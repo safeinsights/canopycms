@@ -377,9 +377,9 @@ function printSections(files) {
 }
 
 // 25-word cap on list items and table cells in CODEBASE_GUIDE.md and module
-// AGENTS.md files. A warning while the constant below is true; flipping it
-// makes every hit an error.
-const WARN_ONLY_LONG_ITEMS = true
+// AGENTS.md files. Every hit is an error; set the constant to true only for the
+// duration of a rewrite that has to land in stages.
+const WARN_ONLY_LONG_ITEMS = false
 
 /** CODEBASE_GUIDE.md plus every AGENTS.md under a package's src/ tree. */
 function findWarningScopeFiles() {

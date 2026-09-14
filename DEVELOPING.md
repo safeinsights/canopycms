@@ -1,14 +1,12 @@
 # Developing CanopyCMS
 
-This document contains development guidelines and patterns for contributors to CanopyCMS.
+Development guidelines and patterns for contributors to CanopyCMS.
 
-## Code Patterns from Major Refactoring (Phases 1-10)
-
-The codebase underwent a major refactoring to establish consistent patterns. Contributors should follow these patterns.
+## Code Patterns
 
 ### Error Handling
 
-Use `catch (err: unknown)` with utilities from `src/utils/error.ts`:
+Catch as `unknown` and narrow with the utilities in `src/utils/error.ts`. `unknown` is safer than `any` for a caught value, and these give type-safe access to error properties without a cast:
 
 ```typescript
 import { getErrorMessage, isNotFoundError, isNodeError } from './utils/error'
@@ -16,607 +14,148 @@ import { getErrorMessage, isNotFoundError, isNodeError } from './utils/error'
 try {
   await riskyOperation()
 } catch (err: unknown) {
-  // Check for expected error conditions
-  if (isNotFoundError(err)) {
-    return null // File not found is expected
-  }
-
-  // Check for permission errors
+  if (isNotFoundError(err)) return null
   if (isNodeError(err) && err.code === 'EACCES') {
     throw new Error(`Permission denied: ${getErrorMessage(err)}`)
   }
-
-  // Re-throw with context
   throw new Error(`Operation failed: ${getErrorMessage(err)}`)
 }
 ```
 
-**Available utilities:**
-
-| Function                 | Purpose                                            |
-| ------------------------ | -------------------------------------------------- |
-| `getErrorMessage(err)`   | Extract message string from unknown error          |
-| `isNodeError(err)`       | Type guard for Node.js errors with `code` property |
-| `isNotFoundError(err)`   | Check if error is ENOENT (file not found)          |
-| `isPermissionError(err)` | Check if error is EACCES (permission denied)       |
-
-**Why this pattern:** TypeScript's `unknown` type is safer than `any` for caught errors. These utilities provide type-safe access to error properties without casting.
+| Function                 | Purpose                                 |
+| ------------------------ | --------------------------------------- |
+| `getErrorMessage(err)`   | Message string from an `unknown` error  |
+| `isNodeError(err)`       | Type guard for a Node error with `code` |
+| `isNotFoundError(err)`   | `ENOENT`                                |
+| `isPermissionError(err)` | `EACCES`                                |
 
 ### Path Handling with Branded Types
 
-Use branded types from `src/paths/` for type-safe path handling:
+`src/paths/` carries two branded path types, and mixing them up is a class of bug the types exist to stop:
+
+| Type             | What it is                                         | Example                       |
+| ---------------- | -------------------------------------------------- | ----------------------------- |
+| `LogicalPath`    | Schema-defined, user-facing; no IDs                | `content/docs/api`            |
+| `PhysicalPath`   | Filesystem path with embedded content IDs          | `content/docs.xyz/api.def456` |
+| `CollectionPath` | Collection identifier; superseded by `LogicalPath` | `blog/posts`                  |
+
+ContentStore methods take `LogicalPath`; the ID index stores `PhysicalPath`. Convert with `resolveLogicalPath(physicalPath, schemaItems)` before calling into ContentStore — see `packages/canopycms/src/paths/resolve.ts`, whose comments state the segment-matching rule. `createLogicalPath()` throws on traversal sequences; `normalizeCollectionId('content/posts')` strips the content root.
 
 ```typescript
-// Client code - import directly from normalize to avoid server-only modules
+// Client code: import directly, to stay clear of server-only modules
 import { createLogicalPath, normalizeCollectionId } from './paths/normalize'
 
-// Server code - can use the barrel export
-import {
-  createLogicalPath,
-  createPhysicalPath,
-  validateAndNormalizePath,
-  resolveLogicalPath,
-  type LogicalPath,
-  type PhysicalPath,
-  type CollectionPath,
-} from './paths'
+// Server code: the barrel is fine
+import { resolveLogicalPath, type LogicalPath, type PhysicalPath } from './paths'
 ```
 
-**Path types:**
-
-| Type             | Purpose                                                     | Example                                                 |
-| ---------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
-| `LogicalPath`    | User-facing, schema-defined paths without IDs               | `content/posts` or `content/docs/api`                   |
-| `PhysicalPath`   | Actual filesystem paths with embedded content IDs           | `content/posts.abc123` or `content/docs.xyz/api.def456` |
-| `CollectionPath` | Collection identifiers (deprecated in favor of LogicalPath) | `posts` or `blog/posts`                                 |
-
-**Logical vs Physical Paths:**
-
-CanopyCMS embeds unique IDs in directory names to ensure stable references even when content is moved or renamed:
-
-- **Logical paths** are schema-defined and user-facing (e.g., `content/authors`)
-- **Physical paths** include embedded IDs (e.g., `content/authors.q52DCVPuH4ga`)
-
-This distinction is critical:
-
-- **ContentStore APIs** expect `LogicalPath` parameters
-- **ID index** stores `PhysicalPath` locations
-- Use `resolveLogicalPath()` to convert between them
-
-**Creating paths:**
-
-```typescript
-// Validates and creates a logical path (throws on traversal sequences)
-const path = createLogicalPath('content', 'posts', 'my-post')
-// Type: LogicalPath
-
-// Creates a physical path (for files with embedded IDs)
-const filePath = createPhysicalPath('content', 'posts', 'my-post.ABC123.mdx')
-// Type: PhysicalPath
-
-// Normalize collection ID (strips content root if present)
-const collectionId = normalizeCollectionId('content/posts') // Returns 'posts'
-```
-
-**Resolving physical paths to logical paths:**
-
-When working with the ID index (which stores physical paths), use `resolveLogicalPath()` to convert to logical paths before calling ContentStore methods:
-
-```typescript
-import { resolveLogicalPath } from './paths'
-
-// ID index returns physical path with embedded IDs
-const physicalPath = 'content/authors.q52DCVPuH4ga'
-
-// Resolve to logical path for ContentStore
-const logicalPath = resolveLogicalPath(physicalPath, schemaItems)
-// Returns: 'content/authors'
-
-// Now safe to use with ContentStore
-const doc = await contentStore.read(logicalPath, slug)
-```
-
-**Algorithm details:**
-
-The path matching algorithm handles:
-
-- ✅ Nested collections with IDs at multiple levels
-- ✅ Collections with similar name prefixes (e.g., `post` vs `posts`)
-- ✅ Collections with dots in their logical names (e.g., `v1.0`)
-- ✅ Exact matches without ID suffixes
-
-Matching logic: For each segment pair, match if `physicalSeg === logicalSeg OR physicalSeg.startsWith(logicalSeg + '.')`. This ensures the dot separator is required, preventing false matches.
-
-**Client/server boundary:** Client code must import from `./paths/normalize` directly because the barrel export (`./paths`) includes server-only modules that use Node.js `path`. This prevents bundler errors when code is used in the browser.
+Client code must import from `./paths/normalize` (and `./paths/branch-name`) rather than the `paths` barrel, which pulls node built-ins into the browser bundle. Enforced by `pnpm lint:bundle` — see [Client-Bundle Boundary Check](#client-bundle-boundary-check).
 
 ### Field Traversal
 
-Use the shared utility for schema-aware data traversal:
+`validation/field-traversal` walks schema-aware data — objects, arrays, and blocks with their `_type` discriminator — so reference validation, reference resolution and data transformation share one traversal:
 
 ```typescript
 import { traverseFields, findFieldsByType } from './validation/field-traversal'
 
-// Find all reference fields in nested data
 const refs = findFieldsByType(schema.fields, data, 'reference')
-// Returns: [{ field, value, path }, ...]
-
-// Custom traversal with visitor pattern
-const results = traverseFields(schema.fields, data, ({ field, value, path }) => {
-  if (field.type === 'reference' && value) {
-    return [{ fieldPath: path, ids: Array.isArray(value) ? value : [value] }]
-  }
-  return []
-})
+// [{ field, value, path }, ...]
 ```
-
-**Use cases:**
-
-- Reference validation (checking all referenced IDs exist)
-- Reference resolution (fetching referenced content)
-- Data transformation (normalizing nested structures)
-
-The traversal handles objects, blocks (with `_type` discriminator), and arrays automatically.
 
 ### Authorization
 
-Use the unified authorization module at `src/authorization/`:
+`src/authorization/` is the single entry point for access checks. `checkContentAccess()` combines the branch and path layers and is what you normally want; `isAdmin`/`isReviewer`/`isPrivileged` from `helpers.ts` are the quick role checks.
 
 ```typescript
-import { checkContentAccess, isAdmin, isPrivileged } from './authorization'
+import { checkContentAccess, isAdmin } from './authorization'
 
-// Check if user can perform an action on content
 const result = await checkContentAccess(
-  deps, // { loadPermissionsFile, loadGroupsFile }
-  context, // { config }
-  branchRoot, // Path to branch workspace
+  deps,
+  ctx,
+  branchRoot,
   'content/posts/post.mdx',
   user,
-  'edit', // 'read' | 'edit'
+  'edit',
 )
-
-if (result.allowed) {
-  // Proceed with operation
-} else {
-  // result.reason explains why access was denied
-}
-
-// Quick admin check
-if (isAdmin(user)) {
-  // User is in Admins group
-}
-
-// Check if user can review/approve (admin or reviewer)
-if (isPrivileged(user)) {
-  // User can perform privileged operations
+if (!result.allowed) {
+  // result.reason explains the denial
 }
 ```
 
-**Module structure:**
-
-- `content.ts` - Combined branch + path access (recommended entry point)
-- `branch.ts` - Branch-level access control
-- `path.ts` - Path-level permissions
-- `helpers.ts` - Utility functions (`isAdmin`, `isReviewer`, `isPrivileged`)
-- `permissions/` - Permissions file schema and loader
-- `groups/` - Groups file schema and loader
+See [authorization/AGENTS.md](packages/canopycms/src/authorization/AGENTS.md) for the module's invariants and [ARCHITECTURE.md](ARCHITECTURE.md#the-permission-model) for the layering.
 
 ### State Management (Editor Components)
 
-React Context provides dependency injection for editor components:
-
-**API Client Context:**
-
-```typescript
-import { ApiClientProvider, useApiClient } from './context/ApiClientContext'
-
-// In your test or app root
-<ApiClientProvider client={mockClient}>
-  <YourComponent />
-</ApiClientProvider>
-
-// In components
-function MyComponent() {
-  const client = useApiClient()
-  // Use client for API calls
-}
-```
-
-**Editor State Context:**
-
-```typescript
-import { EditorStateProvider, useEditorState, useEditorModals } from './context/EditorStateContext'
-
-// Provides loading states, modal states, preview data
-<EditorStateProvider>
-  <Editor />
-</EditorStateProvider>
-
-// In components
-function Toolbar() {
-  const { openModal, closeModal, navigator } = useEditorModals()
-  // ...
-}
-```
-
-**Benefits:**
-
-- Clean testing via providers (no global mutable state)
-- Explicit dependencies
-- Reduced prop drilling
+Editor components take their dependencies from React context, which keeps tests free of global mutable state: `ApiClientProvider`/`useApiClient` (`context/ApiClientContext`) for the API client, and `EditorStateProvider`/`useEditorState`/`useEditorModals` (`context/EditorStateContext`) for loading, modal and preview state. Wrap the tree in the provider and inject a mock client.
 
 ### Module Organization
 
-**Modules with subdirectories** (grouped for complexity):
-
-| Directory        | Purpose                                    |
-| ---------------- | ------------------------------------------ |
-| `authorization/` | Access control (branch + path permissions) |
-| `config/`        | Schema definitions and validation          |
-| `paths/`         | Path handling and validation               |
-| `schema/`        | Schema registry and resolution             |
-| `editor/`        | React components and hooks                 |
-| `api/`           | API handlers and client                    |
-
-**Top-level files** (flat for discoverability):
-
-| File                  | Purpose                     |
-| --------------------- | --------------------------- |
-| `content-store.ts`    | Content reading/writing     |
-| `git-manager.ts`      | Git operations              |
-| `branch-workspace.ts` | Branch workspace management |
-| `comment-store.ts`    | Comment persistence         |
-| `content-id-index.ts` | ID-to-path mapping          |
-
-**Convention:** Group into directories when a module has multiple related files (types, helpers, tests). Keep top-level for single-file modules that are frequently imported.
+Group a module into a directory once it has several related files (types, helpers, tests); keep single-file modules flat for discoverability. [AGENTS.md](AGENTS.md#code-organization) maps every module to its own `AGENTS.md`.
 
 ## Architecture Patterns
 
 ### Framework-Agnostic Core
 
-CanopyCMS follows a strict separation between framework-agnostic business logic and framework adapters:
+`canopycms` holds all business logic and takes its framework-specific pieces by dependency injection; it never imports Next.js, Express, or any other framework. Adapter packages (`canopycms-next`) stay thin — extract the user and request from the framework's APIs, add framework-specific caching, and expose one unified API.
 
-**Core Packages (`canopycms`)**
-
-- Contain all business logic, auth, content reading, services
-- Accept callbacks/functions via dependency injection
-- Never import framework-specific code (Next.js, Express, etc.)
-- Export factory functions that return configured instances
-
-**Adapter Packages (`canopycms-next`, etc.)**
-
-- Thin wrappers around core functionality (prefer ~10 lines)
-- Extract user/request data from framework-specific APIs
-- Add framework-specific optimizations (caching, middleware, etc.)
-- Provide unified API for adopters
-
-**Example: User Extraction**
-
-Core defines the interface:
-
-```typescript
-// packages/canopycms/src/context.ts
-export interface CanopyContextOptions {
-  config: CanopyConfig
-  getUser: () => Promise<CanopyUser> // Injected by adapter
-}
-```
-
-Adapter provides the implementation:
-
-```typescript
-// packages/canopycms-next/src/user-extraction.ts
-export function createNextUserExtractor(authPlugin: AuthPlugin) {
-  return async (): Promise<CanopyUser> => {
-    const headersList = await headers() // Next.js-specific
-    const mockRequest = {
-      method: 'GET',
-      url: headersList.get('referer') || 'http://localhost',
-      header: (name: string) => headersList.get(name),
-      json: async () => ({}),
-    }
-    const authResult = await authPlugin.verifyToken(mockRequest)
-    return authResult.valid && authResult.user ? authResult.user : ANONYMOUS_USER
-  }
-}
-```
+Core declares the seam — `CanopyContextOptions` in `packages/canopycms/src/context.ts` takes pre-created `services` plus an `extractUser: () => Promise<CanopyUser>` the adapter supplies. `packages/canopycms-next/src/context-wrapper.ts` fills it from Next's `headers()` via `authPlugin.authenticate()`, then `resolveCanopyUser()` to apply bootstrap admin groups.
 
 ### Context Factory Pattern
 
-The core exports a `createCanopyContext()` factory that manages auth and content reading:
-
-**Core Factory**
-
-```typescript
-// packages/canopycms/src/context.ts
-export function createCanopyContext(options: CanopyContextOptions) {
-  const services = createCanopyServices(options.config)
-
-  const getContext = async (): Promise<CanopyContext> => {
-    const user = await options.getUser() // Adapter-provided
-    // Apply bootstrap admin groups, create content reader, etc.
-    return { read, services, user }
-  }
-
-  return {
-    getContext, // Call this per-request
-    services, // Shared across requests
-  }
-}
-```
-
-**Framework Adapter**
-
-```typescript
-// packages/canopycms-next/src/context-wrapper.ts
-export function createNextCanopyContext(options: NextCanopyOptions) {
-  const coreContext = createCanopyContext({
-    config: options.config,
-    getUser: createNextUserExtractor(options.authPlugin),
-  })
-
-  // Add React cache() for per-request memoization
-  const getCanopy = cache((): Promise<CanopyContext> => {
-    return coreContext.getContext()
-  })
-
-  return {
-    getCanopy,
-    handler: createCanopyCatchAllHandler(options),
-    services: coreContext.services,
-  }
-}
-```
-
-**Usage in Server Components**
+`createCanopyContext()` returns a `getContext()` called per request: it refreshes the active branch, resolves the user (short-circuiting to `STATIC_DEPLOY_USER` for a static deployment or a build), and builds the content reader. `createNextCanopyContext()` wraps it, adding React `cache()` for per-request memoization plus the catch-all handler:
 
 ```typescript
 // app/posts/[slug]/page.tsx
-const { getCanopy } = createNextCanopyContext({ config, authPlugin })
-
-export default async function PostPage({ params }: { params: { slug: string } }) {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read({ entryPath: 'content/posts', slug: params.slug })
-  return <PostView data={data} />
-}
+const { getCanopy } = await createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
+const canopy = await getCanopy()
+const { data } = await canopy.read({ entryPath: 'content/posts', slug: params.slug })
 ```
 
 ### Static Deployment Detection
 
-CanopyCMS has two deployment shapes: **server** (editor + API running at request time) and **static** (pre-built site with no request context and no auth). When running as a static deployment, auth checks are bypassed and all content is assumed publicly readable. Detection lives in `packages/canopycms/src/build-mode.ts`.
+CanopyCMS has two deployment shapes: **server** (editor and API answering requests) and **static** (pre-built, no request context, no auth). Detection lives in `packages/canopycms/src/build-mode.ts`:
 
-**Primary check: `isDeployedStatic(config)`**
+- `isDeployedStatic(config)` is the primary, config-driven check — it reads `deployedAs`, which defaults to `'server'`. Adopters set it from an env var in `canopycms.config.ts`.
+- `isBuildMode()` is the env-var safety net (`NEXT_PHASE=phase-production-build`, `CANOPY_BUILD_MODE=true`), covering a `server` deployment whose `getCanopy()` runs from `generateStaticParams` with no request context.
+- `STATIC_DEPLOY_USER` is the frozen synthetic admin used when auth is bypassed.
 
-The preferred way to detect a static deployment. Reads the `deployedAs` config field, which defaults to `'server'`:
-
-```typescript
-// packages/canopycms/src/build-mode.ts
-export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
-  return config.deployedAs === 'static'
-}
-```
-
-The `deployedAs` field is set in the adopter's `canopycms.config.ts`, typically driven by an env var:
+Anywhere auth may be skipped, use the combined check:
 
 ```typescript
-// canopycms.config.ts (adopter code)
-deployedAs: process.env.CANOPY_BUILD === 'true' ? 'static' : 'server',
-```
-
-**Safety net: `isBuildMode()`**
-
-Covers edge cases like `getCanopy()` called from `generateStaticParams` in server deployments, where the config says `'server'` but there is no request context:
-
-```typescript
-// packages/canopycms/src/build-mode.ts
-export const isBuildMode = (): boolean => {
-  if (process.env.NEXT_PHASE === 'phase-production-build') return true
-  if (process.env.CANOPY_BUILD_MODE === 'true') return true
-  return false
-}
-```
-
-**Combined check pattern**
-
-Both `context.ts` and `content-reader.ts` use the combined check:
-
-```typescript
-// Anywhere auth/permissions might be skipped
 if (isDeployedStatic(services.config) || isBuildMode()) {
-  // Skip auth / use STATIC_DEPLOY_USER
+  // skip auth / use STATIC_DEPLOY_USER
 }
 ```
 
-`isDeployedStatic` is the primary, config-driven check. `isBuildMode` is the env-var safety net.
+`authPlugin` is optional when `deployedAs: 'static'` — a stub is used internally for the API handler.
 
-**`STATIC_DEPLOY_USER` constant**
-
-Synthetic admin user used when auth is bypassed:
-
-```typescript
-// packages/canopycms/src/build-mode.ts
-export const STATIC_DEPLOY_USER: AuthenticatedUser = Object.freeze({
-  type: 'authenticated',
-  userId: '__static_deploy__',
-  groups: ['Admins'],
-  email: 'static-deploy@canopycms',
-  name: 'Static Deploy',
-})
-```
-
-**`authPlugin` is optional for static deployments**
-
-When `deployedAs` is `'static'`, the adopter does not need to provide an `authPlugin` to `createNextCanopyContext`. A stub plugin is used internally for the API handler:
-
-```typescript
-// canopy.ts (adopter code)
-const isStaticDeploy = config.server.deployedAs === 'static'
-
-const canopyContextPromise = createNextCanopyContext({
-  config: config.server,
-  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
-  entrySchemaRegistry,
-})
-```
-
-**Testing static deployment behavior**
-
-The preferred approach: set `deployedAs: 'static'` in the test config. This avoids env var manipulation and cleanup:
-
-```typescript
-it('bypasses permissions for static deployments', async () => {
-  const staticConfig = { ...config, deployedAs: 'static' as const }
-  const context = createCanopyContext({
-    services: await createCanopyServices(staticConfig, { entrySchemaRegistry }),
-    extractUser: mockExtractUser, // Should NOT be called
-  })
-  const canopy = await context.getContext()
-  expect(canopy.user).toEqual(STATIC_DEPLOY_USER)
-})
-```
-
-You can also test via env var for the `isBuildMode()` safety net path, but always clean up:
-
-```typescript
-it('bypasses permissions during Next.js build phase', async () => {
-  process.env.CANOPY_BUILD_MODE = 'true'
-  try {
-    const context = createCanopyContext({
-      services,
-      extractUser: mockExtractUser,
-    })
-    const canopy = await context.getContext()
-    expect(canopy.user).toEqual(STATIC_DEPLOY_USER)
-  } finally {
-    delete process.env.CANOPY_BUILD_MODE
-  }
-})
-```
+**Testing it:** prefer `deployedAs: 'static'` in the test config over env-var manipulation, and assert `canopy.user` is `STATIC_DEPLOY_USER` while the injected `extractUser` is never called. If you must exercise the `isBuildMode()` path, set `CANOPY_BUILD_MODE` and `delete` it in a `finally`.
 
 ### Static-Export Helpers (`generateStaticParams`)
 
-Prefer the framework helper over hand-rolled `generateStaticParams`. `generateContentStaticParams(opts)` is a **bound method on the `createNextCanopyContext()` result** — it closes over the (guarded) build context, so your page modules enumerate routable content without ever importing the admin `getCanopyForBuild`. Wire it through `lib/canopy` alongside the phase-selecting reads, then call `context.generateContentStaticParams(opts)`:
+Prefer the framework helper over a hand-rolled `generateStaticParams`. `generateContentStaticParams(opts)` is a bound method on the `createNextCanopyContext()` result: it closes over the guarded build context, so page modules enumerate routable content without importing the admin `getCanopyForBuild`. Wire it through `lib/canopy` and call it from each page — [README.md](README.md#static-export-with-generatestaticparams) has the adopter recipe and the option list.
 
-```typescript
-// app/lib/canopy.ts
-const canopyContextPromise = createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
+Under the hood the bound method calls the framework-agnostic `collectStaticParams(buildCtx, opts)` (`canopycms-next`), which maps the neutral `StaticPathEntry[]` descriptors returned by core `collectStaticPaths(ctx, opts)` (`canopycms/server`). Reach for those free helpers only when building a non-Next adapter or a sitemap.
 
-export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
-  const context = await canopyContextPromise
-  return context.generateContentStaticParams(options)
-}
-```
-
-Pages import the bound helper from `lib/canopy` — never `getCanopyForBuild`.
-
-**Single-segment `[slug]` route** — scope to one collection with `rootPath` + `shape: 'single'`:
-
-```typescript
-// app/posts/[slug]/page.tsx
-import { contentStaticParams } from '../../lib/canopy'
-
-export const generateStaticParams = () =>
-  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
-```
-
-**Catch-all `[...slug]` / `[[...slug]]` route** — the default `shape: 'catch-all'` emits the URL `segments` array across all content:
-
-```typescript
-// app/[...slug]/page.tsx
-export const generateStaticParams = () => contentStaticParams()
-```
-
-**Options** (`GenerateContentStaticParamsOptions`):
-
-| Option      | Purpose                                                                                                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rootPath`  | Scope to a collection logical path (e.g. `content/posts`); defaults to the whole content root                                                                               |
-| `shape`     | `'catch-all'` (default, emits `segments`) or `'single'` (emits the entry `slug`)                                                                                            |
-| `basePath`  | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`), the route base (e.g. `'/docs'`); scopes entries to that prefix and makes `segments` relative to it |
-| `paramName` | Route param name; defaults to `'slug'`                                                                                                                                      |
-| `filter`    | Predicate to drop entries (e.g. exclude the root index: `(e) => e.segments.length > 0`)                                                                                     |
-
-**`basePath` for nested catch-all routes:** a catch-all under a URL prefix needs its params relative to that prefix, or the route generates doubled paths like `/docs/docs/...`. Pass `basePath` so the segments are stripped of the prefix:
-
-```typescript
-// app/docs/[[...slug]]/page.tsx
-export const generateStaticParams = () =>
-  contentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
-```
-
-**Gotcha:** a root index (`/`) yields empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
-
-Under the hood the bound method calls the framework-agnostic free helper `collectStaticParams(buildCtx, opts)` (from `canopycms-next`), which maps the neutral `StaticPathEntry[]` descriptors (each carrying a collapsed `segments` array, the entry `slug`, and `urlPath`) returned by core `collectStaticPaths(ctx, opts)` (from `canopycms/server`). Reach for those free helpers directly only when building a non-Next adapter or a sitemap.
-
-See `apps/example1/app/posts/[slug]/page.tsx` (single-segment) and `apps/example1/app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`) — both use the bound helper plus phase-selecting reads.
+`apps/example1/app/posts/[slug]/page.tsx` (single-segment) and `apps/example1/app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`) are the worked examples.
 
 ### Build-Time Single-Entry Reads
 
-There are three ways to read a single entry, and using the wrong one at build time silently returns `null` (the "build fine, dev blank" trap):
+There are three ways to read a single entry, and the wrong one at build time returns `null` silently — the "builds fine, dev blank" trap:
 
-| Source                                         | Phase                       | ACLs / branch                                    | Use for                                                                            |
-| ---------------------------------------------- | --------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `createNextCanopyContext().read/readByUrlPath` | **Either** (auto-selecting) | Picks build context at build, runtime at request | **Recommended** page surface for `[...slug]` / `[slug]` resolution                 |
-| `getCanopy().read/readByUrlPath`               | Request only                | Branch-aware, enforces ACLs                      | Server-component rendering at request time                                         |
-| `getCanopyForBuild().read/readByUrlPath`       | Build only                  | Synthetic admin, no ACLs, working tree           | Advanced escape hatch: `generateMetadata`, build-time render that needs raw access |
+| Source                                         | Phase                | ACLs / branch                              | Use for                     |
+| ---------------------------------------------- | -------------------- | ------------------------------------------ | --------------------------- |
+| `createNextCanopyContext().read/readByUrlPath` | Either, auto-selects | Build context at build, runtime at request | Recommended page surface    |
+| `getCanopy().read/readByUrlPath`               | Request only         | Branch-aware, enforces ACLs                | Server-component rendering  |
+| `getCanopyForBuild().read/readByUrlPath`       | Build only           | Synthetic admin, no ACLs                   | Escape hatch: build scripts |
 
-**Never call the runtime `getCanopy().readByUrlPath()` at build time** — there is no request context, so it returns `null` and your statically generated pages come up blank. `getCanopyForBuild()` is an advanced escape hatch (synthetic admin, bypasses all ACLs); the recommended page surface is the phase-selecting `read`/`readByUrlPath` plus the bound `contentStaticParams`, which never hand the admin context to your page modules. On a **production `server` deployment** (`mode: 'prod' && deployedAs: 'server' && !isBuildMode()`), `getCanopyForBuild()` methods _throw_ if invoked at request time, so they can't accidentally leak protected content into a request path. The guard only fires in prod because dev legitimately uses the build context for `generateStaticParams`/`generateMetadata` (same not-build signature as the request-time footgun, with no reliable way to tell them apart), whereas in prod that ambiguity is gone.
+**Never call the runtime `getCanopy().readByUrlPath()` at build time** — with no request context it returns `null` and the generated pages come up blank. The phase-selecting `read`/`readByUrlPath` plus the bound `contentStaticParams` are correct in both phases by construction, which is why page code should not hand-pick the admin context. On a production `server` deployment (`mode: 'prod' && deployedAs: 'server' && !isBuildMode()`), `getCanopyForBuild()` methods **throw** when invoked at request time, so an ACL-bypassing read cannot leak into a request path. The guard fires only in prod because dev legitimately drives `generateStaticParams`/`generateMetadata` through the build context, which has the same not-build signature as the request-time footgun.
 
-**Recommended: the phase-selecting `read`/`readByUrlPath` from `createNextCanopyContext()`.** They are correct in both phases by construction — filesystem-direct working tree at build, branch-aware ACL-enforced runtime at request — so page code never has to hand-pick the admin build context:
+### Branch Identity
 
-```typescript
-// app/lib/canopy.ts
-const ctx = await createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
-export const readByUrlPath = ctx.readByUrlPath // auto-selects build vs runtime
-```
+`defaultBaseBranch` (fork point) and `defaultActiveBranch` (which workspace serves content) are resolved once at service creation and baked into config, then refreshed per request in dev. The detection matrix, the fallback chain, and the recorded-fork-point rule live in [ARCHITECTURE.md](ARCHITECTURE.md#branch-based-editing); `_createCanopyServicesInternal` in `services.ts` carries the same note at the point of the code.
 
-`apps/example1` follows this: `app/lib/canopy.ts` exports the phase-selecting `read`/`readByUrlPath` and the bound `contentStaticParams`, and the pages call those — `app/posts/[slug]/page.tsx` (single-segment) and `app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`), both resolving via `readByUrlPath` + `notFound()`. Neither page imports `getCanopyForBuild`.
-
-### Branch Config: defaultBaseBranch vs defaultActiveBranch
-
-CanopyCMS distinguishes between two branch config fields:
-
-- **`defaultBaseBranch`** -- The fork point for new CMS branches. When the editor creates a branch, it forks from this branch. When unset in dev mode, it is auto-detected from the current git HEAD (same as the active branch). The canonical resolver is `resolveBaseBranch()` in `utils/git.ts`: explicit config wins → dev-mode git HEAD → `'main'`. Used by `GitManager`, `BranchWorkspace`, and `GitHubService` for rebase targets and PR base branches. The fork point used to create a workspace is recorded immutably in branch metadata (`branch.baseBranch` in `.canopy-meta/branch.json`); git operations on existing branches (`commitFiles`/`submitBranch` in `services.ts`, the PR base in `api/github-sync.ts`) prefer the recorded value over config, so a branch stays pinned to its original base even if the config value changes later.
-
-- **`defaultActiveBranch`** -- Which workspace to serve content from by default. This is the branch the dev server, editor UI, content reader, and AI content resolver use when no branch is explicitly requested.
-
-**Auto-detection in dev mode:**
-
-Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments and any build (`readsFromCheckout()` in `build-mode.ts`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
-
-This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
-
-**The resolved base branch is protected** (see [ARCHITECTURE.md](ARCHITECTURE.md#protected-base-branch)): it can never be submitted for review in either mode, and in prod it is read-only in the editor. In dev the base branch — which is your detected HEAD branch when `defaultBaseBranch` is unset — **stays editable** (editing it is the normal local flow, reconciled via `canopycms sync`), but the Submit button is hidden on it: a branch can't PR against itself. Create a CMS editing branch when you want to exercise the submit/review flow locally.
-
-The detection priority for `defaultActiveBranch` is:
-
-1. Explicit `defaultActiveBranch` in config (both modes)
-2. Current git HEAD branch (dev mode only)
-3. `defaultBaseBranch` from config
-4. `'main'` as final fallback
-
-For `defaultBaseBranch` (via `resolveBaseBranch()` in `utils/git.ts`):
-
-1. Explicit `defaultBaseBranch` in config (both modes)
-2. Current git HEAD branch (dev mode only)
-3. `'main'` as final fallback
-
-**Where `defaultActiveBranch` is consumed:**
-
-Content-serving code uses the pattern `config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'`:
-
-- `context.ts` -- determines the branch for `getContext()`
-- `http/handler.ts` -- determines the branch for API requests without an explicit branch parameter
-- `CanopyEditorPage.tsx` -- determines the initial branch for the editor UI
-- `ai/resolve-branch.ts` -- determines the branch for AI content generation
-- `content-reader.ts` -- determines the branch for `createContentReader()`
-
-**Impact on sync CLI:**
-
-The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior. Note that content validation runs before the auto-create — a precondition failure throws a typed `SyncError` (stderr + exit 1) without creating the workspace.
-
-**In tests:**
-
-`createTestCanopyServices` (in `services.ts`) pins both branch identity fields — `defaultBaseBranch ?? 'main'` and `defaultActiveBranch ?? defaultBaseBranch ?? 'main'` — so tests never shell out to git for HEAD detection (which would vary with the developer's working branch). Mock services skip detection entirely since it only runs in real service creation. Tests that construct `BranchWorkspaceManager` directly should still set `defaultBaseBranch` explicitly to avoid HEAD detection during workspace creation (see `branch-workspace.test.ts`, which sets `'main'`). If your test needs a specific active branch, set it explicitly:
+**In tests:** `createTestCanopyServices` pins both fields (`defaultBaseBranch ?? 'main'`, `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`) so a suite never shells out to git for HEAD detection, which would vary with the developer's working branch. Mock services skip detection entirely. A test constructing `BranchWorkspaceManager` directly should still set `defaultBaseBranch` explicitly (see `branch-workspace.test.ts`). To pin a specific active branch:
 
 ```typescript
 const services = createMockServices({
@@ -627,368 +166,78 @@ const services = createMockServices({
 
 ### Adding a New Framework Adapter
 
-To add support for a new framework (Express, Fastify, SvelteKit, etc.):
-
-1. **Create user extraction function**
-
-   ```typescript
-   // packages/canopycms-express/src/user-extraction.ts
-   export function createExpressUserExtractor(authPlugin: AuthPlugin) {
-     return async (req: Request): Promise<CanopyUser> => {
-       const authResult = await authPlugin.verifyToken(req)
-       return authResult.valid && authResult.user ? authResult.user : ANONYMOUS_USER
-     }
-   }
-   ```
-
-2. **Wrap core context factory**
-
-   ```typescript
-   // packages/canopycms-express/src/context-wrapper.ts
-   export function createExpressCanopyContext(options: ExpressCanopyOptions) {
-     const coreContext = createCanopyContext({
-       config: options.config,
-       getUser: createExpressUserExtractor(options.authPlugin),
-     })
-
-     // Add Express-specific middleware/caching if needed
-     return {
-       middleware: (req, res, next) => {
-         /* ... */
-       },
-       getContext: coreContext.getContext,
-       services: coreContext.services,
-     }
-   }
-   ```
-
-3. **Keep adapters thin** - 10-20 lines for user extraction is ideal
-4. **Export unified API** - hide framework details from adopters
-5. **Add framework-specific optimizations** - caching, middleware, etc.
+1. Write an `extractUser` function that turns the framework's request into a `CanopyUser` — authenticate through the plugin, then `resolveCanopyUser()` (`resolve-canopy-user.ts`), which applies bootstrap admin groups via `authResultToCanopyUser`.
+2. Wrap `createCanopyContext()`, passing pre-created services plus that extractor, and add any framework-specific middleware or caching.
+3. Keep the adapter thin (10-20 lines for user extraction), export one unified API, and hide framework details from adopters.
 
 ## Operating Mode Strategies
 
-CanopyCMS uses the Strategy pattern to encapsulate mode-specific behavior. Understanding this pattern is important for adding new features that behave differently across modes.
+Mode-specific behavior is encapsulated in two strategy layers:
 
-### Strategy Pattern Overview
+- `operating-mode/client-safe-strategy.ts` — no node imports, so it can be bundled for the client. Configuration values and flags only: `supportsBranching()`, `shouldCommit()`, `getPermissionsFileName()`.
+- `operating-mode/client-unsafe-strategy.ts` — extends the above with server-side resolution: `getBaseRoot()`, `getPermissionsFilePath()`, `getRemoteUrlConfig()`.
 
-**Two strategy layers:**
-
-1. **ClientSafeStrategy** (`operating-mode/client-safe-strategy.ts`)
-   - No Node.js imports (can be bundled for client)
-   - Pure configuration values and flags
-   - Methods: `supportsBranching()`, `shouldCommit()`, `getPermissionsFileName()`, etc.
-
-2. **ClientUnsafeStrategy** (`operating-mode/client-unsafe-strategy.ts`)
-   - Extends ClientSafeStrategy
-   - Adds server-side functionality
-   - Methods: `getBaseRoot()`, `getPermissionsFilePath()`, `getRemoteUrlConfig()`, etc.
-
-**Key principle**: Strategies return values, not logic.
-
-```typescript
-// GOOD: Strategy returns a flag
-shouldAutoInitLocal(): boolean {
-  return true
-}
-
-// BAD: Strategy contains business logic
-async resolveRemoteUrl(): Promise<string> {
-  // Don't do git operations in strategies!
-  const git = simpleGit(...)
-  await git.raw([...])
-  // ...
-}
-```
-
-### When to Use Strategies
-
-Add mode-specific behavior to strategies when:
-
-- Different modes need different configuration values (file names, paths, flags)
-- UI features should be enabled/disabled based on mode
-- Simple boolean decisions drive behavior elsewhere
-
-**Don't put in strategies:**
-
-- Git operations (belongs in GitManager)
-- File I/O operations (belongs in services/utilities)
-- Complex business logic (belongs in domain code)
-
-### Example: Adding Mode-Specific Behavior
-
-```typescript
-// 1. Add method to strategy interface (operating-mode/types.ts)
-interface ClientSafeStrategy {
-  // ... existing methods
-  supportsFeatureX(): boolean
-}
-
-// 2. Implement in each strategy class
-class ProdClientSafeStrategy implements ClientSafeStrategy {
-  supportsFeatureX(): boolean {
-    return true
-  }
-}
-
-class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
-  supportsFeatureX(): boolean {
-    return false
-  }
-}
-
-// 3. Use the flag in your code
-const strategy = clientOperatingStrategy(config.mode)
-if (strategy.supportsFeatureX()) {
-  // Enable feature X
-}
-```
-
-### Git Test Repositories
-
-When testing code that involves git operations, use the `initTestRepo()` helper from `src/test-utils`:
-
-```typescript
-import { initTestRepo } from './test-utils'
-
-it('should commit changes', async () => {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
-
-  // Initialize a test repo with CanopyCMS marker
-  const git = await initTestRepo(tmpDir)
-
-  // Now safe to use with GitManager.ensureAuthor()
-  const manager = new GitManager({ repoPath: tmpDir })
-  await manager.ensureAuthor({ name: 'Bot', email: 'bot@test.com' })
-})
-```
-
-**Why this matters:** `GitManager.ensureAuthor()` requires repositories to be marked as CanopyCMS-managed (via `git config canopycms.managed true`). This prevents accidental pollution of non-managed repositories. The `initTestRepo()` helper automatically adds this marker along with test user config.
-
-### Testing Strategies
+**Strategies return values, not logic.** A strategy method answers a question (`shouldAutoInitLocal(): boolean`); git operations belong in `GitManager`, file I/O in services and utilities, and domain rules in domain code. Add a method to `operating-mode/types.ts` and implement it in each strategy class when different modes need different file names, paths or feature flags. See [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) for the single resolution points for `mode` and `deploymentName`.
 
 ```typescript
 import { operatingStrategy } from './operating-mode'
 
 it('returns correct config for each mode', () => {
-  const prodStrategy = operatingStrategy('prod')
-  expect(prodStrategy.shouldAutoInitLocal()).toBe(false)
-
-  const devStrategy = operatingStrategy('dev')
-  expect(devStrategy.shouldAutoInitLocal()).toBe(true)
+  expect(operatingStrategy('prod').shouldAutoInitLocal()).toBe(false)
+  expect(operatingStrategy('dev').shouldAutoInitLocal()).toBe(true)
 })
+```
+
+### Git Test Repositories
+
+`GitManager.ensureAuthor()` refuses to touch a repository not marked CanopyCMS-managed (`git config canopycms.managed true`), so it cannot pollute an unrelated repo. `initTestRepo()` from `src/test-utils` adds that marker plus a test identity:
+
+```typescript
+import { initTestRepo } from './test-utils'
+
+const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+const git = await initTestRepo(tmpDir)
 ```
 
 ## Schema Architecture
 
-CanopyCMS uses a unified schema model built on **collections** and **entry types**. There are no singletons as a separate concept -- a "singleton" is just an entry type with `maxItems: 1`.
-
-### Schema Structure
-
-The schema is a `RootCollectionConfig` with nested collections and entry types:
-
-```typescript
-const schema: RootCollectionConfig = {
-  // Root-level entry types (e.g., a homepage with maxItems: 1)
-  entries: [
-    {
-      name: 'home',
-      format: 'json',
-      fields: [{ name: 'hero', type: 'string' }],
-      maxItems: 1,  // Only one instance allowed
-    },
-  ],
-  // Top-level collections
-  collections: [
-    {
-      name: 'posts',
-      path: 'posts',
-      label: 'Blog Posts',
-      entries: [
-        {
-          name: 'post',
-          format: 'md',
-          default: true,  // Used by "Add" button
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'author', type: 'reference', collections: ['authors'] },
-          ],
-        },
-      ],
-      // Nested sub-collections
-      collections: [
-        {
-          name: 'drafts',
-          path: 'drafts',
-          entries: [{ name: 'draft', format: 'md', fields: [...] }],
-        },
-      ],
-    },
-  ],
-  order: ['agfzDt2RLpSn', '916jXZabYCxu'],  // Ordering by embedded content ID
-}
-```
-
-**Key types** (from `packages/canopycms/src/config/types.ts`):
-
-- `RootCollectionConfig` -- top-level schema container with `entries?`, `collections?`, `order?`
-- `CollectionConfig` -- a named collection with `name`, `path`, `label?`, `entries?`, `collections?`, `order?`
-- `EntryTypeConfig` -- defines content structure: `name`, `format`, `fields`, `label?`, `default?`, `maxItems?`
-
-**On disk**, schema is stored in `.collection.json` files within each collection directory. Fields reference named schemas from a schema registry rather than inlining field definitions directly.
+The schema model is collections and entry types; there is no separate singleton concept — a "singleton" is an entry type with `maxItems: 1`. A `RootCollectionConfig` holds root-level `entries`, nested `collections`, and an `order` array of content IDs. `CollectionConfig` and `EntryTypeConfig` are declared in `packages/canopycms/src/config/types.ts`; the adopter-facing shape of a `.collection.json` file is in [README.md](README.md#schema-registry-and-references). On disk each collection directory carries a `.collection.json` whose fields reference named schemas from the registry rather than inlining field definitions.
 
 ### Flattening Schema for Runtime
 
-At runtime, the nested schema is flattened into a `FlatSchemaItem[]` for O(1) path lookups:
+`flattenSchema(schema, 'content')` produces `FlatSchemaItem[]` for O(1) path lookups. It is a discriminated union on `type`, `'collection'` or `'entry-type'` (never `'singleton'`); see `config/types.ts` for the members. Two things the type alone does not say: `logicalPath` is the branded `LogicalPath`, and `parentPath` is always present on an entry type but absent on a root-level collection.
 
 ```typescript
 import { flattenSchema } from './config'
 
-const flatItems = flattenSchema(schema, 'content')
-// Returns: FlatSchemaItem[]
-
-const schemaIndex = new Map(flatItems.map((item) => [item.logicalPath, item]))
-
+const schemaIndex = new Map(flattenSchema(schema, 'content').map((i) => [i.logicalPath, i]))
 const item = schemaIndex.get('content/posts')
-if (item?.type === 'collection') {
-  console.log('Collection:', item.name, item.entries)
-} else if (item?.type === 'entry-type') {
-  console.log('Entry type:', item.name, item.format, item.maxItems)
-}
 ```
-
-**FlatSchemaItem** is a discriminated union with two variants:
-
-```typescript
-type FlatSchemaItem =
-  | {
-      type: 'collection'
-      logicalPath: LogicalPath // e.g., "content/posts" (branded type)
-      name: string // e.g., "posts"
-      label?: string
-      parentPath?: LogicalPath // Parent collection's logical path
-      entries?: readonly EntryTypeConfig[]
-      collections?: readonly CollectionConfig[]
-      order?: readonly string[]
-    }
-  | {
-      type: 'entry-type'
-      logicalPath: LogicalPath // e.g., "content/home" (branded type)
-      name: string // e.g., "home"
-      label?: string
-      parentPath: LogicalPath // Always present -- parent collection path
-      format: ContentFormat // 'md' | 'mdx' | 'json'
-      fields: readonly FieldConfig[]
-      default?: boolean
-      maxItems?: number // 1 = singleton behavior
-    }
-```
-
-**Key points:**
-
-- `type` discriminator is `'collection'` or `'entry-type'` (not `'singleton'`)
-- `logicalPath` is a branded `LogicalPath` type (e.g., `content/posts`, `content/posts/drafts`)
-- `parentPath` is always present on entry types; optional on collections (absent for root-level)
-- Collections carry `entries` (the allowed entry types); entry types carry `format` and `fields` directly
 
 ### Working with ContentStore
 
-The `ContentStore` uses the flattened schema index for all content operations.
-
-**Path Resolution**
+`ContentStore` resolves a path by treating the last segment as a slug and looking up the rest as a collection path — `resolvePath(['content','posts','hello'])` returns `{ schemaItem, slug }`. There is no separate singleton resolution: an entry-type item is reached through its parent collection, by passing an empty slug.
 
 ```typescript
-// resolvePath returns { schemaItem, slug } -- no itemType field
-const { schemaItem, slug } = store.resolvePath(['content', 'posts', 'hello'])
-// schemaItem: FlatSchemaItem with type 'collection'
-// slug: 'hello' (EntrySlug branded type)
-```
-
-Resolution works by treating the last path segment as a slug and looking up the remaining segments as a collection path. There is no separate singleton resolution -- entry-type items are accessed through their parent collection.
-
-**Reading Content**
-
-```typescript
-// Collection entry: collection path + slug
 const doc = await store.read('content/posts', 'hello-world')
+const home = await store.read('content/home', '') // maxItems: 1 entry type
 
-// Entry-type item (e.g., maxItems: 1): collection path + empty slug
-// Internally delegates to the parent collection with the entry type name as slug
-const home = await store.read('content/home', '')
-```
-
-When reading, `ContentStore` checks the schema item type:
-
-- `entry-type`: uses the entry type's `format` and `fields` directly
-- `collection`: uses the default entry type's `format` and `fields` (via `getDefaultEntryType()`)
-
-**Writing Content**
-
-```typescript
-// Collection entry
 await store.write('content/posts', 'hello-world', {
   format: 'md',
   data: { title: 'Hello World' },
   body: 'Content goes here',
 })
-
-// Entry-type item (maxItems: 1)
-await store.write('content/home', '', {
-  format: 'json',
-  data: { hero: 'Welcome' },
-})
 ```
 
-All entries on disk use the filename pattern `{type}.{slug}.{id}.{ext}` (e.g., `post.hello-world.a1b2c3d4e5f6.md`). The `type` prefix comes from the entry type name.
+On read, an `entry-type` item uses its own `format`/`fields`; a `collection` uses the default entry type's, via `getDefaultEntryType()`. Files on disk are named `{type}.{slug}.{id}.{ext}` (`post.hello-world.a1b2c3d4e5f6.md`), where `type` is the entry type name.
 
 ### API Response Format
 
-**CollectionItem** -- represents an individual content entry:
-
-```typescript
-interface CollectionItem {
-  logicalPath: LogicalPath
-  contentId: ContentId // 12-char short UUID
-  slug: EntrySlug
-  collectionPath: LogicalPath
-  collectionName: string
-  format: ContentFormat
-  entryType: string // Entry type name (e.g., 'post', 'home')
-  physicalPath: PhysicalPath
-  title?: string
-  updatedAt?: string
-  exists?: boolean
-  canEdit?: boolean
-}
-```
-
-**EntryCollectionSummary** -- represents a collection in the tree:
-
-```typescript
-interface EntryCollectionSummary {
-  logicalPath: LogicalPath
-  contentId: ContentId
-  name: string
-  label?: string
-  format: ContentFormat // Default entry type's format
-  type: 'collection' | 'entry' // CollectionKind
-  schema: readonly FieldConfig[] // Default entry type's fields
-  entryTypes?: EntryTypeSummary[] // All entry types in this collection
-  order?: readonly string[]
-  parentId?: string
-  children?: EntryCollectionSummary[]
-}
-```
-
-**Key points:**
-
-- There is no `itemType` field. Use `entryType` on `CollectionItem` to identify the entry type name.
-- `CollectionKind` (`'collection' | 'entry'`) on summaries indicates whether something is a container or a leaf -- not whether it is a "singleton."
-- `maxItems: 1` entry types are just regular entries with a cardinality constraint. The UI enforces the limit; the API does not distinguish them from multi-instance entries.
+`CollectionItem` (one entry) and `EntryCollectionSummary` (a collection in the tree) are declared in the API types. Two things to know beyond the declarations: there is no `itemType` field — use `entryType` on `CollectionItem` — and `CollectionKind` (`'collection' | 'entry'`) on a summary says container-or-leaf, not "singleton". A `maxItems: 1` entry type is an ordinary entry with a cardinality constraint the UI enforces; the API does not distinguish it.
 
 ### Testing with Schema
 
-**Using defineCanopyTestConfig()**
+Use `defineCanopyTestConfig()` / `createTestServices()` (`src/config-test.ts`) rather than hand-rolling a config. `mode` has no default in the real schema (`defineCanopyConfig`) — a prod deploy that omits it must fail validation loudly instead of silently running header-trusting dev auth semantics — but `defineCanopyTestConfig()` defaults it to `'dev'` for you. Pass `mode: 'prod'` explicitly when a test needs it.
 
 ```typescript
 import { defineCanopyTestConfig } from './config-test'
@@ -996,12 +245,7 @@ import { defineCanopyTestConfig } from './config-test'
 const config = defineCanopyTestConfig({
   schema: {
     entries: [
-      {
-        name: 'home',
-        format: 'json',
-        fields: [{ name: 'hero', type: 'string' }],
-        maxItems: 1,
-      },
+      { name: 'home', format: 'json', fields: [{ name: 'hero', type: 'string' }], maxItems: 1 },
     ],
     collections: [
       {
@@ -1021,928 +265,299 @@ const config = defineCanopyTestConfig({
 })
 ```
 
-**`mode` is required by the real config schema, but not in test fixtures:** production config (`defineCanopyConfig`) has no default for `mode` -- a prod deploy that omits it must fail validation loudly rather than silently running header-trusting dev auth semantics. `defineCanopyTestConfig()` (in `src/config-test.ts`) defaults `mode` to `'dev'` for you, so existing test configs don't all need `mode: 'dev'` added. Use `defineCanopyTestConfig()`/`createTestServices()` rather than hand-rolling `mode` into every test config; if you need a `'prod'`-mode test config, pass it explicitly (`defineCanopyTestConfig({ ..., mode: 'prod' })`).
-
-**Testing Schema Flattening**
-
-```typescript
-it('flattens collections and entry types', () => {
-  const flat = flattenSchema(schema, 'content')
-
-  const collections = flat.filter((item) => item.type === 'collection')
-  const entryTypes = flat.filter((item) => item.type === 'entry-type')
-
-  expect(collections.find((c) => c.name === 'posts')?.logicalPath).toBe('content/posts')
-  expect(entryTypes.find((e) => e.name === 'home')?.maxItems).toBe(1)
-})
-```
-
-**Testing Path Resolution**
-
-```typescript
-it('resolves collection entry paths', () => {
-  const { schemaItem, slug } = store.resolvePath(['content', 'posts', 'hello'])
-  expect(schemaItem.type).toBe('collection')
-  expect(slug).toBe('hello')
-})
-```
+Assert flattening by filtering on `item.type`, and path resolution on the `{ schemaItem, slug }` pair `resolvePath` returns.
 
 ### Page Blocks (Flexible Content)
 
-The `block` field type holds an **ordered, repeatable list of heterogeneous section templates** — the "flexible content" / page-builder pattern. Each item in the list is one of the field's `templates`, discriminated by a `template` literal. `TypeFromEntrySchema` derives a discriminated union so each variant only carries its own template's fields.
+A `block` field holds an ordered, repeatable list of heterogeneous section templates, each discriminated by a `template` literal, and `TypeFromEntrySchema` derives a discriminated union so each variant carries only its own template's fields. `defineBlockTemplate()` (exported from `canopycms`) is an identity function that preserves those literal types, so one template const can be dropped into several schemas' `templates` arrays instead of being copy-pasted (and drifting). Narrow one variant with `Extract<Block, { template: 'hero' }>`.
 
-```typescript
-const pageSchema = defineEntrySchema([
-  { name: 'title', type: 'string' },
-  {
-    name: 'sections',
-    type: 'block',
-    templates: [
-      { name: 'hero', label: 'Hero', fields: [{ name: 'headline', type: 'string' }] },
-      { name: 'cta', label: 'CTA', fields: [{ name: 'ctaText', type: 'string' }] },
-    ],
-  },
-])
-
-type Page = TypeFromEntrySchema<typeof pageSchema>
-// Page['sections'] is:
-//   Array<{ template: 'hero'; value: { headline: string } }
-//        | { template: 'cta';  value: { ctaText: string } }>
-```
-
-**Reusing templates across schemas with `defineBlockTemplate()`**
-
-`defineBlockTemplate()` (exported from `canopycms`) lets you define a block template **once** and drop the same const into multiple schemas' `templates` arrays, while still deriving precise per-variant types. It is an identity function whose only job is to preserve the literal types (`const` inference) so `TypeFromEntrySchema` can narrow each variant.
-
-```typescript
-import { defineBlockTemplate, defineEntrySchema } from 'canopycms'
-
-const heroBlock = defineBlockTemplate({
-  name: 'hero',
-  label: 'Hero',
-  fields: [
-    { name: 'headline', type: 'string' },
-    { name: 'body', type: 'markdown' },
-  ],
-})
-
-const ctaBlock = defineBlockTemplate({
-  name: 'cta',
-  label: 'CTA',
-  fields: [
-    { name: 'title', type: 'string' },
-    { name: 'ctaText', type: 'string' },
-  ],
-})
-
-// Reuse the same consts in any schema's `block` field:
-const postSchema = defineEntrySchema([
-  { name: 'title', type: 'string' },
-  { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
-])
-```
-
-**Why:** defining templates inline works, but `defineBlockTemplate()` avoids copy-pasting the same section shape into every schema (and the type drift that causes). Narrow a single variant with `Extract`:
-
-```typescript
-type Block = TypeFromEntrySchema<typeof postSchema>['blocks'][number]
-type HeroBlock = Extract<Block, { template: 'hero' }>
-// HeroBlock['value'] is { headline: string; body: string }
-```
-
-See `apps/example1/app/schemas.ts` for the `heroBlock`/`ctaBlock` consts reused in `postSchema`'s `blocks` field, and `packages/canopycms/src/entry-schema.test.ts` for type-level tests of block narrowing.
+The adopter-facing recipe is in [README.md](README.md#page-blocks-flexible-content). `apps/example1/app/schemas.ts` reuses `heroBlock`/`ctaBlock` in `postSchema`, and `packages/canopycms/src/entry-schema.test.ts` holds the type-level tests for block narrowing.
 
 ## Working with Content IDs
 
-### Using the ID Index
+Entries are identified by stable 12-character short UUIDs embedded in their filenames (`hello.a1b2c3d4e5f6.json`) and indexed by `ContentIdIndex`, which scans filenames.
 
-Content entries are identified by stable, content-addressed IDs (12-character short UUIDs). These IDs are embedded directly in filenames (e.g., `hello.a1b2c3d4e5f6.json`) and managed by the `ContentIdIndex`, which scans filenames to build an in-memory index.
-
-When working with content IDs, use the async `idIndex()` getter to access the index:
+Always reach the index through the async `idIndex()` getter, never the private `_idIndex`: the getter loads lazily on first access and is safe to call repeatedly, returning the already-loaded index.
 
 ```typescript
-// Get the ID index - it loads lazily on first access
 const idIndex = await store.idIndex()
 
-// Find a location by ID
-const location = idIndex.findById('abc123def456ghi789jkl')
-if (location) {
-  console.log(`Entry is at: ${location.relativePath}`)
-}
-
-// Find an ID by file path
+const location = idIndex.findById('abc123def456')
 const id = idIndex.findByPath('content/posts/hello-world.md')
-
-// Add a new entry to the index (returns generated ID)
 const newId = await idIndex.add({
   type: 'entry',
   relativePath: 'content/pages/about.json',
   collection: 'pages',
   slug: 'about',
 })
-
-// Remove an entry from the index
 await idIndex.remove(newId)
-```
-
-**Why use the getter:** The `idIndex()` getter automatically handles lazy loading on first access. Calling it multiple times is safe - the index is loaded only once and subsequent calls return the already-loaded index. Never access `_idIndex` directly - always use the public getter.
-
-**Pattern:**
-
-```typescript
-// Always await the getter
-const idIndex = await store.idIndex()
-
-// Not this:
-// const idIndex = store._idIndex  // Wrong!
 ```
 
 ## Reference Field Configuration
 
-Reference fields link entries together. Configure them with collection constraints and optional custom display fields:
-
-**Field Schema:**
+A reference field scopes what it can point at with `collections` (at least one required) and optionally names the field to show as a label with `displayField`; `list: true` allows several. `options` remains accepted as a static fallback the UI can use alongside `collections`. The schema is `referenceFieldSchema` in the config module; [README.md](README.md#reference-fields) is the adopter-facing version.
 
 ```typescript
-const referenceFieldSchema = z.object({
-  type: z.literal('reference'),
-  name: z.string().min(1),
-  label: z.string().optional(),
-  required: z.boolean().optional(),
-  list: z.boolean().optional(),
-  collections: z.array(z.string().min(1)).min(1), // Which collections to reference
-  displayField: z.string().min(1).optional(), // Field to show as label
-  options: z.array(referenceOptionSchema).optional(), // For backward compatibility
-})
+{ type: 'reference', name: 'author', collections: ['authors'], displayField: 'name' }
 ```
 
-**Example: Dynamic References with Collections**
+`ReferenceValidator` enforces four things: the ID format is valid, the referenced entry exists, it is in an allowed collection, and it is not itself a collection.
 
-```typescript
-// Schema defining which collections can be referenced
-const schema = [
-  {
-    type: 'collection',
-    name: 'posts',
-    fields: [
-      {
-        type: 'reference',
-        name: 'author',
-        label: 'Post Author',
-        collections: ['authors'], // Can only reference authors collection
-        displayField: 'name', // Show author's name field as label
-      },
-      {
-        type: 'reference',
-        name: 'relatedPosts',
-        label: 'Related Posts',
-        collections: ['posts'], // Self-reference for related content
-        displayField: 'title', // Show post titles
-        list: true, // Can reference multiple posts
-      },
-    ],
-  },
-  {
-    type: 'collection',
-    name: 'authors',
-    fields: [{ type: 'string', name: 'name', label: 'Author Name' }],
-  },
-]
-```
+### Live Reference Resolution in the Editor
 
-**Using Optional Properties:**
+The editor's live preview must show full referenced content, not IDs, while rendering synchronously. `FormRenderer.tsx` does this with a render-time `useMemo` over a `useRef` cache plus a debounced background fetch:
 
-- `displayField`: Field name from the referenced entry to show as a label (e.g., `title`, `name`, `headline`)
-- `options`: Static list of options for backward compatibility - if provided alongside `collections`, the UI can use it as a fallback
+1. **Cache** — a `Map` keyed `"<branch>:<id>"`, scoped by branch so a branch switch cannot show stale cross-branch data, cleared when the branch changes, and persisted across form edits for instant re-renders.
+2. **Synchronous transform** — `useMemo` builds the resolved value during render, using the cache where present and keeping the raw ID otherwise. It always returns complete, valid data, never an empty object, so there is no async gap to race.
+3. **Background resolution** — a `useEffect` fetches only uncached IDs through `apiClient.content.resolveReferences`, debounced 300ms, then bumps a `resolutionTrigger` state to re-run the memo.
+4. **Parent notification** — compare a serialized copy against a ref before calling `onResolvedValueChange`, or the notification loops.
 
-**Validation:** The `ReferenceValidator` ensures:
+**Never pass an empty object as the form value.** The parent must render conditionally (`{effectiveValue && <FormRenderer value={effectiveValue} />}`) rather than `value={effectiveValue ?? {}}`, which errors during transitions.
 
-1. Referenced IDs are valid format
-2. Referenced entries actually exist
-3. Referenced entries are in allowed collections
-4. Referenced entries are not collections themselves
-
-### Implementing Live Reference Resolution in Editor
-
-The editor's live preview needs to display full referenced content (not just IDs). This is implemented through a synchronous resolution system with background caching in `FormRenderer.tsx`.
-
-**Core Implementation Pattern:**
-
-```typescript
-// 1. Cache for resolved references (persists across renders)
-const resolvedCache = useRef<Map<string, any>>(new Map())
-const [resolutionTrigger, setResolutionTrigger] = useState(0)
-
-// 2. Synchronous resolution using useMemo (runs during render)
-const resolvedValue = useMemo(() => {
-  const result = { ...value }
-
-  // For each reference field, apply cached data if available
-  for (const fieldName of referenceFieldNames) {
-    const fieldValue = value[fieldName]
-    if (fieldValue && typeof fieldValue === 'string') {
-      const cached = resolvedCache.current.get(`${branch}:${fieldValue}`)
-      result[fieldName] = cached || fieldValue // Use cache or keep ID
-    }
-  }
-
-  return result
-}, [value, fields, branch, resolutionTrigger])
-
-// 3. Background async resolution (updates cache)
-useEffect(() => {
-  // Find IDs not in cache
-  const uncachedIds = findUncachedIds(value, referenceFieldNames, resolvedCache.current, branch)
-
-  if (uncachedIds.length === 0) return
-
-  // Debounce API calls
-  const timeout = setTimeout(async () => {
-    const resolved = await apiClient.content.resolveReferences({ branch }, { ids: uncachedIds })
-
-    // Update cache
-    for (const [id, data] of Object.entries(resolved.data.resolved)) {
-      resolvedCache.current.set(`${branch}:${id}`, data)
-    }
-
-    // Trigger useMemo re-run
-    setResolutionTrigger((prev) => prev + 1)
-  }, 300)
-
-  return () => clearTimeout(timeout)
-}, [value, fields, branch])
-```
-
-**Key Implementation Details:**
-
-1. **Cache Structure:** `Map<string, any>` with keys like `"main:5NVkkrB1MJUvnLqEDqDkRN"` (branch:id)
-   - Scoped by branch to prevent stale cross-branch data
-   - Cleared when branch changes
-   - Persists across form edits for instant re-renders
-
-2. **Synchronous Transform:** `useMemo` computes resolved value during render
-   - Always returns complete, valid data (never empty objects)
-   - Uses cache when available, otherwise keeps ID
-   - No async gaps means no race conditions
-
-3. **Background Resolution:** `useEffect` fills cache asynchronously
-   - 300ms debounce prevents excessive API calls while typing
-   - Only fetches IDs not already in cache (incremental)
-   - Triggers useMemo re-run via `resolutionTrigger` state
-
-4. **Parent Notification:** Pass resolved value to parent with infinite loop prevention
-   ```typescript
-   useEffect(() => {
-     const serialized = JSON.stringify(resolvedValue)
-     if (serialized !== lastNotifiedValueRef.current) {
-       lastNotifiedValueRef.current = serialized
-       onResolvedValueChange?.(resolvedValue)
-     }
-   }, [resolvedValue, onResolvedValueChange])
-   ```
-
-**Critical Gotcha: Never Pass Empty Objects**
-
-The parent component must guard against rendering when data is undefined:
-
-```typescript
-// BAD: Will cause errors during transitions
-<FormRenderer value={effectiveValue ?? {}} />
-
-// GOOD: Only render when data exists
-{effectiveValue && <FormRenderer value={effectiveValue} />}
-```
-
-**API Endpoint:**
-
-The resolution endpoint (`POST /:branch/resolve-references`) accepts an array of IDs and returns full entry objects:
-
-```typescript
-// Request
-{ ids: ["5NVkkrB1MJUvnLqEDqDkRN", "abc123"] }
-
-// Response
-{
-  ok: true,
-  data: {
-    resolved: {
-      "5NVkkrB1MJUvnLqEDqDkRN": { id: "...", name: "Alice", bio: "..." },
-      "abc123": { id: "...", name: "Bob", bio: "..." }
-    }
-  }
-}
-```
-
-**Testing:**
-
-Test the resolution flow by:
-
-1. Selecting a reference in the editor
-2. Verifying preview shows loading state initially (ID rendered)
-3. After 300ms, verify preview shows full data (name, bio, etc.)
-4. Change selection and verify cache is used (instant update for previously-selected references)
-5. Click "Discard All Drafts" and verify no errors (data remains complete)
-
-See `FormRenderer.test.tsx` for examples.
+`POST /:branch/resolve-references` takes `{ ids: [...] }` and returns `{ ok, data: { resolved: { [id]: entry } } }`. See `FormRenderer.test.tsx`.
 
 ## Working with Assets
 
-CanopyCMS's asset system (image/file upload, storage, and on-demand transforms) lives under `src/assets/`. Contributors touching this area will encounter several new dependencies: `sharp` (image transforms), `file-type` + `image-size` (sniffing/dimensions during finalize), `sanitize-html` (SVG sanitization), `content-disposition` (download headers), `@aws-sdk/client-s3` + `@aws-sdk/s3-presigned-post` (S3 store + presigned uploads), and on the editor side `@mantine/dropzone` (pinned to the exact Mantine core version already in use) plus `react-easy-crop` (crop UI).
+The asset system (upload, storage, on-demand transforms) lives under `src/assets/`; see [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) for its invariants and [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for the design. It brings dependencies you will meet here and nowhere else: `sharp` (transforms), `file-type` + `image-size` (finalize sniffing), `sanitize-html` (SVG), `content-disposition`, the S3 SDK plus `@aws-sdk/s3-presigned-post`, and on the editor side `@mantine/dropzone` (pinned to the Mantine core version in use) and `react-easy-crop`.
 
 ### Transform Engine: Shared Between Dev and Prod
 
-The on-demand image transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is deliberately split into two files so the same logic can be reused unchanged between dev-mode emulation and the prod CDK Lambda:
+The on-demand transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is split in two so dev emulation and the prod Lambda reuse it unchanged:
 
-| File                             | What it is                                                                                                                                                                 | Who imports it                                                                         |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `assets/transform-directives.ts` | Pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). No imports at all, not even other files in `assets/` -- safe for client bundles. | Editor/client code, `assets/asset-url.ts`, `assets/transform.ts`, the transform Lambda |
-| `assets/transform.ts`            | The actual sharp-based pipeline (`applyTransform`). Server-only.                                                                                                           | `api/assets.ts`'s dev-mode lazy-transform route, the transform Lambda                  |
+- `assets/transform-directives.ts` — pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). It imports nothing at all, not even a sibling, so it is safe for client bundles.
+- `assets/transform.ts` — the sharp-based `applyTransform` pipeline. Server-only.
 
-Both the dev-mode `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod CDK transform Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, which imports `parseTransformPath`/`formatDirectives`/`applyTransform` via the `canopycms/server` re-exports) call into these same two files for the actual parsing and pixel work. **Never reimplement directive parsing or the sharp pipeline in just one place** -- change behavior in `transform-directives.ts`/`transform.ts` and both dev and prod pick it up automatically.
+Both the dev `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, importing through the `canopycms/server` re-exports) call into those two files. **Never reimplement directive parsing or the sharp pipeline in one place only** — change it in these files and both paths pick it up.
 
-Both of these paths surface a `TransformRejection` with a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure) -- always forward `transformed.status` verbatim rather than flattening every rejection to one code (e.g. a blanket 422 or 502). A client-input error reported as a server error, or vice versa, is a bug: `handler.test.ts` and `assets.test.ts` both assert 400/413/422 pass-through for exactly this reason.
+Both paths surface a `TransformRejection` carrying a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure). **Forward `transformed.status` verbatim** rather than flattening every rejection to one code: reporting a client-input error as a server error, or the reverse, is a bug, and `handler.test.ts` plus `assets.test.ts` both assert the pass-through.
 
-### Finalize Decode Validation: Fail Open on No Decoder, Fail Closed on a Real Rejection
+### Finalize Decode Validation: Open on No Decoder, Closed on a Real Rejection
 
-`pipeline.ts`'s `runFinalizePipeline` forces a real pixel decode for `kind === 'raster'` uploads (`rasterIsDecodable`), not just the header-only sniff `file-type`/`image-size` already do. This closes the "accepted at upload, unrenderable forever" gap: a PNG with a valid IHDR but a corrupt IDAT used to sail through finalize (header-only checks can't see it) and only fail later at `applyTransform`/render time, by which point it already looked like a successful upload.
+`runFinalizePipeline` (`pipeline.ts`) forces a real pixel decode for `kind === 'raster'` uploads (`rasterIsDecodable`), not just the header-only sniff `file-type`/`image-size` perform. That closes the "accepted at upload, unrenderable forever" gap: a PNG with a valid IHDR and a corrupt IDAT passes every header-only check and only fails later at render time.
 
-Two things about this check are worth knowing before touching it:
+Two things to know before touching it:
 
-- **A `.resize()` to a tiny throwaway output, not `.metadata()`.** `metadata()` only reads header fields -- the exact class of check that misses a corrupt IDAT. Forcing a real (if tiny) decode is what actually exercises libvips's decoder.
-- **`sharp` is loaded through `loadSharp()` (`assets/sharp-loader.ts`); no non-test module imports it statically.** If the native binary can't load (wrong platform/arch, or a libvips `.so` missing from a standalone image), a static import fails whatever imports that module graph -- under Turbopack that was every route of an adopter's editor, because `transform.ts` sits under `canopycms/http`. `loadSharp()` instead rejects on first use, logging one error per process, which lets `pipeline.ts` catch that specific failure and **fail open** (log a warning, skip validation, let the upload through -- same as pre-fix behavior) -- but only for "no decoder available." `transform.ts` lets the same rejection propagate, so a transform there is a 500, never a 422. `@typescript-eslint/no-restricted-imports` in `eslint.config.mjs` rejects a static value import of `sharp` under `packages/canopycms/src` outside tests. If sharp loads fine and its decoder rejects the bytes, that's a real fact about the file, and the pipeline **fails closed** (422, generic user-facing message, never the raw libvips string). Keep that split explicit if you touch this function -- don't let "sharp failed to import" and "sharp decoded and said no" collapse into the same branch.
+- **It `.resize()`s to a tiny throwaway output rather than calling `.metadata()`.** `metadata()` reads header fields — exactly the check that misses a corrupt IDAT. Only a real decode exercises libvips.
+- **`sharp` is loaded through `loadSharp()` (`assets/sharp-loader.ts`); no non-test module imports it statically.** A static import fails whatever imports that module graph when the native binary cannot load (wrong platform/arch, a missing libvips `.so` in a standalone image) — and because `transform.ts` sits under `canopycms/http`, under Turbopack that meant every route of an adopter's editor. `loadSharp()` instead rejects on first use and logs once per process, which lets `pipeline.ts` catch that specific failure and **fail open** (warn, skip validation, let the upload through) for "no decoder available" only. If sharp loads and its decoder rejects the bytes, that is a real fact about the file and the pipeline **fails closed** (422, a generic user-facing message, never the raw libvips string). `transform.ts` lets the same rejection propagate, so a transform failure there is a 500, never a 422. Keep those two branches distinct. `@typescript-eslint/no-restricted-imports` in `eslint.config.mjs` rejects a static value import of `sharp` under `packages/canopycms/src` outside tests.
 
-Test fixtures for this area must be genuinely sharp-decodable, not the hand-built header-only base64 constants that used to live in `pipeline.test.ts`. Build fixtures with `sharp({ create: {...} })` (see `transform.test.ts`'s `makePng` or `pipeline.test.ts`'s local copy) rather than hand-crafted bytes -- a header-only fixture will now be correctly rejected by `rasterIsDecodable`, so it can no longer stand in for "a valid raster." `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, built by flipping bytes well past the fixed-offset header fields) for the rejection test itself; the fail-open path (sharp unavailable) is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module -- kept out of `pipeline.test.ts` because that file's own fixtures need the real thing.
+Fixtures here must be genuinely sharp-decodable: build them with `sharp({ create: {...} })` (see `makePng` in `transform.test.ts`), because a header-only fixture is now correctly rejected by `rasterIsDecodable` and can no longer stand in for a valid raster. `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, bytes flipped well past the fixed-offset header fields) for the rejection test; the fail-open path is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module — kept out of `pipeline.test.ts` because that file's fixtures need the real thing.
 
 ### Client-Bundle Safety for Assets
 
-Editor/client code may import **only** the dependency-free isomorphic modules -- `assets/transform-directives` and `assets/asset-url` -- or `import type` from `assets/types`. It must never import the stores (`store-local.ts`, `store-s3.ts`), the upload/finalize pipeline (`pipeline.ts`, `finalize.ts`), or `transform.ts` -- all of those pull in server-only dependencies (`sharp`, `node:crypto`, the S3 SDK) that must never ship to a browser bundle.
+Editor/client code may import **only** the dependency-free isomorphic modules — `assets/transform-directives` and `assets/asset-url` — or `import type` from `assets/types`. It must never import the stores (`store-local.ts`, `store-s3.ts`), the upload pipeline (`pipeline.ts`, `finalize.ts`), or `transform.ts`: all of those pull in `sharp`, `node:crypto` or the S3 SDK, which must never ship to a browser.
 
 ```typescript
 // OK in editor/client code (see packages/canopycms/src/editor/fields/ImageField.tsx)
 import { assetUrl } from '../../assets/asset-url'
 import type { CropRect } from '../../assets/transform-directives'
-
-// NOT OK from client code -- pulls in sharp / node:crypto / the S3 SDK
-// import { applyTransform } from '../../assets/transform'
-// import { LocalAssetStore } from '../../assets/store-local'
 ```
 
-Imports of node built-ins reachable from `canopycms/client` are caught by `pnpm lint:bundle` (see [Client-Bundle Boundary Check](#client-bundle-boundary-check)). That check does not follow into `node_modules`, so pulling in `sharp` or the S3 SDK from client code is still on you to avoid -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
+`pnpm lint:bundle` catches node built-ins reachable from `canopycms/client` but does not follow into `node_modules`, so pulling `sharp` or the S3 SDK in from client code is still yours to avoid — check which file you are importing from before assuming a path is browser-safe.
 
 ### Dev Gotcha: Adopter Apps Run Against Built `dist/`
 
-`apps/example1` (and any adopter app) consumes `canopycms` and `canopycms-next` from their built `dist/` output, not from `src/`. After changing package source under `packages/canopycms/src/` or `packages/canopycms-next/src/`, rebuild before the adopter dev server will pick up the change:
+`apps/example1` (and any adopter app) consumes `canopycms` and `canopycms-next` from built `dist/` output, not from `src/`. Rebuild after changing package source, or you will debug stale compiled output — a missing `/assets/*` rewrite from `withCanopy()`, say, that is actually present in source:
 
 ```bash
 pnpm --filter canopycms build
 pnpm --filter canopycms-next build
 ```
 
-Skipping this is a common way to end up debugging behavior that looks broken but is actually just stale compiled output -- for example, a missing `/assets/*` rewrite (added by `withCanopy()` in `canopycms-next/src/with-canopy.ts`) that silently doesn't show up because the adopter app is still running against the previously-built `dist/`.
-
 ## Testing Content IDs
 
-When testing code that uses content IDs, create files with embedded IDs in their filenames:
+Create files whose names carry the embedded ID, then build the index by scanning:
 
 ```typescript
-import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-import { ContentIdIndex } from './content-id-index'
+const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
+await fs.mkdir(path.join(tempDir, 'content'), { recursive: true })
+const index = new ContentIdIndex(tempDir)
 
-describe('Content with IDs', () => {
-  let tempDir: string
-  let index: ContentIdIndex
+const testId = 'a1b2c3d4e5f6' // 12 characters
+await fs.writeFile(path.join(tempDir, `content/test.${testId}.json`), '{"title": "Test"}')
+await index.buildFromFilenames('content')
 
-  beforeEach(async () => {
-    // Create isolated temp directory
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
-    await fs.mkdir(path.join(tempDir, 'content'), { recursive: true })
-    index = new ContentIdIndex(tempDir)
-  })
-
-  afterEach(async () => {
-    // Clean up
-    await fs.rm(tempDir, { recursive: true, force: true })
-  })
-
-  it('indexes entries with embedded IDs', async () => {
-    // Create file with embedded ID in filename
-    const testId = 'a1b2c3d4e5f6' // 12-character ID
-    const filePath = path.join(tempDir, `content/test.${testId}.json`)
-    await fs.writeFile(filePath, '{"title": "Test"}')
-
-    // Build index by scanning filenames
-    await index.buildFromFilenames('content')
-
-    // Verify forward lookup (ID → path)
-    const location = index.findById(testId)
-    expect(location?.relativePath).toBe(`content/test.${testId}.json`)
-
-    // Verify reverse lookup (path → ID)
-    const foundId = index.findByPath(`content/test.${testId}.json`)
-    expect(foundId).toBe(testId)
-  })
-})
+expect(index.findById(testId)?.relativePath).toBe(`content/test.${testId}.json`)
+expect(index.findByPath(`content/test.${testId}.json`)).toBe(testId)
 ```
 
-**Key pattern:** IDs are embedded in filenames using the pattern `slug.id.ext` (e.g., `test.a1b2c3d4e5f6.json`). The `buildFromFilenames()` method scans filenames recursively to extract IDs and populate the in-memory index.
+Clean the temp directory up in `afterEach` (`fs.rm(tempDir, { recursive: true, force: true })`).
 
 ## Development Workflow
 
 ### Settings Management (Permissions and Groups)
 
-CanopyCMS manages permissions and groups through JSON files. The storage location and behavior differs significantly between operating modes.
+Permissions and groups live in `permissions.json` and `groups.json` on an orphan branch named `canopycms-settings-{deploymentName}` — no shared history with content branches — in both modes. Dev clones that branch into `.canopy-dev/settings/`; prod additionally pushes it to GitHub with a PR.
 
-#### Local Development: `.canopy-dev/` Directory
+| Mode   | Where settings live                                  | Git behavior                             |
+| ------ | ---------------------------------------------------- | ---------------------------------------- |
+| `dev`  | Orphan branch, cloned into gitignored `.canopy-dev/` | Commits to the settings branch only      |
+| `prod` | Orphan branch on the configured workspace root       | Commits, then pushes to GitHub with a PR |
 
-In `dev` mode (the default for development), CanopyCMS uses the same orphan branch mechanism as prod for settings, with the workspace at `.canopy-dev/settings/`:
+In dev this lets you log in as different test users, put them in groups through the UI, and exercise permission scenarios without polluting git history or colliding with other developers. All of `.canopy-dev/` is gitignored via the `.canopy*` pattern (added by `npx canopycms init`), settings stay in the local bare remote, and changes survive a CMS restart. Verify with `git status` — `.canopy-dev/` should not appear; `git reset HEAD .canopy-dev/` if it ever gets staged.
 
-- **Settings storage:** `permissions.json` and `groups.json` on orphan branch `canopycms-settings-{deploymentName}`, cloned into `.canopy-dev/settings/`
+In prod:
 
-- **Purpose:** These files allow you to test different permission scenarios and user roles without polluting the git history or conflicting with other developers.
-
-- **Behavior:**
-  - Changes persist across CMS restarts
-  - Entire `.canopy-dev/` directory is **automatically gitignored** (via `.canopy*` pattern)
-  - Settings are stored in the local bare remote only — never pushed to GitHub
-  - Dev mode mirrors prod's settings architecture for consistent behavior
-
-**Example workflow:**
-
-```bash
-# Start the CMS in dev mode (default)
-pnpm dev
-
-# 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
-# 2. Add them to groups via the CMS UI
-# 3. Test permission restrictions
-# 4. Changes are committed to the local settings branch in .canopy-dev/
-# 5. Files persist but won't show up in git status
-
-# Verify files are gitignored
-git status  # .canopy-dev/ should not appear
-```
-
-#### Understanding the Two Modes
-
-| Mode     | Settings Files                                                      | Git Operations                            | Use Case                                          |
-| -------- | ------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------- |
-| **dev**  | Orphan branch `canopycms-settings-{deployment}` (gitignored clones) | Standard commits to settings branch       | Local development with full branching and git ops |
-| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed)         | Commits to settings branch + PR to GitHub | Production deployment                             |
-
-**dev (Default for Development):**
-
-- Full branch support: local bare remote at `.canopy-dev/remote.git`, branch workspaces at `.canopy-dev/content-branches/`
-- Settings on separate orphan branch (deployment-specific)
-- All of `.canopy-dev/` is gitignored
-- `defaultActiveBranch` auto-detected from current git HEAD if not set in config (see [Branch Config: defaultBaseBranch vs defaultActiveBranch](#branch-config-defaultbasebranch-vs-defaultactivebranch))
-- Tests branch creation, merging, permission inheritance locally
-
-**prod (Production):**
-
-- Settings tracked in git via orphan branch `canopycms-settings-{deploymentName}`
-- Changes committed to settings branch, then pushed to GitHub with a PR (via `push-and-create-or-update-pr` task action)
-- Settings are treated as deployment-specific configuration data
-- Each deployment has its own settings branch
-- Cross-process locking (file-based `wx` flag + in-memory Promise) protects concurrent workspace init on EFS
-
-#### Production Settings Workflow
-
-In production (`mode: 'prod'`), permission and group changes are stored on a separate **orphan branch** (no shared history with content branches):
-
-1. **Settings Branch:** Changes are committed to an orphan branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`, `canopycms-settings-staging`)
-
-2. **Commit + PR (dual-path):** `commitToSettingsBranch` in `services.ts` uses the same dual-path pattern as content branches (`api/github-sync.ts`):
-   - **Direct path:** When `githubService` is available (has internet), calls `githubService.createOrUpdatePR()` synchronously
-   - **Async path:** When no internet (prod Lambda), enqueues a `push-and-create-or-update-pr` task for the EC2 worker
-   - Settings PRs are idempotent: the action checks for an existing open PR before creating a new one
-
-3. **Immediate Effect:** Changes are active in the CMS immediately (read from the settings branch workspace). The PR is for persistence to GitHub, not for gating changes.
-
-4. **Deployment-Specific:** Each deployment environment (prod, staging, dev) has its own independent settings branch
-
-5. **Concurrency-Safe Writes:** Permissions and groups files are written through a **mutate-callback** contract -- `mutatePermissionsFile`/`mutateGroupsFile` (`authorization/`), built on `authorization/settings-file-store.ts`'s `mutateSettingsJsonFile` -- rather than a plain `save*()` function. This closes the load -> compare -> write TOCTOU window under the layered lock + OCC stack described in [docs/concurrency.md](docs/concurrency.md). The old hand-rolled `contentVersion` field is gone; the OCC `version` field is now the single counter. Your `mutate` callback receives the freshly-loaded file and its current `version`, and **must be safe to call more than once** -- it re-runs against freshly reloaded state on every OCC retry attempt. Throw `SettingsVersionConflictError` from inside the callback when an app-level `expectedContentVersion` doesn't match; the API translates that to a 409.
-
-6. **Cross-Process Workspace Locking:** Separately from the per-file write locking in item 5, `SettingsWorkspaceManager` uses two layers of locking for safe concurrent _workspace provisioning_ on shared filesystems like EFS:
-   - **In-memory Promise lock:** Prevents redundant async calls within the same Node.js process (Lambda request lifecycle)
-   - **File-based lock (`wx` flag):** Uses `fs.open(path, 'wx')` (O_CREAT|O_EXCL) for atomic cross-process synchronization. Stale locks (>30s) are automatically cleaned up.
-
-**Configuration:**
+- Each deployment environment has its own independent settings branch, named from `deploymentName`.
+- `commitToSettingsBranch` in `services.ts` uses the same dual path as content branches (`api/github-sync.ts`): call `githubService.createOrUpdatePR()` directly when there is internet, otherwise enqueue a `push-and-create-or-update-pr` task for the worker. Settings PRs are idempotent — the action looks for an existing open PR first.
+- Changes take effect in the CMS immediately, read from the settings branch workspace. The PR is for persistence, not for gating.
+- **Writes go through a mutate callback, not a `save*()` function.** `mutatePermissionsFile`/`mutateGroupsFile` (`authorization/`), built on `settings-file-store.ts`'s `mutateSettingsJsonFile`, run load → mutate → write inside the cross-host layered lock, which closes the load-compare-write TOCTOU window. The OCC `version` field is the single counter. **Your callback must be safe to call more than once** — it re-runs against freshly reloaded state on every OCC retry. Throw `SettingsVersionConflictError` from inside it when an app-level `expectedContentVersion` mismatches; the API turns that into a 409. See [docs/concurrency.md](docs/concurrency.md).
+- **Workspace provisioning has its own two locks**, separate from the per-file write lock above: an in-memory Promise lock against redundant calls inside one process, and a file-based `wx` lock (`O_CREAT|O_EXCL`) for atomic cross-process exclusion on EFS, with stale locks over 30s cleaned up.
 
 ```typescript
-// canopycms.config.ts
-export default defineCanopyConfig({
-  mode: 'prod',
-  deploymentName: 'prod', // Settings branch: canopycms-settings-prod
-  defaultRemoteUrl: 'https://github.com/your-org/your-repo.git',
-  // ... other config
-})
-```
-
-**How it works:**
-
-```typescript
-// Internal flow when updating permissions in prod mode
-
-// 1. Get settings branch name from deploymentName config
-const settingsBranchName = `canopycms-settings-${config.deploymentName}`
-const settingsRoot = getBranchRoot(settingsBranchName)
-
-// 2. mutatePermissionsFile runs load -> mutate -> write atomically under the
-// cross-host layered lock (see docs/concurrency.md) -- no separate pre-read,
-// so there's no TOCTOU window between the version check and the write. The
-// callback must be safe to call more than once (re-run on every OCC retry).
+// Mutate under the lock, commit outside it -- git I/O is comparatively slow.
 await mutatePermissionsFile(settingsRoot, mode, (currentFile, version) => {
   if (expectedContentVersion !== undefined && expectedContentVersion !== version) {
     throw new SettingsVersionConflictError()
   }
-
-  return {
-    updatedAt: new Date().toISOString(),
-    updatedBy: userId,
-    pathPermissions: permissions,
-  }
+  return { updatedAt: new Date().toISOString(), updatedBy: userId, pathPermissions: permissions }
 })
 
-// 3. commitToSettingsBranch handles commit + push + PR (dual-path), OUTSIDE
-// the write lock -- git I/O is comparatively slow, see settings-file-store.ts
 const result = await services.commitToSettingsBranch({
   branchRoot: settingsRoot,
-  files: 'permissions.json', // At root of orphan branch
+  files: 'permissions.json', // at the root of the orphan branch
   message: 'Update permissions',
-  createPR: true, // default — creates or updates PR via githubService or task queue
+  createPR: true,
 })
 // result.syncStatus: 'synced' | 'pending-sync' | 'sync-failed'
 ```
 
-#### Verifying Local Changes Aren't Committed
-
-To ensure your local dev settings don't accidentally get committed:
-
-```bash
-# Check that .canopy* is in .gitignore
-cat apps/example1/.gitignore
-# Should contain: .canopy*
-
-# Verify nothing shows in git status
-git status
-# .canopy-dev/ should NOT appear
-
-# List what would be committed
-git add -n .
-# Should not include .canopy-dev/
-
-# If you accidentally staged CanopyCMS runtime directories
-git reset HEAD .canopy-dev/
-```
-
-**Common mistake:** Forgetting to add `.canopy*/` to `.gitignore` when setting up a new app.
-
-**Fix:** Always add `.canopy*/` to your `.gitignore`. The `npx canopycms init` command does this automatically.
-
 ### Schema Mutations (`SchemaOps`)
 
-`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`): create/update/delete collections, add/update/remove entry types, reorder. All of its public mutators run under a single **non-reentrant, coarse per-branch lock** (`withSchemaLock`, keyed on `{branchRoot}/.canopy-meta/schema`). See [docs/concurrency.md](docs/concurrency.md) for why `.collection.json` deliberately carries no OCC `version`/lockfile of its own (it's an adopter-visible, git-committed file that rebases rewrite wholesale).
+`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`). Every public mutator runs under one **non-reentrant, coarse per-branch lock** (`withSchemaLock`, keyed on `{branchRoot}/.canopy-meta/schema`). [docs/concurrency.md](docs/concurrency.md) explains why `.collection.json` deliberately carries no OCC `version` or lockfile of its own.
 
-**Gotcha:** because the lock is non-reentrant, a public mutator must never call _another_ public mutator from inside its own `withSchemaLock` critical section -- that deadlocks waiting on a lock it already holds. Each public mutator (`createCollection`, `updateCollection`, `deleteCollection`, `addEntryType`, ...) has a private `*Inner` counterpart (`createCollectionInner`, `updateCollectionInner`, ...) that does the real work _without_ acquiring the lock. When one mutation needs another's logic, call the `*Inner` method directly:
+**Because the lock is non-reentrant, a public mutator must never call another public mutator from inside its critical section** — that deadlocks on a lock it already holds. Each public mutator has a private `*Inner` counterpart that does the work without acquiring the lock; call that instead:
 
 ```typescript
-// Inside SchemaOps -- already holding the lock via the public entrypoint.
-// updateOrderInner reuses updateCollectionInner for non-root collections:
-private async updateOrderInner(collectionPath: LogicalPath, order: string[]): Promise<void> {
-  // ...
-  await this.updateCollectionInner(collectionPath, { order }) // safe: no lock acquisition
-
-  // NEVER do this instead -- re-enters withSchemaLock and deadlocks:
-  // await this.updateCollection(collectionPath, { order })
-}
+// Inside SchemaOps, already holding the lock via the public entrypoint:
+await this.updateCollectionInner(collectionPath, { order }) // safe
+// await this.updateCollection(collectionPath, { order })   // deadlocks
 ```
 
-When adding a new mutator, follow the existing pattern: a thin public method that wraps the real logic in `withSchemaLock` and invalidates the schema cache afterward (outside the lock, per `withSchemaLock`'s doc comment), plus a private `*Inner` method other mutators can call directly.
+A new mutator follows the same shape: a thin public method wrapping the real logic in `withSchemaLock`, cache invalidation afterwards and outside the lock (per `withSchemaLock`'s doc comment), plus a private `*Inner` other mutators can call.
 
 ### Dev Content Sync (`dev.contentSync`)
 
-In dev mode, the editor and the dev server read content from a branch clone under `.canopy-dev/content-branches/<branch>/`, seeded from **git-committed** state. `next build` does not: every build-time read comes straight from the working tree, uncommitted files included, and never touches git or `.canopy-dev` (`readsFromCheckout` in `build-mode.ts`). So a working-tree edit made outside the editor reaches the next build at once but leaves the editor and dev server on the stale clone, and an editor save reaches a build only after `canopycms sync pull` copies it out.
+In dev, the editor and dev server read a branch clone under `.canopy-dev/content-branches/<branch>/`, seeded from **git-committed** state. `next build` does not: every build-time read comes from the working tree, uncommitted files included, never touching git or `.canopy-dev` (`readsFromCheckout` in `build-mode.ts`). So an edit made outside the editor reaches the next build at once but leaves the editor on a stale clone, and an editor save reaches a build only after `canopycms sync pull`.
 
-The `dev.contentSync` config field (in `CanopyConfig`, `DevContentSyncMode`) controls how this divergence is handled. It is dev-mode only (ignored when `mode !== 'dev'`):
+`dev.contentSync` (`DevContentSyncMode`, dev-mode only, ignored when `mode !== 'dev'`) chooses what happens: `'warn'` (the default) watches `content/**` and logs a warning naming the diverged files at startup and on change; `'off'` installs no watcher. Choose `'off'` for unit-test configs, or when you only ever edit through the editor. The warning tells you to run `npx canopycms sync push`.
 
-```typescript
-// canopycms.config.ts
-export default defineCanopyConfig({
-  mode: 'dev',
-  dev: {
-    contentSync: 'warn', // 'off' | 'warn'  (default: 'warn')
-  },
-})
-```
+**There is intentionally no auto-push mode**, because it would clobber unsubmitted editor saves ([ARCHITECTURE.md](ARCHITECTURE.md#operating-modes)); reconcile with `canopycms sync push`.
 
-| Mode               | Behavior                                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `'warn'` (default) | On startup and on `content/**` changes, logs a warning naming the diverged files so the staleness is visible |
-| `'off'`            | No watcher, no warnings                                                                                      |
-
-The warning tells you to run `npx canopycms sync push` to update the clone (see [CLI (`canopycms sync`)](#cli-canopycms-sync)). Choose `'off'` for unit-test configs or when you only ever edit through the editor.
-
-**There is intentionally no auto-push mode.** Auto-overwriting the branch clone from the working tree would silently clobber uncommitted editor "Save" state in the clone, with no Canopy-level recovery path for the editor. Reconcile divergence explicitly via `canopycms sync push` (which has interactive conflict handling) rather than letting a watcher do it for you.
-
-**Implementation:** all logic lives in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); framework adapters just call it once at dev startup (see the Next wiring in `packages/canopycms-next/src/context-wrapper.ts`). The watcher is a no-op when not in dev mode, when mode is `'off'`, or when the working-tree content directory does not exist. On each check it re-resolves the active branch (so it follows git-HEAD branch switches) and dedupes across HMR reloads so dev restarts don't double-warn.
+All the logic is in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); adapters call it once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`). It no-ops outside dev mode, under `'off'`, and when the working-tree content directory is absent. Each check re-resolves the active branch, so it follows git HEAD switches, and it dedupes across HMR reloads so a dev restart does not double-warn.
 
 ### Committing and Pushing: Toolchain Gotchas
 
-Two things that bite in a scratch worktree or any non-interactive shell, where `pnpm`
-resolves only through a `corepack` shim rather than being on the ambient `PATH`:
+Two things bite in a scratch worktree or any non-interactive shell, where `pnpm` resolves only through a `corepack` shim rather than being on the ambient `PATH`:
 
-- **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with
-  `pre-push script failed (code 127)`** — not a push or auth error, a
-  `pnpm: command not found` inside the hook. Hooks do not see aliases or shell
-  functions; the shim directory has to be exported on `PATH` in the _same_ command as
-  the push. The same applies to `lint-staged` on `pre-commit`.
-- **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are
-  prettier-ignored. Prettier reports only the files it actually formatted, so passing a
-  task file and seeing no mention of it is a skip, not a no-op-because-clean. The
-  "run prettier on touched files" step therefore never covers task-file formatting;
-  match the surrounding style by hand.
+- **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with `pre-push script failed (code 127)`** — a `pnpm: command not found` inside the hook, not a push or auth error. Hooks see neither aliases nor shell functions, so the shim directory has to be exported on `PATH` in the _same_ command as the push. Same for `lint-staged` on `pre-commit`.
+- **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are prettier-ignored. Prettier reports only the files it formatted, so passing a task file and seeing no mention of it is a skip, not a no-op-because-clean. Match the surrounding style by hand.
 
 ## Testing
 
-### Test Coverage
-
-The codebase maintains high test coverage (1260+ tests, 98%+ coverage):
-
-| Test Type         | Location                                 | Purpose                                          |
-| ----------------- | ---------------------------------------- | ------------------------------------------------ |
-| Unit tests        | `src/**/__tests__/*.test.ts`             | Test individual functions/modules                |
-| Component tests   | `src/editor/**/*.test.tsx`               | Test React components with jsdom                 |
-| Integration tests | `src/__integration__/**/*.test.ts`       | Test complete workflows                          |
-| Type-level tests  | `src/**/*.test.ts` (with `expectTypeOf`) | Verify TypeScript type inference at compile time |
+| Test type   | Location                               | Purpose                                 |
+| ----------- | -------------------------------------- | --------------------------------------- |
+| Unit        | `src/**/__tests__/*.test.ts`           | Individual functions and modules        |
+| Component   | `src/editor/**/*.test.tsx`             | React components under jsdom            |
+| Integration | `src/__integration__/**/*.test.ts`     | Complete workflows                      |
+| Type-level  | `src/**/*.test.ts` with `expectTypeOf` | Type inference, checked at compile time |
 
 ### Running Tests
 
 ```bash
-# Run all tests
-pnpm test
-
-# Run tests for a specific package
-pnpm --filter canopycms test
-
-# Run a specific test file
+pnpm test                                                     # everything
+pnpm --filter canopycms test                                  # one package
 pnpm --filter canopycms exec vitest run src/github-service.test.ts
-
-# Run tests matching a pattern
-pnpm --filter canopycms exec vitest run --grep "authorization"
-
-# Run with coverage
 pnpm --filter canopycms exec vitest run --coverage
-
-# Watch mode for development
-pnpm --filter canopycms exec vitest
+pnpm --filter canopycms exec vitest                           # watch mode
 ```
 
-`packages/canopycms/vitest.config.ts` defines two vitest projects: `node` (everything
-outside `src/editor/**`, run under the `node` environment) and `editor` (jsdom, for
-React component tests). Git-heavy integration suites (`git-manager.test.ts`,
-`branch-workspace`-style tests, `role-permissions.test.ts`, and similar) spawn real
-`git` subprocesses per test, which is slow on macOS (process-spawn overhead is much
-higher there than on Linux). The `node` project's `testTimeout` is raised to 30s to
-absorb that on slower/loaded local machines; the `editor` project intentionally keeps
-the default 5s timeout since jsdom component tests don't shell out to git and a longer
-timeout there would just mask real hangs. CI runs on ubuntu and is fast enough that this
-headroom isn't needed there, but CI remains the source of truth for any timing-sensitive
-test behavior -- don't tune assertions to make a slow local run pass if CI already
-passes.
+`packages/canopycms/vitest.config.ts` defines two projects: `node` (everything outside `src/editor/**`) and `editor` (jsdom, for React components). Git-heavy suites spawn a real `git` per test, which is slow on macOS, so the `node` project raises `testTimeout` to 30s; the `editor` project keeps the default 5s deliberately, since jsdom tests do not shell out and a longer timeout there would mask a real hang. CI runs on ubuntu and does not need the headroom — and CI remains the source of truth for anything timing-sensitive, so never tune an assertion to make a slow local run pass when CI is already green.
 
-The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser
-APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and
-`Element.prototype.scrollIntoView`. Add a shim there when a Mantine component reaches
-for another one. The `scrollIntoView` case is worth knowing about because of how it
-fails: Mantine's Combobox (`Select`, `Autocomplete`, ...) calls it from a timer that
-fires _after_ the test which opened the dropdown has finished, so a missing shim
-surfaces as a Vitest "Unhandled Error" attributed to whichever test happened to run
-next -- and Vitest warns that such errors can cause false positives elsewhere in the
-run. If you see an unhandled error blamed on a test that plainly can't have caused it,
-suspect a missing jsdom shim in the test that ran before it.
+The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and `Element.prototype.scrollIntoView`. Add a shim there when a component reaches for another one. `scrollIntoView` is worth knowing about for _how_ it fails: Mantine's Combobox calls it from a timer that fires after the test which opened the dropdown has finished, so a missing shim surfaces as a Vitest "Unhandled Error" blamed on whichever test ran next. **An unhandled error attributed to a test that plainly cannot have caused it is usually a missing jsdom shim in the test before it.**
 
-`test-setup.ts` also registers React Testing Library's `cleanup()` in an `afterEach`,
-and that registration has to be explicit here. RTL normally installs its own automatic
-cleanup, but only when it finds a **global** `afterEach` -- and this package runs vitest
-with `globals: false`, so that global does not exist and RTL's auto-registration
-silently no-ops. Importing `afterEach` from `vitest` in the setup file is what makes it
-real. Two things follow for contributors:
+`test-setup.ts` also registers React Testing Library's `cleanup()` in an `afterEach`, and that registration has to be explicit: RTL auto-installs cleanup only when it finds a **global** `afterEach`, and this package runs vitest with `globals: false`, so its auto-registration silently no-ops. Importing `afterEach` from `vitest` in the setup file is what makes it real. Two consequences:
 
-- **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts
-  the containers RTL itself mounted; nodes a test appended to `document.body` by hand
-  are its own to remove. Don't write a test that depends on a tree an earlier test in
-  the same file rendered; render what you need.
-- **A new jsdom vitest project, or a second editor setup file, must register `cleanup()`
-  too.** Nothing else will do it for you.
+- **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts what RTL mounted; nodes a test appended to `document.body` by hand are its own to remove. Never depend on a tree an earlier test in the file rendered.
+- **A new jsdom project, or a second editor setup file, must register `cleanup()` too.** Nothing else will.
 
-This is not just tidiness. Without the unmount, components stay mounted for the whole
-file and their timers outlive the test: Mantine's `useTransition` cancels its pending
-`setTimeout(setState)` from an unmount effect, so an un-unmounted transition can fire
-after the jsdom environment is torn down and blow up inside React with
-`ReferenceError: window is not defined`. That lands as exactly the kind of
-misattributed "Unhandled Error" described above -- a run that exits non-zero while every
-single test passes. Before this was fixed, 17 of the 53 editor test files ended with
-components still mounted (252 trees in total).
+This is not tidiness. Without the unmount, components stay mounted for the whole file and their timers outlive the test: Mantine's `useTransition` cancels its pending `setTimeout(setState)` from an unmount effect, so an un-unmounted transition can fire after the jsdom environment is torn down and blow up inside React with `ReferenceError: window is not defined` — landing as exactly the kind of misattributed unhandled error described above, a run that exits non-zero while every test passes.
 
-**A second, unrelated bug had the identical symptom.** In the same fix, a provisioning-lock
-race (see [docs/concurrency.md](docs/concurrency.md)) turned out to alias every branch under
-one shared `proper-lockfile` registry entry, so releasing one branch's lock could tear down
-another's refresh timer and later crash the process with an uncaught `ECOMPROMISED` from
-inside that timer -- also surfacing as "every test passed, but the run exited 1," blamed on
-whichever file happened to be running when the timer fired. Both leaks now have regression
-coverage (`provisioning-lock.test.ts` for the lock race, the `cleanup()` registration above
-for the mount leak), and the root cause in both cases was a real bug, not a test artifact.
-**If you see an unhandled error with zero test failures today, treat it as a genuine new leak
-and investigate it -- it is not a known, ignorable flake.** That used to be different advice:
-both of the above shipped unnoticed for a while precisely because "unhandled error, but
-everything passed" looked like noise.
+**Treat "unhandled error, zero test failures" as a genuine leak and investigate it.** Two separate real bugs presented that way: the mount leak above, and a provisioning-lock race (see [docs/concurrency.md](docs/concurrency.md)) that aliased every branch under one shared `proper-lockfile` registry entry, so releasing one branch's lock tore down another's refresh timer and crashed the process with an uncaught `ECOMPROMISED` from inside it. Both have regression coverage (`provisioning-lock.test.ts`, and the `cleanup()` registration) and both had a real bug behind them, not a test artifact.
 
 ### Diagnosing a Test Failure
 
-**Attribute the failure to the base before blaming your diff.** Run the suite at the
-merge-base first. One failure is expected-red locally and is not a defect:
+**Attribute the failure to the base before blaming your diff** — run the suite at the merge-base first. One failure is expected-red locally: `src/cli/init.integration.test.ts` fails 7 tests with `listen EPERM … tsx-501/*.pipe`, because the sandbox blocks tsx's IPC socket. It is environmental, and **avoidable**: only the tsx _CLI_ binds that socket, so a TS subprocess spawned as `node --import tsx <file>` runs fine sandboxed where `node_modules/.bin/tsx <file>` dies. **Any new test that spawns a TypeScript subprocess should use the loader form** rather than joining this expected-red set.
 
-- `src/cli/init.integration.test.ts` — 7 tests fail with `listen EPERM … tsx-501/*.pipe`.
-  The sandbox blocks tsx's IPC socket. Environmental, not a repo defect — and
-  **avoidable**: only the tsx _CLI_ binds that socket. The loader form runs fine
-  sandboxed, so a TS subprocess spawned as `node --import tsx <file>` works where
-  `node_modules/.bin/tsx <file>` dies. Verified both ways on the same file: the CLI form
-  exits 1 on the EPERM, the loader form exits 0. **Any new test that spawns a TypeScript
-  subprocess should use the loader form** rather than joining this expected-red set;
-  converting the existing seven is a live option, not just an explanation to live with.
+A `CannotFindAsset` in `canopycms-cdk` is a real failure. Its `test` script chains `build:test-fixtures` (`build:worker` plus a `--skip-native` lambda build), so a fresh worktree synthesizes fine; if you see one anyway, either the fixture build broke or `vitest` was invoked directly instead of through `pnpm test`, which skips that step. (The root `build` is `tsc` only; the full bundles build under `prepack`.)
 
-`canopycms-cdk` used to belong on that list and **no longer does** — treat a
-`CannotFindAsset` there as a real failure. Its `test` script chains
-`build:test-fixtures` (`build:worker` plus a `--skip-native` lambda build), so a fresh
-worktree synthesizes fine. If you see `CannotFindAsset` anyway, the fixture build itself
-broke, or `vitest` was invoked directly instead of through `pnpm test`, which skips that
-step. (The root `build` is `tsc` only; the full bundles still build under `prepack`.)
+**Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency topology — so a flake there delays every other package:
 
-**Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency
-topology — so a flake there delays every other package's suite:
+- `MarkdownField.test.tsx` (MDXEditor mount). Triage shortcut: `pnpm --filter canopycms exec vitest run --project editor` is reliably green for it, so a failure in a full run **is** the known flake unless the editor-only project fails too. A `scrollIntoView` shim is a ruled-out cause.
+- `git-manager.test.ts` — `ENOTEMPTY: … rmdir '.git/info'` in `afterEach`. `fs.rm`'s `force: true` suppresses ENOENT but not ENOTEMPTY, so it signals a concurrent writer, likely a detached `git gc --auto` still running after simple-git resolved.
 
-- `MarkdownField.test.tsx` (MDXEditor mount). Triage shortcut:
-  `pnpm --filter canopycms exec vitest run --project editor` is reliably green for it,
-  so a MarkdownField failure in a full run **is** the known flake unless the
-  editor-only project also fails. A `scrollIntoView` shim is a ruled-out cause.
-- `git-manager.test.ts` — `ENOTEMPTY: … rmdir '.git/info'` in `afterEach`. `fs.rm`'s
-  `force: true` suppresses ENOENT but _not_ ENOTEMPTY, so it signals a concurrent
-  writer (likely a detached `git gc --auto` still running after simple-git resolved).
+**Three ways a run reports success while failing.** All three fail in the dangerous direction, so check for them explicitly:
 
-**Three ways a run reports success while failing.** All three fail in the dangerous
-direction, so check for them explicitly:
+- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports `tail`'s 0 even when the suite failed, or when `pnpm` was never found. Capture `${PIPESTATUS[0]}`, or run `echo $?` on its own line. The agent-facing form is worse: run that same piped command as a background task and the harness reports _"completed (exit code 0)"_ — a system message, not something you wrote — while the suite actually died with `ERR_PNPM_RECURSIVE_FAIL`, or `pnpm install` died on an EPERM leaving no `node_modules`. A piped background command's notification tells you nothing about the command; read the captured output.
+- **A backgrounded shell does not inherit the interactive profile**, so `pnpm install` can no-op with "command not found" and still look like it worked. Verify `node_modules` exists afterwards.
+- **When a probe's two arms agree, check they agree for the reason you think.** A scratch workspace with no `packageManager` field makes corepack fetch pnpm over the network; behind a sandbox both arms of a comparison can fail identically for that reason and produce a clean, wrong answer.
 
-- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports
-  `tail`'s 0 even when the suite failed — or when `pnpm` was never found. Capture
-  `${PIPESTATUS[0]}`, or run `echo $?` on its own line.
-  - **The agent-facing form is worse: the false green launders into a completion
-    notification that reads as authoritative.** Run that same piped command as a
-    background task and the harness reports _"completed (exit code 0)"_ — a system
-    message, not something you wrote — while the suite actually died with
-    `ERR_PNPM_RECURSIVE_FAIL`, or `pnpm install` died on an EPERM leaving no
-    `node_modules`. Seen both ways. A piped background command's notification tells you
-    nothing about the command; read the captured output before believing it.
-- **A backgrounded shell does not inherit the interactive profile**, so `pnpm install`
-  can no-op with "command not found" and still look like it worked. Verify
-  `node_modules` actually exists afterwards.
-- **When a probe's two arms agree, check they agree for the reason you think.** A
-  scratch workspace missing a `packageManager` field makes corepack fetch pnpm over the
-  network; behind a sandbox both arms of a comparison can fail identically for that
-  reason and produce a clean, wrong answer.
-
-**Reading CI logs.** `gh run view --log` truncates the vitest step to nothing, on green
-_and_ red runs alike. The real output is only in the downloadable archive:
+**Reading CI logs.** `gh run view --log` truncates the vitest step to nothing, on green and red runs alike. The real output is only in the downloadable archive:
 
 ```bash
 gh api repos/OWNER/REPO/actions/runs/RUN_ID/logs > logs.zip
 # then read: "Validate, Typecheck & Test/13_Run tests.txt"
 ```
 
-**"No checks reported" usually means conflicts, not an Actions outage.** `pull_request`
-runs are built from the merge commit, so a conflicted PR triggers _nothing_ — no run,
-no failure. Check `gh pr view <n> --json mergeable` (`CONFLICTING`/`DIRTY`) before
-suspecting CI.
-
-**...but a fresh `CONFLICTING` reading is often just stale.** The inverse trap: right
-after pushing a merge, `gh pr view --json mergeable` can still report
-`CONFLICTING`/`DIRTY` because GitHub has not recomputed mergeability yet — query again a
-moment later and it returns `MERGEABLE`. Before acting on a `CONFLICTING` reading (least
-of all re-resolving conflicts that are already resolved), confirm against local git:
-
-```bash
-git merge-base --is-ancestor origin/<base> HEAD && echo "base is merged in"
-```
-
-If that succeeds and GitHub still says `CONFLICTING`, believe git and re-query.
+For the state of a PR's checks, run the watcher rather than reading `gh pr checks` yourself — it distinguishes conflicts, stale green and a never-registered workflow from "still pending". See [Waiting on PR Checks](#waiting-on-pr-checks).
 
 ### End-to-End Tests (Playwright)
 
 **Always run the e2e suite single-worker.** Use the root script, which pins it:
 
 ```bash
-pnpm test:e2e                                   # playwright test --workers=1
-pnpm exec playwright test branch-workflow --workers=1   # single spec: pass the flag yourself
+pnpm test:e2e                                             # playwright test --workers=1
+pnpm exec playwright test branch-workflow --workers=1     # single spec: pass the flag yourself
 ```
 
-The reason to be careful here is that the failure mode when you don't is actively
-misleading. The whole suite shares **one** `.canopy-dev` workspace and **one** dev
-server port, so two workers (or two concurrent Playwright runs on the same machine)
-fight over the same git working tree. What you get back is not a recognizable
-contention error -- it's dozens of failures reading:
+The whole suite shares **one** `.canopy-dev` workspace and **one** dev server port, so two workers fight over the same git working tree. What comes back is not a recognizable contention error but dozens of failures reading `Failed to ensure main branch`, `spawn git ENOENT`, `TypeError: fetch failed` — noise that impersonates the subsystem under test. A run at `--workers=2` produced ~135 such failures with no real defect behind any of them. **If you are touching `git-manager.ts`, `branch-workspace.ts` or branch metadata and the suite suddenly reports broad git breakage, check your worker count before debugging the code.**
 
-```
-Error: Failed to ensure main branch
-Error: spawn git ENOENT
-TypeError: fetch failed
-```
+The same constraint holds across processes: **only one Playwright run per machine at a time.** Parallel agent sessions or a second terminal must serialise, or both runs corrupt each other's workspace and both report phantom failures. CI is unaffected — it shards across separate runners, each with its own workspace.
 
-Those read exactly like genuine regressions in branch provisioning or git plumbing,
-which is the trap: the noise impersonates the subsystem under test. A run at
-`--workers=2` produced ~135 such failures with no real defect behind any of them.
-If you are touching `git-manager.ts`, `branch-workspace.ts`, or branch metadata and
-the suite suddenly reports broad git breakage, **check your worker count before you
-start debugging the code**.
-
-The same constraint applies across processes, not just within one run: only one
-Playwright run per machine at a time. Parallel agent sessions or a second terminal
-must serialise their e2e runs, or both runs corrupt each other's workspace and both
-report phantom failures. CI is unaffected -- it shards across separate runners, each
-with its own workspace.
-
-**Browser build.** Playwright pins an exact browser build per release, and having
-_some_ chromium in `~/Library/Caches/ms-playwright/` is not enough -- it must be the
-revision this repo's Playwright version asks for. A machine carrying only a newer
-build from another project will fail before any spec runs. Install the right one
-(~91 MB) after a fresh clone or a Playwright bump:
+**Browser build.** Playwright pins an exact browser revision per release, and having _some_ chromium in `~/Library/Caches/ms-playwright/` is not enough. A machine carrying only a newer build from another project fails before any spec runs. Install the right one (~91 MB) after a fresh clone or a Playwright bump:
 
 ```bash
 pnpm exec playwright install chromium
 ```
 
-To see which revision is actually required, read `revision` for `chromium` in
-`node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/browsers.json`
-rather than inferring it from the `package.json` range -- the range floats, the
-resolved version is what pins the build.
+Read the required revision from `revision` for `chromium` in `node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/browsers.json` rather than inferring it from the `package.json` range — the range floats, the resolved version pins the build.
 
-Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a written
-capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
+Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
 
 ### Integration Test Structure
 
-Integration tests are in `src/__integration__/` with shared fixtures and utilities:
-
 ```
 src/__integration__/
-  fixtures/
-    schemas.ts          # Shared test schemas
-    content-seeds.ts    # Sample content for tests
-  test-utils/
-    test-workspace.ts   # Creates isolated test workspaces
-    api-client.ts       # Test API client helpers
-    multi-user.ts       # Multi-user scenario helpers
-  errors/               # Error handling tests
-  permissions/          # Permission/authorization tests
-  validation/           # Input validation tests
-  workflows/            # End-to-end workflow tests
+  fixtures/          # schemas.ts (shared test schemas), content-seeds.ts
+  test-utils/        # test-workspace.ts, api-client.ts, multi-user.ts
+  errors/ permissions/ validation/ workflows/
 ```
 
-**Creating test workspaces:**
+`createTestWorkspace()` builds an isolated workspace and hands back `{ root, config, cleanup }`:
 
 ```typescript
 import { createTestWorkspace } from '../__integration__/test-utils/test-workspace'
 
-describe('my integration test', () => {
-  let workspace: TestWorkspace
-
-  beforeEach(async () => {
-    workspace = await createTestWorkspace({
-      schema: BLOG_SCHEMA,
-      mode: 'dev',
-    })
-  })
-
-  afterEach(async () => {
-    await workspace.cleanup()
-  })
-
-  it('does something with content', async () => {
-    // workspace.root - path to isolated workspace
-    // workspace.config - configured CanopyConfig
-  })
+beforeEach(async () => {
+  workspace = await createTestWorkspace({ schema: BLOG_SCHEMA, mode: 'dev' })
+})
+afterEach(async () => {
+  await workspace.cleanup()
 })
 ```
 
 ### Testing Authorization Defaults (`defaultBranchAccess` / `defaultPathAccess`)
 
-`createTestWorkspace()` defaults to a permissive `defaultBranchAccess: 'allow'` /
-`defaultPathAccess: 'allow'` workspace (see `test-workspace.ts`'s
-`defineCanopyTestConfig` call). That means most of the integration suite never
-exercises the fail-closed defaults that `canopycms init` actually scaffolds --
-a regression in the `'deny'` path could ship with every other suite green. Override
-the defaults via `createTestWorkspace`'s config overrides when a test needs to
-cover them:
+`createTestWorkspace()` defaults to a permissive `defaultBranchAccess: 'allow'` / `defaultPathAccess: 'allow'` workspace, so most of the integration suite never exercises the fail-closed defaults `canopycms init` actually scaffolds — a regression in the `'deny'` path could ship with every other suite green. Override them when a test needs to cover it:
 
 ```typescript
 workspace = await createTestWorkspace(
@@ -1951,308 +566,82 @@ workspace = await createTestWorkspace(
 )
 ```
 
-See `__integration__/permissions/default-deny-branch-access.test.ts` for the full
-pattern, including seeding `internalGroups` so the `admin`/`reviewer` personas hold
-their reserved-group membership (an auth provider's external groups get reserved
-IDs like `Admins` stripped for security, so those personas need it granted
-internally).
+`__integration__/permissions/default-deny-branch-access.test.ts` has the full pattern, including why `internalGroups` must be seeded: an auth provider's external groups get reserved IDs like `Admins` stripped for security, so the `admin`/`reviewer` personas need that membership granted internally.
 
-**Gotcha: admins bypass BOTH the branch and path layers.** `isAdmin(user)`
-short-circuits in `authorization/branch.ts` and `authorization/path.ts`, so an
-authorization test written against the `admin` persona proves nothing about
-`'deny'` defaults -- it passes identically whether the defaults are `'allow'` or
-`'deny'`. Use the `editor` persona from `__integration__/test-utils/multi-user.ts`
-(`createMockAuthPlugin('editor')`) instead. The same trap applies outside tests:
-`canopycms-auth-dev` auto-sets `CANOPY_BOOTSTRAP_ADMIN_IDS`, so the default dev user
-is an admin and manually clicking around a local dev site won't surface an
-access-rule regression either.
-
-**Gotcha: assert exact status codes, not `.not.toBe(403)`.** A loose exclusion like
-that passes on a 404 from a wrong route just as readily as on a correct 200/403. A
-test in `default-deny-branch-access.test.ts` did exactly this -- it posted to
-`/:branch/status` instead of `/:branch/submit`, 404'd, and passed both with and
-without the fix it was meant to cover. Assert the specific status you expect
-(`expect(res.status).toBe(200)`).
-
-**When adding an authorization grant, verify the negative:** temporarily remove the
-grant and confirm the new test actually fails before restoring it. Restore from a
-scratchpad copy of the file (`cp /path/to/scratchpad-copy.ts src/path/to/file.ts`),
-never `git checkout -- <file>` -- that discards any other uncommitted work in the
-file, not just your temporary edit.
+- **Admins bypass BOTH the branch and path layers.** `isAdmin(user)` short-circuits in `authorization/branch.ts` and `authorization/path.ts`, so an authorization test written against the `admin` persona proves nothing about `'deny'` defaults — it passes identically either way. Use the `editor` persona from `__integration__/test-utils/multi-user.ts` (`createMockAuthPlugin('editor')`). The same trap applies outside tests: `canopycms-auth-dev` auto-sets `CANOPY_BOOTSTRAP_ADMIN_IDS`, so the default dev user is an admin and clicking around a local dev site surfaces no access-rule regression either.
+- **Assert exact status codes, not `.not.toBe(403)`.** A loose exclusion passes on a 404 from a wrong route as readily as on a correct 200 or 403. One test here posted to `/:branch/status` instead of `/:branch/submit`, 404'd, and passed both with and without the fix it covered. Assert `expect(res.status).toBe(200)`.
+- **When adding an authorization grant, verify the negative:** temporarily remove the grant, confirm the new test fails, then restore. Restore from a scratchpad copy (`cp /path/to/scratchpad-copy.ts src/path/to/file.ts`), **never `git checkout -- <file>`**, which discards any other uncommitted work in that file.
 
 ### Working with Async Services
 
-**createCanopyServices is now async** because it loads `.collection.json` meta files from the filesystem. This affects how you create and use services in tests.
-
-**Basic Pattern:**
+`createCanopyServices` is async because it loads `.collection.json` meta files from the filesystem, and those files reference schemas from a registry (`"fields": "postSchema"`) that must be resolved at initialization. `createNextCanopyContext()` is async for the same reason. Always `await` both:
 
 ```typescript
-import { createCanopyServices } from './services'
-
-// Always await service creation
 const services = await createCanopyServices(config)
-
-// Use services in your tests
 const reader = createContentReader({ services, basePathOverride: root })
 ```
 
-**Why async?** CanopyCMS supports defining collections through `.collection.json` files in your content directory. These files reference schemas from a registry (e.g., `"fields": "postSchema"`). Services must scan and load these files at initialization time.
-
-**Framework Integration:**
-
-In Next.js apps, create services once at module initialization:
-
-```typescript
-// app/lib/canopy.ts
-import { createNextCanopyContext } from 'canopycms-next'
-import config from '../../canopycms.config'
-import { entrySchemaRegistry } from '../schemas'
-
-// Create context at module initialization (async)
-const canopyContextPromise = createNextCanopyContext({
-  config: config.server,
-  authPlugin: getAuthPlugin(),
-  entrySchemaRegistry,
-})
-
-// Export for server components
-export const getCanopy = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopy()
-}
-
-// Export for API routes
-export const getHandler = async () => {
-  const context = await canopyContextPromise
-  return context.handler
-}
-```
-
-**Next.js Context Wrapper:**
-
-`createNextCanopyContext()` is also async for the same reason:
-
-```typescript
-import { createNextCanopyContext } from 'canopycms-next'
-
-// Must await context creation
-const { getCanopy, handler, services } = await createNextCanopyContext({
-  config,
-  authPlugin,
-  entrySchemaRegistry,
-})
-```
+In a Next app, create the context once at module initialization and export thin async accessors from `app/lib/canopy.ts` — [README.md](README.md#connecting-the-schema-registry) has the adopter-facing file.
 
 ### Creating Mock Services for Tests
-
-When testing APIs or services, use the `createMockServices()` helper from test utilities:
 
 ```typescript
 import { createMockServices, createMockApiContext } from '../test-utils/api-test-helpers'
 
-it('tests some API handler', async () => {
-  // Create mock services with entrySchemaRegistry (required!)
-  const services = createMockServices({
-    config: { mode: 'dev' },
-    entrySchemaRegistry: {}, // Always include this
-  })
-
-  // Or use higher-level helper that includes entrySchemaRegistry by default
-  const context = createMockApiContext({ services })
-
-  // Test your handler
-  const result = await someApiHandler(context, { user: mockUser })
-  expect(result.ok).toBe(true)
-})
+const services = createMockServices({ config: { mode: 'dev' }, entrySchemaRegistry: {} })
+const context = createMockApiContext({ services }) // includes entrySchemaRegistry by default
 ```
 
-**Critical: Mock services MUST include `entrySchemaRegistry` property.** This property is part of the `CanopyServices` interface and is required for schema resolution. Even if your test doesn't use schemas, include an empty object `{}` to match the interface.
+**Mock services must include `entrySchemaRegistry`.** It is part of the `CanopyServices` interface and is what resolves field references like `"fields": "postSchema"`; include `{}` even when the test uses no schemas, or the type will not satisfy the interface. Tests that bypass async service creation have to provide it by hand.
 
-**Why?** When `createCanopyServices()` became async, it started loading `.collection.json` files and building a schema registry. The registry resolves field references like `"fields": "postSchema"` to actual field configurations. Tests that bypass async service creation must manually provide this property.
-
-**Integration Tests with Real Services:**
-
-For integration tests, create services with `await createCanopyServices()`:
-
-```typescript
-import { createCanopyServices } from '../../services'
-import { createMockApiContext } from '../../test-utils/api-test-helpers'
-
-it('integrates with real services', async () => {
-  // Create real services (loads .collection.json files)
-  const services = await createCanopyServices(workspace.config)
-
-  // Use in API context
-  const context = createMockApiContext({ services })
-
-  const result = await someHandler(context, { user: adminUser })
-  expect(result.ok).toBe(true)
-})
-```
-
-**When to use each approach:**
-
-| Approach                       | Use Case                          | Pros                                  | Cons                                        |
-| ------------------------------ | --------------------------------- | ------------------------------------- | ------------------------------------------- |
-| `createMockServices()`         | Unit tests, simple scenarios      | Fast, no filesystem access            | Must manually set `entrySchemaRegistry: {}` |
-| `await createCanopyServices()` | Integration tests, schema testing | Tests real behavior, loads meta files | Slower, requires test workspace             |
+| Approach                       | Use for                      | Trade-off                                      |
+| ------------------------------ | ---------------------------- | ---------------------------------------------- |
+| `createMockServices()`         | Unit tests, simple scenarios | Fast, no filesystem; set `entrySchemaRegistry` |
+| `await createCanopyServices()` | Integration, schema behavior | Real behavior, loads meta files; slower        |
 
 ### Testing Settings Mutation Handlers (`createMockSettingsMutation`)
 
-Handlers for the permissions/groups APIs (`api/permissions.ts`, `api/groups.ts`) call `mutatePermissionsFile`/`mutateGroupsFile` -- a mutate-callback contract on top of `authorization/settings-file-store.ts`'s `mutateSettingsJsonFile` (see [docs/concurrency.md](docs/concurrency.md)) -- rather than a plain `save*()` function. `createMockSettingsMutation()` from `test-utils/api-test-helpers.ts` mirrors that contract closely enough for handler-level tests: it invokes your real mutator callback against a configured `currentFile`/version, captures whatever payload the callback returns, and lets anything the callback throws (`SettingsVersionConflictError`, a groups validation error, ...) propagate untouched -- exactly like the real implementation.
+The permissions/groups handlers (`api/permissions.ts`, `api/groups.ts`) call `mutatePermissionsFile`/`mutateGroupsFile`, a mutate-callback contract rather than a `save*()` function. `createMockSettingsMutation()` (`test-utils/api-test-helpers.ts`) mirrors that contract for handler-level tests: it invokes your real mutator callback against a configured `currentFile`/version, captures the payload the callback returns, and lets anything it throws propagate untouched, exactly like the real implementation.
 
 ```typescript
-import { createMockSettingsMutation } from '../test-utils/api-test-helpers'
-import * as permissionsLoader from '../authorization'
-
 const settingsMutation = createMockSettingsMutation({ currentFile: null })
 vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
   settingsMutation.impl as typeof permissionsLoader.mutatePermissionsFile,
 )
 
 const result = await updatePermissions(mockContext, req, { permissions: newPermissions })
-
-expect(result.ok).toBe(true)
 expect(settingsMutation.getPayload()).toMatchObject({
   updatedBy: 'admin-1',
   pathPermissions: newPermissions,
 })
 ```
 
-**Does NOT model lock contention.** For a "settings are busy" (`SettingsFileConflictError`) test case, mock the rejection directly instead of going through the mutation helper:
-
-```typescript
-vi.mocked(permissionsLoader.mutatePermissionsFile).mockRejectedValueOnce(
-  new SettingsFileConflictError(),
-)
-```
-
-See `api/permissions.test.ts` and `api/groups.test.ts` for further examples.
+**It does not model lock contention.** For a "settings are busy" case, reject directly instead: `vi.mocked(permissionsLoader.mutatePermissionsFile).mockRejectedValueOnce(new SettingsFileConflictError())`. See `api/permissions.test.ts` and `api/groups.test.ts`.
 
 ### Testing with Schema Meta Files
 
-**What are `.collection.json` files?**
-
-Collections can be defined via JSON files in your content directory instead of (or in addition to) the config:
-
-```json
-// content/posts/.collection.json
-{
-  "name": "posts",
-  "label": "Posts",
-  "entries": {
-    "format": "json",
-    "fields": "postSchema" // References registry key
-  }
-}
-```
-
-The `"fields": "postSchema"` reference is resolved from a schema registry provided at initialization.
-
-**Setting up test fixtures with meta files:**
+A collection can be defined by a `.collection.json` file in the content directory instead of, or alongside, the config; its `"fields"` value is a key into the entry schema registry. To exercise that path, write the meta file into the workspace and pass the registry to `createCanopyServices`:
 
 ```typescript
-import { createTestWorkspace } from '../test-utils/test-workspace'
-import fs from 'node:fs/promises'
-import path from 'node:path'
-
-it('loads collections from .collection.json files', async () => {
-  const workspace = await createTestWorkspace({
-    schema: BLOG_SCHEMA, // Base schema
-    mode: 'dev',
-  })
-
-  // Add a .collection.json file
-  const postsDir = path.join(workspace.root, 'content/posts')
-  await fs.mkdir(postsDir, { recursive: true })
-  await fs.writeFile(
-    path.join(postsDir, '.collection.json'),
-    JSON.stringify({
-      name: 'posts',
-      entries: {
-        format: 'json',
-        fields: 'postSchema', // References schema registry
-      },
-    }),
-  )
-
-  // Create services (will load the meta file)
-  const services = await createCanopyServices(workspace.config, {
-    postSchema: [
-      { name: 'title', type: 'string' },
-      { name: 'body', type: 'string' },
-    ],
-  })
-
-  // Verify schema was loaded
-  expect(services.flatSchema).toContainEqual(
-    expect.objectContaining({
-      type: 'collection',
-      name: 'posts',
-    }),
-  )
-
-  await workspace.cleanup()
-})
-```
-
-**Entry Schema Registry Parameter:**
-
-```typescript
-// createCanopyServices accepts optional entrySchemaRegistry
-const services = await createCanopyServices(
-  config,
-  entrySchemaRegistry, // Maps keys like 'postSchema' to FieldConfig[]
+const workspace = await createTestWorkspace({ schema: BLOG_SCHEMA, mode: 'dev' })
+const postsDir = path.join(workspace.root, 'content/posts')
+await fs.mkdir(postsDir, { recursive: true })
+await fs.writeFile(
+  path.join(postsDir, '.collection.json'),
+  JSON.stringify({ name: 'posts', entries: { format: 'json', fields: 'postSchema' } }),
 )
-```
 
-**Why use meta files?**
-
-1. **Decoupling:** Schema definitions can live alongside content, not just in code
-2. **Dynamic:** Content editors can create new collections without code changes
-3. **Modular:** Each collection folder is self-contained with its schema definition
-
-**Testing pattern:**
-
-```typescript
-// When testing code that uses meta files:
-describe('Schema meta file integration', () => {
-  let workspace: TestWorkspace
-
-  beforeEach(async () => {
-    workspace = await createTestWorkspace({ mode: 'dev' })
-  })
-
-  afterEach(async () => {
-    await workspace.cleanup()
-  })
-
-  it('merges meta file schemas with config schemas', async () => {
-    // Setup: Create .collection.json in workspace
-    // ...
-
-    // Act: Create services (loads meta files)
-    const services = await createCanopyServices(workspace.config, entrySchemaRegistry)
-
-    // Assert: Check merged schema
-    expect(services.flatSchema.length).toBeGreaterThan(0)
-  })
+const services = await createCanopyServices(workspace.config, {
+  postSchema: [{ name: 'title', type: 'string' }],
 })
+expect(services.flatSchema).toContainEqual(
+  expect.objectContaining({ type: 'collection', name: 'posts' }),
+)
 ```
 
 ### Mocking Git Operations
 
-After a major refactoring, CanopyCMS tests now mock high-level git service methods instead of low-level git operations. This makes tests more maintainable and focused on API behavior.
-
-**New Pattern: Use `createMockGitServices()`**
-
-Import the test utility:
-
-```typescript
-import { createMockGitServices } from '../test-utils/mock-git-services'
-```
-
-Create mock services in your test setup:
+Mock the high-level git service methods, not low-level git operations: tests then assert what the API does rather than how git works, and survive a change of git implementation. `createMockGitServices()` (`test-utils/mock-git-services`) creates both mocks at once for the `ApiContext`:
 
 ```typescript
 const mockGitServices = createMockGitServices()
@@ -2261,184 +650,54 @@ const mockContext: ApiContext = {
   services: {
     config: testConfig,
     flatSchema: [],
-    // ... other services
     commitFiles: mockGitServices.commitFiles,
     submitBranch: mockGitServices.submitBranch,
   },
   getBranchContext: vi.fn().mockResolvedValue({
     baseRoot: '/test/repo',
     branchRoot: '/test/repo',
-    branch: {
-      name: 'main',
-      status: 'editing',
-      // ... branch metadata
-    },
+    branch: { name: 'main', status: 'editing' },
   }),
 }
-```
 
-**Verify Git Operations in Tests**
-
-After calling an API handler, verify that `commitFiles` or `submitBranch` was called with the correct arguments:
-
-```typescript
-it('commits files when updating permissions', async () => {
-  const req: ApiRequest = {
-    method: 'POST',
-    url: '/main/permissions',
-    json: async () => ({
-      path: 'content/posts',
-      groups: { Editors: ['read', 'write'] },
-    }),
-  }
-
-  const result = await updatePermissionsHandler(
-    mockContext,
-    { user: adminUser },
-    { branch: 'main' },
-  )
-
-  expect(result.ok).toBe(true)
-
-  // Verify commitFiles was called with correct arguments
-  expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
-    context: {
-      baseRoot: '/test/repo',
-      branchRoot: '/test/repo',
-      branch: {
-        name: 'main',
-        status: 'editing',
-        access: { allowedUsers: [], allowedGroups: [] },
-        createdBy: 'admin-1',
-        createdAt: '2024-01-01T00:00:00Z',
-        updatedAt: '2024-01-01T00:00:00Z',
-      },
-    },
-    files: 'permissions.json', // At root of settings branch workspace
-    message: 'Update permissions',
-  })
-})
-```
-
-**What Changed**
-
-**Old Pattern (Deprecated):**
-
-```typescript
-// DON'T DO THIS - old pattern
-const mockGitManager = {
-  ensureAuthor: vi.fn(),
-  add: vi.fn(),
-  commit: vi.fn(),
-}
-
-// Verify individual git operations
-expect(mockGitManager.ensureAuthor).toHaveBeenCalled()
-expect(mockGitManager.add).toHaveBeenCalledWith('permissions.json') // At root of settings branch
-expect(mockGitManager.commit).toHaveBeenCalledWith('Update permissions')
-```
-
-**New Pattern (Current):**
-
-```typescript
-// DO THIS - new pattern
-import { createMockGitServices } from '../test-utils/mock-git-services'
-
-const mockGitServices = createMockGitServices()
-
-// Include in ApiContext
-services: {
-  commitFiles: mockGitServices.commitFiles,
-  submitBranch: mockGitServices.submitBranch,
-}
-
-// Verify high-level service calls
+// after calling the handler:
 expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
   context: branchContext,
-  files: 'permissions.json',  // At root of settings branch workspace
+  files: 'permissions.json', // at the root of the settings branch workspace
   message: 'Update permissions',
 })
 ```
 
-**When to Use Each Method**
-
-- `commitFiles`: For operations that modify content or metadata files (permissions, groups, content updates)
-- `submitBranch`: For workflow operations that transition a branch to merge (submit for review, approve merge)
-
-**Benefits of the New Pattern**
-
-1. **Higher-level abstractions** - Test the service interface, not git internals
-2. **Cleaner test setup** - `createMockGitServices()` creates both mocks at once
-3. **Easier maintenance** - Changes to git implementation don't break tests
-4. **More focused tests** - Verify what the API does, not how git works
-
-See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
+Use `commitFiles` for operations that modify content or metadata files, and `submitBranch` for workflow transitions (submit for review, approve merge). See `packages/canopycms/src/api/permissions.test.ts` and `packages/canopycms/src/api/groups.test.ts`.
 
 ### Testing Editor Hooks (SWR Cache Isolation, Strict Mode, Direct-Import Mocks)
 
-`createApiClientWrapper(mockClient)` (from `src/editor/hooks/__test__/test-utils.tsx`) wraps the test tree in both `ApiClientProvider` and an `SWRConfig` with an isolated cache (`provider: () => new Map()`, `dedupingInterval: 2000` to match production). This is transparent to existing call sites -- no changes needed. It matters because hooks that read via SWR (`useBranchManager`, `useEntryManager`, `useCommentSystem`, and the `useBranchesData`/`useEntriesData`/`useCommentsData` hooks underneath them) key their cache entries by resource/branch (e.g. `"canopy:branches"`, `"canopy:entries:main"`). Without a fresh `Map` per wrapper instance, tests in the same file/worker would share SWR's real global cache and one test could see another's mocked response on those keys.
+`createApiClientWrapper(mockClient)` (`src/editor/hooks/__test__/test-utils.tsx`) wraps the tree in `ApiClientProvider` plus an `SWRConfig` with an isolated cache (`provider: () => new Map()`, `dedupingInterval: 2000` to match production). It is transparent to existing call sites. It matters because SWR-backed hooks (`useBranchManager`, `useEntryManager`, `useCommentSystem` and the `use*Data` hooks under them) key cache entries by resource and branch (`"canopy:entries:main"`): without a fresh `Map` per wrapper, tests in one file would share SWR's real global cache and one test could see another's mocked response.
 
-**Testing dedup/Strict Mode regressions:** use `createStrictModeApiClientWrapper(mockClient)`, which additionally wraps the tree in `<React.StrictMode>` (mount -> cleanup -> remount, doubling effects in dev). Without SWR's request coalescing, each manager hook's fetch-on-load effect fired twice under Strict Mode -- this wrapper is how you write a regression test for that:
+**For dedup and Strict Mode regressions**, use `createStrictModeApiClientWrapper(mockClient)`, which additionally wraps the tree in `<React.StrictMode>` (mount, cleanup, remount, doubling effects). Without SWR's request coalescing each manager hook's fetch-on-load effect fires twice:
 
 ```typescript
-const mockClient = await setupMockApiClient()
-const wrapper = createStrictModeApiClientWrapper(mockClient)
-renderHook(() => useEntryManager(/* ... */), { wrapper })
-
+renderHook(() => useEntryManager(/* ... */), {
+  wrapper: createStrictModeApiClientWrapper(mockClient),
+})
 await waitFor(() => expect(mockClient.entries.list).toHaveBeenCalledTimes(1))
 ```
 
-See the "mounting under Strict Mode issues one X request, not two" tests in `useEntryManager.test.ts`, `useBranchManager.test.tsx`, and `useCommentSystem.test.ts`.
-
-**Mocking `createApiClient()` for direct-call code:** most editor hooks/components get their API client via `useApiClient()` context (DI), so mocking the `'../api'` barrel is enough. Code that calls `createApiClient()` directly instead -- bypassing context, e.g. `useReferenceResolution.ts`'s dependency chain through `client-reference-resolver.ts`, and `ReferenceField.tsx` -- must mock the exact module it imports from, not the barrel:
+**Mocking `createApiClient()` for direct-call code:** most hooks and components get the client from `useApiClient()` context, so mocking the `'../api'` barrel is enough. Code that calls `createApiClient()` directly — `useReferenceResolution.ts` through `client-reference-resolver.ts`, and `ReferenceField.tsx` — must mock the exact module it imports from, using the relative specifier from the test file's own location:
 
 ```typescript
-vi.mock('../api/client', () => ({
-  createApiClient: vi.fn(),
-}))
+vi.mock('../api/client', () => ({ createApiClient: vi.fn() }))
 ```
 
-Use the relative specifier from the test file's own location (e.g. `'../../api/client'` from a deeper file) -- mocking `'../api'` won't intercept a direct `createApiClient` call. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, and `client-reference-resolver.test.ts` for the pattern.
+Mocking `'../api'` will not intercept it. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, `client-reference-resolver.test.ts`.
 
 ### Testing with Real Git Operations
 
-Some subsystems -- particularly the worker's rebase logic -- need to test against actual git repositories rather than mocks. The `initTestRepo()` utility and a "local remote" pattern make this practical.
+Rebase behavior — conflict resolution, upstream tracking, dirty-tree detection — is too nuanced to mock reliably, and real repos in temp directories are fast, so the worker's rebase logic is tested against actual git. `initTestRepo()` (`src/test-utils/git-helpers.ts`) sets `canopycms.managed=true` plus a test identity so the repo works with `GitManager.ensureAuthor()`.
 
-**The `initTestRepo()` utility** (`src/test-utils/git-helpers.ts`):
-
-```typescript
-import { initTestRepo } from '../test-utils'
-
-// Creates a git repo with CanopyCMS marker config and test user identity
-const git = await initTestRepo(tmpDir)
-await git.add(['.'])
-await git.commit('Initial commit')
-```
-
-This sets `canopycms.managed=true`, `user.name`, and `user.email` so the repo works with `GitManager.ensureAuthor()`.
-
-**Local remote pattern** (from `cms-worker-rebase.test.ts`):
-
-When testing branch synchronization or rebase, create a local "remote" repo and clone it into a branch workspace structure:
+**Local remote pattern** (from `cms-worker-rebase.test.ts`): build a local "remote" repo, then clone it into a branch workspace layout.
 
 ```typescript
-import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-import { simpleGit } from 'simple-git'
-import { initTestRepo } from '../test-utils'
-
-let tmpDir: string
-
-beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rebase-test-'))
-})
-
-afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true })
-})
-
-// Set up a local "remote" repo
 const remotePath = path.join(tmpDir, 'remote')
 await fs.mkdir(remotePath)
 const remoteGit = await initTestRepo(remotePath)
@@ -2447,191 +706,107 @@ await fs.writeFile(path.join(remotePath, '.gitkeep'), '')
 await remoteGit.add(['.'])
 await remoteGit.commit('initial commit')
 
-// Clone it as a branch workspace
 const branchPath = path.join(tmpDir, 'content-branches', 'my-feature')
 await simpleGit().clone(remotePath, branchPath)
 const branchGit = simpleGit({ baseDir: branchPath })
 await branchGit.addConfig('user.name', 'Test Bot')
 await branchGit.addConfig('user.email', 'test@canopycms.test')
+await branchGit.addConfig('core.editor', 'true') // no interactive editor on rebase --continue
 
-// Prevent interactive editor during rebase --continue
-await branchGit.addConfig('core.editor', 'true')
-
-// Exclude .canopy-meta/ from git (matches production ensureGitExclude behavior)
+// exclude .canopy-meta/ from git, matching production ensureGitExclude
 const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
 await fs.mkdir(path.dirname(excludeFile), { recursive: true })
 await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
 ```
 
-**Why real git instead of mocks:** Rebase behavior -- especially conflict resolution, upstream tracking, and dirty-tree detection -- is too nuanced to mock reliably. Real git repos in temp directories are fast and catch edge cases that mocks would miss.
-
-**Testing private methods via type casting:**
-
-When the method under test is private, cast through `unknown` to access it:
+**Testing a private method** by casting through `unknown` is preferable to widening its visibility, but use it sparingly — only where the private method holds logic worth driving directly:
 
 ```typescript
-// Invoke a private method for testing
 const runRebase = (worker: CmsWorker): Promise<void> =>
   (worker as unknown as { rebaseActiveBranches(): Promise<void> }).rebaseActiveBranches()
 ```
 
-This is preferable to making the method public just for testing. Use it sparingly -- only when the private method has complex logic that warrants direct testing.
+Tests also _assign_ through the same cast, over an instance member, which constrains any later refactor of the class — see [Extracting from a Class Whose Tests Reach Through the Instance](#extracting-from-a-class-whose-tests-reach-through-the-instance).
 
-Note that this cast is also used to _assign_ over an instance member, not just to call one. That form constrains any later refactor of the class -- see [Extracting from a Class Whose Tests Reach Through the Instance](#extracting-from-a-class-whose-tests-reach-through-the-instance).
-
-**Git rebase `--ours` vs `--theirs` reversal:**
-
-During `git rebase`, the meaning of `--ours` and `--theirs` is **reversed** from their usual meaning in `git merge`:
+**`--ours` and `--theirs` are reversed during a rebase**, which is why the rebase conflict resolution keeps the editor's version with `git checkout --theirs <file>`: during a rebase the editor's branch commits are "theirs". A test caught this — a good argument for real git here.
 
 | Context      | `--ours`                                 | `--theirs`                            |
 | ------------ | ---------------------------------------- | ------------------------------------- |
 | `git merge`  | Current branch (your work)               | The branch being merged in            |
 | `git rebase` | The upstream commits being replayed onto | The branch being replayed (your work) |
 
-In CanopyCMS's rebase conflict resolution, we use `git checkout --theirs <file>` to keep the **editor's version** of a conflicted file, because during rebase the editor's branch commits are "theirs." This is counterintuitive and was caught by a test -- a good example of why real git tests matter for this kind of logic.
+**Assert working-tree state by porcelain status column.** `git status --porcelain` (what simple-git's `status()` parses) reports **two independent columns per file** — index and working tree — and conflating them produces a false data-loss report. `cms-worker-rebase-wedge.test.ts` classifies files around a `rebase --abort` keyed on the working-tree column only:
 
-**Asserting working-tree state by porcelain status columns:**
+| Status | Columns               | What it means here                                                         |
+| ------ | --------------------- | -------------------------------------------------------------------------- |
+| `UU`   | both conflicted       | A file the rebase stopped on; a known gap, not silently handled            |
+| `M `   | index `M`, tree `' '` | The rebase's own cleanly-replayed change; committed history, survives      |
+| ` M`   | index `' '`, tree `M` | An unstaged modification, e.g. an editor save; this is what abort discards |
+| `??`   | untracked             | A file created during the wedge; the abort leaves it alone                 |
 
-`git status --porcelain` (what simple-git's `status()` parses into `StatusResult`) reports **two independent columns per file** -- index (staged) and working-tree (unstaged) -- and conflating them produces a false data-loss report. `cms-worker-rebase-wedge.test.ts` classifies files around a `git rebase --abort` this way, keyed on the working-tree column only:
-
-| Status | Column meaning                | What it means here                                                                                                                                                     |
-| ------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UU`   | both sides conflicted         | A file the rebase itself stopped on; status alone can't tell whether an editor also saved over its conflict markers, so this case is a known gap, not silently handled |
-| `M `   | index=`M`, working-tree=`' '` | The interrupted rebase's own cleanly-replayed change, already staged -- committed history that survives the abort untouched                                            |
-| ` M`   | index=`' '`, working-tree=`M` | An unstaged modification -- e.g. an editor's save landing while the worker was down. This is what the abort actually discards                                          |
-| `??`   | untracked                     | A new file created during the wedge; the abort leaves it alone                                                                                                         |
-
-Filter on `file.working_dir` (simple-git's name for the working-tree column), never on `file.index` or on the pair together -- keying on the wrong column reports committed, safe history as data loss. This filter was written wrong twice in this file's history (first on the wrong columns entirely, then over-reporting the replay's own staged files) before the distinction above was made explicit and asserted directly. When a test needs to assert "what changed and how" from `git status` rather than just "is the tree clean", read both columns' meanings before writing the filter.
+Filter on `file.working_dir` (simple-git's name for the working-tree column), **never on `file.index` or on the pair together** — keying on the wrong column reports committed, safe history as data loss. Read both columns' meanings before writing a filter that asserts "what changed and how" rather than just "is the tree clean".
 
 ### Extracting from a Class Whose Tests Reach Through the Instance
 
-When you split a large class into module-level functions that take a context object (the seam), and its test suite drives the class by **mutating the instance**, the context has two hard requirements:
+When you split a large class into module-level functions taking a context object, and its suite drives the class by **mutating the instance**, the context has two hard requirements:
 
-1. **Every instance-backed member is a function**, resolved by calling back onto the live instance at call time -- not a field copied when the context is built.
-2. **The context is built fresh per call**, so there is no long-lived object for a stale reference to hide in.
+1. **Every instance-backed member is a function**, resolved by calling back onto the live instance at call time — not a field copied when the context was built.
+2. **The context is built fresh per call**, so no long-lived object can hide a stale reference.
 
-A field copied at construction (`octokit: this.octokit`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.octokit()` makes the late binding visible at every call site, where a getter would read like a captured field.
+A field copied at construction (`octokit: this.octokit`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.octokit()` makes the late binding visible at every call site.
 
-**Pre-flight check before you extract:** grep for `as unknown as { ... }` casts and enumerate them **for assignment, not just for calls** -- and grep the whole repo, not only the class's test files. `apps/test-app/app/api/e2e-test/rebase/route.ts` reaches into `CmsWorker` this way from an e2e fixture route, so a sweep scoped to `*.test.ts` would have missed it and reported the method as unused. Anything the tests _assign to_ has to stay reachable through the seam. The [call form](#testing-with-real-git-operations) is the easy half and is already documented; the assignments are the ones that break silently. In the worker suite the assigned-to surface is `buildGitHubUrl` (aimed at a local fixture repo instead of github.com), `octokit`, `executeTask`, `pushBranchToGitHub`, `running` (set directly instead of calling `start()`), plus two `protected` test hooks that one test file overrides by subclassing.
+**Pre-flight check before extracting:** grep for `as unknown as { ... }` casts and enumerate them **for assignment, not just for calls** — across the whole repo, not only the class's test files. `apps/test-app/app/api/e2e-test/rebase/route.ts` reaches into `CmsWorker` this way from an e2e fixture route, so a sweep scoped to `*.test.ts` would report that method as unused. Anything the tests _assign to_ has to stay reachable through the seam; the [call form](#testing-with-real-git-operations) is the easy half.
 
-**The failure mode**, which happened mid-refactor: an extracted module called the module-level `executeTask` directly -- legal, since the function is defined in the same file as its caller -- which bypassed the instance-level stub and turned 8 tests red. Route the call through the context (`ctx.executeTask(...)`); never edit the test to accommodate the extraction. A test that stubs a method is asserting the seam exists, so making it call the real thing deletes the assertion rather than fixing it.
+**The failure mode:** an extracted module calling the module-level `executeTask` directly — legal, since it is defined in the same file — bypasses the instance-level stub and turns 8 tests red. Route the call through the context, and never edit the test to accommodate the extraction: a test that stubs a method is asserting the seam exists, so making it call the real thing deletes the assertion instead of fixing it.
 
 ```typescript
-// In the extracted module, where both are in scope:
 await ctx.executeTask(task, signal) // late-bound, honors the test's stub
 await executeTask(ctx, task, signal) // WRONG: bypasses it silently
 ```
 
-Worked example: the `WorkerContext` interface in `src/worker/worker-context.ts` documents which members are safe to copy and which must dispatch live, and [`packages/canopycms/src/worker/AGENTS.md`](packages/canopycms/src/worker/AGENTS.md) maps the modules on the other side of that seam.
+`packages/canopycms/src/worker/worker-context.ts` documents which members are safe to copy and which must dispatch live, and [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md) maps the modules on the other side of that seam, including the full assigned-to surface.
 
 ### Testing UI Conflict Indicators
 
-When a rebase detects conflicts, the editor UI shows a notice on affected entries. Test this with the `conflictNotice` prop on `FormRenderer`:
-
-```typescript
-import { render, screen } from '@testing-library/react'
-
-it('shows conflict notice when conflictNotice prop is true', () => {
-  render(
-    <CanopyCMSProvider>
-      <FormRenderer
-        fields={fields}
-        value={{ title: 'hello' }}
-        onChange={() => {}}
-        conflictNotice
-      />
-    </CanopyCMSProvider>
-  )
-  expect(screen.getByText(/Someone else has recently changed this page/)).toBeTruthy()
-})
-
-it('hides conflict notice when prop is absent', () => {
-  render(
-    <CanopyCMSProvider>
-      <FormRenderer fields={fields} value={{ title: 'hello' }} onChange={() => {}} />
-    </CanopyCMSProvider>
-  )
-  expect(screen.queryByText(/Someone else has recently changed this page/)).toBeNull()
-})
-```
-
-**Why this pattern:** Conflict detection happens server-side (worker rebase writes `conflictFiles` to branch metadata). The editor reads this metadata and passes `conflictNotice` as a boolean prop to the form. Testing both the server-side detection (real git tests) and the client-side display (component tests) ensures the full conflict flow works end-to-end.
+Conflict detection happens server-side — the worker's rebase writes `conflictFiles` to branch metadata, the editor reads it and passes `conflictNotice` to the form — so the flow needs coverage on both sides: real git tests for the detection, a component test for the display. Render `FormRenderer` inside `CanopyCMSProvider` with and without the `conflictNotice` prop and assert on the notice text (`/Someone else has recently changed this page/`) with `getByText` and `queryByText` respectively.
 
 ### Asset Store Parity Testing
 
-`LocalAssetStore` and `S3AssetStore` must behave identically for anything that's part of the `AssetStore` contract (staging, originals, meta sidecars, public objects, paginated listing). Rather than writing separate assertions per adapter, `packages/canopycms/src/assets/store-parity.test.ts` defines **one shared behavior suite** and runs it against both:
+`LocalAssetStore` and `S3AssetStore` must behave identically for everything in the `AssetStore` contract (staging, originals, meta sidecars, public objects, paginated listing). Adapter-specific test files only prove each adapter is self-consistent; they cannot catch the two drifting apart on error shapes, precondition semantics or metadata field names. So `packages/canopycms/src/assets/store-parity.test.ts` defines **one shared behavior suite** and runs it against both — local against a real `fs.mkdtemp` directory, S3 against [`aws-sdk-client-mock`](https://github.com/m-radzikowski/aws-sdk-client-mock) plus a small in-memory fake (`installS3Fake()`) that stores real bytes in a `Map`, so a round-trip read returns real data rather than a canned value.
 
 ```typescript
-function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) {
-  describe(`AssetStore parity: ${label}`, () => {
-    // ... shared it() blocks: round-trips staging write/read/delete,
-    // putOriginal/readOriginal, putMetaIfAbsent races, listMeta pagination, etc.
-  })
-}
-
 runParitySuite('LocalAssetStore', async () => ({
-  store: new LocalAssetStore({ root: await fs.mkdtemp(...) }),
+  store: new LocalAssetStore({ root: await fs.mkdtemp(prefix) }),
   assertsNewestFirst: true,
 }))
-
 runParitySuite('S3AssetStore', () => ({
   store: new S3AssetStore({ bucket: 'test-bucket', region: 'us-east-1' }),
-  assertsNewestFirst: false, // S3's ListObjectsV2-backed listing gives no ordering guarantee
+  assertsNewestFirst: false,
 }))
 ```
 
-**LocalAssetStore** runs against a real temp directory (`fs.mkdtemp`), same as other filesystem-backed tests in this codebase.
+The `Harness`'s `assertsNewestFirst` flag exists because `LocalAssetStore` guarantees `listMeta` ordering and S3's `ListObjectsV2`-backed listing does not, so an order-dependent shared test skips for the adapter that makes no such promise instead of being split into an adapter-specific file.
 
-**S3AssetStore** runs against [`aws-sdk-client-mock`](https://github.com/m-radzikowski/aws-sdk-client-mock) plus a small in-memory fake (`installS3Fake()` in the same file) that actually stores bytes in a `Map`, so round-trip reads return real data instead of a canned mocked value:
-
-```typescript
-import { mockClient } from 'aws-sdk-client-mock'
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
-
-const s3Mock = mockClient(S3Client)
-const objects = new Map<string, { body: Uint8Array; contentType?: string }>()
-
-s3Mock.on(PutObjectCommand).callsFake((input) => {
-  objects.set(input.Key, { body: toBytes(input.Body), contentType: input.ContentType })
-  return {}
-})
-s3Mock.on(GetObjectCommand).callsFake((input) => {
-  const obj = objects.get(input.Key)
-  if (!obj) throw makeAwsError('NoSuchKey', 404, 'The specified key does not exist.')
-  return {
-    Body: sdkStreamMixin(Readable.from(Buffer.from(obj.body))),
-    ContentType: obj.contentType,
-  }
-})
-```
-
-A `Harness` carries an `assertsNewestFirst` flag because `LocalAssetStore` guarantees `listMeta` ordering but S3's `ListObjectsV2`-backed implementation does not -- a shared test that depends on ordering is skipped for the adapter that doesn't guarantee it, rather than being split into an adapter-specific test file.
-
-**Why this pattern:** adapter-specific test files only prove each adapter is internally consistent with itself -- they can't catch the two implementations silently drifting apart on edge cases (error shapes, precondition semantics, metadata field names). Running the identical suite against both catches drift immediately. **When you touch the `AssetStore` contract** (add a method, change an error case, change what a read returns), add the assertion to the shared suite in `store-parity.test.ts` rather than to one adapter's test file only.
+**When you touch the `AssetStore` contract** — add a method, change an error case, change what a read returns — add the assertion to the shared suite, not to one adapter's file.
 
 ### Guarding Every Call Site of X (Behavioural, Not Source-Grep)
 
-A guard meant to catch every call site of some API -- "every Octokit call," "every raw `fetch`," "every direct `console.*`" -- is easy to first draft as a source-text regex, and easy to get wrong the same way: call sites end up spelled several different ways across a codebase (`octokit.pulls.list`, `this.octokit.git.deleteRef`, `ctx.octokit().pulls.create`), and one may span lines, which no single-line regex matches at all. Three spellings is the point where the instrument itself is wrong, not merely incomplete.
+A guard meant to catch every call site of some API ("every Octokit call", "every raw `fetch`", "every direct `console.*`") is easy to draft as a source-text regex and easy to get wrong the same way: call sites end up spelled several ways (`octokit.pulls.list`, `this.octokit.git.deleteRef`, `ctx.octokit().pulls.create`), and one may span lines, which no single-line regex matches at all. Three spellings is the point at which the instrument is wrong rather than merely incomplete.
 
-Prefer a **behavioural** guard instead: wrap the real dependency in a recording `Proxy` that records every `namespace.method` invoked, then drive every real caller (every enum value through its dispatcher, every method on a class, every branch of a function with more than one path) against it. Compare the observed operation set against a checked-in map **in both directions**:
+Prefer a **behavioural** guard: wrap the real dependency in a recording `Proxy` that records every `namespace.method` invoked, drive every real caller against it (every enum value through its dispatcher, every method on a class, every branch of a multi-path function), and compare the observed operation set against a checked-in map **in both directions** — an operation observed but unlisted means something new landed uncovered; an operation listed but never observed means either a stale entry or, the case that matters most, that the harness stopped reaching it and the guard is now watching nothing.
 
-- an operation observed that the map doesn't list -> something new landed uncovered
-- an operation the map lists that was never observed -> either the call was removed/renamed (stale entry), or -- the failure that matters most -- the harness stopped reaching it and the guard is now watching nothing
-
-Two details worth keeping when you write one of these:
-
-- **Assert coverage per driver, not on the union.** If two drivers happen to invoke the same operation, a unioned set can't see one of them go dark.
-- **Keep a source-level backstop for what the harness can't reach**, and pin its own regex with a test asserting both what it should and shouldn't match -- a regex that quietly stops matching turns "files with calls" into a vacuous "no files have calls," green.
+- **Assert coverage per driver, not on the union.** If two drivers invoke the same operation, a unioned set cannot see one of them go dark.
+- **Keep a source-level backstop for what the harness cannot reach**, and pin its regex with a test asserting both what it should and should not match — a regex that quietly stops matching turns "files with calls" into a vacuous, green "no files have calls".
 
 Worked example: `packages/canopycms/src/cli/github-app-permission-drift.test.ts` (Octokit calls vs. the declared GitHub App permissions).
 
 ### Testing postMessage Listeners (Framed-Window Simulation)
 
-The preview-bridge listeners validate both `event.origin` and `event.source === window.parent`, so jsdom tests can't just dispatch a bare `MessageEvent` — the source check needs a genuine `WindowProxy` distinct from the test window. Use the `simulateFramed()` pattern from `src/editor/preview-bridge.test.tsx`:
+The preview-bridge listeners validate both `event.origin` and `event.source === window.parent`, so a jsdom test cannot dispatch a bare `MessageEvent`: the source check needs a genuine `WindowProxy` distinct from the test window, and a plain object fails the identity check. `window.parent` is read-only in jsdom, so it has to be redefined and restored. Use `simulateFramed()` from `src/editor/preview-bridge.test.tsx`:
 
 ```typescript
 const simulateFramed = () => {
-  const host = document.createElement('iframe') // Real iframe → real WindowProxy
+  const host = document.createElement('iframe') // real iframe -> real WindowProxy
   document.body.appendChild(host)
   const parentWin = host.contentWindow as Window
   Object.defineProperty(window, 'parent', { configurable: true, get: () => parentWin })
@@ -2641,541 +816,172 @@ const simulateFramed = () => {
 
 afterEach(() => {
   cleanup()
-  Object.defineProperty(window, 'parent', { configurable: true, get: () => window }) // Restore
+  Object.defineProperty(window, 'parent', { configurable: true, get: () => window })
   document.querySelectorAll('iframe').forEach((el) => el.remove())
   vi.restoreAllMocks()
 })
 
-// Dispatch with explicit origin AND source — both are validated
-const event = new MessageEvent('message', {
-  data: { type: CANOPY_PREVIEW_UPDATE /* ... */ },
+// Dispatch with explicit origin AND source -- both are validated
+new MessageEvent('message', {
+  data: { type: CANOPY_PREVIEW_UPDATE },
   origin: window.location.origin,
   source: parentWin,
 })
 ```
 
-**Why this pattern:** `window.parent` is read-only in jsdom, so it must be redefined via `Object.defineProperty` (and restored in `afterEach`). Faking the source with a plain object fails the `WindowProxy` identity check; appending a real `<iframe>` and using its `contentWindow` gives the listener an authentic parent window to compare against. Tests that omit `source` (or pass the wrong window) double as negative tests for the trust check.
+A test that omits `source`, or passes the wrong window, doubles as a negative test for the trust check.
 
 ### Expecting Console Messages
 
-When testing code that intentionally logs to `console.error`, `console.warn`, or `console.log`, use the `mockConsole()` utility to:
+**Swallowing expected console output is mandatory, and only CI enforces it — in every package.** The `onConsoleLog` hook in [vitest.shared.ts](vitest.shared.ts), which each package's `vitest.config.ts` spreads in, **throws on any console output Vitest intercepts** — `log` and `info` as much as `warn` and `error` — but only under `CI=true`. Locally the same test prints the output and reports green, so a stray `console.log` left over from debugging fails CI exactly as hard as an unasserted error.
 
-1. Capture the messages for assertion
-2. Prevent them from cluttering test output
-3. Verify the expected message was logged
-
-**Import the utility:**
-
-```typescript
-import { mockConsole } from './test-utils/console-spy.js'
-```
-
-**Basic usage:**
-
-```typescript
-it('logs error when something fails', () => {
-  const consoleSpy = mockConsole()
-
-  // Call code that logs to console
-  doSomethingThatLogs()
-
-  // Assert on specific messages
-  expect(consoleSpy).toHaveErrored('Failed to do something')
-  expect(consoleSpy).toHaveWarned('Deprecation warning')
-  expect(consoleSpy).toHaveLogged('Debug info')
-
-  // Always restore at the end
-  consoleSpy.restore()
-})
-```
-
-**Available matchers:**
-
-- `toHaveErrored(pattern)` - matches `console.error` calls
-- `toHaveWarned(pattern)` - matches `console.warn` calls
-- `toHaveLogged(pattern)` - matches `console.log` calls
-
-Patterns can be strings (substring match) or RegExp.
-
-**Swallowing expected output is mandatory, and only CI enforces it — in every package.**
-The `onConsoleLog` hook in [`vitest.shared.ts`](vitest.shared.ts), which each package's
-`vitest.config.ts` spreads in, **throws on _any_ console output Vitest intercepts** — `log`
-and `info` just as much as `warn` and `error` — but only under `CI=true`. Locally the same
-test prints the output and the suite reports green, so a stray `console.log` left in from
-debugging fails CI exactly as hard as an unasserted error. Other packages import
-`mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`,
-asserted and `mockRestore()`d in a `finally`, works too.
-
-The failure is easy to misread: the throw surfaces as an _unhandled rejection_, not a
-failed test, so the summary can still say "passed" above `Errors 1 error`. The error names
-the culprit (`<file> > <test> wrote to stderr under CI`). On 2026-08-12 it took the whole
-step down with no vitest output at all, which read as a crashed process and cost two
-people time.
-
-Reproduce it locally before pushing any test that triggers an error handler:
+The failure is easy to misread: the throw surfaces as an _unhandled rejection_, not a failed test, so the summary can still say "passed" above `Errors 1 error`. The error names the culprit (`<file> > <test> wrote to stderr under CI`). Reproduce it before pushing any test that triggers an error handler:
 
 ```bash
 CI=true pnpm exec vitest run          # from any package directory
 ```
 
-Assert the captured output rather than merely silencing it — a test that swallows the
-error it provoked has traded a visible failure for an invisible one.
-
-**Debugging captured messages:**
+Capture and assert with `mockConsole()` rather than merely silencing — a test that swallows the error it provoked has traded a visible failure for an invisible one:
 
 ```typescript
-const consoleSpy = mockConsole()
-doSomething()
-console.log('Captured:', consoleSpy.all()) // Shows all captured messages by method
-consoleSpy.restore()
-```
+import { mockConsole } from './test-utils/console-spy.js'
 
-**Example from the codebase:**
-
-```typescript
-// From github-service.test.ts
-it('should return null when token is missing', () => {
+it('logs error when something fails', () => {
   const consoleSpy = mockConsole()
-  const service = createGitHubService(mockConfig, 'https://github.com/owner/repo.git')
-  expect(service).toBeNull()
-  expect(consoleSpy).toHaveWarned('GitHub token not found')
-  consoleSpy.restore()
+  doSomethingThatLogs()
+  expect(consoleSpy).toHaveErrored('Failed to do something')
+  consoleSpy.restore() // always restore
 })
 ```
 
-This approach ensures:
+`toHaveErrored`, `toHaveWarned` and `toHaveLogged` match `console.error`/`warn`/`log`, taking a substring or a RegExp; `consoleSpy.all()` dumps everything captured, by method, when an assertion is not matching. Other packages import `mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`, asserted and `mockRestore()`d in a `finally`, works too.
 
-- Expected console output doesn't pollute test runs
-- Unexpected console output still surfaces (helping catch real issues)
-- Console behavior is properly tested as part of the functionality
+**Keep the reporter "all dots".** The `dot` reporter prints a `stdout | <file> > <test>` block for any test that writes to the console, which buries real problems; GitHub Actions sets `CI=true`, so the existing `pnpm test` step enforces the guard with no extra workflow step. `vitest.shared.ts` names the reporter explicitly because Vitest 4 otherwise switches to its `agent` reporter under an AI coding agent (`CLAUDECODE`, `AI_AGENT`, …), and that reporter hides passing tests' console output so the guard never fires — which is how `canopycms-cdk` printed ~950 lines of aws-cdk-lib deprecation warnings per CI run that no agent saw locally. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
 
-**Enforced in CI (keep the reporter "all dots"):** the `dot` reporter prints a
-`stdout | <file> > <test>` / `stderr | ...` block for any test that writes to the console,
-which buries real problems. GitHub Actions sets `CI=true`, so the existing `pnpm test` step
-enforces the guard with no extra workflow step. `vitest.shared.ts` also names the reporter
-explicitly, because left to its default Vitest 4 switches to its `agent` reporter under an
-AI coding agent (`CLAUDECODE`, `AI_AGENT`, …). That reporter hides passing tests' console
-output and the guard never fires under it, which is how `canopycms-cdk` printed ~950 lines
-of aws-cdk-lib deprecation warnings per CI run that no agent saw locally. When CI fails
-with this error, swallow and assert the expected output, or remove the stray log — do
-**not** silence the guard.
-
-**`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib
-API throws a `DeprecationError` at the call site — locally too, and inside
-`scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees.
-Migrate the call; do not relax the setting.
+**`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib API throws a `DeprecationError` at the call site — locally too, and inside `scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees. Migrate the call; do not relax the setting.
 
 ### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
 
-Code that prunes dead `WeakRef`s or registers a `FinalizationRegistry` callback can't be exercised by waiting for real garbage collection in a test -- GC timing is non-deterministic. `src/content-index-registry.test.ts` stubs the globals instead, so the pruning logic runs on command:
+Code that prunes dead `WeakRef`s or registers a `FinalizationRegistry` callback cannot be exercised by waiting for real garbage collection, since GC timing is non-deterministic. `src/content-index-registry.test.ts` stubs the globals so the pruning logic runs on command. The two globals need different treatment:
 
-**`WeakRef`: stub the global, since the module reads it fresh on every call**
+**`WeakRef` — stub the global.** Production code calls `new WeakRef(target)` through a bare global reference resolved at call time, so stubbing before the call is enough, with no module reload. A `FakeWeakRef` whose `deref()` consults a static `deadTargets` set lets a test mark one target dead; `afterEach(() => vi.unstubAllGlobals())`.
 
-```typescript
-class FakeWeakRef<T extends object> {
-  static deadTargets = new Set<object>()
-  constructor(private readonly target: T) {}
-  deref(): T | undefined {
-    return FakeWeakRef.deadTargets.has(this.target) ? undefined : this.target
-  }
-}
-
-afterEach(() => vi.unstubAllGlobals())
-
-it('skips a dead ref', () => {
-  vi.stubGlobal('WeakRef', FakeWeakRef)
-  // ... register targets, then mark one dead via FakeWeakRef.deadTargets.add(target)
-})
-```
-
-This works because the production code calls `new WeakRef(target)` via a bare global reference resolved at call time -- stubbing before the call is enough, no module reload needed.
-
-**`FinalizationRegistry`: stub the global AND force a fresh module instance**
-
-If the production module captures the constructor at module-load time (`const finalization = new FinalizationRegistry(cb)`), stubbing the global after that module has already loaded has no effect on the existing instance. Combine `vi.stubGlobal()` with `vi.resetModules()` and a dynamic re-import so the fresh module wires up the fake:
+**`FinalizationRegistry` — stub the global AND force a fresh module instance.** When the production module captures the constructor at module-load time (`const finalization = new FinalizationRegistry(cb)`), stubbing the global afterwards does nothing to the existing instance, and the test would pass for the wrong reason or never exercise the finalizer at all. Combine `vi.stubGlobal()` with `vi.resetModules()` and a dynamic re-import:
 
 ```typescript
-class FakeFinalizationRegistry<T> {
-  constructor(cb: (heldValue: T) => void) {
-    capturedCallback = cb
-  }
-  register(_target: object, heldValue: T): void {
-    capturedHeldValue = heldValue
-  }
-  unregister(): boolean {
-    return true
-  }
-}
-
-vi.stubGlobal('FinalizationRegistry', FakeFinalizationRegistry)
+vi.stubGlobal('FinalizationRegistry', FakeFinalizationRegistry) // captures cb and heldValue
 vi.resetModules()
-
 try {
   const fresh = await import('./content-index-registry')
   fresh.registerContentIndexForInvalidation(root, target)
-  // capturedCallback/capturedHeldValue now hold what the engine would pass on real GC
-  capturedCallback?.(capturedHeldValue) // Simulate the engine deciding to collect `target`
+  capturedCallback?.(capturedHeldValue) // simulate the engine collecting `target`
 } finally {
-  vi.resetModules() // Restore the real module for subsequent tests
+  vi.resetModules() // restore the real module for later tests
 }
 ```
-
-**Why this matters:** without `vi.resetModules()`, the already-loaded module keeps its reference to the _real_ `FinalizationRegistry` constructor, so `vi.stubGlobal()` alone silently does nothing for module-load-time captures -- the test would pass for the wrong reason (or not exercise the finalizer path at all).
 
 ### Type-Level Testing with `expectTypeOf`
 
-Vitest includes a built-in `expectTypeOf` utility for compile-time type assertions. Use it to verify that TypeScript infers the correct types from schema definitions, generics, or utility types -- without executing any runtime code.
-
-**Import from vitest:**
+Vitest's `expectTypeOf` asserts types at compile time without executing runtime code. Use it for generic utility types (`TypeFromEntrySchema`), discriminated-union narrowing (block templates, field types), inference regressions when a schema changes, and resolved references carrying a type through generics.
 
 ```typescript
 import { describe, it, expectTypeOf } from 'vitest'
-```
 
-**Basic usage:**
-
-```typescript
-it('infers the correct content type from a schema', () => {
-  const schema = defineEntrySchema([
-    { name: 'title', type: 'string' },
-    { name: 'body', type: 'markdown' },
-  ])
-
-  type Content = TypeFromEntrySchema<typeof schema>
-
-  // Verify exact type shape
-  expectTypeOf<Content>().toEqualTypeOf<{ title: string; body: string }>()
-})
-```
-
-**Testing discriminated unions:**
-
-```typescript
 it('produces a discriminated union for block fields', () => {
-  const schema = defineEntrySchema([
-    {
-      name: 'blocks',
-      type: 'block',
-      templates: [
-        { name: 'hero', label: 'Hero', fields: [{ name: 'headline', type: 'string' }] },
-        { name: 'cta', label: 'CTA', fields: [{ name: 'ctaText', type: 'string' }] },
-      ],
-    },
-  ])
-
-  type Content = TypeFromEntrySchema<typeof schema>
-  type Block = Content['blocks'][number]
+  type Block = TypeFromEntrySchema<typeof schema>['blocks'][number]
   type HeroBlock = Extract<Block, { template: 'hero' }>
 
-  // Each variant only has its own template's fields
   expectTypeOf<HeroBlock['value']>().toEqualTypeOf<{ headline: string }>()
-
-  // Template narrows to a literal, not a union
   expectTypeOf<HeroBlock['template']>().toEqualTypeOf<'hero'>()
 
-  void schema // Prevent unused-variable lint error
+  void schema // prevents the unused-variable lint error
 })
 ```
 
-**Key matchers:**
+| Matcher                           | Purpose                                     |
+| --------------------------------- | ------------------------------------------- |
+| `.toEqualTypeOf<T>()`             | Exact match (strictest)                     |
+| `.toMatchTypeOf<T>()`             | Assignable to expected; extra props allowed |
+| `.toBeString()` / `.toBeNumber()` | Primitive checks                            |
+| `.toBeNullable()`                 | Includes `null` or `undefined`              |
 
-| Matcher                           | Purpose                                               |
-| --------------------------------- | ----------------------------------------------------- |
-| `.toEqualTypeOf<T>()`             | Exact type match (strictest)                          |
-| `.toMatchTypeOf<T>()`             | Target is assignable to expected (allows extra props) |
-| `.toBeString()` / `.toBeNumber()` | Primitive type checks                                 |
-| `.toBeNullable()`                 | Type includes `null` or `undefined`                   |
-
-**When to use type-level tests:**
-
-- Verifying that generic utility types (like `TypeFromEntrySchema`) produce correct output
-- Ensuring discriminated unions narrow properly (block templates, field types)
-- Catching regressions in type inference when schema definitions change
-- Testing that resolved references carry the correct type through generics
-
-**Important:** During regular `vitest run`, `expectTypeOf` calls execute as runtime no-ops -- the actual type checking happens via `tsc --noEmit` (which includes test files). With `vitest --typecheck`, vitest itself runs the TypeScript checker. The `void schema` pattern prevents TypeScript's unused-variable error for schemas that exist solely to drive type inference.
-
-See `packages/canopycms/src/entry-schema.test.ts` for the complete example.
+Under a plain `vitest run` these calls execute as runtime no-ops — the type checking happens in `tsc --noEmit`, which includes test files; `vitest --typecheck` runs the checker itself. See `packages/canopycms/src/entry-schema.test.ts`.
 
 ### Testing Context and Auth
 
-When testing code that uses the context factory pattern:
-
-**Testing Bootstrap Admin Groups**
+Drive the context factory with an injected `extractUser` and assert on the resolved `canopy.user`:
 
 ```typescript
-it('applies bootstrap admin groups to authenticated users', async () => {
-  const config: CanopyConfig = {
-    // ... config with bootstrapAdminIds: ['admin-123']
-  }
-
-  const mockUser: AuthenticatedUser = {
-    type: 'authenticated',
-    userId: 'admin-123',
-    groups: [], // User has no groups yet
-  }
-
-  const context = createCanopyContext({
-    config,
-    getUser: async () => mockUser,
-  })
-
-  const canopy = await context.getContext()
-
-  // Bootstrap admin should now have Admins group
-  expect(canopy.user.groups).toContain('Admins')
-})
+const context = createCanopyContext({ services, extractUser: async () => mockUser })
+const canopy = await context.getContext()
+expect(canopy.user.groups).toContain('Admins') // bootstrapAdminIds applied
 ```
 
-**Testing Static Deployment Bypass**
-
-```typescript
-it('returns STATIC_DEPLOY_USER for static deployments', async () => {
-  const staticConfig = { ...config, deployedAs: 'static' as const }
-  const services = await createCanopyServices(staticConfig, { entrySchemaRegistry })
-  const mockUser: CanopyUser = { type: 'anonymous' }
-  const context = createCanopyContext({
-    services,
-    extractUser: async () => mockUser, // This should NOT be called
-  })
-
-  const canopy = await context.getContext()
-
-  // Should bypass extractUser and return STATIC_DEPLOY_USER
-  expect(canopy.user.userId).toBe('__static_deploy__')
-  expect(canopy.user.groups).toContain('Admins')
-})
-```
-
-**Testing Content Reader with Auth**
-
-```typescript
-it('enforces permissions when reading content', async () => {
-  const restrictedUser: CanopyUser = {
-    type: 'authenticated',
-    userId: 'user-123',
-    groups: [], // No groups = no access
-  }
-
-  const context = createCanopyContext({
-    config: configWithRestrictedContent,
-    getUser: async () => restrictedUser,
-  })
-
-  const canopy = await context.getContext()
-
-  // Should throw permission error
-  await expect(canopy.read({ entryPath: 'content/restricted' })).rejects.toThrow(
-    'Permission denied',
-  )
-})
-```
-
-**Testing Anonymous vs Authenticated**
-
-```typescript
-it('handles anonymous users correctly', async () => {
-  const context = createCanopyContext({
-    config,
-    getUser: async () => ANONYMOUS_USER,
-  })
-
-  const canopy = await context.getContext()
-
-  expect(canopy.user.type).toBe('anonymous')
-  expect(canopy.user.groups).toEqual([])
-})
-```
+The cases worth covering: a bootstrap admin gains the `Admins` group even with no groups of its own; a static deployment returns `STATIC_DEPLOY_USER` without calling the injected extractor; an anonymous user resolves to `type: 'anonymous'` with no groups; and a user with no groups gets `rejects.toThrow('Permission denied')` from `canopy.read()` on restricted content.
 
 ### API Client Generation
 
-The TypeScript API client is auto-generated from the route registry. When you add new API endpoints:
+The TypeScript API client is generated from the route registry, which keeps endpoint definitions next to their implementations and out of a regex parser. To add an endpoint:
 
-**1. Define the endpoint with `defineEndpoint()`**
-
-In your API module (e.g., `packages/canopycms/src/api/my-module.ts`):
-
-```typescript
-import { defineEndpoint } from './route-builder'
-
-defineEndpoint({
-  namespace: 'myModule',
-  name: 'getSettings',
-  method: 'GET',
-  path: '/settings/:id',
-  paramsSchema: z.object({ id: z.string() }),
-  responseTypeName: 'SettingsResponse',
-  defaultMockData: {
-    ok: true,
-    status: 200,
-    data: { id: '123', name: 'Default' },
-  },
-})
-```
-
-**2. Add the module import to the generator script**
-
-In `packages/canopycms/scripts/generate-client.ts`, add the module import:
-
-```typescript
-// Import all API modules to populate ROUTE_REGISTRY
-import '../src/api/my-module.js' // Add this line
-```
-
-**3. Add namespace mapping (if needed)**
-
-If your namespace doesn't match the filename, add a mapping in `namespaceToModule()`:
-
-```typescript
-function namespaceToModule(namespace: string): string {
-  const mapping: Record<string, string> = {
-    // ... existing mappings
-    myModule: 'my-module', // Add this
-  }
-  return mapping[namespace] || namespace
-}
-```
-
-**4. Generate the client**
-
-```bash
-pnpm run generate:client
-```
-
-This creates typed methods in `src/api/client.ts` and mock helpers in `src/api/__test__/mock-client.ts`.
-
-**Usage in client code:**
-
-```typescript
-// Auto-generated and type-safe
-const response = await client.myModule.getSettings({ id: '123' })
-if (response.ok) {
-  console.log(response.data) // Type: SettingsResponse
-}
-```
-
-**Why this pattern:** The route registry eliminates regex parsing and keeps endpoint definitions close to implementations. All metadata (params, response types, mock data) flows through the registry into the generated client.
+1. **Declare it** with `defineEndpoint({ namespace, name, method, path, paramsSchema, responseTypeName, defaultMockData })` in your API module.
+2. **Import that module** in `packages/canopycms/scripts/generate-client.ts`, so it populates `ROUTE_REGISTRY`.
+3. **Map the namespace** in `namespaceToModule()` if the namespace does not match the filename.
+4. **Generate:** `pnpm run generate:client`, which writes typed methods into `src/api/client.ts` and mock helpers into `src/api/__test__/mock-client.ts`.
 
 ### Integration Testing with Framework Adapters
 
-When testing framework-specific adapters:
-
-**Next.js Adapter Testing**
-
-```typescript
-// Mock Next.js headers
-vi.mock('next/headers', () => ({
-  headers: vi.fn(async () => ({
-    get: (name: string) => {
-      if (name === 'authorization') return 'Bearer valid-token'
-      return null
-    },
-  })),
-}))
-
-it('extracts user from Next.js headers', async () => {
-  const { getCanopy } = createNextCanopyContext({ config, authPlugin })
-  const canopy = await getCanopy()
-
-  expect(canopy.user.type).toBe('authenticated')
-  expect(canopy.user.userId).toBe('expected-user-id')
-})
-```
-
-**Testing Per-Request Caching**
-
-```typescript
-it('caches context per request with React cache()', async () => {
-  const getUserSpy = vi.fn(async () => mockUser)
-
-  const coreContext = createCanopyContext({
-    config,
-    getUser: getUserSpy,
-  })
-
-  const getCanopy = cache(() => coreContext.getContext())
-
-  // Multiple calls in same request should use cache
-  await getCanopy()
-  await getCanopy()
-
-  expect(getUserSpy).toHaveBeenCalledTimes(1) // Cached!
-})
-```
+Mock `next/headers` to return the headers the adapter should read, then assert on the extracted user. For per-request caching, wrap `coreContext.getContext` in React's `cache()`, call it twice, and assert the injected `extractUser` spy ran once.
 
 ### Shelling Out to Real Builds (CI Fixture Pattern)
 
-`apps/dual-build-fixture/dual-build.test.ts` is a vitest suite that verifies CanopyCMS's two deploy shapes (README.md "Dual-Build Sites") by actually running `next build` twice -- once per `CANOPY_BUILD` flavor (`static`, `cms`) -- against a minimal fixture app, then asserting on the real build output rather than just exit codes. It runs as its own CI job (`dual-build` in `.github/workflows/ci.yml`), gated on a paths-filter so the two (expensive) builds only run when something able to break the split actually changed. Run it locally with:
+`apps/dual-build-fixture/dual-build.test.ts` verifies the two deploy shapes ([README.md](README.md#dual-build-sites-static-export--cms-server)) by running `next build` twice, once per `CANOPY_BUILD` flavor, against a minimal fixture app, then asserting on the real build output rather than exit codes. It is its own CI job (`dual-build` in `.github/workflows/ci.yml`), gated on a paths filter so the two expensive builds run only when something able to break the split changed.
 
 ```bash
 pnpm --filter canopycms-dual-build-fixture run verify:dual-build
 ```
 
-Read the file in full before extending it or writing a similar "shell out to a real build, inspect output" test elsewhere -- it packs several fixed bugs worth reusing rather than reintroducing:
+Read the file in full before extending it, or before writing another "shell out to a real build, inspect output" test — it packs five rules worth reusing:
 
-- **Run the expensive step once, assert many times.** Both `next build` invocations run once in `beforeAll` (each takes tens of seconds); every `it()` afterward only inspects the resulting file trees. Never re-run a build per-assertion.
-- **Relocate output when two flavors share one `.next/`.** Both flavors write to the same `.next/` directory, so `moveNextOutputAside()` relocates the static build's non-cache output to `.next-static/` before the cms build starts, leaving both inspectable afterward. `.next/cache` (the SWC/webpack compilation cache) is deliberately left in place across both builds and preserved by `cleanNextOutputKeepCache()` -- a "clean everything under `.next/` except `cache/`" helper run before each build. This matters because `next build` isn't guaranteed to prune stale output for routes/`pageExtensions` that no longer apply: without the clean step, a leftover `.next/server/app/edit` from an earlier build could make an assertion pass for the wrong reason, while nuking the cache too would defeat CI's build-cache restore step.
-- **Use a dynamically-allocated port for live-server checks, never a hardcoded one.** A live-server smoke test spawns `next start` and fetches routes to verify runtime behavior (not just build artifacts) -- e.g. that the cms build's home route renders the same content as the static build's prerendered HTML. `getFreePort()` binds to port 0 and reads back what the OS picked. A hardcoded port previously caused a real false pass here: a stale `next start` left over from a prior manual test run kept answering on that port, so the freshly-spawned (and, in that run, deliberately broken) server was never actually exercised. A fresh port per run makes that class of contamination impossible instead of relying on cleanup discipline.
-- **Fail fast on child-process exit instead of polling out the full timeout.** `waitForServer()` listens for the spawned child's `exit` event and throws immediately -- surfacing the captured server log -- if the process dies before the first successful response, rather than blindly polling for the full timeout against a server that's already gone.
-- **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`. CanopyCMS's dev-mode branch-workspace machinery clones the whole app directory -- including the test file itself -- into `.canopy-dev/content-branches/<branch>/` the first time a request-time content read happens; without the exclude, Vitest picks up that clone as a second, broken test file (no `node_modules` of its own).
+- **Run the expensive step once, assert many times.** Both `next build` invocations run in `beforeAll`; every `it()` only inspects the resulting file trees. Never re-run a build per assertion.
+- **Relocate output when two flavors share one `.next/`.** `moveNextOutputAside()` moves the static build's non-cache output to `.next-static/` before the cms build starts, leaving both inspectable, and `cleanNextOutputKeepCache()` clears everything under `.next/` except `cache/` before each build. `next build` is not guaranteed to prune stale output for routes or `pageExtensions` that no longer apply, so without the clean step a leftover `.next/server/app/edit` could make an assertion pass for the wrong reason — while nuking the cache too would defeat CI's build-cache restore.
+- **Use a dynamically-allocated port for live-server checks, never a hardcoded one.** A smoke test spawns `next start` and fetches routes to verify runtime behavior, not just artifacts. `getFreePort()` binds port 0 and reads back what the OS picked. A hardcoded port caused a real false pass: a stale `next start` from an earlier manual run kept answering, so the freshly-spawned (deliberately broken) server was never exercised. A fresh port makes that contamination impossible instead of relying on cleanup discipline.
+- **Fail fast on child-process exit instead of polling out the timeout.** `waitForServer()` listens for the child's `exit` event and throws immediately, surfacing the captured server log, rather than polling a server that is already gone.
+- **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`: the dev branch-workspace machinery clones the whole app directory — the test file included — into `.canopy-dev/content-branches/<branch>/` on the first request-time read, and Vitest would pick that clone up as a second, broken test file with no `node_modules` of its own.
 
-**Local-run gotcha:** the live-server test's request-time content read resolves against the last git commit (dev-mode branch-workspace resolution), not uncommitted working-tree edits. Running this test locally against WIP changes (to the fixture app or to `withCanopy()`) can make the cms server's `/` return a non-200 until you commit (or run `canopycms sync push`) -- that's expected dev-mode behavior, not a build-shape regression, and the test's own assertion message explains this inline. Read the failure message before assuming a real regression.
+**Local-run gotcha:** the live-server test's request-time read resolves against the last git commit, not uncommitted working-tree edits. Running it locally against WIP changes can make the cms server's `/` return a non-200 until you commit (or `canopycms sync push`) — expected dev-mode behavior, not a build-shape regression. The assertion message says so inline; read it before assuming a regression.
 
 ### `apps/example1` Build Verification (`example1-build` CI Gate)
 
-`apps/example1` -- the reference app most doc snippets and e2e expectations are written
-against -- used to be built by nothing in CI: `validate` only type-checks/lints it, and
-`dual-build` above builds a different app (`apps/dual-build-fixture`). A path-gated
-`example1-build` job in `.github/workflows/ci.yml` closes that gap by running the app's own
-`verify:build` script (`apps/example1/build-verify.test.ts`, vitest):
+`apps/example1` is the reference app most doc snippets and e2e expectations are written against, and `validate` only type-checks and lints it while `dual-build` builds a different app. The path-gated `example1-build` job runs the app's own `verify:build` script (`apps/example1/build-verify.test.ts`):
 
 ```bash
 pnpm --filter canopycms-example-one run verify:build
 ```
 
-(`--filter example1` matches nothing -- `example1` is the directory name, the package is
-`canopycms-example-one`.)
+(`--filter example1` matches nothing — `example1` is the directory name, the package is `canopycms-example-one`.)
 
-Two things about this gate are easy to miss:
-
-- **It asserts on the build's OUTPUT, not its exit code.** The incident that motivated it:
-  re-modelling the `home` entry as a root `index` entry changed its on-disk slug while
-  `app/page.tsx` still read the old one, so `readByUrlPath('/')` resolved nothing and Next
-  prerendered the not-found boundary -- AT `/` -- while the build's exit code stayed 0 the
-  whole time; `sitemap.xml` kept advertising the stale `/home` URL alongside it. "The build
-  passed" was not evidence of anything. `build-verify.test.ts` instead greps the emitted
-  `.next/server/app/index.html` for the home entry's actual hero title (read from its content
-  file, not hardcoded) and checks `sitemap.xml.body` for `/` while asserting the stale `/home`
-  is absent, plus a floor against a near-empty sitemap. Duplicate-URL collisions aren't
-  re-checked separately here -- `assertNoDuplicateUrlPaths` already runs during a normal
-  `next build` via the sitemap and static-params calls, so a real collision already fails the
-  build outright.
-- **The CI job builds on the detached HEAD `actions/checkout` leaves, with no git setup.** A
-  build reads the working tree, never a branch clone, so it reads exactly the PR's content; a
-  green run is the live proof, and `build-verify.test.ts` also asserts the build creates no
-  `.canopy-dev`. `dual-build` above still attaches HEAD, for its request-time reads.
+- **It asserts on the build's OUTPUT, not its exit code.** Re-modelling the `home` entry as a root `index` entry changed its on-disk slug while `app/page.tsx` still read the old one, so `readByUrlPath('/')` resolved nothing and Next prerendered the not-found boundary **at `/`** while the exit code stayed 0, with `sitemap.xml` still advertising the stale `/home`. "The build passed" was evidence of nothing. So the test greps the emitted `.next/server/app/index.html` for the home entry's actual hero title (read from its content file, not hardcoded) and checks `sitemap.xml.body` for `/` while asserting `/home` is absent, plus a floor against a near-empty sitemap. Duplicate-URL collisions are not re-checked here: `assertNoDuplicateUrlPaths` already runs during a normal `next build` via the sitemap and static-params calls, so a real collision fails the build outright.
+- **The CI job builds on the detached HEAD `actions/checkout` leaves, with no git setup.** A build reads the working tree, never a branch clone, so it reads exactly the PR's content and a green run is the live proof; `build-verify.test.ts` also asserts the build creates no `.canopy-dev`. `dual-build` still attaches HEAD, for its request-time reads.
 
 ### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
 
-`scaffold-synth.test.ts` verifies `canopycms init-deploy aws` end to end: it runs the real CLI into a scratch project, then executes the generated `cdk.json`'s own `app` command, and requires a CloudFormation template to come out the other end. It exists because the bug it fixes -- the generated GitHub Actions workflow deployed against a `cdk.json` that nothing had created -- was invisible to `init.test.ts`'s template-string assertions, which passed the whole time. The lesson generalizes past this one test: for generated/scaffolded output, assert on what the output _does_ (does it synth?), not on what it _contains_ (does the string look right?).
-
-Run it locally with:
+`scaffold-synth.test.ts` verifies `canopycms init-deploy aws` end to end: it runs the real CLI into a scratch project, executes the generated `cdk.json`'s own `app` command, and requires a CloudFormation template to come out. The bug it fixes — a generated GitHub Actions workflow deploying against a `cdk.json` nothing had created — was invisible to `init.test.ts`'s template-string assertions, which passed throughout. **For generated output, assert on what it _does_ (does it synth?), not on what it _contains_.**
 
 ```bash
-pnpm --filter canopycms-cdk run build:test-fixtures   # stages worker/dist first, see below
+pnpm --filter canopycms-cdk run build:test-fixtures   # stages worker/dist first
 pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 ```
 
-- **Why this test lives in `canopycms-cdk`, not next to the CLI it exercises.** The synth needs `aws-cdk-lib`, `constructs`, and a resolvable `canopycms-cdk` -- this is the one package where all three are guaranteed present. Scratch projects are created under `packages/canopycms-cdk/.scaffold-synth/` (gitignored) with **no `package.json` of their own**, and that omission is load-bearing: it's what lets Node's self-reference resolution find `canopycms-cdk` from the generated stack by walking up to this package's own manifest via its `exports` field. Adding a `package.json` in the scratch project would break that resolution. The scratch directory sits at the package root, never under `src/`, so a crashed run that skips cleanup can't start failing `pnpm lint`/`pnpm typecheck` with generated files -- both globs cover `src/`.
-- **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth; the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without passing the context can't catch a bad context value -- e.g. a CDKv1-only feature flag that CDKv2 rejects at synth (`UnsupportedFeatureFlag`) -- because a context-free run never reaches that code path.
-- **Fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** The package's own `test` script builds it via `build:test-fixtures` first; running this file in isolation (as above) requires that step too. A skip here would restore exactly the going-green-without-checking property the test exists to remove.
-- **A synth proves nothing about types.** `cdk.json` runs the app through tsx, which strips types, so the file also runs the generated workflow's `npx tsc --noEmit -p infrastructure`, read out of the workflow as `appCommand` is read out of `cdk.json`, and expects it to fail on a misspelled `CanopyCmsService` prop. Here that check resolves `canopycms` and `canopycms-cdk` to their workspace `src/`, not the published `.d.ts`.
+- **Why it lives in `canopycms-cdk`, not next to the CLI it exercises.** The synth needs `aws-cdk-lib`, `constructs` and a resolvable `canopycms-cdk`, and this is the one package where all three are guaranteed present. Scratch projects are created under `packages/canopycms-cdk/.scaffold-synth/` (gitignored) with **no `package.json` of their own**, and that omission is load-bearing: it is what lets Node's self-reference resolution find `canopycms-cdk` from the generated stack by walking up to this package's manifest via its `exports` field. Adding one would break that resolution. The scratch directory sits at the package root, never under `src/`, so a crashed run that skips cleanup cannot start failing `pnpm lint`/`pnpm typecheck` — both globs cover `src/`.
+- **`CDK_OUTDIR` + `CDK_CONTEXT_JSON` are how the CDK CLI drives an app.** The first triggers auto-synth, the second delivers `cdk.json`'s `context` block. A test that runs the generated `app` command without the context cannot catch a bad context value — a CDKv1-only feature flag CDKv2 rejects at synth (`UnsupportedFeatureFlag`), say — because a context-free run never reaches that code path.
+- **It fails loudly, never skips, when `packages/canopycms-cdk/worker/dist` is missing.** A skip would restore exactly the going-green-without-checking property the test exists to remove.
+- **A synth proves nothing about types.** `cdk.json` runs the app through tsx, which strips types, so the file also runs the generated workflow's `npx tsc --noEmit -p infrastructure` — read out of the workflow the same way `appCommand` is read out of `cdk.json` — and expects it to fail on a misspelled `CanopyCmsService` prop. That check resolves `canopycms` and `canopycms-cdk` to their workspace `src/`, not the published `.d.ts`.
 
 ### Test-Owned CDK Synth Output (`newTestApp()`)
 
-A CDK `App` given no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK does clean those up -- from a `process.on('exit')` handler, see `determineOutputDirectory` in `@aws-cdk/cloud-assembly-api`'s `cloud-assembly.js` -- but **a vitest worker is torn down without firing exit handlers**, so under vitest that cleanup never runs and each synth strands an assembly of 0.6-3.2 MB. 26,537 orphaned `cdk.out*` directories (13 GB) accumulated over eight days of ordinary development before it was caught, exhausting free disk. It took that long to notice because a full temp filesystem breaks unrelated tooling, so the symptom surfaces nowhere near its cause.
+A CDK `App` with no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK cleans those up from a `process.on('exit')` handler, but **a vitest worker is torn down without firing exit handlers**, so under vitest each synth strands an assembly of 0.6-3.2 MB. Enough of them accumulate to exhaust free disk, and the symptom — a full temp filesystem breaking unrelated tooling — surfaces nowhere near its cause.
 
-**Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly -- always use `newTestApp()`** from `test-support/test-synth.ts`:
+**Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly — always use `newTestApp()`** from `test-support/test-synth.ts`:
 
 ```typescript
 import { newTestApp } from '../../test-support/test-synth'
@@ -3185,179 +991,79 @@ const stack = new Stack(app, 'TestStack', { env: { account: '123456789012', regi
 app.synth()
 ```
 
-`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root. It is not overridable: `props` is typed `Omit<AppProps, 'outdir'>`, so passing one is a compile error rather than an argument silently dropped. The root itself is created once by vitest's `globalSetup` (`setup`/`teardown`, wired in `vitest.config.ts`) and `rm -rf`'d when the run ends; that lives in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
+`newTestApp(props?)` forwards `props` to `App` but applies `outdir` afterwards, pinned to a fresh `mkdtemp` subdirectory of a per-run root, and is not overridable: `props` is typed `Omit<AppProps, 'outdir'>`, so passing one is a compile error rather than an argument silently dropped. The root is created once by vitest's `globalSetup` and `rm -rf`'d when the run ends — in the main process rather than a per-file `afterAll`, so teardown still runs when an individual test file fails.
 
-Two layers enforce this mechanically rather than relying on convention, and the distinction between them matters:
+Two layers enforce this mechanically, and the distinction matters:
 
-- **The guarantee is behavioral.** `test-support/synth-leak-guard.ts` is a `setupFiles` hook, so it wraps _every_ test file: it snapshots `os.tmpdir()`'s `cdk.out*` entries in `beforeAll` and fails the file on any addition. That catches a leak whatever route produced it -- a namespace-qualified `App`, a scope-less `Stack` (whose constructor builds its own `outdir`-less App), a `Stack` subclass, or an innocuous-looking `makeStack(app?: App)` helper called with nothing.
-- **A textual scan checks the convention.** One test in `test-support/test-synth.test.ts` walks the package's `.ts`/`.tsx`/`.mts`/`.cts` files and fails on a direct `App` construction or a scope-less `Stack`, outside an allowlist of the two files entitled to one (this helper, and `canary/bin/canary.ts`, a real deployable app). It has textual blind spots by construction -- don't widen its patterns to chase subclasses, that is the hook's job -- but it catches a direct construction in a file whose leak would only manifest conditionally, or that a given run never exercises.
+- **The guarantee is behavioral.** `test-support/synth-leak-guard.ts` is a `setupFiles` hook, so it wraps every test file: it snapshots `os.tmpdir()`'s `cdk.out*` entries in `beforeAll` and fails the file on any addition. That catches a leak by whatever route — a namespace-qualified `App`, a scope-less `Stack` (whose constructor builds its own `outdir`-less App), a `Stack` subclass, an innocuous `makeStack(app?: App)` called with nothing.
+- **A textual scan checks the convention.** One test in `test-support/test-synth.test.ts` walks the package's TypeScript files and fails on a direct `App` construction or a scope-less `Stack`, outside an allowlist of the two files entitled to one (this helper, and `canary/bin/canary.ts`, a real deployable app). It has textual blind spots by construction — do not widen its patterns to chase subclasses, that is the hook's job — but it catches a direct construction in a file whose leak would only manifest conditionally.
 
 `test-synth.test.ts` also asserts the tmpdir property directly around one synth of its own, with its non-vacuity checks ordered deliberately _after_ the leak assertion: placed first they fire first under the outdir-removal mutation and mask the assertion they exist to support.
 
-Interrupting a run needs no cleanup from you. Ctrl-C makes vitest exit without running globalSetup teardown, so the root survives; the root's name carries the owning pid and the next run's `setup` removes any root whose process is gone. Only `ESRCH` licenses that delete, so a live run's root -- including a concurrent one -- is never touched.
+Interrupting a run needs no cleanup from you: Ctrl-C makes vitest exit without running globalSetup teardown, so the root survives, and the root's name carries the owning pid so the next run's `setup` removes any root whose process is gone. Only `ESRCH` licenses that delete, so a live run's root — including a concurrent one — is never touched.
 
-`test-support/` is treated like `lambda/`, `canary/`, and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks -- the package `tsconfig.json` is its build/publish config and excludes test files -- and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
+`test-support/` is treated like `lambda/`, `canary/` and `worker/`: a non-shipped directory with its own `tsconfig.json`, appended to the package's `typecheck` and `lint` scripts. That config also includes `../src/**/*.test.ts`, which nothing else typechecks — the package `tsconfig.json` is its build config and excludes test files — and it sets no `rootDir`, which is what lets those suites' deliberate cross-package imports resolve.
 
 ### Testing a Docker Image Asset's Build (Without Docker)
 
-`DockerImageCode.fromEcr(...)` -- what every other synth in `cms-deploy.test.ts` uses -- has no build step, so it can't exercise build-time behavior like the `--platform` CDK picks. For that, use `fromImageAsset(...)` pointed at the Dockerfile-only fixture `test-support/fixtures/docker-image-asset/`: `cdk synth` stages and fingerprints it as an image asset without ever invoking `docker build`. The platform lands in the synthesized **asset manifest**, not the CloudFormation template; read it via `app.synth().artifacts.filter(AssetManifestArtifact.isAssetManifestArtifact)` (`aws-cdk-lib/cx-api`) then `Manifest.loadAssetManifest(artifact.file).dockerImages[*].source.platform` (`aws-cdk-lib/cloud-assembly-schema`). See `synthWithImageAsset` in `cms-deploy.test.ts` and the equivalent check in `scaffold-synth.test.ts`.
+`DockerImageCode.fromEcr(...)`, which every other synth in `cms-deploy.test.ts` uses, has no build step, so it cannot exercise build-time behavior like the `--platform` CDK picks. For that, use `fromImageAsset(...)` pointed at the Dockerfile-only fixture `test-support/fixtures/docker-image-asset/`: `cdk synth` stages and fingerprints it as an image asset without invoking `docker build`. The platform lands in the synthesized **asset manifest**, not the CloudFormation template — read it via `app.synth().artifacts.filter(AssetManifestArtifact.isAssetManifestArtifact)` (`aws-cdk-lib/cx-api`) then `Manifest.loadAssetManifest(artifact.file).dockerImages[*].source.platform` (`aws-cdk-lib/cloud-assembly-schema`). See `synthWithImageAsset` in `cms-deploy.test.ts`.
 
 ### Diffing Synthesized Output Across a Construct Refactor
 
-Moving a builder out of a construct (e.g., a method pulled into a module-local free function) can pass every existing test while still changing the emitted template -- and in CDK a renamed logical ID replaces live resources on the next deploy, so a passing suite is not the relevant proof. Assertions on individual `Template.fromStack()` matchers can all stay green while the underlying JSON has shifted underneath them.
+Moving a builder out of a construct can pass every existing test while changing the emitted template — and in CDK a renamed logical ID replaces live resources on the next deploy, so a passing suite is not the relevant proof. Assertions on individual `Template.fromStack()` matchers can all stay green while the underlying JSON shifts underneath them.
 
-The check that actually proves it: synth the same stack against both the pre- and post-refactor version of the file, dump `Template.fromStack(stack).toJSON()` to a file each time (a throwaway script or test is fine -- see `newTestApp()` above for synthesizing without leaking a `cdk.out`), and diff the two. An identical diff is what proves the refactor is behavior-preserving; passing assertions alone are not. Reach for this on any extraction out of a construct, not just the one that motivated it. Restore the pre-refactor file from a scratchpad copy afterwards, not `git checkout --` -- see the scratchpad-restore note under [Testing Authorization Defaults](#testing-authorization-defaults-defaultbranchaccess--defaultpathaccess).
+The check that does prove it: synth the same stack against both versions of the file, dump `Template.fromStack(stack).toJSON()` each time (a throwaway script is fine — see `newTestApp()` above for synthesizing without leaking a `cdk.out`), and diff the two. An identical diff is the proof that the refactor preserves behavior. Reach for this on any extraction out of a construct. Restore the pre-refactor file from a scratchpad copy afterwards, not `git checkout --` (see [Testing Authorization Defaults](#testing-authorization-defaults-defaultbranchaccess--defaultpathaccess)).
 
-**A mutation only counts once you've confirmed it changed the source.** Running break-and-rerun (introduce a bug, confirm the test fails, restore) across 13 mutations on 16 tests turned up two that "passed" and proved nothing: one edited a property that doesn't affect the behavior it claimed to break (adding `customHeaders: {}` to an origin does not turn on origin access control), and one never applied at all because shell quoting mangled the patch script, leaving the source unchanged. Both looked like "the test is weak" and were neither. Before trusting a green (or red) mutation result, check that the intended edit is actually present in the file -- not just that the test command ran.
+**A mutation only counts once you have confirmed it changed the source.** Across 13 break-and-rerun mutations on 16 tests, two "passed" and proved nothing: one edited a property that does not affect the behavior it claimed to break (adding `customHeaders: {}` to an origin does not turn on origin access control), and one never applied at all because shell quoting mangled the patch script. Both looked like a weak test and were neither. Before trusting a green or red mutation result, check the intended edit is actually present in the file — not just that the test command ran.
 
 ### Testing a Repo Script as a Subprocess (`scripts/bump-version.mjs`)
 
-`packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script rather than importing it, because the script does its work at module scope against a directory tree (reads `package.json` files, writes them, `console.log`s the result, exits) -- there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location:
+`packages/canopycms/src/cli/bump-version.test.ts` tests a plain `scripts/*.mjs` release script as a subprocess rather than importing it, because the script does its work at module scope against a directory tree (reads and writes `package.json` files, logs, exits) — there is no function to call. The fixture is copied in rather than run in place, since the script resolves its target paths from its own location. Reach for this shape for any `scripts/*.mjs` that does real work at import time.
 
 ```typescript
-const execFileAsync = promisify(execFile)
-
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-bump-version-'))
   await fs.mkdir(path.join(tmpDir, 'scripts'), { recursive: true })
   await fs.copyFile(SCRIPT, path.join(tmpDir, 'scripts', 'bump-version.mjs'))
 })
 
-async function run(args: string[]) {
-  const localScript = path.join(tmpDir, 'scripts', 'bump-version.mjs')
-  return execFileAsync(process.execPath, [localScript, ...args], { cwd: tmpDir })
-}
+const run = (args: string[]) =>
+  promisify(execFile)(process.execPath, [path.join(tmpDir, 'scripts/bump-version.mjs'), ...args], {
+    cwd: tmpDir,
+  })
 ```
 
-Reach for this shape for any other `scripts/*.mjs` that does real work at import time -- it generalizes past this one script.
+**Assert both halves of a rejection.** A script that rewrites files in place has to fail closed, not just fail: `expectRejected` seeds a version, asserts `run(args)` rejects, and then asserts every package's version is untouched. Checking the exit code alone would have missed the defect this suite exists for — an unrecognized flag written verbatim as the version string into six `package.json` files, exit 0.
 
-**The `expectRejected` helper asserts both halves of a rejection.** A script that rewrites files in place needs to fail closed, not just fail:
+**Derive test input from the real producer, not a literal.** The prerelease test runs `scripts/prerelease-version.mjs` and feeds its actual stdout into `bump-version.mjs`. A hard-coded `1.2.3` in a test named after the prerelease path stayed green when stricter validation was added and hid a real break of `publish-prerelease.yml`, which passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through. **When a test stands in for a pipeline, derive its input from the upstream stage of that pipeline** — a literal can silently drift from what the real producer emits.
 
-```typescript
-async function expectRejected(args: string[]): Promise<void> {
-  await seed('0.0.63')
-  await expect(run(args)).rejects.toThrow()
-  for (const pkg of PACKAGES) {
-    expect(await readVersion(pkg), `${pkg} must be untouched`).toBe('0.0.63')
-  }
-}
-```
-
-Asserting only the exit code would have missed the real defect this test suite exists for: an unrecognized flag used to be written verbatim as the version string into six `package.json` files and exit 0. Checking the exit code alone is not enough when the code under test writes files -- confirm the write didn't happen either.
-
-**Derive test input from the real producer, don't hand-write it.** The prerelease-path test runs `scripts/prerelease-version.mjs` and feeds its actual stdout into `bump-version.mjs`, instead of hard-coding a version string:
-
-```typescript
-const { stdout: generated } = await execFileAsync(process.execPath, [
-  PRERELEASE_SCRIPT,
-  '0.0.63',
-  '123',
-])
-const prereleaseVersion = generated.trim()
-await run([prereleaseVersion])
-```
-
-This exists because the prior version of that test hard-coded `1.2.3` for a case named after the prerelease path. It stayed green when stricter validation was added, and hid a real break of `publish-prerelease.yml` (which passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through) until a dispatch actually failed. **The general lesson: when a test stands in for a pipeline, derive its input from the upstream stage of that pipeline rather than a literal -- the literal can silently drift from what the real producer emits.**
-
-**`--min <version>` is the release train's self-heal, not something you run routinely.** `publish.yml` commits the version bump only _after_ all five packages publish, so an interrupted run can leave npm holding a version main doesn't know about; every later run would then re-derive that same (already-published) version and fail forever. `--min` floors the bump on `max(committed version, --min value)` instead of the committed version alone. If a release ever gets stuck wedged this way, `node scripts/bump-version.mjs --min <registry-version>` (with the version currently published on npm) is how you'd manually re-derive a safe next version -- normally CI passes this for you.
+**`--min <version>` is the release train's self-heal, not routine.** `publish.yml` commits the version bump only after all five packages publish, so an interrupted run can leave npm holding a version main does not know about, and every later run re-derives that same already-published version and fails forever. `--min` floors the bump on `max(committed version, --min value)`. If a release wedges that way, `node scripts/bump-version.mjs --min <registry-version>` is how you re-derive a safe next version; normally CI passes it for you.
 
 ## Deployment Infrastructure
 
-### CmsWorker (canopycms/worker/cms-worker)
+The design of the prod topology is in [ARCHITECTURE.md](ARCHITECTURE.md#deployment-architecture), the operational procedures in [docs/deploying-to-aws.md](docs/deploying-to-aws.md), the worker's own invariants in [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md), and the CLI's in [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md). What follows is only how a contributor runs and tests this locally.
 
-The `CmsWorker` class handles internet-requiring operations that Lambda cannot perform. It is cloud-agnostic and auth-agnostic:
+### Running the Worker Locally
 
-- **Task queue processing**: Polls `.tasks/pending/` on the workspace filesystem
-- **Git sync**: Fetches from GitHub into `remote.git`, rebases active branch workspaces, and pushes `canopycms-settings-*` branches to GitHub (belt-and-suspenders for the task queue -- ensures settings reach GitHub even if a task queue entry is lost)
-- **Auth cache refresh**: Calls a pluggable `refreshAuthCache` callback
+`CmsWorker` (`canopycms/worker/cms-worker`) handles the internet-requiring work Lambda cannot do: it polls the file-based task queue at `.tasks/pending/`, fetches from GitHub into `remote.git` and rebases active branch workspaces, pushes `canopycms-settings-*` branches, and refreshes the auth cache through a pluggable `refreshAuthCache` callback. It lives in the core package because it has no cloud dependencies.
 
-The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
-
-### Worker Logging: Never Call `console.*` Directly
-
-Code under `packages/canopycms/src/worker/**` and `packages/canopycms-cdk/worker/**` must log via `workerLog` / `workerLogWarn` / `workerLogError` from `src/worker/log.ts` (re-exported from `canopycms/worker/cms-worker`, so no new package entrypoint is needed) -- never call `console.log`/`console.warn`/`console.error` directly. Elsewhere in the codebase, normal console/`mockConsole()` conventions apply unchanged; see [Expecting Console Messages](#expecting-console-messages).
-
-```typescript
-import { workerLog, workerLogWarn, workerLogError } from './log'
-
-workerLog('CMS Worker started') // -> 2026-08-12T21:39:45.214Z INFO CMS Worker started
-```
-
-**Why it's not optional:** in production, the worker's stdout _and_ stderr both append to one file (`/var/log/canopy-worker/worker.log` on the EC2 instance), tailed by the amazon-cloudwatch-agent. The agent config (written by user-data in `packages/canopycms-cdk/src/constructs/cms-service.ts`) sets `multi_line_start_pattern` keyed on the helpers' ISO-8601 timestamp prefix, so a line missing that prefix doesn't start a new CloudWatch event -- it silently gets appended to the previous one, corrupting event boundaries rather than just looking inconsistent. The level tag (`INFO`/`WARN`/`ERROR`) is also load-bearing: it's the only way to tell the two interleaved streams apart downstream. A stray `console.log` in worker code breaks log shipping without erroring locally.
-
-The helpers pass the timestamp and level as separate `console` arguments rather than concatenating them into the message, so passing an `Error` still prints its stack normally.
-
-### Task Queue (canopycms/worker/task-queue)
-
-File-based task queue for async GitHub operations:
-
-```typescript
-import { enqueueTask, dequeueTask, completeTask } from 'canopycms/worker/task-queue'
-
-// Lambda side: enqueue
-const taskId = await enqueueTask(taskDir, {
-  action: 'push-and-create-pr',
-  payload: { branch: 'feature-x', title: 'New feature' },
-})
-
-// Worker side: dequeue and process
-const task = await dequeueTask(taskDir)
-// ... execute task ...
-await completeTask(taskDir, task.id, { prUrl: '...' })
-```
-
-**Task actions (`TaskAction` union in `worker/task-queue.ts`):**
-
-| Action                         | Purpose                                              | Used by                                                           |
-| ------------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| `push-and-create-pr`           | Push branch, create new PR                           | Content branch submit (new PR)                                    |
-| `push-and-update-pr`           | Push branch, update existing PR                      | Content branch submit (existing PR)                               |
-| `push-and-create-or-update-pr` | Push branch, find existing open PR or create new one | Settings branches (idempotent -- settings get updated repeatedly) |
-| `convert-to-draft`             | Convert PR to draft state                            | Withdraw, request-changes                                         |
-| `close-pr`                     | Close a PR                                           | Branch cleanup                                                    |
-| `delete-remote-branch`         | Delete branch from GitHub                            | Branch cleanup                                                    |
-| `push-branch`                  | Push branch without PR operations                    | Sync-only pushes                                                  |
-
-The `push-and-create-or-update-pr` action is specifically designed for settings branches, which are updated many times but should maintain a single open PR. It queries GitHub for an existing open PR on the branch before deciding whether to create or update.
-
-### Auth Caching Pattern
-
-Each auth plugin provides a symmetric pair:
-
-- **Token verifier**: Extracts userId from request context (networkless)
-- **Cache writer**: Populates JSON files for `FileBasedAuthCache`
-
-| Package                | Token Verifier             | Cache Writer          |
-| ---------------------- | -------------------------- | --------------------- |
-| `canopycms-auth-clerk` | `createClerkJwtVerifier()` | `refreshClerkCache()` |
-| `canopycms-auth-dev`   | `createDevTokenVerifier()` | `refreshDevCache()`   |
-
-`CachingAuthPlugin` wraps a token verifier + `FileBasedAuthCache` into a full `AuthPlugin`.
-
-### GitHub Sync Helper (api/github-sync)
-
-`syncSubmitPr()` and `syncConvertToDraft()` transparently use `githubService` when available or fall back to the task queue. API handlers use these without knowing the deployment topology.
-
-`commitToSettingsBranch` in `services.ts` uses the same dual-path pattern for settings branches: direct `githubService.createOrUpdatePR()` when available, or enqueue `push-and-create-or-update-pr` when not. This means settings and content branches share a consistent approach to GitHub synchronization despite having different PR semantics (settings reuse a single PR; content branches create one per branch).
-
-### Worker CLI
-
-For local development in dev mode:
+In dev mode, run one cycle and exit:
 
 ```bash
-pnpm exec canopycms worker run-once  # Refresh cache, process tasks, exit
+pnpm exec canopycms worker run-once  # refresh cache, process tasks, exit
 ```
 
-### Testing
+**Worker code must log through `workerLog`/`workerLogWarn`/`workerLogError` (`src/worker/log.ts`), never `console.*` directly** — an eslint `no-restricted-syntax` rule on `**/worker/**` enforces it, and [worker/AGENTS.md](packages/canopycms/src/worker/AGENTS.md) states why. Elsewhere in the codebase the normal `mockConsole()` conventions apply; see [Expecting Console Messages](#expecting-console-messages).
 
-Integration tests cover the full lifecycle: submit handler enqueues → worker dequeues → task completes. See `src/worker/integration.test.ts`.
+### Testing the Worker
 
-Rebase logic is tested with real git operations in `src/worker/cms-worker-rebase.test.ts`. These tests create local "remote" repos in temp directories to exercise branch skipping (submitted/approved/dirty), clean rebase, and conflict detection with ContentId extraction. See [Testing with Real Git Operations](#testing-with-real-git-operations) for the pattern.
+`src/worker/integration.test.ts` covers the full task lifecycle: the submit handler enqueues, the worker dequeues, the task completes.
 
-`src/worker/cms-worker-rebase-wedge.test.ts` covers the two ways a branch clone gets stuck mid-rebase (a modify/delete conflict, and a rebase interrupted by worker termination) and their recovery. To assert on the `workerLogWarn` output the recovery path emits, it spies on `console.warn` directly rather than `mockConsole()` -- the worker's log helpers route through `console` under the hood, see [Worker Logging](#worker-logging-never-call-console-directly) -- and restores the spy in a `finally` so a failed assertion doesn't leave `console.warn` mocked for later tests:
+Rebase logic is tested against real git in `src/worker/cms-worker-rebase.test.ts` — local "remote" repos in temp directories exercising branch skipping (submitted/approved/dirty), a clean rebase, and conflict detection with ContentId extraction. See [Testing with Real Git Operations](#testing-with-real-git-operations) for the pattern, including how the wedge test classifies which files a `rebase --abort` discards.
+
+`src/worker/cms-worker-rebase-wedge.test.ts` covers the two ways a branch clone gets stuck mid-rebase (a modify/delete conflict, and a rebase interrupted by worker termination) plus recovery. To assert on the `workerLogWarn` output the recovery path emits, it spies on `console.warn` directly rather than using `mockConsole()` — the worker log helpers route through `console` — and restores the spy in a `finally` so a failed assertion cannot leave `console.warn` mocked for later tests:
 
 ```typescript
-const warnings: string[] = []
 const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
   warnings.push(args.map(String).join(' '))
 })
@@ -3368,148 +1074,60 @@ try {
 }
 ```
 
-See [Testing with Real Git Operations](#testing-with-real-git-operations) for how the same file classifies which files a `rebase --abort` will discard, by porcelain status column.
+### Building the Transform Lambda (No Docker)
 
-### Transform Lambda Bundling Without Docker
+The prod transform Lambda needs `sharp`'s native binary for `linux/arm64`, and Docker-based bundling is not available here. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` bundles `handler.ts` with esbuild (leaving `sharp`/`@img/*` and `@aws-sdk/*` external, the latter already in the Node 22.x managed runtime), then runs `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` in the output directory. Since sharp >= 0.33 ships its binary as a platform-specific optional dependency, those npm overrides fetch the linux/arm64 build whatever the host OS is — which is what makes Docker unnecessary, even from macOS.
 
-The prod on-demand transform Lambda needs `sharp`'s native binary for `linux/arm64`, but Docker-based bundling (the usual `aws-cdk-lib/aws-lambda-nodejs` approach) isn't available in this environment. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` works around this:
-
-1. `esbuild` bundles `handler.ts` into a single CJS file, leaving `sharp`/`@img/*` (native bindings) and `@aws-sdk/*` (already present in the Lambda's Node 22.x managed runtime) external.
-2. `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` runs directly in the output directory. Since sharp >=0.33 ships its native binary as a platform-specific optional dependency, npm's `--os`/`--cpu`/`--libc` overrides fetch the linux/arm64 binary regardless of the host OS actually running the install -- this is what makes Docker unnecessary, even from a macOS dev machine.
-
-The `sharp` version installed is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda's bundled binary never drifts from the version the transform engine (`assets/transform.ts`) is written against -- never hardcode a version in `build.mjs`.
-
-Run it before synth/deploy:
+The `sharp` version is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda's binary cannot drift from the version `assets/transform.ts` is written against. **Never hardcode a version in `build.mjs`.**
 
 ```bash
 pnpm --filter canopycms-cdk run build:lambda
 ```
 
-Output lands in `lambda/asset-transform/dist/` (gitignored); the CDK construct's `lambda.Code.fromAsset()` points there, so `cdk synth`/`deploy` fails with "Cannot find asset" if you skip this step.
+Output lands in gitignored `lambda/asset-transform/dist/`, where the construct's `lambda.Code.fromAsset()` points, so `cdk synth`/`deploy` fails with "Cannot find asset" if you skip this.
 
 ### CDK Asset Verification: the Canary Stack
 
-`packages/canopycms-cdk/canary/` is a small CDK app -- not a separate package, it imports `canopycms-cdk`'s own `../../src` directly -- that deploys a throwaway `canopy-assets-canary` stack to a sandbox AWS account (bootstrap qualifier `canopy`) to verify `AssetSupport`'s CloudFront wiring and the transform Lambda against real infrastructure: real CloudFront origin-group failover, a real S3 bucket, a real Lambda invocation. It exists for manual infra verification by contributors working on the assets deployment path -- it is not part of CI or any automated test suite:
+`packages/canopycms-cdk/canary/` is a small CDK app (not a separate package — it imports `../../src` directly) that deploys a throwaway `canopy-assets-canary` stack to a sandbox account, bootstrap qualifier `canopy`, to check `AssetSupport`'s CloudFront wiring and the transform Lambda against real infrastructure: origin-group failover, a real bucket, a real Lambda invocation. It is for manual verification by contributors working on the assets deployment path, and is in no CI job or automated suite.
 
 ```bash
-pnpm --filter canopycms-cdk run build:lambda   # Lambda asset must exist before synth
-cd packages/canopycms-cdk/canary
-npx cdk synth
-npx cdk deploy --profile sandbox-admin
+pnpm --filter canopycms-cdk run build:lambda   # the Lambda asset must exist before synth
+cd packages/canopycms-cdk/canary && npx cdk synth
+cd packages/canopycms-cdk/canary && npx cdk deploy --profile sandbox-admin
 ```
 
-The stack is created with `RemovalPolicy.DESTROY` and `autoDeleteObjects: true` -- it's meant to be deployed, checked, and torn down, not left running.
+The stack sets `RemovalPolicy.DESTROY` and `autoDeleteObjects: true` — deploy it, check it, tear it down.
 
-### CLI (`canopycms init`)
+### Working on the `init` CLI
 
-The `canopycms init` CLI scaffolds a new CanopyCMS project. It lives at `src/cli/init.ts` and uses `tsx` as its runtime so TypeScript works in both source and published dist contexts.
+`canopycms init` lives at `src/cli/init.ts` and runs under `tsx` (`#!/usr/bin/env tsx`, not `node`), so `tsx` is a production dependency: it must be present at runtime for an adopter running `npx canopycms init`.
 
-**Key implementation details:**
+Templates are `.template` files under `src/cli/template-files/`, located at runtime relative to the script via `import.meta.url`. The directory is named `template-files` rather than `templates` to avoid an ESM directory-import collision with `templates.ts`. Because `tsc` compiles only `.ts`, they are copied separately by the `postbuild` script (`cp -r src/cli/template-files dist/cli/template-files`) — new template files are picked up automatically, but renaming the directory or changing the copy target means updating both `templates.ts`'s `TEMPLATES_DIR` and `postbuild`.
 
-- **Shebang:** `#!/usr/bin/env tsx` (not `node`). This means `tsx` is a production dependency -- it must be available at runtime for adopters who run `npx canopycms init`.
-- **Template files:** The CLI reads `.template` files from `src/cli/template-files/` at runtime using `import.meta.url` to locate the directory relative to the script. The directory was renamed from `templates/` to `template-files/` to avoid an ESM directory import collision with `templates.ts`.
-- **postbuild copy:** Since `tsc` only compiles `.ts` files, the template files must be copied to `dist/` separately. The `postbuild` script in `package.json` handles this:
+`init.integration.test.ts` runs the binary from both source and `dist/`. The dist block needs `pnpm build` to have run first; its `beforeAll` checks for `dist/cli/init.js` and throws a clear error when it is missing. **When you change the set of files `canopycms init` creates, update the `expectedFiles` array in both the source and dist blocks.**
 
-```bash
-# In packages/canopycms/package.json scripts:
-"postbuild": "cp -r src/cli/template-files dist/cli/template-files"
-```
+### Working on the `sync` CLI
 
-If you add new template files to `src/cli/template-files/`, the postbuild step picks them up automatically. If you rename the directory or change the copy target, update both `templates.ts` (the `TEMPLATES_DIR` constant) and the `postbuild` script.
+`canopycms sync` (`src/cli/sync.ts`) moves content between the developer's working tree and the branch workspaces in `.canopy-dev/content-branches/`. The commands and workflow are adopter-facing — see [README.md](README.md#local-development-sync). Three implementation rules:
 
-**CLI integration tests (`init.integration.test.ts`):**
+- **Throw typed errors; let the entrypoint exit.** Precondition failures throw `SyncError` (`cli/sync.ts`) or `MigrateError` (`cli/migrate.ts`) rather than printing a warning and exiting 0; `main().catch` in `cli/cli.ts` turns any thrown error into `Error: <message>` on stderr plus exit 1. A new CLI precondition throws a typed error with an actionable message — never `console.warn` + `process.exit(0)`.
+- **Project root resolution is shared.** Project-bound commands (`sync`, `migrate`, `worker run-once`, `generate-ai-content`) walk up from cwd to the nearest `canopycms.config.ts` via `findProjectRoot()` (`cli/project-root.ts`), so they work from a subdirectory and fail fast outside a project.
+- **Both flags are path-traversal guarded.** `--branch` and `--content-root` are validated with `assertWithinDir()`, and every resolved path is checked to stay inside its expected parent before any file operation, so `--branch ../../etc` cannot escape.
 
-The CLI has integration tests that verify the binary actually runs and produces expected files. These tests exercise both source and dist execution paths:
-
-```typescript
-// Source path: runs src/cli/init.ts via tsx
-execFileAsync(tsxBin, [SRC_BIN, 'init', '--non-interactive', '--force'], { cwd: tmpDir })
-
-// Dist path: runs dist/cli/init.js via tsx (requires prior build)
-execFileAsync(tsxBin, [DIST_BIN, 'init', '--non-interactive', '--force'], { cwd: tmpDir })
-```
-
-The dist tests will fail if `pnpm build` has not been run first, since they depend on compiled output in `dist/`. The test `beforeAll` hook checks for `dist/cli/init.js` and throws a clear error if it is missing.
-
-**When to update these tests:** If you change the set of files that `canopycms init` creates, update the `expectedFiles` array in both the dist and source test blocks in `init.integration.test.ts`.
-
-### CLI (`canopycms sync`)
-
-The `canopycms sync` command provides bidirectional content sync between the developer's working tree and CMS branch workspaces in `.canopy-dev/content-branches/`. Implementation is in `src/cli/sync.ts`.
-
-**Why this exists:** In dev mode, the CMS works against branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
-
-**Failure idiom: throw typed errors, let the entrypoint exit.** Precondition failures in `sync` and `migrate` throw typed errors (`SyncError` in `cli/sync.ts`, `MigrateError` in `cli/migrate.ts`) rather than printing warnings and exiting 0. The `main().catch` in `cli/cli.ts` converts any thrown error into `Error: <message>` on stderr plus exit code 1. When adding a new CLI precondition, throw a typed error with an actionable message — don't `console.warn` + `process.exit(0)`. **Project root resolution:** project-bound commands (`sync`, `migrate`, `worker run-once`, `generate-ai-content`) resolve the project root by walking up from cwd to the nearest `canopycms.config.ts` (`findProjectRoot()` in `cli/project-root.ts`), so they work from subdirectories and fail fast with a clear error when run outside a project.
-
-**Commands:**
-
-```bash
-# Push working-tree content into a branch workspace (working tree → CMS)
-npx canopycms sync push
-
-# Pull content from a branch workspace (CMS → working tree)
-npx canopycms sync pull
-
-# 3-way merge: merge working-tree and editor changes, pull result back
-npx canopycms sync both
-
-# Abort a failed merge in the branch workspace
-npx canopycms sync abort
-
-# Target a specific branch workspace
-npx canopycms sync push --branch my-feature
-
-# Specify a custom content directory (default: content)
-npx canopycms sync push --content-root src/content
-```
-
-**Push flow:** Copies the working tree's content directory into the branch workspace, replacing it. Uncommitted editor changes in the workspace are auto-committed to git history before overwriting, so nothing is lost. The resulting commit is tagged `canopycms-sync-base` for future 3-way merges. Uses crash-safe directory replacement (backup-rename pattern) so that if interrupted, at least one copy always exists on disk.
-
-**Pull flow:** Copies content from a branch workspace back into the working tree's content directory. Before overwriting, detects both uncommitted changes and untracked files that would be deleted, and warns with a confirmation prompt. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
-
-**Both (3-way merge) flow:** Invoked via `canopycms sync both`. Uses a `canopycms-sync-base` git tag as the merge base to perform a proper 3-way merge between working-tree changes and editor changes in the workspace. If the merge produces conflicts, the workspace is left in a merge state with instructions to resolve manually, then run `canopycms sync pull` or `canopycms sync abort`.
-
-**Abort flow:** Runs `git merge --abort` in the branch workspace to cancel a failed merge and restore the workspace to its pre-merge state.
-
-**Security: path traversal guards.** The `--branch` and `--content-root` flags are validated with `assertWithinDir()` to prevent path traversal attacks (e.g., `--branch ../../etc`). Every resolved path is checked to ensure it stays within its expected parent directory before any file operations.
-
-**Typical workflow:**
-
-```bash
-# 1. Edit content files directly
-vim content/posts/new-post.mdx
-
-# 2. Push changes so the CMS can see them
-npx canopycms sync push
-
-# 3. Open the CMS UI, refine content, publish
-
-# 4. Pull the published changes back to your working tree
-npx canopycms sync pull
-
-# 5. Review and commit
-git diff
-git add content/
-git commit -m "Update posts"
-
-# Or use 3-way merge to handle both directions at once
-npx canopycms sync both
-```
+Push replaces the workspace's content directory from the working tree, auto-committing any uncommitted editor changes there first so nothing is lost, tagging the result `canopycms-sync-base` for later 3-way merges, and using a backup-rename replacement so an interruption always leaves one complete copy on disk. Pull copies back the other way, detecting uncommitted changes and untracked files that would be deleted and prompting first. `both` uses the `canopycms-sync-base` tag as the merge base, leaving the workspace in a merge state with instructions on conflict; `abort` runs `git merge --abort` there.
 
 ## Dependency Overrides (`pnpm.overrides`)
 
-Root `package.json` pins several transitive dependencies under `pnpm.overrides` to force in a security fix ahead of whatever version the direct dependency tree would otherwise resolve. JSON can't hold comments, so the rationale for each pin lives here — check this table before removing or loosening any of them, and re-check `pnpm why <pkg>` still resolves to a non-vulnerable version if you do.
+Root `package.json` pins several transitive dependencies to force in a security fix ahead of whatever the dependency tree would otherwise resolve. JSON carries no comments, so the rationale for each pin lives here — check this list before removing or loosening one, and re-check that `pnpm why <pkg>` still resolves to a non-vulnerable version if you do.
 
-| Override                 | Advisory                                                                      | Reason                                                                                                                                                |
-| ------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ws@^8.20.1`             | GHSA-58qx-3vcg-4xpx (CVE-2026-45736)                                          | Uninitialized memory disclosure in `ws` before 8.20.1; pin forces the patched version.                                                                |
-| `uuid@^11.1.1`           | GHSA-w5hq-g745-h8pq (CVE-2026-41907)                                          | Missing buffer bounds check in `uuid` v3/v5/v6 when a `buf` is supplied; fixed in 11.1.1.                                                             |
-| `js-cookie@^3.0.7`       | GHSA-qjx8-664m-686j (CVE-2026-46625)                                          | Per-instance prototype hijack in `assign()` enables cookie-attribute injection in <=3.0.5.                                                            |
-| `fast-xml-parser@^5.7.0` | GHSA-gh4j-gqv2-49f6 (CVE-2026-41650)                                          | XMLBuilder XML comment/CDATA injection via unescaped delimiters, fixed in 5.7.0.                                                                      |
-| `brace-expansion@^2.0.3` | GHSA-v6h2-p8h4-qcjw (CVE-2025-5889)                                           | ReDoS in `brace-expansion`'s `expand()`; pin keeps the 2.x line above the vulnerable <=2.0.1 range.                                                   |
-| `picomatch@^4.0.4`       | GHSA-c2c7-rcm5-vvqj (CVE-2026-33671) and GHSA-3v7f-55p6-f55p (CVE-2026-33672) | ReDoS via extglob quantifiers and a POSIX-character-class method-injection bug, both fixed in 4.0.4.                                                  |
-| `postcss@^8.5.10`        | GHSA-qx2v-qp2m-jg93 (CVE-2026-41305)                                          | XSS via unescaped `</style>` in PostCSS's CSS stringify output, fixed in 8.5.10.                                                                      |
-| `yaml@1@^1.10.3`         | GHSA-48c2-rrv3-qjmp (CVE-2026-33532)                                          | Stack overflow via deeply nested YAML collections; pins the legacy `yaml` 1.x line (still pulled in transitively) above the vulnerable <1.10.3 range. |
+- `ws@^8.20.1` — GHSA-58qx-3vcg-4xpx (CVE-2026-45736): uninitialized memory disclosure before 8.20.1.
+- `uuid@^11.1.1` — GHSA-w5hq-g745-h8pq (CVE-2026-41907): missing buffer bounds check in v3/v5/v6 when a `buf` is supplied; fixed in 11.1.1.
+- `js-cookie@^3.0.7` — GHSA-qjx8-664m-686j (CVE-2026-46625): per-instance prototype hijack in `assign()` enables cookie-attribute injection in <= 3.0.5.
+- `fast-xml-parser@^5.7.0` — GHSA-gh4j-gqv2-49f6 (CVE-2026-41650): XMLBuilder comment/CDATA injection via unescaped delimiters; fixed in 5.7.0.
+- `brace-expansion@^2.0.3` — GHSA-v6h2-p8h4-qcjw (CVE-2025-5889): ReDoS in `expand()`; keeps the 2.x line above the vulnerable <= 2.0.1 range.
+- `picomatch@^4.0.4` — GHSA-c2c7-rcm5-vvqj (CVE-2026-33671) and GHSA-3v7f-55p6-f55p (CVE-2026-33672): extglob ReDoS and a POSIX-class method-injection bug, both fixed in 4.0.4.
+- `postcss@^8.5.10` — GHSA-qx2v-qp2m-jg93 (CVE-2026-41305): XSS via unescaped `</style>` in stringify output; fixed in 8.5.10.
+- `yaml@1@^1.10.3` — GHSA-48c2-rrv3-qjmp (CVE-2026-33532): stack overflow on deeply nested collections; pins the legacy 1.x line (still pulled in transitively) above the vulnerable < 1.10.3 range.
 
 ## Quality Checks
 
@@ -3522,15 +1140,13 @@ pnpm test
 
 ### Client-Bundle Boundary Check
 
-The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries -- at any depth -- must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so this used to surface only in the e2e production build, minutes after the mistake.
-
-`dependency-cruiser` now enforces the reachability directly:
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build.
 
 ```bash
 pnpm lint:bundle
 ```
 
-It runs in CI right after ESLint, and in the pre-commit hook whenever a commit touches either package's `src/`. Config lives in [.dependency-cruiser.mjs](.dependency-cruiser.mjs). `tsPreCompilationDeps` stays off on purpose, so `import type` edges (erased at compile time) are not followed -- type-only imports of server modules remain legal. A second rule fails on unresolvable relative imports, because an import the resolver can't follow is a subtree the reachability rule can't see.
+`dependency-cruiser` enforces the reachability directly. It runs in CI right after ESLint, and in the pre-commit hook whenever a commit touches either package's `src/`; config lives in [.dependency-cruiser.mjs](.dependency-cruiser.mjs). `tsPreCompilationDeps` stays off on purpose, so `import type` edges (erased at compile time) are not followed and type-only imports of server modules stay legal. A second rule fails on unresolvable relative imports, since an import the resolver cannot follow is a subtree the reachability rule cannot see.
 
 A violation prints the whole chain from the entry to the built-in, which is usually the fastest way to see where the boundary broke:
 
@@ -3538,12 +1154,13 @@ A violation prints the whole chain from the entry to the built-in, which is usua
 error client-bundle-no-node-builtins: packages/canopycms/src/client.ts → fs/promises
     packages/canopycms/src/editor/CanopyEditor.tsx →
     ...
-    packages/canopycms/src/editor/hooks/useBranchManager.tsx →
     packages/canopycms/src/paths/branch.ts →
     fs/promises
 ```
 
-The fix is normally to import the dependency-free sibling instead of the node-importing module -- `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) -- or to make the import `import type`. If a client-reachable module genuinely needs new browser-safe logic that currently lives in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+The fix is normally to import the dependency-free sibling — `paths/branch-name` (not `paths/branch` or the `paths` barrel), `assets/asset-prefixes` (not `assets/keys`), `assets/transform-directives` (not `assets/transform`) — or to make the import `import type`. When client-reachable code genuinely needs new browser-safe logic that currently sits in a node-importing file, extract that logic into its own dependency-free module rather than widening the rule.
+
+One limit: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` is the backstop.
 
 ### Import-Cycle Check
 
@@ -3553,31 +1170,27 @@ The same `dependency-cruiser` config carries a `no-circular` rule over both pack
 pnpm lint:cycles
 ```
 
-Both packages are at **zero cycles**, so any violation this reports is one you just introduced. Under ESM a runtime import cycle makes module-init order load-order dependent, and the symptom -- an undefined binding at first use -- points nowhere near the cause, so this is cheaper to catch here than to debug later.
+Both packages are at **zero cycles**, so any violation is one you just introduced. Under ESM a runtime import cycle makes module-init order load-order dependent, and the symptom — an undefined binding at first use — points nowhere near the cause, so this is much cheaper to catch here than to debug later.
 
-`tsPreCompilationDeps` is off (see above), which matters more for this rule than for the bundle one: `import type` edges are erased and can never trip it, so a type-only back-import from an extracted module to the one it was extracted from is legal. Only value imports count.
+`tsPreCompilationDeps` being off matters more for this rule than for the bundle one: `import type` edges are erased and can never trip it, so a type-only back-import from an extracted module to the one it came from is legal. Only value imports count.
 
-The rule bites hardest when splitting a class whose methods called each other freely -- the extracted modules can easily end up mutually importing. Break the edge the way the worker split did: hoist the shared piece into a third module that imports neither (`worker/history-rewrite.ts`), or pass the collaborator in through a context object rather than importing it (`worker/worker-context.ts`).
+The rule bites hardest when splitting a class whose methods called each other freely, since the extracted modules easily end up mutually importing. Break the edge the way the worker split did: hoist the shared piece into a third module that imports neither (`worker/history-rewrite.ts`), or pass the collaborator in through a context object rather than importing it (`worker/worker-context.ts`).
 
 ### Published-Package ESM Import Check
-
-`tsc` with `moduleResolution: "Bundler"` emits extensionless relative specifiers (`from './adapter'`), which `tsc` and bundlers both tolerate but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). Four of five published packages shipped that way, undetected, until a real adopter hit it:
 
 ```bash
 pnpm check:esm
 ```
 
-This **requires a build first** -- it resolves each published package's entry points against real built `dist/` output, not `src/`. It runs in CI (`.github/workflows/ci.yml`) right after a step that builds the four non-core published packages (CI previously only built `packages/canopycms`, so nothing ever built `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, or `canopycms-cdk` to check).
+`tsc` with `moduleResolution: "Bundler"` emits extensionless relative specifiers (`from './adapter'`), which `tsc` and bundlers tolerate but Node's native ESM resolver rejects outright (`ERR_MODULE_NOT_FOUND`). [ARCHITECTURE.md](ARCHITECTURE.md#esm-output-must-be-node-resolvable-not-just-bundler-resolvable) states why nothing else in this repo can see that class of defect, and what the guard therefore has to do.
 
-Each package's `build` script runs `rm -rf dist` before `tsc`: bare `tsc` never removes output it no longer emits, so narrowing a `tsconfig.build.json`'s `exclude` list (or deleting a source file) leaves the old compiled file behind in `dist/` on top of a fresh build. If you ever see `check:esm` report an "undeclared runtime dependency" for something like `vitest` or `@testing-library/react` that nothing in current `src/` imports, that is almost always a stale `dist/` from before this clean step existed, or from a `tsc` invocation that bypassed the package's `build` script -- delete `dist/` by hand and rebuild before trusting the guard's output.
+[scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs) **requires a build first** — it resolves each published package's entry points against real built `dist/` output, not `src/`. It builds a sandbox `node_modules`, merging each package's `publishConfig` over its `package.json` (the same merge `npm publish`/`pnpm pack` perform), points the result at the real `dist/`, and then:
 
-**Why it can't just `import('canopycms')` in-repo:** this is a pnpm workspace, so `node_modules/canopycms` is a symlink that resolves through the package's _dev_ `exports` field (raw `.ts`, meant for bundlers/tsx) -- never through `publishConfig.exports`, the field a real npm consumer actually gets. A naive in-repo smoke test would pass while the published tarball was broken. The guard ([scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)) instead builds a sandbox `node_modules`, merging each package's `publishConfig` over its `package.json` (the same merge `npm publish`/`pnpm pack` perform) and pointing the result at the real built `dist/`, then imports every entry point from there under a real Node subprocess.
-
-**The check also requires every entry point from CommonJS.** When a `package.json` has an `exports` map Node ignores `main` entirely, and a `require()` resolves the conditions `["node", "require", "default"]` -- so a map offering only `{ types, import }` matches _nothing_ on that path and dies at resolution with `ERR_PACKAGE_PATH_NOT_EXPORTED`, before the module is ever loaded. Every published entry point except `canopycms-next/config` shipped that way. It bites hardest on `canopycms-cdk`: our own `cdk.json` template runs `node --import tsx infrastructure/bin/app.ts`, and an adopter repo without `"type": "module"` (the Next.js default) resolves that through Node's **CJS** loader, so `cdk synth` and `cdk deploy` both failed for the scaffold we ship. Nothing about the code was wrong -- `require(esm)` loads these files fine once resolution gets past the gate, which is why all five packages -- and the repo root, whose own `check:esm` CJS probe needs it -- now declare `engines: node >=22.12.0`, the release in which Node unflagged `require(esm)`, and list conditions `types` first, then `import`, then `require`. Position matters: resolvers take the first matching key, and some ignore a `types` entry that sits after `import`.
-
-Nothing else in this repo can see that class. Vitest resolves through Vite, and the example apps through webpack/Turbopack; **all of them use the `import` condition**, so a fully green test suite and a working example app say nothing about whether a CommonJS consumer can load the package at all. The guard therefore runs a real `require()` from a real `.cjs` file in the same sandbox, alongside a static pass over every published subpath: it must carry a `require` (or `default`) condition, list `types` first at every nesting level, and name targets that are valid per Node (`./`-prefixed, no `..`), exist on disk, and are covered by `files`. That static half is the only thing standing behind the `skip` subpaths, which no probe can execute, and the behavioral half catches what no amount of reading `package.json` reveals: a module graph that grows a top-level `await` keeps a perfectly valid `require` condition and still fails, because `require(esm)` refuses async graphs (`ERR_REQUIRE_ASYNC_MODULE`). Verify the guard still bites by appending `await Promise.resolve()` to a built `dist/index.js`: the ESM probe should stay green and the CJS probe go red.
-
-**And it compiles a consumer under six real adopter tsconfig shapes.** The probes above answer "can Node load this"; they do not answer the question an adopter actually has, which is whether `import { X } from 'canopycms-cdk'` compiles in the project shape they have. Those answers genuinely differ, so the matrix pins all six — value imports, not `import type`, because a type-only import is erased and never produces the interop diagnostic that is the whole point:
+- **imports every entry point as ESM** in a real Node subprocess;
+- **requires every entry point from CommonJS.** When a `package.json` has an `exports` map Node ignores `main` entirely, and a `require()` resolves the conditions `["node", "require", "default"]` — so a map offering only `{ types, import }` matches nothing and dies with `ERR_PACKAGE_PATH_NOT_EXPORTED` before the module loads. All five packages therefore declare `engines: node >=22.12.0` (the release that unflagged `require(esm)`) and list conditions `types` first, then `import`, then `require`. **Position matters:** resolvers take the first matching key, and some ignore a `types` entry that sits after `import`.
+- **statically checks every published subpath:** it must carry a `require` (or `default`) condition, list `types` first at every nesting level, and name targets that are valid per Node (`./`-prefixed, no `..`), exist on disk, and are covered by `files`. That static half is the only thing standing behind the `skip` subpaths, which no probe can execute.
+- **typechecks a generated consumer** against the same sandbox with `module`/`moduleResolution: nodenext` and `skipLibCheck` deliberately **off**, which is the only way to see a missing extension inside a `.d.ts` (the ARCHITECTURE section above says why that failure is otherwise silent). Two classes of diagnostic fail it: anything attributed to the generated `consumer.ts` (it imports nothing but our own packages, so every diagnostic there is ours), and `TS2834`/`TS2835`/`TS2307`/`TS7016` whose path points into one of our own `dist/` directories. Diagnostics on third-party paths are ignored, because the probe sets `types: []` and dependency declarations then emit unrelated noise. This pass covers **every** published subpath, not just the runtime-testable ones: each `skip` is a runtime limitation and none of them apply to `import type`.
+- **compiles a consumer under six real adopter tsconfig shapes**, with value imports rather than `import type` (a type-only import is erased and never produces the interop diagnostic that is the point):
 
 | Consumer | `module` / `moduleResolution`             | Result                                      |
 | -------- | ----------------------------------------- | ------------------------------------------- |
@@ -3588,79 +1201,25 @@ Nothing else in this repo can see that class. Vitest resolves through Vite, and 
 | CommonJS | `nodenext`                                | compiles                                    |
 | CommonJS | `node16`                                  | **`TS1479` — pinned limitation**            |
 
-The two pinned rows are **not** tolerated failures: a row flipping in _either_ direction fails the check, because either means the adopter-facing story moved and the docs describing it are now wrong. Neither is caused by the `exports` map. `node16` is pinned to Node 16 semantics, where `require(esm)` does not exist, so TypeScript refuses any value import of an ESM-only package from a CommonJS file — measured before and after the `require` condition was added and the diagnostic is the same either way; the cause is the package being ESM-only, and the fix for an adopter is `nodenext` or a dynamic `import()` — not `node10`, which resolves only the root entry, as the row above it records. `node10` predates `exports` and ignores it entirely, so it looks for a _physical_ `node_modules/canopycms/server.js` while our files live under `dist/`; supporting it would mean stub directories or `typesVersions`, legacy compat this project does not carry.
+The two pinned rows are **not** tolerated failures: a row flipping in _either_ direction fails the check, because either way the adopter-facing story moved and the docs describing it are wrong. Neither is caused by the `exports` map. `node16` is pinned to Node 16 semantics, where `require(esm)` does not exist, so TypeScript refuses any value import of an ESM-only package from a CommonJS file; the cause is the package being ESM-only, and an adopter's fix is `nodenext` or a dynamic `import()`. `node10` predates `exports` and ignores it, looking for a physical `node_modules/canopycms/server.js` while our files live under `dist/`; supporting it would mean stub directories or `typesVersions`, legacy compat this project does not carry.
 
-That `node10` root row is worth understanding rather than just keeping green: it compiles through `main`, which is exactly why `tsc` stayed happy for the entire period when Node could not load the package at all. A green typecheck told the adopter nothing. That divergence is the defect this whole file exists to catch.
+**It also enforces publish-status coverage.** Every `exports` subpath of every published package must be declared in the `PACKAGES` list as exactly one of `test` (imported live under Node), `skip: <reason>` (published but not exercisable this way, e.g. a client entry that pulls in CSS), or `devOnly: <reason>` (in the dev `exports` map so sibling workspace packages can import it, deliberately absent from `publishConfig.exports`). `checkCoverage()` enforces both directions: a `devOnly` subpath reappearing in `publishConfig.exports` fails, and so does a `publishConfig.exports` subpath declared nowhere. A subpath advertised in `publishConfig.exports` but excluded from the build resolves in-repo through the dev map and fails for every external consumer; this is the gap the coverage check closes. **A new workspace-internal-only subpath must be declared `devOnly` here.** See [ARCHITECTURE.md](ARCHITECTURE.md#package-architecture) for why `test-utils` stays unpublished.
 
-**The check also enforces publish-status coverage.** Every `exports` subpath of
-every published package must be declared in [scripts/check-esm-imports.mjs](scripts/check-esm-imports.mjs)'s
-`PACKAGES` list as exactly one of `test` (imported live under Node), `skip: <reason>`
-(published, but can't be exercised this way -- e.g. a client-only entry that pulls in CSS),
-or `devOnly: <reason>` (present in the package's dev `exports` map so sibling workspace
-packages can import it, but deliberately absent from `publishConfig.exports`). `checkCoverage()`
-enforces both directions: a `devOnly` subpath that reappears in `publishConfig.exports` fails,
-and so does a subpath in `publishConfig.exports` that isn't declared here at all. This is what
-now catches the shape of bug that shipped `canopycms/test-utils` broken for a while:
-`publishConfig.exports` advertised the subpath while `tsconfig.build.json` excluded
-`src/test-utils/**` from the build (its sources import `vitest` at module scope and augment
-its global types, so it can't be published as-is), so an external `import 'canopycms/test-utils'`
-hit `ERR_MODULE_NOT_FOUND` while in-repo consumers resolved it fine through the dev exports map
-and never noticed. If you add a new workspace-internal-only subpath to a published package,
-declare it `devOnly` here -- leaving it out of `publishConfig.exports` without declaring it is
-exactly the gap that let this ship. See [ARCHITECTURE.md](ARCHITECTURE.md#package-architecture)
-for the full rationale on why `test-utils` stays unpublished.
+**Fixing a hit:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory and bare `.`/`..` specifiers). It is wired into all five published packages' `build` scripts — `packages/canopycms` through its own `packages/canopycms/scripts/postbuild.mjs`, the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`. **Wire a new published package's `build` script the same way**; `check:esm` fails on the omission. It rewrites `.d.ts` alongside `.js`, appending the **runtime** extension (`./x.js`, never `./x.d.ts`), which is what TypeScript expects in a declaration file.
 
-**Fix:** run [scripts/add-js-extensions.mjs](scripts/add-js-extensions.mjs), the shared post-build step that rewrites extensionless relative specifiers to explicit `.js` (or `/index.js` for directory and bare `.`/`..` specifiers). It is now wired into all five published packages' `build` scripts (`packages/canopycms` via its own `packages/canopycms/scripts/postbuild.mjs`; the other four inline as `tsc ... && node ../../scripts/add-js-extensions.mjs dist`). If you add a new published package, wire its `build` script the same way -- `check:esm` will fail on the omission the next time CI runs.
+Each package's `build` script runs `rm -rf dist` before `tsc`, because bare `tsc` never removes output it no longer emits: narrowing a `tsconfig.build.json` `exclude` list, or deleting a source file, otherwise leaves the stale compiled file behind on top of a fresh build. An "undeclared runtime dependency" report for something like `vitest` that nothing in current `src/` imports is almost always a stale `dist/` from a `tsc` invocation that bypassed the package's `build` script — delete `dist/` by hand and rebuild before trusting the output.
 
-**The check has a second pass, for `.d.ts`.** The same missing extension in a declaration file does not throw, so the runtime probe above cannot see it: an adopter on `moduleResolution: "node16"`/`"nodenext"` fails to resolve `export * from './x'` inside a `.d.ts`, and TypeScript's recovery is to type the whole import as `any`. Their build stays green while every type we export silently becomes `any` -- and under `skipLibCheck: true`, which most scaffolds set, there is no diagnostic at all. So `check:esm` also typechecks a generated consumer against the same sandbox with `module`/`moduleResolution: nodenext` and `skipLibCheck` deliberately **off**. Two classes of diagnostic fail it, and both are needed:
+The rewrite pattern is the most fragile part and fails silently in both directions: too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, idempotence), and `pnpm check:esm` runs it first so it executes in CI.
 
-- **Anything attributed to the generated `consumer.ts`.** It imports nothing but our own packages, so every diagnostic in it is ours by construction -- a missing `.d.ts` (`TS7016`), a `publishConfig` `types`/exports path pointing at output that was never built (`TS2307`). Filtering these out by path was this guard's own first bug: `dist/server.d.ts` could be deleted outright and the check still passed green.
-- **`TS2834`/`TS2835`/`TS2307`/`TS7016` whose path points into one of our own `dist/` directories** -- the declaration-kept-an-extensionless-import case, which surfaces inside our declarations rather than at the consumer.
-
-Diagnostics attributed to third-party paths are ignored: the probe sets `types: []`, so ambient `@types` are not auto-included and dependency declarations emit unrelated noise (missing `NodeJS` namespace, `Buffer`, bare `child_process` specifiers, Next's own extensionless imports). Note the sandbox _does_ have `@types/node` symlinked in -- `types: []` is what excludes the globals, not its absence. `TS2503`/`TS2591` are deliberately not in the list, since they say nothing about resolution.
-
-This pass covers **every published subpath, not just the runtime-testable ones**. Each `skip` in the `PACKAGES` list is a _runtime_ limitation (a CSS import Node's loader rejects, a `next/server` specifier only a bundler resolves), and none of them apply to `import type`, which never executes the module. Restricting the type pass to `test` entries left canopycms's entire `editor/` declaration subtree unguarded, because only `./client` reaches it.
-
-`addJsExtensions` rewrites `.d.ts` alongside `.js` for this reason; note it appends the **runtime** extension (`./x.js`, never `./x.d.ts`), which is what TypeScript expects to see in a declaration file.
-
-The rewrite pattern is the most fragile part and fails silently in both directions -- too narrow and a relative specifier ships unrewritten (a bare `.` did exactly that), too wide and a bare package name gets a spurious `.js` welded on. `node scripts/add-js-extensions.mjs --self-test` asserts the pattern's classification table plus an end-to-end rewrite (directory expansion, bare dot, already-suffixed specifiers, `.d.ts` alongside `.js`, and idempotence). `pnpm check:esm` runs it first, so it executes in CI.
-
-When changing either the rewrite or the guard, verify the guard still fails. Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass should go red. Deleting a built `.d.ts` outright should also go red. If either stays green, the guard is not testing what it claims -- and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
+**When you change either the rewrite or the guard, verify the guard still fails.** Strip a `.js` off one relative specifier in a built `dist/**/*.d.ts` and re-run `pnpm check:esm`: the runtime probe should stay green and the type pass go red. Deleting a built `.d.ts` outright should also go red. Appending `await Promise.resolve()` to a built `dist/index.js` should turn the CJS probe red while ESM stays green, because `require(esm)` refuses async graphs (`ERR_REQUIRE_ASYNC_MODULE`). If any of those stays green the guard is not testing what it claims — and confirm the mutation actually landed before trusting the result (see [Diffing Synthesized Output Across a Construct Refactor](#diffing-synthesized-output-across-a-construct-refactor)).
 
 ### Standalone CMS Image Smoke Test (`standalone-image` CI job)
 
-`scripts/smoke/standalone-image.mjs` builds the CMS editor image that `canopycms init-deploy aws`
-generates (`Dockerfile.cms.template`), boots it, and sends it real requests. Its header comment
-is authoritative on the why -- read it before changing the script. In short:
+`scripts/smoke/standalone-image.mjs` builds the CMS editor image `canopycms init-deploy aws` generates (`Dockerfile.cms.template`), boots it, and sends it real requests. **Its header comment is authoritative on the why — read it before changing the script.** In short:
 
-- **Scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of
-  `canopycms`, `canopycms-next`, and `canopycms-auth-dev` (`npm pack` won't do -- only pnpm
-  applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are
-  workspace links compiled through `transpilePackages`, which is not what an adopter installs.
-  The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as
-  `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under
-  pnpm bundles sharp instead (seen on Next 15.5.21; see
-  [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
-- **Runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main`
-  `release-base` branch copied in before boot -- see the header comment for why. The page's title
-  in the working tree, which `next build` reads, differs from its title in the `release-base`
-  commit, which requests read, so a check can tell which copy served a response.
-- **Checks (`assertContainer`, 14 in all):**
-  - `whoami` answers 200;
-  - `/hello` renders the `release-base` title (a request-time read of the branch clone), not the
-    working-tree one;
-  - `/sitemap.xml` lists the page's URL. Its slug is the same in the working tree and the
-    `release-base` commit, so this check cannot yet tell a build-time read from a request-time one
-    ([cms-image-pr5-review-followups.md](.claude/future-tasks/cms-image-pr5-review-followups.md),
-    item 5);
-  - `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time
-    read); `/no/such/route` is a 404 carrying the working-tree title (Next serves it from the
-    not-found page `next build` prerendered); `/favicon.ico` is not a 5xx;
-  - an asset round trip: presign -> proxied upload/finalize -> the `orig` identity transform
-    (through sharp) as a PNG -> WebP resize;
-  - sharp externalized as a `.next/node_modules/sharp-*` alias; each alias has the libvips-cpp its
-    own sharp declares; each alias loads and encodes;
-  - zero `ERR_DLOPEN_FAILED` in the container logs.
+- **The app is scaffolded OUTSIDE this workspace.** A Next 16.1.7 app installs `pnpm pack` tarballs of `canopycms`, `canopycms-next` and `canopycms-auth-dev` (`npm pack` will not do — only pnpm applies `publishConfig` and rewrites `workspace:` ranges). In this workspace those packages are workspace links compiled through `transpilePackages`, which is not what an adopter installs. The registry-shaped install, built with Next 16's default Turbopack, externalizes sharp as `.next/node_modules/sharp-<hash>`, the shape the libvips defect shows in. A webpack build under pnpm bundles sharp instead (see [webpack-standalone-sharp-bundled.md](.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+- **It runs in dev mode**, with a git checkout of the scaffold's `content/` on a non-`main` `release-base` branch copied in before boot. The page's title in the working tree, which `next build` reads, differs from its title in the `release-base` commit, which requests read, so a check can tell which copy served a response.
+- **14 checks (`assertContainer`)**: `whoami` answers 200; `/hello` renders the `release-base` title (a request-time read of the branch clone), not the working-tree one; `/sitemap.xml` lists the page's URL — its slug is identical in both copies, so this check cannot yet tell a build-time read from a request-time one ([cms-image-pr5-review-followups.md](.claude/future-tasks/cms-image-pr5-review-followups.md), item 5); `/no-such-page` is a 404 carrying the `release-base` title (the root layout's request-time read) while `/no/such/route` is a 404 carrying the working-tree title (Next serves the not-found page `next build` prerendered); `/favicon.ico` is not a 5xx; an asset round trip (presign, proxied upload/finalize, the `orig` identity transform through sharp as a PNG, a WebP resize); sharp externalized as `.next/node_modules/sharp-*` aliases, each with the libvips-cpp its own sharp declares, each loading and encoding; and zero `ERR_DLOPEN_FAILED` in the container logs.
 
 Run it locally (needs Docker running, Node >= 22.2, pnpm, and corepack for `--pm pnpm`):
 
@@ -3669,218 +1228,90 @@ node scripts/smoke/standalone-image.mjs --pm pnpm
 node scripts/smoke/standalone-image.mjs --pm npm
 ```
 
-Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (default 11.27.0,
-written as the scaffold's `packageManager`), `--tarballs <dir>` (reuse pre-packed tarballs instead
-of packing; exactly one per package), `--work-dir <dir>` (must be outside the repo, checked as
-given and through the real path of its nearest existing ancestor before it is created), `--keep`
-(keep the container, the image, and the scaffold they were built from).
+Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (default 11.27.0, written as the scaffold's `packageManager`), `--tarballs <dir>` (reuse pre-packed tarballs, exactly one per package), `--work-dir <dir>` (must be outside the repo — checked as given and through the real path of its nearest existing ancestor before it is created), and `--keep` (keep the container, image and scaffold).
 
-**When it fails.** Once the container exists, the script writes its whole log to
-`<work-dir>/container.log` on every exit path, and prints the last 200 lines when a check failed or
-the run stopped before the checks. Without `--work-dir` the work dir is a temp directory, deleted
-only after a fully green run without `--keep`. In CI a failed leg uploads `container.log` as an
-artifact.
+**When it fails.** Once the container exists the script writes its whole log to `<work-dir>/container.log` on every exit path, and prints the last 200 lines when a check failed or the run stopped before the checks. Without `--work-dir` the work dir is a temp directory, deleted only after a fully green run without `--keep`. In CI a failed leg uploads `container.log` as an artifact.
 
-**Red-before-green:** `pnpm pack --pack-destination <dir>` from `packages/<name>` against a
-deliberately broken copy of that package, copy the other two tarballs into the same directory,
-then run with `--tarballs <dir>`. Restore the source from a scratch copy afterward -- never
-`git checkout --`.
+**Red-before-green:** `pnpm pack --pack-destination <dir>` from `packages/<name>` against a deliberately broken copy of that package, copy the other two tarballs into the same directory, then run with `--tarballs <dir>`. Restore the source from a scratch copy afterward — never `git checkout --`.
 
-**Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized"
-check on purpose -- that's the guard working, not a fixture bug.
+**Pitfall:** a fixture that bundles sharp instead of externalizing it fails the "externalized" check on purpose. That is the guard working, not a fixture bug.
 
-CI runs it as `standalone-image`, matrixed over pnpm+npm on `ubuntu-latest` and pnpm on
-`ubuntu-24.04-arm` (the Lambda's default architecture). Gated by `dorny/paths-filter` like
-`dual-build` -- the job always reports, only the expensive build+boot steps are skipped -- on
-every source and packaging input of the three packages (each one's `src/**`, `package.json`,
-`tsconfig.json` and `tsconfig.build.json`, plus `packages/canopycms/scripts/**`,
-`scripts/add-js-extensions.mjs` and `tsconfig.base.json`), the lockfile, the root `package.json`
-and `.nvmrc`, and the script and workflow themselves. `ci.yml` has the list and why it is this
-wide.
+CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` and pnpm on `ubuntu-24.04-arm` (the Lambda's default architecture). It is gated by `dorny/paths-filter` like `dual-build` — the job always reports, only the expensive build and boot steps are skipped — on every source and packaging input of the three packages, the lockfile, the root `package.json`, `.nvmrc`, and the script and workflow themselves. `ci.yml` carries the list and why it is that wide.
 
 ### Future-Tasks Backlog Check
 
-`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row. Four failure modes kept slipping through review, so they are now enforced:
+`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row.
 
 ```bash
 pnpm lint:tasks
 ```
 
-It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) -- plain node, no dependencies. It checks:
+It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) — plain node, no dependencies. It enforces four things:
 
-- **Dead links** -- every `.md` link target must resolve **relative to the linking file's own directory**. This matters more than it sounds: task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in the files that did _not_ change. Both dead links found on 2026-08-13 were relative-path errors (one missing a `../`, one carrying a stale `../`) that a repo-root-relative check would have called clean.
-- **Stale open rows** -- a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
-- **Orphans, both directions** -- a task file no `index.md` row points at, and a row pointing at a file that does not exist.
-- **`[[wikilinks]]`** -- they render as literal `[[text]]` on GitHub and are invisible to the dead-link check, so they rot silently. Of the 41 present on 2026-08-13, 5 were already dead, four of them pointing at a Claude _memory_ filename rather than anything in the repo. All were converted to markdown links; this check keeps them from returning. Kebab-case slugs only, so `[[...slug]]` (Next.js catch-all routes) and `[[:space:]]` (POSIX class) stay legal in prose.
+- **Dead links** — every `.md` link target must resolve **relative to the linking file's own directory**. Task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in files that did not change, and a repo-root-relative check would call those clean.
+- **Stale open rows** — a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
+- **Orphans, both directions** — a task file no `index.md` row points at, and a row pointing at a file that does not exist.
+- **`[[wikilinks]]`** — they render as literal `[[text]]` on GitHub and are invisible to the dead-link check, so they rot silently. Kebab-case slugs only, so `[[...slug]]` (Next.js catch-all routes) and `[[:space:]]` (POSIX class) stay legal in prose.
 
-### Resolving a task: use `--fix`
+Only `.md` targets are checked. Task files also cite source files as prose written relative to the repo root rather than as navigable links; checking those would be pure false positives.
 
-Moving a file into `resolved/` invalidates relative paths in two directions at once -- links _inside_ the moved file (siblings are now one level up, repo-root docs one level further) and links _pointing at_ it (now behind `resolved/`). That churn is mechanical, and the checker already knows where the target went, so let it do the edit:
+When you retire a task, do all three things together or the check will name the one you missed: `git mv` the file into `resolved/`, move its `index.md` row to the Resolved section, and fix any inbound links. One deliberate exception is documented in the backlog itself — `program-b-final-review-followups.md` strikes items ~~in place~~ rather than moving them, because the file still holds open work.
+
+**Use `--fix` for the mechanical half.** Moving a file into `resolved/` invalidates relative paths in two directions at once — links _inside_ the moved file (siblings are now one level up, repo-root docs one further) and links _pointing at_ it (now behind `resolved/`) — and the checker already knows where the target went:
 
 ```bash
 pnpm lint:tasks --fix
 ```
 
-It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically so a path that also appears as prose is left alone. A 2026-08-13 audit moved 9 files and needed 13 hand-edits; `--fix` reproduces all of them byte-for-byte.
-
-Two things it deliberately will **not** fix, because both need judgment: a **stale open row** (moving it to the Resolved section usually means rewriting the summary too) and an **orphan file** (its row has to be written by whoever knows what the task is).
-
-Only `.md` targets are checked. Task files also cite source files (`packages/canopycms/src/config.ts`) as prose written relative to the repo root, not as navigable links; checking those would be pure false positives.
-
-When you retire a task, do all three things together or the check will tell you which you missed: `git mv` the file into `resolved/`, move its `index.md` row to the Resolved section, and fix any inbound links. One deliberate exception is documented in the backlog itself -- `program-b-final-review-followups.md` strikes findings ~~in place~~ rather than moving them, because the file still holds open work.
-
-One limit worth knowing: the check does not follow into `node_modules`, so a server-only npm package (`sharp`, `simple-git`, the S3 SDK) imported from client code slips past it. The e2e production `next build` remains the backstop for that.
+It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically, so a path that also appears as prose is left alone. Two things it deliberately will **not** fix, because both need judgment: a **stale open row** (moving it to the Resolved section usually means rewriting the summary too) and an **orphan file** (its row has to be written by whoever knows what the task is).
 
 ### Trojan Source (Bidirectional Unicode) Check
 
-CI scans tracked files for bidirectional unicode control characters (U+202A-202E, U+2066-2069) before `pnpm install` runs, catching CVE-2021-42574 in seconds. It checks file _contents_ and file _names_ separately -- `git grep` reads contents only, so a file merely named with an override (`report<U+202E>gnp.ts`, which renders as `report st.png`) needs its own pass over `git ls-files -z`. Content matching uses `git grep -P -I`, so a file git treats as binary (a NUL byte, or a `.gitattributes` `binary`/`-diff` marking) is skipped -- a deliberate trade, since without `-I` a future binary fixture would false-positive on any stray `E2 80 AA`-`AE` byte run.
+CI scans tracked files for bidirectional unicode control characters (U+202A-202E, U+2066-2069) before `pnpm install` runs, catching CVE-2021-42574 in seconds. It checks file _contents_ and file _names_ separately: `git grep` reads contents only, so a file merely named with an override (`report<U+202E>gnp.ts`, which renders as `report st.png`) needs its own pass over `git ls-files -z`. Content matching uses `git grep -P -I`, so a file git treats as binary (a NUL byte, or a `.gitattributes` `binary`/`-diff` marking) is skipped — a deliberate trade, since without `-I` a future binary fixture would false-positive on any stray `E2 80 AA`-`AE` byte run.
 
-It pins `LC_ALL=C.UTF-8`: `git grep -P` only compiles `\x{...}` escapes above 0xFF in PCRE2 UTF mode, which git enables only under a UTF-8 locale -- under `LC_ALL=C` the command dies with exit 128 instead of matching nothing. The **content** half therefore branches on exit status with `case` rather than `if`: 0 (matches found) fails, 1 (clean) passes, anything else -- including that 128 -- fails loudly rather than being read as "clean".
+It pins `LC_ALL=C.UTF-8`: `git grep -P` compiles `\x{...}` escapes above 0xFF only in PCRE2 UTF mode, which git enables only under a UTF-8 locale — under `LC_ALL=C` the command dies with exit 128 instead of matching nothing. The **content** half therefore branches on exit status with `case` rather than `if`: 0 (matches) fails, 1 (clean) passes, and anything else — including that 128 — fails loudly rather than reading as clean.
 
-The **filename** half is built differently, and deliberately. It uses perl rather than `grep -P`, so it is runnable on macOS too (BSD grep has no `-P`), and it matches the raw UTF-8 **bytes** rather than decoding with `-CSD`. Decoding would make a path whose bytes are an invalid multi-byte sequence -- a bad or missing continuation after a start byte such as `E2`, though not a stray `\xff`, which never reaches the decoder -- a _fatal_ match error, aborting the scan partway and leaving every later path unexamined. That is a way to mask a bidi filename, since invalid-UTF-8 paths are creatable on the runner's ext4 (not on macOS/APFS). Detection there is signalled by output rather than exit status, because an `END` block runs on death too and would launder a fatal into a status the caller reads as clean; `set -o pipefail` covers the matching case where `git ls-files` itself fails.
+The **filename** half is built differently, deliberately. It uses perl rather than `grep -P`, so it runs on macOS too (BSD grep has no `-P`), and it matches the raw UTF-8 **bytes** rather than decoding with `-CSD`. Decoding would make a path whose bytes are an invalid multi-byte sequence — a bad or missing continuation after a start byte such as `E2`, though not a stray `\xff`, which never reaches the decoder — a _fatal_ match error, aborting the scan partway and leaving every later path unexamined. That is a way to mask a bidi filename, since invalid-UTF-8 paths are creatable on the runner's ext4 (not on macOS/APFS). Detection there is signalled by output rather than exit status, because an `END` block runs on death too and would launder a fatal into a status the caller reads as clean; `set -o pipefail` covers the matching case where `git ls-files` itself fails.
 
-A wrong byte range would fail open, so the step self-tests the pattern against all nine codepoints before trusting a clean result, and both halves splice one shared definition so the self-test cannot drift from the scan. Those nine are the embeddings, overrides and isolates only -- not the marks U+061C/U+200E/U+200F, which reorder just adjacent neutral runs and appear legitimately in the RTL content this CMS edits. ESLint's `security/detect-bidi-characters` overlaps but is JS/TS-only and only a warning, so it doesn't gate CI.
+A wrong byte range would fail open, so the step self-tests the pattern against all nine codepoints before trusting a clean result, and both halves splice one shared definition so the self-test cannot drift from the scan. Those nine are the embeddings, overrides and isolates only — not the marks U+061C/U+200E/U+200F, which reorder just adjacent neutral runs and appear legitimately in the RTL content this CMS edits. ESLint's `security/detect-bidi-characters` overlaps but is JS/TS-only and only a warning, so it does not gate CI.
 
 ### Dependency License Scan (Trivy)
 
 CI runs a Trivy `fs` scan (`scanners: license`, `severity: HIGH,CRITICAL`, `exit-code: 1`) **after** `pnpm install`, deliberately: Trivy reads `pnpm-lock.yaml` but collects license metadata from the installed tree, so against a bare checkout it reports the lockfile as "Not scanned" and exits 0 without having inspected anything.
 
-A new HIGH/CRITICAL (LGPL/GPL-class) license anywhere in the production dependency graph fails the build. Either remove the dependency or add a documented exemption to [.trivy-ignore-policy.rego](.trivy-ignore-policy.rego), passed via the action's `ignore-policy:` input. The existing exemption covers libvips (`LGPL-3.0-or-later`), pulled in by `sharp` (a direct production dependency), and is scoped by package-name prefix because the flagged package differs between a dev machine (`@img/sharp-libvips-darwin-arm64`) and CI (`@img/sharp-libvips-linux-x64`, `-linuxmusl-x64`).
+A new HIGH/CRITICAL (LGPL/GPL-class) license anywhere in the production dependency graph fails the build. Either remove the dependency or add a documented exemption to [.trivy-ignore-policy.rego](.trivy-ignore-policy.rego), passed via the action's `ignore-policy:` input. The existing exemption covers libvips (`LGPL-3.0-or-later`), pulled in by `sharp`, and is scoped by package-name prefix because the flagged package differs between a dev machine (`@img/sharp-libvips-darwin-arm64`) and CI (`@img/sharp-libvips-linux-x64`, `-linuxmusl-x64`).
 
-It has to be a rego policy rather than the simpler `.trivyignore.yaml`, and the reason is worth knowing before you reach for the YAML form: a YAML `licenses:` rule matches the license expression _alone_ and cannot be narrowed to a package. Every license finding here carries `FilePath: "pnpm-lock.yaml"`, so `paths:` only ever matches the lockfile, and `purls:` is not applied to license findings at all. A YAML rule would therefore have suppressed _every_ `LGPL-3.0-or-later` dependency, present and future -- silently passing exactly what the scan exists to catch. Rego receives `PkgName`, so it exempts the packages we mean and nothing else.
+**It has to be a rego policy, not the simpler `.trivyignore.yaml`.** A YAML `licenses:` rule matches the license expression _alone_ and cannot be narrowed to a package: every license report here carries `FilePath: "pnpm-lock.yaml"`, so `paths:` only ever matches the lockfile, and `purls:` is not applied to license results at all. A YAML rule would therefore suppress _every_ `LGPL-3.0-or-later` dependency, present and future — silently passing exactly what the scan exists to catch. Rego receives `PkgName`, so it exempts the packages we mean and nothing else.
 
 ### Waiting on PR Checks
-
-Watching a PR's CI by hand -- or worse, by inline bash loop -- is how a session loses twenty minutes and then merges on a result it misread. Use the watcher instead:
 
 ```bash
 node scripts/wait-for-pr-checks.mjs 272
 ```
 
-It polls until the situation is decided and then prints exactly one verdict, which is also its exit code: `0 PASSED`, `1 FAILED` (naming the checks and linking the jobs), `2 BLOCKED` (merge conflicts), `3 NO_CHECKS`, `4 TIMED_OUT`, `5 ERROR`. Defaults are a 30s poll, a 25 minute budget, and a 120s grace period for checks to first appear; `--interval`, `--timeout`, `--grace`, `--repo`, `--required`, `--fail-fast` and `--verbose` adjust that. Omit the PR number to watch the current branch's PR. It emits one line per **state change** rather than per poll, so it is quiet enough to sit behind a `Monitor` command.
-
-#### Why not just loop on `gh pr checks`
-
-Because the naive loop --
-
-```bash
-# Do not do this.
-for i in $(seq 1 50); do
-  s=$(gh pr checks "$PR" 2>/dev/null | awk -F'\t' '{print $1"\t"$2}')
-  if [ -n "$s" ] && [ "$(echo "$s" | grep -c pending)" = "0" ]; then
-    echo "COMPLETE"; break
-  fi
-  sleep 30
-done
-```
-
--- has six failure modes that all present identically, as "still waiting". Every one of them was hit in a single working day (2026-08-22), and each maps to something the script now does:
-
-- **It goes silent when it gives up.** Running out of iterations exits 0 with no output, which is indistinguishable from still polling. This caused a false "checks are still running" belief twice in one day. The watcher's loudest path is its give-up path, and `TIMED_OUT` prints the current state and the words `this is NOT a pass`.
-- **It cannot see a conflicted PR.** When a PR is `CONFLICTING`/`DIRTY`, GitHub cannot build the merge ref, so `pull_request` workflows never run and there is nothing to poll. `gh pr checks` says `no checks reported`, the loop's `[ -n "$s" ]` guard treats that as "not yet", and it spins the full 25 minutes. Verified on a deliberately conflicted throwaway PR: the naive loop would have waited 25 minutes for CI that was never coming; the watcher returned `BLOCKED` in 1.5 seconds. Mergeability is checked **before** check state for this reason, via `gh pr view --json mergeable,mergeStateStatus`.
-- **It cannot tell "no checks yet" from "no checks ever".** Right after a push nothing has registered; on a branch no workflow triggers for, nothing ever will. A bounded `--grace` window separates them, after which `NO_CHECKS` is its own verdict.
-- **It swallows `gh` failures.** `2>/dev/null` plus an empty-output guard turns an expired token, a rate limit or a network blip into "still pending", permanently. The watcher classifies gh's stderr: permanent errors (bad PR number, auth) stop immediately, everything else gets a bounded retry with backoff, and exhausting that budget is a reported `ERROR`.
-- **Green can be stale.** Re-running a check replays it against the base it originally ran against, and a `pull_request` workflow is not re-triggered when the base moves -- so a PR whose base has advanced can report green from a run that never saw the current base. A merge was made on exactly that basis. `PASSED` is annotated with a `STALE WARNING` when the base has advanced past the PR head.
-- **Tab-delimited output is not a data format.** `awk -F'\t'` broke on a check name with unexpected spacing. The script uses `gh pr checks --json` and its pre-classified `bucket` field (`pass`/`fail`/`pending`/`skipping`/`cancel`), and fails closed on a bucket it does not recognize rather than counting it as passing.
-
-Two things worth knowing about what `gh` actually exposes, both established by checking rather than assuming:
-
-- **`gh pr checks --json` has no head-SHA field.** As of gh 2.97 the full set is `bucket, completedAt, description, event, link, name, startedAt, state, workflow`. Staleness therefore cannot be answered from the check runs at all, and is derived from the commit graph instead: `gh api repos/{slug}/compare/{headRefOid}...{baseTip}` reports `ahead_by` as the number of base commits the PR head has never contained. When the base commit dates are also newer than the last check completion, the warning says so explicitly.
-- **`baseRefOid` is a snapshot, not the current base tip.** This one is a trap, because the field name reads like it means "where the base is". It is where the base pointed when the PR was last synced. Measured on 2026-08-22: a PR whose base had just advanced still reported the pre-advance SHA, and comparing against it returned `ahead_by: 0` for every PR tried -- an implementation using it looks correct, runs clean, and silently reports every stale green as fresh. The base tip is resolved from `gh api repos/{slug}/git/ref/heads/{baseRefName}` instead, with `baseRefOid` kept only as a fallback if that lookup fails.
-- **Staleness is only meaningful on an OPEN PR.** On a merged or closed PR the base has almost always moved on by definition, so the same comparison fires constantly and its advice ("update the branch to re-verify") is nonsense for something already merged. The check is skipped unless the PR is open.
-- **`mergeStateStatus: BLOCKED` is not a reason to stop waiting.** It means "required reviews or required checks are not satisfied yet", which is the normal state of a healthy PR mid-CI. Only `CONFLICTING`/`DIRTY` terminates the watch. Conflating the two would make the watcher give up on every PR in this repo, since branch protection puts open PRs in `BLOCKED` while checks run.
-
-A merged or closed PR is evaluated once rather than polled, because no further results can arrive -- so the watcher is also a quick way to ask "what did CI say about that PR" after the fact.
+Use the watcher rather than watching a PR by hand or with an inline bash loop, which cannot distinguish a conflicted PR, a stale green, a never-registered workflow or a `gh` failure from "still pending". [scripts/wait-for-pr-checks.mjs](scripts/wait-for-pr-checks.mjs) and its skill own that behaviour. It polls until the situation is decided, then prints exactly one verdict, which is also its exit code: `0 PASSED` (annotated `STALE WARNING` when the base has advanced past the PR head), `1 FAILED` (naming the checks and linking the jobs), `2 BLOCKED` (merge conflicts), `3 NO_CHECKS`, `4 TIMED_OUT`, `5 ERROR`. Omit the PR number to watch the current branch's PR; `--interval`, `--timeout`, `--grace`, `--repo`, `--required`, `--fail-fast` and `--verbose` adjust the defaults (30s poll, 25 minute budget, 120s grace for checks to appear). It emits one line per **state change** rather than per poll, so it is quiet enough to sit behind a `Monitor` command. A merged or closed PR is evaluated once rather than polled, so it also answers "what did CI say about that PR" after the fact.
 
 ### Public re-exports: attach JSDoc at the entrypoint
 
-When you add a new top-level public symbol re-exported from `packages/canopycms/src/server.ts` (or `index.ts`) via a named `export { X } from './module'` statement, **attach JSDoc above the re-export site too**, even if the source file already documents the original declaration. TypeScript's JSDoc propagation through `export { X } from './module'` is inconsistent across LSP versions and module-resolution modes, so adopters hovering over `import { X } from 'canopycms/server'` in VSCode can lose the documentation if it only lives on the original. Duplicating it at the re-export site is the reliable fix and the convention this codebase follows. Wildcard `export *` re-exports propagate more reliably and don't need duplication.
+When you add a new top-level public symbol re-exported from `packages/canopycms/src/server.ts` (or `index.ts`) via a named `export { X } from './module'`, **attach JSDoc above the re-export site too**, even when the source file already documents the original declaration. TypeScript's JSDoc propagation through a named re-export is inconsistent across LSP versions and module-resolution modes, so an adopter hovering over `import { X } from 'canopycms/server'` can lose the documentation if it lives only on the original. Wildcard `export *` re-exports propagate reliably and need no duplication.
 
 ### CI Workflow Conventions
 
-When adding a step to `.github/workflows/*.yml` (or the generated adopter deploy workflow template):
+When adding a step to `.github/workflows/*.yml`, or to the generated adopter deploy workflow template:
 
-- **Pin third-party actions to a full commit SHA, with the version tag as a trailing comment** -- `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`, not `@v7`. A movable tag can be repointed (the `tj-actions/changed-files` supply-chain incident is the canonical example); a pinned SHA can't run different code without the diff showing up in this repo's history. This applies to every workflow, but matters most in `publish.yml`, which mints a token that can bypass branch protection and holds `id-token: write` for npm provenance across five public packages. Nothing refreshes these pins for you: `.github/dependabot.yml` raises security updates only, and only scans `.github/workflows/`, so it never touches the adopter template or the example. A stale pin shows up as a warning annotation on every job instead of as a PR -- the Node 20 action-runtime deprecation arrived that way in 2026-09.
-- **Give every job an explicit, minimal `permissions:` block** rather than relying on the repo-level default. `ci.yml`'s job needs nothing but `contents: read` (plus `pull-requests: read`, for `dorny/paths-filter`) even though it runs `pnpm install`, which executes untrusted dependency lifecycle scripts alongside whatever credentials `actions/checkout` persisted on disk -- an explicit read-only block means that scope can't silently widen if the repo-level default ever does. Jobs that need to write (`publish.yml`'s `contents: write`/`id-token: write`) should scope permissions per-job, not workflow-wide, so an unrelated job in the same file doesn't inherit write access it never needed.
+- **Pin third-party actions to a full commit SHA, with the version tag as a trailing comment** — `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`, not `@v7`. A movable tag can be repointed (the `tj-actions/changed-files` supply-chain incident is the canonical example); a pinned SHA cannot run different code without the diff showing up in this repo's history. This applies to every workflow and matters most in `publish.yml`, which mints a token that can bypass branch protection and holds `id-token: write` for npm provenance across five public packages. Nothing refreshes these pins for you: `.github/dependabot.yml` raises security updates only and scans only `.github/workflows/`, so it never touches the adopter template or the example, and a stale pin shows up as a warning annotation on every job rather than as a PR.
+- **Give every job an explicit, minimal `permissions:` block** rather than relying on the repo-level default. `ci.yml`'s job needs nothing but `contents: read` (plus `pull-requests: read`, for `dorny/paths-filter`) even though it runs `pnpm install`, which executes untrusted dependency lifecycle scripts alongside whatever credentials `actions/checkout` persisted on disk — an explicit read-only block means that scope cannot silently widen if the repo-level default ever does. Jobs that need to write (`publish.yml`'s `contents: write`/`id-token: write`) scope permissions per job, not workflow-wide, so an unrelated job in the same file does not inherit write access it never needed.
 
 ### Storybook
 
-Update stories when UI changes. Run Storybook to verify:
+Update stories when UI changes, and run Storybook to verify:
 
 ```bash
 pnpm --filter canopycms storybook
 ```
 
-### Test Coverage
-
-Add tests alongside new logic. Integration tests cover end-to-end behavior.
-
-### Async Changes Quick Reference
-
-**Function signatures that changed to async:**
-
-| Function                                             | Location                                         | Reason                               |
-| ---------------------------------------------------- | ------------------------------------------------ | ------------------------------------ |
-| `createCanopyServices(config, entrySchemaRegistry?)` | `packages/canopycms/src/services.ts`             | Loads `.collection.json` meta files  |
-| `createNextCanopyContext(options)`                   | `packages/canopycms-next/src/context-wrapper.ts` | Calls async `createCanopyServices()` |
-
-**What to update in your code:**
-
-```typescript
-// BEFORE: Synchronous service creation
-const services = createCanopyServices(config)
-
-// AFTER: Async service creation
-const services = await createCanopyServices(config)
-
-// BEFORE: Synchronous Next.js context
-const { getCanopy } = createNextCanopyContext({ config, authPlugin })
-
-// AFTER: Async Next.js context
-const { getCanopy } = await createNextCanopyContext({
-  config,
-  authPlugin,
-  entrySchemaRegistry,
-})
-```
-
-**New required properties in mock services:**
-
-```typescript
-// Always include entrySchemaRegistry when creating mock services
-const services = createMockServices({
-  entrySchemaRegistry: {}, // Required even if empty
-})
-```
-
-**Test setup pattern:**
-
-```typescript
-// Tests must use async functions for setup
-it('does something', async () => {
-  const services = await createCanopyServices(config)
-  // ... rest of test
-})
-
-// Or use beforeEach for shared setup
-let services: CanopyServices
-beforeEach(async () => {
-  services = await createCanopyServices(config)
-})
-```
-
-**Common errors and fixes:**
-
-| Error                                              | Cause                       | Fix                                         |
-| -------------------------------------------------- | --------------------------- | ------------------------------------------- |
-| `Property 'entrySchemaRegistry' is missing`        | Using old mock structure    | Add `entrySchemaRegistry: {}` to mock       |
-| `Cannot read property 'then' of undefined`         | Forgot to await             | Add `await` before `createCanopyServices()` |
-| `Type 'Promise<CanopyServices>' is not assignable` | Not awaiting async function | Add `await` or use `async` function         |
-
 ### Claude Subagents
 
-For automated quality checks, see:
-
-- `.claude/agents/test.md` - Test runner
-- `.claude/agents/typecheck.md` - Type checker
-- `.claude/agents/review.md` - Code review
+- `.claude/agents/test.md` — test runner
+- `.claude/agents/typecheck.md` — type checker
+- `.claude/agents/review.md` — code review

@@ -19,7 +19,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                                                  |
 | `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                                              |
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
-| `github-auth.ts`     | Which GitHub credential this worker uses (token or App), how an installation token is minted, the PAT swap in `refreshCredential` behind its 60s floor, and PEM normalization                                                                                              |
+| `github-auth.ts`     | GitHub credential selection (token or App), installation-token minting, the PAT swap in `refreshCredential` behind its 60s floor, PEM normalization                                                                                                                        |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
 `history-rewrite` → `worker-context`. `github-auth` sits outside that chain as a leaf:
