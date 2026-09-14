@@ -45,7 +45,7 @@
         },
         "packages/canopycms/src/http": {
           "maxRun": 30,
-          "ratio": 0.386
+          "ratio": 0.41
         },
         "packages/canopycms/src/operating-mode": {
           "maxRun": 30,
