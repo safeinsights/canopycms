@@ -1,11 +1,8 @@
-// HTTP types
 export type { CanopyRequest, CanopyResponse, CanopyBinaryResponse } from './types'
 export { jsonResponse, isCanopyBinaryResponse } from './types'
 
-// Router
 export type { CanopyHandler, RouteDefinition, RouteMatch, CanopyRouter } from './router'
 export { createCanopyRouter } from './router'
 
-// Core request handler
 export type { CanopyHandlerOptions, CanopyRequestHandler } from './handler'
 export { createCanopyRequestHandler, createCanopyRequestHandlerFromConfig } from './handler'

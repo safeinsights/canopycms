@@ -1,10 +1,6 @@
 import type { ContentFormat } from '../config'
 
-/**
- * Get the file extension for a content format
- * @param format - The content format (md, mdx, json, yaml)
- * @returns The file extension including the dot (e.g., '.md', '.json', '.yaml')
- */
+/** The file extension, dot included, for a content format. */
 export const getFormatExtension = (format: ContentFormat): string => {
   if (format === 'md') return '.md'
   if (format === 'mdx') return '.mdx'
