@@ -274,7 +274,7 @@ export type AuthorContent = EntryTypes['author']
 
 The string in `.collection.json`'s `entry.schema` is a lookup key into the registry. Keying by the **entry-type name** removes a level of indirection (`entry.name` and `entry.schema` are then the same string), makes errors clearer (`Available schemas: post, author, home`), and lets `EntryTypesFromRegistry` derive the typed entry-type map for you. Keying by schema-variable name instead (`{ postSchema, authorSchema }`) still works, but you then declare that map by hand as an interface of `TypeFromEntrySchema<typeof xSchema>` members and pass it to `buildContentTree<NavFields, MyEntries>`. That is the right choice when several entry types share one schema (`partner-v1` and `partner-v2` both pointing at `partnerSchema`), since name-keying would hold the same schema twice.
 
-To move an existing project onto the entry-type-name convention, see [docs/adopter-migration.md](docs/adopter-migration.md). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
+To move an existing project onto the entry-type-name convention, see [the migration entry](docs/adopter-migration.md#the-registry-is-keyed-by-entry-type-name-0042). Nothing about content files, frontmatter or `.canopy-meta/` caches changes, and in dev mode editing a `.collection.json` invalidates the schema cache so the next read picks up the new strings.
 
 ### Creating .collection.json Meta Files
 
