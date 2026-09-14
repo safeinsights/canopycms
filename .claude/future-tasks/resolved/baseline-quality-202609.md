@@ -51,21 +51,22 @@ Sequence: G, then A1/A2/A3 and D in parallel (disjoint files), then B, then E.
 
 ## Final numbers
 
-Guard counters (`check-comment-budget.mjs --report`, `check-docs.mjs --report`), `c25035d2` →
-the integration tip; full tables in the review record.
+Guard counters (`check-comment-budget.mjs --report`, `check-docs.mjs --report`) run on a plain
+`c25035d2` tree and at the integration tip; full tables in the review record.
 
-- Comment lines, whole guarded scope: 28,295 → 20,992 (ratio 0.557 → 0.412; code 50,795 →
-  50,890). canopycms 0.523 → 0.375, canopycms-cdk 1.546 → 1.279, canopycms-next 0.927 → 0.801.
-- History markers in source comments 145 → 0. Longest run 91 → 43; the 43 is a leave-alone range
-  in `utils/`, every other directory is at most 31.
+- Comment lines, whole guarded scope: 28,235 → 20,992 (ratio 0.564 → 0.412; code 50,039 → 50,890,
+  the after count including the two guard scripts this epic added). canopycms 0.523 → 0.375,
+  canopycms-cdk 1.546 → 1.279, canopycms-next 0.927 → 0.801.
+- History markers in source comments: the plan's scout counter (case-sensitive, bare `reviewer`
+  and `finding`) counted 151; this epic's guard counter at `c25035d2` counts 147; after, 0.
+- Longest run 91 → 43; the 43 is a leave-alone range in `utils/`, every other directory is at
+  most 31.
 - Directories still above 1.0: `static` 1.091, `utils` 1.012 (leave-alone files at 1.80), and the
   cdk directories (see [cdk-comment-second-pass.md](../cdk-comment-second-pass.md)).
 - knip: 182 unused exports + 90 unused types → 0 / 0.
-- Docs (words outside code spans and fences): the four root docs 98,570 → 54,399; all 34
-  budgeted docs 142,805 → 91,905; doc history-marker lines 127 → 13, all in
-  `docs/adopter-migration.md`, a dated changelog the marker check skips. Budgets sit at actual
-  + 3%, except three that keep their earlier ceiling because the doc grew (README,
-  CODEBASE_GUIDE's largest section, `docs/adopter-migration.md`).
+- Docs (words outside code spans and fences): the four root docs 98,570 → 54,399; all 34 budgeted
+  docs 142,805 → 91,905; doc history-marker lines 127 → 13, all in `docs/adopter-migration.md`, a
+  dated changelog the marker check skips. Every doc budget sits at or below actual + 3%, rounded up.
 
 ## Rules that outlive the epic
 

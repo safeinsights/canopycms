@@ -211,21 +211,20 @@ mutable-JSON recipe instead (see the table row and
 ## Content writes vs. the rebase loop [SYNC-C1]
 
 The worker's rebase loop (`runRebaseCycle`, worker/rebase.ts) and Lambda's `ContentStore`
-mutate the **same branch working tree** on shared EFS. Content files had only the
-in-process mutex, which does not cross that boundary, and the loop's "skip dirty
-branches" check is plain check-then-act. Its old comment claimed the residual window was
-safe because a racing save would make `git rebase` fail — true only for a save landing
-**before** the rebase starts. After that (a window spanning fetch, replay and N conflict
-rounds of git subprocesses on EFS) the save is destroyed two ways:
+mutate the **same branch working tree** on shared EFS. The in-process mutex does not
+cross that boundary, and the loop's "skip dirty branches" check is plain check-then-act.
+A racing save makes `git rebase` fail only when it lands **before** the rebase starts.
+After that (a window spanning fetch, replay and N conflict rounds of git subprocesses on
+EFS) an unlocked save is destroyed two ways:
 
 - `git checkout --theirs <file>` overwrites the just-saved working-tree content with the
   branch's committed version and stages it — **the rebase then succeeds and nothing logs
   a failure at all**; and
 - `git rebase --abort` hard-resets the tree, discarding it.
 
-Either way the editor already received a 200. That is an acknowledged write rolled back
-with no error on either side — which is why "no writes to the wrong file" was never a
-sufficient statement of write-path safety.
+Either way the editor has already received a 200: an acknowledged write rolled back with
+no error on either side. "No writes to the wrong file" is therefore not a sufficient
+statement of write-path safety.
 
 The fix is one server-enforced lock per branch root
 (`utils/content-write-lock.ts`, layer 3), used **asymmetrically**, because the worker
@@ -288,7 +287,7 @@ waiting on a save:
 - **Reads never take it.** An EFS round-trip on every read is not an acceptable price,
   and a read racing a rebase gets an older or newer file, never a destroyed one.
 
-**A content write is now a read-modify-write of the content file itself.** To stop editor
+**A content write is a read-modify-write of the content file itself.** To stop editor
 saves deleting the file's comments, `ContentStore.write` re-serialises onto the file's own
 parsed YAML document rather than a fresh one (`utils/content-serialize.ts`), which means it
 reads the current bytes before writing. That read sits _inside_ `withLock(lockKey)`, inside
@@ -335,9 +334,9 @@ All are bounded by per-request store lifetimes, throttled backstops, and the nex
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is
 prevented independently (existence guard, ID locks, server-enforced locks, and the
 duplicate-ID guard below). Read that narrowly: "the right file" is not the same as
-"the write survives". Until [SYNC-C1] above, a correctly-targeted, already-acknowledged
-write could still be rolled back wholesale by the worker's rebase; the lock closes that,
-subject to the stale-takeover caveat noted there.
+"the write survives". Without [SYNC-C1] above, a correctly-targeted, already-acknowledged
+write can be rolled back wholesale by the worker's rebase; that lock prevents it, subject
+to the stale-takeover caveat noted there.
 
 ## Duplicate content IDs vs. the write path [F1]
 
@@ -347,16 +346,16 @@ one deterministic winner (string-MIN of the relative paths, so every host agrees
 drops the loser from the index, recording it for `branch-health` and the
 `repair-content-duplicates` admin action.
 
-Quarantine is an **index** decision and nothing more. It is tempting — and was, briefly,
-written down as fact — to describe the dropped file as inert until an admin repairs it.
+Quarantine is an **index** decision and nothing more. It is tempting to describe the
+dropped file as inert until an admin repairs it.
 It is not: slugs resolve by directory scan (`ContentStore.buildPaths()`), which knows
 nothing about the quarantine, so the dropped file stays fully addressable by
 collection+slug and a stale editor tab can still save to it.
 
 That is a hazard specifically for `write()`, because its post-write index repair reads
 "the index puts this ID somewhere else" as "the slug changed" and `unlink`s that other
-path. With a duplicate, that other path is a **different document** — so the save
-silently deleted the kept file and returned 200. Now `write()` refuses first, with
+path. With a duplicate, that other path is a **different document**, so an unguarded save
+would silently delete the kept file and return 200. `write()` therefore refuses first, with
 `DuplicateContentIdError` (a `ContentConflictError` subclass → 409 carrying its own
 message, naming both files and the repair action). Two independent detections, because
 neither alone is sufficient: the index's own quarantine record (catches a duplicate in
@@ -382,15 +381,15 @@ found with one search. A tag is only useful if it resolves to a definition, so e
 tag must be defined in this table; undefined severity tags such as `[HIGH-n]` are not
 used. **If you add a tag, define it here.**
 
-| Tag         | Meaning                                                                                                                                                                                                                                                                                                                                                                       | Defined in                                       |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `[SYNC-C1]` | Cross-host exclusion between content writes and the worker's rebase loop                                                                                                                                                                                                                                                                                                      | "Content writes vs. the rebase loop" above       |
-| `[SYNC-H1]` | The history-rewrite marker and its cache invalidation                                                                                                                                                                                                                                                                                                                         | "The four layers" above                          |
-| `[SYNC-M2]` | The settings-branch reconcile loop is **per-branch best-effort**. One unreadable or partially-written ref must cost its own branch, not the whole sync cycle — an unguarded `rev-list` there once threw out of `syncGit()` entirely, skipping `pushSettingsBranches`, `refreshBaseBranchWorkspace` and `runRebaseCycle`, and recurred every cycle because nothing self-healed | this table, plus `worker/git-sync.ts`            |
-| `[SYNC-M3]` | A settings branch present in `remote.git` but absent from GitHub's tracking refs was pushed **locally** and has never reached GitHub. That combination is the discriminating signature: in the supported two-deployments-one-repo case a foreign branch arrives via the GitHub fetch and therefore always has a tracking ref                                                  | this table, plus `worker/git-sync.ts`            |
-| `[F1]`      | Duplicate content IDs vs. the write path                                                                                                                                                                                                                                                                                                                                      | "Duplicate content IDs vs. the write path" below |
-| `[SLUG]`    | Slug-routability enforcement at the write boundary                                                                                                                                                                                                                                                                                                                            | `static/AGENTS.md`, and `ContentStore.write()`   |
-| `[REDACT]`  | Error text that is persisted or served on a path reaching a browser, and must go through `sanitizeErrorMessage`                                                                                                                                                                                                                                                               | `utils/error.ts`                                 |
+| Tag         | Meaning                                                                                                                                                                                                                                                                                                                                                                | Defined in                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `[SYNC-C1]` | Cross-host exclusion between content writes and the worker's rebase loop                                                                                                                                                                                                                                                                                               | "Content writes vs. the rebase loop" above       |
+| `[SYNC-H1]` | The history-rewrite marker and its cache invalidation                                                                                                                                                                                                                                                                                                                  | "The four layers" above                          |
+| `[SYNC-M2]` | The settings-branch reconcile loop is **per-branch best-effort**. One unreadable or partially-written ref must cost its own branch, not the whole sync cycle — an unguarded `rev-list` there throws out of `syncGit()` entirely, skipping `pushSettingsBranches`, `refreshBaseBranchWorkspace` and `runRebaseCycle`, and recurs every cycle because nothing self-heals | this table, plus `worker/git-sync.ts`            |
+| `[SYNC-M3]` | A settings branch present in `remote.git` but absent from GitHub's tracking refs was pushed **locally** and has never reached GitHub. That combination is the discriminating signature: in the supported two-deployments-one-repo case a foreign branch arrives via the GitHub fetch and therefore always has a tracking ref                                           | this table, plus `worker/git-sync.ts`            |
+| `[F1]`      | Duplicate content IDs vs. the write path                                                                                                                                                                                                                                                                                                                               | "Duplicate content IDs vs. the write path" below |
+| `[SLUG]`    | Slug-routability enforcement at the write boundary                                                                                                                                                                                                                                                                                                                     | `static/AGENTS.md`, and `ContentStore.write()`   |
+| `[REDACT]`  | Error text that is persisted or served on a path reaching a browser, and must go through `sanitizeErrorMessage`                                                                                                                                                                                                                                                        | `utils/error.ts`                                 |
 
 ## Recipes
 
@@ -416,8 +415,7 @@ retry the uncached path would have given you, so say which you chose and why.
 **Adding a mutable JSON file** (read-modify-write): wrap mutators in
 `withLock(resolvedPath)`; write via `writeOccJsonFile` with `withOccRetry`; translate
 `OccWriteConflictError` to your public error type **at the boundary, after retries**
-(translating inside the write path silently disables the retry predicate — this bug
-has been caught in review once already). Add `withOccFileLock` when a cross-host lost
+(translating inside the write path silently disables the retry predicate). Add `withOccFileLock` when a cross-host lost
 update is unacceptable. Always `path.resolve` the root that feeds your lock key.
 Reference implementations: `comment-store.ts`, `branch-metadata.ts`,
 `authorization/settings-file-store.ts`.

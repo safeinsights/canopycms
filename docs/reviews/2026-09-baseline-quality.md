@@ -6,7 +6,7 @@ Dated snapshot. Before: 2026-09-13 at `c25035d2` (tip of `int-202609-a`). After:
 
 Three suspicions, each tested:
 
-- **Comments bloated: confirmed, severe, recent.** Since June the core package added more comment lines than code lines; 59 runs over 30 lines (longest 91); 151 history-marker lines; cdk worst.
+- **Comments bloated: confirmed, severe, recent.** Since June the core package added more comment lines than code lines; 59 runs over 30 lines (longest 91); 151 history-marker lines (scout counter); cdk worst.
 - **Encapsulation eroded: real but localized.** No true layering inversion; the queue contract sat under `worker/`, `cli/init-github-app.ts` held 37 exports (21 test-only), and nothing checked module boundaries or unused exports. The flat `src/` namespace is a recorded decision and stays.
 - **Doc agents not doing their job: they ran on every merge, and every run was net additive**, because the charters measured lines while files grew inside bullets and table cells.
 
@@ -36,7 +36,7 @@ Three suspicions, each tested:
 
 ## After: comments
 
-`node scripts/check-comment-budget.mjs --report`, `c25035d2` → after, same counter both sides. Max run 43 (`utils/`) is a leave-alone range.
+`node scripts/check-comment-budget.mjs --report` on a plain `c25035d2` tree and at the integration tip, the same counter both sides. History markers: the plan's scout counter (case-sensitive, bare `reviewer`/`finding`) counted 151 at `c25035d2`, this guard counter counts 147, after 0. The after `scripts` code includes the two guard scripts this epic added (`check-comment-budget.mjs`, `diff-comments-only.mjs`). Max run 43 (`utils/`) is a leave-alone range.
 
 | package              | code            | comment         | ratio         | max run | markers |
 | -------------------- | --------------- | --------------- | ------------- | ------- | ------- |
@@ -45,8 +45,8 @@ Three suspicions, each tested:
 | canopycms-next       | 1,094 → 1,094   | 1,014 → 876     | 0.927 → 0.801 | 55 → 30 | 2 → 0   |
 | canopycms-auth-clerk | 446 → 446       | 129 → 96        | 0.289 → 0.215 | 16 → 15 | 1 → 0   |
 | canopycms-auth-dev   | 392 → 392       | 114 → 91        | 0.291 → 0.232 | 16 → 16 | 0 → 0   |
-| scripts              | 3,549 → 3,738   | 1,120 → 993     | 0.316 → 0.266 | 45 → 28 | 11 → 0  |
-| **total**            | 50,795 → 50,890 | 28,295 → 20,992 | 0.557 → 0.412 | 91 → 43 | 145 → 0 |
+| scripts              | 2,793 → 3,738   | 1,060 → 993     | 0.380 → 0.266 | 49 → 28 | 13 → 0  |
+| **total**            | 50,039 → 50,890 | 28,235 → 20,992 | 0.564 → 0.412 | 91 → 43 | 147 → 0 |
 
 | core directory | ratio         | core directory | ratio         |
 | -------------- | ------------- | -------------- | ------------- |
@@ -73,15 +73,15 @@ Three suspicions, each tested:
 | DEVELOPING.md                         | 18,524 → 12,607  | 20 → 0   |
 | README.md                             | 18,294 → 14,556  | 6 → 0    |
 | CODEBASE_GUIDE.md                     | 19,421 → 3,994   | 16 → 0   |
-| AGENTS.md                             | 1,256 → 1,245    | 1 → 0    |
+| AGENTS.md                             | 1,256 → 1,279    | 1 → 0    |
 | docs/adopter-migration.md (unchecked) | 18,068 → 13,033  | 36 → 13  |
 | docs/deploying-to-aws.md              | 8,702 → 8,718    | 2 → 0    |
-| docs/concurrency.md                   | 5,554 → 5,352    | 7 → 0    |
-| module AGENTS.md and READMEs (15)     | 6,772 → 5,442    | 19 → 0   |
+| docs/concurrency.md                   | 5,554 → 5,315    | 7 → 0    |
+| module AGENTS.md and READMEs (15)     | 6,772 → 5,445    | 19 → 0   |
 | .claude/agents (11)                   | 3,883 → 3,716    | 4 → 0    |
 | **total (34 budgeted docs)**          | 142,805 → 91,905 | 127 → 13 |
 
-Doc budgets sit at actual + 3%, except README, CODEBASE_GUIDE's largest section and `docs/adopter-migration.md`, which keep their earlier ceilings because those docs grew.
+Every doc budget sits at or below actual + 3%, rounded up; README, CODEBASE_GUIDE's largest section and `docs/adopter-migration.md` keep earlier, tighter ceilings because those docs grew.
 
 ## The six PRs
 
@@ -109,4 +109,3 @@ Doc budgets sit at actual + 3%, except README, CODEBASE_GUIDE's largest section 
 - [branch-lockdown-vs-acl-precedence.md](../../.claude/future-tasks/branch-lockdown-vs-acl-precedence.md): comment and code disagree on lockdown vs explicit ACL; an authorization decision.
 - [check-docs-heading-anchors.md](../../.claude/future-tasks/check-docs-heading-anchors.md): link `#anchors` are not resolved.
 - [readme-ispermissionerror-claims-eperm.md](../../.claude/future-tasks/readme-ispermissionerror-claims-eperm.md): README claims `EPERM` coverage the code lacks.
-- [doc-residue-202609.md](../../.claude/future-tasks/doc-residue-202609.md): history phrasing the marker regex cannot see in `docs/concurrency.md`, two missing root `AGENTS.md` rows, one stale `task-queue/README.md` line.
