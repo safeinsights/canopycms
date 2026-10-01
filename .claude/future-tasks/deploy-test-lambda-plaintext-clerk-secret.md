@@ -79,10 +79,12 @@ the middleware, but CanopyCMS's own auth doesn't need it: `createNextCanopyConte
 `CLERK_JWT_KEY` only, with user and group metadata from the worker-refreshed cache
 (`canopycms-next/src/context-wrapper.ts`, `canopycms-auth-clerk/src/clerk-plugin.ts`). Deleting
 the generated middleware keeps the Security Model true with no endpoint cost. It gives up turning
-signed-out requests away before they reach the app. `docs/deploying-to-aws.md` now documents it
+signed-out requests away before they reach the app; since 2026-10-01 those visitors get the
+editor's own sign-in screen instead ([clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md)). `docs/deploying-to-aws.md` now documents it
 as a supported shape, and `middleware-clerk.ts.template` states the middleware's cost. Not yet
 exercised against a live Clerk instance; see
-[clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md). For
+[clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md)
+and [clerk-signed-out-followups.md](clerk-signed-out-followups.md). For
 deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough removable
 **together**. Removing only the passthrough still breaks the editor, per the correction above.
 

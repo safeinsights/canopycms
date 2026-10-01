@@ -280,6 +280,20 @@ export type RootCollectionConfig = {
  */
 export type BranchSchema = RootCollectionConfig
 
+/**
+ * Props for an auth provider's `SignInComponent`. The editor decides signed-out from the API's
+ * 401s alone; the provider owns the sign-in UI and reports back.
+ */
+export interface EditorSignInProps {
+  /** Call when the provider believes the user is signed in; the editor re-checks with the API. */
+  onSignedIn: () => void
+  /**
+   * The API rejected the credential after `onSignedIn` (e.g. a mismatched JWT key). Offer
+   * sign-out; calling `onSignedIn` again in response would loop.
+   */
+  sessionRejected: boolean
+}
+
 export interface CanopyEditorConfig {
   title?: string
   subtitle?: string
@@ -297,6 +311,11 @@ export interface CanopyEditorConfig {
   onAccountClick?: () => void
   onLogoutClick?: () => void
   AccountComponent?: React.ComponentType
+  /**
+   * Shown instead of the editor on a 401, and over it when a session lapses mid-edit. Supplied
+   * by the auth provider; absent, the editor shows a plain notice.
+   */
+  SignInComponent?: React.ComponentType<EditorSignInProps>
 }
 
 export type DefaultBranchAccess = 'allow' | 'deny'
@@ -542,5 +561,6 @@ export interface ClientOnlyFields {
     onAccountClick?: () => void
     onLogoutClick?: () => void | Promise<void>
     AccountComponent?: React.ComponentType
+    SignInComponent?: React.ComponentType<EditorSignInProps>
   }
 }

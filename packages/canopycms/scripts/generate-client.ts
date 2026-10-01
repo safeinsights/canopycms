@@ -267,6 +267,12 @@ export interface ApiClientOptions {
   baseUrl?: string
   /** Custom fetch implementation, e.g. a mock in tests. */
   fetch?: typeof fetch
+
+  /**
+   * Called whenever a response comes back 401: the credential is no longer accepted. A
+   * notification, not a retry; the editor's auth gate uses it to show sign-in.
+   */
+  onUnauthorized?: () => void
 }
 
 /**
@@ -282,6 +288,7 @@ export interface ApiClientOptions {
 export class CanopyApiClient {
   private baseUrl: string
   private fetchFn: typeof fetch
+  private onUnauthorized: (() => void) | undefined
 
 ${namespacesCode}
 
@@ -289,6 +296,7 @@ ${namespacesCode}
     this.baseUrl = options.baseUrl ?? '/api/canopycms'
     // An unbound fetch throws "Illegal invocation" in browsers; Node has no window.
     this.fetchFn = options.fetch ?? (typeof window !== 'undefined' ? fetch.bind(window) : fetch)
+    this.onUnauthorized = options.onUnauthorized
   }
 
   private buildPath(template: string, params: Record<string, string>): string {
@@ -368,6 +376,17 @@ ${namespacesCode}
     }
 
     const response = await this.fetchFn(url, init)
+    if (response.status === 401) {
+      this.onUnauthorized?.()
+      // A 401 is an auth answer whatever its body: one from in front of the API (a proxy) may
+      // not be an ApiResponse, or not JSON. Always return it as one rather than throwing.
+      const body: unknown = await response.json().catch(() => undefined)
+      const error =
+        typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+          ? body.error
+          : 'Unauthorized'
+      return { ok: false, status: 401, error } as T
+    }
     const payload = await response.json()
 
     // All responses use ApiResponse format: { ok, status, data?, error? }

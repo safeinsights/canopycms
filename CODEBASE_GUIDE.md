@@ -64,7 +64,7 @@ Flat `src/*.ts` modules, kept flat deliberately — [AGENTS.md](packages/canopyc
 Content, git and branch files have their own sections below; the rest:
 
 - `index.ts` — package main entry, client-safe exports only
-- `client.ts` — `use client` editor exports for `canopycms/client`
+- `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
 - `server.ts` — server entry point exports
 - `config.ts` — re-export shim over the `config/` module
 - `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`
@@ -135,7 +135,7 @@ Support files:
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
-- `client.ts` — generated API client
+- `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401
 
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
@@ -188,11 +188,13 @@ The three access layers, reserved groups, and bootstrap admins are described in
 
 - `dev-plugin.ts` — `DevAuthPlugin` with mock users and groups; never sets `verifiesCredentials`
 - `dev-defaults.ts` — client-safe dev user and group defaults, no server-only imports
-- `cookie-utils.ts` — dev user cookie extraction
-- `jwt-verifier.ts` — `createDevTokenVerifier`, reads a user id from headers or cookies
+- `cookie-utils.ts` — dev user cookie helpers; `DEV_SIGNED_OUT` marks sign-out, set by `setDevSignedOutCookie`
+- `resolve-user.ts` — `resolveDevUserId`, the single dev-auth request resolver; null means signed out
+- `jwt-verifier.ts` — `createDevTokenVerifier`, reads a user id via `resolveDevUserId`
 - `cache-writer.ts` — `refreshDevCache` writes dev users and groups into the EFS-style cache
 - `UserSwitcherModal.tsx` / `UserSwitcherButton.tsx` — dev user switcher UI
-- `client.ts` — client component exports
+- `DevSignIn.tsx` / `DevUserList.tsx` — the sign-in screen and the picker it shares with the switcher
+- `client.ts` — the `canopycms-auth-dev/client` entry: `useDevAuthConfig` and `DevSignIn`
 - `index.ts` — public exports
 
 ### canopycms-auth-clerk Package
@@ -202,7 +204,8 @@ The three access layers, reserved groups, and bootstrap admins are described in
 - `clerk-plugin.ts` — `ClerkAuthPlugin`, real JWT verification; resolves its secret lazily on first authenticated call
 - `jwt-verifier.ts` — `createClerkJwtVerifier`, networkless JWT-only verifier, deprecated in favour of `verifyTokenOnly()`
 - `cache-writer.ts` — `refreshClerkCache` populates the auth cache from the Clerk API
-- `client.ts` — `useClerkAuthConfig` wires Clerk's `UserButton` and sign-out into the editor
+- `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen, re-exported from `canopycms-auth-clerk/client`
+- `client.ts` — `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
 - `index.ts` — public exports
 
 ## Worker Module
@@ -394,12 +397,8 @@ and search indexes.
 array then alphabetical; with it, the comparator fully replaces that, and runs after `extract` and
 `filter`.
 
-`ContentTreeExtractMeta` is `extract`'s second argument, carrying `kind`, `logicalPath`,
-`entryType`, `format` and a collection's `indexEntry`. Supplying the optional `TEntryTypes` type
-parameter discriminates `entryType` and `indexEntry` on the entry-type literal union. Entries are
-fetched before `extract` runs, so `meta.indexEntry` is populated for filters that depend on index
-data. The full option and type reference, with worked examples, is in
-[README.md](README.md#content-tree-builder).
+`ContentTreeExtractMeta` is `extract`'s second argument; its fields, `indexEntry` and the optional
+`TEntryTypes` narrowing are in [README.md](README.md#content-tree-builder).
 
 ## Content Listing (Batch)
 
@@ -420,7 +419,7 @@ standalone function from `canopycms/server` and as a method on `CanopyContext`; 
 
 **Location**: `packages/canopycms/src/config/`
 
-- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess` and `basePath`
+- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess`, `basePath` and `EditorSignInProps` for `editor.SignInComponent`
 - `schemas/config.ts` — the Zod schema for `CanopyConfig`; `mode` has no default, so omitting it fails validation
 - `schemas/field.ts` — Zod schemas for field types
 - `schemas/collection.ts` — Zod schemas for collections and entry types
@@ -463,6 +462,7 @@ Top-level components and helpers:
 
 - `CanopyEditor.tsx` — the provider wrapper adopters mount
 - `CanopyEditorPage.tsx` — page-level shell resolving branch and entry from the URL
+- `EditorAuthGate.tsx` — between `ApiClientProvider` and `Editor`; signed-out decided by API 401s, sign-in full-screen before mount, overlay after
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
@@ -482,8 +482,9 @@ Top-level components and helpers:
 
 Context providers, in `editor/context/`:
 
-- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks, also mounted in Storybook's preview
-- `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`
+- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks; `EditorAuthGate` mounts it keyed by user id, Storybook's preview too
+- `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
+- `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
 - `AssetContext.tsx` — asset base URL for rendered asset URLs
 - `index.ts` — context exports
@@ -502,12 +503,10 @@ Manager hooks, in `editor/hooks/` — see
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `useEditorLayout.ts` — panel layout state
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user and user metadata
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and user metadata
 - `useReferenceResolution.ts` — resolves reference IDs to display values
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data before `PreviewFrame`
-- `useBranchesData.ts` — SWR hook, key `canopy:branches`, `GET /branches`, not branch-keyed
-- `useEntriesData.ts` — SWR hook, key `canopy:entries:${branch}`, schema plus paginated entries combined
-- `useCommentsData.ts` — SWR hook, key `canopy:comments:${branch}`, `GET /:branch/comments`
+- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import; the rest are deep-imported
 
 Field components, in `editor/fields/`:
@@ -579,20 +578,16 @@ Conflict indicators appear per entry (`FormRenderer`'s `conflictNotice` prop) an
 (`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` by
 matching a `contentId` against `currentBranch.conflictFiles`.
 
-Patterns: Mantine theme helpers from `theme.tsx`; `'use client'` on browser components; client
-exports through `canopycms/client`; drafts in `localStorage` per branch and entry; no `'main'`
-branch fallback. See [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
+Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 ### Preview URL Construction
 
 **Location**: `packages/canopycms/src/editor/editor-utils.ts`
 
-`buildPreviewSrc(entry, context)` builds the preview iframe `src` in two parts: a module-local
-`buildRawPreviewSrc` produces the unprefixed URL (a `previewSrc` override, then
-`previewBaseByCollection`, then collection path plus encoded slug, plus `?branch=`), and the
-exported `buildPreviewSrc` applies `joinUrlPrefix(context.basePath, …)` once at the end. See
-[ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity) for why the prefix has to be applied
-exactly once, uniformly.
+`buildPreviewSrc(entry, context)` wraps the module-local `buildRawPreviewSrc` (a `previewSrc`
+override, then `previewBaseByCollection`, then collection path plus encoded slug, plus `?branch=`)
+and applies `joinUrlPrefix(context.basePath, …)` once; why is in
+[ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity).
 
 ### Preview Bridge
 

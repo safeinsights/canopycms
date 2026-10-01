@@ -86,7 +86,7 @@ See [authorization/AGENTS.md](packages/canopycms/src/authorization/AGENTS.md) fo
 
 ### State Management (Editor Components)
 
-Editor components take their dependencies from React context, which keeps tests free of global mutable state: `ApiClientProvider`/`useApiClient` (`context/ApiClientContext`) for the API client, and `EditorStateProvider`/`useEditorState`/`useEditorModals` (`context/EditorStateContext`) for loading, modal and preview state. Wrap the tree in the provider and inject a mock client.
+Editor components take their dependencies from React context, which keeps tests free of global mutable state: `ApiClientProvider`/`useApiClient` (`context/ApiClientContext`) for the API client, and `EditorStateProvider`/`useEditorState`/`useEditorModals` (`context/EditorStateContext`) for loading, modal and preview state. Wrap the tree in the provider and inject a mock client — except for 401 handling: an injected client never reports 401s (`useOnUnauthorized`), so let the provider build the real client over a stubbed `fetch` (`EditorAuthGate.test.tsx`).
 
 ### Module Organization
 

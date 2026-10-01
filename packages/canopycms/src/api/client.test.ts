@@ -38,6 +38,69 @@ describe('CanopyApiClient', () => {
     })
   })
 
+  describe('onUnauthorized', () => {
+    const respond = (status: number, json: () => Promise<unknown>) =>
+      vi.fn().mockResolvedValue({ ok: status < 400, status, json })
+
+    it('is called on a 401, and the response still reaches the caller unchanged', async () => {
+      const onUnauthorized = vi.fn()
+      const body = { ok: false, status: 401, error: 'Unauthorized' }
+      const client = new CanopyApiClient({
+        fetch: respond(401, async () => body),
+        onUnauthorized,
+      })
+
+      expect(await client.branches.list()).toEqual(body)
+      expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    })
+
+    it('is not called for other statuses, including 403', async () => {
+      const onUnauthorized = vi.fn()
+      for (const status of [200, 403, 500]) {
+        const client = new CanopyApiClient({
+          fetch: respond(status, async () => ({ ok: status < 400, status })),
+          onUnauthorized,
+        })
+        await client.branches.list()
+      }
+      expect(onUnauthorized).not.toHaveBeenCalled()
+    })
+
+    it('returns a non-JSON 401 as a 401 ApiResponse instead of throwing, and reports it', async () => {
+      const onUnauthorized = vi.fn()
+      const client = new CanopyApiClient({
+        fetch: respond(401, async () => {
+          throw new SyntaxError('Unexpected token <')
+        }),
+        onUnauthorized,
+      })
+
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 401,
+        error: 'Unauthorized',
+      })
+      expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns a JSON 401 that is not an ApiResponse as one, keeping a string error', async () => {
+      const client = new CanopyApiClient({
+        fetch: respond(401, async () => ({
+          message: 'proxy says no',
+          error: 'Forbidden by proxy',
+        })),
+      })
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 401,
+        error: 'Forbidden by proxy',
+      })
+
+      const bare = new CanopyApiClient({ fetch: respond(401, async () => ({ message: 'nope' })) })
+      expect(await bare.branches.list()).toEqual({ ok: false, status: 401, error: 'Unauthorized' })
+    })
+  })
+
   describe('URL encoding', () => {
     it('should encode collection and slug with spaces', async () => {
       const mockFetch = vi.fn().mockResolvedValue({

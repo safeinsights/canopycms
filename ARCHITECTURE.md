@@ -613,6 +613,8 @@ The editor provides schema-driven forms, block-based page building and live prev
 
 **Live preview** is an iframe loading the real site pages, with the editor communicating over postMessage: editing a field updates the preview immediately, and clicking an element in the preview focuses the corresponding form field. When the host app is served under a deployment prefix, the editor's API base URL and the iframe's `src` both have to carry it — and the preview URL must carry it **exactly once**, because the same string is also matched against the browser-reported location path to drive draft sync. See [Preview Path Identity](#preview-path-identity).
 
+**Signed-out is decided by the server.** A 401 from the CMS API is the only signed-out signal the editor trusts, since a provider's client-side state can disagree with what the API accepts. Before the editor mounts, a 401 shows the provider's sign-in UI full-screen; after, it overlays the still-mounted editor so unsaved edits survive. Cache isolation between users and the other rules are in [EditorAuthGate.tsx](packages/canopycms/src/editor/EditorAuthGate.tsx).
+
 ### Preview Bridge Trust Model
 
 The preview bridge is a postMessage channel between two windows, and the site side feeds incoming draft data straight into the host site's renderer, often MDX evaluation. An unvalidated listener would therefore let any window holding a handle on a preview page execute arbitrary content in the site's origin. Trust is explicit on both sides:
@@ -808,9 +810,11 @@ The builder is therefore split into an unprefixed core plus a thin wrapper apply
 
 ### Authentication
 
-Authentication is provided by separate packages; the core has no built-in provider, so Clerk, Auth0, NextAuth, Supabase Auth or a custom solution all work (`canopycms-auth-clerk` is the reference implementation). Plugins implement the `AuthPlugin` interface — user identity extraction, group membership lookup, session validation — plus one optional method, **`verifyTokenOnly(context)`**: networkless JWT verification returning just a user ID. When it is implemented, framework adapters automatically enable file-based auth caching, which is the path for Lambda deployments with no internet access and makes dev mirror prod.
+Authentication is provided by separate packages; the core has no built-in provider, so Clerk, Auth0, NextAuth, Supabase Auth or a custom solution all work (`canopycms-auth-clerk` is the reference implementation). Plugins implement the `AuthPlugin` interface — user identity extraction, group membership lookup, session validation — plus one optional method, **`verifyTokenOnly(context)`**: networkless JWT verification returning just a user ID. When it is implemented, framework adapters automatically enable file-based auth caching (see [Auth Caching](#auth-caching-cachingauthplugin)).
 
 **Production trust gate — `verifiesCredentials`.** Framework adapters check every configured auth plugin against the operating mode before using it: **if `mode` is `'prod'` and the plugin does not affirm `verifiesCredentials: true`, the adapter throws at handler creation rather than serving traffic.** This is an allowlist, not a denylist — a plugin must actively declare that it performs real cryptographic credential verification to be trusted in production, so one that omits the marker is rejected whether it is the dev plugin (which intentionally trusts request headers for local development) or a third-party plugin that simply forgot. `CachingAuthPlugin` forwards rather than declares it (see [Auth Caching](#auth-caching-cachingauthplugin)), and the static-deployment stub plugin sets it, since an always-deny plugin is trivially safe in any mode.
+
+**Sign-in UI.** Providers also supply the editor's sign-in screen (see [Editor Architecture](#editor-architecture)): Clerk's runs in the browser on the publishable key alone, and dev auth's is a user picker over a real signed-out state. Since the API verifies every request itself, `clerkMiddleware` is optional edge protection and the only component needing the Clerk secret key in a deployed CMS runtime (dev mode's in-process cache refresh reads it too); without it, Clerk's browser SDK refreshes the session cookie itself.
 
 ### Framework Adapters
 
@@ -861,7 +865,7 @@ The frictionless first run `'allow'` appears to provide does not come from `'all
 
 Two rules close one gap: a prod deployment silently running header-trusting auth because of a missing config value.
 
-- **`mode` has no default.** A fallback to `'dev'` would let a prod deploy that omitted the field authenticate every request by trusting whatever identity a caller claims — no error, no warning. Requiring it turns that mistake into a loud validation failure at startup.
+- **`mode` has no default** (rationale under [Operating Modes](#operating-modes)): omitting it is a loud validation failure at startup, not a prod deploy running header-trusting auth.
 - **`verifiesCredentials` is an allowlist.** Asking plugins to opt _out_ of production use fails in the wrong direction: a third-party or hand-rolled plugin that doesn't know about the marker would be trusted by default, which is backwards for a check whose purpose is preventing header-spoofing impersonation. A marker a plugin must affirmatively set makes rejection the safe default.
 
 ### Why is the worker daemon split into free functions over a context?
@@ -876,7 +880,7 @@ So the class stays a thin lifecycle shell with one delegating method per duty cy
 
 ### Why does ClerkAuthPlugin resolve its secret lazily?
 
-So that a zero-editor public build can import the same `canopy.ts` module — configured with `mode: 'prod'` and a real plugin — without the secret in that build's environment: the plugin is instantiated but never authenticates anything there. Only code calling Clerk's backend API needs the secret (the auth-cache refresh, or an unwrapped plugin), and a CMS Lambda needs it for neither, because `CachingAuthPlugin` authenticates through `verifyTokenOnly()` with the JWT key alone. An adopter's `clerkMiddleware` is what would bring the secret back onto the Lambda (see [Security Model](docs/deploying-to-aws.md#security-model)).
+So that a zero-editor public build can import the same `canopy.ts` module — configured with `mode: 'prod'` and a real plugin — without the secret in that build's environment: the plugin is instantiated but never authenticates anything there. Only code calling Clerk's backend API needs the secret (the auth-cache refresh, or an unwrapped plugin), and a CMS Lambda needs it for neither, because `CachingAuthPlugin` authenticates through `verifyTokenOnly()` with the JWT key alone. Only the optional `clerkMiddleware` would bring the secret back onto the Lambda (see [Authentication](#authentication) and [Security Model](docs/deploying-to-aws.md#security-model)).
 
 ### Why one GitHub App per site, not one shared across an organisation?
 

@@ -3,9 +3,15 @@
 import { useClerk } from '@clerk/nextjs'
 import { UserButton } from '@clerk/nextjs'
 import type { CanopyClientConfig } from 'canopycms/client'
+import { ClerkSignIn } from './ClerkSignIn'
+
+export { ClerkSignIn, type ClerkSignInProps } from './ClerkSignIn'
 
 /**
  * Hook that provides Clerk-specific auth handlers and components for CanopyCMS editor.
+ *
+ * Includes the sign-in screen (`ClerkSignIn`), with or without `clerkMiddleware`. Customize it
+ * at module scope: `SignInComponent: (p) => <ClerkSignIn {...p} signInProps={...} />`.
  *
  * @example
  * ```tsx
@@ -25,6 +31,7 @@ export function useClerkAuthConfig(): Pick<CanopyClientConfig, 'editor'> {
   return {
     editor: {
       AccountComponent: UserButton,
+      SignInComponent: ClerkSignIn,
       onLogoutClick: async () => {
         try {
           await signOut()
