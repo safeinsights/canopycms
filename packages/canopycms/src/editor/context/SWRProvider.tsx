@@ -15,8 +15,8 @@
  * - provider: () => new Map() -- gives the editor its own cache instead of
  *   SWR's module-global one, so editor keys ("canopy:entries:main", ...) can
  *   never collide with an SWR cache the host app is running for its own data.
- *   Mounted once (CanopyEditor.tsx), so the cache spans
- *   the whole editor session.
+ *   Mounted by EditorAuthGate and keyed by user id, so the cache spans
+ *   one identity's session and a different user starts empty.
  * - dedupingInterval: 2000 -- collapses the duplicate requests React Strict
  *   Mode's mount -> cleanup -> remount cycle produces (each hook's
  *   automatic on-mount fetch runs twice), plus any accidental

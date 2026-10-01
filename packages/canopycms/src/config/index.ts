@@ -62,6 +62,7 @@ export type {
   FlatSchemaItem,
   CanopyClientConfig,
   ClientOnlyFields,
+  EditorSignInProps,
   // Save-time validation hook
   EntryValidationIssue,
   ValidateEntryInput,

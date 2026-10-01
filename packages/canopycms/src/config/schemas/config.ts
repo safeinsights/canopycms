@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import type { AuthPlugin } from '../../auth/plugin'
 import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
-import type { ValidateEntryHook } from '../types'
+import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
 
@@ -64,6 +64,8 @@ const editorConfigSchema = z.object({
   onLogoutClick: z.function().returns(z.void()).optional(),
   // Optional: custom account component (e.g., Clerk's UserButton)
   AccountComponent: z.custom<React.ComponentType>().optional(),
+  // Optional: provider sign-in UI for signed-out users (see EditorSignInProps)
+  SignInComponent: z.custom<React.ComponentType<EditorSignInProps>>().optional(),
 })
 
 export const CanopyConfigSchema = z
