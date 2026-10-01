@@ -26,7 +26,8 @@ tier":
   `createNextCanopyContext` wraps `ClerkAuthPlugin` in `CachingAuthPlugin`, which calls
   `verifyTokenOnly()` (`CLERK_JWT_KEY` only) and reads users and groups from the worker-refreshed
   cache (`canopycms-next/src/context-wrapper.ts`, `canopycms-auth-clerk/src/clerk-plugin.ts`).
-  `middleware-clerk.ts.template` now says the middleware is optional and what it costs.
+  `canopycms init` now scaffolds a passthrough for every auth mode (2026-10-01), with
+  `clerkMiddleware` and its costs as a commented opt-in, so this shape is the default.
 - The Lambda's `environment` carries `CLERK_JWT_KEY` and the publishable key, both public.
 
 ## The middleware path
@@ -69,5 +70,5 @@ there, and decide whether the scaffold should generate a client-side sign-in gat
 
 - `docs/deploying-to-aws.md`: Dual Build Support ("One image for every Clerk tier"), Build-time
   client keys, Security Model.
-- `packages/canopycms/src/cli/template-files/middleware-clerk.ts.template`
+- `packages/canopycms/src/cli/template-files/middleware.ts.template` (the commented `clerkMiddleware`)
 - `apps/dual-build-fixture/app/edit/layout.server.tsx` and `dual-build.test.ts`

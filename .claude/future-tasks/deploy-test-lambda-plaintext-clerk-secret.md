@@ -55,8 +55,8 @@ committed and may have been read.
   falsy, and `throwMissingSecretKeyError` throws.
 
 So an unset `CLERK_SECRET_KEY` makes an empty string, which is falsy, which throws — per
-request, inside middleware. And the shipped
-`cli/template-files/middleware-clerk.ts.template` passes only
+request, inside middleware. And the then-shipped
+`cli/template-files/middleware-clerk.ts.template` passed only
 `{ jwtKey: process.env.CLERK_JWT_KEY }`, with `matcher: ['/edit(.*)', '/api/canopycms(.*)']`
 — i.e. every editor route and every API call.
 
@@ -80,8 +80,9 @@ the middleware, but CanopyCMS's own auth doesn't need it: `createNextCanopyConte
 (`canopycms-next/src/context-wrapper.ts`, `canopycms-auth-clerk/src/clerk-plugin.ts`). Deleting
 the generated middleware keeps the Security Model true with no endpoint cost. It gives up turning
 signed-out requests away before they reach the app; since 2026-10-01 those visitors get the
-editor's own sign-in screen instead ([clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md)). `docs/deploying-to-aws.md` now documents it
-as a supported shape, and `middleware-clerk.ts.template` states the middleware's cost. Not yet
+editor's own sign-in screen instead ([clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md)). `docs/deploying-to-aws.md` documents it
+as a supported shape, and since 2026-10-01 `canopycms init` scaffolds it: the passthrough, with
+`clerkMiddleware` and its cost as a commented opt-in. Not yet
 exercised against a live Clerk instance; see
 [clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md)
 and [clerk-signed-out-followups.md](clerk-signed-out-followups.md). For
@@ -227,9 +228,9 @@ interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
 
 ### ⚠️ DO NOT add `runtime: 'nodejs'` to the shipped template
 
-Neither `cli/template-files/middleware-clerk.ts.template` nor
-`apps/example1/middleware.ts` declares a `runtime`, so everything we scaffold runs on
-edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
+The `clerkMiddleware` example commented in `cli/template-files/middleware.ts.template` (and
+copied into `apps/example1/middleware.ts`) declares no `runtime`, so an adopter who swaps it in
+runs on edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
 **Measured: on Next 16.1.7 that would silently disable the auth middleware.**
 
 Three build arms, all real `CANOPY_BUILD=cms next build` runs with a

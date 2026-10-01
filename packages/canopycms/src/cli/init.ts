@@ -221,14 +221,12 @@ export async function init(options: InitOptions): Promise<void> {
   // dev via getPossibleMiddlewareFilenames on the same). A multi-segment `--app-dir
   // src/app` therefore puts a project-root middleware.ts where Next never loads it —
   // with no warning from Next or from us. (The plain `appDir='app'` case is
-  // unaffected: `path.dirname('app')` is '.', which path.join collapses.) The Clerk
-  // variant's `auth.protect()` then silently does nothing: /edit and
-  // /api/canopycms/* lose their edge protection. The API's own Clerk enforcement
-  // still holds, so this is lost defense-in-depth plus broken sign-in UX, not an
-  // authz bypass.
+  // unaffected: `path.dirname('app')` is '.', which path.join collapses.) The
+  // generated passthrough does nothing either way, but an adopter who swaps in
+  // clerkMiddleware needs it here, or `auth.protect()` silently never runs.
   await writeFile(
     path.join(projectDir, path.dirname(appDir), 'middleware.ts'),
-    await middleware({ authProvider }),
+    await middleware(),
     writeOpts,
   )
 

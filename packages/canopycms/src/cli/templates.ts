@@ -97,10 +97,9 @@ export async function aiRoute(options: { configImport: string }): Promise<string
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
-export async function middleware(options: { authProvider: 'clerk' | 'dev' }): Promise<string> {
-  const templateName =
-    options.authProvider === 'clerk' ? 'middleware-clerk.ts.template' : 'middleware.ts.template'
-  return readTemplate(templateName)
+/** One passthrough for every auth mode; it carries the opt-in `clerkMiddleware` as a comment. */
+export async function middleware(): Promise<string> {
+  return readTemplate('middleware.ts.template')
 }
 
 export async function nextConfig(options: { staticBuild: boolean }): Promise<string> {
