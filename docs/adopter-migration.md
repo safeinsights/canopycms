@@ -58,7 +58,8 @@ with `clerkMiddleware` and its costs as a commented opt-in, instead of an active
 The passthrough's `CANOPY_AUTH_MODE=clerk` warning is gone: one file now fits both modes.
 
 **To adopt.** Nothing. `init` keeps an existing `middleware.ts` unless you confirm or pass
-`--force`.
+`--force`. Doing either replaces an active `clerkMiddleware` with the passthrough, so re-apply
+the commented snippet if you want to keep the edge check.
 
 **Now deletable.** A `clerkMiddleware` an earlier `init` wrote, if you never chose the edge check.
 The entry below says what it costs.

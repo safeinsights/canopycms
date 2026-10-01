@@ -855,7 +855,7 @@ Adopter touchpoints, kept minimal:
 4. `app/lib/canopy.ts` — context setup: `getCanopy`, phase-selecting `readByUrlPath` / `read`, `contentStaticParams`, `getHandler`
 5. `app/schemas.ts` — entry schema definitions
 6. `app/ai/config.ts` and `app/ai/[...path]/route.ts` — AI content config and endpoint
-7. `middleware.ts` — a passthrough; `clerkMiddleware` is a commented opt-in
+7. `middleware.ts` — `clerkMiddleware` route protection under `CANOPY_AUTH_MODE=clerk`
 8. `next.config.mjs` — `withCanopy` from `canopycms-next/config`
 
 Content lives under `apps/example1/content/`. `pnpm reset-sim` removes `.canopy-dev/`, the local dev
