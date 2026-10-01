@@ -48,3 +48,28 @@ shape (an adopter's, or deploy-test) should confirm, in a clean browser profile:
 
 The marketing-site adopter gets all of this with no code change once it upgrades: its edit
 page already calls `useClerkAuthConfig()`, which now supplies `ClerkSignIn`.
+
+## 4. README's custom-renderers example passes no auth config
+
+README's "Custom Field Renderers" example calls `NextCanopyEditorPage(config.client(),
+customRenderers)`, while the page `init` generates passes `useClerkAuthConfig()` or
+`useDevAuthConfig()` into `config.client(...)`. Copied as written, the editor gets no account
+menu, and a signed-out user sees the gate's plain "Sign in required" notice instead of the
+provider's sign-in. That was already true of the account menu; the notice is new only in that
+the editor now has a signed-out state at all. Make the example match the generated page.
+
+## 5. A 401 from a request that started before re-auth reopens the overlay
+
+`EditorAuthGate`'s `handleUnauthorized` treats every 401 alike. If a save and two SWR
+revalidations 401 together and the user re-authenticates, a late 401 from one of those earlier
+requests can arrive after `accepted` and reopen the overlay. It is not a loop: `ClerkSignIn`
+remounts, mints a token, re-checks and closes it again in one round trip, and `DevSignIn` needs
+one more click. So the cost is a flicker or an extra click, and nothing is lost.
+
+Fix: stamp each request in the generated client (`scripts/generate-client.ts`) with a
+monotonic sequence number and pass it to `onUnauthorized`. Have the gate read the client's
+counter when a `check` starts, and ignore any 401 whose sequence is lower than the start of
+the check that last returned `accepted`. That avoids needing the accepting `whoami`'s own
+sequence, which `ApiResponse` does not carry. That changes the generated
+client's callback signature, so it wants its own reviewed change, plus a test that reproduces
+the late 401.

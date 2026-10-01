@@ -13,7 +13,7 @@ instance. What remains, including option 3, is in
   (`resolve-user.ts`) turns into "no user"; `DevSignIn` is a user picker.
 - **Scaffold + docs:** both middleware templates, README "Protect editor routes", and the
   AWS guide now state that `clerkMiddleware` is optional and is the only thing that needs
-  `CLERK_SECRET_KEY` in the CMS runtime.
+  `CLERK_SECRET_KEY` in a deployed CMS runtime.
 
 The analysis below is the problem as found, kept as the reference for why.
 

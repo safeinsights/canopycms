@@ -29,7 +29,7 @@ test. Do not split it before reading `hooks/`; what you are looking for is proba
 `EditorAuthGate` trusts one signal, a 401 from the API; its header comment holds the rules.
 Two traps outside it:
 
-- A 401 after mount overlays the editor. Never unmount a mounted editor for auth; it loses unsaved edits.
+- A 401 after mount overlays the editor. Never remount it for the same identity; that loses unsaved edits.
 - Only a client the `ApiClientProvider` builds reports every 401. An injected `client` is
   seen only through the gate's `whoami`.
 
