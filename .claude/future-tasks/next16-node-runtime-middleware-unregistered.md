@@ -1,7 +1,8 @@
 # [P2] Node-runtime middleware does not register on Next 16.1.7
 
 Measured 2026-09-09 across two sessions while investigating an unrelated Clerk
-question. Filed separately because **this is not Clerk-specific** — it
+question. Related, unverified (flagged by a 2026-10-01 review): Next 16 introduced `proxy.ts` as
+the successor to `middleware.ts`, and `canopycms init` still writes `middleware.ts`. Filed separately because **this is not Clerk-specific** — it
 constrains any adopter who needs a Node-only module in middleware, and
 `canopycms-next`'s peer range admits 16.x.
 

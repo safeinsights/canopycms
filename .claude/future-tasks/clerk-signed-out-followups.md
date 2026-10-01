@@ -2,7 +2,7 @@
 
 New 2026-10-01, left over from
 [clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md). The
-editor now handles signed-out users itself, so `clerkMiddleware` is optional. Three things
+editor now handles signed-out users itself, so `clerkMiddleware` is optional. Five things
 follow from that; the first two are done.
 
 ## 1. DONE 2026-10-01: `init --auth clerk` scaffolds the passthrough
@@ -19,6 +19,9 @@ example app no longer needs `CLERK_SECRET_KEY` for its middleware, matching
 server-side Clerk calls (`auth()`, `currentUser()`) that would need the middleware.
 
 ## 3. First live run against a real Clerk instance
+
+Do [clerk-setactive-server-action-oac-hang.md](clerk-setactive-server-action-oac-hang.md) first:
+on the OAC-fronted Lambda, in-app sign-in is expected to hang until it is fixed.
 
 Everything Clerk-side was verified against `@clerk/clerk-js@6.36.0`'s shipped source and a
 mocked `@clerk/nextjs`, never against a live instance. The first deploy of the no-middleware

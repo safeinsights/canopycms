@@ -55,8 +55,8 @@ committed and may have been read.
   falsy, and `throwMissingSecretKeyError` throws.
 
 So an unset `CLERK_SECRET_KEY` makes an empty string, which is falsy, which throws — per
-request, inside middleware. And the shipped
-`cli/template-files/middleware-clerk.ts.template` passes only
+request, inside middleware. And the then-shipped
+`cli/template-files/middleware-clerk.ts.template` passed only
 `{ jwtKey: process.env.CLERK_JWT_KEY }`, with `matcher: ['/edit(.*)', '/api/canopycms(.*)']`
 — i.e. every editor route and every API call.
 
