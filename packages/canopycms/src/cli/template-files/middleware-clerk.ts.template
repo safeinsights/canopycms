@@ -5,9 +5,10 @@ const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
 // This middleware is optional. CanopyCMS authenticates /api/canopycms without
 // it: createNextCanopyContext wraps the Clerk auth plugin in CachingAuthPlugin,
 // which verifies each request's Clerk token with CLERK_JWT_KEY alone and reads
-// user and group metadata from the auth cache. What this file adds is turning
-// signed-out requests to /edit and /api/canopycms away before they reach the
-// app. On a deployed CMS Lambda it costs two things:
+// user and group metadata from the auth cache, and the editor shows Clerk's
+// sign-in to signed-out users itself (EditorAuthGate). What this file adds is
+// turning signed-out requests to /edit and /api/canopycms away before they
+// reach the app. On a deployed CMS Lambda it costs two things:
 //   - CLERK_SECRET_KEY on the Lambda. clerkMiddleware throws on every request
 //     it matches unless it can resolve a secret key (jwtKey doesn't count),
 //     which breaks the public-keys-only Lambda that the Security Model in

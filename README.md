@@ -74,7 +74,7 @@ npx canopycms init --non-interactive --auth clerk --dual-build --force
 - `{appDir}/api/canopycms/[...canopycms]/route.ts` — the single catch-all API route
 - `{appDir}/edit/page.tsx` — editor page component
 - `{appDir}/ai/config.ts` and `{appDir}/ai/[...path]/route.ts` — AI content config and route (unless `--no-ai`)
-- `middleware.ts` — route protection for `/edit` and `/api/canopycms`; passthrough by default, with a commented Clerk example inside, and written into the parent of your app directory rather than always the project root (see [Protect editor routes](#5-protect-editor-routes))
+- `middleware.ts` — optional edge protection for `/edit` and `/api/canopycms`; passthrough by default, with a commented Clerk example inside, and written into the parent of your app directory rather than always the project root (see [Protect editor routes](#5-protect-editor-routes))
 - `next.config.ts` — wrapped with `withCanopy()`; skipped, with manual instructions printed instead, if you already have a `next.config.js`/`.mjs` (see [Next.js configuration](#3-nextjs-configuration-auto-generated))
 
 It also creates `.gitignore`, or appends to yours, to exclude `.canopy-dev/` — which is what stops an accidental `git add .` from committing the whole workspace as broken submodule-like entries.
@@ -183,11 +183,15 @@ Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and Ref
 
 ### 5. Protect editor routes
 
+The CMS protects itself, with or without middleware. The API authenticates every request, and the editor handles signed-out users: when the API answers 401 it shows your auth provider's sign-in screen instead of loading, and when a session ends mid-edit it overlays sign-in on the open editor, so unsaved edits survive signing back in as the same user. `useClerkAuthConfig()` supplies Clerk's sign-in and `useDevAuthConfig()` a user picker. Another provider supplies its own as `editor.SignInComponent` (it receives `EditorSignInProps`).
+
 `init` generates a `middleware.ts` matching `/edit` and `/api/canopycms`. It is a passthrough by default (suitable for dev auth); for Clerk, replace the contents with the commented example inside, or the snippet below.
 
 The Clerk middleware is **optional**. CanopyCMS's own API authentication checks every `/api/canopycms` request and rejects unauthenticated calls without it; what the middleware adds is turning signed-out requests away before they reach the app. On a deployed CMS Lambda it costs `CLERK_SECRET_KEY` there (see [Security Model](docs/deploying-to-aws.md#security-model)) and a publishable key baked into each Docker image (see [Dual Build Support](docs/deploying-to-aws.md#dual-build-support)), so deleting `middleware.ts` is a supported choice.
 
-`middleware.ts` is written into the **parent of your app directory**, not always the project root, because Next.js only loads middleware from there: with `--app-dir src/app` it is `src/middleware.ts`. Move it alongside the app directory if you move that later. Unlike `canopy.ts` and the edit page, it does not switch on `CANOPY_AUTH_MODE` at runtime — replace it too if you change auth providers.
+To customize Clerk's sign-in, override it at module scope: `SignInComponent: (p) => <ClerkSignIn {...p} signInProps={{ appearance }} />` (`ClerkSignIn` is exported from `canopycms-auth-clerk/client`).
+
+`middleware.ts` is written into the **parent of your app directory**, not always the project root, because Next.js only loads middleware from there: with `--app-dir src/app` it is `src/middleware.ts`. Move it alongside the app directory if you move that later. Unlike `canopy.ts` and the edit page, it does not switch on `CANOPY_AUTH_MODE` at runtime; if you change auth providers, see the note under [Adopter Touchpoints](#adopter-touchpoints-summary).
 
 ```typescript
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'

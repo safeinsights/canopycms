@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server'
 
-// Protect CMS routes from unauthenticated access.
+// Optional edge protection for CMS routes. This passthrough adds none, and the CMS
+// is protected without it in every auth mode: the API authenticates every request
+// itself, and the editor shows the auth provider's sign-in screen to signed-out
+// users (EditorAuthGate).
 //
-// For dev auth mode, no middleware protection is needed — this file is a passthrough.
-// If you don't need auth protection, you can delete this file entirely.
-//
-// For Clerk auth, replace this file's contents with:
+// With Clerk, clerkMiddleware can add an edge check plus a redirect to sign-in
+// before the editor loads, but it requires CLERK_SECRET_KEY in this runtime (it
+// throws without one). Keep this passthrough to keep the secret off the CMS
+// runtime -- e.g. a no-internet Lambda, where the worker holds the secret. To add
+// the edge check instead, replace this file's contents with:
 //
 //   import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 //
@@ -29,14 +33,10 @@ import { NextResponse } from 'next/server'
 // IMPORTANT: unlike canopy.ts and the edit page, this file does NOT read
 // CANOPY_AUTH_MODE at runtime -- it is frozen at `init` time. If you switch
 // from dev to Clerk auth (or flip CANOPY_AUTH_MODE=clerk), choose what this
-// file becomes. The Clerk middleware above turns signed-out requests away
-// before they reach the app, but needs CLERK_SECRET_KEY wherever it runs.
-// Deleting the file relies on the Clerk auth plugin alone, which rejects
-// unauthenticated API calls on its own (the core also fails closed in prod
-// mode), and keeps the secret off a deployed CMS Lambda -- see "One image for
-// every Clerk tier" in docs/deploying-to-aws.md. Keeping this passthrough with
-// Clerk behaves like deleting it; the warning below is there so that it's a
-// choice rather than an oversight.
+// file becomes: the Clerk middleware above, or this passthrough (the same as
+// no file), which keeps the secret off a deployed CMS Lambda -- see "One image
+// for every Clerk tier" in docs/deploying-to-aws.md. The warning below is there
+// so that it's a choice rather than an oversight.
 
 let warnedAuthModeMismatch = false
 
@@ -46,7 +46,7 @@ export default function middleware() {
     console.warn(
       '[canopycms] CANOPY_AUTH_MODE=clerk is set, but middleware.ts is still the dev ' +
         'passthrough generated for dev auth. Replace it with the Clerk middleware (see the ' +
-        'comment above), or delete it to rely on the Clerk auth plugin alone.',
+        "comment above), or keep it to rely on the API's own auth and the editor's sign-in.",
     )
   }
   return NextResponse.next()

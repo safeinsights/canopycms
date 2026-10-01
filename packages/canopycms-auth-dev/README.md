@@ -113,6 +113,11 @@ The plugin comes with 5 pre-configured users:
 3. Select a user from the modal
 4. Page reloads with the new user
 
+Choose **Sign out** in the same modal to sign out. The editor then shows its sign-in
+screen, which lists the same users: picking one signs in without a reload. A first visit
+with no cookie is still signed in as the default user. The sign-in screen and switcher
+list `DEFAULT_USERS`, so a plugin configured with custom `users` accepts only those.
+
 ### In Tests (Playwright)
 
 Send the `X-Test-User` header with one of these values:
@@ -160,8 +165,9 @@ const authPlugin = createDevAuthPlugin({
 2. **Priority order**:
    - `X-Test-User` header (for tests)
    - `x-dev-user-id` header (custom)
-   - `canopy-dev-user` cookie (from UI)
-   - Default user (user1)
+   - `canopy-dev-user` cookie (from UI). The reserved value `__canopy_signed_out__`
+     means signed out: no user, so the API answers 401. The headers above still win
+   - Default user (user1), when there is no cookie at all
 3. **User lookup** → Find user in config
 4. **Groups assigned**:
    - External groups (from auth plugin)
@@ -195,7 +201,8 @@ Factory function that creates a dev auth plugin.
 
 ### `useDevAuthConfig()`
 
-React hook that provides editor configuration with user switcher.
+React hook that provides editor configuration: the user switcher (`AccountComponent`) and
+the sign-in screen for signed-out users (`SignInComponent`, `DevSignIn`).
 
 **Returns:** `Pick<CanopyClientConfig, 'editor'>`
 
@@ -207,7 +214,7 @@ export { createDevAuthPlugin, DevAuthPlugin, DEFAULT_USERS, DEFAULT_GROUPS }
 export type { DevAuthConfig, DevUser, DevGroup }
 
 // Client-side (import from 'canopycms-auth-dev/client')
-export { useDevAuthConfig }
+export { useDevAuthConfig, DevSignIn }
 ```
 
 ## Switching Between Auth Providers
