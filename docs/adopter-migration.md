@@ -51,6 +51,18 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
+
+**What changed.** `init --auth clerk` now writes the same passthrough `middleware.ts` as dev auth,
+with `clerkMiddleware` and its costs as a commented opt-in, instead of an active `clerkMiddleware`.
+The passthrough's `CANOPY_AUTH_MODE=clerk` warning is gone: one file now fits both modes.
+
+**To adopt.** Nothing. `init` keeps an existing `middleware.ts` unless you confirm or pass
+`--force`.
+
+**Now deletable.** A `clerkMiddleware` an earlier `init` wrote, if you never chose the edge check.
+The entry below says what it costs.
+
 ### The editor handles signed-out users itself, so `clerkMiddleware` is optional
 
 **What changed.** The editor treats a 401 from the CMS API as signed out. It shows the auth

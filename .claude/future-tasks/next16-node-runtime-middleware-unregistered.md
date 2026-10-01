@@ -36,9 +36,11 @@ is what identifies the bundler as the irrelevant variable. The difference is
 
 ## Why it matters to us
 
-1. **A one-line "fix" to our scaffold would ship auth-silently-off.** Our
-   generated `middleware-clerk.ts.template` declares no runtime, so it runs on
-   edge; adding `runtime: 'nodejs'` is the natural change and would disable
+1. **A one-line "fix" to our scaffold would ship auth-silently-off.** The
+   `clerkMiddleware` example commented in `middleware.ts.template` (`init` has
+   generated the passthrough since 2026-10-01) declares no runtime, so an adopter
+   who swaps it in runs on edge; adding `runtime: 'nodejs'` is the natural change
+   and would disable
    `auth.protect()` on `/edit` and `/api/canopycms` for any 16.x adopter. Do not
    make that change without a per-version measurement. Recorded at the point of
    temptation in

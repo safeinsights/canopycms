@@ -3,22 +3,13 @@
 New 2026-10-01, left over from
 [clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md). The
 editor now handles signed-out users itself, so `clerkMiddleware` is optional. Three things
-follow from that and are not done.
+follow from that; the first is done.
 
-## 1. Decide what `init --auth clerk` scaffolds (decision for JP)
+## 1. DONE 2026-10-01: `init --auth clerk` scaffolds the passthrough
 
-`init --auth clerk` still writes `middleware-clerk.ts.template`, i.e. `clerkMiddleware`,
-which needs `CLERK_SECRET_KEY` in the CMS runtime and throws without it. The deployment this
-package documents (`docs/deploying-to-aws.md`) keeps that secret off the Lambda, so the
-scaffold's Clerk default is the one shape that does not run on the documented deploy.
-
-- **Recommended: scaffold the passthrough for `--auth clerk` too**, with the template's
-  comments offering `clerkMiddleware` as the opt-in edge check. Nothing is lost on
-  sign-in UX any more, and it matches the documented posture.
-- Or keep `clerkMiddleware` as the default and add an `init` flag for the secret-free shape.
-
-Either way `init.test.ts` pins the generated middleware (`'generates clerk middleware when
-authProvider is clerk'`, and the `jwtKey` test), so the change is visible in review.
+JP chose the passthrough. `init` writes the same `middleware.ts.template` for every auth mode,
+with `clerkMiddleware` and its two costs as a commented opt-in; `middleware-clerk.ts.template`
+is gone, and so is the passthrough's mode-mismatch warning, since one file now serves both modes.
 
 ## 2. The example app and the AWS example disagree
 

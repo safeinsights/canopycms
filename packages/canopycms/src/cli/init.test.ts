@@ -174,32 +174,37 @@ describe('canopycms init', () => {
     expect(mw).toContain('export default function middleware()')
   })
 
-  it('passthrough middleware warns when CANOPY_AUTH_MODE=clerk but middleware was not regenerated', async () => {
+  it('generates the same passthrough for clerk auth, with no active clerkMiddleware', async () => {
+    // The CMS needs no middleware in any auth mode, so one file serves both and switching
+    // CANOPY_AUTH_MODE cannot leave a mismatched middleware.ts behind.
     await init(defaultOpts(tmpDir))
+    const devMiddleware = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    const clerkDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-init-test-clerk-'))
+    try {
+      await init(defaultOpts(clerkDir, { authProvider: 'clerk' }))
+      const clerkMiddleware = await fs.readFile(path.join(clerkDir, 'middleware.ts'), 'utf-8')
 
-    // ADO-M1: middleware.ts is frozen at init time and does not read CANOPY_AUTH_MODE
-    // at runtime like canopy.ts/edit page do. It should at least warn about the
-    // mismatch so an adopter who flips the env var without swapping this file notices.
-    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
-    expect(mw).toContain("process.env.CANOPY_AUTH_MODE === 'clerk'")
-    expect(mw).toContain('console.warn')
+      expect(clerkMiddleware).toBe(devMiddleware)
+      const activeCode = clerkMiddleware
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//'))
+        .join('\n')
+      expect(activeCode).toContain('NextResponse.next()')
+      expect(activeCode).not.toContain('clerkMiddleware')
+      expect(activeCode).not.toContain('console.warn')
+    } finally {
+      await fs.rm(clerkDir, { recursive: true, force: true })
+    }
   })
 
-  it('generates clerk middleware when authProvider is clerk', async () => {
-    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
-
-    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
-    expect(mw).toContain('clerkMiddleware')
-    expect(mw).toContain('isProtectedRoute')
-  })
-
-  it('clerk middleware passes an explicit jwtKey so cold verification never hits the network (B2)', async () => {
+  it('offers clerkMiddleware as a commented example that passes an explicit jwtKey (B2)', async () => {
     await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
 
     // Without an explicit jwtKey, @clerk/nextjs fetches JWKS from api.clerk.com
     // on cold verification; the prod CMS Lambda has no internet and hangs.
     const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
-    expect(mw).toContain('jwtKey: process.env.CLERK_JWT_KEY')
+    expect(mw).toContain('//   export default clerkMiddleware(')
+    expect(mw).toContain('//     { jwtKey: process.env.CLERK_JWT_KEY },')
   })
 
   it('generates dual-build next.config when staticBuild is true', async () => {
