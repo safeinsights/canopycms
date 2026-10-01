@@ -148,6 +148,6 @@ per the instrument change recorded in
 
 - [asset-support-upload-behavior.md](asset-support-upload-behavior.md) — the topology this
   makes constructible, and the measurements behind it.
-- [adopter-migration-unreleased-is-stale.md](../adopter-migration-unreleased-is-stale.md) —
+- [adopter-migration-unreleased-is-stale.md](adopter-migration-unreleased-is-stale.md) —
   found while filing this; `docs/adopter-migration.md`'s Unreleased section covers three
   shipped releases.

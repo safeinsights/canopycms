@@ -66,9 +66,8 @@ version scripts. Also still true that `int` consumers must pin exactly.
 
 ## Related
 
-- [adopter-migration-unreleased-is-stale.md](adopter-migration-unreleased-is-stale.md) —
-  the same adopter hits both: stale `## Unreleased` filing tells them what they run has
-  not shipped, and until 2026-10-01 nothing told them which ref to read.
+- [adopter-migration-unreleased-is-stale.md](resolved/adopter-migration-unreleased-is-stale.md) —
+  the other half the same adopter hit, resolved 2026-10-01 in the same pass.
 - Consider `npm deprecate`-ing superseded `int` versions to keep
   `npm view canopycms versions` readable; the prerelease list is the only real
   cost of the scheme.

@@ -590,6 +590,16 @@ for (const f of inScopeFiles) {
   }
 
   for (const [name, count] of metrics.sectionWords) {
+    // A changelog's `## Released` section is append-only: every release that has
+    // ever shipped lives under it, so its word count only ever rises and a ceiling
+    // on it measures nothing an author can act on -- it would fail the build on the
+    // routine promotion of entries out of `## Unreleased`, which is the one thing
+    // this document most needs people to keep doing. The ceiling still applies to
+    // every other section of the file, `## Unreleased` included, which is where
+    // unbounded growth is a real signal. `historyMarkers: null` is the existing
+    // marker for "this file is a dated changelog"; this reuses it rather than
+    // introducing a second opt-out.
+    if (budget.historyMarkers === null && name === 'Released') continue
     if (count > budget.maxSectionWords) {
       problems.push({
         kind: 'doc section over ceiling',
@@ -633,6 +643,78 @@ for (const item of longItems) {
     line: item.lineNo,
     message: `${item.words} words`,
   })
+}
+
+// Check 9: every release this branch contains has a section in the migration guide.
+//
+// Entries are written under `## Unreleased` and promoted by hand, so a release that
+// ships without anyone touching the file leaves its entries filed as unreleased. Three
+// releases accumulated that way once (0.0.64 through 0.0.66, ~1,150 lines), which tells
+// an adopter that everything they are already running has not shipped yet — neutralising
+// the "Now deletable" lists the document calls its own point.
+//
+// Tag reachability is the signal: if `vX.Y.Z` is an ancestor of HEAD, this branch
+// contains that release and the guide on this branch should account for it.
+//
+// This check is INERT ON A SHALLOW CLONE, which is what CI checks out — no history, no
+// tags, nothing to compare. That is deliberate rather than overlooked: lint-staged runs
+// `lint:docs` on every commit touching `**/*.md`, locally, where the full history is
+// present, so the check fires at the moment someone edits this file. CI is the backstop
+// for everything else here, not for this one.
+{
+  const guide = 'docs/adopter-migration.md'
+  const guidePath = join(repoRoot, guide)
+  let shallow = true
+  let tags = []
+  try {
+    shallow =
+      execFileSync('git', ['rev-parse', '--is-shallow-repository'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim() === 'true'
+    if (!shallow) {
+      tags = execFileSync('git', ['tag', '--merged', 'HEAD', '--list', 'v*.*.*'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      })
+        .split('\n')
+        .map((t) => t.trim().replace(/^v/, ''))
+        .filter((t) => /^\d+\.\d+\.\d+$/.test(t))
+    }
+  } catch {
+    tags = []
+  }
+
+  if (!shallow && tags.length > 0 && existsSync(guidePath)) {
+    const headings = readFileSync(guidePath, 'utf8')
+      .split('\n')
+      .filter((l) => l.startsWith('### '))
+      .map((l) => l.slice(4).trim())
+    const named = new Set()
+    let floor = null
+    for (const h of headings) {
+      const exact = /^(\d+\.\d+\.\d+)$/.exec(h)
+      if (exact) named.add(exact[1])
+      const catchAll = /^(\d+\.\d+\.\d+) and earlier$/.exec(h)
+      if (catchAll) floor = catchAll[1]
+    }
+    const cmp = (a, b) => {
+      const x = a.split('.').map(Number)
+      const y = b.split('.').map(Number)
+      for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]
+      return 0
+    }
+    for (const v of tags) {
+      if (named.has(v)) continue
+      if (floor && cmp(v, floor) <= 0) continue
+      problems.push({
+        kind: 'released version has no section in the migration guide',
+        file: guide,
+        line: null,
+        message: `\`${v}\` is tagged and reachable from HEAD -- add a \`### ${v}\` section under \`## Released\` and move its entries out of \`## Unreleased\`, demoting each from \`###\` to \`####\``,
+      })
+    }
+  }
 }
 
 const errors = problems.filter((p) => p.severity !== 'warn')
