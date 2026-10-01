@@ -191,20 +191,32 @@ describe('canopycms init', () => {
         .join('\n')
       expect(activeCode).toContain('NextResponse.next()')
       expect(activeCode).not.toContain('clerkMiddleware')
-      expect(activeCode).not.toContain('console.warn')
+      expect(activeCode).not.toMatch(/console\.|emitWarning/)
     } finally {
       await fs.rm(clerkDir, { recursive: true, force: true })
     }
   })
 
-  it('offers clerkMiddleware as a commented example that passes an explicit jwtKey (B2)', async () => {
+  it('offers a complete, working clerkMiddleware as the commented opt-in (B2)', async () => {
     await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
 
+    // The commented example is the only place the Clerk variant lives, so pin what makes it work
+    // once uncommented, not its indentation.
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    const example = mw
+      .split('\n')
+      .filter((line) => line.startsWith('//   '))
+      .map((line) => line.slice('//   '.length))
+      .join('\n')
+    expect(example).toContain(
+      "import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'",
+    )
+    expect(example).toContain("createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])")
+    expect(example).toContain('export default clerkMiddleware(')
+    expect(example).toContain('await auth.protect()')
     // Without an explicit jwtKey, @clerk/nextjs fetches JWKS from api.clerk.com
     // on cold verification; the prod CMS Lambda has no internet and hangs.
-    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
-    expect(mw).toContain('//   export default clerkMiddleware(')
-    expect(mw).toContain('//     { jwtKey: process.env.CLERK_JWT_KEY },')
+    expect(example).toContain('{ jwtKey: process.env.CLERK_JWT_KEY }')
   })
 
   it('generates dual-build next.config when staticBuild is true', async () => {
