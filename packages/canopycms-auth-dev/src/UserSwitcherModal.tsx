@@ -1,9 +1,9 @@
 'use client'
 
-import { Modal, Stack, Paper, Group, Avatar, Text, Badge } from '@mantine/core'
-import { IconCheck } from '@tabler/icons-react'
-import { DEFAULT_USERS } from './dev-defaults'
-import { setDevUserCookie } from './cookie-utils'
+import { Modal, Stack, Button } from '@mantine/core'
+import { IconLogout } from '@tabler/icons-react'
+import { setDevUserCookie, setDevSignedOutCookie } from './cookie-utils'
+import { DevUserList } from './DevUserList'
 
 interface Props {
   opened: boolean
@@ -17,41 +17,18 @@ export function UserSwitcherModal({ opened, onClose, currentUserId }: Props) {
     window.location.reload()
   }
 
+  const signOut = () => {
+    setDevSignedOutCookie()
+    window.location.reload()
+  }
+
   return (
     <Modal opened={opened} onClose={onClose} title="Switch Development User">
-      <Stack gap="sm">
-        {DEFAULT_USERS.map((user) => (
-          <Paper
-            key={user.userId}
-            p="md"
-            withBorder
-            style={{ cursor: 'pointer' }}
-            onClick={() => switchUser(user.userId)}
-          >
-            <Group justify="space-between" mb="xs">
-              <Group>
-                <Avatar color="blue">{user.name[0]}</Avatar>
-                <div>
-                  <Text fw={500}>{user.name}</Text>
-                  <Text size="sm" c="dimmed">
-                    {user.email}
-                  </Text>
-                </div>
-              </Group>
-              {user.userId === currentUserId && <IconCheck size={20} />}
-            </Group>
-
-            {user.externalGroups.length > 0 && (
-              <Group gap="xs">
-                {user.externalGroups.map((g) => (
-                  <Badge key={g} variant="outline" size="sm">
-                    {g}
-                  </Badge>
-                ))}
-              </Group>
-            )}
-          </Paper>
-        ))}
+      <Stack gap="md">
+        <DevUserList onSelect={switchUser} currentUserId={currentUserId} />
+        <Button variant="subtle" leftSection={<IconLogout size={16} />} onClick={signOut}>
+          Sign out
+        </Button>
       </Stack>
     </Modal>
   )

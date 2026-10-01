@@ -2,7 +2,8 @@ import type { AuthPlugin } from 'canopycms/auth'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
 import { extractHeaders } from 'canopycms/auth'
 import type { CanopyUserId, CanopyGroupId } from 'canopycms'
-import { getDevUserCookieFromHeaders } from './cookie-utils'
+import { DEFAULT_USER_ID } from './cookie-utils'
+import { resolveDevUserId } from './resolve-user'
 import { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID } from './dev-defaults'
 import type { DevUser, DevGroup, DevAuthConfig } from './dev-defaults'
 
@@ -28,16 +29,14 @@ export class DevAuthPlugin implements AuthPlugin {
   constructor(config: DevAuthConfig = {}) {
     this.users = config.users ?? DEFAULT_USERS
     this.groups = config.groups ?? DEFAULT_GROUPS
-    this.defaultUserId = config.defaultUserId ?? 'dev_user1_2nK8mP4xL9'
+    this.defaultUserId = config.defaultUserId ?? DEFAULT_USER_ID
   }
 
   async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
     const headers = extractHeaders(context)
     if (!headers) return null
-    let userId = headers.get('X-Test-User')
-    if (!userId) userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
-    if (!userId) userId = this.defaultUserId
-    return { userId: this.mapTestUserKey(userId) }
+    const userId = resolveDevUserId(headers, this.defaultUserId)
+    return userId ? { userId } : null
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
@@ -46,19 +45,12 @@ export class DevAuthPlugin implements AuthPlugin {
       return { success: false, error: 'Invalid context' }
     }
 
-    let userId = headers.get('X-Test-User')
-
+    const userId = resolveDevUserId(headers, this.defaultUserId)
     if (!userId) {
-      userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
+      return { success: false, error: 'Signed out' }
     }
 
-    if (!userId) {
-      userId = this.defaultUserId
-    }
-
-    const userIdMapped = this.mapTestUserKey(userId)
-
-    const user = this.users.find((u) => u.userId === userIdMapped)
+    const user = this.users.find((u) => u.userId === userId)
     if (!user) {
       return { success: false, error: `Dev user not found: ${userId}` }
     }
@@ -73,19 +65,6 @@ export class DevAuthPlugin implements AuthPlugin {
         externalGroups: user.externalGroups,
       },
     }
-  }
-
-  /**
-   * Map test-app user keys to dev user IDs for backward compatibility
-   */
-  private mapTestUserKey(key: string): CanopyUserId {
-    const testUserMap: Record<string, CanopyUserId> = {
-      admin: DEV_ADMIN_USER_ID, // admin1
-      editor: 'dev_user1_2nK8mP4xL9', // user1
-      viewer: 'dev_user2_7qR3tY6wN2', // user2
-      reviewer: 'dev_reviewer_9aB4cD2eF7', // reviewer1
-    }
-    return testUserMap[key] ?? key
   }
 
   async searchUsers(query: string, limit?: number): Promise<UserSearchResult[]> {
