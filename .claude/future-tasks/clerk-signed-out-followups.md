@@ -3,7 +3,7 @@
 New 2026-10-01, left over from
 [clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md). The
 editor now handles signed-out users itself, so `clerkMiddleware` is optional. Three things
-follow from that; the first is done.
+follow from that; the first two are done.
 
 ## 1. DONE 2026-10-01: `init --auth clerk` scaffolds the passthrough
 
@@ -11,15 +11,12 @@ JP chose the passthrough. `init` writes the same `middleware.ts.template` for ev
 with `clerkMiddleware` and its two costs as a commented opt-in; `middleware-clerk.ts.template`
 is gone, and so is the passthrough's mode-mismatch warning, since one file now serves both modes.
 
-## 2. The example app and the AWS example disagree
+## 2. DONE 2026-10-01: example1 uses the scaffold's passthrough
 
-`apps/example1/middleware.ts` adopts `clerkMiddleware` under `CANOPY_AUTH_MODE=clerk`, while
-`examples/aws-deployment/infrastructure/lib/cms-stack.ts` gives the Lambda only
-`CLERK_JWT_KEY`. [deploy-test-lambda-plaintext-clerk-secret.md](deploy-test-lambda-plaintext-clerk-secret.md)
-already noted that this reference deployment looks unable to serve an authenticated editor
-request. Moving example1 to the passthrough under Clerk would fix it. That changes the
-example app's integration surface, so it needs approval per `CLAUDE.md`; it should follow
-whatever item 1 decides.
+JP approved. `apps/example1/middleware.ts` is now `middleware.ts.template` verbatim, so the
+example app no longer needs `CLERK_SECRET_KEY` for its middleware, matching
+`examples/aws-deployment`, which gives the Lambda only `CLERK_JWT_KEY`. example1 has no
+server-side Clerk calls (`auth()`, `currentUser()`) that would need the middleware.
 
 ## 3. First live run against a real Clerk instance
 

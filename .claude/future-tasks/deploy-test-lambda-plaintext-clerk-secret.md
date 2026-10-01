@@ -228,9 +228,9 @@ interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
 
 ### ⚠️ DO NOT add `runtime: 'nodejs'` to the shipped template
 
-Neither the `clerkMiddleware` example commented in `cli/template-files/middleware.ts.template`
-nor `apps/example1/middleware.ts` declares a `runtime`, so any Clerk middleware we ship runs on
-edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
+The `clerkMiddleware` example commented in `cli/template-files/middleware.ts.template` (and
+copied into `apps/example1/middleware.ts`) declares no `runtime`, so an adopter who swaps it in
+runs on edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
 **Measured: on Next 16.1.7 that would silently disable the auth middleware.**
 
 Three build arms, all real `CANOPY_BUILD=cms next build` runs with a
