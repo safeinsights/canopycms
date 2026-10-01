@@ -51,6 +51,24 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### The editor handles signed-out users itself, so `clerkMiddleware` is optional
+
+**What changed.** The editor treats a 401 from the CMS API as signed out. It shows the auth
+provider's sign-in screen instead of loading, or over the open editor when a session ends mid-edit,
+so unsaved edits survive signing back in. `useClerkAuthConfig()` and `useDevAuthConfig()` supply that
+screen. The API verifies tokens from `CLERK_JWT_KEY` alone, so `clerkMiddleware` is optional.
+
+**To adopt.** Nothing, if your edit page passes one of those hooks into `config.client(...)`. A
+custom auth provider adds `editor.SignInComponent`, which receives `EditorSignInProps`.
+
+**Now deletable.**
+
+- A hand-rolled signed-out gate around the editor page, such as `<SignedOut>` wrappers or a
+  `useAuth()` check rendering `<RedirectToSignIn />`.
+- `clerkMiddleware` kept only to send signed-out visitors to sign-in, and with it
+  `CLERK_SECRET_KEY` in the deployed CMS runtime.
+- Reload-on-401 or "session expired" handling in your edit page.
+
 ### A worker credential can be one field of a JSON secret
 
 **What changed.** The EC2 worker's Secrets Manager reads can pull a single field out of a secret
