@@ -41,7 +41,20 @@ release commit genuinely is unreleased and stays. Worth adding a check to
 `scripts/check-future-tasks.mjs`'s neighbourhood — or to the release workflow — so the next
 release moves its own entries rather than accumulating another three.
 
+## Confirmed in the wild, 2026-10-01
+
+No longer hypothetical. An adopter on `0.0.67-int.90` hit exactly the failure described
+above and spent a verification pass on it. Worth noting what that incident did *not*
+show, because it is easy to misread: the `int.90` entries were never stranded or awaiting
+a merge — they were present in the tree at `92961874`, the exact commit `int.90` was built
+from, alongside the code they describe. Code and docs ship in lockstep on the integration
+branch. What the adopter lacked was any way to know which ref to read, which is the
+`document-release-process.md` half and is now fixed. This item — the misfiling itself —
+is untouched by that fix and still bites: an `int` reader who finds the right branch is
+still told that everything they are running is unreleased.
+
 ## Related
 
 - [document-release-process.md](document-release-process.md) — the release process is
   undocumented outside workflow comments, which is plausibly why this step has no owner.
+  Its adopter half shipped 2026-10-01.

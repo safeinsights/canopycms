@@ -47,8 +47,28 @@ material already exists in
 [program-log.md](program-log.md) — this is mostly relocation into docs an
 adopter or a new maintainer would actually find.
 
+## Partly done: the adopter half, 2026-10-01
+
+An adopter running `0.0.67-int.90` could not find the documentation for the behaviour
+they were running, and spent a verification pass on it. Two causes, both now fixed in
+`packages/canopycms/README.md` — the only guide that ships inside the tarball:
+
+- It hard-pinned its two repository links to `/blob/main/`, so an `int` reader landed on
+  the last stable release's guides with nothing signalling the mismatch.
+- Nothing said how to resolve an installed version back to its source ref. It turns out
+  nothing needed building: the `--provenance` publish already records `ref` and
+  `gitCommit` for every version on both channels, so the README now just shows the
+  registry query that reads them back.
+
+Still open here: the **maintainer-facing** half — a release section in `DEVELOPING.md`
+covering both channels, the one-trusted-publisher-per-workflow-filename trap, and the
+version scripts. Also still true that `int` consumers must pin exactly.
+
 ## Related
 
+- [adopter-migration-unreleased-is-stale.md](adopter-migration-unreleased-is-stale.md) —
+  the same adopter hits both: stale `## Unreleased` filing tells them what they run has
+  not shipped, and until 2026-10-01 nothing told them which ref to read.
 - Consider `npm deprecate`-ing superseded `int` versions to keep
   `npm view canopycms versions` readable; the prerelease list is the only real
   cost of the scheme.
