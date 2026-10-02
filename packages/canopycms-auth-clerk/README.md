@@ -70,8 +70,9 @@ once. Clerk's `router.refresh()`, which runs next, still clears Next's router ca
 harmless off AWS too.
 
 The editor already holds it, so this is only for a CMS build that renders `<SignIn>`, `UserButton`
-or `OrganizationSwitcher` outside the editor. Render it once inside `<ClerkProvider>`. It has to be
-inside, because the provider installs the hook in its own effect, which must run first:
+or `OrganizationSwitcher` outside the editor. It is for the App Router: the Pages Router provider's
+hook clears that router's data caches and runs no Server Action, so leave it alone. Render it once
+inside `<ClerkProvider>`, which guarantees its effect runs after the provider installs the hook:
 
 ```tsx
 'use client'

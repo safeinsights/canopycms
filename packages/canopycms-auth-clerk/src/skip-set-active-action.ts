@@ -9,8 +9,8 @@ const replaced = new Map<string, unknown>()
 
 /**
  * Makes `@clerk/nextjs`'s before-`setActive` hook resolve at once instead of running a Server
- * Action, which 403s behind CloudFront OAC and leaves sign-in hanging. Call it in a component
- * inside `<ClerkProvider>`: the editor already does (see the README for your own pages).
+ * Action, which 403s behind CloudFront OAC and leaves sign-in hanging. App Router only: call it
+ * in a component inside `<ClerkProvider>`. The editor already does; see the README for your pages.
  */
 export function useSkipClerkSetActiveAction(): void {
   useEffect(() => {

@@ -15,7 +15,12 @@ observed live**. That check is item 3 of
 - **What research added.**
   - `@clerk/nextjs` 6.x has the same bug under `window.__unstable__onBeforeSetActive`.
   - 7.9.10 (latest) is byte-identical to 7.9.8.
-  - clerk-js 6.37.0 is unchanged.
+  - clerk-js 6.37.0 still awaits the hook.
+- **Accepted residual (review LOW).** If the provider's layout effect re-runs while held, the hook
+  comes back until a holder next mounts. A passive effect does not re-run alongside it, as when a
+  Suspense boundary above the provider re-suspends and is revealed. The editor has no such
+  suspender. A `window` accessor trap would close it, at the cost of more magic than the risk
+  warrants.
 - **Still open:** adopters' own Server Actions on the CMS build, and proxied-store FormData. See
   [oac-unhashed-body-requests.md](../oac-unhashed-body-requests.md), which holds option 3.
 
@@ -51,8 +56,8 @@ flips. The user completes Clerk's form and the sign-in never finishes.
 - **Hit:** any in-app `setActive`: the embedded `<SignIn>` inside `ClerkSignIn`
   (`packages/canopycms-auth-clerk/src/ClerkSignIn.tsx`), plus account and org switching from
   `UserButton`.
-- **Not hit:** sign-out on Next 15/16 (intent `sign-out` resolves immediately; on Next 13/14 it
-  runs the action too), and the gate's mid-session path when Clerk is still signed in (`getToken`
+- **Not hit:** sign-out on Next 15/16 (intent `sign-out` resolves immediately; on Next 13/14 the
+  7.x provider runs the action too), and the gate's mid-session path when Clerk is still signed in (`getToken`
   only).
 - **Not hit either: a hosted Account Portal sign-in.** On the return trip, clerk-js's
   `updateClient` sets the first session directly, without `setActive`.
@@ -75,7 +80,7 @@ flips. The user completes Clerk's form and the sign-in never finishes.
    access computes `x-amz-content-sha256` before OAC signs. It fixes every body-carrying request
    at once, including adopters' own Server Actions on the CMS build and `FormData` bodies, which
    cannot carry the header today (`uploadProxied` sends one, but only a proxied store routes it
-   through OAC; S3 uploads go direct). Costs: Lambda@Edge's latency,
+   through OAC; S3 uploads never reach the Function URL). Costs: Lambda@Edge's latency,
    regions and price, plus deploy complexity. A CloudFront Function cannot do it, because
    functions cannot read bodies.
 4. **A provider without Server Actions.** The website session's lead: mount `@clerk/react`'s

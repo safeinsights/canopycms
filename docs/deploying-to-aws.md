@@ -1037,7 +1037,7 @@ CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via th
 
 **Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (`.claude/future-tasks/oac-unhashed-body-requests.md`). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
 
-**`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads straight to S3 by presigned POST, which never reaches this distribution. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
+**`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
 
 ## Environments
 

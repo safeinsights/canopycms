@@ -14,8 +14,8 @@ bodies (`api/request-body-hash.ts`). Nothing adds it to anything else.
   but nothing covers an adopter's. No known adopter has one today.
 - **Proxied-store uploads.** `client.assets.uploadProxied` sends `FormData`, whose multipart
   boundary is chosen at send time, so the browser cannot hash it in advance. On AWS the S3 store
-  uploads direct to S3 via presigned POST, so this bites only if a proxied store is deployed behind
-  OAC.
+  uploads by presigned POST to an unsigned S3 origin (`asset-support.ts`), never the Function URL,
+  so this bites only if a proxied store is deployed behind OAC.
 
 `OAC always` cannot be relaxed. On basic-auth tiers it replaces the viewer's `Authorization: Basic`
 with SigV4, and `no-override` would forward Basic to the Lambda, which rejects it.
@@ -32,9 +32,9 @@ with SigV4, and `no-override` would forward Basic to the Lambda, which rejects i
    **Unverified:** that OAC signs *after* an origin-request function adds the header. Prove that on
    a deploy before building anything else.
 2. **A same-origin fetch shim** on CMS-build pages that hashes string bodies on POSTs lacking the
-   header. It covers Server Actions with string bodies, not `FormData`. It must stay same-origin,
-   because a custom header on a cross-origin request (Clerk's Frontend API) triggers a CORS
-   preflight that would break Clerk.
+   header. It covers Server Actions with string bodies, not `FormData`. It must stay same-origin:
+   a custom header on a cross-origin request, such as one to Clerk's Frontend API, triggers a CORS
+   preflight that the other host would have to allow.
 
 Until one ships, `docs/deploying-to-aws.md` ("CloudFront OAC and request body signing") tells
 adopters not to rely on Server Actions in the CMS build.
