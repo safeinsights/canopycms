@@ -1,5 +1,5 @@
 import { defineConfig, configDefaults } from 'vitest/config'
-import { quietTestOutput } from '../../vitest.shared'
+import { ownedTmpdirSetup, quietTestOutput } from '../../vitest.shared'
 
 // vitest 4 removed `environmentMatchGlobs`; per-glob environments are now
 // expressed as separate `projects`. The editor tree runs under jsdom (with the
@@ -10,6 +10,9 @@ export default defineConfig({
     // `dot` reporter + the CI `onConsoleLog` guard, shared with every package.
     // Swallow and assert expected output with mockConsole() (src/test-utils/console-spy.ts).
     ...quietTestOutput,
+    // Owns os.tmpdir() for the run, so no test can strand a temp directory.
+    // src/test-utils/owned-tmpdir.test.ts fails if this is dropped.
+    globalSetup: [ownedTmpdirSetup],
     env: {
       CANOPY_BOOTSTRAP_ADMIN_IDS: 'test-admin',
     },

@@ -199,6 +199,8 @@ const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
 const git = await initTestRepo(tmpDir)
 ```
 
+`os.tmpdir()` in a test is a per-run root that the `ownedTmpdirSetup` globalSetup ([vitest.tmpdir.ts](vitest.tmpdir.ts)) creates and deletes, so a `mkdtemp` directory a test never removes strands nothing. A new package's `vitest.config.ts` must list it.
+
 ## Schema Architecture
 
 The schema model is collections and entry types; there is no separate singleton concept — a "singleton" is an entry type with `maxItems: 1`. A `RootCollectionConfig` holds root-level `entries`, nested `collections`, and an `order` array of content IDs. `CollectionConfig` and `EntryTypeConfig` are declared in `packages/canopycms/src/config/types.ts`; the adopter-facing shape of a `.collection.json` file is in [README.md](README.md#schema-registry-and-references). On disk each collection directory carries a `.collection.json` whose fields reference named schemas from the registry rather than inlining field definitions.
@@ -979,7 +981,7 @@ pnpm --filter canopycms-cdk exec vitest run src/scaffold-synth.test.ts
 
 ### Test-Owned CDK Synth Output (`newTestApp()`)
 
-A CDK `App` with no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK cleans those up from a `process.on('exit')` handler, but **a vitest worker is torn down without firing exit handlers**, so under vitest each synth strands an assembly of 0.6-3.2 MB. Enough of them accumulate to exhaust free disk, and the symptom — a full temp filesystem breaking unrelated tooling — surfaces nowhere near its cause.
+A CDK `App` with no `outdir` synthesizes into a `mkdtemp('cdk.out')` under `os.tmpdir()`. CDK cleans those up from a `process.on('exit')` handler, but **a vitest worker is torn down without firing exit handlers**, so under vitest each synth strands an assembly of 0.6-3.2 MB.
 
 **Rule: in `packages/canopycms-cdk` tests, never call `new App()` directly — always use `newTestApp()`** from `test-support/test-synth.ts`:
 

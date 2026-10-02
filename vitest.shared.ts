@@ -6,6 +6,7 @@
  * No `vitest` import, runtime or type: the repo root does not depend on vitest
  * (each package does), so the few shapes this reads are declared structurally.
  */
+import { fileURLToPath } from 'node:url'
 
 /** The fields this reads from the TestCase / TestSuite / TestModule Vitest passes to `onConsoleLog`. */
 interface ConsoleLogSource {
@@ -63,3 +64,9 @@ export const quietTestOutput = {
     )
   },
 }
+
+/**
+ * `globalSetup` entry that gives the run a temp directory it owns and deletes
+ * afterwards; every package lists it. See vitest.tmpdir.ts.
+ */
+export const ownedTmpdirSetup = fileURLToPath(new URL('./vitest.tmpdir.ts', import.meta.url))
