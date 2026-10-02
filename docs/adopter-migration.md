@@ -51,6 +51,22 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Clerk sign-in no longer hangs behind CloudFront OAC
+
+**What changed.** `@clerk/nextjs`'s provider makes every `setActive` (sign-in, account or org
+switch) wait on a Server Action. Behind `CanopyCmsDistribution`'s OAC that action's POST 403s, so
+the wait never ended. `canopycms-auth-clerk` now skips it while the editor is mounted, and exports
+`useSkipClerkSetActiveAction()` for Clerk components elsewhere in the CMS build.
+
+**To adopt.** Nothing for the editor, if your edit page uses `useClerkAuthConfig()` or
+`ClerkSignIn`. If your CMS build renders `<SignIn>`, `UserButton` or `OrganizationSwitcher` on
+your own pages, mount the hook as in
+[Clerk components on your own pages](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages).
+Your own Server Actions in the CMS build still 403 behind OAC.
+
+**Now deletable.** Any local patch of `window.__internal_onBeforeSetActive` (or 6.x's
+`__unstable__onBeforeSetActive`), and any edge function added only to make Clerk sign-in finish.
+
 ### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
 
 **What changed.** `init --auth clerk` now writes the same passthrough `middleware.ts` as dev auth,

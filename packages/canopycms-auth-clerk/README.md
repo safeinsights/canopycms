@@ -61,6 +61,29 @@ const clerkAuth = useClerkAuthConfig()
 config.client({ editor: { ...clerkAuth.editor, SignInComponent: SignIn } })
 ```
 
+### Clerk components on your own pages
+
+`@clerk/nextjs`'s provider makes every `setActive` (sign-in, account or org switch) first wait on
+a Server Action. Behind CloudFront OAC (`CanopyCmsDistribution`), that action's POST is rejected,
+so the wait never ends and sign-in hangs. `useSkipClerkSetActiveAction()` makes the wait resolve at
+once. Clerk's `router.refresh()`, which runs next, still clears Next's router cache, so the hook is
+harmless off AWS too.
+
+The editor already holds it, so this is only for a CMS build that renders `<SignIn>`, `UserButton`
+or `OrganizationSwitcher` outside the editor. Render it once inside `<ClerkProvider>`. It has to be
+inside, because the provider installs the hook in its own effect, which must run first:
+
+```tsx
+'use client'
+import { useSkipClerkSetActiveAction } from 'canopycms-auth-clerk/client'
+
+export function SkipClerkSetActiveAction() {
+  useSkipClerkSetActiveAction()
+  return null
+}
+// in the layout: <ClerkProvider><SkipClerkSetActiveAction />{children}</ClerkProvider>
+```
+
 ### Configuration Options
 
 ```typescript
