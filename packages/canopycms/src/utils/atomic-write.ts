@@ -1,20 +1,11 @@
 /**
- * Atomic file write utility.
- *
- * Writes to a temp file first, then renames over the target.
- * Prevents partial/interleaved writes that corrupt files on NFS/EFS.
+ * Atomic file write: temp file first, then rename over the target, so the file is never
+ * partially written. Prevents the interleaved writes that corrupt files on NFS/EFS.
  */
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-/**
- * Atomically write content to a file via temp-file + rename.
- * Ensures the target file is never partially written.
- *
- * @param filePath - Absolute path to the target file
- * @param content - String or binary content to write
- */
 export async function atomicWriteFile(
   filePath: string,
   content: string | Buffer | Uint8Array,

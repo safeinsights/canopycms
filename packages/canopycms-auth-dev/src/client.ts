@@ -2,7 +2,10 @@
 
 import type { CanopyClientConfig } from 'canopycms/client'
 import { UserSwitcherButton } from './UserSwitcherButton'
-import { clearDevUserCookie } from './cookie-utils'
+import { DevSignIn } from './DevSignIn'
+import { setDevSignedOutCookie } from './cookie-utils'
+
+export { DevSignIn } from './DevSignIn'
 
 /**
  * Hook that provides dev auth handlers and components for CanopyCMS editor.
@@ -24,9 +27,10 @@ export function useDevAuthConfig(): Pick<CanopyClientConfig, 'editor'> {
   return {
     editor: {
       AccountComponent: UserSwitcherButton,
+      SignInComponent: DevSignIn,
       onLogoutClick: () => {
-        // Reset to default user
-        clearDevUserCookie()
+        // A real sign-out: clearing the cookie would only return to the default user.
+        setDevSignedOutCookie()
         window.location.reload()
       },
     },

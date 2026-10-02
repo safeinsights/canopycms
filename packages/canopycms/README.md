@@ -2,6 +2,32 @@
 
 CanopyCMS is a schema-driven, branch-aware CMS for websites that store their content in GitHub repositories.
 
+## Which documentation matches this build
+
+This package ships code, not documentation. The guides — `docs/adopter-migration.md`,
+`docs/deploying-to-aws.md` and the project README — live in the repository and change
+alongside the code, so read them at the ref **your installed version was built from**, not at
+`main`. The npm provenance attestation records that ref exactly:
+
+```bash
+V=$(node -p "require('./node_modules/canopycms/package.json').version")
+curl -s "https://registry.npmjs.org/-/npm/v1/attestations/canopycms@$V" | node -e '
+let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+  const a=JSON.parse(s).attestations.find(x=>x.predicateType==="https://slsa.dev/provenance/v1")
+  const b=JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload,"base64")).predicate.buildDefinition
+  console.log(b.externalParameters.workflow.ref, b.resolvedDependencies[0].digest.gitCommit)
+})'
+```
+
+Then browse `https://github.com/safeinsights/canopycms/tree/<commit>/docs`.
+
+Check this whenever a documented behaviour does not match what you observe. It matters most on
+the `int` channel: a version like `0.0.67-int.90` is published from an integration branch that
+has **not** merged to `main`, so `main`'s guides describe the last stable release and simply do
+not contain the sections covering your build. A missing section reads exactly like a behaviour
+you misunderstood, which is why it is worth resolving the ref rather than guessing. Stable
+`X.Y.Z` builds are on `main`, at tag `vX.Y.Z`.
+
 ## What it does for you
 
 - Lets you keep your site code and content in one repo.
@@ -644,6 +670,7 @@ to enable the interactive crop step, or `altOptional: true` for decorative image
 
 For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct that provisions
 the bucket, the transform Lambda and the CloudFront behaviors. Fuller documentation — every
-config option, the transform directive syntax, and the AWS wiring — is in the
-[project README](https://github.com/safeinsights/canopycms#media-configuration) and
-[docs/deploying-to-aws.md](https://github.com/safeinsights/canopycms/blob/main/docs/deploying-to-aws.md).
+config option, the transform directive syntax, and the AWS wiring — is in the project README's
+`#media-configuration` section and in `docs/deploying-to-aws.md`. Read both at the ref this
+build came from, not at `main` — see
+[Which documentation matches this build](#which-documentation-matches-this-build).

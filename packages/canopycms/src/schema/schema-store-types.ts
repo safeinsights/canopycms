@@ -8,13 +8,6 @@
 import type { ContentFormat } from '../config'
 import type { LogicalPath } from '../paths/types'
 
-// ============================================================================
-// Input Types
-// ============================================================================
-
-/**
- * Input for creating a new collection
- */
 export interface CreateCollectionInput {
   name: string
   label?: string
@@ -22,9 +15,6 @@ export interface CreateCollectionInput {
   entries: CreateEntryTypeInput[]
 }
 
-/**
- * Input for creating a new entry type
- */
 export interface CreateEntryTypeInput {
   name: string
   label?: string
@@ -34,9 +24,6 @@ export interface CreateEntryTypeInput {
   maxItems?: number
 }
 
-/**
- * Input for updating a collection
- */
 export interface UpdateCollectionInput {
   name?: string
   label?: string
@@ -44,9 +31,6 @@ export interface UpdateCollectionInput {
   order?: string[] // Embedded IDs for ordering
 }
 
-/**
- * Input for updating an entry type
- */
 export interface UpdateEntryTypeInput {
   label?: string
   format?: ContentFormat

@@ -3,21 +3,6 @@
  *
  * These schemas validate incoming strings from HTTP requests
  * and cast them to branded types for type-safe handling in API handlers.
- *
- * Usage:
- * ```ts
- * import { branchNameSchema, logicalPathSchema } from './validators'
- *
- * const paramsSchema = z.object({
- *   branch: branchNameSchema,
- *   path: logicalPathSchema,
- * })
- *
- * // TypeScript infers branded types automatically
- * const params = paramsSchema.parse(req.params)
- * // params.branch is BranchName (not string)
- * // params.path is LogicalPath (not string)
- * ```
  */
 
 import { z } from 'zod'
@@ -34,15 +19,8 @@ import {
 import { parsePermissionPath, type PermissionPath } from '../authorization'
 
 /**
- * Zod schema for BranchName - validates git branch naming rules and brands.
- *
- * Validates:
- * - No empty strings
- * - No double dots (..)
- * - No leading/trailing slashes
- * - No spaces
- * - No leading/trailing dots
- * - No @{ sequences
+ * Zod schema for BranchName: validates and brands a branch-name string via `parseBranchName`
+ * (paths/validation.ts), so handlers receive a `BranchName`, not a bare `string`.
  */
 export const branchNameSchema = z
   .string()
@@ -60,12 +38,9 @@ export const branchNameSchema = z
   }) as unknown as z.ZodType<BranchName>
 
 /**
- * Zod schema for LogicalPath - validates and brands logical content paths.
- *
- * Validates:
- * - No empty strings
- * - No path traversal sequences (..)
- * - Not a physical path (no embedded content IDs)
+ * Zod schema for LogicalPath: validates and brands via `parseLogicalPath` (paths/validation.ts),
+ * which blocks path-traversal sequences and physical-path shapes, so handlers get a
+ * `LogicalPath`, not a bare `string`.
  */
 export const logicalPathSchema = z
   .string()
@@ -83,11 +58,8 @@ export const logicalPathSchema = z
   }) as unknown as z.ZodType<LogicalPath>
 
 /**
- * Zod schema for ContentId - validates 12-char Base58 IDs.
- *
- * Validates:
- * - Exactly 12 characters
- * - Base58 alphabet only (no 0, O, I, l)
+ * Zod schema for ContentId: validates and brands a 12-char Base58 ID via `parseContentId`
+ * (paths/validation.ts), so handlers get a `ContentId`, not a bare `string`.
  */
 export const contentIdSchema = z.string().transform((val, ctx) => {
   const result = parseContentId(val)
@@ -102,13 +74,8 @@ export const contentIdSchema = z.string().transform((val, ctx) => {
 }) as unknown as z.ZodType<ContentId>
 
 /**
- * Zod schema for Slug - validates entry and collection slugs.
- *
- * Validates:
- * - No path separators (/ or \)
- * - Starts with lowercase letter or number
- * - Only lowercase letters, numbers, and hyphens
- * - Max 64 characters
+ * Zod schema for Slug: validates and brands via `parseSlug` (paths/validation.ts), so handlers
+ * get a `Slug`, not a bare `string`.
  */
 export const slugSchema = z
   .string()
@@ -126,16 +93,6 @@ export const slugSchema = z
   }) as unknown as z.ZodType<Slug>
 
 /**
- * Zod schema for PermissionPath - validates permission rule paths.
- *
- * SECURITY: Prevents path traversal attacks in permission rules.
- *
- * Validates:
- * - No path traversal sequences (..)
- * - No leading/trailing slashes
- * - No consecutive slashes
- */
-/**
  * Common params schema for endpoints that accept a branch name path parameter.
  * Shared across branch-status, branch-review, branch-withdraw, comments, and branch handlers.
  */
@@ -143,6 +100,11 @@ export const branchParamSchema = z.object({
   branch: branchNameSchema,
 })
 
+/**
+ * Zod schema for PermissionPath: validates and brands via `parsePermissionPath`
+ * (authorization/validation.ts), so handlers get a `PermissionPath`, not a bare `string`.
+ * SECURITY: this is what blocks path traversal (`..`) in permission-rule paths.
+ */
 export const permissionPathSchema = z
   .string()
   .min(1)

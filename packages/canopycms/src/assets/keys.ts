@@ -3,7 +3,7 @@
  * here — keeps this file trivially unit-testable and safe to reason about for
  * path-traversal / header-injection concerns.
  *
- * Bucket-prefix layout (see .claude/future-tasks/assets-media-system.md):
+ * Bucket-prefix layout (see .claude/future-tasks/resolved/assets-media-system.md):
  *   asset-originals/{hash32}.{ext}          private; full-fidelity originals
  *   asset-staging/{uuid}                    presigned-POST target
  *   asset-meta/{hash32}.json                private; filename/uploader/dims/mime
@@ -90,7 +90,7 @@ export function slugifyFilename(name: string): { slug: string; ext: string } {
 export function createKeyBuilders(prefixes: AssetPrefixes = ASSET_PREFIXES) {
   return {
     originalKey: (hash32: string, ext: string): string => `${prefixes.originals}/${hash32}.${ext}`,
-    /** Prefix used to look up an original by hash32 alone (extension unknown ahead of time). */
+    /** Prefix for looking up an original by hash32 alone (extension unknown ahead of time). */
     originalPrefix: (hash32: string): string => `${prefixes.originals}/${hash32}.`,
     stagingKey: (uuid: string): string => `${prefixes.staging}/${uuid}`,
     metaKey: (hash32: string): string => `${prefixes.meta}/${hash32}.json`,
@@ -100,5 +100,7 @@ export function createKeyBuilders(prefixes: AssetPrefixes = ASSET_PREFIXES) {
   }
 }
 
-export const { originalKey, originalPrefix, stagingKey, metaKey, metaPrefix, publicKey } =
-  createKeyBuilders()
+const keyBuilders = createKeyBuilders()
+export const { originalKey, stagingKey, metaKey, publicKey } = keyBuilders
+/** @internal Exported for tests. */
+export const { originalPrefix, metaPrefix } = keyBuilders

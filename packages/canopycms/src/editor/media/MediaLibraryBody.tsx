@@ -260,5 +260,3 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     </Stack>
   )
 }
-
-export default MediaLibraryBody

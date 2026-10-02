@@ -6,7 +6,8 @@ import type { CanopyClientConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorProps } from './Editor'
 import { Editor } from './Editor'
-import { ApiClientProvider, SWRProvider } from './context'
+import { ApiClientProvider } from './context'
+import { EditorAuthGate } from './EditorAuthGate'
 import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-config'
 
 export interface CanopyEditorProps extends Omit<
@@ -50,9 +51,11 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined
 
+  // The gate owns the SWRProvider (keyed by user id), so it sits between the API client and the
+  // editor: see EditorAuthGate for what a signed-out or lapsed session renders.
   return (
-    <SWRProvider>
-      <ApiClientProvider basePath={config.basePath}>
+    <ApiClientProvider basePath={config.basePath}>
+      <EditorAuthGate SignInComponent={config.editor?.SignInComponent} themeOptions={resolvedTheme}>
         <Editor
           entries={entries}
           title={resolvedTitle}
@@ -75,8 +78,8 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           onAccountClick={config.editor?.onAccountClick}
           onLogoutClick={config.editor?.onLogoutClick}
         />
-      </ApiClientProvider>
-    </SWRProvider>
+      </EditorAuthGate>
+    </ApiClientProvider>
   )
 }
 

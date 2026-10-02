@@ -69,7 +69,7 @@ export const DEFAULT_USERS: DevUser[] = [
     name: 'Reviewer One',
     email: 'reviewer1@localhost.dev',
     externalGroups: ['team-a'],
-    // Note: 'Reviewers' membership comes from internal groups file, not auth plugin
+    // Note: this user's group membership comes from the internal groups file, not this plugin
   },
   {
     userId: DEV_ADMIN_USER_ID,

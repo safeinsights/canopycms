@@ -1,35 +1,12 @@
 #!/usr/bin/env node
-// Consistency guard for the .claude/future-tasks/ backlog.
+// Consistency guard for the .claude/future-tasks/ backlog: dead/orphaned
+// links (in both directions), `[[wikilink]]` syntax, and "open" rows whose
+// file already moved to resolved/. Dependency-free and whole-tree, so it
+// runs the same in CI and in pre-commit.
 //
-// Pass `--fix` to repair link paths whose target moved (see the fixer below);
-// everything else is reported and left for a human.
-//
-// The backlog is the repo's durable record of deferred work, and it rots in
-// four specific ways that reviewers keep re-discovering by hand:
-//
-//   1. Dead links. Task files link each other with RELATIVE paths, so moving a
-//      file into resolved/ silently breaks every inbound link that did not move
-//      with it. This is why targets are resolved against the LINKING FILE'S own
-//      directory rather than the repo root -- both dead links found on
-//      2026-08-13 were relative-path errors (one missing `../`, one with a
-//      stale `../`) that a root-relative check would have called clean.
-//   2. Stale open rows. index.md's open priority tables claim to list OPEN work
-//      only, and program sequencing reads them, so a row whose file already
-//      lives in resolved/ overstates the remaining work.
-//   3. Orphans, in both directions: a task file no row points at, and a row
-//      pointing at a file that does not exist.
-//   4. `[[wikilinks]]`. They render as literal `[[text]]` on GitHub and were
-//      invisible to checks 1-3, so they rotted silently: of the 41 present on
-//      2026-08-13, 5 were already dead. All were converted to markdown links
-//      and check 4 keeps them from returning.
-//
-// Dependency-free and whole-tree, so it runs the same way in CI and in
-// pre-commit (once per commit that touches the backlog, like lint:bundle).
-//
-// Scope note: only `.md` link targets are checked. Task files also cite source
-// files (`packages/canopycms/src/config.ts`) and placeholders (`/figures/...`)
-// as prose references written relative to the repo root, not as navigable
-// links; checking those would be pure false positives.
+// Usage: node scripts/check-future-tasks.mjs [--fix]
+// `--fix` repairs link paths whose target moved; everything else is reported
+// and left for a human.
 
 import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative, basename } from 'node:path'
@@ -69,12 +46,10 @@ function collectLinks(file) {
         return
       }
       if (inFence) return
-      // safe-regex flags star height only: `[^"]*` is inside the optional
-      // `(?:\s+"...")?` group, which matches at most once, and `[^)\s]+`
-      // before it excludes whitespace while `\s+` requires it -- disjoint, so
-      // they cannot ambiguate. Measured 2026-08-22 at 0.5ms against a 60KB
-      // adversarial input. This runs in the pre-commit hook, so it was worth
-      // confirming by timing rather than by reading.
+      // safe-regex flags star height only: `[^"]*` sits inside the optional
+      // `(?:\s+"...")?` group (matches at most once), while `[^)\s]+` before
+      // it excludes whitespace that `\s+` then requires -- disjoint, so they
+      // cannot ambiguate; linear, not exponential.
       // eslint-disable-next-line security/detect-unsafe-regex
       for (const m of raw.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
         links.push({ target: m[1], line: i + 1, raw })
@@ -83,7 +58,9 @@ function collectLinks(file) {
   return links
 }
 
-/** Only same-repo .md targets are navigable links worth resolving. */
+// Only same-repo .md targets are navigable links. Task files also cite source
+// files and repo-root placeholders as prose, relative to the repo root, not
+// as links -- checking those would be pure false positives.
 function isCheckableTarget(target) {
   if (/^(https?:|mailto:|#)/.test(target)) return false
   return target.split('#')[0].endsWith('.md')
@@ -95,15 +72,13 @@ const report = (kind, file, line, message) =>
 
 const markdownFiles = findMarkdown(tasksDir)
 
-// --- `--fix`: repair link paths that broke because their TARGET moved.
+// `--fix` repairs link paths that broke because their TARGET moved.
 //
 // Resolving a task means `git mv`-ing it into resolved/, which invalidates both
 // the links inside it (siblings are now one level up) and the links pointing at
 // it (now behind resolved/). That churn is mechanical -- the checker already
 // knows the target exists and where -- so it is repaired here rather than by
-// hand. A 2026-08-13 audit moved 9 files and needed 13 hand-edits, one of which
-// (a repo-root doc needing a third `../`) had no "exists in resolved/" hint to
-// catch it, which is why the index below spans more than the backlog tree.
+// hand, which is why buildTargetIndex() below spans more than the backlog tree.
 //
 // Deliberately NOT auto-fixed: a "stale open row" (moving it to the Resolved
 // section is a semantic edit, and the row's summary usually needs rewriting too)
@@ -155,9 +130,12 @@ function planFix(file, target) {
   return true
 }
 
-// --- Check 1 + 3b: link resolution, relative to each linking file's directory.
-// Row links in index.md are split out as "orphan row" so the two orphan
-// directions read distinctly in the output; they are the same resolution rule.
+// Targets resolve against the LINKING FILE's own directory, not the repo
+// root: task files link each other with relative paths, and a root-relative
+// check would call a miscounted `../` clean until the file containing it
+// moves. Row links in index.md are reported as "orphan row" rather than
+// "dead link" so the two orphan directions read distinctly, but it's the same
+// resolution rule.
 for (const file of markdownFiles) {
   for (const { target, line, raw } of collectLinks(file)) {
     if (!isCheckableTarget(target)) continue
@@ -186,14 +164,10 @@ for (const file of markdownFiles) {
   }
 }
 
-// --- Check 4: `[[wikilink]]` cross-references.
-//
-// The backlog used to mix these with markdown links. They render as literal
-// `[[text]]` on GitHub and were invisible to this script, so 5 of the 41 that
-// existed on 2026-08-13 had rotted unnoticed -- including four pointing at a
-// Claude *memory* filename rather than anything in the repo. All were converted
-// to markdown links; this keeps them from coming back, so every cross-reference
-// stays both clickable and checkable.
+// `[[wikilink]]` cross-references must not appear at all: they render as
+// literal `[[text]]` on GitHub and are invisible to checks 1-3 above, so a
+// broken one rots unnoticed. Every cross-reference has to be a real markdown
+// link to stay both clickable and checkable.
 //
 // Only kebab-case slugs are flagged. `[[...slug]]` (Next.js optional catch-all
 // routes) and `[[:space:]]` (POSIX class) appear legitimately in task prose and
@@ -219,8 +193,9 @@ for (const file of markdownFiles) {
     })
 }
 
-// --- Check 2: open-table rows whose target already lives in resolved/.
-// Walks index.md down to the Resolved heading and looks at table rows only.
+// index.md's open priority tables must list OPEN work only -- program
+// sequencing reads them, so a row whose file already lives in resolved/
+// overstates what's left. Walks down to the Resolved heading; table rows only.
 {
   const lines = readFileSync(indexPath, 'utf8').split('\n')
   for (const [i, line] of lines.entries()) {
@@ -239,7 +214,7 @@ for (const file of markdownFiles) {
   }
 }
 
-// --- Check 3a: task files no index row points at.
+// Check 3a: task files no index row points at.
 // "Indexed" means referenced anywhere in index.md, not necessarily as its own
 // row: some files are deliberately tracked as sub-items inside another row's
 // summary, and demanding a dedicated row for those would be noise.
@@ -262,7 +237,7 @@ for (const file of markdownFiles) {
   }
 }
 
-// --- Apply `--fix` rewrites. Anchored on the `](target)` form rather than the
+// Apply `--fix` rewrites. Anchored on the `](target)` form rather than the
 // bare target so a path that also appears as prose elsewhere in the file is left
 // alone.
 if (shouldFix && pendingFixes.size > 0) {

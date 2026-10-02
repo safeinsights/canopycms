@@ -8,63 +8,10 @@ import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
 
 /**
- * ThreadCarousel - Horizontal comment thread navigation component
- *
  * ## Purpose
  * Provides a horizontal carousel UI for navigating between multiple comment threads
  * on fields, entries, or branches. Supports both keyboard navigation (arrow buttons)
  * and displays a visual "peekaboo" preview of adjacent threads.
- *
- * ## Key Behaviors
- *
- * ### Layout & Sizing
- * - **Active thread width**: `calc(100% - 72px)` - fills container minus peekaboo space
- * - **Single thread width**: `calc(100% - 72px)` - same as active (for consistency)
- * - **Inactive thread width**: `400px` - fixed width when not in view
- * - **Peekaboo size**: `60px` - sliver of next thread shown on right edge
- * - **Gap between threads**: `12px`
- *
- * ### Peekaboo Preview
- * - Shows 60px of the next thread on the right edge (when not viewing last thread)
- * - Gradient fade overlay applied to peekaboo area for visual polish
- * - **Last thread behavior**: Invisible 60px spacer ensures last thread stays left-aligned
- *   without showing previous threads on the left
- * - Peekaboo helps users discover there are more threads to navigate
- *
- * ### Thread Sorting
- * - **Unresolved threads first** (primary sort)
- * - **Newest first within same resolved state** (secondary sort by createdAt)
- * - This ensures urgent unresolved feedback appears first
- *
- * ### Navigation
- * - **Arrow buttons**: `← 2/5 →` counter with disabled states at boundaries
- * - **Smooth scrolling**: CSS `scroll-behavior: smooth` with programmatic scroll
- * - **Auto-scroll**: When `autoFocus` is true, automatically scrolls to first unresolved thread
- * - **Mouse scrolling disabled**: `overflowX: 'hidden'` - only button navigation allowed
- * - **Scroll calculation**: Accounts for active thread width + gaps when navigating
- *
- * ### Always-Visible Design
- * - Component renders even with 0 threads (shows "No comments yet" message)
- * - "New" button always accessible in header
- * - Header shows thread count when threads exist: "Comments (3)"
- * - Navigation arrows only appear when multiple threads exist
- *
- * ### Vertical Resizing
- * - **Default height**: 400px
- * - **Resize range**: 200px (min) to 600px (max)
- * - **Resize handle**: Bottom edge with visual feedback on hover/drag
- * - User can drag to adjust carousel height for their workflow
- *
- * ### New Thread Creation
- * - "New" button in header toggles inline thread creation box
- * - `autoOpenNewThread` prop auto-opens box (used when clicking "New comment" button)
- * - New thread box appears above carousel, with textarea and Create/Cancel buttons
- *
- * ## Usage Context
- * Used by:
- * - **FieldWrapper**: Inline comments beneath form fields
- * - **EntryComments**: Comments at top of entry form
- * - **BranchComments**: Comments at top of BranchManager
  *
  * ## Design Decisions
  *
@@ -72,11 +19,6 @@ import { InlineCommentThread } from './InlineCommentThread'
  * - 60px for peekaboo preview + 12px gap = 72px total
  * - Active thread fills remaining space for maximum readability
  * - Consistent sizing between single thread and active thread in multi-thread scenarios
- *
- * ### Why invisible spacer at end?
- * - Without spacer: last thread would align to right edge, showing previous threads on left
- * - With spacer: last thread stays left-aligned with blank space on right (matching peekaboo size)
- * - Creates consistent left-alignment across all thread positions
  *
  * ### Why disable mouse scrolling?
  * - Prevents accidental scroll-wheel navigation that could be jarring
@@ -141,12 +83,10 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   const resizeStartY = useRef<number>(0)
   const resizeStartHeight = useRef<number>(0)
 
-  // Sort: unresolved first, then resolved
   const sortedThreads = useMemo(
     () =>
       [...threads].sort((a, b) => {
         if (a.resolved === b.resolved) {
-          // Same resolved state: sort by createdAt (newest first)
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         }
         return a.resolved ? 1 : -1
@@ -154,22 +94,17 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     [threads],
   )
 
-  // Auto-scroll to first unresolved thread when autoFocus is true
-
   useEffect(() => {
     if (autoFocus && sortedThreads.length > 0) {
       const firstUnresolved = sortedThreads.find((t) => !t.resolved)
       if (firstUnresolved) {
         const index = sortedThreads.findIndex((t) => t.id === firstUnresolved.id)
         setCurrentIndex(index)
-        // Scroll to thread
         scrollToIndex(index)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
   }, [autoFocus, sortedThreads])
-
-  // Scroll to and highlight specific thread when highlightThreadId changes
 
   useEffect(() => {
     if (highlightThreadId && sortedThreads.length > 0) {
@@ -178,7 +113,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         setCurrentIndex(threadIndex)
         scrollToIndex(threadIndex)
         setHighlightedThreadId(highlightThreadId)
-        // Clear highlight after 2 seconds
         const timer = window.setTimeout(() => {
           setHighlightedThreadId(undefined)
         }, 2000)
@@ -188,14 +122,12 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
   }, [highlightThreadId, sortedThreads])
 
-  // Auto-open new thread box when autoOpenNewThread is true
   useEffect(() => {
     if (autoOpenNewThread) {
       setShowNewThreadBox(true)
     }
   }, [autoOpenNewThread])
 
-  // Handle resize dragging
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return
@@ -228,8 +160,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   const scrollToIndex = (index: number) => {
     if (scrollContainerRef.current) {
       const container = scrollContainerRef.current
-      // Calculate scroll position based on container width
-      // Active thread takes most space, others are 400px + gap
       let scrollLeft = 0
       for (let i = 0; i < index; i++) {
         if (sortedThreads.length > 1) {
@@ -293,7 +223,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   return (
     <Paper p="sm" bg="gray.0" style={{ marginTop: 8 }}>
       <Stack gap="xs">
-        {/* Header: always visible */}
         <Group justify="space-between" align="center">
           <Group gap="xs">
             <Text size="sm" fw={600}>
@@ -308,7 +237,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </Group>
 
           <Group gap="xs">
-            {/* Navigation arrows (only if multiple threads) */}
             {sortedThreads.length > 1 && (
               <>
                 <ActionIcon
@@ -340,7 +268,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               </>
             )}
 
-            {/* New button (always visible) */}
             <Button
               size="xs"
               variant="light"
@@ -351,7 +278,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </Group>
         </Group>
 
-        {/* Error display */}
         {error && (
           <Alert
             icon={<IconAlertCircle size={16} />}
@@ -364,7 +290,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </Alert>
         )}
 
-        {/* New thread box */}
         {showNewThreadBox && (
           <Paper withBorder p="sm" bg="white">
             <Stack gap="xs">
@@ -402,7 +327,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </Paper>
         )}
 
-        {/* Thread carousel */}
         {sortedThreads.length > 0 && (
           <div
             style={{
@@ -433,13 +357,11 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                     style={{
                       scrollSnapAlign: 'start',
                       flexShrink: 0,
-                      // Active thread or single thread stretches to fill space minus peekaboo
                       width:
                         isActive || sortedThreads.length === 1
                           ? 'calc(100% - 72px)' // Active or single: leave room for peekaboo/spacing
                           : 400, // Non-active: fixed width
                       maxWidth: isActive || sortedThreads.length === 1 ? 'calc(100% - 72px)' : 400,
-                      // Add highlight animation
                       outline: isHighlighted ? '3px solid var(--mantine-color-blue-5)' : undefined,
                       outlineOffset: isHighlighted ? 2 : undefined,
                       borderRadius: isHighlighted ? 8 : undefined,
@@ -458,7 +380,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 )
               })}
 
-              {/* Invisible spacer at end to maintain left alignment for last thread */}
+              {/* Without this spacer the last thread right-aligns, showing previous threads on the left. */}
               {sortedThreads.length > 1 && (
                 <div
                   style={{
@@ -470,7 +392,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               )}
             </div>
 
-            {/* Peekaboo gradient fade overlay */}
             {sortedThreads.length > 1 && currentIndex < sortedThreads.length - 1 && (
               <div
                 style={{
@@ -486,7 +407,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               />
             )}
 
-            {/* Resize handle */}
             <div
               onMouseDown={handleResizeStart}
               style={{
@@ -523,7 +443,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           </div>
         )}
 
-        {/* Empty state */}
         {sortedThreads.length === 0 && !showNewThreadBox && (
           <Text size="xs" c="dimmed" ta="center" py="xs">
             No comments yet. Click &quot;+ New&quot; to start a thread.

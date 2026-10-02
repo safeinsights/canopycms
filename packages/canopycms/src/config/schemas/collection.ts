@@ -7,7 +7,6 @@ import { isAbsolute } from 'pathe'
 
 import { fieldSchema } from './field'
 
-// Relative path schema - validates and normalizes paths
 export const relativePathSchema = z
   .string()
   .min(1)
@@ -22,14 +21,6 @@ export const relativePathSchema = z
       .join('/'),
   )
 
-/**
- * Entry type schema: defines a type of content within a collection.
- * Each type has its own schema (fields) and can have cardinality constraints.
- *
- * Examples:
- * - { name: 'post', format: 'mdx', schema: postSchema } - unlimited posts
- * - { name: 'settings', format: 'json', schema: settingsSchema, maxItems: 1 } - restricted to one instance
- */
 export const entryTypeSchema = z.object({
   name: z.string().min(1),
   format: z.enum(['md', 'mdx', 'json', 'yaml']),
@@ -40,7 +31,6 @@ export const entryTypeSchema = z.object({
   maxItems: z.number().int().positive().optional(),
 })
 
-// Recursive collection schema
 const collectionSchema: z.ZodTypeAny = z.lazy(() =>
   z
     .object({

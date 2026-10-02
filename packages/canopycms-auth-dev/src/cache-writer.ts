@@ -50,7 +50,6 @@ export async function refreshDevCache(
     ),
   }
 
-  // Write cache files atomically via snapshot directory + symlink swap
   await writeAuthCacheSnapshot(cachePath, {
     'users.json': usersData,
     'orgs.json': groupsData,

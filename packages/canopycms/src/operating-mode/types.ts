@@ -1,20 +1,11 @@
-/**
- * Operating Mode Strategy Types
- *
- * This module defines the two-layer strategy pattern for operating modes:
- * - ClientSafeStrategy: Methods safe for client-side bundles (no Node.js APIs)
- * - ClientUnsafeStrategy: Full strategy with Node.js APIs (server-side only)
- */
+/** Operating-mode strategy types. */
 
 import type { OperatingMode as OM } from '.'
 import type { CanopyConfig } from '../config'
 
-// Re-export OperatingMode so it's available from this module
 export type OperatingMode = OM
 
-/**
- * Options for resolving git remote URL
- */
+/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -23,55 +14,35 @@ export interface ResolveRemoteUrlOptions {
   sourceRoot?: string
 }
 
-/**
- * Configuration for remote URL resolution
- * Strategies return this data; GitManager executes the logic
- */
+/** Strategies return this data; GitManager executes the logic. */
 export interface RemoteUrlConfig {
-  /** Whether to auto-initialize a local remote */
   shouldAutoInitLocal: boolean
   /** Default path for local remote (e.g., '.canopycms/remote.git') */
   defaultRemotePath: string
-  /** Environment variable name for remote URL */
   envVarName: string
   /**
-   * Absolute path to check for auto-detection of a pre-existing local remote.
-   * If this path exists on disk, it's used as the remote URL (file:// protocol).
-   * Used in prod mode where the EC2 worker creates remote.git on EFS.
-   * Unlike shouldAutoInitLocal, this does NOT create the remote — just detects it.
+   * If this absolute path exists on disk it becomes the remote URL (file://).
+   * Set in prod, where the EC2 worker creates remote.git on EFS. Unlike
+   * shouldAutoInitLocal, this only DETECTS a remote; it never creates one.
    */
   autoDetectRemotePath?: string
 }
 
 /**
- * Client-Safe Strategy
- *
- * Methods that can be safely imported in 'use client' React components.
- * NO Node.js APIs (fs, path, process, etc.) - only pure logic and simple data.
+ * Methods safe to import in 'use client' React components: pure logic and
+ * simple data, NO Node.js APIs (fs, path, process).
  */
 export interface ClientSafeStrategy {
-  /** The operating mode this strategy represents */
   readonly mode: OperatingMode
-
-  // ========================================================================
-  // UI Feature Flags
-  // ========================================================================
 
   /** Whether this mode supports multiple branch workspaces */
   supportsBranching(): boolean
 
-  /** Whether to show status badge in UI */
   supportsStatusBadge(): boolean
 
-  /** Whether comments/collaboration features are enabled */
   supportsComments(): boolean
 
-  /** Whether pull request features are available */
   supportsPullRequests(): boolean
-
-  // ========================================================================
-  // Simple Data Methods (no I/O)
-  // ========================================================================
 
   /** Get the permissions file name (e.g., 'permissions.json' or 'permissions.local.json') */
   getPermissionsFileName(): string
@@ -86,116 +57,64 @@ export interface ClientSafeStrategy {
   shouldPush(): boolean
 }
 
-/**
- * Client-Unsafe Strategy
- *
- * Full strategy including Node.js APIs. Can only be imported server-side.
- * Extends ClientSafeStrategy, so all client-safe methods are available.
- */
+/** The full strategy, including Node.js APIs. Server-side imports only. */
 export interface ClientUnsafeStrategy extends ClientSafeStrategy {
-  // ========================================================================
-  // Path Resolution (needs path, process.cwd, env vars)
-  // ========================================================================
-
   /**
-   * Get the root directory for this mode's workspace.
-   * All mode-specific subdirectories (content-branches, settings, .cache, etc.) live under this.
-   * - prod: CANOPYCMS_WORKSPACE_ROOT ?? /mnt/efs/workspace
-   * - dev: {sourceRoot ?? cwd}/.canopy-dev
+   * The mode's workspace root; content-branches, settings and .cache all live
+   * under it. prod: CANOPYCMS_WORKSPACE_ROOT ?? /mnt/efs/workspace.
+   * dev: {sourceRoot ?? cwd}/.canopy-dev.
    */
   getWorkspaceRoot(sourceRoot?: string): string
 
   /**
-   * Get the content directory path (at project/workspace root).
-   * - dev: {sourceRoot ?? cwd}/{contentRoot}
-   * - prod (in workspaces): {sourceRoot ?? cwd}/{contentRoot}
+   * The content directory, `{sourceRoot ?? cwd}/{contentRoot}` in both modes.
    *
    * `contentRoot` is REQUIRED and must be the caller's already-resolved
    * `config.contentRoot` (falling back to 'content' at the call site, not here).
-   * A default here is deliberately not provided: this method used to hardcode
-   * the literal 'content', which silently disarmed callers configured with a
-   * non-default contentRoot (e.g. dev-content-watcher.ts's divergence watcher
-   * resolved a content directory that never existed, hit its existsSync guard,
-   * and permanently no-op'd — with no error, since a missing directory looks
-   * like "nothing to watch yet"). Making the parameter required means a future
-   * caller cannot silently reintroduce that bug by omitting it.
+   * Defaulting it here would silently disarm any caller configured with a
+   * non-default contentRoot: it would resolve a directory that never exists,
+   * and a missing content directory reads as "nothing to do" rather than as an
+   * error. Requiring the parameter makes that mistake impossible.
    */
   getContentRoot(contentRoot: string, sourceRoot?: string): string
 
   /**
-   * Get the parent directory of all content branch workspaces (contains branches.json and branch directories).
-   * - dev: {cwd}/.canopy-dev/content-branches
-   * - prod: $CANOPYCMS_WORKSPACE_ROOT/content-branches or /mnt/efs/workspace/content-branches
+   * `{workspaceRoot}/content-branches`: the parent of every content branch
+   * workspace, and the home of branches.json.
    */
   getContentBranchesRoot(sourceRoot?: string): string
 
-  /**
-   * Get individual content branch workspace directory.
-   * Returns: {contentBranchesRoot}/{branchName}
-   */
+  /** `{contentBranchesRoot}/{branchName}`. */
   getContentBranchRoot(branchName: string, sourceRoot?: string): string
 
   /**
-   * Get the git exclude pattern for runtime metadata (e.g., '.canopy-meta/').
-   * Used by GitManager to add to .git/info/exclude in content branch workspaces.
+   * Runtime-metadata pattern (e.g. '.canopy-meta/') that GitManager adds to
+   * .git/info/exclude in every content branch workspace.
    */
   getGitExcludePattern(): string
 
-  // ========================================================================
-  // File Paths (needs path.join)
-  // ========================================================================
-
-  /** Get the full path to the permissions file */
   getPermissionsFilePath(root: string): string
 
-  /** Get the full path to the groups file */
   getGroupsFilePath(root: string): string
 
-  // ========================================================================
-  // Git Operations
-  // ========================================================================
-
-  /** Get configuration for remote URL resolution (GitManager executes the logic) */
   getRemoteUrlConfig(): RemoteUrlConfig
 
   /** Whether this mode requires an existing git repository */
   requiresExistingRepo(): boolean
 
-  // ========================================================================
-  // Settings
-  // ========================================================================
-
-  /**
-   * Get the branch name to use for settings (permissions/groups).
-   * Returns: canopycms-settings-{deploymentName}
-   */
+  /** The permissions/groups branch: `canopycms-settings-{deploymentName}`. */
   getSettingsBranchName(config: {
     settingsBranch?: string
     deploymentName?: string
     defaultBaseBranch?: string
   }): string
 
-  /**
-   * Get the root directory for settings storage.
-   * - prod: $CANOPYCMS_WORKSPACE_ROOT/settings or /mnt/efs/workspace/settings
-   * - dev: {cwd}/.canopy-dev/settings
-   */
+  /** `{workspaceRoot}/settings`, where settings storage lives. */
   getSettingsRoot(sourceRoot?: string): string
 
-  /** Whether settings should be stored in a separate branch */
   usesSeparateSettingsBranch(): boolean
 
-  // ========================================================================
-  // Validation
-  // ========================================================================
-
-  /** Validate configuration for this mode */
   validateConfig(config: Partial<CanopyConfig>): void
 
-  // ========================================================================
-  // GitHub
-  // ========================================================================
-
-  /** Whether PRs should be auto-created for permissions/groups changes */
   shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean
 }

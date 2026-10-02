@@ -1,26 +1,6 @@
 # Deploying CanopyCMS to AWS
 
-This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Worker. This architecture costs ~$5-9/month and is designed for low-traffic CMS editing workflows.
-
-> **Deploy-proven notes (2026-07).** The whole stack was first deployed and
-> exercised end-to-end during the deployment-test epic — see
-> [`.claude/future-tasks/resolved/cms-service-deployment-test.md`](../.claude/future-tasks/resolved/cms-service-deployment-test.md)
-> for the full account of what broke and the fixes. Load-bearing gotchas that
-> guide is the source of truth for: reference secrets by their **full** ARN
-> (below); Lambda **architecture must match the Docker image platform**;
-> **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
-> read → the no-internet Lambda hangs on sign-in) and the shipped template
-> asserts a secret key; the raw-CloudFront path needs the managed
-> `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
-> and a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`. The
-> EC2 worker's logs now ship to CloudWatch by default (see
-> [Worker observability](#worker-observability) below) — a locked-down
-> operator role may not have SSM, and the worker was otherwise unobservable.
-> Adopters consume the published `canopycms-cdk` package; the constructs
-> referenced here also power `AssetSupport` for media (pass it to
-> `CanopyCmsDistribution`'s `assetSupport` prop to give the deployed editor an
-> upload/transform backend, with both CloudFront behaviors wired in the only
-> order that is safe).
+This guide deploys CanopyCMS on AWS as Lambda + EFS + EC2 Worker, an architecture that costs ~$5-9/month and suits low-traffic CMS editing. It describes the published `canopycms-cdk` constructs; [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-architecture) covers why the topology is shaped this way.
 
 ## Architecture Overview
 
@@ -100,6 +80,23 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
+**sharp in the standalone image.** For the CMS build, `withCanopy()` also adds sharp's libvips shared library to Next's file tracing. Next can miss that library for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). An image built without it fails to load sharp at runtime with `ERR_DLOPEN_FAILED`. The include fixes Turbopack builds, Next 16's default. It does not fix a webpack build (Next 13 to 15, or `next build --webpack`): on Next 15.5.21 with pnpm, Next bundles sharp's JavaScript into a server chunk, so image transforms fail with or without the include. Other Next versions, Next 16's `--webpack` and npm installs have not been checked ([webpack-standalone-sharp-bundled.md](../.claude/future-tasks/webpack-standalone-sharp-bundled.md)).
+
+If you don't use `withCanopy()`, or your standalone build prints `CanopyCMS: could not add sharp's libvips…`, add the directory yourself. Paths are relative to the Next.js project directory. With pnpm:
+
+```typescript
+export default {
+  output: 'standalone',
+  outputFileTracingIncludes: {
+    '/**': ['node_modules/.pnpm/@img+sharp-libvips-*/node_modules/@img/*/lib/**/*'],
+  },
+}
+```
+
+- **npm.** npm's hoisted layout puts the same directory at `node_modules/@img/sharp-libvips-*/lib`.
+- **Monorepo.** Prefix the glob with the path from the app to the directory that holds `node_modules`, e.g. `../../`. That directory must be inside Next's tracing root: `outputFileTracingRoot`, or the lockfile directory Next infers.
+- **Next 13 or 14.** Nest `outputFileTracingIncludes` under `experimental`. These versions build with webpack, so read the note above first.
+
 For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page like the home route), don't use a single `page.tsx`: `output: 'export'` requires `dynamicParams = false`, but on the CMS Lambda that makes an unknown slug throw Next's internal `NoFallbackError` (a 500) before your page's `notFound()` runs — and Next statically parses route-segment config, so the value can't be a conditional expression. The CMS build also must not prerender content pages: a build-time prerender serves build-time content to anonymous visitors (bypassing runtime path ACLs), and rendering a not-prerendered slug as on-demand static generation makes the request-scoped read throw `DYNAMIC_SERVER_USAGE` (also a 500). Split the page instead:
 
 ```tsx
@@ -116,7 +113,29 @@ Anonymous/public read on the CMS Lambda also needs `defaultPathAccess: { read: '
 
 **Where a Clerk (or any auth SDK) provider goes.** A dual-build adopter cannot mount `<ClerkProvider>` in the app's root layout: the root layout is shared by both builds, so merely importing `@clerk/nextjs` there reaches the static export too — and in practice this is worse than dead code shipping to public visitors, because `ClerkProvider` pulls in React Server Actions internally, which `output: 'export'` rejects outright (`next build` fails with "Server Actions are not supported with static export"). Put the provider in a layout scoped to the editor subtree instead, named under the CMS-only extension, e.g. `app/edit/layout.server.tsx`. This works because `withCanopy()`'s `pageExtensions` handling is **additive, not subtractive**: `staticBuild: true` adds `static.ts`/`static.tsx` to `pageExtensions` _instead of_ `server.ts`/`server.tsx` — nothing is removed from a shared list, the two build flavors just add different extensions on top of Next's defaults. Next's app-dir loader resolves every special file (`layout`, `page`, `route`, `loading`, `error`, …) through that same `pageExtensions`-derived resolver, with no special case for `layout` — so a `layout.server.tsx` is picked up as a real layout, scoped to its subtree, exactly like `page.server.tsx` is picked up as a page, whenever `server.tsx` is present, and is invisible whenever it isn't. `apps/dual-build-fixture` enforces both halves of this in CI (`dual-build.test.ts`): the CMS build's compiled `/edit` output must reference `@clerk/nextjs`, and the static build's output must not contain a single byte of it — so this is a guarantee the build enforces, not just advice you have to trust.
 
-**The publishable key still ships per Docker image, not per request.** `<ClerkProvider>` accepts an explicit `publishableKey` prop, and `@clerk/nextjs` gives that prop precedence over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — so reading a plain (non-`NEXT_PUBLIC_`-prefixed) runtime environment variable inside `layout.server.tsx` and passing it explicitly is not blocked by the SDK; a real server component's `process.env` read happens at request time, not at build time. That is not the same as one Docker image working across every Clerk instance/tier, though: `clerkMiddleware` (see `middleware-clerk.ts.template`) resolves its own `publishableKey`/`secretKey` independently of whatever the provider receives — there is no shared state between Next middleware and the React render tree — and the shipped middleware template does not thread a runtime-only key through to it, so it falls back to the build-time-baked `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`. Worse, `clerkMiddleware` unconditionally requires a non-empty `secretKey` (it throws if one can't be resolved, `jwtKey` alone does not satisfy it), and `CLERK_SECRET_KEY` is deliberately kept out of the CMS Lambda today (see Step 6) — so making one image genuinely serve multiple Clerk instances would mean also passing matching explicit keys to `clerkMiddleware`, sourced the same way, and revisiting whether `CLERK_SECRET_KEY` belongs in the Lambda at all. **This is unverified** — nothing in this repo demonstrates it end-to-end, and no real Clerk instance was exercised to check it — so treat `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` as a per-tier Docker `buildArg` (see [Build-time client keys](#build-time-client-keys)) until someone does.
+**One image for every Clerk tier.** `<ClerkProvider>` takes an explicit `publishableKey` prop, and `@clerk/nextjs` prefers it over `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, so the editor layout can read the key from a plain run-time variable instead of baking it into the image:
+
+```tsx
+// app/edit/layout.server.tsx
+import { ClerkProvider } from '@clerk/nextjs'
+
+// Render per request. Without this, Next prerenders /edit at `next build`
+// and bakes in whatever the variable held then.
+export const dynamic = 'force-dynamic'
+
+export default function EditLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <ClerkProvider publishableKey={process.env.CLERK_PUBLISHABLE_KEY}>{children}</ClerkProvider>
+  )
+}
+```
+
+The `dynamic` export has to be in the layout. The scaffolded edit page is a `'use client'` module, and a `dynamic` export from a `'use client'` page didn't stop the prerender when measured on Next 15.5. `apps/dual-build-fixture` builds without the variable, serves with it, and checks that `/edit` carries the served key. Two more things make the image tier-independent:
+
+- **No `clerkMiddleware`.** Keep the passthrough `middleware.ts` that `canopycms init` generates. `clerkMiddleware` reads the build-time key rather than the provider's prop, and it needs `CLERK_SECRET_KEY` on the Lambda (see [Security Model](#security-model)). CanopyCMS doesn't depend on it: `createNextCanopyContext` wraps the Clerk plugin in `CachingAuthPlugin`, which verifies each request's token (an `Authorization` bearer or the `__session` cookie) with `CLERK_JWT_KEY` alone. What you give up is having signed-out requests turned away before they reach the app: a signed-out visitor to `/edit` gets the editor's own sign-in screen instead (Clerk's `<SignIn>`, which `useClerkAuthConfig()` supplies), and a session that lapses mid-edit brings it back over the open editor.
+- **Per-tier values in the Lambda's `environment`.** Pass the publishable-key variable to `CanopyCmsService` alongside `CLERK_JWT_KEY`; both are public. The `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` build arg then no longer decides which Clerk instance the editor uses. Other `NEXT_PUBLIC_CLERK_*` settings are inlined at build the same way, and the common ones (`signInUrl`, `proxyUrl`, `domain`) have matching provider props.
+
+This is a supported shape that nobody has yet run against a real Clerk instance: what CanopyCMS does with the token is read from its source, and the fixture uses a fake key. On a first live deploy, check sign-in from `/edit`, a save, and an editor request after the tab has sat idle longer than a Clerk session token lives. Without the middleware nothing on the server refreshes `__session`, and nothing needs to: Clerk's browser SDK refreshes it itself: it checks every few seconds and on tab focus, and mints a fresh token shortly before the old one expires (read from `@clerk/clerk-js` 6.36.0, which loads from Clerk's CDN). A request that still lands with an expired token is rejected by `verifyTokenOnly()`, and the editor overlays sign-in rather than failing silently.
 
 ### Preview Support
 
@@ -147,19 +166,35 @@ npx canopycms init-deploy aws
 This creates:
 
 - `Dockerfile.cms` — Lambda Web Adapter image
-- `.dockerignore` — keeps `.env*` out of the build context
+- `.dockerignore` — keeps `.env*`, `.pem` files and `infrastructure/` out of the build context
 - `.github/workflows/deploy-cms.yml` — CI/CD workflow
 - `cdk.json` — CDK app configuration; `cdk deploy` resolves the app through this
 - `infrastructure/bin/app.ts` — CDK app entry point
 - `infrastructure/lib/cms-stack.ts` — the stack itself, yours to edit
+- `infrastructure/tsconfig.json` — compiler settings for type-checking the CDK app
 
 The install and build commands in `Dockerfile.cms` and the workflow are written
 for the package manager the command detects (npm, pnpm, or Yarn — from your
-`packageManager` field, else your lockfile). The deploy trigger branch comes
-from `origin/HEAD`, and the worker's repo from your `origin` remote.
+`packageManager` field, else your lockfile). For pnpm the image's install also
+gets `pnpm-workspace.yaml`, where pnpm 11 keeps its `allowBuilds` decisions. The
+deploy trigger branch comes from `origin/HEAD`, and the worker's repo from your
+`origin` remote.
 
-`init-deploy aws` never overwrites a file you already have — re-run it with
-`--force` to replace them.
+`init-deploy aws` never overwrites a file you already have without asking, and
+`--non-interactive` skips them — re-run it with `--force` to replace them. The one existing file it edits is `tsconfig.json`: it
+adds `infrastructure` to `exclude`, because the CDK app imports `aws-cdk-lib`
+and your app's own `next build` would otherwise type-check it. A `tsconfig.json`
+with comments, or one that inherits `exclude` through `extends` with no list of
+its own, is left alone, and the command asks you to make that edit. It asks the
+same when there is no `tsconfig.json`.
+
+The CDK app is type-checked separately, with `infrastructure/tsconfig.json`.
+`cdk.json` runs the app through tsx, which does not check types, so without that
+check a misspelled `CanopyCmsService` prop is dropped silently and the deploy
+uses the prop's default. The generated workflow runs
+`tsc --noEmit -p infrastructure` before deploying; run it yourself after editing
+the stack. `infrastructure/tsconfig.json` extends your `tsconfig.json`, so that
+check fails until the project has one.
 
 ## Step 3: Test Locally in Dev Mode
 
@@ -191,9 +226,11 @@ first write fails with `EROFS`.
 
 **Leave `mode: 'dev'` in `canopycms.config.ts` anyway.** That one file is loaded
 by three different things — `next dev` locally, `next build` inside the
-deployment image, and the deployed server — and the first two genuinely need
-dev: a prod-mode build read looks for a branch workspace on EFS that cannot
-exist in an image builder, so a `mode: 'prod'` literal fails the image build.
+deployment image, and the deployed server. `next dev` needs dev. `next build`
+reads the working tree in either mode, so it needs nothing from prod, and a
+`mode: 'prod'` literal would only hold the image build to prod-mode checks it
+has no reason to meet: `gitBotAuthorName`/`gitBotAuthorEmail`, and an auth
+plugin that verifies credentials.
 
 The deployed value therefore comes from the environment, in two halves:
 
@@ -210,14 +247,35 @@ other than `prod`/`dev` rather than falling back — a typo like
 `CANOPY_MODE=production` would otherwise deploy dev auth semantics silently.
 
 Both are wired up by `canopycms init-deploy aws`; you only need this section if
-you hand-edit the stack or the Dockerfile. Two things to know if you do:
+you hand-edit the stack or the Dockerfile, or build the image some other way:
 
 - `environment: { CANOPY_MODE: ... }` on `CanopyCmsService` accepts only
   `'prod'`, and rejects anything else at synth.
-- If you build the image yourself, pass
-  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod`. Without it the deployed editor
-  believes it is in dev mode: it sends dev-auth headers at a server enforcing
-  Clerk (every editor call rejected) and hides the pull-request UI.
+- **Set `NEXT_PUBLIC_CANOPY_MODE=prod` as a constant in the image's build
+  stage**: an `ENV` line in your own Dockerfile, or
+  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod` against the generated one. Every
+  deployed tier runs `prod`, so one image still serves them all, and the
+  build's own content reads stay in dev mode, because `resolveOperatingMode`
+  reads this variable only where `window` exists. Expect one browser console
+  warning per editor page load,
+  `CanopyCMS: NEXT_PUBLIC_CANOPY_MODE="prod" overrides config.mode="dev"`; that
+  is the override working.
+- **Without it, the browser resolves `dev`,** and the scaffolded edit page
+  (`edit-page.tsx.template`) selects dev auth rather than Clerk against a
+  server that accepts only Clerk tokens, unless `NEXT_PUBLIC_CANOPY_AUTH_MODE=clerk`
+  was also set at build. That is the only thing CanopyCMS's client code takes
+  from the mode: the editor's capability checks answer the same in both modes,
+  and `supportsPullRequests`, the one that differs, is only consulted on the
+  server.
+- **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
+  from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
+  Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build would
+  resolve `prod` and meet the prod-mode checks the `dev` literal keeps out of
+  it (see [Operating mode](#operating-mode)). Not from `CANOPY_MODE` either
+  (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
+  inline it into the browser bundle, so that literal is always `dev` there,
+  while server code on the Lambda gets `prod`. The server half looks
+  right, and the missing browser half goes unnoticed.
 
 ## Step 4: CDK Stack
 
@@ -246,13 +304,23 @@ successful deploy.
 
 | Variable                                     | Required | Notes                                                                                                                                                                                |
 | -------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GITHUB_TOKEN_SECRET_ARN`                    | yes      | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
+| `GITHUB_TOKEN_SECRET_ARN`                    | yes\*    | **Full** ARN including the six-character suffix — it goes verbatim into the worker's IAM policy, so a name-based ARN silently never matches and the worker gets AccessDenied at boot |
 | `CLERK_SECRET_KEY_SECRET_ARN`                | yes      | Full ARN, same reason                                                                                                                                                                |
+| `GITHUB_TOKEN_SECRET_JSON_FIELD`             | no       | Set only if that secret holds a JSON document rather than the bare token; names the key to read out of it. See [JSON secret documents](#json-secret-documents)                       |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`         | no       | Same, for the Clerk secret                                                                                                                                                           |
+| `GITHUB_APP_ID`                              | no       | GitHub App authentication instead of a token — see [Authenticating as a GitHub App](#authenticating-as-a-github-app). Set all three App variables or none                            |
+| `GITHUB_APP_INSTALLATION_ID`                 | no       | The App's installation on _this_ repository, not the App ID                                                                                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_ARN`          | no       | Full ARN of the secret holding the App's PEM. ARN-only: the key is multi-line and never reaches the worker as a plain value                                                          |
+| `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`   | no       | Set only if that secret holds a JSON document rather than the bare PEM                                                                                                               |
 | `CLERK_JWT_KEY`                              | yes      | Clerk's public JWKS PEM. Unset, Clerk falls back to a network JWKS fetch and the no-internet Lambda hangs at sign-in                                                                 |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`          | no       | Deploys fine when empty and ships an editor that cannot sign in                                                                                                                      |
 | `CANOPY_BOOTSTRAP_ADMIN_IDS`                 | no       | Comma-separated Clerk user IDs granted admin on first boot                                                                                                                           |
 | `CANOPYCMS_DEPLOYMENT_NAME`                  | no       | Defaults to `prod`. Two stacks sharing one GitHub repo **must** differ — see [Two deployments, one repository](#two-deployments-one-repository)                                      |
 | `CMS_DOMAIN_NAME` / `CMS_HOSTED_ZONE_DOMAIN` | no       | Set both to add CloudFront + Route53; leave unset to use the Lambda Function URL directly                                                                                            |
+
+\* Required unless you set the `GITHUB_APP_*` variables instead. A personal
+access token is the default; exactly one of the two credentials must be
+configured, and setting both is refused at synth.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
@@ -272,17 +340,52 @@ under aws-cdk-lib's own defaults, so an inherited flag set would be untested
 here. Add flags if you need them, but note that a flag which only existed in
 CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
 
+### CloudFront in front of the Function URL
+
+The CMS Lambda's Function URL is fronted by a CloudFront distribution for a stable
+custom domain and TLS. Two things are worth knowing before you hand-roll your own
+or override a timeout:
+
+- **The origin-read timeout and the Lambda's own timeout must agree.**
+  CloudFront's default origin-read timeout is 30 seconds, well under a Lambda
+  that can legitimately run longer — a first-touch branch provision doing a full
+  `git clone` onto EFS inside the request is a real case — so leaving it unset
+  caps every such request at half the Lambda's budget: CloudFront answers 504 at
+  30 seconds while the Lambda runs to completion behind it, with nothing to
+  correlate that server-side success to the viewer-facing failure. Both values
+  resolve from one constant in the constructs, and the service construct exposes
+  its resolved timeout so a caller overriding the Lambda's can pass the same
+  value to the distribution. CloudFront rejects an origin-read timeout above 60
+  seconds without a quota increase, so an override past that ceiling fails at
+  synth rather than deploying a distribution that can never work.
+- **Extra behaviors keep your ordering.** The distribution merges behaviors you
+  pass with its own defaults and preserves the order you listed them in, because
+  CloudFront matches path patterns in order — pinning an overridden key back at
+  the defaults' position could hide a specific pattern behind a general one. This
+  is how `AssetSupport`'s two behaviors attach to the generated distribution
+  instead of needing a second one.
+
+A distribution you build yourself in front of a Function URL needs the managed
+`CACHING_DISABLED` cache policy and a CloudFront Function forwarding only
+`x-forwarded-host`; `CanopyCmsDistribution` does both.
+
 ### Deploy
 
 ```bash
-cdk bootstrap                # once per account/region
-cdk synth                    # confirm it builds before touching the account
+cdk bootstrap                        # once per account/region
+npx tsc --noEmit -p infrastructure   # cdk synth does not check types
+cdk synth                            # confirm it builds before touching the account
 cdk deploy CanopyCms
 ```
 
 `cdk synth` needs the required variables above but no AWS credentials, as long
 as you leave `CMS_DOMAIN_NAME` unset — `CanopyCmsDistribution` resolves your
 hosted zone with a context lookup, which needs a real account.
+
+Expect the first deploy of a new tier to take **two passes**: anything keyed on
+the distribution's own domain name — an asset bucket's CORS rule,
+`CLERK_AUTHORIZED_PARTIES` — cannot be set until that domain exists, so set it
+and deploy again once it does.
 
 ## Step 5: CI/CD
 
@@ -305,16 +408,23 @@ launch template until the next spot interruption.
 > `DockerImageCode.fromEcr(repo, { tagOrDigest })` and keep `cdk deploy` as the
 > single deployer. Pick one mechanism.
 
-Prerequisites that an update-function-code pipeline did not need:
+What `cdk deploy` needs in place:
 
 1. **CDK bootstrap** in the target account and region (`cdk bootstrap`).
 2. **A broader OIDC role.** It must be able to assume the CDK bootstrap roles
    (`cdk-hnb659fds-*-deploy-role`, `-file-publishing-role`,
    `-image-publishing-role`, `-lookup-role`). `cdk deploy` mutates
    infrastructure, so this is a wider grant than updating a function's code.
-3. **A Docker daemon on the runner** (`ubuntu-latest` has one).
+3. **A Docker daemon on the runner.** The generated workflow's
+   `ubuntu-24.04-arm` has one; read
+   [Where the image is built](#where-the-image-is-built) before changing the
+   runner. On a self-hosted runner, you also need Actions Runner v2.327.1 or
+   later: the workflow's pinned actions run on Node 24, and their docs give
+   that as the minimum.
 4. **The CDK devDependencies from Step 4**, committed to `package.json`. The
-   workflow checks for them before deploying.
+   workflow checks for them before deploying, then type-checks the CDK app
+   with `tsc --noEmit -p infrastructure`, which also needs `typescript` and
+   `@types/node`. Next.js requires both in a TypeScript app.
 
 ### Repository secrets and variables
 
@@ -322,34 +432,48 @@ The Deploy step passes these through to `infrastructure/bin/app.ts`. The
 required ones are read by `required()` there, so a missing value fails the
 deploy at synth — before anything is changed in the account.
 
-| Name                                        | Kind      | Required                                     |
-| ------------------------------------------- | --------- | -------------------------------------------- |
-| `AWS_DEPLOY_ROLE_ARN`                       | secret    | yes                                          |
-| `CANOPY_GITHUB_TOKEN_SECRET_ARN`            | secret    | yes (see note below)                         |
-| `CLERK_SECRET_KEY_SECRET_ARN`               | secret    | yes                                          |
-| `AWS_REGION`                                | variable  | yes                                          |
-| `CLERK_JWT_KEY`                             | variable  | yes (see note below)                         |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`         | variable  | no, but the editor cannot sign in without it |
-| `CANOPY_BOOTSTRAP_ADMIN_IDS`                | variable  | no                                           |
-| `CANOPYCMS_DEPLOYMENT_NAME`                 | variable  | no (defaults to `prod`)                      |
-| `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN` | variables | no (enables CloudFront + Route53)            |
+| Name                                              | Kind      | Required                                     |
+| ------------------------------------------------- | --------- | -------------------------------------------- |
+| `AWS_DEPLOY_ROLE_ARN`                             | secret    | yes                                          |
+| `CANOPY_GITHUB_TOKEN_SECRET_ARN`                  | secret    | yes (see note below)                         |
+| `CLERK_SECRET_KEY_SECRET_ARN`                     | secret    | yes                                          |
+| `AWS_REGION`                                      | variable  | yes                                          |
+| `CLERK_JWT_KEY`                                   | variable  | yes (see note below)                         |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`               | variable  | no, but the editor cannot sign in without it |
+| `CANOPY_BOOTSTRAP_ADMIN_IDS`                      | variable  | no                                           |
+| `CANOPYCMS_DEPLOYMENT_NAME`                       | variable  | no (defaults to `prod`)                      |
+| `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD`           | variable  | no (only for a JSON secret document)         |
+| `CLERK_SECRET_KEY_SECRET_JSON_FIELD`              | variable  | no (only for a JSON secret document)         |
+| `CANOPY_GITHUB_APP_ID`                            | variable  | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_INSTALLATION_ID`               | variable  | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN`        | secret    | no (only for GitHub App auth)                |
+| `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` | variable  | no (only for a JSON secret document)         |
+| `CMS_DOMAIN_NAME`, `CMS_HOSTED_ZONE_DOMAIN`       | variables | no (enables CloudFront + Route53)            |
+
+`CANOPY_GITHUB_TOKEN_SECRET_ARN` is required **unless** you configure GitHub App
+authentication instead, in which case it must be left unset — exactly one of the
+two. See [Authenticating as a GitHub App](#authenticating-as-a-github-app).
+
+The App ID and `_JSON_FIELD` entries are variables, not secrets, because they identify or
+name something rather than carry key material; the App private key reaches Actions only as
+the ARN of the secret holding it.
 
 > **Why is `CLERK_JWT_KEY` a variable and not a secret?** Because it is a _public_ key —
-> Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint, and used only to
-> verify signatures. It is `required` because without it `@clerk/nextjs` falls back to
-> fetching JWKS over the network and the internet-less CMS Lambda hangs at sign-in; that
+> Clerk's JWKS PEM, retrievable from your instance's public JWKS endpoint and used only to
+> verify signatures. It is required because without it `@clerk/nextjs` falls back to
+> fetching JWKS over the network and the internet-less CMS Lambda hangs at sign-in: that
 > makes it load-bearing, not confidential. Storing it as an Actions _secret_ also works, but
-> it is worth being precise: classifying it as a secret is what invites the conclusion that
-> the CMS Lambda accepts secrets, which it does not (see
-> [Security Model](#security-model)). The genuinely sensitive Clerk value is
-> `CLERK_SECRET_KEY`, which never goes near the Lambda — it lives in Secrets Manager and is
-> read by the worker.
+> classifying it as one invites the conclusion that the CMS Lambda accepts secrets, which it
+> does not. The genuinely sensitive Clerk value is `CLERK_SECRET_KEY`, which lives in Secrets
+> Manager and is read by the worker — CanopyCMS does not need it on the Lambda, though
+> `clerkMiddleware` does (see [Security Model](#security-model)).
 
 > **Why `CANOPY_GITHUB_TOKEN_SECRET_ARN` and not `GITHUB_TOKEN_SECRET_ARN`?** GitHub
 > reserves the `GITHUB_` prefix and rejects any Actions secret or variable whose name
 > starts with it, so the obvious name cannot be created. The generated workflow maps this
 > secret onto an unprefixed `GITHUB_TOKEN_SECRET_ARN` environment variable, which is what
-> the CDK app reads — only the _secret_ name needs the prefix.
+> the CDK app reads — only the _secret_ name needs the prefix. Every other `CANOPY_GITHUB_*`
+> entry above is spelled that way for the same reason, and mapped the same way.
 
 > **CloudFront requires a us-east-1 certificate.** When `CMS_DOMAIN_NAME` is set,
 > `CanopyCmsDistribution` creates an ACM certificate in the **stack's own region**, and
@@ -365,36 +489,79 @@ rename it in the workflow's Deploy step too.
 
 ### Build-time client keys
 
-`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is inlined into the **client** bundle by
-Next.js at image-build time, so it has to reach the image _build_ — a Lambda
-environment variable is far too late. Because CDK builds the image, it must be
-passed through `buildArgs` in the stack, not through a `docker build
---build-arg` step in CI:
+The generated stack bakes `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+`NEXT_PUBLIC_CANOPY_MODE` into the image. Next.js inlines them into the
+**client** bundle at image-build time, so they have to reach the image _build_ —
+a Lambda environment variable is far too late. Because CDK builds the image,
+they must be passed through `buildArgs` in the stack, not through a
+`docker build --build-arg` step in CI:
 
 ```ts
 cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
   file: 'Dockerfile.cms',
+  // No `platform`: see "Where the image is built" below.
   buildArgs: {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? '',
+    NEXT_PUBLIC_CANOPY_MODE: 'prod',
   },
 }),
 ```
 
-The workflow sets that variable on the `cdk deploy` step from a repository
-variable. If it is missing, the deploy still succeeds and the editor ships with
-an empty publishable key.
+The workflow sets the publishable key on the `cdk deploy` step from a
+repository variable; if it is missing, the deploy still succeeds and the editor
+ships with an empty publishable key. `NEXT_PUBLIC_CANOPY_MODE` is a literal, for
+the reason [Operating mode](#operating-mode) gives.
 
-### Worker outage during deploy
+That bakes one Clerk instance into each image, which is what the generated
+`clerkMiddleware` needs, since it reads the build-time publishable key rather
+than the one a `<ClerkProvider>` receives. Without the middleware the key can
+come from a run-time variable instead and one image serves every tier; see
+[Dual Build Support](#dual-build-support).
 
-The worker ASG has `minCapacity` and `maxCapacity` of 1, so the rolling update
-is terminate-then-relaunch with a short gap while the replacement boots
-(package installs and the EFS mount — roughly 2–4 minutes). This is safe: the
-task queue and branch workspaces live on EFS and are picked up on boot, and the
-Lambda's Save/Publish enqueue paths are unaffected. Tasks interrupted mid-flight
-are recovered by the worker's orphaned-task sweep, which runs every task-queue
-cycle.
+### Where the image is built
 
-See `examples/aws-deployment/deploy-cms.yml` for the full workflow.
+`cdk deploy` builds the CMS image on whichever machine runs it, but that machine
+does not decide what ends up in the image:
+
+- **The image's architecture is the docker build's target platform**, and
+  `CanopyCmsService` fixes that from its `architecture` prop (`ARM_64` by
+  default). It always passes the function a resolved architecture, and CDK
+  derives a `fromImageAsset` image's build platform from it. Leave `platform`
+  off `fromImageAsset`: an explicit one overrides the derived value, and an
+  image built for the other architecture cannot run on the function: its
+  binaries are for the wrong architecture, which
+  [`execve` rejects][execve-enoexec]. An arm64 image on an x86_64 function
+  [fails at invoke with `Runtime.InvalidEntrypoint`][lambda-arch-mismatch].
+  A prebuilt `fromEcr` image has no build for CDK to steer, so build it with
+  the matching `--platform` yourself.
+- **Everything native comes from inside the build.** The Node binary comes
+  from the `node:22-slim` base image, pulled for the target platform; git from
+  an `apt-get` step; sharp and its libvips from the package install. All of
+  those run inside the build, and `.dockerignore` keeps the host's
+  `node_modules` out of the build context.
+
+What the host does decide is whether that build runs natively, and so how fast:
+
+| `cdk deploy` runs on         | Building the default `linux/arm64` image                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Apple Silicon Mac            | Native, fast                                                                                                                                                                                                                                                                                                                                                                          |
+| GitHub `ubuntu-24.04-arm`    | Native. The generated workflow's runner: a standard GitHub-hosted runner in private repositories, with 2 vCPUs there. The workflow's own dependency install runs on arm64 Linux too, so native dependencies install their linux-arm64 builds                                                                                                                                          |
+| GitHub `ubuntu-latest` (x86) | Emulated: the build runs under QEMU, which [Docker's GitHub Actions guide][docker-gha-multi-platform] adds with `docker/setup-qemu-action`. [Docker's docs][docker-multi-platform] warn emulation can be much slower for compute-heavy work such as compilation, and emulated arm64 builds have failure reports on 24.04 runners ([actions/runner-images#11561][runner-images-11561]) |
+
+[lambda-arch-mismatch]: https://jasoncameron.dev/posts/aws-lambda-handler-gotchas
+[execve-enoexec]: https://man7.org/linux/man-pages/man2/execve.2.html#ERRORS
+[docker-gha-multi-platform]: https://docs.docker.com/build/ci/github-actions/multi-platform/
+[docker-multi-platform]: https://docs.docker.com/build/building/multi-platform/
+[runner-images-11561]: https://github.com/actions/runner-images/issues/11561
+
+The asset's hash covers its build inputs — the directory contents, `file`,
+`buildArgs` and the platform among them — and not the machine that built it, so
+the same inputs give the same asset hash on a Mac or in CI.
+
+Every `cdk deploy` that changes the worker's launch template also replaces the
+worker instance, with a short outage while the replacement boots; see
+[Redeploying updates the worker too](#redeploying-updates-the-worker-too). And
+see `examples/aws-deployment/deploy-cms.yml` for the full workflow.
 
 ## Step 6: Create Secrets
 
@@ -405,14 +572,225 @@ Before deploying, create these secrets in AWS Secrets Manager:
 | `canopycms/github-token`     | GitHub PAT with `repo` scope | EC2 worker (push, PR creation)  |
 | `canopycms/clerk-secret-key` | Clerk backend secret key     | EC2 worker (user cache refresh) |
 
-The Lambda does NOT need these secrets — only the EC2 worker reads them.
+CanopyCMS's code on the Lambda needs neither secret — only the EC2 worker reads them.
+Keeping `clerkMiddleware` changes that for the Clerk key; see [Security Model](#security-model).
+
+### Authenticating as a GitHub App
+
+A personal access token is the default and is fully supported; this section is
+for organisations that require an App, and nothing here deprecates the token.
+Registering an App under an organisation takes an owner of it (or a GitHub App
+manager for all its Apps), which many adopters are not.
+
+What an App buys you, when you can have one: its private key does not expire, it
+acts as itself rather than as the person who created it, and it survives that
+person leaving. A fine-grained PAT expires within a year and dies with its
+creator's account.
+
+#### Register it with `canopycms init-github-app`
+
+```bash
+canopycms init-github-app create -- \
+  aws secretsmanager create-secret --name canopycms/github-app-key --secret-string file:///dev/stdin
+```
+
+The command writes an HTML form to a temp file and prints the path. Open it in a
+browser **signed in to GitHub as the repository's owner** (for an organisation:
+an owner, or a GitHub App manager for all its Apps), review the permissions
+GitHub shows you, and click Create; then install the App on the content
+repository and press Enter. It prints `GITHUB_APP_ID` and
+`GITHUB_APP_INSTALLATION_ID`, both read from the API rather than copied off a URL.
+
+Everything after `--` is run with the private key on its **standard input**, so
+the key never touches disk and never appears in a process listing. Any command
+that reads a secret from stdin works, and `--key-out <path>` writes a `0600` file
+instead if you have none. The command's output is shown to you, which is how you
+get the secret's full ARN — `Secret.fromSecretCompleteArn` needs the ARN
+including its six-character suffix, not the friendly name. If that command fails,
+`create` keeps the key in memory and asks for a **file path** to write it to
+(created `0600`, never overwriting); commands are not accepted at that prompt,
+and a first word after `--` containing `=` is refused, so set variables in your
+shell before `canopycms`.
+
+If you already keep one JSON document per environment, create the secret
+yourself and point `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD` at the field:
+`init-github-app` deliberately will not edit an existing document, because a
+read-modify-write against a shared credential can silently drop its other fields.
+
+Prefer to do it by hand? Create the App under the account's settings with
+exactly the permissions below, install it on the content repository, and
+generate a private key from the App's "Private keys" section.
+
+#### The permissions, and why each one
+
+| Permission                  | Why                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| Contents: read & write      | cloning, fetching and pushing content branches over HTTPS, and deleting a remote branch ref |
+| Pull requests: read & write | opening and updating the pull request that carries an edit, and the draft/ready transitions |
+| Metadata: read              | granted automatically alongside any repository permission                                   |
+
+**Nothing else.** Not Issues, not Workflows, not Administration, and no
+organisation permissions. That set is not advice — it is derived from every
+GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
+`packages/canopycms/src/cli/init-github-app.ts` with the call site that forces
+each entry, and held there by a test that drives the worker's dispatch table and
+fails if a call is added that the set does not cover.
+
+One known gap, reported in public GitHub issues and not reproduced here: GitHub
+refuses a push that creates or updates a file under `.github/workflows/` without
+the workflows permission (the `workflow` scope, for a classic PAT), and a content
+branch rebased across a base-branch workflow change may count as one.
+
+**Register one App per site.** Anyone holding an App's key can mint a token for
+any of its installations, so one App shared across sites lets a compromise of
+one site's secret store write to every other site's repository — see
+[ARCHITECTURE.md](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation).
+
+#### Check it before you trust it
+
+```bash
+aws secretsmanager get-secret-value --secret-id canopycms/github-app-key \
+  --query SecretString --output text |
+  canopycms init-github-app verify --app-id 123456 --key-stdin
+```
+
+Read-only and repeatable. It reports the permissions the installation actually
+holds — flagging anything **missing** and anything **wider than intended** —
+whether it is scoped to selected repositories or all of them, whether it has been
+suspended, whether the App is installed exactly **once** (a second installation
+means this key reaches another account's repositories), and whether a token can
+actually be minted, which matters because **adding a permission to an App does
+not reach existing installations until an account owner approves it**, so an App
+whose settings page looks correct can still hold a stale grant. Any token it
+mints is revoked immediately.
+
+A check that could not run is reported as a failure, not passed over: "could not
+list this App's installations" is not the same as "installed once", and only one
+of those is a reason to trust the credential.
+
+#### Then set these instead of `GITHUB_TOKEN_SECRET_ARN`
+
+```
+GITHUB_APP_ID=123456
+GITHUB_APP_INSTALLATION_ID=78901234
+GITHUB_APP_PRIVATE_KEY_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:canopycms/github-app-key-AbCdEf
+```
+
+From the generated GitHub Actions workflow you set the matching repository
+variables and secret, all `CANOPY_`-prefixed, which the workflow maps back onto
+the unprefixed names above. See
+[Repository secrets and variables](#repository-secrets-and-variables).
+
+Four things worth knowing before you choose:
+
+- **The private key is ARN-only**, and cannot be otherwise: the worker's
+  configuration arrives as a `.env` file systemd reads as `EnvironmentFile=`,
+  where a newline starts a new variable, and a PEM is multi-line. Pasting the key
+  into `GITHUB_APP_PRIVATE_KEY_SECRET_ARN` is caught at synth.
+- **The key may live in a JSON document**, like any other credential here — set
+  `GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. The worker also accepts a PEM whose
+  newlines arrived as literal `\n` escapes, or one base64-wrapped to get through a
+  single-line field, so a key mangled in transit still boots.
+- **The App's installation tokens last about an hour**, so the worker mints one
+  on demand rather than reading a credential once at boot. Both halves of its
+  GitHub access — the REST API and git-over-HTTPS — share one token cache, so
+  this costs roughly one extra API call an hour, not one per operation.
+- **`GITHUB_APP_INSTALLATION_ID` is not the App ID**, and neither is the `Iv1.…`
+  Client ID shown beside the App ID on the settings page: an App installed on two
+  accounts has one App ID and two installation ids. Both `create` and `verify`
+  print the pair, so you should not need to read either off a URL — by hand, it is
+  the trailing number in the URL of the App's install page.
+
+### JSON secret documents
+
+The table above is the simple shape: one secret per credential, whose entire
+value _is_ the credential. If you instead keep one JSON document per
+environment, point the deployment at the field you want:
+
+```
+GITHUB_TOKEN_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-app/prod-AbCdEf
+GITHUB_TOKEN_SECRET_JSON_FIELD=CANOPYCMS_GITHUB_TOKEN
+```
+
+Those are the **environment variables the CDK app reads**, for a deploy from a laptop. From
+the generated GitHub Actions workflow, set the repository variable
+`CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` instead
+([why the prefix](#repository-secrets-and-variables)). The worker then reads that
+key out of the document; leave the `_JSON_FIELD` variable unset and the whole
+value is the credential, as in the table above.
+
+Three things worth knowing before you choose:
+
+- **Do not append the field to the ARN.** `arn:…:secret:my-app/prod-AbCdEf:CANOPYCMS_GITHUB_TOKEN::`
+  is the ECS / CloudFormation dynamic-reference convention, and the worker uses
+  neither — it calls `GetSecretValue`, which returns the whole document and does
+  not parse that suffix. `CanopyCmsService` rejects such an ARN at synth rather
+  than letting it reach the worker's IAM policy, where it would match nothing and
+  produce AccessDenied at boot.
+- **A missing or misspelled field fails loudly, at boot**, naming the field you
+  asked for and the keys the document actually has. A secret that holds a JSON
+  document with _no_ field configured is warned about on every boot, since the
+  whole document would otherwise silently become the credential.
+- **Only these credentials can come from a secret at all** — the GitHub token,
+  the Clerk secret key, and a GitHub App private key. If your document also holds
+  `CLERK_JWT_KEY` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, those two are public
+  key material and are supplied separately, as a repository variable and a build
+  arg; see [Security Model](#security-model).
+
+### Rotating a secret
+
+Update the secret's value in Secrets Manager. The running worker picks it up on
+its own — **you do not need to redeploy or replace the instance.**
+
+How long it takes, and why:
+
+| Secret                 | Picked up within       | Noticed by                                                    |
+| ---------------------- | ---------------------- | ------------------------------------------------------------- |
+| GitHub token           | ~5 minutes (up to ~10) | a failed publish, or the git sync, which runs every 5 minutes |
+| Clerk secret key       | ~15 minutes            | the auth-cache refresh                                        |
+| GitHub App private key | not re-read            | — see below                                                   |
+
+The re-read is **reactive**: the worker re-reads a secret only after the
+operation using it has just failed, so a healthy deployment makes no
+`GetSecretValue` calls between boots — which is also why rotation is not instant.
+
+For the GitHub token, **store the new value before you revoke the old one.**
+Then the first publish to meet the revoked token normally re-reads straight away
+and its automatic retry goes out on the new token. Normally, not always: the
+worker re-reads at most once every five minutes (and calls its credential
+provider at most once a minute), and any failure — a sync, or an unrelated
+publish — can consume that read, so a publish can still fail and need
+resubmitting. The two limits can stack, which is where the table's ~10 minutes
+comes from. Revoke first and a failure in the gap re-reads the old value, so
+publishes can fail for up to about six minutes.
+
+A secret that is simply wrong, rather than rotated, does not turn into a loop:
+when a re-read comes back identical to the value the worker already holds it does
+not retry the operation, since that retry could not succeed. It keeps checking at
+the same rate indefinitely, so a later correction is still picked up — twelve
+re-reads an hour per secret is the ceiling.
+
+Two things to know:
+
+- **A GitHub App private key is read once, at boot.** To rotate one: generate
+  the new key, store it in Secrets Manager, **replace the instance** (terminate
+  it and let the ASG replace it; `cdk deploy` replaces it only when the worker's
+  launch template changed, and a new value under the same secret ARN changes
+  nothing there), and only then delete the old key on GitHub. Delete first and
+  nothing fails at once — tokens already minted keep working for up to an hour —
+  then every publish fails with a 401 until the instance is replaced, and each
+  branch that failed meanwhile must be resubmitted.
+- **A plain env var is never re-read.** If you set `CANOPYCMS_GITHUB_TOKEN` or
+  `CLERK_SECRET_KEY` directly instead of pointing at an ARN, the value is
+  whatever the instance booted with: re-reading an ARN you deliberately overrode
+  would swap your override back out, so the worker leaves it alone.
 
 ## Content Publishing Flow
 
 1. Editor creates/edits content in the CMS at `cms.docs.example.org/edit`
 2. Editor clicks "Submit" → Lambda commits to branch, pushes to `remote.git` on EFS
 3. EC2 worker picks up task (~5 seconds) → pushes branch to GitHub, creates PR
-4. Reviewer merges PR on GitHub
+4. Someone with merge permissions merges the PR on GitHub
 5. Existing CI/CD pipeline rebuilds the static site and deploys to S3
 
 ## Settings Publishing Flow (Permissions & Groups)
@@ -428,7 +806,7 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 
 ## Two deployments, one repository
 
-Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, permissions/groups PRs from one deployment get silently clobbered by the other's push, and reviewers see confusing, unattributable diffs on a single PR that's actually serving two unrelated CMS instances.
+Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, permissions/groups PRs from one deployment get silently clobbered by the other's push, and a single PR ends up carrying unattributable diffs from two unrelated CMS instances.
 
 The fix is to give each stack a distinct `deploymentName`:
 
@@ -439,17 +817,17 @@ new CanopyCmsService(this, 'Cms', {
 })
 ```
 
-`deploymentName` is stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment variable and the worker's `.env`, and resolved with this precedence (see `resolveDeploymentName` in `packages/canopycms/src/operating-mode/deployment-name.ts`):
+`deploymentName` is stamped into the Lambda's `CANOPYCMS_DEPLOYMENT_NAME` environment variable and the worker's `.env`, and resolved by `resolveDeploymentName` (`packages/canopycms/src/operating-mode/deployment-name.ts`) with this precedence:
 
 1. `CANOPYCMS_DEPLOYMENT_NAME` (stamped per-stack by this CDK prop) — wins
 2. `deploymentName` in the shared repo's `canopycms.config.ts`
 3. the operating mode's default (`prod` / `local`)
 
-The env var deliberately wins over config: it's the one guaranteed to differ between two stacks sharing a repo, while `config.deploymentName` is checked out identically by both. If both are set and disagree, the Lambda logs a one-time warning naming both values and which one won.
+The env var deliberately wins over config, and if both are set and disagree the Lambda logs a one-time warning naming both values and which one won. See [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-name-resolution) for why that order and not the intuitive one.
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically. Renaming the resolved settings branch would make CanopyCMS check out a _different_ orphan branch in the same on-disk workspace, which wipes `permissions.json`/`groups.json` with no history to recover them from (orphan branches share none). If you see this error, either restore the previous value or deliberately move the settings workspace aside first — see the error message for specifics.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 
@@ -558,15 +936,14 @@ whenever anything in its launch template changes — most commonly a new
 worker code bundle, but also an AMI refresh, instance-role change, or
 user-data edit. Without this, CloudFormation's default behavior for an ASG
 behind a changed launch template is to update the template resource and stop
-there: the running instance keeps its old user-data (and therefore the old
-worker bundle) until a spot interruption or a manual terminate happens to
+there: the running instance keeps its old user-data, and therefore the old
+worker bundle, until a spot interruption or a manual terminate happens to
 replace it — so a plain `cdk deploy` would silently ship every other change
 except the one to the worker.
 
 Because `minInstancesInService` must be `0` here, every such deploy causes a
-short worker outage (replacement boot time — installing git/unzip/nodejs/
-efs-utils and mounting EFS — is typically 2-4 minutes). This is expected and
-safe:
+short worker outage — replacement boot time, installing packages and mounting
+EFS, is typically 2-4 minutes. This is expected and safe:
 
 - The task queue and branch workspaces live on EFS, not on the instance, so
   the replacement worker picks up exactly where the old one left off.
@@ -574,71 +951,79 @@ safe:
   talk to the worker directly, so they queue up normally during the outage
   instead of failing.
 - A task that was actually being processed when the old instance was
-  terminated is automatically recovered: the worker re-checks
-  `.tasks/processing/` for stranded tasks on every task-queue poll cycle (not
-  only at its own boot), so a task orphaned by the old instance's termination
-  gets moved back to `pending/` and retried once it's old enough (5 minutes
-  by default) — no manual intervention needed.
+  terminated is recovered automatically: the worker re-checks
+  `.tasks/processing/` for stranded tasks on every task-queue poll cycle, not
+  only at its own boot, so a task orphaned by the termination is moved back to
+  `pending/` and retried once it is old enough (5 minutes by default).
+
+**The boot script fails fast on anything the worker needs.** A failure in a
+prerequisite step — package installs, the EFS mount, unpacking the worker
+bundle, starting the systemd service — shuts the instance down immediately so
+the ASG replaces it, which is the only automatic recovery this topology has and
+a deliberate choice over doing nothing: a half-booted instance passes the ASG's
+EC2-only health check indefinitely while doing nothing useful. That behavior is
+then explicitly turned off before the best-effort CloudWatch log-shipping setup,
+so a package-mirror hiccup while installing the logging agent cannot take down
+an otherwise-healthy worker and hand it straight back into the same outage on
+relaunch. Node installs from the OS package repository rather than a piped
+third-party script for the same reason: a routine unattended replacement should
+not depend on a third party being reachable just to boot.
 
 There is deliberately no `cfn-signal`/readiness gate on this update: the
 worker's systemd unit is `Type=simple` with `Restart=always`, so
-`systemctl start` reports success the instant the process execs, regardless
-of whether it then crash-loops — a real readiness signal would need to poll
-`worker-status.json` or `systemctl is-active` before signaling, which isn't
-implemented yet. If you need to confirm a redeploy actually took (e.g. after
-a worker code change), check the new instance's log stream (see
-[Worker observability](#worker-observability) above) or
-`npx canopycms worker run-once`-style diagnostics rather than relying on
+`systemctl start` reports success the instant the process execs, regardless of
+whether it then crash-loops, and a real readiness signal would need to poll
+`worker-status.json` or `systemctl is-active` first. So to confirm a redeploy
+actually took, check the new instance's log stream (see
+[Worker observability](#worker-observability) above) rather than relying on
 `cdk deploy` exiting cleanly as proof.
 
 ## Security Model
 
-| CMS Lambda                       | EC2 Worker                                      |
-| -------------------------------- | ----------------------------------------------- |
-| No internet access               | Outbound HTTPS only                             |
-| No sensitive secrets             | GitHub token + Clerk key (from Secrets Manager) |
-| Public keys only (CLERK_JWT_KEY) | Full API access                                 |
-| Read/write EFS only              | Read/write EFS + internet                       |
+| CMS Lambda                       | EC2 Worker                                                               |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| No internet access               | Outbound HTTPS only                                                      |
+| No sensitive secrets             | GitHub token _or_ an App private key, + Clerk key (from Secrets Manager) |
+| Public keys only (CLERK_JWT_KEY) | Full API access                                                          |
+| Read/write EFS only              | Read/write EFS + internet                                                |
 
 **The CMS Lambda is intended to receive public configuration only.** Every genuinely
 sensitive value is meant to go to the worker instead: pass the GitHub token and Clerk
-secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`,
+secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`
+(or, for App auth, `githubAppPrivateKeySecretArn` in place of the first),
 and the worker reads them at boot with its own IAM grant. The Lambda's `environment`
 should carry nothing you would mind reading in the output of
 `aws lambda get-function-configuration`.
 
-An earlier version of this paragraph justified the absence of a Secrets-Manager-fetch path
-on the Lambda by saying it "could not use one if it had it, having no internet access."
-**That was wrong**, and it mattered, because it made the absence look like a closed design
-decision rather than an open gap. The Lambda runs in `PRIVATE_ISOLATED` subnets of a VPC
-this construct creates, and a VPC endpoint reaches an AWS service from there **without any
-internet route** — which is not hypothetical here: `CanopyCmsService` already adds a
-gateway endpoint for S3 for exactly this reason, because otherwise the Lambda's asset
-writes would hang. Secrets Manager needs the _interface_ variety rather than the free
-gateway one, so it carries an hourly and per-GB charge; that is a cost argument, not an
-impossibility argument.
+The Lambda holds no secrets **because nothing has built that path yet**, not because the
+path cannot exist. It runs in `PRIVATE_ISOLATED` subnets, and a VPC endpoint reaches an AWS
+service from there with no internet route — `CanopyCmsService` already adds a gateway
+endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ variety
+rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
+argument, not an impossibility argument.
 
-So the honest statement of today's position is: the Lambda holds no secrets **because
-nothing has built that path yet**, not because the path cannot exist.
+The worker's own AWS permissions are correspondingly narrow: EFS client access, Secrets
+Manager reads for its specific secrets, SSM core (the Session Manager channel, for
+operators whose roles allow it), read access to the CDK asset bucket holding its code
+bundle, and write-only access to its one CloudWatch log group.
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda.
-`CLERK_SECRET_KEY` (full Clerk API access) should not — but read the note below before
-removing it from a deployment where it is currently set, because the shipped middleware
-appears to need it.
+Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
+`CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
+never reads the secret there: `createNextCanopyContext` wraps the Clerk plugin in
+`CachingAuthPlugin`, which checks each token with `verifyTokenOnly()` (the JWT key only) and
+takes user and group metadata from the auth cache on EFS. The calls that need the secret, to
+Clerk's backend API for that cache, run on the worker.
 
-> **Known tension, unresolved as of 2026-09-08.** The posture above is the design; the
-> shipped Clerk middleware template may not currently satisfy it. `clerkMiddleware`
-> resolves `secretKey` as `process.env.CLERK_SECRET_KEY || ''` and asserts it is non-empty
-> (`@clerk/nextjs@6.39.5`, `server/clerkMiddleware.js:62-65` via `assertKey`), while
-> `middleware-clerk.ts.template` passes only `jwtKey` and matches `/edit(.*)` and
-> `/api/canopycms(.*)`. On that reading an authenticated editor request to a Lambda with no
-> `CLERK_SECRET_KEY` throws inside middleware. This has been read from the SDK source but
-> **not confirmed on a live deploy**, so it is filed rather than fixed — see
-> `.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md` for the options and
-> what to verify first — including a fetch-at-init path over a Secrets Manager interface
-> endpoint, which is the only option that makes the posture above true rather than
-> requiring it to be softened. If you are standing up a Clerk-authenticated deployment now,
-> test sign-in early and treat this as the first thing to check if editor requests 500.
+**`clerkMiddleware` is the exception.** `canopycms init` generates a passthrough with it as a
+commented opt-in, and adopted, it throws on every request it matches unless it can
+resolve a secret key — `jwtKey` does not satisfy that check. So the posture above holds for a
+deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
+Lambda's environment, or a fetch of it at run time (see
+`.claude/future-tasks/deploy-test-lambda-plaintext-clerk-secret.md`). **A middleware you keep
+must also be passed `jwtKey` explicitly**: it never reads `CLERK_JWT_KEY` from the
+environment, and without the prop the internet-less Lambda hangs on sign-in fetching JWKS.
+What dropping the middleware gives up is under [Dual Build Support](#dual-build-support); the
+shape without it has not been run against a real Clerk instance, so test sign-in early.
 
 If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
 
@@ -650,7 +1035,9 @@ This has one consequence adopters don't need to think about, but that's worth kn
 
 CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. The header is a no-op on non-AWS deployments (it's just an extra header nothing enforces), so this doesn't need to be conditionally enabled per environment.
 
-**Known limitation:** raw `FormData` bodies (multipart uploads) can't be hashed this way — the multipart boundary is generated by the runtime at send time, so the final bytes aren't known until after the header would need to be set. No current CanopyCMS endpoint sends a `FormData` body. (The `assets.upload` endpoint nominally takes a JSON body, but its server schema expects a `Buffer`/`Uint8Array` instance, which JSON transport can't produce — the endpoint is non-functional today and is slated for rework in the assets/media system task. When it's reworked, use base64 string data in JSON, or raw `ArrayBuffer`/`Blob` bodies hashed with `computeContentSha256HexFromBytes` — never `FormData`, which would 403 behind this OAC shape.)
+**Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (`.claude/future-tasks/oac-unhashed-body-requests.md`). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
+
+**`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
 
 ## Environments
 

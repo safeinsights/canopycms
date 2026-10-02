@@ -11,15 +11,15 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { Task, QueueStats, CorruptTaskFile } from '../worker/task-queue'
+import type { Task, QueueStats, CorruptTaskFile } from '../task-queue/cms-task-queue'
 import {
   getQueueStats,
   listTasks,
   listCorruptTaskFiles,
   requeueFailedTask,
-} from '../worker/task-queue'
-import { getTaskQueueDir } from '../worker/task-queue-config'
-import { WORKER_STATUS_FILE } from '../worker/worker-status'
+} from '../task-queue/cms-task-queue'
+import { getTaskQueueDir } from '../task-queue/task-queue-config'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
@@ -38,25 +38,21 @@ export type {
   RepairContentDuplicatesResponse,
 } from './admin-branch-health'
 
-// ============================================================================
-// Worker lock liveness
-// ============================================================================
-
 /**
- * 60_000 = DEFAULT_LOCK_STALE_MS in worker/cms-worker.ts, hardcoded here
- * rather than imported/threaded through config: an adopter overriding
- * `lockStaleMs` on their worker will skew this classification (documented
- * limitation — the observability endpoint doesn't know the worker's actual
- * config). +90_000 absorbs the EFS/NFS attribute-cache staleness window: a
- * freshly-refreshed heartbeat can still appear up to ~60s old to a reader on
- * a different host, since NFS clients cache file attributes.
+ * 60_000 = DEFAULT_LOCK_STALE_MS in worker/cms-worker.ts, hardcoded rather
+ * than threaded through config: an adopter who overrides `lockStaleMs` skews
+ * this classification (the endpoint doesn't know the worker's actual
+ * config). +90_000 absorbs the EFS/NFS attribute-cache staleness window (see
+ * docs/concurrency.md's "Residual staleness windows" (A)), large enough that
+ * a freshly-refreshed heartbeat won't misreport as stale to a reader on a
+ * different host.
  */
 const LIVENESS_THRESHOLD_MS = 60_000 + 90_000
 
 const DEFAULT_ADMIN_TASKS_LIMIT = 50
 const MAX_ADMIN_TASKS_LIMIT = 200
 
-export type WorkerLivenessState = 'alive' | 'stale' | 'absent'
+type WorkerLivenessState = 'alive' | 'stale' | 'absent'
 
 export interface WorkerLiveness {
   /**
@@ -143,10 +139,6 @@ async function getOldestPendingAgeMs(taskDir: string): Promise<number | undefine
   return oldestMtimeMs === undefined ? undefined : Math.max(0, Date.now() - oldestMtimeMs)
 }
 
-// ============================================================================
-// Response types
-// ============================================================================
-
 export interface AdminStatusData {
   generatedAt: string
   mode: OperatingMode
@@ -167,23 +159,19 @@ export interface AdminTasksData {
 /** Response type for GET /admin/tasks/:status */
 export type AdminTasksResponse = ApiResponse<AdminTasksData>
 
-export interface AdminRetryTaskData {
+interface AdminRetryTaskData {
   newTaskId: string
 }
 
 /** Response type for POST /admin/tasks/:taskId/retry */
 export type AdminRetryTaskResponse = ApiResponse<AdminRetryTaskData>
 
-export interface AdminDeleteTaskData {
+interface AdminDeleteTaskData {
   deleted: true
 }
 
 /** Response type for DELETE /admin/tasks/:status/:fileName */
 export type AdminDeleteTaskResponse = ApiResponse<AdminDeleteTaskData>
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 const adminTaskStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed', 'corrupt'])
 
@@ -200,7 +188,7 @@ export type ListAdminTasksParams = z.infer<typeof listAdminTasksParamsSchema>
 const retryTaskParamsSchema = z.object({
   taskId: z.string().regex(/^[A-Za-z0-9-]{1,80}$/),
 })
-export type RetryTaskParams = z.infer<typeof retryTaskParamsSchema>
+type RetryTaskParams = z.infer<typeof retryTaskParamsSchema>
 
 // processing/ and completed/ are deliberately excluded: processing/ is
 // worker-owned (deleting there races completeTask's read-then-unlink), and
@@ -215,10 +203,6 @@ const deleteTaskParamsSchema = z.object({
     .refine((v) => !v.includes('..'), { message: 'fileName must not contain ..' }),
 })
 export type DeleteTaskParams = z.infer<typeof deleteTaskParamsSchema>
-
-// ============================================================================
-// Handlers
-// ============================================================================
 
 const getAdminStatusHandler = async (
   _gc: Record<string, never>,
@@ -363,13 +347,8 @@ const deleteTaskHandler = async (
   }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
 /**
  * Task queue stats + worker liveness snapshot
- * GET /admin/status
  */
 const getAdminStatus = defineEndpoint({
   namespace: 'admin',
@@ -391,7 +370,6 @@ const getAdminStatus = defineEndpoint({
 
 /**
  * List task files for a given status (or quarantined corrupt/ files)
- * GET /admin/tasks/:status
  */
 const listAdminTasks = defineEndpoint({
   namespace: 'admin',
@@ -408,7 +386,6 @@ const listAdminTasks = defineEndpoint({
 
 /**
  * Requeue a failed task as a fresh pending task
- * POST /admin/tasks/:taskId/retry
  */
 const retryTask = defineEndpoint({
   namespace: 'admin',
@@ -425,7 +402,6 @@ const retryTask = defineEndpoint({
 
 /**
  * Delete a task file from pending/, failed/, or corrupt/
- * DELETE /admin/tasks/:status/:fileName
  */
 const deleteTask = defineEndpoint({
   namespace: 'admin',

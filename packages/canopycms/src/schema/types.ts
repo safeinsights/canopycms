@@ -16,15 +16,11 @@ export type EntrySchemaRegistry = Record<string, EntrySchema>
 export interface SchemaSourceInfo {
   /** File path relative to content root */
   path: string
-  /** Type of schema source */
   type: 'root' | 'collection'
   /** Collection names defined in this source */
   collections: string[]
 }
 
-/**
- * Result of schema resolution.
- */
 export interface SchemaResolutionResult {
   /** Resolved schema ready for use */
   schema: RootCollectionConfig

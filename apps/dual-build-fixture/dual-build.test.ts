@@ -54,16 +54,29 @@ const MANTINE_SIGNAL = '--mantine-'
 // bundling verbatim in any output that pulls in ClerkProvider.
 const CLERK_SIGNAL = '@clerk/nextjs'
 
+// app/edit/layout.server.tsx passes this variable's value to <ClerkProvider>,
+// falling back to its own constant. The builds run WITHOUT it and the server
+// starts WITH it, so the served /edit can only carry RUNTIME_PUBLISHABLE_KEY
+// if the layout read it per request -- the property docs/deploying-to-aws.md's
+// "One image for every Clerk tier" depends on. A /edit prerendered at build
+// would carry the fallback instead.
+const RUNTIME_KEY_ENV = 'FIXTURE_CLERK_PUBLISHABLE_KEY'
+const RUNTIME_PUBLISHABLE_KEY = `pk_test_${Buffer.from('canopycms-dual-build-runtime.clerk.accounts.dev$').toString('base64')}`
+const FALLBACK_PUBLISHABLE_KEY =
+  'pk_test_Y2Fub3B5Y21zLWR1YWwtYnVpbGQtZml4dHVyZS5jbGVyay5hY2NvdW50cy5kZXYk'
+
 interface BuildResult {
   ok: boolean
   output: string
 }
 
 function runNextBuild(flavor: 'static' | 'cms'): BuildResult {
+  const env: NodeJS.ProcessEnv = { ...process.env, CANOPY_BUILD: flavor }
+  delete env[RUNTIME_KEY_ENV]
   try {
     const output = execFileSync(NEXT_BIN, ['build'], {
       cwd: APP_DIR,
-      env: { ...process.env, CANOPY_BUILD: flavor },
+      env,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -337,7 +350,7 @@ describe('cms build (CANOPY_BUILD=cms)', () => {
 
     cmsServer = spawn(NEXT_BIN, ['start', '-p', String(port)], {
       cwd: APP_DIR,
-      env: { ...process.env, CANOPY_BUILD: 'cms' },
+      env: { ...process.env, CANOPY_BUILD: 'cms', [RUNTIME_KEY_ENV]: RUNTIME_PUBLISHABLE_KEY },
       stdio: 'pipe',
     })
     let serverLog = ''
@@ -370,6 +383,18 @@ describe('cms build (CANOPY_BUILD=cms)', () => {
         editRes.status,
         `cms server's /edit route did not respond (got ${editRes.status})`,
       ).toBe(200)
+
+      // See RUNTIME_KEY_ENV: the build never saw this key, so finding it
+      // proves app/edit/layout.server.tsx read it per request.
+      const editBody = await editRes.text()
+      expect(
+        editBody.includes(RUNTIME_PUBLISHABLE_KEY),
+        `cms server's /edit did not render the publishable key from ${RUNTIME_KEY_ENV} at request time -- /edit was probably prerendered at build; does app/edit/layout.server.tsx still export dynamic = 'force-dynamic'?`,
+      ).toBe(true)
+      expect(
+        editBody.includes(FALLBACK_PUBLISHABLE_KEY),
+        `cms server's /edit rendered the layout's fallback publishable key despite ${RUNTIME_KEY_ENV} being set`,
+      ).toBe(false)
 
       // CanopyCMS's handler itself returns a JSON 404 for an unrecognized
       // sub-path (e.g. /health isn't part of its API surface), so status

@@ -21,12 +21,6 @@ export interface ReferenceOption {
 
 /**
  * ReferenceResolver resolves content IDs to display values for reference fields.
- *
- * This class provides utilities for:
- * - Resolving a single ID to its display value (e.g., title)
- * - Loading all available options for a reference field
- * - Filtering options by collection constraints
- * - Searching options by display value
  */
 export class ReferenceResolver {
   constructor(
@@ -37,9 +31,6 @@ export class ReferenceResolver {
   /**
    * Resolve a content ID to a display value.
    * Returns null if the ID doesn't exist or points to a collection.
-   *
-   * @param id - The content ID to resolve
-   * @param displayField - The field to use for display value (default: 'title')
    */
   async resolve(id: string, displayField = 'title'): Promise<ResolvedReference | null> {
     const location = this.idIndex.findById(id)
@@ -79,10 +70,6 @@ export class ReferenceResolver {
    * Scans collections (including subcollections) and/or filters by entry type.
    * At least one of `collections` or `entryTypes` should be provided.
    *
-   * @param collections - Collection paths to search, including subcollections (e.g., ['data-catalog'])
-   * @param displayField - Field to use for option labels (default: 'title')
-   * @param search - Optional search string to filter options
-   * @param entryTypes - Optional entry type names to filter by (e.g., ['partner'])
    * @param canAccess - Optional permission predicate, called with each candidate's
    *   relative path before it is read. Returning false skips the entry entirely --
    *   no file I/O, no label, no option -- so a caller who can't read a path never
@@ -97,20 +84,17 @@ export class ReferenceResolver {
   ): Promise<ReferenceOption[]> {
     const options: ReferenceOption[] = []
 
-    // Gather candidate entries. Use getCollectionEntryPaths for collection-based queries
-    // (it handles path normalization and schema index lookups). Use the ID index directly
-    // for entryTypes-only queries (no collection scope).
+    // Collection-scoped queries go through getCollectionEntryPaths (it normalizes paths -- e.g.
+    // 'authors' -> 'content/authors' -- and consults the schema index); an entryTypes-only query
+    // has no collection scope, so it reads the ID index directly.
     type Candidate = { relativePath: PhysicalPath; collection: LogicalPath; slug: Slug }
     let candidates: Candidate[]
     if (collections && collections.length > 0) {
-      // Search within specified collection trees (including subcollections)
-      // getCollectionEntryPaths handles normalization (e.g., 'authors' → 'content/authors')
       const results = await Promise.all(
         collections.map((col) => this.store.getCollectionEntryPaths(col)),
       )
       candidates = results.flat()
     } else {
-      // No collection scope — search all entries via index
       candidates = this.idIndex
         .getAllEntryLocations()
         .filter(
@@ -119,7 +103,6 @@ export class ReferenceResolver {
         )
     }
 
-    // Filter by entry type if specified
     if (entryTypes && entryTypes.length > 0) {
       candidates = candidates.filter((loc) => {
         const entryType = extractEntryTypeFromFilename(nodePath.basename(loc.relativePath))
@@ -142,7 +125,6 @@ export class ReferenceResolver {
         const doc = await this.store.read(location.collection, normalizedSlug as Slug)
         const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
-        // Apply search filter if provided
         if (search && !label.toLowerCase().includes(search.toLowerCase())) {
           continue
         }

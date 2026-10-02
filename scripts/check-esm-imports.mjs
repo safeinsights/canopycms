@@ -1,44 +1,15 @@
 #!/usr/bin/env node
 /**
- * Regression guard for two defect classes that share one root cause — the
- * published package shape is never exercised by anything else in this repo.
- * It resolves each published package's entry point four ways and fails loudly
- * on any of them:
+ * Regression guard: the published package shape (dist/ + publishConfig) is
+ * never exercised anywhere else in this repo. Resolves each published entry
+ * point four ways -- `import` under Node ESM, `require()` from CommonJS,
+ * `import type` under moduleResolution:nodenext, and a VALUE import under
+ * each adopter tsconfig shape in CONSUMER_CONFIGS -- see
+ * checkPublishedConditions(), checkDeclarationResolution() and
+ * checkConsumerMatrix() below for the rule each enforces.
  *
- *   1. `import` under Node's native ESM resolver — the extensionless-relative-
- *      import defect (see scripts/add-js-extensions.mjs).
- *   2. `require()` from a real CommonJS consumer — the missing-"require"-
- *      condition defect, which made every entry point unreachable from any
- *      CommonJS project, our own `init-deploy` CDK scaffold included. See
- *      checkPublishedConditions().
- *   3. `import type` under moduleResolution:nodenext — see
- *      checkDeclarationResolution().
- *   4. a VALUE import from a generated consumer, under each adopter tsconfig
- *      shape in CONSUMER_CONFIGS — see checkConsumerMatrix().
- *
+ * Usage: node scripts/check-esm-imports.mjs
  * MUST run after `pnpm build` — it imports built dist/ output, not src/.
- *
- * Why a sandbox instead of `import('canopycms')` directly: this repo is a
- * pnpm workspace, so node_modules/canopycms is a symlink to
- * packages/canopycms and resolves through its DEV "exports" field (bare
- * *.ts source, meant for bundlers/tsx), never through "publishConfig.exports"
- * — the field real npm consumers actually get. Testing the published shape
- * means testing what npm/pnpm publish actually produce: merging each
- * package's `publishConfig` over its package.json (exactly what `npm
- * publish`/`pnpm pack` do — verified by diffing a real `pnpm pack` tarball's
- * package.json against this merge) and pointing it at the real built dist/.
- * This script does that merge directly instead of shelling out to `pnpm
- * pack`, because `pnpm pack` runs each package's `prepack` script (a full
- * rebuild for canopycms) — redundant after the CI build step already ran,
- * and slow to run on every guard invocation.
- *
- * The resulting sandbox package needs canopycms's OWN peer/runtime
- * dependencies (next, react, @clerk/nextjs, aws-cdk-lib, constructs, ...) to
- * resolve too, so every already-installed dependency is symlinked in from
- * the real workspace node_modules trees (package-local first, then the
- * workspace root as a fallback), skipping the 5 packages under test — those
- * get the merged, dist-backed copy instead so cross-package imports (e.g.
- * canopycms-next -> canopycms) go through publishConfig as well.
  */
 
 import {
@@ -323,36 +294,27 @@ function checkCoverage() {
 // Static half of the CommonJS-reachability guard (the behavioral half is the
 // require() probe in buildRequireProbeScript() below).
 //
-// When a package.json has an "exports" map, Node IGNORES "main" entirely, and a
+// When a package.json has an "exports" map, Node IGNORES "main" entirely, and
 // require() resolves the conditions ["node", "require", "default"]. A map
 // offering only { types, import } therefore matches NOTHING on that path:
 // require('canopycms-cdk') dies with ERR_PACKAGE_PATH_NOT_EXPORTED before the
-// module is ever loaded. That shipped — every published entry point except
-// canopycms-next/config was unreachable from CommonJS.
+// module is ever loaded -- including our OWN `init-deploy` CDK scaffold, whose
+// cdk.json.template runs `node --import tsx infrastructure/bin/app.ts`; tsx
+// honors the nearest package.json "type", so in an adopter repo without
+// "type": "module" (the Next.js default) that import resolves through Node's
+// CJS loader and `cdk synth`/`cdk deploy` die at resolution.
 //
-// It bit hardest on the CDK package, and NOT only for adopters who wrote their
-// own CommonJS app (`cdk init app --language typescript` produces one, running
-// ts-node). Our OWN scaffold failed: cli/template-files/cdk.json.template runs
-// `node --import tsx infrastructure/bin/app.ts`, and tsx honors the nearest
-// package.json "type" — so in an adopter repo without "type": "module" (the
-// Next.js default, and what all three apps/ fixtures here are) that import
-// resolves through Node's CJS loader and `cdk synth`/`cdk deploy` both die at
-// resolution. Verified both directions against a published-shape sandbox: the
-// same scaffold succeeds pre-fix if the adopter's package.json DOES declare
-// "type": "module", which is exactly why this went unnoticed.
+// Node loads these ESM files from require() perfectly well once resolution
+// gets past the gate -- require(esm), which Node unflagged in 22.12.0, hence
+// engines: node >=22.12.0 on every published package and the repo root (this
+// script's own CJS probe needs it too). Only the metadata was the problem.
 //
-// Nothing about the code needed changing: once resolution gets past the gate,
-// Node loads these ESM files from require() perfectly well — require(esm), which
-// Node unflagged in 22.12.0, hence engines: node >=22.12.0 on every published
-// package and on the repo root (this script's own CJS probe needs it too).
-// Only the metadata refused.
-//
-// The require() probe below proves the 'test' subpaths genuinely load. This pass
-// covers the rest: 'skip' subpaths are client-only or need a bundler, so they
-// can never be exercised by either probe, and without this check they are
-// exactly where a missing condition would sit unnoticed. It also pins condition
-// ORDER — Node and TypeScript both take the first matching key, so a "types"
-// entry after "import" is ignored by some resolvers.
+// The require() probe below proves the 'test' subpaths genuinely load. This
+// static pass covers 'skip' subpaths too: client-only or bundler-only, so
+// they can never be exercised by either probe, and without this check a
+// missing condition on one would sit unnoticed. It also pins condition ORDER
+// — Node and TypeScript both take the first matching key, so a "types" entry
+// after "import" is ignored by some resolvers.
 function checkPublishedConditions() {
   const problems = []
   for (const { dir } of PACKAGES) {
@@ -518,7 +480,6 @@ function toPublishedPackageJson(pkg) {
   return { ...rest, ...(publishConfig ?? {}) }
 }
 
-// ---------------------------------------------------------------------------
 // Static undeclared-dependency scan.
 //
 // The runtime probe and the declaration-resolution pass below both run inside
@@ -665,7 +626,6 @@ function checkDeclaredDependencies() {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Stray test-artifact scan.
 //
 // A dist/ directory should contain only what the package intends to publish.
@@ -729,6 +689,18 @@ function layerInNodeModules(sourceNodeModules, sandboxNodeModules, targetNames) 
   }
 }
 
+/**
+ * A workspace `import('canopycms')` resolves through the DEV "exports" field
+ * (bare *.ts, meant for bundlers) via the node_modules symlink -- never
+ * through "publishConfig.exports", the field real npm consumers get. This
+ * builds a sandbox node_modules where the 5 packages under test instead get
+ * their PUBLISHED package.json (see toPublishedPackageJson()) pointing at the
+ * real built dist/, so the guard exercises what npm actually ships. Merges
+ * that directly rather than shelling out to `pnpm pack`, which reruns each
+ * package's `prepack` build -- redundant once CI has already built, and slow
+ * on every invocation. Everything else each package depends on is symlinked
+ * in unchanged from the real workspace node_modules so it still resolves.
+ */
 function buildSandbox() {
   const sandbox = mkdtempSync(path.join(os.tmpdir(), 'canopycms-esm-check-'))
   const sandboxNodeModules = path.join(sandbox, 'node_modules')
@@ -848,42 +820,34 @@ console.log(JSON.stringify(results))
   return { body, count: requires.length }
 }
 
-// Second guard, for the OTHER half of the same defect: the emitted .d.ts.
-//
-// The runtime probe above cannot see this. A .d.ts with an extensionless
-// relative import does not throw — TypeScript's recovery under
-// moduleResolution "node16"/"nodenext" is to resolve nothing and type the whole
-// import as `any`. So the adopter's build stays GREEN while every type this
-// package exports silently degrades to `any`; with skipLibCheck:true (what most
-// scaffolds set) there is not even a diagnostic. Both states were reproduced
-// against a real packed tarball before scripts/add-js-extensions.mjs learned to
-// rewrite .d.ts.
+// Second guard, for the OTHER half of the same defect: the emitted .d.ts. The
+// runtime probe above cannot see this -- an extensionless relative import in a
+// .d.ts does not throw. TypeScript's recovery under moduleResolution
+// "node16"/"nodenext" is to resolve nothing and type the whole import as
+// `any`, so the adopter's build stays GREEN while our types silently degrade;
+// with skipLibCheck:true (what most scaffolds set) there is not even a
+// diagnostic.
 //
 // Detecting "the type became any" directly is awkward, so this asserts the
 // mechanism instead: typecheck a consumer under nodenext with skipLibCheck OFF
 // and fail on anything that means "this package's types did not resolve".
 //
-// Two classes of diagnostic count, and BOTH are needed:
-//
-//   * Anything attributed to consumer.ts. That file is generated here and
-//     imports nothing but our own packages, so every diagnostic in it is ours by
-//     construction — a missing .d.ts (TS7016), a broken publishConfig "types"
-//     path or exports subpath (TS2307), and so on. Filtering these out by path
-//     was the original bug in this guard: `dist/server.d.ts` could be deleted
-//     outright and the check still passed green, which is the exact
-//     types-silently-vanish failure it exists to catch.
-//   * Extension/resolution diagnostics whose path points INTO one of our dist
-//     directories. This is the .d.ts-kept-an-extensionless-import case, which
-//     surfaces inside our own declarations rather than at the consumer.
+// Two diagnostic classes are both needed. Anything attributed to consumer.ts
+// is ours by construction (it imports nothing but our own packages), catching
+// a missing .d.ts (TS7016) or a broken publishConfig "types"/exports path
+// (TS2307) -- filtering only by that path was the original bug here:
+// `dist/server.d.ts` could be deleted outright and the check still passed.
+// Extension/resolution diagnostics whose path points INTO one of our dist
+// directories catch the .d.ts-kept-an-extensionless-import case, which
+// surfaces inside our own declarations rather than at the consumer.
 //
 // Diagnostics attributed to a THIRD-PARTY path are ignored. The probe sets
-// `types: []`, so ambient @types are not auto-included and dependency
-// declarations emit their own unrelated noise (missing NodeJS namespace, Buffer,
-// bare `child_process` specifiers, and Next's own extensionless imports). Note
-// the sandbox does have @types/node symlinked in — `types: []` is what excludes
-// the globals, not its absence. A handful of our own declarations reference
-// `NodeJS.`/`Buffer` under that setting; those produce TS2503/TS2591, which are
-// deliberately NOT in the list below because they say nothing about resolution.
+// `types: []` (ambient @types are symlinked in but not auto-included), so
+// dependency declarations still emit unrelated noise -- missing NodeJS
+// namespace, Buffer, bare `child_process` specifiers, Next's own extensionless
+// imports. A handful of our own declarations reference `NodeJS.`/`Buffer`
+// under that setting too (TS2503/TS2591), deliberately not in the list below
+// since they say nothing about resolution.
 const CONSUMER_DIAGNOSTIC_RE = /^consumer\.ts\([0-9]+,[0-9]+\): error TS[0-9]+:/
 const DIST_DIAGNOSTIC_RE = /error TS(2834|2835|2307|7016):/
 
@@ -1037,7 +1001,6 @@ function reportProbe(results) {
   return failed
 }
 
-// ---------------------------------------------------------------------------
 // Consumer-configuration matrix.
 //
 // The two runtime probes answer "can Node load this", and checkDeclarationResolution()

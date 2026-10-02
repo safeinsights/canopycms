@@ -22,33 +22,13 @@ export interface UseBranchActionsReturn {
 
 /**
  * Custom hook for branch navigation actions with dirty check support.
- *
- * Handles:
- * - Branch switching with unsaved changes confirmation
- * - Creating new branches with dirty check
- *
- * @example
- * ```tsx
- * const { handleBranchChange, handleCreateBranch } = useBranchActions({
- *   branchName,
- *   setBranchName,
- *   isAnyDirty,
- *   onReloadBranches
- * })
- * ```
  */
 export function useBranchActions(options: UseBranchActionsOptions): UseBranchActionsReturn {
   const apiClient = useApiClient()
 
-  // Helper: Perform branch switch with URL update
   const performBranchSwitch = (next: string) => {
-    // Update branchName state - hooks will react:
-    // - useEntryManager clears selectedPath and refreshes entries
-    // - useDraftManager clears drafts/loadedValues
-    // - useCommentSystem loads comments
     options.setBranchName(next)
 
-    // Update URL
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
       url.searchParams.set('branch', next)
@@ -57,7 +37,6 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     options.onBranchSwitch?.(next)
   }
 
-  // Helper: Check for dirty state and show modal
   const confirmIfDirty = async (message: string): Promise<boolean> => {
     if (!options.isAnyDirty()) return true
 
@@ -90,7 +69,6 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     const confirmed = await confirmIfDirty('Create new branch without saving changes?')
     if (!confirmed) return
 
-    // Create the branch via API
     try {
       const result = await apiClient.branches.create({
         branch: branch.name,

@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Modal form for creating/editing groups
- */
-
 import React from 'react'
 import { Button, Group, Modal, Paper, Stack, Text, TextInput, Textarea } from '@mantine/core'
 import type { InternalGroup, GroupFormData } from './types'

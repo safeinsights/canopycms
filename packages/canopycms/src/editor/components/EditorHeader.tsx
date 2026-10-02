@@ -20,9 +20,6 @@ import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
 
-/**
- * Props for the EditorHeader component.
- */
 export interface EditorHeaderProps {
   /**
    * Site title displayed in the top-left.
@@ -202,34 +199,6 @@ const getStatusColor = (status: BranchStatus): string => {
 /**
  * Header component for the Editor.
  * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
- *
- * @example
- * ```tsx
- * <EditorHeader
- *   siteTitle="My Site"
- *   siteSubtitle="CMS"
- *   headerTitle="Edit Content"
- *   currentEntry={currentEntry}
- *   branchName="main"
- *   operatingMode="collaboration"
- *   busy={false}
- *   breadcrumbSegments={['Posts', 'My Post']}
- *   editedFiles={[]}
- *   modifiedCount={0}
- *   unresolvedCommentCount={0}
- *   comments={[]}
- *   onNavigatorOpen={() => setNavigatorOpen(true)}
- *   onFileReload={handleReload}
- *   onFileDiscardDraft={handleDiscardFileDraft}
- *   onEntrySelect={setSelectedId}
- *   onBranchReloadData={handleReloadBranchData}
- *   onBranchDiscardDrafts={handleDiscardDrafts}
- *   onBranchManagerOpen={() => setBranchManagerOpen(true)}
- *   onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
- *   onSave={handleSave}
- *   onSubmit={() => handleSubmit(branchName)}
- * />
- * ```
  */
 export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(function EditorHeader(
   {
@@ -267,31 +236,19 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   }: EditorHeaderProps,
   ref,
 ) {
-  // `branchWriteBlocked` is the server's own answer (getBranchProtection, the
-  // same call the writableBranch guard makes), so Save can never be enabled for
-  // a write the API would reject. `branchReadOnly` only picks WHICH banner: the
-  // base branch's is a structural property and takes precedence over a workflow
-  // status lock.
+  // `branchWriteBlocked` is the server's own answer (getBranchProtection), so
+  // Save is never enabled for a write the API would reject; a client-side
+  // derivation could drift from it. `branchReadOnly` only picks which banner
+  // to show -- base-branch read-only takes precedence over a workflow status
+  // lock.
   const statusLocked = branchWriteBlocked && !branchReadOnly
 
-  // The lock now fails CLOSED while the branch list is unresolved (Editor.tsx's
-  // `branchContentLocked` is `?? true`), which is right -- but `branchStatus` is
-  // `currentBranch?.status`, i.e. undefined in that same window. Without this
-  // distinction every banner and tooltip below interpolated it directly and read
-  // `Branch "main" is undefined - content is read-only`, on ordinary initial load
-  // and permanently after a failed branches fetch. Worse under version skew,
-  // where the status IS known ('editing') and the copy would assert a status
-  // lock the status plainly contradicts. So: locked, but say why honestly.
-  //
-  // Provably behavior-neutral for supported deployments: writeBlocked =
-  // readOnly || status !== 'editing', so when status === 'editing' that
-  // reduces to writeBlocked === readOnly. statusLocked = branchWriteBlocked
-  // && !branchReadOnly, so the new 'editing' arm below would require
-  // readOnly && !readOnly -- impossible. It is unreachable against any
-  // current server and only changes what renders under version skew (an old
-  // server that omits writeBlocked while still sending status: 'editing'),
-  // where it replaces the self-contradicting "Branch is editing — content is
-  // read-only" with the honest data-unavailable copy.
+  // Covers two cases where `branchStatus` can't be trusted to describe the lock
+  // honestly: branch data still loading (`branchStatus` is undefined, so the
+  // banner would otherwise interpolate "Branch is undefined...") and version
+  // skew (an old server omits `branchWriteBlocked` while still reporting
+  // status: 'editing', which would otherwise assert a lock the status
+  // contradicts). In both cases the banner says data is unavailable instead.
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
@@ -540,11 +497,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // wrongly stuck in 'submitted'.
               if (branchIsProtected && !isWithdrawable) return null
 
-              // Check if user can perform workflow actions (creator OR ACL access OR system
-              // branch OR privileged). Admins/Reviewers must be able to withdraw a protected
-              // base branch wrongly stuck in 'submitted' -- the documented recovery flow --
-              // even when they're neither its creator nor in its ACL; this mirrors the
-              // server's canPerformWorkflowAction and BranchManager.tsx.
+              // Who may submit/withdraw: creator, ACL access, the system branch, or an
+              // admin/reviewer -- Admins/Reviewers must be able to withdraw a protected
+              // base branch stuck in 'submitted' even without ACL access. Mirrors the
+              // server's canPerformWorkflowAction (BranchManager.tsx), which is the
+              // actual enforcer; this only decides whether to show the control disabled.
               const userIsCreator = userContext?.userId === branchCreatedBy
               const isSystemBranch = branchCreatedBy === 'canopycms-system' && !branchIsProtected
               const userInACL =
@@ -567,21 +524,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               return (
                 <Tooltip
                   label={
-                    // The unknown-status arm mirrors the banner's: with no
-                    // branch data, `statusHasAction` is false (undefined is
-                    // neither 'editing' nor withdrawable) and this label used
-                    // to interpolate it as "This branch is undefined and has
-                    // no submit or withdraw action available".
-                    //
-                    // Latent rather than live TODAY, and only by accident:
-                    // Editor.tsx passes `branchIsProtected={... ?? true}` since
-                    // the fail-closed change, so in that same window the early
-                    // return above (`branchIsProtected && !isWithdrawable`)
-                    // unmounts this button before the tooltip can render. That
-                    // is one guard away from being user-visible -- relax the
-                    // `?? true`, or pass `branchIsProtected={false}` from
-                    // anywhere, and the copy is live. Guarding it here rather
-                    // than relying on an unrelated condition to keep hiding it.
+                    // No branch data (`branchStatus === undefined`) must not be
+                    // interpolated raw into this label. Guarded explicitly here rather
+                    // than left to the early return above, which hides this button
+                    // today only as a side effect of `branchIsProtected`'s `?? true`
+                    // default -- not a guarantee this arm stays unreachable.
                     branchStatus === undefined
                       ? 'Branch data could not be loaded, so no submit or withdraw action is available'
                       : !statusHasAction

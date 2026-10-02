@@ -1,43 +1,10 @@
-/**
- * Hook for live preview reference resolution
- *
- * LIVE PREVIEW REFERENCE RESOLUTION
- *
- * Problem: The preview needs full referenced content (e.g., {name: "Alice", bio: "..."}),
- * but the form only stores IDs (e.g., "5NVkkrB1MJUvnLqEDqDkRN").
- *
- * Solution: Synchronous resolution with background caching
- *
- * 1. SYNCHRONOUS PHASE (useMemo):
- *    - Compute resolvedValue by applying cached data to form value
- *    - If reference ID is in cache, use full object; otherwise keep ID
- *    - Runs during render, so no async gaps or race conditions
- *    - Preview always gets complete, valid data
- *
- * 2. BACKGROUND PHASE (useEffect):
- *    - Find IDs not in cache
- *    - After 300ms debounce, fetch from API
- *    - Update cache with resolved data
- *    - Trigger useMemo re-run via resolutionTrigger
- *    - Preview updates again with full data
- *
- * This two-phase approach eliminates race conditions that occurred with async state,
- * where form data and resolved data could get out of sync during transitions
- * (e.g., "Discard All Drafts" was passing empty objects to preview).
- *
- * Cache structure: Map&lt;string, unknown&gt; with keys like "main:5NVkkrB1MJUvnLqEDqDkRN"
- * - Branch-scoped to prevent stale cross-branch data
- * - Cleared on branch change
- * - Persists across edits for instant re-renders
- */
-
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
 import { resolveChangedReferences } from '../client-reference-resolver'
 import { flattenGroupFields } from '../../utils/flatten-group-fields'
 import { useOptionalApiClient } from '../context'
 
-export type FormValue = Record<string, unknown>
+type FormValue = Record<string, unknown>
 
 export interface UseReferenceResolutionOptions {
   value: FormValue
@@ -77,7 +44,6 @@ export function useReferenceResolution({
   // the component unmounting, while the network call was in flight.
   const resolveGenerationRef = useRef(0)
 
-  // Map field names to their types for fast lookup
   const referenceFieldNames = useMemo(() => {
     const names = new Set<string>()
     for (const field of flattenGroupFields(fields)) {
@@ -104,24 +70,19 @@ export function useReferenceResolution({
   const resolvedValue = useMemo(() => {
     const result = { ...value }
 
-    // Synchronously apply cached resolutions
     for (const fieldName of referenceFieldNames) {
       const fieldValue = value[fieldName]
       if (fieldValue) {
         if (Array.isArray(fieldValue)) {
-          // List of references
           result[fieldName] = fieldValue.map((id) => {
             if (typeof id === 'string') {
               const cached = resolvedCache.current.get(`${branch}:${id}`)
-              // Return cached object, or null if not yet resolved
               return cached || null
             }
             return id
           })
         } else if (typeof fieldValue === 'string') {
-          // Single reference
           const cached = resolvedCache.current.get(`${branch}:${fieldValue}`)
-          // Return cached object, or null if not yet resolved
           result[fieldName] = cached || null
         }
       }
@@ -141,7 +102,6 @@ export function useReferenceResolution({
       const fieldValue = value[fieldName]
       if (fieldValue) {
         if (Array.isArray(fieldValue)) {
-          // List of references - return array of booleans
           result[fieldName] = fieldValue.map((id) => {
             if (typeof id === 'string') {
               return !resolvedCache.current.has(`${branch}:${id}`)
@@ -149,7 +109,6 @@ export function useReferenceResolution({
             return false
           })
         } else if (typeof fieldValue === 'string') {
-          // Single reference - return boolean
           result[fieldName] = !resolvedCache.current.has(`${branch}:${fieldValue}`)
         } else {
           result[fieldName] = false
@@ -168,7 +127,6 @@ export function useReferenceResolution({
    * Find reference IDs that aren't in cache yet and fetch them from the API.
    */
   useEffect(() => {
-    // Find all uncached reference IDs
     const uncachedIds = new Set<string>()
 
     for (const fieldName of referenceFieldNames) {
@@ -194,10 +152,8 @@ export function useReferenceResolution({
     // hold when the callback resumes after its await.
     const generation = ++resolveGenerationRef.current
 
-    // Debounce API calls to batch multiple rapid changes
     const timeout = setTimeout(async () => {
       try {
-        // Resolve uncached IDs via API
         const updates = await resolveChangedReferences(
           prevValueRef.current,
           value,
@@ -211,7 +167,6 @@ export function useReferenceResolution({
         // unmounted, while the request above was in flight -- discard.
         if (generation !== resolveGenerationRef.current) return
 
-        // Update cache with resolved values
         for (const [fieldName, resolvedFieldValue] of Object.entries(updates)) {
           if (Array.isArray(resolvedFieldValue)) {
             resolvedFieldValue.forEach((obj, idx) => {
@@ -231,7 +186,6 @@ export function useReferenceResolution({
           }
         }
 
-        // Trigger useMemo re-computation
         setResolutionTrigger((prev) => prev + 1)
         prevValueRef.current = value
       } catch (error) {
@@ -248,10 +202,9 @@ export function useReferenceResolution({
     }
   }, [value, fields, branch, referenceFieldNames, apiClient])
 
-  // Clear cache when branch changes
   useEffect(() => {
     resolvedCache.current.clear()
-    setResolutionTrigger((prev) => prev + 1) // Trigger re-computation with empty cache
+    setResolutionTrigger((prev) => prev + 1)
   }, [branch])
 
   // Notify parent of resolved value changes (with infinite loop prevention)
@@ -263,7 +216,6 @@ export function useReferenceResolution({
     }
   }, [resolvedValue, onResolvedValueChange])
 
-  // Notify parent of loading state changes
   const lastNotifiedLoadingRef = useRef<string>('')
   useEffect(() => {
     const serialized = JSON.stringify(loadingState)

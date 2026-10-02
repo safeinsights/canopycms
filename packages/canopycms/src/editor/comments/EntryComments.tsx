@@ -46,21 +46,17 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
 }) => {
   const [showCarousel, setShowCarousel] = useState(false)
 
-  // Filter for entry-level threads
   const entryThreads = useMemo(
     () => comments.filter((t) => t.type === 'entry' && t.entryPath === entryPath),
     [comments, entryPath],
   )
 
-  // Show carousel if threads exist or if auto-focused
   const shouldShowCarousel = entryThreads.length > 0 || showCarousel || autoFocus
 
-  // Wrapper to add entry context to comment handler
   const handleAddComment = async (text: string, threadId?: string) => {
     await onAddComment(text, 'entry', entryPath, undefined, threadId)
   }
 
-  // Show "New file comment" button when no threads
   if (!shouldShowCarousel) {
     return (
       <Box>

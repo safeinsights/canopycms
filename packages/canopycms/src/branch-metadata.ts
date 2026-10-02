@@ -21,19 +21,14 @@ import {
   OccWriteConflictError,
 } from './utils/occ-json-write'
 
-// The file format itself lives in the leaf so branch-registry.ts can read
-// branch.json without importing this module (which imports it back). Re-exported
-// here so the existing importers of these names do not have to move.
-export {
-  BRANCH_META_DIR,
-  BRANCH_META_FILE,
-  BranchMetadataCorruptError,
-  readBranchMetadataFile,
-  type BranchMetadataFile,
-}
+// The file format lives in the leaf so branch-registry.ts can read branch.json
+// without importing this module, which imports it back. Re-exported here so
+// importers of these names do not have to move.
+export { BranchMetadataCorruptError, type BranchMetadataFile }
 
 const CURRENT_SCHEMA_VERSION = 1
 
+/** @internal Exported for tests. */
 export class BranchMetadataConflictError extends Error {
   constructor(message = 'Concurrent modification detected in branch metadata') {
     super(message)
@@ -45,28 +40,17 @@ export class BranchMetadataConflictError extends Error {
  * Manages branch.json — branch status and access ACLs, both security-adjacent
  * state — under `.canopy-meta/` in a branch workspace.
  *
- * save() is protected by three layers, outermost to innermost (identical
- * structure to {@link CommentStore}'s withMutation, see comment-store.ts):
+ * save() runs under the same three-layer stack as {@link CommentStore}'s
+ * withMutation — see comment-store.ts, and `utils/occ-json-write.ts` for the
+ * guarantees of layers 2-3.
  *
- * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
- *    path. Serializes concurrent mutators on the SAME process/host
- *    deterministically.
- * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
- *    lock (proper-lockfile, mkdir-based). This is the actual fix for lost
- *    branch-status/ACL updates across two warm Lambda containers (or a
- *    Lambda + the EC2 worker) on EFS: rename-based OCC verification alone
- *    relies on a read-back that can be served from the writer's own local
- *    NFS dentry/attribute cache, so a foreign writer's rename can stay
- *    invisible for that cache's window (commonly 3-60s) and both writers
- *    conclude they won. A settle delay does not help — the cache window
- *    dwarfs any sleep worth paying — only server-enforced mutual exclusion
- *    does. Given branch.json carries status + ACLs, silently losing an
- *    update here is a correctness/security issue, not just a UX glitch.
- * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
- *    based optimistic concurrency control. With layers 1-2 in place this is
- *    now a defense-in-depth backstop only, not the primary safety mechanism.
- *
- * See `utils/occ-json-write.ts` for full guarantee documentation of layers 2-3.
+ * Layer 2's server-enforced lock is the load-bearing one here. Rename-based OCC
+ * alone verifies by a read-back that can come from the writer's own NFS
+ * attribute cache, so for that cache's window (docs/concurrency.md) a foreign
+ * writer's rename stays invisible and both writers conclude they won; no settle
+ * delay closes it, since the window dwarfs any sleep worth paying. And because
+ * branch.json carries status and ACLs, a silently lost update is a
+ * correctness/security issue, not a UX glitch.
  */
 export class BranchMetadataFileManager {
   private readonly branchRoot: string
@@ -81,17 +65,14 @@ export class BranchMetadataFileManager {
     this.settleMs = options?.settleMs
   }
 
-  /**
-   * Load branch metadata without requiring baseRoot.
-   * Use this for read-only access (e.g., in registry scanning or loadBranchContext).
-   */
+  /** Read-only load, needing no baseRoot: registry scanning, loadBranchContext. */
   static async loadOnly(branchRoot: string): Promise<BranchMetadataFile | null> {
     return readBranchMetadataFile(branchRoot)
   }
 
   /**
-   * Get a BranchMetadataFileManager instance configured for registry invalidation.
-   * Use this in API handlers to ensure registry cache is invalidated on updates.
+   * An instance wired for registry invalidation. API handlers use this, so the
+   * registry cache is invalidated on update.
    */
   static get(
     branchRoot: string,
@@ -116,18 +97,16 @@ export class BranchMetadataFileManager {
   }
 
   /**
-   * Write branch.json via the shared OCC helper, with the schemaVersion
-   * default applied here (payload shaping stays branch-metadata's concern).
+   * Write branch.json via the shared OCC helper, applying the schemaVersion
+   * default here since payload shaping is branch-metadata's concern.
    *
-   * Throws the helper's raw {@link OccWriteConflictError} so the surrounding
-   * {@link withOccRetry} in save() recognizes and retries it; translation to
-   * the public `BranchMetadataConflictError` contract happens at the save()
-   * boundary, after retries are exhausted (translating earlier would make
-   * withOccRetry's default predicate miss it, since it only recognizes the
-   * raw error type).
+   * Throws the helper's raw {@link OccWriteConflictError}, which is what the
+   * surrounding {@link withOccRetry} in save() recognizes and retries;
+   * translating to the public `BranchMetadataConflictError` earlier than the
+   * save() boundary would make withOccRetry's predicate miss it.
    *
-   * branch-metadata historically writes WITH a trailing newline, unlike
-   * comment-store; `trailingNewline: true` preserves that.
+   * branch.json is written WITH a trailing newline (`trailingNewline: true`),
+   * unlike comments.json.
    */
   private async write(
     meta: BranchMetadataFile,
@@ -145,28 +124,22 @@ export class BranchMetadataFileManager {
   }
 
   /**
-   * Run a save cycle under the full lock + OCC-retry stack described in the
-   * class doc comment. A conflict that survives every retry surfaces as the
-   * public `BranchMetadataConflictError`.
+   * Run a save cycle under the full lock + OCC-retry stack (class doc). A
+   * conflict surviving every retry surfaces as `BranchMetadataConflictError`.
    *
-   * Guards against a phantom-resurrection race with branch deletion: a
-   * caller's branchContext can be resolved BEFORE a concurrent
-   * deleteBranchHandler removes the branch directory, but this save() call
-   * only reaches here (and its own mkdir({recursive:true}) inside write())
-   * AFTER the removal. Without this check, that mkdir would silently
-   * recreate `.canopy-meta/` (and this save would recreate branch.json from
-   * defaults) inside a directory tree that no longer exists anywhere else --
-   * a registry entry with no clone behind it. Checking BEFORE the lock stack
-   * (rather than after) fails fast without paying for a lock acquisition on
-   * a doomed save.
+   * The stat guards a phantom-resurrection race with branch deletion: a
+   * caller's branchContext can resolve BEFORE a concurrent deleteBranchHandler
+   * removes the branch directory, while the save reaches here after it, and
+   * write()'s `mkdir({recursive:true})` would then recreate `.canopy-meta/` and
+   * branch.json from defaults inside a tree nothing else refers to — a registry
+   * entry with no clone behind it. It runs BEFORE the lock stack so a doomed
+   * save fails fast instead of paying for a lock.
    *
-   * Residual window (accepted): a save that passes this check can still
-   * race a `rm` that starts moments later and is still mid-flight when this
-   * save's write lands, resurrecting the tree. Closing that fully would
-   * need a tombstone OUTSIDE the tree being removed -- the lockfile
-   * (`withOccFileLock`) this save takes next lives INSIDE `branchRoot`, so
-   * it cannot itself provide a wider guarantee than "the directory existed
-   * a moment ago."
+   * Accepted residual window: a save that passes the check can still race a
+   * `rm` that starts moments later and is mid-flight when the write lands.
+   * Closing that needs a tombstone OUTSIDE the tree being removed, and the
+   * lockfile taken next lives INSIDE `branchRoot`, so it can promise no more
+   * than "the directory existed a moment ago".
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
     try {
@@ -212,9 +185,9 @@ export class BranchMetadataFileManager {
                 createdAt: existing?.branch.createdAt ?? defaults.createdAt,
                 // Fork point is recorded once at creation; later saves must not move it
                 baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
-                // Always stamped fresh — the spreads above would otherwise let
-                // the existing (creation-time) value win forever, freezing the
-                // timestamp the editor's Branches panel sorts and displays by
+                // Always stamped fresh; the spreads above would otherwise let
+                // the creation-time value win forever, freezing the timestamp
+                // the editor's Branches panel sorts and displays by
                 updatedAt: now,
               },
             }
@@ -231,18 +204,16 @@ export class BranchMetadataFileManager {
       }
       throw err
     }
-    // Registry invalidation AFTER releasing the lockfile: the protocol only
-    // requires the bump to land strictly after the branch.json write (it
-    // does), and the registry's eager regeneration is O(branch count) fs
-    // reads on EFS — holding the server-enforced lock through it would
-    // extend every save's critical section for no correctness gain.
+    // Registry invalidation AFTER releasing the lockfile. The protocol only
+    // requires the bump to land strictly after the branch.json write, which it
+    // does, and the registry's eager regeneration is O(branch count) fs reads
+    // on EFS — holding the lock through it would stretch every save's critical
+    // section for no correctness gain.
     await this.invalidateRegistry()
     return saved
   }
 
-  /**
-   * Invalidates the registry cache so next list() call regenerates from branch.json files.
-   */
+  /** Invalidate the registry cache so the next list() regenerates. */
   private async invalidateRegistry(): Promise<void> {
     const registry = new BranchRegistry(this.baseRoot)
     await registry.invalidate()
@@ -250,23 +221,21 @@ export class BranchMetadataFileManager {
 }
 
 /**
- * Fields that can be set via save().
- * - createdBy: Only used on initial creation; ignored if metadata already exists
- * - createdAt/updatedAt: Managed automatically
+ * Fields save() accepts. `createdBy` applies on creation only and is ignored
+ * once metadata exists; createdAt/updatedAt are managed here, not by callers.
  */
 export interface BranchMetadataUpdate {
   branch?: Partial<Omit<BranchMetadata, 'createdAt' | 'updatedAt'>>
 }
 
 /**
- * Build the metadata update for archiving a branch because its PR merged.
- * Shared by the worker's merge-poll (CmsWorker.pollMergeState) and the
- * manual markAsMerged API (api/branch-merge.ts) so both paths produce
- * identical archived-branch metadata.
+ * The metadata update for archiving a branch whose PR merged. Shared by the
+ * worker's merge-poll (CmsWorker.pollMergeState) and the manual markAsMerged
+ * API (api/branch-merge.ts), so both produce identical metadata.
  *
- * Deliberately omits pullRequestNumber/pullRequestUrl: save()'s merge keeps
- * whatever the existing metadata already has for fields not present in the
- * incoming update, so the PR number/URL recorded earlier survive untouched.
+ * Deliberately omits pullRequestNumber/pullRequestUrl: save() keeps existing
+ * values for fields the incoming update omits, so the recorded PR number and
+ * URL survive untouched.
  */
 export function buildMergedBranchUpdate(
   branchName: string,
@@ -280,10 +249,7 @@ export function buildMergedBranchUpdate(
   }
 }
 
-/**
- * Get a BranchMetadataFileManager instance configured for registry invalidation.
- * Use this in API handlers to ensure registry cache is invalidated on updates.
- */
+/** {@link BranchMetadataFileManager.get} as a function. */
 export const getBranchMetadataFileManager = (
   branchRoot: string,
   baseRoot: string,
@@ -292,10 +258,7 @@ export const getBranchMetadataFileManager = (
   return BranchMetadataFileManager.get(branchRoot, baseRoot, options)
 }
 
-/**
- * Load branch context from metadata file (source of truth).
- * Returns null if the branch doesn't exist.
- */
+/** Branch context from the metadata file, the source of truth. Null if absent. */
 export const loadBranchContext = async (options: {
   branchName: string
   mode: OperatingMode

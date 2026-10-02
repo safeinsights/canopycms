@@ -1,39 +1,27 @@
 /**
- * Shared entry URL computation — used by both server and client code.
- *
- * This module has NO server-only dependencies (no node:fs, etc.)
- * so it can be safely imported into browser bundles.
+ * Shared entry URL computation, used by server and client code alike. No server-only
+ * dependencies, so it is safe to import into browser bundles.
  */
 
 import { trimSlashes } from '../paths/normalize'
 
 /**
- * Is this slug the collection-index slug?
+ * Is this slug the collection-index slug? The shared home for that decision — every forward and
+ * reverse URL rule routes through it (see utils/AGENTS.md), and it is re-exported from
+ * `canopycms/server` for adopters.
  *
- * The shared home for that decision. Six sites route through here: `computeEntryUrl` below,
- * `content-tree.ts`'s `defaultBuildPath`, `content-reader.ts`'s `buildEntryPath` and the
- * editor's `buildPreviewSrc` (the four forward-rule implementations), the reverse
- * `resolveUrlPathCandidates`, and `canopycms-next`'s `collectStaticParams`, which skips index
- * entries for a single-segment route. Re-exported from `canopycms/server` for adopters. (`content-tree.ts`'s `indexEntry` lookup still does its own
- * `slug === 'index'`; it is fed slugs already lowercased by the listing, so it is safe rather
- * than shared.) Slug matching is case-insensitive throughout
- * CanopyCMS (`parseSlug` lowercases, and `ContentStore` resolves slugs by a lowercased
- * directory scan), so this compares lowercased — a bare `slug === 'index'` is correct only
- * for callers whose input was already normalized, and silently wrong for the ones handling
- * raw URL segments or on-disk names. `resolveUrlPathCandidates` was exactly that case: its
- * strict compare left `/x/Index` resolving the index entry after `/x/index` stopped.
+ * The compare is lowercased because slug matching is case-insensitive throughout CanopyCMS
+ * (`parseSlug` lowercases; `ContentStore` resolves slugs by a lowercased directory scan): a bare
+ * `slug === 'index'` is correct only where the input is already normalized, and silently wrong
+ * for callers handling raw URL segments or on-disk names.
  */
 export function isIndexSlug(slug: string | undefined): boolean {
   return slug?.toLowerCase() === 'index'
 }
 
 /**
- * Compute a URL path from an entry's collection path and slug.
- *
- * Logic:
- * - Strip the contentRoot prefix (e.g., "content/") from the collection path
- * - Append the slug (unless it's "index", which collapses to the parent path)
- * - Always returns a path starting with "/"
+ * Compute a URL path from an entry's collection path and slug: strip the `contentRoot` prefix,
+ * append the slug unless it is an index slug, lowercase. Always starts with `/`.
  *
  * Examples:
  *   ("content/posts", "hello-world", "content") => "/posts/hello-world"
@@ -43,7 +31,6 @@ export function isIndexSlug(slug: string | undefined): boolean {
 export function computeEntryUrl(collection: string, slug: string, contentRoot: string): string {
   const root = trimSlashes(contentRoot)
 
-  // Strip contentRoot prefix
   let stripped = collection
   if (root && collection.startsWith(`${root}/`)) {
     stripped = collection.slice(root.length + 1)
@@ -51,10 +38,8 @@ export function computeEntryUrl(collection: string, slug: string, contentRoot: s
     stripped = ''
   }
 
-  // Build URL segments
   const segments = stripped.split('/').filter(Boolean)
 
-  // Append slug unless it's an index slug (index entries collapse to parent)
   if (slug && !isIndexSlug(slug)) {
     segments.push(slug)
   }

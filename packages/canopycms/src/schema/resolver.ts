@@ -15,10 +15,6 @@ import { loadCollectionMetaFiles, resolveCollectionReferences } from './meta-loa
 /**
  * Resolve schema from .collection.json files.
  *
- * This is the primary entry point for loading schema configuration.
- * It discovers all .collection.json files in the content directory
- * and resolves schema references using the provided registry.
- *
  * @param contentRoot - Path to the content directory
  * @param entrySchemaRegistry - Map of entry schema names to field definitions
  * @returns Resolved schema configuration
@@ -28,7 +24,6 @@ export async function resolveSchema(
   contentRoot: string,
   entrySchemaRegistry: EntrySchemaRegistry,
 ): Promise<SchemaResolutionResult> {
-  // Load all .collection.json meta files
   const metaFiles = await loadCollectionMetaFiles(contentRoot)
 
   // Build source info for debugging
@@ -50,7 +45,6 @@ export async function resolveSchema(
     })
   }
 
-  // Resolve schema references to actual field definitions
   const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
   return { schema, sources }
@@ -61,6 +55,7 @@ export async function resolveSchema(
  *
  * @param contentRoot - Path to the content directory
  * @returns true if at least one .collection.json file exists
+ * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
  */
 export async function hasSchemaFiles(contentRoot: string): Promise<boolean> {
   const metaFiles = await loadCollectionMetaFiles(contentRoot)

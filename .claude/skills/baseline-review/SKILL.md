@@ -5,15 +5,15 @@ effort: max
 model: opus[1m]
 ---
 
-Do a comprehensive baseline review of the entire CanopyCMS codebase. This codebase was largely vibecoded, so focus on finding real issues: production bugs, security vulnerabilities, architectural inconsistencies, client/server boundary violations, and incorrect behavior. Do NOT nitpick style, formatting, or missing comments.
+Do a comprehensive baseline review of the entire CanopyCMS codebase. This codebase was largely vibecoded, so focus on finding real issues: production bugs, security vulnerabilities, architectural inconsistencies, client/server boundary violations, and incorrect behavior. Do NOT nitpick style or formatting, and do not request comments: a wrong claim is fixed by a shorter correct claim, never by an added justification.
 
 ## Approach
 
-Run the following review phases. Use parallel agents wherever possible to maximize throughput. Use the specified model for each agent to balance reasoning depth vs speed.
+Run the phases below with parallel agents where possible, at the model each names.
 
 ### Phase 1: Automated checks (parallel, all haiku)
 
-Run all three of these in parallel using haiku-level agents:
+Run all three in parallel:
 
 1. **Typecheck**: Run `pnpm typecheck` across the monorepo. Collect all type errors.
 2. **Lint**: Run `pnpm lint` across the monorepo. Collect all lint errors/warnings.
@@ -21,7 +21,7 @@ Run all three of these in parallel using haiku-level agents:
 
 ### Phase 2: Domain reviews (parallel)
 
-Launch parallel review agents for each domain below. Each agent should report issues classified as:
+Launch a review agent per domain below, reporting issues classified as:
 
 - **Critical** — would break in production, cause data loss, or create a security vulnerability
 - **High** — incorrect behavior that would surface under normal use

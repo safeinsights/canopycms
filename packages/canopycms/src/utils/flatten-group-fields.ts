@@ -1,14 +1,12 @@
 import type { FieldConfig, InlineGroupFieldConfig } from '../config'
 
 /**
- * Recursively flatten inline groups out of a field array.
- * Group children are inlined at the parent level — groups are transparent to data.
+ * Recursively flatten inline groups out of a field array: group children are inlined at the
+ * parent level, because groups are transparent to data.
  *
- * Use this when iterating fields for data-layer purposes (reference resolution,
- * change detection, body-field lookup, etc.) where you need all data-carrying
- * fields without group wrappers.
- *
- * Not needed when using traverseFields() — that already handles groups transparently.
+ * For data-layer iteration (reference resolution, change detection, body-field lookup) that
+ * needs every data-carrying field without group wrappers. `traverseFields()` already handles
+ * groups transparently and does not need this.
  */
 export function flattenGroupFields(fields: readonly FieldConfig[]): FieldConfig[] {
   const result: FieldConfig[] = []

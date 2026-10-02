@@ -1,11 +1,9 @@
 /**
- * FIFO per-key async mutex.
+ * FIFO per-key async mutex, keyed by any string that uniquely identifies the resource (usually
+ * an absolute file path). Module-level, so it serializes only within one process.
  *
- * Module-level map so all callers within the same process share the same set of locks.
- * Lock key = absolute file path (or any string that uniquely identifies the resource).
- *
- * Each caller atomically enqueues itself behind the current tail and only ever wakes
- * once — guaranteeing strict FIFO order with no thundering-herd on release.
+ * Each caller atomically enqueues itself behind the current tail and wakes exactly once: strict
+ * FIFO order, no thundering herd on release.
  */
 const locks = new Map<string, Promise<void>>()
 

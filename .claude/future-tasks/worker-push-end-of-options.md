@@ -4,9 +4,12 @@ Flagged by PR #141 review (LOW). Pre-existing — out of PR #141's own diff.
 
 ## Problem
 
-`packages/canopycms/src/worker/cms-worker.ts` (~line 726) calls
-`git.push(this.buildGitHubUrl(), branch)`, passing a task-payload branch name straight
-through to git's `push` with no `--end-of-options` separator. A branch name crafted to
+Three plain `git.push(<url>, branch)` sites pass a branch name straight
+through to git's `push` with no `--end-of-options` separator:
+`task-runner.ts:580` and `:605` (the unleased push and the stale-lease retry inside
+`pushBranchToGitHub`) and `git-sync.ts:209` (`pushSettingsBranches`). The leased force
+push at `task-runner.ts:574` already passes `--end-of-options` and is the pattern to
+back-apply. A branch name crafted to
 look like a flag (e.g. something starting with `--mirror` or `--delete`) would be
 argument-injected into the `git push` invocation instead of being treated as a plain
 branch name.

@@ -47,8 +47,7 @@ export class LocalAssetStore implements AssetStore {
   /**
    * Resolve a store key to an absolute filesystem path, guarding against
    * escape from the root. Keys are internally generated (never taken
-   * verbatim from user input), but this guard is kept as defense-in-depth
-   * (ported from the v1 LocalAssetStore).
+   * verbatim from user input), but this guard is kept as defense-in-depth.
    *
    * A naive `resolved.startsWith(root)` check would let a sibling directory
    * that merely shares the root's name as a prefix (e.g. root `.../assets`,

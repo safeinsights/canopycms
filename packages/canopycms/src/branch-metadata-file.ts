@@ -1,20 +1,10 @@
 /**
  * Reading `branch.json` — the file format, nothing else.
  *
- * Deliberately a LEAF: it imports only node built-ins, a type, and the error
- * helper. That is the whole point of the file.
- *
- * `branch-registry.ts` scans every branch directory and reads each one's
- * `branch.json`; `branch-metadata.ts` owns writing it and, after a write,
- * invalidates the registry cache. Both of those are correct, but together they
- * were a runtime import cycle (`branch-metadata` -> `branch-registry` ->
- * `branch-metadata`), with value imports on both edges — the only cycle in the
- * package when `no-circular` was first turned on, 2026-08-23.
- *
- * Hoisting the READ here breaks it without changing either module's behavior:
- * the registry gets its reader from a leaf, and the metadata manager keeps its
- * invalidation edge. `BranchMetadataFileManager.loadOnly` stays as a thin
- * delegate so its ~16 existing call sites are untouched.
+ * Deliberately a LEAF, importing only node built-ins, a type, and the error
+ * helper. That is what keeps `branch-registry.ts` (which reads every branch's
+ * `branch.json`) out of a runtime import cycle with `branch-metadata.ts` (which
+ * writes it and then invalidates the registry cache).
  */
 
 import fs from 'node:fs/promises'
@@ -34,21 +24,19 @@ export interface BranchMetadataFile {
 }
 
 /**
- * branch.json exists but its content is not valid JSON. Distinguished from
- * provisioning/IO failures so callers can degrade instead of failing hard:
- * the registry scan quarantines the branch, and the request handler keeps
- * serving (with empty internal groups) when the BASE branch is the corrupt
- * one — otherwise the admin recovery surface would be unreachable exactly
- * when it is needed.
+ * branch.json exists but is not valid JSON. Distinguished from provisioning and
+ * IO failures so callers can degrade instead of failing hard: the registry scan
+ * quarantines the branch, and the request handler keeps serving (with empty
+ * internal groups) when the BASE branch is the corrupt one — otherwise the
+ * admin recovery surface is unreachable exactly when it is needed.
  */
 export class BranchMetadataCorruptError extends Error {
   readonly branchRoot: string
   /**
-   * [REDACT] The raw JSON.parse failure message (e.g. "Unexpected token
-   * ..."), with no embedded path. `message` above deliberately keeps the
-   * full `branchRoot`-qualified text for server logs; `parseCause` is what
-   * callers should surface to clients (see branch-health.ts's `parseError`)
-   * so the admin branch-health scan never leaks the absolute workspace path.
+   * [REDACT] The raw JSON.parse failure message, with no embedded path.
+   * `message` above keeps the `branchRoot`-qualified text for server logs;
+   * `parseCause` is the one callers surface to clients (branch-health.ts's
+   * `parseError`), so no scan leaks the absolute workspace path.
    */
   readonly parseCause: string
 
@@ -61,16 +49,14 @@ export class BranchMetadataCorruptError extends Error {
 }
 
 /** Absolute path to a branch workspace's `branch.json`. */
-export const branchMetadataFilePath = (branchRoot: string): string =>
+const branchMetadataFilePath = (branchRoot: string): string =>
   path.join(path.resolve(branchRoot), BRANCH_META_DIR, BRANCH_META_FILE)
 
 /**
  * Read and parse `branch.json`, with no locking, no OCC and no side effects.
- *
- * Returns `null` when the file does not exist (an un-provisioned or
- * non-branch directory), throws `BranchMetadataCorruptError` on malformed
- * JSON, and rethrows every other IO failure unchanged — callers distinguish
- * all three.
+ * Callers distinguish three outcomes: `null` when the file does not exist (an
+ * un-provisioned or non-branch directory), `BranchMetadataCorruptError` on
+ * malformed JSON, and every other IO failure rethrown unchanged.
  */
 export async function readBranchMetadataFile(
   branchRoot: string,

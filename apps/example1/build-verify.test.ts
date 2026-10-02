@@ -43,23 +43,14 @@
  * second, separate check over `listEntries()` here would just re-run a check
  * the build itself cannot skip.
  *
- * IMPORTANT for CI wiring: this app is always `mode: 'dev'` (see
- * canopycms.config.ts), and dev mode's base-branch resolution
- * (`resolveBaseBranch` / `detectHeadBranch` in canopycms's utils/git.ts)
- * falls back to the literal branch name 'main' whenever HEAD is detached --
- * which is exactly what `actions/checkout` leaves it as. That is true even
- * for this BUILD-TIME read (contrary to what you might assume from
- * apps/dual-build-fixture's own CI comment, which only holds for that
- * fixture's separate static-export flavor, which bypasses branch resolution
- * entirely). Verified empirically while writing this suite: under a detached
- * HEAD with a stale local `main` lying around, this exact build silently
- * reproduced BOTH halves of the historical bug -- empty home page AND
- * `/home` in the sitemap -- because it built the CURRENT commit's code
- * against `main`'s (older) content. The CI job that runs `verify:build` MUST
- * attach HEAD to a real branch pointing at the checked-out commit first
- * (`git checkout -B main`, same as apps/dual-build-fixture's "Attach HEAD to
- * a real branch for dev-mode content reads" step) -- otherwise this suite
- * builds the wrong content and its assertions mean nothing.
+ * CI wiring needs no git setup, and has none: a build reads the working tree
+ * directly, never a `.canopy-dev` branch clone (`readsFromCheckout` in
+ * canopycms's build-mode.ts), so building on the detached HEAD that
+ * `actions/checkout` leaves reads exactly the checked-out commit's content.
+ * Before that was true, this app's `mode: 'dev'` build read a clone chosen via
+ * git HEAD, and under a detached HEAD with a stale local `main` it silently
+ * reproduced BOTH halves of the historical bug above, so the job needed a
+ * `git checkout -B main` step. The `.canopy-dev` test below pins the fix.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -71,6 +62,11 @@ const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
 const NEXT_BIN = path.join(APP_DIR, 'node_modules', '.bin', 'next')
 const NEXT_DIR = path.join(APP_DIR, '.next')
 const SERVER_APP_DIR = path.join(NEXT_DIR, 'server', 'app')
+const CANOPY_DEV_DIR = path.join(APP_DIR, '.canopy-dev')
+// Captured at collection time, before beforeAll runs the build. A developer's
+// own `next dev` may already have created .canopy-dev; the build must leave it
+// alone, but then its absence proves nothing.
+const CANOPY_DEV_EXISTED_BEFORE_BUILD = existsSync(CANOPY_DEV_DIR)
 
 // This app does not set NEXT_PUBLIC_SITE_URL for its own local/CI smoke
 // build, so app/lib/canopy.ts's SITE_URL falls back to this literal (see its
@@ -209,6 +205,18 @@ describe('apps/example1 `next build`', () => {
   it('builds successfully', () => {
     expect(build.ok, `\`next build\` failed:\n${build.output}`).toBe(true)
   })
+
+  it.skipIf(CANOPY_DEV_EXISTED_BEFORE_BUILD)(
+    'reads the working tree: the build creates no .canopy-dev branch workspace',
+    () => {
+      expect(
+        existsSync(CANOPY_DEV_DIR),
+        `\`next build\` created ${CANOPY_DEV_DIR} -- a build-time read provisioned a branch clone ` +
+          'instead of reading the working tree, so this build may have rendered committed (or stale) ' +
+          'content rather than what is on disk.',
+      ).toBe(false)
+    },
+  )
 
   it('prerenders real home content at "/", not the not-found boundary', () => {
     const indexHtmlPath = path.join(SERVER_APP_DIR, 'index.html')

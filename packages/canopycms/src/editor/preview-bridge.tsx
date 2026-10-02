@@ -83,7 +83,7 @@ export interface HighlightMessage {
 
 /**
  * Preview → editor report that the current draft fails to compile/render
- * (e.g. malformed MDX). `message: null` clears a previously reported error.
+ * (e.g. malformed MDX). `message: null` clears an earlier error.
  */
 export interface PreviewErrorMessage {
   type: typeof CANOPY_PREVIEW_ERROR
@@ -92,16 +92,16 @@ export interface PreviewErrorMessage {
   fieldPath?: string
 }
 
-/**
- * Convenience hook that wires draft updates, focus emitter, and highlight toggling together.
- * Returns live data plus helpers for setting data-canopy-path attributes.
- */
 const resolvePreviewPath = (explicit?: string): string => {
   if (explicit) return explicit
   if (typeof window === 'undefined') return ''
   return `${window.location.pathname}${window.location.search}`
 }
 
+/**
+ * Convenience hook that wires draft updates, focus emitter, and highlight toggling together.
+ * Returns live data plus helpers for setting data-canopy-path attributes.
+ */
 export const useCanopyPreview = <T,>(opts: {
   path?: string
   initialData: T

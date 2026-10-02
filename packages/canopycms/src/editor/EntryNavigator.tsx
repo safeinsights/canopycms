@@ -32,7 +32,6 @@ import {
 
 import { calculatePathToEntry } from './editor-utils'
 
-// TreeController type from Mantine's useTree hook
 type TreeController = ReturnType<typeof useTree>
 
 export interface EntryNavItem {
@@ -140,7 +139,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         const totalChildren = entries.length + childCollections.length
         const order = col.order ?? []
 
-        // Build entry nodes keyed by contentId
         const entryNodesByContentId = new Map<string, TreeNodeData>()
         entries.forEach((entry) => {
           const node: TreeNodeData = {
@@ -162,7 +160,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           }
         })
 
-        // Build child collection nodes keyed by contentId
         const childNodesByContentId = new Map<string, TreeNodeData>()
         childCollections.forEach((child) => {
           const childTree = toTree(child)
@@ -181,11 +178,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           }
         })
 
-        // Interleave entries and children based on order array
         const allChildren: TreeNodeData[] = []
         const usedContentIds = new Set<string>()
 
-        // First, add items in order
         for (const contentId of order) {
           const entryNode = entryNodesByContentId.get(contentId)
           if (entryNode) {
@@ -208,7 +203,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           }
         }
 
-        // Add any entries not in order (alphabetically)
         const unorderedEntries = entries
           .filter((e) => !e.contentId || !usedContentIds.has(e.contentId))
           .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
@@ -230,7 +224,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           allChildren.push(node)
         }
 
-        // Add any child collections not in order (alphabetically)
         const unorderedChildren = childCollections
           .filter((c) => !c.contentId || !usedContentIds.has(c.contentId))
           .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
@@ -286,37 +279,29 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     }))
   }, [collections, items, hiddenRootPath])
 
-  // Initialize tree controller
   const tree = useTree({
     initialExpandedState: expandedStateRef?.current ?? {},
     onNodeExpand: (value) => {
-      // Update local state synchronously
       localExpandedStateRef.current = {
         ...localExpandedStateRef.current,
         [value]: true,
       }
-      // Notify parent immediately
       onExpandedStateChange?.(localExpandedStateRef.current)
     },
     onNodeCollapse: (value) => {
-      // Update local state synchronously
       localExpandedStateRef.current = {
         ...localExpandedStateRef.current,
         [value]: false,
       }
-      // Notify parent immediately
       onExpandedStateChange?.(localExpandedStateRef.current)
     },
   })
-
-  // Forward tree controller to parent for collapse/expand all functionality
 
   useEffect(() => {
     onTreeControllerReady?.(tree)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only when callback ref changes, not on tree state
   }, [onTreeControllerReady])
 
-  // Cleanup: save current state when component unmounts
   // Empty dependency array ensures this only runs on mount/unmount, not on re-renders
   useEffect(() => {
     return () => {
@@ -325,13 +310,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Restore state on mount and when selectedPath changes
   useEffect(() => {
     if (!selectedPath || !treeData) return
 
     const savedState = expandedStateRef?.current ?? {}
 
-    // Calculate path to current entry and merge with saved state
     const pathToEntry = calculatePathToEntry(selectedPath, treeData)
     const baseState = { ...savedState, ...pathToEntry }
 
@@ -341,14 +324,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     if (currentStateJson !== newStateJson) {
       tree.setExpandedState(baseState)
       localExpandedStateRef.current = baseState
-      // Notify parent of the merged state
       onExpandedStateChange?.(baseState)
     }
     // Dependencies limited to data changes only to prevent infinite update loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPath, treeData])
 
-  // Auto-scroll to selected entry when drawer opens
   useEffect(() => {
     if (selectedPath && selectedNodeRef.current && !hasScrolledRef.current) {
       // Small delay to ensure tree expansion completes first
@@ -365,7 +346,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     }
   }, [selectedPath, tree.expandedState])
 
-  // Reset scroll flag when component mounts (drawer opens)
   useEffect(() => {
     hasScrolledRef.current = false
   }, [])
@@ -420,14 +400,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // collections to always be expandable
     const showChevron = hasChildren || Boolean(isCollection)
 
-    // Reordering is available for both entries and collections that have contentId and parent path
     const canReorder =
       onReorderEntry && contentId && parentCollectionPath && typeof childIndex === 'number'
     const canMoveUp = canReorder && childIndex > 0
     const canMoveDown =
       canReorder && typeof totalChildrenCount === 'number' && childIndex < totalChildrenCount - 1
 
-    // Determine if we should show a context menu
     // Collections show menu for add/edit/delete actions OR for reordering (subcollections)
     const hasCollectionMenu =
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)

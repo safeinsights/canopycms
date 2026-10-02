@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createApiClient } from '../../api'
 import { useOptionalApiClient } from '../context'
+import { useEditorIdentity } from '../context/EditorIdentityContext'
 import type { UserContext } from '../BranchManager'
 
 export interface UseUserContextReturn {
@@ -15,17 +16,11 @@ export interface UseUserContextReturn {
  * Hook to fetch current user context from the API.
  * This provides the userId and groups needed for permission checks.
  *
- * @example
- * ```tsx
- * const { userContext, loading, error } = useUserContext()
- *
- * if (loading) return <div>Loading...</div>
- * if (error) return <div>Error: {error}</div>
- *
- * return <BranchManager user={userContext} />
- * ```
+ * Inside an `EditorAuthGate` (always, under `CanopyEditor`) it returns the identity the gate
+ * already resolved and issues no request of its own. Outside one it fetches `whoami` itself.
  */
 export function useUserContext(): UseUserContextReturn {
+  const gateIdentity = useEditorIdentity()
   const [userContext, setUserContext] = useState<UserContext | undefined>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>()
@@ -36,6 +31,7 @@ export function useUserContext(): UseUserContextReturn {
   const contextApiClient = useOptionalApiClient()
 
   useEffect(() => {
+    if (gateIdentity) return
     const fetchUserContext = async () => {
       setLoading(true)
       try {
@@ -59,7 +55,10 @@ export function useUserContext(): UseUserContextReturn {
     }
 
     fetchUserContext()
-  }, [contextApiClient])
+  }, [contextApiClient, gateIdentity])
 
+  if (gateIdentity) {
+    return { userContext: gateIdentity.user, loading: false, error: undefined }
+  }
   return { userContext, loading, error }
 }

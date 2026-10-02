@@ -9,44 +9,20 @@ import { resolveMessageOrigin } from '../preview-bridge'
 import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
 
 export interface UseCommentSystemOptions {
-  /**
-   * Current branch name for loading/saving comments.
-   */
   branchName: string
 
-  /**
-   * Currently selected entry path.
-   */
   selectedPath: string
 
-  /**
-   * Current entry being edited.
-   */
   currentEntry: EditorEntry | undefined
 
-  /**
-   * Current user identifier.
-   */
   currentUser: string
 
-  /**
-   * Whether the current user can resolve comment threads.
-   */
   canResolveComments: boolean
 
-  /**
-   * Callback to change the selected entry.
-   */
   setSelectedPath: (id: string) => void
 
-  /**
-   * Callback to open the branch manager.
-   */
   setBranchManagerOpen: (open: boolean) => void
 
-  /**
-   * Optional callback when comments are loaded/updated.
-   */
   onCommentsChange?: (comments: CommentThread[]) => void
 }
 
@@ -85,31 +61,6 @@ export interface UseCommentSystemReturn {
 
 /**
  * Custom hook for managing the comment system.
- *
- * Handles:
- * - Loading comments from API
- * - Adding comments to threads
- * - Resolving comment threads
- * - Field focus highlighting from preview frame
- * - Active comment context tracking
- *
- * @example
- * ```tsx
- * const {
- *   comments,
- *   activeThreads,
- *   handleAddComment,
- *   handleResolveThread,
- *   loadComments
- * } = useCommentSystem({
- *   branchName,
- *   selectedPath,
- *   currentEntry,
- *   currentUser,
- *   canResolveComments,
- *   onReloadBranches
- * })
- * ```
  */
 export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
   const apiClient = useApiClient()
@@ -126,7 +77,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Automatic load, keyed per branch and deduped by SWR (e.g. React Strict
   // Mode's double effect invoke collapses to a single request). Switching
   // branches re-keys automatically, so no manual branch-change effect is
-  // needed the way there used to be.
+  // needed.
   const { data: commentsData } = useCommentsData(apiClient, options.branchName)
   const comments = commentsData?.threads ?? []
 
@@ -186,7 +137,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       })
       if (!result.ok) throw new Error('Failed to resolve thread')
       await loadComments(options.branchName)
-      // Branch summaries auto-update via useMemo watching comments
       notifications.show({ message: 'Thread resolved', color: 'green' })
     } catch {
       notifications.show({ message: 'Failed to resolve thread', color: 'red' })
@@ -271,22 +221,17 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     return () => window.removeEventListener('message', handleFocus)
   }, [options.currentEntry])
 
-  // Jump-to handlers for navigating from CommentsPanel
   const handleJumpToField = (entryPath: string, canopyPath: string, threadId: string) => {
-    // Switch to the correct entry if needed
     if (entryPath !== options.selectedPath) {
       options.setSelectedPath(entryPath)
     }
 
-    // Wait for entry to load, then scroll and highlight
     window.setTimeout(
       () => {
-        // Find and scroll to the field element
         const fieldElement = document.querySelector(`[data-canopy-field="${canopyPath}"]`)
         if (fieldElement) {
           fieldElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
-        // Set focused field path and highlight thread
         setFocusedFieldPath(canopyPath)
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
@@ -299,12 +244,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   }
 
   const handleJumpToEntry = (entryPath: string, threadId: string) => {
-    // Switch to the correct entry if needed
     if (entryPath !== options.selectedPath) {
       options.setSelectedPath(entryPath)
     }
 
-    // Wait for entry to load, then scroll and highlight
     window.setTimeout(
       () => {
         // Scroll to top of form (where EntryComments renders)
@@ -312,7 +255,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         if (formElement) {
           formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
-        // Set highlight thread
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
           setHighlightThreadId(undefined)
@@ -323,7 +265,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   }
 
   const handleJumpToBranch = (threadId: string) => {
-    // Open branch manager and highlight thread
     options.setBranchManagerOpen(true)
     setHighlightThreadId(threadId)
     window.setTimeout(() => {

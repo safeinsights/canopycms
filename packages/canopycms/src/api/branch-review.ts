@@ -15,7 +15,6 @@ const requestChangesHandler = async (
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
-  // Verify branch is submitted
   if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
@@ -24,10 +23,8 @@ const requestChangesHandler = async (
     }
   }
 
-  // Convert PR to draft (sync via githubService, or async via task queue)
   await syncConvertToDraft(ctx, branchContext)
 
-  // Update branch status to 'editing'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
@@ -47,7 +44,6 @@ const approveBranchHandler = async (
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
-  // Verify branch is submitted
   if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
@@ -56,7 +52,6 @@ const approveBranchHandler = async (
     }
   }
 
-  // Update branch status to 'approved'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
@@ -68,10 +63,6 @@ const approveBranchHandler = async (
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
 
-/**
- * Request changes on a submitted branch (reviewer action)
- * POST /:branch/request-changes
- */
 export const requestChanges = defineEndpoint({
   namespace: 'workflow',
   name: 'requestChanges',
@@ -96,10 +87,6 @@ export const requestChanges = defineEndpoint({
   handler: requestChangesHandler,
 })
 
-/**
- * Approve a branch (optional for v1)
- * POST /:branch/approve
- */
 export const approveBranch = defineEndpoint({
   namespace: 'workflow',
   name: 'approve',

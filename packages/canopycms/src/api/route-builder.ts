@@ -20,10 +20,7 @@ import { type GuardId, type ComputeGuardContext, executeGuards } from './guards'
  * @example
  * { 'collectionPath': 'createLogicalPath', 'items.*.path': 'createPhysicalPath' }
  */
-export type MockDataCasts = Record<
-  string,
-  'createLogicalPath' | 'createPhysicalPath' | 'as ContentId'
->
+type MockDataCasts = Record<string, 'createLogicalPath' | 'createPhysicalPath' | 'as ContentId'>
 
 /**
  * Metadata for code generation
@@ -45,7 +42,7 @@ export interface RouteMetadata {
 /**
  * Global registry - generator reads this
  */
-export const ROUTE_REGISTRY: RouteMetadata[] = []
+const ROUTE_REGISTRY: RouteMetadata[] = []
 
 /**
  * Route definition created by defineEndpoint.
@@ -93,7 +90,7 @@ export interface RouteDefinition<
 /**
  * Handler function signature with validated params and body (no guards)
  */
-export type RouteHandler<
+type RouteHandler<
   TParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
   TResponse,
@@ -110,7 +107,7 @@ export type RouteHandler<
  * Guarded handler: receives guard context as first argument.
  * The guard context shape is computed from the declared guards.
  */
-export type GuardedRouteHandler<
+type GuardedRouteHandler<
   TGuards extends readonly GuardId[],
   TParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
@@ -124,10 +121,6 @@ export type GuardedRouteHandler<
     ...(TBody extends z.ZodType ? [body: z.infer<TBody>] : []),
   ]
 ) => Promise<TResponse>
-
-// ============================================================================
-// Endpoint configuration types
-// ============================================================================
 
 /** Base config fields shared by guarded and unguarded endpoints */
 interface EndpointConfigBase<
@@ -171,10 +164,6 @@ interface GuardedEndpointConfig<
   response: TResponse
   handler: GuardedRouteHandler<TGuards, TParams, TBody, TResponse>
 }
-
-// ============================================================================
-// defineEndpoint overloads
-// ============================================================================
 
 /** Define an endpoint without guards */
 export function defineEndpoint<

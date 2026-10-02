@@ -1,0 +1,32 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreWorkspaces": [
+    ".",
+    "packages/canopycms-cdk",
+    "packages/canopycms-auth-clerk",
+    "packages/canopycms-auth-dev",
+    "apps/*"
+  ],
+  "include": ["exports", "types", "nsExports", "nsTypes"],
+  "workspaces": {
+    "packages/canopycms": {
+      "entry": [
+        "scripts/*.ts!",
+        ".storybook/*.{ts,tsx}!",
+        "src/**/*.stories.tsx!",
+        "src/config/index.ts!",
+        "src/authorization/groups/index.ts!"
+      ],
+      "project": ["src/**/*.{ts,tsx}!", "scripts/**/*.{ts,mjs}!", ".storybook/**/*.{ts,tsx}!"],
+      "ignore": [
+        "src/**/index.{ts,tsx}",
+        "src/editor/GroupManager.tsx",
+        "src/editor/PermissionManager.tsx"
+      ]
+    },
+    "packages/canopycms-next": {
+      "entry": ["src/config.ts!"],
+      "project": ["src/**/*.{ts,tsx}!"]
+    }
+  }
+}

@@ -17,7 +17,8 @@ later under load.
 
    Bounded on Lambda (one invocation per container; only cross-container writers contend,
    and the critical section is normally a few `fs` calls). It bites hardest where in-process
-   concurrency is real: `next dev`, and build-time provisioning across worker processes.
+   concurrency is real: `next dev`. (Build-time content reads no longer provision workspaces --
+   they read the working tree since 2026-09-12.)
 
    The case to watch: a write whose in-lock path triggers a full `idIndex()` rescan of a
    large tree over EFS can plausibly exceed 2s and start 409-ing unrelated saves.

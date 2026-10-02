@@ -11,9 +11,6 @@ import {
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 
-/**
- * Props for the EditorSidebar component.
- */
 export interface EditorSidebarProps {
   /**
    * Current layout mode (side or stacked).
@@ -92,22 +89,6 @@ export interface EditorSidebarProps {
 /**
  * Sidebar component for the Editor.
  * Contains layout toggle, highlight toggle, settings menu, account button, and logout button.
- *
- * @example
- * ```tsx
- * <EditorSidebar
- *   layout={layout}
- *   highlightEnabled={highlightEnabled}
- *   sidebarWidth={60}
- *   headerHeight={60}
- *   footerHeight={40}
- *   onLayoutChange={setLayout}
- *   onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
- *   onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
- *   onGroupManagerOpen={() => setGroupManagerOpen(true)}
- *   onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
- * />
- * ```
  */
 export function EditorSidebar({
   layout,
@@ -188,7 +169,6 @@ export function EditorSidebar({
             )}
           </Menu.Dropdown>
         </Menu>
-        {/* Account section - use custom component or default buttons */}
         {AccountComponent ? (
           <AccountComponent />
         ) : (

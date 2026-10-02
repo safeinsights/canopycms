@@ -14,7 +14,6 @@ import { Stack, StackProps } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
-import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
 import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
 // The SAME config file the CMS Lambda reads at request time -- imported here,
 // at synth time, so `baseBranch`/`settingsBranch` below can never drift from
@@ -30,10 +29,42 @@ export interface CmsStackProps extends StackProps {
   /** GitHub repository the EC2 worker pushes branches and opens PRs against. */
   githubOwner: string
   githubRepo: string
-  /** FULL Secrets Manager ARN, including the random six-character suffix. */
-  githubTokenSecretArn: string
+  /**
+   * FULL Secrets Manager ARN, including the random six-character suffix.
+   *
+   * Optional only because GitHub App authentication replaces it -- one of this
+   * and the `githubApp*` trio below must be set, and setting both is refused at
+   * synth. A personal access token is the default.
+   */
+  githubTokenSecretArn?: string
+  /**
+   * Optional. GitHub App authentication, instead of the token above. Set all
+   * three or none.
+   */
+  githubAppId?: string
+  githubAppInstallationId?: string
+  /** FULL Secrets Manager ARN of the secret holding the App's PEM private key. */
+  githubAppPrivateKeySecretArn?: string
+  /**
+   * Optional. Key to read out of the App private-key secret when that secret
+   * holds a JSON document rather than the bare PEM.
+   */
+  githubAppPrivateKeySecretJsonField?: string
   /** FULL Secrets Manager ARN, including the random six-character suffix. */
   clerkSecretKeySecretArn: string
+  /**
+   * Optional. Key to read out of the GitHub token secret when that secret holds
+   * a JSON document rather than the bare token. Unset means the whole value is
+   * the token.
+   */
+  githubTokenSecretJsonField?: string
+  /**
+   * Optional. Key to read out of the Clerk secret when it holds a JSON
+   * document. Note this covers CLERK_SECRET_KEY only -- CLERK_JWT_KEY below and
+   * the publishable key are public material and are passed as plain values, so
+   * a JSON document holding all three still supplies those two separately.
+   */
+  clerkSecretKeySecretJsonField?: string
   /** Clerk's public JWKS PEM, for networkless session verification. */
   clerkJwtKey: string
   /** Clerk publishable key, baked into the client bundle at image-build time. */
@@ -56,11 +87,20 @@ export class CmsStack extends Stack {
     // written verbatim into the worker's IAM policy, so a partial or
     // name-based ARN never matches the real secret and the worker fails with
     // AccessDenied at boot rather than at deploy.
-    const githubToken = secretsmanager.Secret.fromSecretCompleteArn(
-      this,
-      'GitHubToken',
-      props.githubTokenSecretArn,
-    )
+    const githubToken = props.githubTokenSecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(this, 'GitHubToken', props.githubTokenSecretArn)
+      : undefined
+    // The App private key, when this deployment authenticates as a GitHub App
+    // instead. Resolved the same way and for the same reason -- the worker
+    // reads it with GetSecretValue under its own IAM grant, so the ARN must be
+    // the complete one.
+    const githubAppPrivateKey = props.githubAppPrivateKeySecretArn
+      ? secretsmanager.Secret.fromSecretCompleteArn(
+          this,
+          'GitHubAppPrivateKey',
+          props.githubAppPrivateKeySecretArn,
+        )
+      : undefined
     const clerkSecretKey = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'ClerkSecret',
@@ -76,18 +116,29 @@ export class CmsStack extends Stack {
       // `cdk deploy` touching the function silently reverts your code.
       cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
         file: 'Dockerfile.cms',
-        // The image platform and the Lambda architecture must agree, or the
-        // function fails at invoke with an exec-format error. Building on
-        // Apple Silicon defaults to arm64, so arm64 is the pairing that works
-        // both locally and on an x86 CI runner.
-        platform: Platform.LINUX_ARM64,
         // Next.js inlines NEXT_PUBLIC_* into the CLIENT bundle during
-        // `next build`, so this has to reach the image BUILD. A Lambda
+        // `next build`, so these have to reach the image BUILD. A Lambda
         // environment variable would be far too late.
         buildArgs: {
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: props.clerkPublishableKey,
+          // The browser half of the operating mode. The server half is the
+          // Lambda's CANOPY_MODE, set by CanopyCmsService; this one decides
+          // what the editor bundle believes, which in CanopyCMS's client code
+          // means one thing: the edit page selects Clerk auth rather than dev
+          // auth. The image's own `next build` stays in dev mode either way --
+          // see Dockerfile.cms.
+          NEXT_PUBLIC_CANOPY_MODE: 'prod',
         },
       }),
+      // The one place the CMS image's CPU architecture is decided. CDK derives
+      // the Docker build platform from it, so do not add `platform` to
+      // fromImageAsset above: an explicit one overrides this, and an image
+      // built for the other architecture cannot run on the function (an arm64
+      // image on an x86_64 function fails at invoke with
+      // Runtime.InvalidEntrypoint). arm64 matches the EC2 worker and is
+      // CanopyCmsService's default. deploy-cms.yml runs on an arm64 runner to
+      // match; see "Where the image is built" in
+      // docs/deploying-to-aws.md before changing either.
       architecture: lambda.Architecture.ARM_64,
 
       githubOwner: props.githubOwner,
@@ -104,10 +155,28 @@ export class CmsStack extends Stack {
       baseBranch: canopyConfig.server.defaultBaseBranch,
       settingsBranch: canopyConfig.server.settingsBranch,
 
-      // Secrets the EC2 worker reads. The Lambda needs none of them.
-      secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
-      githubTokenSecretArn: githubToken.secretArn,
+      // Secrets the EC2 worker reads. CanopyCMS's code on the Lambda reads none
+      // of them; a clerkMiddleware you keep needs the Clerk secret key on the
+      // Lambda as well (see "Security Model" in docs/deploying-to-aws.md).
+      secretsArns: [
+        githubToken?.secretArn,
+        githubAppPrivateKey?.secretArn,
+        clerkSecretKey.secretArn,
+      ].filter((arn): arn is string => arn !== undefined),
+      githubTokenSecretArn: githubToken?.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // GitHub App auth, when configured instead of the token above. Undefined
+      // unless the adopter set all three; CanopyCmsService refuses a partial
+      // set, and refuses an App alongside githubTokenSecretArn.
+      githubAppId: props.githubAppId,
+      githubAppInstallationId: props.githubAppInstallationId,
+      githubAppPrivateKeySecretArn: githubAppPrivateKey?.secretArn,
+      githubAppPrivateKeySecretJsonField: props.githubAppPrivateKeySecretJsonField,
+      // Undefined unless the adopter set one, which is the supported way to
+      // point at a field of a JSON secret. The ':KEY::' ARN suffix is NOT --
+      // GetSecretValue does not parse it, and CanopyCmsService throws on it.
+      githubTokenSecretJsonField: props.githubTokenSecretJsonField,
+      clerkSecretKeySecretJsonField: props.clerkSecretKeySecretJsonField,
 
       // Lambda environment: public config only, never secrets.
       environment: {

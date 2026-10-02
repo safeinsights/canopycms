@@ -1,10 +1,5 @@
 'use client'
 
-/**
- * Tree visualization component for permission management.
- * Renders the content tree with permission badges and handles selection.
- */
-
 import React from 'react'
 import { ActionIcon, Collapse } from '@mantine/core'
 import { IconChevronRight, IconChevronDown, IconFolder, IconFile } from '@tabler/icons-react'
@@ -110,7 +105,6 @@ export const PermissionTree: React.FC<PermissionTreeProps> = ({
 
   return (
     <div>
-      {/* Tree node row */}
       <div
         style={{
           display: 'flex',
@@ -143,7 +137,6 @@ export const PermissionTree: React.FC<PermissionTreeProps> = ({
           <span style={{ fontSize: '14px', whiteSpace: 'nowrap' }}>{node.name}</span>
         </div>
 
-        {/* Show permission level badges */}
         <div
           style={{
             display: 'flex',
@@ -193,7 +186,6 @@ export const PermissionTree: React.FC<PermissionTreeProps> = ({
         />
       </Collapse>
 
-      {/* Children */}
       {node.type === 'folder' && hasChildren && (
         <Collapse in={isExpanded}>
           <div style={{ paddingLeft: 16 }}>

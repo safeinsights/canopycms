@@ -30,7 +30,7 @@ export interface BlockInstance {
   value: Record<string, unknown>
 }
 
-export type RenderField = (
+type RenderField = (
   field: FieldConfig,
   value: unknown,
   onChange: (v: unknown) => void,
@@ -99,7 +99,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   )
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
 
-  // Sync itemKeys length with value length (adjust state during render)
+  // Keeps itemKeys in sync with value's length; setState runs directly in render, not an effect.
   if (value.length > itemKeys.length) {
     const extras = Array.from(
       { length: value.length - itemKeys.length },
@@ -265,5 +265,3 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     </Paper>
   )
 }
-
-export default BlockField

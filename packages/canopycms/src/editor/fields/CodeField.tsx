@@ -37,5 +37,3 @@ export const CodeField: React.FC<CodeFieldProps> = ({
     />
   )
 }
-
-export default CodeField

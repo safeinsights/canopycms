@@ -1,37 +1,32 @@
 /**
- * The shared transform engine: applies a parsed `TransformDirectives` to
- * source image bytes with sharp. Server-only - never import this from
- * client/editor code (this is why it lives in its own file, separate from
- * the dependency-free transform-directives.ts). Used by the dev-mode lazy
- * `/assets/t/*` emulation in api/assets.ts today, and will be reused
- * unchanged by the prod transform Lambda (PR 7).
+ * The shared transform engine: applies a parsed `TransformDirectives` to source image bytes
+ * with sharp. Server-only - never import this from client/editor code (kept in its own file,
+ * separate from the dependency-free transform-directives.ts). Used by the dev-mode lazy
+ * `/assets/t/*` emulation in api/assets.ts and, unchanged, by the prod transform Lambda
+ * (packages/canopycms-cdk/lambda/asset-transform).
  *
- * Pipeline: a cheap metadata-only probe (`limitInputPixels: MAX_INPUT_PIXELS`,
- * decompression-bomb defense #1) learns the real page count, so animated
- * GIF/WebP frames can be capped at `MAX_ANIMATED_FRAMES` (decompression-bomb
- * defense #2) without exceeding it and making sharp throw -> load for real
- * with `{ pages: min(totalPages, MAX_ANIMATED_FRAMES), limitInputPixels }` ->
- * `.rotate()` with no args (bakes EXIF orientation into pixels,
- * dropping the orientation tag) -> optional crop via `.extract()` -> optional
- * `.resize({ width, withoutEnlargement: true })` (never upscales) -> encode.
+ * sharp is imported for its TYPES only and loaded on first use through `loadSharp()`
+ * (sharp-loader.ts), so importing this module never loads libvips - see sharp-loader.ts for
+ * why, and eslint.config.mjs for the rule that keeps a static import from coming back.
  *
- * Identity (`orig`) and any request that omits an explicit `f=` format
- * re-encode through the SOURCE format rather than a fixed one: this is what
- * guarantees EXIF/GPS gets stripped even when no other change is requested
- * (sharp strips metadata by default on re-encode - `withMetadata()` is never
- * called here, which would undo that).
+ * Pipeline: metadata probe learns the page count (decompression-bomb defenses #1/#2) -> real
+ * load capped at `min(totalPages, MAX_ANIMATED_FRAMES)` -> `.rotate()` (bakes EXIF orientation
+ * into pixels) -> optional crop/resize (never upscales) -> encode.
  *
- * GIF has no EXIF segment (EXIF is a JPEG/TIFF APP1 marker; GIF has no such
- * extension block), so an identity GIF has nothing to strip - it is still
- * re-encoded through sharp's `.gif()` (verified: current sharp bundles cgif
- * and re-encodes multi-frame GIFs through the `{ animated: true }` input
- * path with no extra native dependency) purely for pipeline uniformity, not
+ * Identity (`orig`) and any request that omits an explicit `f=` format re-encode through the
+ * SOURCE format rather than a fixed one: this is what guarantees EXIF/GPS gets stripped even
+ * when no other change is requested (sharp strips metadata by default on re-encode -
+ * `withMetadata()` is never called here, which would undo that).
+ *
+ * GIF has no EXIF segment (EXIF is a JPEG/TIFF APP1 marker), so an identity GIF has nothing to
+ * strip - it is still re-encoded through sharp's `.gif()` purely for pipeline uniformity, not
  * because GIF needs stripping.
  */
 
-import sharp from 'sharp'
+import type { Sharp as SharpPipeline } from 'sharp'
 
 import { getErrorMessage } from '../utils/error'
+import { loadSharp } from './sharp-loader'
 import {
   MAX_ANIMATED_FRAMES,
   MAX_INPUT_PIXELS,
@@ -39,15 +34,6 @@ import {
   type OutputFormat,
   type TransformDirectives,
 } from './transform-directives'
-
-/**
- * `sharp`'s type declarations use `export =`, which doesn't let a default
- * import (`import sharp from 'sharp'`) reference the merged `sharp.Sharp`
- * namespace type directly under this repo's `esModuleInterop`/`Bundler`
- * module settings. `ReturnType<typeof sharp>` gets the same instance type
- * without needing a namespace import.
- */
-type SharpPipeline = ReturnType<typeof sharp>
 
 /** Raster formats the transform engine accepts as input. svg/pdf never reach here - they're served statically. */
 const ALLOWED_INPUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
@@ -75,6 +61,7 @@ export interface ApplyTransformInput {
   ext: string
 }
 
+/** @internal Exported for tests. */
 export interface TransformSuccess {
   ok: true
   data: Uint8Array
@@ -82,6 +69,7 @@ export interface TransformSuccess {
   ext: string
 }
 
+/** @internal Exported for tests. */
 export interface TransformRejection {
   ok: false
   /** 400: unsupported input; 413: output too large; 422: sharp failed to process the input. */
@@ -155,7 +143,7 @@ function encode(pipeline: SharpPipeline, format: OutputFormat, quality: number |
 
 /**
  * Re-encode through the source container format - used for identity and for
- * requests that omit `f=`. `quality` (C3) is honoured here exactly like
+ * requests that omit `f=`. `quality` is honoured here exactly like
  * `encode()` does for an explicit `f=`, so a `q=` directive without `f=` is
  * never silently dropped - the cache key (`formatDirectives` in
  * transform-directives.ts) already includes `q=` unconditionally, so the
@@ -184,6 +172,11 @@ function encodeSourceFormat(
   }
 }
 
+/**
+ * Resolves a `TransformRejection` for anything wrong with the input or the
+ * output. REJECTS (throws) when sharp itself cannot be loaded in this process
+ * - see the comment at the `loadSharp()` call below.
+ */
 export async function applyTransform(
   input: ApplyTransformInput,
   directives: TransformDirectives,
@@ -196,6 +189,15 @@ export async function applyTransform(
       error: `Unsupported input format for transform: '${sourceExt}'`,
     }
   }
+
+  // After the format check and OUTSIDE the try below, both on purpose. A load
+  // failure is a fault in this environment (the native binary is missing or
+  // built for another platform), not a fact about these bytes, so it must
+  // reach the caller as a thrown error - a 500 from http/handler.ts's
+  // top-level catch or from the transform Lambda's - and never the 422 the
+  // catch below means "sharp could not process this input". The 400 above
+  // needs no decoder, so it keeps working where sharp cannot load.
+  const sharp = await loadSharp()
 
   const resize = directives.identity ? undefined : directives
   const format = resize?.format

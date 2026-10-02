@@ -1,14 +1,13 @@
 import type { FieldConfig, InlineGroupFieldConfig } from '../config'
 
-/** Type guard: true if field is an inline group (type === 'group'). */
 function isGroupField(field: FieldConfig): field is InlineGroupFieldConfig {
   return field.type === 'group'
 }
 
 /**
- * Find the field marked `isTitle: true` in a schema and extract its value from data.
- * Recurses into object fields to support nested title fields (e.g., hero.title).
- * Returns the string value or undefined if not found or not a string.
+ * Value of the field marked `isTitle: true`, or undefined when there is none or it is not a
+ * string. Recurses into object fields, so a nested title (`hero.title`) is found.
+ * @internal Exported for tests.
  */
 export function extractTitleFromSchema(
   fields: readonly FieldConfig[],
@@ -41,7 +40,10 @@ function findTitleValue(
   return undefined
 }
 
-/** Convert a slug like "my-cool-page" to "My Cool Page". */
+/**
+ * Convert a slug like "my-cool-page" to "My Cool Page".
+ * @internal Exported for tests.
+ */
 export function humanizeSlug(slug: string): string {
   return slug
     .replace(/[-_]/g, ' ')
@@ -50,12 +52,11 @@ export function humanizeSlug(slug: string): string {
 }
 
 /**
- * Resolve a display title for an entry using the full fallback chain:
- * 1. Schema-marked isTitle field (if schema provided)
- * 2. Convention: data.title or data.name
- * 3. Entry type label (if provided)
- * 4. Humanized slug (if provided)
- * 5. "Untitled"
+ * Display title for an entry, by fallback chain: schema-marked isTitle field, then `data.title`
+ * or `data.name`, then the entry type label, then the humanized slug, then "Untitled".
+ *
+ * Client-safe — its only dependency on `../config` is type-only — and re-exported from both
+ * `canopycms/server` and the root `canopycms` entry, so adopter client code can import it.
  */
 export function resolveEntryTitle(
   data: Record<string, unknown>,
@@ -65,24 +66,19 @@ export function resolveEntryTitle(
     slug?: string
   },
 ): string {
-  // 1. Schema-marked isTitle field
   if (options?.schema) {
     const schemaTitle = extractTitleFromSchema(options.schema, data)
     if (schemaTitle) return schemaTitle
   }
-  // 2. Convention: data.title or data.name
   const title = data.title ?? data.name
   if (typeof title === 'string') return title
-  // 3. Entry type label
   if (options?.entryTypeLabel) return options.entryTypeLabel
-  // 4. Humanized slug
   return options?.slug ? humanizeSlug(options.slug) : 'Untitled'
 }
 
 /**
- * Count the number of fields marked `isTitle: true` in a schema, recursing into objects.
- * Skips `list: true` objects since runtime title extraction cannot resolve array values.
- * Used for validation — at most one field per schema should be marked.
+ * Count fields marked `isTitle: true`, recursing into objects but skipping `list: true` ones,
+ * whose array values runtime title extraction cannot resolve. Validation allows at most one.
  */
 export function countTitleFields(fields: readonly FieldConfig[]): number {
   let count = 0
@@ -100,9 +96,8 @@ export function countTitleFields(fields: readonly FieldConfig[]): number {
 }
 
 /**
- * Validate that all isTitle fields in a schema are string type.
- * Skips `list: true` objects (those are caught by findTitleFieldsInLists).
- * Returns an array of field names that have isTitle on a non-string type.
+ * Dotted paths of isTitle fields whose type is not `string`. Skips `list: true` objects —
+ * `findTitleFieldsInLists` catches those.
  */
 export function findInvalidTitleFields(
   fields: readonly FieldConfig[],
@@ -125,10 +120,7 @@ export function findInvalidTitleFields(
   return invalid
 }
 
-/**
- * Find isTitle fields inside `list: true` object fields, where they can never resolve.
- * Returns dotted paths of such fields.
- */
+/** Dotted paths of isTitle fields inside `list: true` objects, where they can never resolve. */
 export function findTitleFieldsInLists(
   fields: readonly FieldConfig[],
   parentPath?: string,
@@ -141,7 +133,6 @@ export function findTitleFieldsInLists(
       const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
       if (field.type === 'object' && 'fields' in field && field.fields) {
         if (field.list) {
-          // Any isTitle inside a list object is invalid — collect them
           found.push(...collectAllTitleFields(field.fields, fieldPath))
         } else {
           found.push(...findTitleFieldsInLists(field.fields, fieldPath))
@@ -152,7 +143,7 @@ export function findTitleFieldsInLists(
   return found
 }
 
-/** Collect all isTitle fields recursively (used inside list context). */
+/** Every isTitle field below this point, for the list context where all of them are invalid. */
 function collectAllTitleFields(fields: readonly FieldConfig[], parentPath: string): string[] {
   const found: string[] = []
   for (const field of fields) {

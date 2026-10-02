@@ -56,7 +56,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
   const loading = loadingOverride ?? isLoading
 
-  // Avatar size mapping
   const avatarSize = {
     xs: 16,
     sm: 20,
@@ -64,7 +63,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     lg: 32,
   }[size]
 
-  // Text size mapping
   const textSize = {
     xs: 'xs',
     sm: 'sm',
@@ -72,7 +70,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     lg: 'md',
   }[size] as 'xs' | 'sm' | 'md'
 
-  // Loading state
   if (loading) {
     return (
       <Group gap={4}>
@@ -82,7 +79,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  // Error or missing user - fallback to userId
   if (error || !userMetadata) {
     const content = (
       <Group gap={4}>
@@ -102,16 +98,13 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  // Generate initials from name
   const getInitials = (name: string): string => {
     const parts = name.trim().split(/\s+/)
     if (parts.length === 1) return parts[0].charAt(0).toUpperCase()
     return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
   }
 
-  // Render avatar
   const renderAvatar = () => {
-    // Special case: anonymous user
     if (userId === 'anonymous') {
       return (
         <Avatar size={avatarSize} color="orange">
@@ -151,7 +144,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  // Render content based on variant
   const renderContent = () => {
     const avatar = renderAvatar()
 
@@ -189,7 +181,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
 
   const content = renderContent()
 
-  // If onRemove or showBadge, wrap the content in a Badge
   if (onRemove || showBadge) {
     const badgeContent = (
       <Badge
@@ -231,7 +222,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  // No badge wrapper - just wrap with tooltip if needed
   return showEmailTooltip && variant !== 'full' ? (
     <Tooltip label={userMetadata.email}>{content}</Tooltip>
   ) : (

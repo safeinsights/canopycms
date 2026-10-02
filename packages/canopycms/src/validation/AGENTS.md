@@ -2,9 +2,8 @@
 
 Schema-driven validation, and the single field-traversal encoding everything else is meant to build on.
 
-Split out of the root [AGENTS.md](../../../../AGENTS.md) on 2026-08-23, where this had grown to
-418 words inside a single bullet. The **code comment at the point of the rule is
-authoritative**; this file is the map to where those rules live.
+The **code comment at the point of the rule is authoritative**; this file is the map to
+where those rules live.
 
 ## Overview
 

@@ -24,9 +24,9 @@ import { declaresScheme, neutralizeImplicitOffOrigin } from './sanitize-href'
  * Whether `url` is a DECLARED off-site pointer - a scheme-qualified absolute URL
  * (`https://example.com/x`) or a literal protocol-relative one (`//cdn.example.com/x`).
  *
- * Deliberately narrower than "resolves off-origin": a WHATWG-backslash-equivalent spelling
- * (`/\evil.com`, `\\evil.com`, `\/evil.com` — see `utils/sanitize-href.ts`'s
- * `isImplicitlyOffOrigin`) also resolves off-origin in a browser, but is NOT recognized here as
+ * Deliberately narrower than "resolves off-origin": a backslash-equivalent spelling (see
+ * `utils/sanitize-href.ts`'s `declaresScheme` and `isImplicitlyOffOrigin`)
+ * also resolves off-origin in a browser, but is NOT recognized here as
  * an intentional off-site pointer the way a literal `//cdn…` is. Callers handle that case
  * separately, by neutralizing (`neutralizeImplicitOffOrigin`) rather than passing through: a
  * `false` result here isn't a guarantee the value is a safe site-relative path on its own, only

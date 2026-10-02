@@ -16,7 +16,7 @@ export interface AddCommentBody {
   canopyPath?: string
 }
 
-export interface ListCommentsResponse {
+interface ListCommentsResponse {
   threads: CommentThread[]
 }
 
@@ -113,7 +113,6 @@ const resolveCommentHandler = async (
 
   const commentStore = new CommentStore(branchContext.branchRoot)
 
-  // Get the thread to check permissions
   const thread = await commentStore.getThread(params.threadId)
   if (!thread) {
     return { ok: false, status: 404, error: 'Thread not found' }
@@ -139,18 +138,10 @@ const resolveCommentHandler = async (
   return { ok: true, status: 200, data: { resolved: true } }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-//
 // Deliberately no 'writableBranch' guard on any endpoint below: comments live
 // in .canopy-meta/comments.json, which is never committed to git. Commenting
 // while browsing the (read-only) protected base branch is desirable.
 
-/**
- * List all comment threads for a branch
- * GET /:branch/comments
- */
 const listComments = defineEndpoint({
   namespace: 'comments',
   name: 'list',
@@ -166,7 +157,6 @@ const listComments = defineEndpoint({
 
 /**
  * Add a comment to a thread or create new thread
- * POST /:branch/comments
  */
 const addComment = defineEndpoint({
   namespace: 'comments',
@@ -183,10 +173,6 @@ const addComment = defineEndpoint({
   handler: addCommentHandler,
 })
 
-/**
- * Resolve a comment thread
- * POST /:branch/comments/:threadId/resolve
- */
 const resolveComment = defineEndpoint({
   namespace: 'comments',
   name: 'resolve',
@@ -200,9 +186,6 @@ const resolveComment = defineEndpoint({
   handler: resolveCommentHandler,
 })
 
-/**
- * Exported routes for router registration
- */
 export const COMMENT_ROUTES = {
   list: listComments,
   add: addComment,

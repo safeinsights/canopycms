@@ -68,11 +68,9 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
 
   const canUserResolve = () => {
     if (!canResolve) return false
-    // Thread author or user with resolver permission
     return thread.authorId === currentUserId || canResolve
   }
 
-  // Always show full thread view with per-thread scrolling
   return (
     <Paper
       withBorder
@@ -100,7 +98,6 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
           )}
         </Group>
 
-        {/* All comments in thread */}
         <Stack gap="md">
           {thread.comments.map((comment, idx) => (
             <div key={comment.id}>
@@ -143,7 +140,6 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
           ))}
         </Stack>
 
-        {/* Error display */}
         {error && (
           <Alert
             icon={<IconAlertCircle size={16} />}
@@ -156,7 +152,6 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
           </Alert>
         )}
 
-        {/* Reply box (only if not resolved) */}
         {!thread.resolved && (
           <Stack gap="xs">
             <Textarea
@@ -191,7 +186,6 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
           </Stack>
         )}
 
-        {/* Resolved info */}
         {thread.resolved && thread.resolvedBy && (
           <Group gap={4}>
             <Text size="xs" c="dimmed" fs="italic">

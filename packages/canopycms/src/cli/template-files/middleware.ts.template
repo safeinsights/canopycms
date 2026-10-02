@@ -1,18 +1,26 @@
 import { NextResponse } from 'next/server'
 
-// Protect CMS routes from unauthenticated access.
+// Optional edge protection for /edit and /api/canopycms. This passthrough adds none, and the CMS
+// needs none in any auth mode: the API authenticates every request itself, and the editor shows
+// the auth provider's sign-in screen to signed-out users. It is the same file for every auth mode,
+// so changing CANOPY_AUTH_MODE needs nothing here.
 //
-// For dev auth mode, no middleware protection is needed — this file is a passthrough.
-// If you don't need auth protection, you can delete this file entirely.
-//
-// For Clerk auth, replace this file's contents with:
+// With Clerk you can instead turn signed-out requests away at the edge, before they reach the
+// app. On a deployed CMS Lambda that costs two things:
+//   - CLERK_SECRET_KEY on the Lambda. clerkMiddleware throws on every request it matches unless
+//     it can resolve a secret key (jwtKey doesn't count), which breaks the public-keys-only
+//     Lambda that the Security Model in docs/deploying-to-aws.md describes.
+//   - One image per Clerk instance. It reads the publishable key inlined at image build
+//     (NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY), not the one your ClerkProvider receives, unless you
+//     pass it an options callback that reads both keys at run time.
+// To adopt it anyway, replace this file's contents with:
 //
 //   import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 //
 //   const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
 //
-//   // jwtKey avoids a JWKS fetch to api.clerk.com on cold verification --
-//   // the prod CMS Lambda has no internet.
+//   // jwtKey avoids a JWKS fetch to api.clerk.com on cold verification -- the prod CMS Lambda
+//   // has no internet, and the CLERK_JWT_KEY env var alone is never read.
 //   export default clerkMiddleware(
 //     async (auth, req) => {
 //       if (isProtectedRoute(req)) {
@@ -25,26 +33,8 @@ import { NextResponse } from 'next/server'
 //   export const config = {
 //     matcher: ['/edit(.*)', '/api/canopycms(.*)'],
 //   }
-//
-// IMPORTANT: unlike canopy.ts and the edit page, this file does NOT read
-// CANOPY_AUTH_MODE at runtime -- it is frozen at `init` time. If you switch
-// from dev to Clerk auth (or flip CANOPY_AUTH_MODE=clerk), you must swap this
-// file for the Clerk middleware above; otherwise /edit and /api/canopycms stay
-// unprotected at the edge (the Clerk auth plugin still rejects unauthenticated
-// API calls, and the core fails closed in prod mode, but this defense-in-depth
-// redirect is gone). The warning below only helps you notice the mismatch.
-
-let warnedAuthModeMismatch = false
 
 export default function middleware() {
-  if (process.env.CANOPY_AUTH_MODE === 'clerk' && !warnedAuthModeMismatch) {
-    warnedAuthModeMismatch = true
-    console.warn(
-      '[canopycms] CANOPY_AUTH_MODE=clerk is set, but middleware.ts is still the dev ' +
-        'passthrough generated for dev auth. Replace this file with the Clerk middleware ' +
-        '(see the comment above) so /edit and /api/canopycms are protected at the edge.',
-    )
-  }
   return NextResponse.next()
 }
 

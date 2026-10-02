@@ -2,7 +2,8 @@ import type { AuthPlugin } from 'canopycms/auth'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
 import { extractHeaders } from 'canopycms/auth'
 import type { CanopyUserId, CanopyGroupId } from 'canopycms'
-import { getDevUserCookieFromHeaders } from './cookie-utils'
+import { DEFAULT_USER_ID } from './cookie-utils'
+import { resolveDevUserId } from './resolve-user'
 import { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID } from './dev-defaults'
 import type { DevUser, DevGroup, DevAuthConfig } from './dev-defaults'
 
@@ -10,7 +11,6 @@ export type { DevUser, DevGroup, DevAuthConfig }
 export { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID }
 
 /**
- * Dev authentication plugin implementation for CanopyCMS.
  * Supports both cookie-based (UI) and header-based (tests) authentication.
  */
 export class DevAuthPlugin implements AuthPlugin {
@@ -29,48 +29,32 @@ export class DevAuthPlugin implements AuthPlugin {
   constructor(config: DevAuthConfig = {}) {
     this.users = config.users ?? DEFAULT_USERS
     this.groups = config.groups ?? DEFAULT_GROUPS
-    this.defaultUserId = config.defaultUserId ?? 'dev_user1_2nK8mP4xL9'
+    this.defaultUserId = config.defaultUserId ?? DEFAULT_USER_ID
   }
 
   async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
     const headers = extractHeaders(context)
     if (!headers) return null
-    let userId = headers.get('X-Test-User')
-    if (!userId) userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
-    if (!userId) userId = this.defaultUserId
-    return { userId: this.mapTestUserKey(userId) }
+    const userId = resolveDevUserId(headers, this.defaultUserId)
+    return userId ? { userId } : null
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
-    // 1. Extract headers using extractHeaders() helper
     const headers = extractHeaders(context)
     if (!headers) {
       return { success: false, error: 'Invalid context' }
     }
 
-    // 2. Check X-Test-User header (for test-app compatibility) FIRST
-    let userId = headers.get('X-Test-User')
-
-    // 3. If no test header, check x-dev-user-id header OR canopy-dev-user cookie
+    const userId = resolveDevUserId(headers, this.defaultUserId)
     if (!userId) {
-      userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
+      return { success: false, error: 'Signed out' }
     }
 
-    // 4. Fall back to default user
-    if (!userId) {
-      userId = this.defaultUserId
-    }
-
-    // 5. Map test user keys to dev user IDs for test compatibility
-    const userIdMapped = this.mapTestUserKey(userId)
-
-    // 6. Find user in config
-    const user = this.users.find((u) => u.userId === userIdMapped)
+    const user = this.users.find((u) => u.userId === userId)
     if (!user) {
       return { success: false, error: `Dev user not found: ${userId}` }
     }
 
-    // 7. Return AuthenticationResult with externalGroups
     return {
       success: true,
       user: {
@@ -81,19 +65,6 @@ export class DevAuthPlugin implements AuthPlugin {
         externalGroups: user.externalGroups,
       },
     }
-  }
-
-  /**
-   * Map test-app user keys to dev user IDs for backward compatibility
-   */
-  private mapTestUserKey(key: string): CanopyUserId {
-    const testUserMap: Record<string, CanopyUserId> = {
-      admin: DEV_ADMIN_USER_ID, // admin1
-      editor: 'dev_user1_2nK8mP4xL9', // user1
-      viewer: 'dev_user2_7qR3tY6wN2', // user2
-      reviewer: 'dev_reviewer_9aB4cD2eF7', // reviewer1
-    }
-    return testUserMap[key] ?? key
   }
 
   async searchUsers(query: string, limit?: number): Promise<UserSearchResult[]> {
@@ -165,7 +136,6 @@ export class DevAuthPlugin implements AuthPlugin {
 }
 
 /**
- * Factory function for creating dev auth plugin.
  * By default, auto-sets CANOPY_BOOTSTRAP_ADMIN_IDS to the admin dev user
  * if the env var is not already set. Disable with { autoBootstrapAdmin: false }.
  */

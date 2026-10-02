@@ -1,11 +1,6 @@
 /**
  * Schema API - endpoints for managing collection structure.
  *
- * Provides CRUD operations for:
- * - Collections (create, read, update, delete)
- * - Entry types (add, update, remove)
- * - Ordering (update item order within collections)
- *
  * All mutations require Admin group membership.
  * Schema changes are branch-specific (like content edits).
  */
@@ -39,12 +34,10 @@ import type {
 } from '../config'
 import { type LogicalPath, type ContentId } from '../paths'
 
-// ============================================================================
 // Wire Types — API response shapes with schemaRef instead of resolved schema
-// ============================================================================
 
 /** Entry type in wire format: schemaRef instead of resolved schema */
-export interface WireEntryType {
+interface WireEntryType {
   readonly name: string
   readonly format: ContentFormat
   readonly schemaRef: string
@@ -54,7 +47,7 @@ export interface WireEntryType {
 }
 
 /** Collection in wire format (entry types carry schemaRef, not resolved schema) */
-export interface WireCollectionConfig {
+interface WireCollectionConfig {
   readonly name: string
   readonly path: string
   readonly label?: string
@@ -70,7 +63,7 @@ export interface WireCollectionConfig {
  * collections appear as their own flat items, linked via `parentPath`.
  * Embedding subtrees would re-serialize every collection once per ancestor.
  */
-export type WireFlatSchemaItem =
+type WireFlatSchemaItem =
   | {
       type: 'collection'
       logicalPath: LogicalPath
@@ -92,10 +85,6 @@ export type WireFlatSchemaItem =
       default?: boolean
       maxItems?: number
     }
-
-// ============================================================================
-// Wire conversion functions
-// ============================================================================
 
 type Registry = Record<string, EntrySchema>
 
@@ -199,17 +188,13 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
   })
 }
 
-// ============================================================================
-// Response Types
-// ============================================================================
-
-export interface SchemaResponse {
+interface SchemaResponse {
   flatSchema: WireFlatSchemaItem[]
   /** Entry schema definitions keyed by registry name */
   entrySchemas: Record<string, EntrySchema>
 }
 
-export interface EntryTypeWithUsage {
+interface EntryTypeWithUsage {
   name: string
   label?: string
   format: ContentFormat
@@ -220,44 +205,44 @@ export interface EntryTypeWithUsage {
   usageCount: number
 }
 
-export interface CollectionResponse {
+interface CollectionResponse {
   collection: WireCollectionConfig | null
   /** Entry types with usage counts (only present when collection exists) */
   entryTypesWithUsage?: EntryTypeWithUsage[]
 }
 
-export interface CreateCollectionResponse {
+interface CreateCollectionResponse {
   /** The logical path to the created collection (e.g., "posts" or "blog/posts") */
   collectionPath: LogicalPath
   /** The unique 12-character content ID for the collection */
   contentId: ContentId
 }
 
-export interface UpdateCollectionResponse {
+interface UpdateCollectionResponse {
   success: boolean
 }
 
-export interface DeleteCollectionResponse {
+interface DeleteCollectionResponse {
   success: boolean
 }
 
-export interface AddEntryTypeResponse {
+interface AddEntryTypeResponse {
   success: boolean
 }
 
-export interface UpdateEntryTypeResponse {
+interface UpdateEntryTypeResponse {
   success: boolean
 }
 
-export interface RemoveEntryTypeResponse {
+interface RemoveEntryTypeResponse {
   success: boolean
 }
 
-export interface UpdateOrderResponse {
+interface UpdateOrderResponse {
   success: boolean
 }
 
-export interface InvalidateSchemaCacheResponse {
+interface InvalidateSchemaCacheResponse {
   success: boolean
   message: string
 }
@@ -272,10 +257,6 @@ export type UpdateEntryTypeApiResponse = ApiResponse<UpdateEntryTypeResponse>
 export type RemoveEntryTypeApiResponse = ApiResponse<RemoveEntryTypeResponse>
 export type UpdateOrderApiResponse = ApiResponse<UpdateOrderResponse>
 export type InvalidateSchemaCacheApiResponse = ApiResponse<InvalidateSchemaCacheResponse>
-
-// ============================================================================
-// Zod Schemas for Params
-// ============================================================================
 
 const branchParamsSchema = z.object({
   branch: branchNameSchema,
@@ -305,10 +286,6 @@ const updateOrderBodySchema = z.object({
   order: z.array(z.string()),
 })
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
 /**
  * Get a SchemaOps instance for a branch
  */
@@ -333,18 +310,12 @@ async function getSchemaOps(
 }
 
 /**
- * `collectionPath` (C5, August 2026 baseline review follow-up): this used to
- * decode the catch-all param itself, because http/router.ts's matchRoute did
- * not decode catch-all segments at all - only `:param` ones. matchRoute now
- * decodes every matched param exactly once, uniformly for `:param` and
- * catch-all alike, and `collectionParamsSchema`'s `logicalPathSchema`
- * already re-validates that single decoded value for traversal before this
- * handler ever runs. Decoding again here would be a second, unauthorized
- * decode pass on an already-decoded value - exactly the "double-encoding
- * smuggles a traversal sequence" hazard this function's own re-validation
- * was written to defend against, just relocated. This is now a passthrough;
- * kept as a named function (rather than inlined at each call site) so a
- * future re-validation need has one place to add it back.
+ * `collectionPath` is already decoded exactly once by matchRoute (uniformly for `:param` and
+ * catch-all segments) and re-validated for traversal by `collectionParamsSchema`'s
+ * `logicalPathSchema` before this handler runs. Decoding it again here would be a second,
+ * unauthorized decode pass — the "double-encoding smuggles a traversal sequence" hazard this
+ * function exists to guard against. A passthrough today; kept as a named function so a future
+ * re-validation need has one place to add it back.
  */
 function decodeCollectionPath(
   collectionPath: LogicalPath,
@@ -352,13 +323,6 @@ function decodeCollectionPath(
   return { ok: true, path: collectionPath }
 }
 
-// ============================================================================
-// Handlers
-// ============================================================================
-
-/**
- * GET /:branch/schema - Get full schema tree
- */
 const getSchemaHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -377,10 +341,6 @@ const getSchemaHandler = async (
   }
 }
 
-/**
- * GET /:branch/schema/collection/...collectionPath - Get single collection details
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const getCollectionHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -458,9 +418,6 @@ const getCollectionHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/collections - Create collection
- */
 const createCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -492,10 +449,6 @@ const createCollectionHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/collection/...collectionPath - Update collection
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const updateCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -533,10 +486,6 @@ const updateCollectionHandler = async (
   }
 }
 
-/**
- * DELETE /:branch/schema/collection/...collectionPath - Delete collection
- * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
- */
 const deleteCollectionHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -573,10 +522,6 @@ const deleteCollectionHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/entry-types/...collectionPath - Add entry type
- * Note: Restructured URL with catch-all at end to support paths with slashes
- */
 const addEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -614,10 +559,6 @@ const addEntryTypeHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
- * Note: Restructured URL with entry type name before catch-all path
- */
 const updateEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -636,13 +577,10 @@ const updateEntryTypeHandler = async (
   }
   const collectionPath = decodedPath.path
 
-  // Note: the breaking-change usage guard (blocking format/schema changes
-  // while entries still use this type) used to live here, checked BEFORE
-  // calling the store. It moved into SchemaOps.updateEntryType itself so the
-  // usage count is read under the same schema lock that guards the write —
-  // otherwise a concurrent write could land a new entry between this
-  // handler's count and its call to the store (TOCTOU). See
-  // schema-store.ts's updateEntryTypeInner.
+  // The breaking-change usage guard (blocking format/schema changes while entries still use this
+  // type) lives in SchemaOps.updateEntryType, not here: the usage count must be read under the
+  // same schema lock that guards the write, or a concurrent write could land a new entry between
+  // this handler's count and the store call (TOCTOU). See schema-store.ts's updateEntryTypeInner.
   try {
     await storeResult.store.updateEntryType(
       collectionPath,
@@ -666,10 +604,6 @@ const updateEntryTypeHandler = async (
   }
 }
 
-/**
- * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
- * Note: Restructured URL with entry type name before catch-all path
- */
 const removeEntryTypeHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -706,10 +640,6 @@ const removeEntryTypeHandler = async (
   }
 }
 
-/**
- * PATCH /:branch/schema/order/...collectionPath - Update item order
- * Note: Restructured URL with catch-all at end to support paths with slashes
- */
 const updateOrderHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -747,9 +677,6 @@ const updateOrderHandler = async (
   }
 }
 
-/**
- * POST /:branch/schema/invalidate-cache - Invalidate schema cache (for debugging/manual refresh)
- */
 const invalidateSchemaCacheHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -777,12 +704,9 @@ const invalidateSchemaCacheHandler = async (
   }
 }
 
-// ============================================================================
-// Route Definitions
-// ============================================================================
-
 /**
  * GET /:branch/schema - Get full schema
+ * @internal Exported for tests.
  */
 export const getSchema = defineEndpoint({
   namespace: 'schema',
@@ -800,6 +724,7 @@ export const getSchema = defineEndpoint({
 /**
  * GET /:branch/schema/collection/...collectionPath - Get single collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const getCollection = defineEndpoint({
   namespace: 'schema',
@@ -816,6 +741,7 @@ export const getCollection = defineEndpoint({
 
 /**
  * POST /:branch/schema/collections - Create collection
+ * @internal Exported for tests.
  */
 export const createCollection = defineEndpoint({
   namespace: 'schema',
@@ -839,6 +765,7 @@ export const createCollection = defineEndpoint({
 /**
  * PATCH /:branch/schema/collection/...collectionPath - Update collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const updateCollection = defineEndpoint({
   namespace: 'schema',
@@ -858,6 +785,7 @@ export const updateCollection = defineEndpoint({
 /**
  * DELETE /:branch/schema/collection/...collectionPath - Delete collection
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
+ * @internal Exported for tests.
  */
 export const deleteCollection = defineEndpoint({
   namespace: 'schema',
@@ -875,6 +803,7 @@ export const deleteCollection = defineEndpoint({
 /**
  * POST /:branch/schema/entry-types/...collectionPath - Add entry type
  * Note: Restructured URL with catch-all at end to support paths with slashes
+ * @internal Exported for tests.
  */
 export const addEntryType = defineEndpoint({
   namespace: 'schema',
@@ -894,6 +823,7 @@ export const addEntryType = defineEndpoint({
 /**
  * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
  * Note: Restructured URL with entry type name before catch-all path
+ * @internal Exported for tests.
  */
 export const updateEntryType = defineEndpoint({
   namespace: 'schema',
@@ -913,6 +843,7 @@ export const updateEntryType = defineEndpoint({
 /**
  * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
  * Note: Restructured URL with entry type name before catch-all path
+ * @internal Exported for tests.
  */
 export const removeEntryType = defineEndpoint({
   namespace: 'schema',
@@ -930,6 +861,7 @@ export const removeEntryType = defineEndpoint({
 /**
  * PATCH /:branch/schema/order/...collectionPath - Update item order
  * Note: Restructured URL with catch-all at end to support paths with slashes
+ * @internal Exported for tests.
  */
 export const updateOrder = defineEndpoint({
   namespace: 'schema',
@@ -949,7 +881,7 @@ export const updateOrder = defineEndpoint({
 /**
  * POST /:branch/schema/invalidate-cache - Invalidate schema cache
  */
-export const invalidateSchemaCache = defineEndpoint({
+const invalidateSchemaCache = defineEndpoint({
   namespace: 'schema',
   name: 'invalidateSchemaCache',
   method: 'POST',
@@ -961,10 +893,6 @@ export const invalidateSchemaCache = defineEndpoint({
   guards: ['admin', 'branch'] as const,
   handler: invalidateSchemaCacheHandler,
 })
-
-// ============================================================================
-// Exports
-// ============================================================================
 
 /** Body type for updateOrder endpoint */
 export type UpdateOrderBody = z.infer<typeof updateOrderBodySchema>

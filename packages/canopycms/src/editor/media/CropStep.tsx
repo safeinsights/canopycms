@@ -131,5 +131,3 @@ const CropStepBody: React.FC<CropStepBodyProps> = ({
     </Stack>
   )
 }
-
-export default CropStep

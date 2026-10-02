@@ -1,6 +1,6 @@
 'use client'
 
-export type { CanopyClientConfig } from './config'
+export type { CanopyClientConfig, EditorSignInProps } from './config'
 export type { CustomFieldRenderers, CustomFieldRenderProps } from './editor/FormRenderer'
 export * from './editor/EditorPanes'
 export * from './editor/EntryNavigator'

@@ -167,15 +167,30 @@ describe('Next.js adapter', () => {
         json: async () => undefined,
       } as any
 
-      const response: any = await handler(mockNextRequest, { params: { canopycms: ['branches'] } })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const response: any = await handler(mockNextRequest, {
+          params: { canopycms: ['branches'] },
+        })
 
-      expect(response.status).toBe(500)
-      expect(response.body).toHaveProperty('ok', false)
-      const error = response.body.error ?? ''
-      expect(error).not.toContain('ghp_secret789')
-      expect(error).not.toContain('/mnt/efs')
-      expect(error).toContain('***@github.com')
-      expect(error).toContain('<path>')
+        expect(response.status).toBe(500)
+        expect(response.body).toHaveProperty('ok', false)
+        const error = response.body.error ?? ''
+        expect(error).not.toContain('ghp_secret789')
+        expect(error).not.toContain('/mnt/efs')
+        expect(error).toContain('***@github.com')
+        expect(error).toContain('<path>')
+
+        // The server log is redacted too, not just the response body: it is the
+        // copy that reaches a log aggregator.
+        expect(errorSpy).toHaveBeenCalledTimes(1)
+        const logged = errorSpy.mock.calls[0].map(String).join(' ')
+        expect(logged).toContain('Unhandled error in Next.js catch-all handler')
+        expect(logged).toContain('***@github.com')
+        expect(logged).not.toContain('ghp_secret789')
+      } finally {
+        errorSpy.mockRestore()
+      }
     })
   })
 })

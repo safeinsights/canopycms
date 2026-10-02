@@ -23,7 +23,7 @@ export interface MediaLibraryProps {
 /**
  * One component, two presentations, sharing the same grid/upload/filter/
  * pagination/delete core (MediaLibraryBody) - see
- * .claude/future-tasks/assets-media-system.md "MediaManager design".
+ * .claude/future-tasks/resolved/assets-media-system.md "MediaManager design".
  */
 export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mode, onSelect }) => {
   if (mode === 'picker') {
@@ -63,5 +63,3 @@ export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mod
     </Drawer>
   )
 }
-
-export default MediaLibrary

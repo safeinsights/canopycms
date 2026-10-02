@@ -34,27 +34,77 @@ const canopyContextPromise = createNextCanopyContext({
 export const getHandler = async () => (await canopyContextPromise).handler
 ```
 
-The secret key is read from the environment by default; see
-[Configuration Options](#configuration-options) below to pass it explicitly.
 `apps/example1/app/lib/canopy.ts` is the full reference wiring, including the
 fail-closed dev/Clerk plugin selection.
+
+### Editor sign-in
+
+`useClerkAuthConfig()` (from `canopycms-auth-clerk/client`) supplies the editor's account
+button (Clerk's `UserButton`) and its sign-in screen (`ClerkSignIn`, wrapping Clerk's
+`<SignIn>`). Signed-out users get Clerk's sign-in in place of the editor; when a session
+lapses mid-edit it reappears over the open editor, and unsaved edits survive signing back
+in as the same user. It all runs in the browser on the publishable key, so
+`clerkMiddleware` is optional. See the root README's
+[Protect editor routes](../../README.md#5-protect-editor-routes) for when to adopt it: it
+requires `CLERK_SECRET_KEY` in the CMS runtime.
+
+To customize Clerk's `<SignIn>` (appearance, sign-up URL), override the component at
+module scope; `routing` and the return URL stay fixed so sign-in returns to the editor:
+
+```tsx
+import { ClerkSignIn, useClerkAuthConfig } from 'canopycms-auth-clerk/client'
+import type { EditorSignInProps } from 'canopycms/client'
+
+const SignIn = (p: EditorSignInProps) => <ClerkSignIn {...p} signInProps={{ appearance }} />
+// in the edit page:
+const clerkAuth = useClerkAuthConfig()
+config.client({ editor: { ...clerkAuth.editor, SignInComponent: SignIn } })
+```
+
+### Clerk components on your own pages
+
+`@clerk/nextjs`'s provider makes every `setActive` (sign-in, account or org switch) first wait on
+a Server Action. Behind CloudFront OAC (`CanopyCmsDistribution`), that action's POST is rejected,
+so the wait never ends and sign-in hangs. `useSkipClerkSetActiveAction()` makes the wait resolve at
+once. Clerk's `router.refresh()`, which runs next, still clears Next's router cache, so the hook is
+harmless off AWS too.
+
+The editor already holds it, so this is only for a CMS build that renders `<SignIn>`, `UserButton`
+or `OrganizationSwitcher` outside the editor. It is for the App Router: the Pages Router provider's
+hook clears that router's data caches and runs no Server Action, so leave it alone. Render it once
+inside `<ClerkProvider>`, which guarantees its effect runs after the provider installs the hook:
+
+```tsx
+'use client'
+import { useSkipClerkSetActiveAction } from 'canopycms-auth-clerk/client'
+
+export function SkipClerkSetActiveAction() {
+  useSkipClerkSetActiveAction()
+  return null
+}
+// in the layout: <ClerkProvider><SkipClerkSetActiveAction />{children}</ClerkProvider>
+```
 
 ### Configuration Options
 
 ```typescript
 interface ClerkAuthConfig {
-  /**
-   * Clerk secret key (defaults to process.env.CLERK_SECRET_KEY)
-   */
+  /** Clerk secret key (defaults to process.env.CLERK_SECRET_KEY). */
   secretKey?: string
-
-  /**
-   * Use organizations as groups
-   * @default true
-   */
+  /** Public PEM for networkless JWT verification (defaults to process.env.CLERK_JWT_KEY). */
+  jwtKey?: string
+  /** Allowed token origins (defaults to process.env.CLERK_AUTHORIZED_PARTIES). */
+  authorizedParties?: string[]
+  /** Use organizations as groups. @default true */
   useOrganizationsAsGroups?: boolean
 }
 ```
+
+Under `createNextCanopyContext` in prod and dev mode, requests are verified by
+`verifyTokenOnly()` from `jwtKey` alone, with no network. `secretKey` is read only where
+Clerk's API is called: refreshing the user/group cache (the worker, in prod) and
+`authenticate()` when the plugin is used unwrapped. A deployed CMS runtime therefore needs
+no secret.
 
 ### Groups-Only Permission Model
 
