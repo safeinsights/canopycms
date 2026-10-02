@@ -15,12 +15,12 @@ const replaced = new Map<string, unknown>()
 export function useSkipClerkSetActiveAction(): void {
   useEffect(() => {
     const slots = window as unknown as Record<string, unknown>
-    if (holders++ === 0) {
-      for (const name of HOOK_NAMES) {
-        if (typeof slots[name] === 'function') {
-          replaced.set(name, slots[name])
-          slots[name] = resolveNow
-        }
+    holders++
+    for (const name of HOOK_NAMES) {
+      const current = slots[name]
+      if (typeof current === 'function' && current !== resolveNow) {
+        replaced.set(name, current)
+        slots[name] = resolveNow
       }
     }
     return () => {

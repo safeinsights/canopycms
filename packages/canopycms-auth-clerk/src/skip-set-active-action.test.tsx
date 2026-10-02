@@ -126,6 +126,26 @@ describe('useSkipClerkSetActiveAction', () => {
     expect(slots[INTERNAL]).toBe(neverSettles)
   })
 
+  it('still takes over when an earlier holder mounted before the provider installed its hook', async () => {
+    const tree = (withProvider: boolean) => (
+      <>
+        <Holder />
+        {withProvider && (
+          <FakeProvider>
+            <Holder />
+          </FakeProvider>
+        )}
+      </>
+    )
+    const { rerender, unmount } = render(tree(false))
+    await act(async () => {})
+    rerender(tree(true))
+
+    expect(await settles(INTERNAL)).toBe(true)
+    unmount()
+    expect(slots[INTERNAL]).toBe(neverSettles)
+  })
+
   it('does not clobber a hook installed while held, when it releases', async () => {
     const newer = (): Promise<void> => new Promise<void>(() => undefined)
     const { unmount } = render(
