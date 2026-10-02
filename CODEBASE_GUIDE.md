@@ -205,6 +205,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 - `jwt-verifier.ts` — `createClerkJwtVerifier`, networkless JWT-only verifier, deprecated in favour of `verifyTokenOnly()`
 - `cache-writer.ts` — `refreshClerkCache` populates the auth cache from the Clerk API
 - `ClerkSignIn.tsx` — `ClerkSignIn`, the editor's sign-in screen, re-exported from `canopycms-auth-clerk/client`
+- `skip-set-active-action.ts` — `useSkipClerkSetActiveAction`, skips `@clerk/nextjs`'s before-`setActive` Server Action while mounted; re-exported from `canopycms-auth-clerk/client`
 - `client.ts` — `useClerkAuthConfig` wires Clerk's `UserButton`, `ClerkSignIn` and sign-out into the editor
 - `index.ts` — public exports
 

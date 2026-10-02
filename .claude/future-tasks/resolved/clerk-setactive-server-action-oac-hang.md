@@ -1,5 +1,29 @@
 # Clerk sign-in hangs behind CloudFront OAC: `setActive` awaits a Server Action that 403s
 
+**RESOLVED 2026-10-01, branch `fix/clerk-setactive-oac-hang`: option 1.** The fix is still **not
+observed live**. That check is item 3 of
+[clerk-signed-out-followups.md](../clerk-signed-out-followups.md).
+
+- **What shipped.** `useSkipClerkSetActiveAction()` (`canopycms-auth-clerk/client`) replaces both
+  hook names with an immediate resolve, while any holder is mounted. `useClerkAuthConfig()` and
+  `ClerkSignIn` hold it, so the editor needs no adopter change. It is exported for Clerk components
+  on an adopter's own CMS-build pages.
+- **Why skipping is safe.** Clerk's after-hook is `router.refresh()`, a GET that OAC passes, and
+  Next's refresh reducer invalidates the whole router cache, exactly as the action does.
+- **Where Clerk drifts, CI fails.** A contract test renders the real installed `@clerk/nextjs`
+  provider with a rejecting action. It reproduces the hang, then shows the fix resolving it.
+- **What research added.**
+  - `@clerk/nextjs` 6.x has the same bug under `window.__unstable__onBeforeSetActive`.
+  - 7.9.10 (latest) is byte-identical to 7.9.8.
+  - clerk-js 6.37.0 still awaits the hook.
+- **Accepted residual (review LOW).** If the provider's layout effect re-runs while held, the hook
+  comes back until a holder next mounts. A passive effect does not re-run alongside it, as when a
+  Suspense boundary above the provider re-suspends and is revealed. The editor has no such
+  suspender. A `window` accessor trap would close it, at the cost of more magic than the risk
+  warrants.
+- **Still open:** adopters' own Server Actions on the CMS build, and proxied-store FormData. See
+  [oac-unhashed-body-requests.md](../oac-unhashed-body-requests.md), which holds option 3.
+
 New 2026-10-01. Reported by the website adopter's W5-3 session as SUSPECTED; every link below
 was then read from source in this repo's session. **Not yet observed live**: it needs a real Clerk
 instance behind the OAC-fronted Lambda to confirm.
@@ -32,10 +56,11 @@ flips. The user completes Clerk's form and the sign-in never finishes.
 - **Hit:** any in-app `setActive`: the embedded `<SignIn>` inside `ClerkSignIn`
   (`packages/canopycms-auth-clerk/src/ClerkSignIn.tsx`), plus account and org switching from
   `UserButton`.
-- **Not hit:** sign-out (intent `sign-out` resolves immediately on Next 15/16), and the
-  gate's mid-session path when Clerk is still signed in (`getToken` only).
-- **Unsettled:** a hosted Account Portal sign-in. Whether clerk-js's load-on-return path calls
-  `setActive` has not been read.
+- **Not hit:** sign-out on Next 15/16 (intent `sign-out` resolves immediately; on Next 13/14 the
+  7.x provider runs the action too), and the gate's mid-session path when Clerk is still signed in (`getToken`
+  only).
+- **Not hit either: a hosted Account Portal sign-in.** On the return trip, clerk-js's
+  `updateClient` sets the first session directly, without `setActive`.
 - **Not a middleware question.** The POST is rejected at the Function URL before Next.js runs,
   so adopting `clerkMiddleware` (and putting `CLERK_SECRET_KEY` on the Lambda) would not help.
   The no-secret decision stands either way.
@@ -49,11 +74,13 @@ flips. The user completes Clerk's form and the sign-in never finishes.
    to Clerk versions. And `ClerkProvider` sets the hook in a layout effect, which runs after a
    child's layout effect, so ordering needs care.
 2. **Hosted sign-in.** `ClerkSignIn` redirects to Clerk's Account Portal instead of embedding
-   `<SignIn>`. Only works if the return path avoids `setActive`; unread.
+   `<SignIn>`. The return path does avoid `setActive`, but a full-page redirect loses unsaved
+   edits on a mid-session re-sign-in, and `UserButton` switching would still hang.
 3. **A payload-hash Lambda@Edge in `canopycms-cdk`.** An origin-request function with body
    access computes `x-amz-content-sha256` before OAC signs. It fixes every body-carrying request
    at once, including adopters' own Server Actions on the CMS build and `FormData` bodies, which
-   cannot carry the header today (no current CanopyCMS endpoint sends one). Costs: Lambda@Edge's latency,
+   cannot carry the header today (`uploadProxied` sends one, but only a proxied store routes it
+   through OAC; S3 uploads never reach the Function URL). Costs: Lambda@Edge's latency,
    regions and price, plus deploy complexity. A CloudFront Function cannot do it, because
    functions cannot read bodies.
 4. **A provider without Server Actions.** The website session's lead: mount `@clerk/react`'s

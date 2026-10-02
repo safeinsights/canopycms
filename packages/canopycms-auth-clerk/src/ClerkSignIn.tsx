@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { SignIn, useAuth } from '@clerk/nextjs'
 import type { EditorSignInProps } from 'canopycms/client'
+import { useSkipClerkSetActiveAction } from './skip-set-active-action'
 
 type ClerkSignInComponentProps = ComponentProps<typeof SignIn>
 
@@ -23,6 +24,7 @@ export interface ClerkSignInProps extends EditorSignInProps {
  * (6.36.0, CDN-loaded) emits `token:update` and its cookie service writes the cookie from that.
  */
 export function ClerkSignIn({ onSignedIn, sessionRejected, signInProps }: ClerkSignInProps) {
+  useSkipClerkSetActiveAction()
   const { isLoaded, isSignedIn, getToken, signOut } = useAuth()
   const previousSignedIn = useRef<boolean | undefined>(undefined)
   // Return here after sign-in/out; Clerk's default "/" leaves the editor. Client-side only.

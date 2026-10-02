@@ -20,15 +20,15 @@ server-side Clerk calls (`auth()`, `currentUser()`) that would need the middlewa
 
 ## 3. First live run against a real Clerk instance
 
-Do [clerk-setactive-server-action-oac-hang.md](clerk-setactive-server-action-oac-hang.md) first:
-on the OAC-fronted Lambda, in-app sign-in is expected to hang until it is fixed.
-
 Everything Clerk-side was verified against `@clerk/clerk-js@6.36.0`'s shipped source and a
 mocked `@clerk/nextjs`, never against a live instance. The first deploy of the no-middleware
 shape (an adopter's, or deploy-test) should confirm, in a clean browser profile:
 
 1. `/edit` shows Clerk's sign-in, not an error, and signing in mounts the editor without
-   leaving `/edit`.
+   leaving `/edit`. DevTools shows **no** POST to `/edit` with a `Next-Action` header. The
+   editor skips Clerk's Server Action, which OAC would 403
+   ([fix](resolved/clerk-setactive-server-action-oac-hang.md)), so seeing one means the fix
+   did not take.
 2. After idling the tab for 5+ minutes, returning and saving immediately succeeds. Watch for
    a `POST …/tokens` to Clerk's Frontend API on focus.
 3. If that save 401s instead, the sign-in overlay appears over the editor, the edit

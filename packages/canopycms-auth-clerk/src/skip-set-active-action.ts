@@ -1,0 +1,34 @@
+'use client'
+
+import { useEffect } from 'react'
+
+const HOOK_NAMES = ['__internal_onBeforeSetActive', '__unstable__onBeforeSetActive'] as const
+const resolveNow = (): Promise<void> => Promise.resolve()
+let holders = 0
+const replaced = new Map<string, unknown>()
+
+/**
+ * Makes `@clerk/nextjs`'s before-`setActive` hook resolve at once instead of running a Server
+ * Action, which 403s behind CloudFront OAC and leaves sign-in hanging. App Router only: call it
+ * in a component inside `<ClerkProvider>`. The editor already does; see the README for your pages.
+ */
+export function useSkipClerkSetActiveAction(): void {
+  useEffect(() => {
+    const slots = window as unknown as Record<string, unknown>
+    holders++
+    for (const name of HOOK_NAMES) {
+      const current = slots[name]
+      if (typeof current === 'function' && current !== resolveNow) {
+        replaced.set(name, current)
+        slots[name] = resolveNow
+      }
+    }
+    return () => {
+      if (--holders > 0) return
+      for (const [name, original] of replaced) {
+        if (slots[name] === resolveNow) slots[name] = original
+      }
+      replaced.clear()
+    }
+  }, [])
+}
