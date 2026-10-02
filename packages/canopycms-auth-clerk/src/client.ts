@@ -4,8 +4,10 @@ import { useClerk } from '@clerk/nextjs'
 import { UserButton } from '@clerk/nextjs'
 import type { CanopyClientConfig } from 'canopycms/client'
 import { ClerkSignIn } from './ClerkSignIn'
+import { useSkipClerkSetActiveAction } from './skip-set-active-action'
 
 export { ClerkSignIn, type ClerkSignInProps } from './ClerkSignIn'
+export { useSkipClerkSetActiveAction } from './skip-set-active-action'
 
 /**
  * Hook that provides Clerk-specific auth handlers and components for CanopyCMS editor.
@@ -27,6 +29,7 @@ export { ClerkSignIn, type ClerkSignInProps } from './ClerkSignIn'
  */
 export function useClerkAuthConfig(): Pick<CanopyClientConfig, 'editor'> {
   const { signOut } = useClerk()
+  useSkipClerkSetActiveAction()
 
   return {
     editor: {
