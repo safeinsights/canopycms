@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config'
-import { quietTestOutput } from '../../vitest.shared'
+import { ownedTmpdirSetup, quietTestOutput } from '../../vitest.shared'
 
 export default defineConfig({
   test: {
@@ -37,12 +37,12 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
 
-    // Owns the directory every `App` in this suite synthesizes into, and
-    // deletes it when the run ends. Without it each synth strands a cloud
-    // assembly in os.tmpdir(): CDK cleans those up from a process exit handler,
-    // which a vitest worker never fires. 13 GB across 26,537 orphaned
-    // directories, before this was caught. See test-support/test-synth.ts.
-    globalSetup: ['./test-support/test-synth.ts'],
+    // ownedTmpdirSetup owns os.tmpdir() for the run, as in every package, and
+    // must come first: test-synth.ts then creates the directory every `App`
+    // synthesizes into inside it. An App with no `outdir` strands a cloud
+    // assembly per synth, since CDK removes those from a process exit handler a
+    // vitest worker never fires. See test-support/test-synth.ts.
+    globalSetup: [ownedTmpdirSetup, './test-support/test-synth.ts'],
 
     // The behavioral half of the same rule: fails any test file that leaves a
     // cloud assembly in os.tmpdir(), whatever route it took to construct the

@@ -1,7 +1,32 @@
 # [P2] `canopycms` test files `mkdtemp` without cleanup, leaking temp directories
 
+## Resolution (2026-10-02)
+
+Measured first, as this file asked: one `packages/canopycms` run stranded **373
+directories** across 28 prefixes (not the 10 files screened), and the machine's
+temp directory held ~49,500 `canopy*` entries, enough to slow other tools that
+scan it.
+
+Fixed by ownership rather than per-file cleanup. `vitest.tmpdir.ts` (repo root)
+is a `globalSetup` every package lists via `ownedTmpdirSetup`: it points
+TMPDIR/TMP/TEMP at a per-run `canopy-test-<pid>-*` root before workers spawn and
+deletes the root in teardown, so a test that never removes its directory strands
+nothing, and neither does a subprocess it starts. Interrupted runs leave one
+root, swept by the next run on the pid-liveness rule extracted from the CDK
+suite (which now delegates to it rather than keeping a copy).
+`src/test-utils/owned-tmpdir.test.ts` asserts `os.tmpdir()` is such a root and
+was mutation-checked by removing the globalSetup.
+
+Two things found on the way: vitest runs globalSetup once per project, so
+`setup` must be idempotent per process or roots nest; and nesting pushed tsx's
+unix-socket path past macOS's 104-byte limit, which is why the prefix is short.
+
+Measured after: a full `CI=1 pnpm test` adds zero `canopy*`/`cdk.out*` entries.
+
+The original write-up follows.
+
 Found 2026-09-09 while fixing the CDK suite's cloud-assembly leak
-([cdk-test-synth-leaks-tmpdir.md](resolved/cdk-test-synth-leaks-tmpdir.md)).
+([cdk-test-synth-leaks-tmpdir.md](cdk-test-synth-leaks-tmpdir.md)).
 That fix was scoped to `packages/canopycms-cdk`; this is the same defect shape
 in `packages/canopycms`, which has a far larger suite.
 

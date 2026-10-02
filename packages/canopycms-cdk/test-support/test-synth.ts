@@ -3,9 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { App } from 'aws-cdk-lib'
 import type { AppProps } from 'aws-cdk-lib'
-// Test-only import across the package boundary, as cms-deploy.test.ts already
-// does. `utils/error.ts` is dependency-free.
-import { isNodeError } from '../../canopycms/src/utils/error'
+import { sweepDeadRoots as sweepDeadRootsWithPrefix } from '../../../vitest.tmpdir'
 
 /**
  * The suite's synth-output ownership, in one file.
@@ -26,11 +24,6 @@ import { isNodeError } from '../../canopycms/src/utils/error'
  *    a test in test-synth.test.ts. Every App gets its own subdirectory of that
  *    root: several tests build more than one App/Stack and a few compare two
  *    synths, which one shared outdir would cross-contaminate.
- *
- * Bound on failure: a run that never reaches teardown (Ctrl-C, SIGKILL, a crash)
- * leaves one root, not one per synth, and `setup` sweeps those on the next run.
- * Interruption is the common case - vitest's SIGINT handler exits without
- * running globalSetup teardown.
  */
 
 /**
@@ -94,41 +87,11 @@ export function newTestApp(props: Omit<AppProps, 'outdir'> = {}): App {
 }
 
 /**
- * Removes roots belonging to runs that are no longer alive.
- *
- * Sweeping has to tell a dead run's root from a CONCURRENT live one's, and
- * getting that wrong deletes a running suite's assemblies out from under it.
- * That hazard is why the root name carries its owner's pid: liveness is asked
- * of the OS rather than guessed from mtime, which cannot distinguish a crashed
- * run from a live one that is simply slow between synths.
- *
- * Only ESRCH ("no such process") licenses a delete. Anything else -- EPERM (the
- * pid is alive and someone else's), a range error from an absurd pid, a
- * recycled pid reading as alive -- leaves the directory alone. Every ambiguous
- * case errs toward leaking one directory rather than breaking a live run.
- *
- * The one shape this cannot get right is a separate PID namespace sharing the
- * tmpdir, e.g. a container bind-mounting /tmp: a live containerized run's pid
- * can read as ESRCH on the host. Not reachable from this repo's CI, which runs
- * the suite directly on the runner, and the blast radius is test output.
+ * Removes roots belonging to runs that are no longer alive; the liveness rule
+ * is `sweepDeadRoots` in vitest.tmpdir.ts.
  */
 export function sweepDeadRoots(): void {
-  for (const entry of readdirSync(os.tmpdir())) {
-    if (!entry.startsWith(SYNTH_ROOT_PREFIX)) continue
-    const pid = Number(entry.slice(SYNTH_ROOT_PREFIX.length).split('-')[0])
-    if (!Number.isInteger(pid) || pid <= 0) continue
-    try {
-      process.kill(pid, 0)
-      continue
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ESRCH') continue
-    }
-    try {
-      rmSync(path.join(os.tmpdir(), entry), { recursive: true, force: true })
-    } catch {
-      // A root we cannot remove is not worth failing an otherwise good run over.
-    }
-  }
+  sweepDeadRootsWithPrefix(SYNTH_ROOT_PREFIX)
 }
 
 /** vitest globalSetup. */
