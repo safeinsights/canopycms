@@ -15,6 +15,7 @@ import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 // Re-exported so existing imports of `listAllEntries` from this module keep
 // working -- the implementation lives in useEntriesData.ts alongside the
 // other fetch/key/type pieces useEntryManager shares with the SWR layer.
+/** @internal Exported for tests. */
 export { listAllEntries } from './useEntriesData'
 
 /**
@@ -91,7 +92,7 @@ export interface UseEntryManagerReturn {
    * Slugs already taken in `createModalCollection`, derived from the
    * already-loaded `entries` list. Lets the create modal reject an obvious
    * collision client-side with a clear message, before ever hitting the
-   * server's authoritative 409 guard (August 2026 baseline review).
+   * server's authoritative 409 guard.
    */
   createModalExistingSlugs: Set<string>
   handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
@@ -120,32 +121,6 @@ const EMPTY_SCHEMAS: string[] = []
 
 /**
  * Custom hook for managing editor entries (CRUD operations).
- *
- * Handles:
- * - Entry selection and navigation
- * - Loading and saving entry data
- * - Refreshing entry list from API
- * - Creating new entries
- * - URL synchronization for selected entry
- *
- * @example
- * ```tsx
- * const {
- *   selectedPath,
- *   entries,
- *   currentEntry,
- *   refreshEntries,
- *   handleCreateEntry,
- *   loadEntry,
- *   saveEntry
- * } = useEntryManager({
- *   initialEntries: entries,
- *   branchName,
- *   collections,
- *   resolvePreviewSrc,
- *   setBusy
- * })
- * ```
  */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const apiClient = useApiClient()
@@ -206,45 +181,33 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const versionKey = (branch: string, contentId: string) => `${branch}:${contentId}`
   // PER-BRANCH monotonic tokens guarding every commit of the fetched
   // `BranchView` record above, shared by BOTH the automatic SWR-backed load
-  // (below) and explicit `refreshEntries()` calls. Two maps, keyed by branch:
+  // (below) and explicit `refreshEntries()` calls. `claimed` bumps the
+  // moment an attempt's request starts (baked into that attempt's result
+  // tag); `committed` is the tag seq currently reflected in state, per
+  // branch.
   //
-  // - `claimed`: bumped the moment an attempt's request starts; the value is
-  //   baked into that attempt's result tag.
-  // - `committed`: the tag seq currently REFLECTED IN STATE for that branch.
+  // Commit rule: `tag.seq >= committed(tag.branch)` -- never move a branch's
+  // view backwards -- NOT `tag.seq === claimed(tag.branch)` ("newest attempt
+  // wins"). Two reasons:
   //
-  // The commit rule is `tag.seq >= committed(tag.branch)` -- "never move a
-  // branch's view backwards" -- NOT `tag.seq === claimed(tag.branch)`
-  // ("newest attempt wins"). The difference matters twice:
+  // 1. SWR replays a branch's cached tagged result on a switch back, and
+  //    that tag carries the seq claimed when it was originally fetched --
+  //    older than the newest claim by then. A newest-attempt rule would fail
+  //    that valid cache hit and never commit it, and when the switch back
+  //    also lands inside SWR's dedupingInterval no revalidation follows
+  //    either, leaving the previous branch's entries on screen indefinitely.
+  //    The committed-seq rule always accepts a replayed tag.
+  // 2. On remount these refs reset to empty maps while SWR's own cache
+  //    (owned by the `SWRProvider` above this component) survives, so a
+  //    replayed tag can carry a seq higher than anything this instance ever
+  //    claimed, yet still be the newest data known for that branch.
   //
-  // 1. SWR replays a branch's CACHED tagged result when the user switches
-  //    back to it, and the cached tag necessarily carries the seq claimed
-  //    when that data was originally fetched. Under a newest-attempt rule
-  //    (or a single GLOBAL counter, as originally shipped), any newer claim
-  //    -- another branch's load with a global counter, or the switch-back's
-  //    own revalidation with a per-branch one -- made the replayed,
-  //    perfectly valid cache hit fail the check and never commit; when the
-  //    switch back also landed inside SWR's dedupingInterval, no
-  //    revalidation followed either, so the editor kept showing the
-  //    PREVIOUS branch's entries under the new branch indefinitely. A
-  //    replayed tag always passes the committed-seq rule (it was committed
-  //    before, or is newer than what was).
-  // 2. On remount these refs reset to empty maps while SWR's cache (owned by
-  //    the provider above this component) survives, so a replayed tag can
-  //    carry a seq higher than anything this instance ever claimed -- still
-  //    the newest data known for that branch, and still committable. Note the
-  //    cache now belongs to `SWRProvider`'s own `provider` Map rather than
-  //    SWR's module global, so "survives" means across remounts BELOW
-  //    `CanopyEditor`; remounting `CanopyEditor` itself starts a fresh cache,
-  //    which is the same empty-cache path as a first load.
-  //
-  // What the committed-seq rule gives up: when two same-branch attempts race
-  // and the OLDER response arrives second while the newer is still in
-  // flight, the older commits transiently and the newer overwrites it on
-  // settle (a sub-second flash of slightly-stale data, converging to the
-  // newest). A response older than what's already displayed is still
-  // rejected outright. Cross-branch bleed is prevented separately: every
-  // commit site checks the tag's branch against options.branchName at
-  // settle time.
+  // Trade-off: when two same-branch attempts race and the older response
+  // settles second, it commits transiently before the newer overwrites it on
+  // settle. An older response than what's already displayed is still
+  // rejected outright; every commit site also checks the tag's branch
+  // against options.branchName at settle time to keep cross-branch bleed
+  // out.
   const refreshSeqRef = useRef<{ claimed: Map<string, number>; committed: Map<string, number> }>({
     claimed: new Map(),
     committed: new Map(),
@@ -430,9 +393,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return fetched.entries
   }
 
-  /**
-   * Open the create entry modal for the specified collection
-   */
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
     if (!col || col.type === 'entry') {
@@ -444,9 +404,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalOpen(true)
   }
 
-  /**
-   * Handle entry creation from the modal
-   */
   const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
     if (!createModalCollection) return
 
@@ -460,9 +417,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       // expectedVersion: null is the create-intent signal the server
       // enforces authoritatively (see content-store.ts's write() OCC block
       // and api/content.ts's writeContentHandler) -- "this slug must not
-      // already exist yet". Without it a create is indistinguishable from a
-      // blind update, which used to let a same-slug create silently
-      // overwrite existing content (August 2026 baseline review).
+      // already exist yet". The client always sends create intent here,
+      // never a blind update, so a same-slug create cannot silently
+      // overwrite existing content.
       const payload = isDataOnlyFormat(format)
         ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
         : { format, data: {}, body: '', expectedVersion: null }
@@ -512,9 +469,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
   }
 
-  /**
-   * Close the create entry modal
-   */
   const closeCreateModal = () => {
     setCreateModalOpen(false)
     setCreateModalCollection(null)
@@ -522,9 +476,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalCreating(false)
   }
 
-  /**
-   * Rename an entry's slug
-   */
   const renameEntry = async (path: string, newSlug: string): Promise<void> => {
     options.setBusy(true)
     try {
@@ -611,7 +562,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   })
 
   // Commit the current branch's tagged data -- both fresh settles AND SWR
-  // cache replays on a switch back to a previously visited branch (the
+  // cache replays on a switch back to an earlier-visited branch (the
   // effect re-runs on options.branchName so the replayed tag, whose object
   // identity didn't change, still gets (re)committed). The seq comparison is
   // the per-branch committed-seq rule -- see refreshSeqRef's doc comment for

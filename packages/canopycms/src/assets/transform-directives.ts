@@ -4,7 +4,7 @@
  * NO imports (not even other files in this directory) so it can be imported
  * from client bundles (via `assetUrl`/`assetSrcSet` in asset-url.ts, exported
  * off the package's main entry) as well as from the server-only transform
- * engine (transform.ts) and the future prod transform Lambda (PR 7), without
+ * engine (transform.ts) and the prod transform Lambda, without
  * ever pulling in node:crypto, sharp, or any other server-only dependency.
  *
  * `{directives}` is either the literal identity token (`orig`) or a
@@ -36,12 +36,12 @@ export interface CropRect {
 }
 
 /** Identity ('orig'): EXIF-strip only, no resize/format/quality change. */
-export interface IdentityDirectives {
+interface IdentityDirectives {
   readonly identity: true
 }
 
 /** Non-identity directive set - every field optional, but at least one is present. */
-export interface ResizeDirectives {
+interface ResizeDirectives {
   readonly identity: false
   readonly width?: number
   readonly format?: OutputFormat
@@ -144,7 +144,7 @@ function parseWidth(value: string): number | null {
 }
 
 /** True if `quality` is on the allowlist: a multiple of 5 in [30, 95]. */
-export function isAllowedTransformQuality(quality: number): boolean {
+function isAllowedTransformQuality(quality: number): boolean {
   return (
     Number.isInteger(quality) &&
     quality >= MIN_QUALITY &&

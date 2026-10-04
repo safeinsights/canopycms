@@ -1,23 +1,18 @@
 import path from 'node:path'
 
 /**
- * In-process registry connecting branch-mutating operations (git checkout/merge/rebase,
- * content sync) to the ContentStore instances whose ContentId indexes those operations
- * make stale.
+ * In-process registry connecting branch-mutating operations to the ContentStore
+ * instances whose ContentId indexes they make stale. ContentStore registers
+ * itself on construction, keyed by its resolved root; a mutation site calls
+ * invalidateContentIndexesForRoot() so the next index access rebuilds from disk
+ * instead of serving stale ID→path mappings.
  *
- * ContentStore registers itself (keyed by its resolved root) on construction. Operations
- * that change files under a root — GitManager working-tree mutations, the worker's rebase
- * loop, sync-core's content replacement — call invalidateContentIndexesForRoot() so the
- * next index access rebuilds from disk instead of serving stale ID→path mappings.
+ * SCOPE: in-process only, the zero-latency half. Cross-process divergence is the
+ * generation marker's job (content-index-generation.ts), and mutation sites
+ * should call invalidateContentIndexesDurable() there, which does both.
  *
- * SCOPE: in-process only — the zero-latency path for stores in the same process.
- * Cross-process divergence (e.g. Lambda + worker on shared EFS, each with its own
- * registry) is handled by the on-disk generation marker in
- * content-index-generation.ts; invalidateContentIndexesDurable() there combines
- * both scopes and is what mutation sites should call.
- *
- * Stores are held via WeakRef so short-lived (per-request) instances can be garbage
- * collected; a FinalizationRegistry prunes dead entries.
+ * Stores are held via WeakRef so per-request instances can be collected; a
+ * FinalizationRegistry prunes dead entries.
  */
 
 /** Anything holding a rebuildable content index (in practice: ContentStore). */
@@ -37,10 +32,7 @@ const finalization = new FinalizationRegistry<{
   if (refs.size === 0) registry.delete(rootKey)
 })
 
-/**
- * Register a content-index holder for invalidation when files under `root` change.
- * Called by the ContentStore constructor.
- */
+/** Register a holder for invalidation when files under `root` change. */
 export function registerContentIndexForInvalidation(
   root: string,
   target: InvalidatableContentIndex,
@@ -57,12 +49,11 @@ export function registerContentIndexForInvalidation(
 }
 
 /**
- * Invalidate every registered content index rooted at `root` or below it.
- * Prefix matching covers stores rooted at a subdirectory of the mutated repo
- * (e.g. a store rooted at a branch clone inside a mutated workspace tree).
+ * Invalidate every registered index rooted at `root` or below it; the prefix
+ * match covers a store rooted at a subdirectory of the mutated repo.
  *
- * Invalidation only marks indexes stale; the rebuild happens lazily on the next
- * index access, so calling this for a root with no live stores is free.
+ * This only marks indexes stale — the rebuild is lazy, on next access — so a
+ * root with no live stores costs nothing.
  */
 export function invalidateContentIndexesForRoot(root: string): void {
   const rootKey = path.resolve(root)

@@ -9,6 +9,7 @@ import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
 
+/** @internal Exported for tests. */
 export interface ReferenceOption {
   value: string
   label: string
@@ -17,7 +18,7 @@ export interface ReferenceOption {
 export interface ReferenceFieldProps {
   id?: string
   label?: string
-  options?: ReferenceOption[] // Now optional - will be loaded from API if not provided
+  options?: ReferenceOption[] // Loaded from the API when not provided
   collections?: string[] // Collections to load options from (includes subcollections)
   entryTypes?: string[] // Entry types to filter by (e.g., ['partner'])
   displayField?: string // Field to use for display label
@@ -41,10 +42,10 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   multiple,
   dataCanopyField,
 }) => {
-  // Context-provided client (configured with the deployment's basePath) when rendered inside an
-  // ApiClientProvider -- which it always is in the real Editor tree. `null` outside one (e.g.
-  // FormRenderer.stories.tsx has no provider), in which case the fetch effect below falls back
-  // to a default-configured client.
+  // Configured with the deployment's basePath when rendered inside an
+  // ApiClientProvider (always true in the real Editor tree); `null` outside one
+  // (e.g. FormRenderer.stories.tsx), so the fetch effect falls back to a
+  // default-configured client.
   const contextApiClient = useOptionalApiClient()
   const hasCollections = !!collections && collections.length > 0
   const hasEntryTypes = !!entryTypes && entryTypes.length > 0
@@ -54,7 +55,6 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
 
-  // Extract ID from value - handle both string IDs and resolved objects
   const extractId = (val: unknown): string => {
     if (typeof val === 'string') return val
     if (val && typeof val === 'object' && 'id' in val && typeof val.id === 'string') return val.id
@@ -82,17 +82,14 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     }
   }
 
-  // Load options from API if collections or entryTypes are provided and no static options.
+  // Keyed on the derived `fetchKey`, not the raw `collections`/`entryTypes`
+  // arrays: the parent rebuilds those on every render (including every
+  // `refreshEntries()` after a save), so depending on them directly fired
+  // this fetch far more often than the inputs actually changed.
   //
-  // Keyed on the derived `fetchKey` (not the raw `collections`/`entryTypes`
-  // arrays): the parent rebuilds those arrays on every render -- including
-  // every `refreshEntries()` after a save -- so depending on them directly
-  // fired this fetch far more often than the inputs actually changed.
-  //
-  // `active` guards against a stale response: if the key changes again (or
-  // the field unmounts) before this request settles, the loser's `.then`/
-  // `.catch`/`.finally` must not overwrite state a newer request already
-  // owns.
+  // `active` guards against a stale response: if the key changes again or the
+  // field unmounts before this request settles, the loser's `.then`/`.catch`/
+  // `.finally` must not overwrite state a newer request already owns.
   useEffect(() => {
     if (!needsFetch) return
     let active = true
@@ -218,5 +215,3 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     </Stack>
   )
 }
-
-export default ReferenceField

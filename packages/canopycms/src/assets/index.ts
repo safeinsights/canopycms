@@ -36,17 +36,15 @@ export {
   ALLOWED_UPLOAD_CONTENT_TYPES,
   runFinalizePipeline,
   type FinalizeInput,
-  type FinalizePublicObject,
   type FinalizeResult,
   type FinalizeRejection,
-  type FinalizeSuccess,
 } from './pipeline'
 
 export { finalizeAsset, finalizeStagedUpload, type FinalizeAssetResult } from './finalize'
 
 export { sanitizeSvg } from './svg-sanitizer'
 
-export { assetSrc, IDENTITY_TRANSFORM_DIRECTIVE } from './asset-src'
+export { assetSrc } from './asset-src'
 
 export {
   formatDirectives,
@@ -54,11 +52,9 @@ export {
   isValidCropRect,
   parseTransformPath,
   type CropRect,
-  type IdentityDirectives,
   type OutputFormat,
   type ParsedTransformPath,
   type ParseTransformPathResult,
-  type ResizeDirectives,
   type TransformDirectives,
 } from './transform-directives'
 

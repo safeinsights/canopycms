@@ -29,10 +29,6 @@ export interface AIContentHandlerOptions {
 }
 
 /**
- * Create a Next.js GET handler for serving AI content.
- *
- * Returns a function compatible with Next.js route handlers.
- *
  * Caching strategy:
  * - Dev mode: regenerates on every request (content changes without deploys)
  * - Prod: generates once per process lifetime (Lambda instances are recycled on deploy,
@@ -46,23 +42,19 @@ export function createAIContentHandler(
   let cachedResult: GenerateResult | null = null
 
   const generate = async (): Promise<GenerateResult> => {
-    // In dev mode, always regenerate (content changes without deploys)
     if (config.mode !== 'prod') {
       cachedResult = null
     }
 
     if (cachedResult) return cachedResult
 
-    // Resolve branch root
     const branchRoot = await resolveBranchRoot(config)
     const contentRootName = config.contentRoot || 'content'
 
-    // Load schema (use test override if provided)
     const flatSchema =
       _testFlatSchema ??
       (await schemaCache.getSchema(branchRoot, entrySchemaRegistry, contentRootName)).flatSchema
 
-    // Create store and generate
     const store = new ContentStore(branchRoot, flatSchema, { contentRootName })
     const result = await generateAIContent({
       store,
@@ -81,10 +73,8 @@ export function createAIContentHandler(
       const { path: pathSegments } = await ctx.params
       const result = await generate()
 
-      // Join path segments to get the file key
       const requestPath = pathSegments.join('/')
 
-      // Check for manifest
       if (requestPath === 'manifest.json') {
         return new Response(result.files.get('manifest.json'), {
           headers: {
@@ -94,7 +84,6 @@ export function createAIContentHandler(
         })
       }
 
-      // Check for generated file
       const content = result.files.get(requestPath)
       if (content) {
         return new Response(content, {

@@ -1,7 +1,3 @@
-/**
- * Hook for external group search functionality
- */
-
 import { useState, useEffect } from 'react'
 import type { ExternalGroup } from '../types'
 

@@ -55,8 +55,8 @@ committed and may have been read.
   falsy, and `throwMissingSecretKeyError` throws.
 
 So an unset `CLERK_SECRET_KEY` makes an empty string, which is falsy, which throws — per
-request, inside middleware. And the shipped
-`cli/template-files/middleware-clerk.ts.template` passes only
+request, inside middleware. And the then-shipped
+`cli/template-files/middleware-clerk.ts.template` passed only
 `{ jwtKey: process.env.CLERK_JWT_KEY }`, with `matcher: ['/edit(.*)', '/api/canopycms(.*)']`
 — i.e. every editor route and every API call.
 
@@ -72,6 +72,22 @@ all, and deploy-test works precisely because it deviates.
 
 Not "remove the passthrough" but "reconcile the security model with the shipped
 middleware", which is a real architectural call and not a deploy-test-local cleanup:
+
+**0. Drop `clerkMiddleware`.** Added 2026-09-12. The options below all assume the Lambda keeps
+the middleware, but CanopyCMS's own auth doesn't need it: `createNextCanopyContext` wraps
+`ClerkAuthPlugin` in `CachingAuthPlugin`, whose token check is `verifyTokenOnly()`, which uses
+`CLERK_JWT_KEY` only, with user and group metadata from the worker-refreshed cache
+(`canopycms-next/src/context-wrapper.ts`, `canopycms-auth-clerk/src/clerk-plugin.ts`). Deleting
+the generated middleware keeps the Security Model true with no endpoint cost. It gives up turning
+signed-out requests away before they reach the app; since 2026-10-01 those visitors get the
+editor's own sign-in screen instead ([clerk-no-middleware-signin-gap.md](resolved/clerk-no-middleware-signin-gap.md)). `docs/deploying-to-aws.md` documents it
+as a supported shape, and since 2026-10-01 `canopycms init` scaffolds it: the passthrough, with
+`clerkMiddleware` and its cost as a commented opt-in. Not yet
+exercised against a live Clerk instance; see
+[clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md)
+and [clerk-signed-out-followups.md](clerk-signed-out-followups.md). For
+deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough removable
+**together**. Removing only the passthrough still breaks the editor, per the correction above.
 
 1. **Bring `CLERK_SECRET_KEY` into the CMS Lambda as a plaintext env var** and retract
    the "no sensitive secrets" half of the Security Model. Honest, but gives up the
@@ -89,8 +105,9 @@ middleware", which is a real architectural call and not a deploy-test-local clea
    Manager needs the *interface* variety rather than the free gateway one, so it costs an
    hourly rate plus per-GB — a cost argument, not an impossibility.
 
-   This is the only option that makes the documented Security Model **true** rather than
-   requiring it to be softened, which is why it is worth the endpoint cost. Note the
+   Of the options that keep the middleware, this is the only one that makes the documented
+   Security Model **true** rather than requiring it to be softened, which is why it is worth
+   the endpoint cost if the middleware stays (option 0 avoids both). Note the
    adopter's observation that their request #37 is now on its third version and **version
    one was right**: it was filed as "no fetch path is a gap", retracted on the
    no-internet objection, and re-filed once that objection turned out not to hold.
@@ -211,9 +228,9 @@ interface endpoint resolve from the Lambda's isolated subnet — deploy-level.
 
 ### ⚠️ DO NOT add `runtime: 'nodejs'` to the shipped template
 
-Neither `cli/template-files/middleware-clerk.ts.template` nor
-`apps/example1/middleware.ts` declares a `runtime`, so everything we scaffold runs on
-edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
+The `clerkMiddleware` example commented in `cli/template-files/middleware.ts.template` (and
+copied into `apps/example1/middleware.ts`) declares no `runtime`, so an adopter who swaps it in
+runs on edge. The obvious fix is a `runtime: 'nodejs'` line in the template's `config` export.
 **Measured: on Next 16.1.7 that would silently disable the auth middleware.**
 
 Three build arms, all real `CANOPY_BUILD=cms next build` runs with a
@@ -246,9 +263,9 @@ middleware on 16.x.
 
 **Consequences for this task.** Since `canopycms-next`'s peer range admits 16.x, 1b's
 fetch-at-init path is currently **blocked at the build** for a 16.x adopter, not merely
-unproven. For such a deployment the Clerk secret as a Lambda environment variable is
-presently the only option, which is a point in favour of correcting the Security Model
-table rather than waiting to make it true.
+unproven. For such a deployment that keeps `clerkMiddleware`, the Clerk secret as a Lambda
+environment variable is presently the only option. Option 0 avoids the question by not
+needing the secret on the Lambda at all.
 
 **If the template is ever changed**, it must carry the version constraint explicitly —
 the rule this whole thread produced, applied to the thing the thread was about.

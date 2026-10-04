@@ -1,40 +1,22 @@
 import type { ApiResponse } from '../api/types'
 import type { CanopyBinaryResponse } from './types'
-import { BRANCH_ROUTES } from '../api/branch'
-import { WORKFLOW_ROUTES } from '../api/branch-status'
-import { COMMENT_ROUTES } from '../api/comments'
-import { CONTENT_ROUTES } from '../api/content'
-import { REFERENCE_OPTIONS_ROUTES } from '../api/reference-options'
-import { RESOLVE_REFERENCES_ROUTES } from '../api/resolve-references'
-import { ENTRY_ROUTES } from '../api/entries'
-import { ASSET_ROUTES, assetRawRoute } from '../api/assets'
-import { PERMISSION_ROUTES } from '../api/permissions'
-import { GROUP_ROUTES } from '../api/groups'
-import { USER_ROUTES } from '../api/user'
-import { SCHEMA_ROUTES } from '../api/schema'
-import { ADMIN_ROUTES } from '../api/admin'
+import { buildCanopyRoutes } from '../api/routes'
 
 /**
- * Handler function signature for Canopy API routes.
- * Uses `any` to accommodate different handler signatures in the codebase.
- * Some handlers take (ctx, req, params), others take (ctx, params) directly.
- * Return type is widened to include `CanopyBinaryResponse` so routes that
- * stream bytes (e.g. asset serving) can be registered in the same route
- * table as ordinary JSON routes; the core handler discriminates on `kind`
- * before deciding whether to wrap the result in a JSON envelope.
+ * `any` because handler signatures differ: some take (ctx, req, params), others
+ * (ctx, params). The return type includes `CanopyBinaryResponse` so byte-
+ * streaming routes share this route table with JSON ones; http/handler.ts
+ * discriminates on `kind` before wrapping a result in a JSON envelope.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any> | CanopyBinaryResponse>
 
-/**
- * Route definition for the Canopy API.
- * Maps HTTP method + path pattern to a handler.
- */
+/** Route definition for the Canopy API. */
 export interface RouteDefinition {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   pattern: readonly string[] // e.g., [':branch', 'content', ':collection', '...slug']
   handler: CanopyHandler
-  // Optional validation function for routes defined with defineEndpoint()
+  // Present on routes defined with defineEndpoint().
   validate?: (extracted: { params?: Record<string, string>; body?: unknown }) =>
     | {
         ok: true
@@ -46,85 +28,37 @@ export interface RouteDefinition {
         error: string
       }
   /**
-   * Opt out of the core handler's default eager `req.json()` body parsing
-   * (see http/handler.ts). Set by routes that accept a non-JSON body (e.g.
-   * multipart/form-data uploads) - the handler must read the body itself via
-   * `req.formData()` instead, since a body stream can only be consumed once.
+   * Opts out of the core handler's eager `req.json()` (see http/handler.ts).
+   * Set by routes taking a non-JSON body: the body stream is single-use, so
+   * such a handler must read it itself via `req.formData()`.
    */
   bodyFormat?: 'multipart'
 }
 
-/**
- * Result of route matching.
- */
 export interface RouteMatch {
   handler: CanopyHandler
   params: Record<string, string>
-  // Optional validation function for new-style routes
   validate?: RouteDefinition['validate']
   bodyFormat?: RouteDefinition['bodyFormat']
 }
 
-/**
- * Core router - framework-agnostic route matching.
- */
+/** Core router: framework-agnostic route matching. */
 export interface CanopyRouter {
-  /** All registered routes */
   readonly routes: RouteDefinition[]
 
-  /** Find a matching route for the given method and path segments */
   match(method: string, segments: string[]): RouteMatch | null
 }
 
 /**
- * Build the standard route definitions for the Canopy API.
- * Assembled from co-located route definitions in each API module.
+ * Match a route pattern against actual path segments: `:param` takes one
+ * segment, `...slug` takes the rest.
  *
- * This is a function (not a top-level constant) to ensure all route modules
- * have been fully initialized before we try to access their exports.
- * This prevents module initialization timing issues with ES modules.
- */
-function buildCanopyRoutes(): RouteDefinition[] {
-  return [
-    ...Object.values(BRANCH_ROUTES),
-    ...Object.values(WORKFLOW_ROUTES),
-    ...Object.values(COMMENT_ROUTES),
-    ...Object.values(CONTENT_ROUTES),
-    ...Object.values(REFERENCE_OPTIONS_ROUTES),
-    ...Object.values(RESOLVE_REFERENCES_ROUTES),
-    ...Object.values(ENTRY_ROUTES),
-    ...Object.values(ASSET_ROUTES),
-    assetRawRoute,
-    ...Object.values(PERMISSION_ROUTES),
-    ...Object.values(GROUP_ROUTES),
-    ...Object.values(USER_ROUTES),
-    ...Object.values(SCHEMA_ROUTES),
-    ...Object.values(ADMIN_ROUTES),
-  ].map(
-    (route): RouteDefinition => ({
-      method: route.method,
-      pattern: route.pattern,
-      handler: route.handler,
-      // Include validation function if present (new-style routes from defineEndpoint)
-      validate: 'validate' in route ? (route.validate as RouteDefinition['validate']) : undefined,
-      bodyFormat:
-        'bodyFormat' in route ? (route.bodyFormat as RouteDefinition['bodyFormat']) : undefined,
-    }),
-  )
-}
-
-/**
- * Match a route pattern against actual path segments.
- * Supports :param for single-segment params and ...slug for catch-all.
- *
- * Params are returned RAW (undecoded) here on purpose (C5): matching is
- * purely structural (segment counts, static-segment equality) and must never
- * throw. Decoding happens exactly once, uniformly for :param and catch-all
- * alike, in matchRoute() below - after the winning route has been picked, so
- * a malformed `%` escape is handled in a single place instead of aborting
- * mid-match (which previously let a URIError from a bad :param escape to
- * `decodeURIComponent` bubble all the way to http/handler.ts's top-level
- * catch and surface as a 500).
+ * Params come back RAW (undecoded) on purpose (C5): matching is purely
+ * structural and must NEVER throw. Decoding happens exactly once, uniformly for
+ * `:param` and catch-all alike, in matchRoute() below, after the winning route
+ * is picked — so a malformed `%` escape is handled in one place instead of
+ * aborting mid-match, where the URIError would reach http/handler.ts's
+ * top-level catch and surface as a 500 rather than a 400.
  */
 const matchPattern = (
   pattern: readonly string[],
@@ -134,7 +68,6 @@ const matchPattern = (
   const actualCopy = [...actual]
 
   for (const part of pattern) {
-    // Catch-all: consume remaining segments
     if (part.startsWith('...')) {
       const paramName = part.slice(3) // Remove '...' prefix
       params[paramName] = actualCopy.join('/')
@@ -146,25 +79,22 @@ const matchPattern = (
     if (!next) return null
 
     if (part.startsWith(':')) {
-      // Dynamic segment - extract param (still raw; see decode note above)
+      // Still raw; see the decode note above.
       params[part.slice(1)] = next
     } else if (part !== next) {
-      // Static segment - must match exactly
       return null
     }
   }
 
-  // If there are leftover segments, no match
   if (actualCopy.length > 0) return null
 
   return { params }
 }
 
 /**
- * Synthetic handler for a request whose matched route params contain a
- * malformed `%` escape sequence (C5) - e.g. a lone `%` or `%zz`. Reported as
- * a 400 (the request is malformed), never registered in the real route
- * table, and only ever reachable via matchRoute()'s decode step below.
+ * Synthetic handler for matched params carrying a malformed `%` escape (C5) —
+ * a lone `%`, `%zz`. The request is malformed, so it answers 400. Never
+ * registered in the route table; only matchRoute()'s decode step reaches it.
  */
 const malformedPathHandler: CanopyHandler = async () => ({
   ok: false,
@@ -173,19 +103,17 @@ const malformedPathHandler: CanopyHandler = async () => ({
 })
 
 /**
- * Specificity rank of a pattern segment. Higher wins.
- * A literal ("static") segment is more specific than a `:param`, which is
- * more specific than a `...catchall`.
+ * Specificity rank of a pattern segment, higher wins: a literal beats a
+ * `:param`, which beats a `...catchall`.
  */
 const STATIC_RANK = 2
 const DYNAMIC_RANK = 1
 const CATCHALL_RANK = 0
 
 /**
- * Rank of the pattern segment governing position `index`.
- * A catch-all at or before `index` governs every position from there on
- * (in this codebase a catch-all is always the last pattern segment, so it
- * effectively "consumes" every subsequent position).
+ * Rank of the pattern segment governing position `index`. A catch-all at or
+ * before `index` governs every position from there on — it is always the last
+ * pattern segment here, so it consumes everything after itself.
  */
 const segmentRankAt = (pattern: readonly string[], index: number): number => {
   for (let i = 0; i <= index && i < pattern.length; i++) {
@@ -196,13 +124,10 @@ const segmentRankAt = (pattern: readonly string[], index: number): number => {
 }
 
 /**
- * Compare two route patterns for specificity, position by position, for
- * routes that both matched the same actual segments.
- *
- * Returns a negative number if `a` is more specific than `b`, positive if
- * `b` is more specific than `a`, and 0 if they are tied (in which case the
- * caller should keep whichever route it already picked, so registration
- * order acts as the final, deterministic tiebreaker).
+ * Compare two patterns that both matched, position by position: negative when
+ * `a` is more specific, positive when `b` is, 0 when tied. On a tie the caller
+ * keeps the route it already picked, so registration order is the final,
+ * deterministic tiebreaker.
  */
 const compareSpecificity = (a: readonly string[], b: readonly string[]): number => {
   const maxLen = Math.max(a.length, b.length)
@@ -220,12 +145,12 @@ const compareSpecificity = (a: readonly string[], b: readonly string[]): number 
 /**
  * Find the most specific matching route for a method + path.
  *
- * Scans every route (not just the first structural match) so that route
- * *registration order* can never let a broad dynamic route (e.g. `:branch`)
- * shadow a narrower, differently-guarded static route (e.g. `assets`) that
- * happens to be registered later. Exported standalone (rather than inlined
- * into `createCanopyRouter`) so the precedence rule can be unit-tested
- * against synthetic route tables, independent of the real API surface.
+ * Scans EVERY route, not just the first structural match, so registration order
+ * can never let a broad dynamic route (`:branch`) shadow a narrower,
+ * differently-guarded static one (`assets`) registered later. Exported
+ * standalone so that precedence rule can be unit-tested against synthetic route
+ * tables, independent of the real API surface.
+ * @internal Exported for tests.
  */
 export function matchRoute(
   routes: readonly RouteDefinition[],
@@ -242,8 +167,6 @@ export function matchRoute(
     const match = matchPattern(route.pattern, segments)
     if (!match) continue
 
-    // Among all routes that match this request, pick the most specific one
-    // (static segments beat :params, which beat ...catchalls).
     if (!best || compareSpecificity(route.pattern, best.route.pattern) < 0) {
       best = { route, params: match.params }
     }
@@ -251,16 +174,12 @@ export function matchRoute(
 
   if (!best) return null
 
-  // Decode every matched param exactly once, here - uniformly for :param and
-  // catch-all values alike (C5). A malformed escape must produce a 400, not
-  // an uncaught URIError that would otherwise reach http/handler.ts's
-  // top-level catch and get reported as a 500. Downstream consumers
-  // (Zod's logicalPathSchema/branchNameSchema etc. in each route's
-  // `validate`, and any handler-local re-check such as entries.ts's
-  // parseLogicalPath call) still run their own traversal validation against
-  // this same final decoded value - decoding centrally here does not skip
-  // that, it just removes the redundant second decode that used to run
-  // alongside it in a few handlers.
+  // Decode every matched param exactly once, here, uniformly for :param and
+  // catch-all alike (C5). A malformed escape MUST produce a 400, not an
+  // uncaught URIError reaching http/handler.ts's top-level catch as a 500.
+  // Decoding centrally does not replace downstream validation: each route's
+  // `validate` (Zod's logicalPathSchema/branchNameSchema) and any handler-local
+  // re-check still run their own traversal checks against this decoded value.
   let decodedParams: Record<string, string>
   try {
     decodedParams = Object.fromEntries(
@@ -278,9 +197,6 @@ export function matchRoute(
   }
 }
 
-/**
- * Create the standard Canopy router with all API routes.
- */
 export function createCanopyRouter(): CanopyRouter {
   const routes = buildCanopyRoutes()
 

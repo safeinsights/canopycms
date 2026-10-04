@@ -13,10 +13,9 @@ export async function filePathExists(filePath: string): Promise<boolean> {
 }
 
 /**
- * Read a UTF-8 file, or return undefined if it does not exist.
- *
- * Only ENOENT is swallowed — a permissions or I/O failure still throws, so a caller cannot
- * mistake "unreadable" for "not there yet".
+ * Read a UTF-8 file, or undefined if it does not exist. Only ENOENT is swallowed — a
+ * permissions or I/O failure still throws, so a caller cannot mistake "unreadable" for
+ * "not there yet".
  */
 export async function readFileIfExists(filePath: string): Promise<string | undefined> {
   try {

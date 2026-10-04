@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Group search and selection component
- */
-
 import React from 'react'
 import { Group, Paper, Stack, Text } from '@mantine/core'
 import type { GroupSelectItem, GroupSource } from './types'
@@ -63,11 +59,10 @@ export const GroupSelector: React.FC<GroupSelectorProps> = ({
                 }}
                 onClick={() => onSelectGroup(group.value)}
               >
-                {/* Internal (groups.json) and external (auth provider) IDs are
-                    not namespaced against each other, so the source is shown
-                    rather than left for the admin to infer from the name.
-                    'Internal + External' means the ID exists in both universes
-                    and a grant reaches BOTH memberships. */}
+                {/* Internal (groups.json) and external (auth provider) IDs aren't
+                    namespaced against each other, so the source is shown rather
+                    than left for the admin to infer. 'Internal + External' means
+                    the ID exists in both, and a grant reaches BOTH memberships. */}
                 <Group gap="xs" justify="space-between" wrap="nowrap">
                   <span>{group.label}</span>
                   <Text size="10px" c="dimmed" style={{ flexShrink: 0 }}>

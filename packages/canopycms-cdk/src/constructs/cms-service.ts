@@ -5,6 +5,7 @@ import {
   Duration,
   RemovalPolicy,
   Stack,
+  Token,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_iam as iam,
@@ -16,36 +17,22 @@ import {
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 
-// This package (`canopycms-cdk`) is `"type": "module"`, so its compiled
-// output is real ESM - `__dirname` is not a global there. Found while
-// fixing this construct's B1 deploy blocker below: the worker asset path a
-// few lines down threw `__dirname is not defined` under a real ESM runtime
-// (e.g. `tsx`) - masked in this file's own tests only because Vitest's
-// SSR/CJS-interop transform shims `__dirname` automatically. Same fix as
-// ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
+// This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
+// is real ESM and `__dirname` is not a global there - the worker asset path
+// below throws `__dirname is not defined` under a real ESM runtime (e.g. `tsx`)
+// without this. Vitest's SSR/CJS-interop transform shims `__dirname`
+// automatically, so this file's own tests would not catch its absence. Same fix
+// as ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
  * package (packages/canopycms/src/operating-mode/deployment-name.ts).
- * Duplicated rather than imported, but NOT for the reason this comment used
- * to give ("canopycms-cdk publishes with no runtime dependency on canopycms").
- * That was false, and measurably so: `pnpm --filter canopycms-cdk run build`
- * emits `dist/index.js` -> `export { CmsWorker } from './worker.js'` and
- * `dist/worker.js` -> `export { CmsWorker } from 'canopycms/worker/cms-worker'`
- * -- a bare, unresolved specifier in tsc output, reached from this package's
- * MAIN entry point. (The esbuild bundle is a different artifact,
- * `worker/dist/index.js`, built for the EC2 instance.) `canopycms` is
- * correspondingly a non-optional `peerDependency` in package.json, so
- * importing `canopycms-cdk` already requires `canopycms` to resolve.
  *
- * The honest reason is narrower: importing the predicate here would make a
- * CONSTRUCT-only consumer pay for the core package's module graph, and the
- * drift it risks is already covered by a test (below). Whether that still
- * justifies duplicating is an open question, tracked with the same question
- * about the S3 prefix constants in
- * .claude/future-tasks/cdk-prefixes-duplication.md, which reached this
- * conclusion first.
+ * Duplicated rather than imported so a CONSTRUCT-only consumer does not pay for
+ * the core package's module graph. Whether that still justifies duplicating is
+ * an open question, tracked alongside the same question about the S3 prefix
+ * constants in .claude/future-tasks/cdk-prefixes-duplication.md.
  *
  * Drift between the two copies is caught by a test, not by this comment:
  * cms-deploy.test.ts drives both this construct and the runtime predicate over
@@ -83,12 +70,8 @@ const ENV_HEREDOC_DELIMITER = 'ENVEOF'
  * deploy clean and fail at boot, or worse, boot with a subtly wrong
  * environment.
  *
- * Applied to every entry in `envEntries` below by construction rather than by
- * remembering to call it — the previous version validated `deploymentName`
- * only, while giving a rationale that applied verbatim to the other three
- * interpolated values.
- *
- * Returns the value so it can be used inline.
+ * Applied to EVERY entry in `envEntries` below by construction, not by
+ * remembering to call it at each site.
  */
 function assertEnvSafe(name: string, value: string): string {
   if (/[\r\n]/.test(value)) {
@@ -120,6 +103,31 @@ function assertEnvSafe(name: string, value: string): string {
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
+  // The same systemd `EnvironmentFile=` parser the leading-quote rule above is
+  // about also treats a backslash as an escape: `a\b` arrives as `ab`, and a
+  // value ENDING in a backslash continues onto the next line, swallowing the
+  // .env entry that follows it. That is the quote hazard again in a quieter
+  // form -- it corrupts a neighbouring variable rather than the one it appears
+  // in -- so it is refused here rather than debugged on an instance.
+  if (value.includes('\\')) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not contain a backslash (got ${JSON.stringify(value)}). ` +
+        `It is written into the worker's .env file, which systemd reads as EnvironmentFile -- ` +
+        `there a backslash escapes the next character, and a trailing one continues the value ` +
+        `onto the following line, consuming the next variable entirely.`,
+    )
+  }
+  // Leading/trailing whitespace is stripped by that same parser, so a value
+  // that is only whitespace reaches the worker as an empty string and every
+  // caller downstream treats it as unset -- the silent-discard case, arriving
+  // by a route no charset check upstream can see.
+  if (value !== value.trim()) {
+    throw new Error(
+      `CanopyCmsService: ${name} must not start or end with whitespace ` +
+        `(got ${JSON.stringify(value)}). systemd strips it when reading the worker's .env, so ` +
+        `the value the worker sees would differ from the one configured here.`,
+    )
+  }
   return value
 }
 
@@ -128,27 +136,22 @@ function assertEnvSafe(name: string, value: string): string {
  * synth rather than at worker boot.
  *
  * Both values are interpolated into a git ref AND into a line of the worker's
- * `.env` that user-data writes with a shell heredoc. `assertEnvSafe` covers
- * the `.env` half (newlines, a leading quote, the ENVEOF delimiter); this covers the
- * ref half, because a value git refuses does not fail at `cdk deploy` -- it
- * fails inside the worker, where `verifyBaseBranchExists` throws,
- * `worker/index.ts` exits 1, and systemd's `Restart=always` turns it into a
- * crash loop with no signal at the deploy that caused it.
+ * `.env` that user-data writes with a shell heredoc. `assertEnvSafe` covers the
+ * `.env` half; this covers the ref half, because a value git refuses does not
+ * fail at `cdk deploy` -- it fails inside the worker, where
+ * `verifyBaseBranchExists` throws, `worker/index.ts` exits 1, and systemd's
+ * `Restart=always` turns it into a crash loop with no signal at the deploy that
+ * caused it.
  *
- * DELIBERATELY NOT `isValidDeploymentName`. That rule governs a single ref
- * COMPONENT (`deploymentName` is interpolated into
- * `canopycms-settings-<name>`), so it forbids `/`. These two props are whole
- * branch names, where `/` is not merely legal but conventional --
- * `release/2026`, `epic/foo`. Reusing the component rule here would refuse
- * `cdk synth` for an adopter whose default branch is `release/v2`, and the
- * worker handles such names fine: it keeps the raw name for git refs and runs
- * it through `sanitizeBranchName` only for workspace DIRECTORY names.
- *
- * So this implements git's `check-ref-format` rules for a branch name
- * instead. There is no runtime counterpart to drift from (nothing in
- * `canopycms` validates a branch name -- the worker uses the string as
- * given), which is why this has its own tests rather than a shared fixture
- * list like `deploymentName`'s.
+ * DELIBERATELY NOT `isValidDeploymentName`, which governs a single ref
+ * COMPONENT and so forbids `/`. These two props are whole branch names, where
+ * `/` is conventional (`release/2026`, `epic/foo`); reusing the component rule
+ * would refuse `cdk synth` for an adopter whose default branch is `release/v2`,
+ * and the worker handles such names fine - it keeps the raw name for git refs
+ * and runs it through `sanitizeBranchName` only for workspace DIRECTORY names.
+ * This implements git's `check-ref-format` rules for a branch name instead.
+ * Nothing in `canopycms` validates a branch name, so there is no runtime
+ * counterpart to drift from and no shared fixture list like `deploymentName`'s.
  */
 function assertValidGitBranchName(propName: string, value: string): string {
   const reject = (why: string): never => {
@@ -195,6 +198,307 @@ function assertValidGitBranchName(propName: string, value: string): string {
 }
 
 /**
+ * A Secrets Manager ARN carrying the ECS/CloudFormation JSON-field suffix,
+ * i.e. `arn:…:secret:name-AbCdEf:MY_KEY::` rather than `arn:…:secret:name-AbCdEf`.
+ *
+ * Keyed on "a colon anywhere after `:secret:`", because a secret NAME cannot
+ * contain one: Secrets Manager's documented name charset is ASCII letters,
+ * digits and `/_+=.@-`. So everything after `:secret:` in a secret ARN is the
+ * name -- plus the six random characters AWS appends, when the ARN is a
+ * complete one rather than the partial form this guard deliberately accepts --
+ * and a further colon can only begin the `:json-key:version-stage:version-id`
+ * tail. Anchoring on the six-character suffix instead would MISS the name-only
+ * form `arn:…:secret:name:MY_KEY::`, which is the shape ECS's own documentation
+ * shows and so the one adopters copy.
+ */
+const SECRET_ARN_WITH_FIELD_SUFFIX = /:secret:[^:]*:/
+
+/**
+ * The last two characters of the `…:json-key::` spelling -- the ECS suffix with
+ * `version-stage` and `version-id` left empty, which is how AWS's own examples
+ * show it.
+ *
+ * Checked in ADDITION to the regex above, for one case the regex cannot see: an
+ * unresolved CDK token, `${Token[TOKEN.42]}:MY_KEY::`, carries no `:secret:` to
+ * anchor on because the ARN has not been rendered yet. No well-formed secret
+ * ARN, token or literal, ends in two colons, so this is safe to refuse.
+ *
+ * KNOWN LIMIT: a token ARN with NON-empty version parts
+ * (`${Token[…]}:MY_KEY:AWSCURRENT:v1`) is caught by neither check and is stamped
+ * verbatim. Recognising it needs `Token.isUnresolved` plus a guess at where the
+ * token ends; the spelling adopters actually copy has the empty parts, and every
+ * LITERAL ARN is caught by the regex whatever its version parts say.
+ */
+const SECRET_ARN_WITH_EMPTY_VERSION_TAIL = '::'
+
+/**
+ * Guards one (secret ARN, JSON field) prop pair at synth.
+ *
+ * Both checks exist because the failure they replace is SILENT, and both
+ * failures land on the worker at boot -- where systemd's `Restart=always` turns
+ * a misconfiguration into an indefinite 5-second restart loop rather than
+ * anything `cdk deploy` reports.
+ *
+ * 1. A JSON-field prop with no ARN prop. The field env var is stamped, the ARN
+ *    is not, and the credential is read from nowhere: for Clerk that leaves
+ *    `refreshAuthCache` undefined, disabling auth-cache refresh with NO log line
+ *    at all; for GitHub the worker reports "CANOPYCMS_GITHUB_TOKEN or
+ *    CANOPYCMS_GITHUB_TOKEN_SECRET_ARN is required" while the adopter looks at a
+ *    stack that plainly configures a GitHub secret.
+ * 2. An ARN carrying the ECS `:KEY::` suffix, a CloudFormation-dynamic-reference
+ *    and ECS `secrets.valueFrom` convention the `GetSecretValue` API does not
+ *    parse. Through the scaffolded stack the adopter gets CDK's own cryptic
+ *    complaint ("does not appear to be complete; missing 6-character suffix");
+ *    hand-rolling the stack, the string lands verbatim in the worker's IAM
+ *    `Resource`, where it can never match the real secret, and the worker gets
+ *    AccessDenied. The message names the JSON-field prop, because the adopter's
+ *    intent is supported - just spelled differently here.
+ *
+ * An empty JSON field is rejected for the same reason `settingsBranch: ''` is:
+ * the worker reads a blank env var as "not configured" (`|| undefined` at both
+ * call sites in worker/index.ts), so stamping it would discard an explicitly
+ * set prop without a word.
+ */
+function assertSecretPropPair(
+  arnPropName: string,
+  arn: string | undefined,
+  jsonFieldPropName: string,
+  jsonField: string | undefined,
+): void {
+  if (jsonField !== undefined) {
+    // `.trim()`, not `=== ''`: systemd's EnvironmentFile parser strips leading
+    // and trailing whitespace from a value, so `" "` reaches the worker as `""`
+    // and takes the same silently-ignored path an empty string would.
+    if (jsonField.trim() === '') {
+      throw new Error(
+        `CanopyCmsService: ${jsonFieldPropName} must name a key, but it is ` +
+          `${JSON.stringify(jsonField)}. The worker reads a blank value as "no field configured" ` +
+          `and falls back to using the secret's whole value, silently ignoring this prop -- name ` +
+          `the key you want, or omit the prop entirely.`,
+      )
+    }
+    if (!arn) {
+      throw new Error(
+        `CanopyCmsService: ${jsonFieldPropName} is set but ${arnPropName} is not. ` +
+          `The JSON field names a key INSIDE a secret, so it does nothing without the secret's ` +
+          `ARN -- the worker would be told which key to read and never told where to read it ` +
+          `from. Set ${arnPropName}, or drop ${jsonFieldPropName}.`,
+      )
+    }
+  }
+
+  if (arn !== undefined) {
+    assertSecretArnHasNoFieldSuffix(arnPropName, arn, jsonFieldPropName)
+  }
+}
+
+/**
+ * Rejects the ECS `:KEY::` ARN suffix on any prop that carries a secret ARN.
+ *
+ * Separate from `assertSecretPropPair` because `secretsArns` has no JSON-field
+ * prop of its own and still needs the check: its values go verbatim into the
+ * worker's IAM policy, where a suffixed ARN is an unmatchable `Resource` and
+ * produces exactly the AccessDenied restart-loop described above.
+ */
+function assertSecretArnHasNoFieldSuffix(
+  propName: string,
+  arn: unknown,
+  jsonFieldPropName?: string,
+): void {
+  // `unknown`, and narrowed here, because the types are not the whole story:
+  // `secretsArns: [process.env.EXTRA_SECRET_ARN!]` is the idiom a CDK app that
+  // reads its config from the environment reaches for -- the scaffolded
+  // `bin/app.ts` does exactly that everywhere else -- and `!` turns an unset
+  // variable into `undefined` with the compiler none the wiser. Throwing, not
+  // skipping: the `typeof arn === 'string'` filter on the IAM union below drops
+  // such an entry silently, leaving a worker told to read a secret it has no
+  // grant for, which is AccessDenied at boot.
+  if (typeof arn !== 'string' || arn.length === 0) {
+    throw new Error(
+      `CanopyCmsService: ${propName} must be a non-empty secret ARN string, but it is ` +
+        `${JSON.stringify(arn) ?? String(arn)}. An unset environment variable asserted with '!' ` +
+        `arrives here as undefined; it would otherwise be dropped from the worker's IAM policy ` +
+        `in silence, leaving a worker that knows which secret to read and cannot read it.`,
+    )
+  }
+  if (!SECRET_ARN_WITH_FIELD_SUFFIX.test(arn) && !arn.endsWith(SECRET_ARN_WITH_EMPTY_VERSION_TAIL))
+    return
+  const alternative = jsonFieldPropName
+    ? `Pass the plain secret ARN (everything up to and including the six-character suffix) and ` +
+      `name the key with ${jsonFieldPropName} instead.`
+    : `Pass the plain secret ARN, ending at the six-character suffix.`
+  throw new Error(
+    `CanopyCmsService: ${propName} ${JSON.stringify(arn)} carries a ':KEY::' JSON-field suffix. ` +
+      `That is the ECS / CloudFormation dynamic-reference convention; the worker reads secrets ` +
+      `with the GetSecretValue API, which does not parse it -- the suffixed string would be ` +
+      `written into the worker's IAM policy, where it can never match the real secret, and the ` +
+      `worker would fail with AccessDenied at boot. ${alternative}`,
+  )
+}
+
+/** The three props that together configure GitHub App authentication. */
+const GITHUB_APP_PROP_NAMES = [
+  'githubAppId',
+  'githubAppInstallationId',
+  'githubAppPrivateKeySecretArn',
+] as const
+
+/**
+ * The props that mean "this deployment authenticates with a personal access
+ * token". The JSON field belongs here as well as the ARN: on its own it cannot
+ * authenticate anything, but its PRESENCE still says which credential the
+ * adopter thinks they are configuring, which is what the exclusivity rule needs
+ * to know.
+ */
+const GITHUB_TOKEN_PROP_NAMES = ['githubTokenSecretArn', 'githubTokenSecretJsonField'] as const
+
+/**
+ * Rejects a PEM private key passed where a prop expects an identifier or an ARN.
+ *
+ * There is no plaintext private-key prop, and there cannot be one: the value
+ * would be written into the worker's `.env`, which systemd reads as
+ * `EnvironmentFile=` where a newline begins a new variable. So the realistic
+ * mistake is to paste the key into `githubAppPrivateKeySecretArn` -- the prop
+ * whose name contains "PrivateKey" -- instead of the ARN of a secret holding it.
+ * Without this, that lands on `assertEnvSafe`'s generic rule and reports "must
+ * not contain a newline" about an ARN, explaining the mechanism and not the
+ * mistake.
+ *
+ * Checked on each of `GITHUB_APP_PROP_NAMES`, since the same misunderstanding
+ * puts the key in any of them. `githubAppPrivateKeySecretJsonField` is
+ * deliberately not checked: a JSON key NAME is not somewhere anyone mistakes a
+ * PEM for, and this stays aligned with the one list defining "the App props".
+ *
+ * **Reached only by a hand-written stack**, since the generated
+ * `infrastructure/lib/cms-stack.ts` resolves the ARN with
+ * `Secret.fromSecretCompleteArn` BEFORE constructing `CanopyCmsService`, so a
+ * scaffolded adopter gets CDK's own "does not appear to be complete" complaint
+ * first. The hand-written path has nothing else.
+ *
+ * A one-line key (a base64-wrapped PEM, say) is NOT caught here and cannot be -
+ * it is indistinguishable from a malformed ARN at synth. It fails at boot in
+ * `normalizeGitHubAppPrivateKey`, or for the ARN prop as a Secrets Manager error
+ * naming the string it tried to fetch.
+ */
+function assertNotInlinePrivateKey(propName: string, value: string | undefined): void {
+  if (value === undefined || !value.includes('-----BEGIN')) return
+  throw new Error(
+    `CanopyCmsService: ${propName} looks like a PEM private key, not ${
+      propName === 'githubAppPrivateKeySecretArn' ? 'a secret ARN' : 'an identifier'
+    }. ` +
+      `The GitHub App private key can ONLY be supplied as a Secrets Manager ARN -- it is ` +
+      `multi-line, and every value this construct configures goes into the worker's .env file, ` +
+      `which systemd reads as EnvironmentFile where a newline starts a new variable. Store the ` +
+      `PEM in Secrets Manager and pass that secret's full ARN as githubAppPrivateKeySecretArn ` +
+      `(optionally with githubAppPrivateKeySecretJsonField if it lives inside a JSON document).`,
+  )
+}
+
+/**
+ * Rejects a GitHub App identifier that is not a whole number.
+ *
+ * Both identifiers are numeric, and the two wrong values an adopter reaches for
+ * are the App's *slug* and its `Iv1.…` OAuth client id — both are on the same
+ * settings page as the number, and neither works.
+ *
+ * Both fail worse at boot. `createAppAuth` refuses a non-numeric `appId` at
+ * construction (`@octokit/auth-app@6.1.4`: `Number.isFinite(+options.appId)`),
+ * so the app id at least produces a named error; the installation id is checked
+ * only for falsiness there, so a non-numeric one is interpolated into
+ * `/app/installations/NaN/access_tokens` and comes back as a 404 that reads as
+ * "the app is not installed", sending the operator to re-install a good App.
+ * Stricter than `createAppAuth`'s own `+value` coercion, deliberately: that
+ * accepts `' 12 '`, `12.5` and `0x1f`, and none of them is an id.
+ *
+ * Two values pass through untouched, both of which would otherwise be reported
+ * as the wrong problem:
+ *
+ * - **Empty**, which is what `process.env.GITHUB_APP_ID ?? ''` and an Actions
+ *   `vars.` reference to a variable nobody created both produce. That is an
+ *   ABSENT id, not a malformed one, and `assertGitHubAuthProps` says so by name.
+ * - **An unresolved CDK token**, e.g. `Fn.importValue(…)`, whose value does not
+ *   exist until deploy. Refusing it would make a legitimate configuration
+ *   unrepresentable, and it is unverifiable here either way.
+ *   `githubAppPrivateKeySecretArn` already accepts a token, so this keeps the
+ *   App props consistent with each other.
+ */
+function assertNumericId(propName: string, value: string | undefined): void {
+  if (value === undefined || value === '' || /^\d+$/.test(value)) return
+  if (Token.isUnresolved(value)) return
+  throw new Error(
+    `CanopyCmsService: ${propName} must be the numeric id GitHub shows for the app ` +
+      `(got ${JSON.stringify(value)}). The app's slug and its 'Iv1.…' client id both appear on ` +
+      `the same settings page and neither works here — githubAppId is the number labelled ` +
+      `"App ID", and githubAppInstallationId is the trailing number in the URL of the app's ` +
+      `install page under your organisation's settings.`,
+  )
+}
+
+/**
+ * Guards the GitHub credential props at synth: exactly one shape, fully given.
+ *
+ * 1. **All three App props or none.** Two of the three cannot work at all:
+ *    `createAppAuth` needs the App ID, the installation ID and the key, and the
+ *    message names the missing ones.
+ * 2. **Not both an App and a token.** Rejected rather than resolved by
+ *    precedence, because it would otherwise be undefined which identity a push
+ *    or a pull request acts as -- and a PR opened by the wrong identity is not
+ *    something an adopter notices quickly.
+ *
+ * Rule 2 also lives in `resolveWorkerGitHubAuth`
+ * (packages/canopycms/src/worker/github-auth.ts), which core keeps because core
+ * is reachable without this construct; rule 1 has no counterpart there, since
+ * core takes one already-built `githubAppAuth` object. Checking at synth matters
+ * because a worker that throws at boot is restarted by systemd every 5 seconds
+ * indefinitely while `cdk deploy` reports success.
+ *
+ * Configuring NEITHER is deliberately not an error here. The worker also reads
+ * `CANOPYCMS_GITHUB_TOKEN` directly from its environment, which an adopter can
+ * supply outside this construct, and core refuses the genuinely empty case at
+ * boot with a message naming both options.
+ */
+function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
+  for (const name of GITHUB_APP_PROP_NAMES) {
+    assertNotInlinePrivateKey(name, props[name])
+  }
+  assertNumericId('githubAppId', props.githubAppId)
+  assertNumericId('githubAppInstallationId', props.githubAppInstallationId)
+
+  const missing = GITHUB_APP_PROP_NAMES.filter((name) => !props[name])
+  const provided = GITHUB_APP_PROP_NAMES.filter((name) => props[name])
+
+  if (provided.length > 0 && missing.length > 0) {
+    throw new Error(
+      `CanopyCmsService: GitHub App authentication needs all of ` +
+        `${GITHUB_APP_PROP_NAMES.join(', ')}, but ${missing.join(' and ')} ` +
+        `${missing.length === 1 ? 'is' : 'are'} not set (${provided.join(' and ')} ` +
+        `${provided.length === 1 ? 'is' : 'are'}). An App's installation token is minted from ` +
+        `all three together, so a partial set cannot authenticate at all -- supply the rest, or ` +
+        `drop them and use githubTokenSecretArn.`,
+    )
+  }
+
+  // The JSON field counts as "a token is configured", not just the ARN. An
+  // adopter following docs/adopter-migration.md removes `githubTokenSecretArn`
+  // and overlooks `githubTokenSecretJsonField`; left out of this check, that
+  // lands on `assertSecretPropPair` instead, which answers "Set
+  // githubTokenSecretArn, or drop githubTokenSecretJsonField" -- pointing them
+  // back at the credential they were just told to delete, and at a
+  // configuration this rule would then refuse anyway.
+  const tokenPropsSet = GITHUB_TOKEN_PROP_NAMES.filter((name) => props[name])
+  if (provided.length > 0 && tokenPropsSet.length > 0) {
+    throw new Error(
+      `CanopyCmsService: configure either the githubToken* props or the githubApp* props, not ` +
+        `both (${tokenPropsSet.join(' and ')} ${tokenPropsSet.length === 1 ? 'is' : 'are'} set ` +
+        `alongside ${provided.join(' and ')}). Two credentials would leave it undefined which ` +
+        `identity the worker's pushes and pull requests act as. A personal access token is the ` +
+        `default and needs no App props; GitHub App auth replaces it, so drop ` +
+        `${tokenPropsSet.join(' and ')} when you adopt it.`,
+    )
+  }
+}
+
+/**
  * Default CMS Lambda timeout.
  *
  * Shared with `CanopyCmsDistribution`, which uses it as its default origin
@@ -234,11 +538,18 @@ export interface CanopyCmsServiceProps {
   reservedConcurrency?: number
 
   /**
-   * Lambda architecture (default: `Architecture.X86_64`, Lambda's own
-   * default). MUST match the platform the Docker image was built for - e.g.
-   * an image built for `Platform.LINUX_ARM64` requires
-   * `Architecture.ARM_64` here, or the function fails at invoke time with
-   * an exec format error.
+   * Lambda architecture (default: `Architecture.ARM_64`, matching the EC2
+   * worker and AssetSupport's transform Lambda).
+   *
+   * This also decides the image's architecture for
+   * `DockerImageCode.fromImageAsset`: the construct always passes a resolved
+   * architecture to the function, and CDK derives the Docker build platform
+   * from it. So omit `platform` on `fromImageAsset`. An explicit `platform`
+   * overrides the derived one, and an image built for the other architecture
+   * cannot run on the function: an arm64 image on an x86_64 function fails at
+   * invoke with `Runtime.InvalidEntrypoint` (see "Where the image is built" in
+   * docs/deploying-to-aws.md). A prebuilt image (`DockerImageCode.fromEcr`) has
+   * no build for CDK to steer, so it must already be built for this architecture.
    */
   architecture?: lambda.Architecture
 
@@ -278,33 +589,134 @@ export interface CanopyCmsServiceProps {
   /** Secrets Manager ARN for the GitHub bot token */
   githubTokenSecretArn?: string
 
+  /**
+   * The key within a JSON secret document at `githubTokenSecretArn`; omit when
+   * the secret's whole value is the credential.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD`, which
+   * `getSecret` (packages/canopycms-cdk/worker/secrets.ts) reads to pull one
+   * field out of the document instead of using the whole string. Omitting it is
+   * the default and the common case — a secret holding a bare `ghp_…` needs
+   * nothing here.
+   *
+   * This is NOT the ECS/CloudFormation `arn:…:secret:name-AbCdEf:KEY::`
+   * convention. The worker calls the `GetSecretValue` API, which does not parse
+   * that suffix; a literal ARN carrying one is refused at synth (see
+   * `assertSecretArnHasNoFieldSuffix` below, and the known limit recorded on
+   * `SECRET_ARN_WITH_EMPTY_VERSION_TAIL` for the one token spelling that gets
+   * through) and the field belongs here instead.
+   */
+  githubTokenSecretJsonField?: string
+
+  /**
+   * GitHub App ID, to authenticate the worker as a GitHub App installation
+   * instead of as a personal access token.
+   *
+   * **The token is the default and stays first-class.** Registering a GitHub
+   * App under an organisation takes an owner of that organisation (or a GitHub
+   * App manager for all its Apps), which many adopters are not, so this is the
+   * "if your organisation requires it" option, not a direction of travel.
+   * Nothing about
+   * `githubTokenSecretArn` is deprecated or warned about.
+   *
+   * All three App props (`githubAppId`, `githubAppInstallationId`,
+   * `githubAppPrivateKeySecretArn`) are set together or not at all, and App
+   * auth is mutually exclusive with `githubTokenSecretArn` — both are refused
+   * at synth. That mirrors `resolveWorkerGitHubAuth` in core
+   * (packages/canopycms/src/worker/github-auth.ts), which refuses the same two
+   * shapes at boot; checking here turns a 5-second systemd restart loop into a
+   * failed `cdk synth`.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_APP_ID`.
+   */
+  githubAppId?: string
+
+  /**
+   * The App's installation ID on your repository — NOT the App ID above.
+   *
+   * An App can be installed on several accounts, and a token is minted per
+   * installation, so both numbers are needed. It is the trailing number in the
+   * URL of the App's install page under your organisation's settings.
+   *
+   * Stamped into the worker's `CANOPYCMS_GITHUB_APP_INSTALLATION_ID`.
+   */
+  githubAppInstallationId?: string
+
+  /**
+   * Secrets Manager ARN for the App's PEM private key.
+   *
+   * **ARN-only: there is deliberately no plaintext prop for this key**, and the
+   * reason is mechanical. Every value the construct puts in the worker's
+   * environment is written into a `.env` file systemd reads as
+   * `EnvironmentFile=`, where a newline starts a new variable, so `assertEnvSafe`
+   * refuses one and a PEM is inherently multi-line: a plaintext key could not be
+   * delivered to the worker intact by this path at all. Passing the PEM itself
+   * here is caught by name at synth (`assertNotInlinePrivateKey`) rather than
+   * surfacing as a puzzling "an ARN must not contain a newline".
+   *
+   * The ARN is unioned into the worker's IAM policy alongside the other secret
+   * ARN props; you do not need to repeat it in `secretsArns`.
+   */
+  githubAppPrivateKeySecretArn?: string
+
+  /**
+   * The key within a JSON secret document at `githubAppPrivateKeySecretArn`;
+   * omit when the secret's whole value is the PEM.
+   *
+   * Stamped into the worker's
+   * `CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD`. See
+   * `githubTokenSecretJsonField` above — same mechanism, same non-relationship
+   * to the ECS `:KEY::` ARN suffix.
+   *
+   * A PEM stored as a JSON string value carries its newlines as `\n` escapes,
+   * which `JSON.parse` turns back into real newlines — and the worker
+   * additionally runs whatever it reads through
+   * `normalizeGitHubAppPrivateKey`, which unescapes and base64-unwraps, so a
+   * key mangled by a single-line config field still works.
+   */
+  githubAppPrivateKeySecretJsonField?: string
+
   /** Secrets Manager ARN for the Clerk secret key */
   clerkSecretKeySecretArn?: string
+
+  /**
+   * The key within a JSON secret document at `clerkSecretKeySecretArn`; omit
+   * when the secret's whole value is the credential.
+   *
+   * Stamped into the worker's `CLERK_SECRET_KEY_SECRET_JSON_FIELD`. See
+   * `githubTokenSecretJsonField` above — same mechanism, same non-relationship
+   * to the ECS `:KEY::` ARN suffix.
+   *
+   * Note that this covers `CLERK_SECRET_KEY` only. A Clerk JSON document
+   * typically also holds `CLERK_JWT_KEY` and the publishable key, and NEITHER
+   * can be sourced from Secrets Manager at all: `CLERK_JWT_KEY` reaches the
+   * Lambda as a plain value through `environment`, and the publishable key is a
+   * Docker build arg inlined into the client bundle. Both are public material
+   * (docs/deploying-to-aws.md, "Security Model"), so that is by design rather
+   * than an omission — but it means pointing this prop at your document does
+   * not relieve you of supplying those two separately.
+   */
+  clerkSecretKeySecretJsonField?: string
 
   /**
    * The GitHub repository's default branch name (default: 'main').
    *
    * Interpolated straight into a git ref (`refs/heads/{baseBranch}`) and into
    * the worker's `.env` heredoc, so an invalid value is rejected at synth (see
-   * `assertValidGitBranchName` above) instead of deploying an instance that
-   * boots successfully and then fails. And fail it will, permanently:
-   * `verifyBaseBranchExists`
-   * (packages/canopycms/src/worker/cms-worker.ts) throws when the named branch
-   * does not exist in the cloned `remote.git`, `start()`'s catch records the
-   * fatal error, `worker/index.ts` exits 1, and systemd's `Restart=always`
-   * repeats that forever — there is no working worker at all until the value
-   * is fixed and the instance replaced, and `rebaseActiveBranches` fetches and
-   * rebases against the wrong lineage in the meantime.
+   * `assertValidGitBranchName` above). A branch that git accepts but the repo
+   * does not have fails permanently at boot instead: `verifyBaseBranchExists`
+   * (packages/canopycms/src/worker/cms-worker.ts) throws, `worker/index.ts`
+   * exits 1, systemd's `Restart=always` repeats that forever, and
+   * `rebaseActiveBranches` rebases against the wrong lineage in the meantime.
    *
    * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`
    * (both default to 'main' when unset) — the two are resolved by different
    * processes (this stamps the worker's `.env`; the Lambda reads
-   * `config.defaultBaseBranch` at request time) with no automatic
-   * reconciliation between them. `infrastructure/lib/cms-stack.ts`, as
-   * scaffolded by `canopycms init-deploy aws`, derives this prop FROM that same
-   * config file at synth time so the two cannot drift for adopters who deploy
-   * through the generated stack; a hand-rolled stack must set this explicitly
-   * whenever `defaultBaseBranch` is anything other than 'main'.
+   * `config.defaultBaseBranch` at request time) with no automatic reconciliation
+   * between them. `infrastructure/lib/cms-stack.ts`, as scaffolded by
+   * `canopycms init-deploy aws`, derives this prop FROM that config file so the
+   * two cannot drift; a hand-rolled stack must set it explicitly whenever
+   * `defaultBaseBranch` is anything other than 'main'.
    */
   baseBranch?: string
 
@@ -315,22 +727,21 @@ export interface CanopyCmsServiceProps {
    * `canopycms-settings-<deploymentName>` — see `deploymentName` below).
    *
    * Only set this to mirror an adopter-configured `config.settingsBranch` in
-   * `canopycms.config.ts`. Leaving both unset (the default) is safe: Lambda and
-   * worker then resolve the SAME computed name independently, with nothing to
-   * keep in sync. But if the shared config sets `settingsBranch` explicitly
-   * and this prop is left unset, the worker keeps resolving the computed name
-   * while the Lambda's `getSettingsBranchName` short-circuits on
-   * `config.settingsBranch` — so the two own different branches. The PRIMARY
-   * settings-push path still reaches GitHub (its task payload carries the
-   * Lambda-resolved name), but the worker's per-cycle backstop push
-   * (`pushSettingsBranches`) targets the wrong branch and its "foreign settings
-   * branch" [SYNC-M3] warning misfires against the deployment's own branch.
-   * Validated at synth like `baseBranch` (see `assertValidGitBranchName`),
-   * since this is interpolated into a git ref and the worker's `.env` heredoc
-   * too. `infrastructure/lib/cms-stack.ts`, as scaffolded by
-   * `canopycms init-deploy aws`, derives this prop from the same
-   * `canopycms.config.ts` at synth time, so the two cannot drift for adopters
-   * who deploy through the generated stack.
+   * `canopycms.config.ts`. Leaving both unset is safe: Lambda and worker resolve
+   * the SAME computed name independently, with nothing to keep in sync. But if
+   * the shared config sets `settingsBranch` and this prop does not, the worker
+   * keeps resolving the computed name while the Lambda's `getSettingsBranchName`
+   * short-circuits on `config.settingsBranch`, so the two own different
+   * branches: the PRIMARY settings-push path still reaches GitHub (its task
+   * payload carries the Lambda-resolved name), but the worker's per-cycle
+   * backstop push (`pushSettingsBranches`) targets the wrong branch and its
+   * "foreign settings branch" warning misfires against the deployment's own.
+   *
+   * Interpolated into a git ref and the worker's `.env` heredoc, so validated at
+   * synth like `baseBranch` (see `assertValidGitBranchName`).
+   * `infrastructure/lib/cms-stack.ts`, as scaffolded by `canopycms init-deploy
+   * aws`, derives it from the same `canopycms.config.ts` so the two cannot
+   * drift.
    */
   settingsBranch?: string
 
@@ -387,20 +798,10 @@ export interface CanopyCmsServiceProps {
    * Execution role for the CMS Lambda (default: CDK creates one).
    *
    * Set this when the role's ARN has to be computable WITHOUT a reference to
-   * this construct - the motivating case is an asset bucket in a different AWS
-   * account from the compute, where the resource-policy half of the
-   * cross-account grant must be written in the bucket's own stack and needs the
-   * principal as a plain string. Reading `lambdaFunction.role` across an
-   * account boundary does not give you that: CDK emits `Fn::GetStackOutput`, a
-   * CDK-CLI-only intrinsic resolved at deploy time, so the coupling is
-   * invisible to CloudFormation and unusable by any deploy path that is not
-   * `cdk deploy`. Create a deterministically NAMED role instead and both stacks
-   * can compute `arn:aws:iam::<account>:role/<name>` from literals, with
-   * nothing crossing between them.
-   *
-   * A named IAM role means the consuming stack needs `CAPABILITY_NAMED_IAM`,
-   * and cannot be replaced in place without a rename - that trade is yours to
-   * make here, which is the point of taking a role rather than a name.
+   * this construct - typically a cross-account asset bucket. See
+   * `AssetSupportProps.transformRole` for why `Fn::GetStackOutput` does not give
+   * you that, and what a deterministically NAMED role costs
+   * (`CAPABILITY_NAMED_IAM`, no in-place replacement without a rename).
    *
    * This Lambda is VPC-attached, which makes the compensation in
    * `attachLambdaExecutionPolicies` (./lambda-execution-role) load-bearing
@@ -445,10 +846,10 @@ export interface CanopyCmsServiceProps {
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
  * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd) -
- *   rolled on every deploy via the ASG's UpdatePolicy, so a changed worker
- *   bundle actually reaches the instance instead of sitting unused in a
- *   launch template until the next spot interruption (see the UpdatePolicy
- *   below)
+ *   rolled via the ASG's UpdatePolicy by every deploy that changes its launch
+ *   template, so a changed worker bundle reaches the instance instead of
+ *   sitting unused in a launch template until the next spot interruption (see
+ *   the UpdatePolicy below)
  * - Dedicated CloudWatch log groups for the CMS Lambda and the worker's
  *   stdout/stderr (the worker's is shipped via the amazon-cloudwatch-agent -
  *   journald is not agent-readable), each with a custom name/retention/
@@ -497,22 +898,13 @@ export class CanopyCmsService extends Construct {
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
 
-    // ------------------------------------------------------------------
-    // Deployment name: ONE effective value, validated once, used by both halves
-    // ------------------------------------------------------------------
-    //
-    // `props.environment` is spread into the Lambda's environment, so an
-    // adopter can set CANOPYCMS_DEPLOYMENT_NAME there directly. That escape
-    // hatch used to bypass both things that make this prop safe: the synth
-    // guard below (an invalid value deployed clean and crash-looped the Lambda
-    // at boot) and the worker, which kept reading `props.deploymentName` and so
-    // resolved a DIFFERENT settings branch than the Lambda — exactly the split
-    // that `pushSettingsBranches`'s [SYNC-M3] warning was added to detect.
-    //
-    // Kept rather than dropped (dropping is a breaking change for anyone
-    // already setting it), but resolved to a single value here: whatever wins
-    // is validated, and the same string is stamped on the Lambda AND written
-    // into the worker's `.env` below. The two halves cannot disagree.
+    // Deployment name: ONE effective value, validated once, used by both halves.
+    // `props.environment` is spread into the Lambda's environment, so an adopter
+    // can set CANOPYCMS_DEPLOYMENT_NAME there directly; that escape hatch is
+    // resolved HERE so it cannot bypass the synth guard below, and so the same
+    // validated string is stamped on the Lambda AND written into the worker's
+    // `.env`. Two halves resolving different settings branches is what
+    // `pushSettingsBranches`'s "foreign settings branch" warning detects.
     const envDeploymentNameOverride = props.environment?.['CANOPYCMS_DEPLOYMENT_NAME']
     const deploymentName = envDeploymentNameOverride ?? props.deploymentName ?? 'prod'
     const deploymentNameSource =
@@ -520,13 +912,11 @@ export class CanopyCmsService extends Construct {
         ? 'environment.CANOPYCMS_DEPLOYMENT_NAME'
         : 'deploymentName'
 
-    // Fail at synth, not at boot. deploymentName is interpolated BOTH into a
-    // git ref (`canopycms-settings-{deploymentName}`) and into a line of the
-    // worker's `.env`, which user-data writes with a shell heredoc — a value
-    // carrying a newline or quote would corrupt the worker's environment file
-    // before any runtime validation could run. Mirrors the package-side rule
-    // in operating-mode/deployment-name.ts (resolveDeploymentName); the
-    // fixture-driven drift test named above keeps the two in step.
+    // Fail at synth, not at boot. deploymentName is interpolated BOTH into a git
+    // ref (`canopycms-settings-{deploymentName}`) and into a line of the worker's
+    // `.env`, which user-data writes with a shell heredoc — a value carrying a
+    // newline or quote would corrupt the worker's environment file before any
+    // runtime validation could run.
     if (!isValidDeploymentName(deploymentName)) {
       throw new Error(
         `CanopyCmsService: invalid deploymentName ${JSON.stringify(deploymentName)} ` +
@@ -536,44 +926,73 @@ export class CanopyCmsService extends Construct {
       )
     }
 
-    // ------------------------------------------------------------------
-    // Base branch / settings branch: validated the same way as deploymentName
-    // ------------------------------------------------------------------
-    //
     // Both are interpolated into a git ref and the worker's `.env` heredoc, so
-    // both are guarded at synth rather than left to fail (or silently diverge
-    // from the shared `canopycms.config.ts`) at boot. See the doc comments on
-    // `baseBranch`/`settingsBranch` above for the specific failure each guards
-    // against. `settingsBranch` stays `undefined` (not stamped at all) unless
-    // the adopter explicitly set it — an absent env var and an empty one are
-    // NOT the same to the worker, which falls through to a computed name only
-    // when `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
+    // both are guarded at synth - see their doc comments for the failure each
+    // prevents. `settingsBranch` stays `undefined` (not stamped at all) unless
+    // the adopter explicitly set it: an absent env var and an empty one are NOT
+    // the same to the worker, which falls through to a computed name only when
+    // `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
     const baseBranch = assertValidGitBranchName('baseBranch', props.baseBranch ?? 'main')
     const settingsBranch =
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
 
-    // ------------------------------------------------------------------
-    // Operating mode
-    // ------------------------------------------------------------------
+    // Checked at the top so a misconfigured pair fails `cdk synth` rather than
+    // `cdk deploy`-then-restart-loop.
     //
+    // WHICH CREDENTIAL first, then whether each is well formed: the order is
+    // load-bearing. Reversed, an adopter following docs/adopter-migration.md who
+    // removes `githubTokenSecretArn` and overlooks `githubTokenSecretJsonField`
+    // is told "Set githubTokenSecretArn, or drop githubTokenSecretJsonField" --
+    // pointing them back at the credential they were just told to delete, and at
+    // a configuration the exclusivity rule would refuse anyway.
+    // `assertGitHubAuthProps` is silent when no App prop is set, so this costs
+    // the token-only path nothing.
+    assertGitHubAuthProps(props)
+    assertSecretPropPair(
+      'githubTokenSecretArn',
+      props.githubTokenSecretArn,
+      'githubTokenSecretJsonField',
+      props.githubTokenSecretJsonField,
+    )
+    assertSecretPropPair(
+      'clerkSecretKeySecretArn',
+      props.clerkSecretKeySecretArn,
+      'clerkSecretKeySecretJsonField',
+      props.clerkSecretKeySecretJsonField,
+    )
+    assertSecretPropPair(
+      'githubAppPrivateKeySecretArn',
+      props.githubAppPrivateKeySecretArn,
+      'githubAppPrivateKeySecretJsonField',
+      props.githubAppPrivateKeySecretJsonField,
+    )
+    // `secretsArns` gets the suffix half of the same guard: it has no
+    // JSON-field prop, but its entries are written verbatim into the worker's
+    // IAM policy below, so a suffixed ARN fails there in precisely the way the
+    // policy's own comment describes.
+    for (const [index, arn] of (props.secretsArns ?? []).entries()) {
+      assertSecretArnHasNoFieldSuffix(`secretsArns[${index}]`, arn)
+    }
+
     // The adopter's `canopycms.config.ts` is shared by local dev, the image
-    // build and this deployment, and it must say `dev` for the first two (a
-    // prod-mode `next build` would try to open an EFS branch workspace that
-    // cannot exist in an image builder). So the deployed mode is supplied
-    // here, at run time: `resolveOperatingMode`
-    // (packages/canopycms/src/operating-mode/mode-env.ts) reads CANOPY_MODE
-    // and it wins over the config literal. Without it the Lambda runs dev
-    // mode, resolves its workspace to `<cwd>/.canopy-dev`, and fails EROFS on
-    // Lambda's read-only filesystem.
+    // build and this deployment, and it says `dev`. That is right for both of
+    // the others: build-time reads come from the working tree in either mode
+    // (`readsFromCheckout` in canopycms's build-mode.ts), while prod would hold
+    // the image builder to checks it has no reason to meet (gitBotAuthorName/
+    // gitBotAuthorEmail, a credential-verifying auth plugin). So the deployed
+    // mode is supplied at run time instead: `resolveOperatingMode`
+    // (packages/canopycms/src/operating-mode/mode-env.ts) reads CANOPY_MODE and
+    // it wins over the config literal. Without it the Lambda runs dev mode,
+    // resolves its workspace to `<cwd>/.canopy-dev`, and fails EROFS on Lambda's
+    // read-only filesystem.
     //
     // Only 'prod' is accepted from `props.environment`: this construct deploys
-    // the prod topology (EFS workspace, no internet, read-only container), and
-    // 'dev' there cannot work — better a synth error than an EROFS crash-loop.
-    // The browser half of `mode` cannot come from here at all; it is inlined
-    // at image-build time from the NEXT_PUBLIC_CANOPY_MODE build arg (see
-    // Dockerfile.cms.template and the generated cms-stack.ts).
+    // the prod topology (EFS workspace, no internet, read-only container), so a
+    // synth error beats an EROFS crash-loop. The browser half of `mode` cannot
+    // come from here at all; it is inlined at image-build time from the
+    // NEXT_PUBLIC_CANOPY_MODE build arg (Dockerfile.cms.template).
     const envModeOverride = props.environment?.['CANOPY_MODE']
     if (envModeOverride !== undefined && envModeOverride !== 'prod') {
       throw new Error(
@@ -583,10 +1002,6 @@ export class CanopyCmsService extends Construct {
           `Omit it to get the default.`,
       )
     }
-
-    // ========================================================================
-    // VPC — 2 AZs, public + private subnets, NO NAT
-    // ========================================================================
 
     this.vpc =
       props.vpc ??
@@ -608,20 +1023,16 @@ export class CanopyCmsService extends Construct {
       })
 
     // Gateway VPC endpoint for S3 (free - no hourly/data charge, unlike an
-    // interface endpoint). Without this the PRIVATE_ISOLATED subnet has NO
-    // route to S3 at all (no NAT, no IGW) - the CMS Lambda's S3AssetStore
-    // calls (presigned POST generation, finalize's originals/meta writes)
-    // would hang/fail outright (adversarial finding B1). `addGatewayEndpoint`
-    // is on `IVpc` itself, so this works whether `this.vpc` was created here
-    // or supplied via `props.vpc`.
+    // interface endpoint). Without this the PRIVATE_ISOLATED subnet has NO route
+    // to S3 at all (no NAT, no IGW) and the CMS Lambda's S3AssetStore calls
+    // (presigned POST generation, finalize's originals/meta writes) hang or fail
+    // outright. `addGatewayEndpoint` is on `IVpc` itself, so this works whether
+    // `this.vpc` was created here or supplied via `props.vpc`.
     this.vpc.addGatewayEndpoint('S3Endpoint', {
       service: ec2.GatewayVpcEndpointAwsService.S3,
     })
 
-    // ========================================================================
     // EFS — persistent filesystem for content, git repos, cache
-    // ========================================================================
-
     const efsSg = new ec2.SecurityGroup(this, 'EfsSg', {
       vpc: this.vpc,
       description: 'CanopyCMS EFS',
@@ -650,55 +1061,46 @@ export class CanopyCmsService extends Construct {
       },
     })
 
-    // ========================================================================
-    // Lambda — CMS app, private subnet, no internet, EFS mount
-    // ========================================================================
-
     const lambdaSg = new ec2.SecurityGroup(this, 'LambdaSg', {
       vpc: this.vpc,
       description: 'CanopyCMS Lambda',
       allowAllOutbound: false, // No internet access
     })
 
-    // Lambda ↔ EFS (ingress on EFS SG + egress on Lambda SG).
-    // The Lambda SG is allowAllOutbound: false, so without the explicit egress
-    // rule the NFS mount is blocked and every Lambda request fails to reach
-    // /mnt/efs (DEP-C1). Mirrors the worker's ingress+egress pair below.
+    // The Lambda SG is allowAllOutbound: false, so without the explicit EGRESS
+    // rule as well as the EFS ingress rule the NFS mount is blocked and every
+    // Lambda request fails to reach /mnt/efs. Same pair for the worker below.
     efsSg.addIngressRule(lambdaSg, ec2.Port.tcp(2049), 'Lambda NFS access')
     lambdaSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
-    // Lambda -> S3 (via the gateway endpoint above), HTTPS only. The tight
-    // option - `ec2.Peer.prefixList(<S3 managed prefix list id>)` - needs a
-    // region-specific literal id (there is no CFN attribute exposing it off
-    // `GatewayVpcEndpoint`, and `PrefixList.fromLookup` does a real AWS
-    // context-provider lookup at synth time, which would make this
-    // construct's synth require live AWS credentials - unacceptable for a
-    // construct whose own unit tests synth with a fake account/region).
-    // `anyIpv4()` on 443 is safe here specifically because the route table
-    // for this PRIVATE_ISOLATED subnet has no route to 0.0.0.0/0 at all (no
-    // NAT, no IGW) - only to the VPC CIDR and to configured endpoints'
-    // prefix-list routes - so this rule cannot actually reach the general
-    // internet; the route table, not the security group, is the real
-    // boundary here. Narrow this to `Peer.prefixList(...)` if/when a
-    // region-agnostic way to reference the S3 managed prefix list lands in
-    // CDK, or if this VPC ever gains a NAT/IGW route.
+    // Lambda -> S3 via the gateway endpoint above, HTTPS only. The tight option,
+    // `ec2.Peer.prefixList(<S3 managed prefix list id>)`, needs a
+    // region-specific literal id: no CFN attribute exposes it off
+    // `GatewayVpcEndpoint`, and `PrefixList.fromLookup` is a real AWS
+    // context-provider lookup, which would make this construct's synth require
+    // live AWS credentials.
+    //
+    // `anyIpv4()` on 443 is safe HERE SPECIFICALLY because this
+    // PRIVATE_ISOLATED subnet's route table has no route to 0.0.0.0/0 at all
+    // (no NAT, no IGW) - only the VPC CIDR and configured endpoints' prefix-list
+    // routes - so the rule cannot reach the general internet. The route table,
+    // not the security group, is the real boundary. Narrow this to
+    // `Peer.prefixList(...)` if a region-agnostic reference to the S3 managed
+    // prefix list lands in CDK, or if this VPC ever gains a NAT/IGW route.
     lambdaSg.addEgressRule(
       ec2.Peer.anyIpv4(),
       ec2.Port.tcp(443),
       'HTTPS to S3 (via gateway endpoint)',
     )
 
-    // Dedicated CloudWatch log group for the CMS Lambda's stdout/stderr.
-    // Custom name (NOT the CloudFormation-implicit `/aws/lambda/<function
-    // name>`), for two reasons: (1) CDK does not manage that implicit group
-    // at all - infinite retention, and `cdk destroy` leaves it behind (the
-    // deploy-test teardown had to sweep it manually); (2) Lambda auto-creates
-    // `/aws/lambda/<function name>` on first invoke, OUTSIDE CloudFormation -
-    // once that has happened (e.g. this stack was already deployed before
-    // this log group existed), a CDK `LogGroup` construct using that exact
-    // name would fail its `CreateLogGroup` call with "already exists" and
-    // block every future `cdk deploy`. Mirrors `workerLogGroup` below, which
-    // predates this and already follows the same convention.
+    // Dedicated CloudWatch log group for the CMS Lambda's stdout/stderr,
+    // custom-named and NOT the CloudFormation-implicit `/aws/lambda/<function
+    // name>`, for two reasons: CDK does not manage that implicit group at all
+    // (infinite retention, and `cdk destroy` leaves it behind), and Lambda
+    // auto-creates it on first invoke OUTSIDE CloudFormation, after which a CDK
+    // `LogGroup` using that exact name fails `CreateLogGroup` with "already
+    // exists" and blocks every future `cdk deploy`. Same convention as
+    // `workerLogGroup` below.
     this.cmsLogGroup = new logs.LogGroup(this, 'CmsFunctionLogs', {
       logGroupName: props.cmsLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/cms`,
       retention: props.cmsLogRetention ?? logs.RetentionDays.THREE_MONTHS,
@@ -716,6 +1118,14 @@ export class CanopyCmsService extends Construct {
       attachLambdaExecutionPolicies(props.lambdaRole, { vpc: true })
     }
 
+    // Always resolved, never passed through as `undefined`. DockerImageFunction
+    // hands it to the image code's `_bind`, and for `fromImageAsset` that is
+    // what sets the Docker build platform. Unset, CDK sets no platform at all:
+    // Docker builds for whatever machine runs `cdk deploy` (arm64 on Apple
+    // Silicon, amd64 on an x86 CI runner) while the function stays x86_64, and
+    // the mismatch only shows at invoke. See `architecture`'s doc comment.
+    const architecture = props.architecture ?? lambda.Architecture.ARM_64
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       // Default (unset) leaves CDK to create the execution role, with its own
@@ -724,7 +1134,7 @@ export class CanopyCmsService extends Construct {
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
-      architecture: props.architecture,
+      architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
@@ -735,64 +1145,55 @@ export class CanopyCmsService extends Construct {
       // LogGroup construct above instead.
       logGroup: this.cmsLogGroup,
       environment: {
-        // INVARIANT (B1): the Lambda mounts EFS through the WorkspaceAP access
-        // point above, which is already rooted at EFS:/workspace - so /mnt/efs
-        // here IS EFS:/workspace. The EC2 worker instead mounts the filesystem
-        // ROOT at /mnt/efs (see UserData below) and reaches the same directory
-        // via /mnt/efs/workspace. Both paths must resolve to EFS:/workspace,
-        // or the Lambda and worker silently operate on different directories.
+        // INVARIANT: the Lambda mounts EFS through the WorkspaceAP access point
+        // above, which is already rooted at EFS:/workspace - so /mnt/efs here IS
+        // EFS:/workspace. The EC2 worker instead mounts the filesystem ROOT at
+        // /mnt/efs (see UserData below) and reaches the same directory via
+        // /mnt/efs/workspace. Both paths must resolve to EFS:/workspace, or the
+        // Lambda and worker silently operate on different directories.
         CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
         CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
-        // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
-        // access point forces uid 1000; Lambda containers run as a different
-        // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
-        // hard-blocks env config (deploy-proven 2026-07-24). The fix lives in
-        // the image: Dockerfile.cms.template runs
+        // git >= 2.35.2 refuses repos owned by another uid (the access point
+        // forces uid 1000; Lambda containers run as a different user).
+        // Env-based GIT_CONFIG_* CANNOT fix this - simple-git hard-blocks env
+        // config. The fix lives in the image: Dockerfile.cms.template runs
         // `git config --system safe.directory '*'`.
         ...props.environment,
-        // AFTER the spread, deliberately. Both values are already the
-        // adopter's own choice (an `environment` override is folded into
-        // `deploymentName` above and validated; CANOPY_MODE is restricted to
-        // 'prod'), so nothing is being taken away here - what the placement
-        // buys is that the Lambda and the worker's `.env` cannot end up
-        // holding different strings, which is the failure mode that made this
-        // an escape hatch worth fixing rather than a harmless one.
+        // AFTER the spread, deliberately. Both values are already the adopter's
+        // own choice (an `environment` override is folded into `deploymentName`
+        // above and validated; CANOPY_MODE is restricted to 'prod'), so nothing
+        // is taken away - the placement is what stops the Lambda and the
+        // worker's `.env` holding different strings.
         CANOPYCMS_DEPLOYMENT_NAME: deploymentName,
         CANOPY_MODE: 'prod',
       },
     })
 
     // Explicit, scoped grant - NOT a reliance on the auto-created execution
-    // role's AWSLambdaBasicExecutionRole managed policy (attached by CDK's
-    // lambda.Function/DockerImageFunction regardless of `logGroup`, and
-    // never adjusted for it - passing `logGroup` only points the function's
-    // LoggingConfig at this group, it grants no IAM permissions). That
-    // managed policy's logs:CreateLogStream/logs:PutLogEvents statement is
-    // scoped to `arn:aws:logs:*:*:log-group:/aws/lambda/*:*` only (its
-    // logs:CreateLogGroup statement is the sole one that's unrestricted) -
-    // it grants nothing for a custom-named group like this one. Without this
-    // grantWrite, the function would still create log streams to the void:
-    // CloudWatch Logs delivery failures are never surfaced to the function's
-    // own invocation, so logs would simply vanish with no error anywhere.
+    // role's AWSLambdaBasicExecutionRole managed policy, which CDK attaches
+    // regardless of `logGroup` and never adjusts for it (passing `logGroup` only
+    // points the function's LoggingConfig at this group; it grants no IAM). That
+    // policy's logs:CreateLogStream/logs:PutLogEvents statement is scoped to
+    // `arn:aws:logs:*:*:log-group:/aws/lambda/*:*`, so it grants nothing for a
+    // custom-named group. Without this grantWrite the function creates log
+    // streams into the void: CloudWatch Logs delivery failures never reach the
+    // invocation, so logs simply vanish with no error anywhere.
     this.cmsLogGroup.grantWrite(this.lambdaFunction)
 
-    // Function URL for CloudFront origin.
-    // AWS_IAM (not NONE): the URL must only be reachable through CloudFront,
-    // which signs origin requests via Origin Access Control (see
+    // AWS_IAM (not NONE): the Function URL must only be reachable through
+    // CloudFront, which signs origin requests via Origin Access Control (see
     // CanopyCmsDistribution). With NONE, anyone who learns the URL hits the CMS
-    // directly, bypassing CloudFront (DEP-H2). Adopters wiring their own
-    // CloudFront must configure an OAC and grant it lambda:InvokeFunctionUrl.
+    // directly, bypassing CloudFront. Adopters wiring their own CloudFront must
+    // configure an OAC and grant it lambda:InvokeFunctionUrl.
     this.functionUrl = this.lambdaFunction.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.AWS_IAM,
     })
 
-    // Asset bucket access (optional) - grants the CMS Lambda's role the same
-    // prefix-scoped put/get/delete permissions `AssetSupport.grantUploadAccess()`
-    // grants, without this construct depending on `AssetSupport` directly
-    // (kept decoupled - a consumer wires both constructs together in their
-    // own stack). Duplicated rather than shared because the two constructs
-    // must stay independently usable (`AssetSupport` has no CMS-service
-    // dependency either).
+    // The same prefix-scoped put/get/delete grants as
+    // `AssetSupport.grantUploadAccess()`, duplicated rather than shared so the
+    // two constructs stay independently usable - a consumer wires them together
+    // in their own stack, and `AssetSupport` has no CMS-service dependency
+    // either.
     if (props.assetBucket) {
       const prefixes = {
         staging: 'asset-staging',
@@ -812,54 +1213,45 @@ export class CanopyCmsService extends Construct {
       props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.meta}/*`)
     }
 
-    // ========================================================================
-    // EC2 Worker — t4g.nano spot, public subnet, internet, EFS mount
-    // ========================================================================
-
     const workerSg = new ec2.SecurityGroup(this, 'WorkerSg', {
       vpc: this.vpc,
       description: 'CanopyCMS EC2 Worker',
       allowAllOutbound: false,
     })
 
-    // Worker ↔ EFS (ingress on EFS SG + egress on Worker SG)
     efsSg.addIngressRule(workerSg, ec2.Port.tcp(2049), 'Worker NFS access')
     workerSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
-    // Worker → internet (HTTPS only)
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS outbound')
 
     // Worker → DNS (needed for EFS DNS-based mount targets)
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(53), 'DNS TCP')
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.udp(53), 'DNS UDP')
 
-    // Worker IAM role
     const workerRole = new iam.Role(this, 'WorkerRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       description: 'CanopyCMS EC2 Worker role',
     })
 
-    // Worker needs to read secrets.
+    // The worker's secret grant MUST be the UNION of `secretsArns` and every
+    // individual ARN prop. Anything the construct stamps into the worker's
+    // `.env` and omits here is a worker that knows WHICH secret to read and has
+    // no permission to read it: `cdk deploy` succeeds, the worker boots, gets
+    // AccessDenied from GetSecretValue, exits, and systemd restart-loops it
+    // every 5s forever, with nothing flagged at synth.
     //
-    // The grant is the UNION of `secretsArns` and the individual ARN props,
-    // because the construct previously carried two disconnected
-    // representations of "the secrets the worker reads": `secretsArns` fed
-    // this policy, while `githubTokenSecretArn`/`clerkSecretKeySecretArn` fed
-    // only the worker's `.env`. An adopter hand-writing their stack (both are
-    // individually documented, and `secretsArns`'s doc comment did not say it
-    // was the sole source of IAM) could set the individual props and omit
-    // `secretsArns` -- producing a worker that knows WHICH secret to read and
-    // has no permission to read it. `cdk deploy` succeeded; the worker booted,
-    // got AccessDenied from GetSecretValue, exited, and systemd restart-looped
-    // it every 5s forever. Nothing flagged it at synth.
-    //
-    // Deduped so the emitted policy does not list the same ARN twice when an
-    // adopter correctly passes both.
+    // Deduped for the reader, NOT for the emitted template: `PolicyStatement`
+    // already collapses a repeated `resources` entry (aws-cdk-lib 2.265), so
+    // removing this `new Set` changes no synthesized output.
     const secretsArns = [
       ...new Set(
         [
           ...(props.secretsArns ?? []),
           props.githubTokenSecretArn,
+          // Read by the same `getSecret` call path as the token it replaces,
+          // from the same instance profile, so omitting it here reproduces that
+          // AccessDenied restart-loop exactly.
+          props.githubAppPrivateKeySecretArn,
           props.clerkSecretKeySecretArn,
         ].filter((arn): arn is string => typeof arn === 'string' && arn.length > 0),
       ),
@@ -896,15 +1288,12 @@ export class CanopyCmsService extends Construct {
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
 
-    // Worker S3 Asset — upload bundled worker code to CDK assets bucket
-    // The worker is bundled with esbuild into a single JS file (npm run build:worker)
+    // The worker is bundled with esbuild into a single JS file (pnpm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
       path: path.join(__dirname, '../../worker/dist'),
     })
     workerAsset.grantRead(workerRole)
 
-    // Build worker .env file content from CDK props.
-    //
     // Name/value PAIRS rather than pre-formatted lines: every value then flows
     // through `assertEnvSafe` in the single `map` below, so a value added here
     // later is guarded whether or not whoever adds it remembers to.
@@ -916,18 +1305,54 @@ export class CanopyCmsService extends Construct {
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
-      // and disagreeing here is what [SYNC-M3] warns about at runtime.
+      // and disagreeing here is what the runtime warning detects.
       ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName],
-      // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
-      // without this the worker's bare `SecretsManagerClient({})` crash-loops
-      // with "Region is missing".
+      // The AWS SDK JS v3 cannot resolve a region from IMDS on its own - without
+      // this the worker's bare `SecretsManagerClient({})` crash-loops with
+      // "Region is missing".
       ['AWS_REGION', Stack.of(this).region],
     ]
     if (props.githubTokenSecretArn) {
       envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
     }
+    // The JSON-field vars need NO IAM change, and that is not an oversight: a
+    // field is a key inside a secret's value, not a separately grantable
+    // resource. `secretsmanager:GetSecretValue` on the secret -- already granted
+    // above from the same ARN prop -- returns the whole document, and the worker
+    // picks the field out of it in `getSecret` (worker/secrets.ts).
+    if (props.githubTokenSecretJsonField) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_TOKEN_SECRET_JSON_FIELD',
+        props.githubTokenSecretJsonField,
+      ])
+    }
+    // GitHub App credentials, stamped individually even though
+    // `assertGitHubAuthProps` has established they are all set or all unset: a
+    // future prop added to the App set then cannot be silently dropped by a
+    // condition that names only its siblings.
+    if (props.githubAppId) {
+      envEntries.push(['CANOPYCMS_GITHUB_APP_ID', props.githubAppId])
+    }
+    if (props.githubAppInstallationId) {
+      envEntries.push(['CANOPYCMS_GITHUB_APP_INSTALLATION_ID', props.githubAppInstallationId])
+    }
+    if (props.githubAppPrivateKeySecretArn) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_ARN',
+        props.githubAppPrivateKeySecretArn,
+      ])
+    }
+    if (props.githubAppPrivateKeySecretJsonField) {
+      envEntries.push([
+        'CANOPYCMS_GITHUB_APP_PRIVATE_KEY_SECRET_JSON_FIELD',
+        props.githubAppPrivateKeySecretJsonField,
+      ])
+    }
     if (props.clerkSecretKeySecretArn) {
       envEntries.push(['CLERK_SECRET_KEY_SECRET_ARN', props.clerkSecretKeySecretArn])
+    }
+    if (props.clerkSecretKeySecretJsonField) {
+      envEntries.push(['CLERK_SECRET_KEY_SECRET_JSON_FIELD', props.clerkSecretKeySecretJsonField])
     }
     if (settingsBranch !== undefined) {
       // Only when explicitly set - an absent prop must keep today's behavior
@@ -939,7 +1364,6 @@ export class CanopyCmsService extends Construct {
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
 
-    // UserData script
     const userData = ec2.UserData.forLinux()
     userData.addCommands(
       '#!/bin/bash',
@@ -1178,15 +1602,18 @@ export class CanopyCmsService extends Construct {
       },
     })
 
-    // Auto Scaling Group
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       launchTemplate,
       minCapacity: 1,
       maxCapacity: 1,
-      healthCheck: autoscaling.HealthCheck.ec2({
-        grace: Duration.minutes(5),
+      // `healthChecks`, not the deprecated `healthCheck`/`HealthCheck.ec2({ grace })`:
+      // both synthesize the same HealthCheckType/HealthCheckGracePeriod, but the
+      // deprecated form prints a jsii warning on every synth -- in adopters'
+      // `cdk synth` output, not just ours -- and is slated for removal in v3.
+      healthChecks: autoscaling.HealthChecks.ec2({
+        gracePeriod: Duration.minutes(5),
       }),
       // Without an updatePolicy, CloudFormation's default behavior for an ASG
       // behind a changed launch template is to update the template resource
@@ -1200,53 +1627,41 @@ export class CanopyCmsService extends Construct {
       // launch template, so a worker code change actually reaches it.
       //
       // minInstancesInService: 0 is REQUIRED, not just accepted, because
-      // minCapacity/maxCapacity are both 1: there is no way to keep an
-      // instance "in service" out of a max of 1 while its replacement is
-      // being created. The update is therefore terminate-then-relaunch, with
-      // a short worker outage while the replacement boots (yum install
-      // git/unzip/nodejs/efs-utils, mount EFS - realistically 2-4 minutes).
-      // That outage is acceptable: the task queue and branch workspaces live
-      // on EFS, not on the instance, so the new instance picks up exactly
-      // where the old one left off; the Lambda's Save/Publish paths only
-      // enqueue task files onto EFS and never talk to the worker directly,
-      // so they are unaffected by the worker being briefly down. A task that
-      // was actually mid-flight when the old instance was terminated is
-      // handled by orphan recovery now running on every task-queue cycle,
-      // not only at worker boot (see recoverOrphanedTasks's call site in
+      // minCapacity/maxCapacity are both 1: nothing can stay "in service" out of
+      // a max of 1 while its replacement is created. The update is therefore
+      // terminate-then-relaunch, with a short worker outage while the
+      // replacement boots (2-4 minutes of package installs and the EFS mount).
+      // That outage is acceptable: the task queue and branch workspaces live on
+      // EFS, not on the instance, so the new instance picks up where the old one
+      // left off, and the Lambda's Save/Publish paths only enqueue task files
+      // onto EFS and never talk to the worker directly. A task mid-flight at
+      // termination is handled by orphan recovery on every task-queue cycle, not
+      // only at worker boot (recoverOrphanedTasks in
       // CmsWorker.processTaskQueue(), packages/canopycms/src/worker/cms-worker.ts).
       //
-      // Deliberately NOT paired with a `signals`/cfn-signal setup (and
-      // `waitOnResourceSignals` therefore defaults to false here, so this
-      // rolling update does not wait on one): see the comment below.
+      // `waitOnResourceSignals` therefore defaults to false here - see the
+      // no-cfn-signal note below.
       updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 0 }),
     })
 
-    // Why this PR does NOT add cfn-signal, despite the rolling update above
-    // now making instance replacement routine instead of rare:
+    // Deliberately NO cfn-signal, for two reasons:
     //
-    // 1. User-data runs under `set -euo pipefail`, and the CloudWatch-agent
-    //    block is placed at the very end ON PURPOSE (see that block's own
-    //    comment) so an agent failure there cannot kill the boot. A
-    //    cfn-signal placed after it would then never run when that block
-    //    fails, and CloudFormation would wait out its own timeout and
-    //    fail/roll back the ENTIRE deploy - the opposite of the intent
-    //    (agent shipping is best-effort; the worker itself must not be
-    //    blocked by it).
-    // 2. Even placed earlier (right after `systemctl start canopy-worker`),
-    //    a signal there would prove almost nothing: the systemd unit is
-    //    `Type=simple` with `Restart=always`, so `systemctl start` returns 0
-    //    the instant the process execs, regardless of what happens next. A
-    //    worker that immediately crash-loops (bad env, bad bundle) would
-    //    still signal SUCCESS. A real readiness gate would have to poll
-    //    `worker-status.json` or `systemctl is-active` in a loop before
-    //    signaling - a bigger change than this PR should carry.
+    // 1. User-data runs under `set -euo pipefail` and the CloudWatch-agent block
+    //    sits at the very end ON PURPOSE, so an agent failure cannot kill the
+    //    boot. A cfn-signal after it would never run when that block fails, and
+    //    CloudFormation would wait out its timeout and roll back the ENTIRE
+    //    deploy - the opposite of "agent shipping is best-effort".
+    // 2. Placed earlier (right after `systemctl start canopy-worker`) a signal
+    //    proves almost nothing: the unit is `Type=simple` with `Restart=always`,
+    //    so `systemctl start` returns 0 the instant the process execs and a
+    //    worker that immediately crash-loops still signals SUCCESS. A real
+    //    readiness gate would have to poll `worker-status.json` or
+    //    `systemctl is-active` in a loop first.
     //
-    // recoverOrphanedTasks()'s per-cycle recovery (see above) is the
-    // intentionally simpler fix for the actual problem (a stranded task
-    // surviving an instance replacement) - it works regardless of WHY the
-    // instance was replaced (rolling update, spot interruption, manual
-    // terminate) and does not depend on the new instance ever proving
-    // "ready" in the first place.
+    // recoverOrphanedTasks()'s per-cycle recovery (see above) covers the actual
+    // problem - a stranded task surviving an instance replacement - regardless
+    // of WHY the instance was replaced, and without depending on the new one
+    // ever proving "ready".
 
     // Boot ordering: the ASG can launch before EFS mount targets are
     // available; user-data runs with `set -euo pipefail`, so an early

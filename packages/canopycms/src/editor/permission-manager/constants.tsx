@@ -1,7 +1,3 @@
-/**
- * Constants for PermissionManager
- */
-
 import React from 'react'
 import { IconEye, IconPencil, IconCheckbox } from '@tabler/icons-react'
 import type { PermissionLevel } from './types'

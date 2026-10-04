@@ -1,7 +1,3 @@
-/**
- * Hook for user search functionality
- */
-
 import { useState, useEffect, useCallback } from 'react'
 import type { UserSearchResult } from '../types'
 

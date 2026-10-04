@@ -1,26 +1,19 @@
 /**
- * Single resolution point for `deploymentName`.
+ * Single resolution point for `deploymentName`, which namespaces the settings
+ * branch (`canopycms-settings-{deploymentName}`) so two CanopyCMS deployments
+ * can share one GitHub repo without fighting over the same orphan branch.
  *
- * `deploymentName` namespaces the settings branch
- * (`canopycms-settings-{deploymentName}`) so two CanopyCMS deployments can
- * share one GitHub repo without both resolving to `canopycms-settings-prod`
- * and fighting over the same orphan branch.
+ * Precedence: `process.env.CANOPYCMS_DEPLOYMENT_NAME` (trimmed, empty ignored),
+ * then `config.deploymentName`, then `modeDefault` (the caller's mode-specific
+ * fallback, e.g. 'prod'/'local').
  *
- * Precedence (highest wins):
- *   1. `process.env.CANOPYCMS_DEPLOYMENT_NAME` (trimmed; empty string ignored)
- *   2. `config.deploymentName`
- *   3. `modeDefault` (the caller's mode-specific fallback, e.g. 'prod'/'local')
- *
- * Env wins over config DELIBERATELY. The env var is stamped per-stack by
- * infrastructure (CDK's `CanopyCmsServiceProps.deploymentName` ->
- * `CANOPYCMS_DEPLOYMENT_NAME`), so it is the value GUARANTEED TO DIFFER
- * between two deployments sharing a repo. `config.deploymentName` lives in
- * the shared repo's `canopycms.config.ts`, so it is the value GUARANTEED TO
- * BE IDENTICAL across both deployments (both Lambdas run the same checked-out
- * config). If config won instead, an adopter who already wrote
- * `deploymentName` into their shared config would find the CDK
- * `deploymentName` prop silently doing nothing — exactly the two-stacks-one-repo
- * case this feature exists to fix.
+ * Env wins over config DELIBERATELY. Infrastructure stamps the env var
+ * per-stack (CDK's `CanopyCmsServiceProps.deploymentName`), so it is the value
+ * GUARANTEED TO DIFFER between two deployments sharing a repo, while
+ * `config.deploymentName` lives in the shared repo's `canopycms.config.ts` and
+ * is GUARANTEED TO BE IDENTICAL across both. If config won, an adopter who had
+ * already written `deploymentName` into their shared config would find the CDK
+ * prop silently doing nothing — the two-stacks-one-repo case this exists to fix.
  */
 
 import { canopyLogWarn } from '../utils/logger'
@@ -30,29 +23,23 @@ let warned = false
 /**
  * Conservative charset for a deployment name. The resolved value is
  * interpolated straight into a git ref (`canopycms-settings-{name}`), and the
- * env var route bypasses the config schema entirely — nothing else validates
- * an infra-stamped value before it becomes a branch name. Rejecting anything
- * outside this set keeps the result a single, well-formed ref component:
- * no `/` (would add a ref hierarchy level and break sanitizeBranchName
- * round-trips), no whitespace, no `..`/`~`/`^`/`:` (git-forbidden), no
- * leading `-` (would parse as a git option).
- *
- * The charset alone is not sufficient: `..`, a trailing `.`, and a `.lock`
- * suffix are all built from allowed characters but are still rejected by
- * git's own ref rules (git-check-ref-format), so they are excluded separately.
+ * env var route bypasses the config schema entirely — nothing else validates an
+ * infra-stamped value before it becomes a branch name. So the result must stay
+ * a single well-formed ref component: no `/` (would add a ref hierarchy level
+ * and break sanitizeBranchName round-trips), no whitespace, no `..`/`~`/`^`/`:`
+ * (git-forbidden), no leading `-` (would parse as a git option). `..`, a
+ * trailing `.` and a `.lock` suffix are built from allowed characters but are
+ * still rejected by git-check-ref-format, so they are excluded separately below.
  */
 const VALID_DEPLOYMENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
- * Exported so `canopycms-cdk`'s suite can assert that its own synth-time copy
- * of this rule (constructs/cms-service.ts) still agrees with this one. The
- * construct deliberately does not import this directly — see
- * `isValidDeploymentName`'s doc comment in cms-service.ts for the real reason
- * (not, as this comment used to say, that the published construct lacks a
- * runtime dependency on `canopycms` — it doesn't: `canopycms` is a
- * non-optional peerDependency there, and the package's own main entry already
- * imports it at runtime). The drift check is therefore test-only — see
- * `deployment-name-fixtures.ts`.
+ * Exported so `canopycms-cdk`'s suite can assert that its own synth-time copy of
+ * this rule (constructs/cms-service.ts) still agrees with this one. The
+ * construct deliberately does not import this directly — see its own
+ * `isValidDeploymentName` doc comment. The drift check is therefore test-only,
+ * over `deployment-name-fixtures.ts`.
+ * @internal Exported for tests.
  */
 export const isValidDeploymentName = (name: string): boolean =>
   VALID_DEPLOYMENT_NAME.test(name) &&
@@ -68,14 +55,9 @@ export function resolveDeploymentName(
   const configValue = config.deploymentName
 
   if (envValue && configValue && envValue !== configValue && !warned) {
-    // canopyLogWarn, not console.warn: cms-worker.ts imports this module and
-    // resolves through it inside start(), so this line lands in worker.log,
-    // where an unprefixed line is folded into the previous CloudWatch event.
-    // The mismatch this reports is exactly what an operator would be grepping
-    // for. Plain console under Lambda/dev, as everywhere else. See
-    // utils/logger.ts. (Missed by the worker-log sweep, which went by directory
-    // name and by the modules the finding named, rather than by the worker's
-    // real import graph.)
+    // canopyLogWarn, not console.warn: cms-worker.ts resolves through this
+    // inside start(), so the line lands in worker.log, where an unprefixed line
+    // is folded into the previous CloudWatch event (utils/logger.ts).
     canopyLogWarn(
       `CanopyCMS: CANOPYCMS_DEPLOYMENT_NAME ("${envValue}") differs from config.deploymentName ` +
         `("${configValue}") — using the env var (infra-stamped env wins over shared-repo config ` +

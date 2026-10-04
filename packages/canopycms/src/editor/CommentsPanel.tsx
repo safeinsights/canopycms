@@ -67,7 +67,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     setIsSubmitting(true)
     try {
       if (replyTo) {
-        // Reply to existing thread - get context from the thread
         const thread = comments.find((t) => t.id === replyTo)
         if (thread) {
           await onAddComment(
@@ -79,7 +78,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           )
         }
       } else {
-        // New branch-level comment (default for panel)
         await onAddComment(newCommentText, 'branch', undefined, undefined, undefined)
       }
       setNewCommentText('')
@@ -114,7 +112,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       }
     >
       <Stack gap="md" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
-        {/* Add new comment */}
         <Paper withBorder p="md">
           <Stack gap="sm">
             {replyTo && (
@@ -153,7 +150,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           </Stack>
         </Paper>
 
-        {/* Filter toggle */}
         <Group justify="space-between">
           <Text size="sm" fw={500}>
             {filteredThreads.length} {filteredThreads.length === 1 ? 'thread' : 'threads'}
@@ -166,7 +162,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           />
         </Group>
 
-        {/* Comment threads */}
         <ScrollArea style={{ flex: 1 }}>
           {filteredThreads.length === 0 ? (
             <Text size="sm" c="dimmed" ta="center" py="xl">
@@ -229,7 +224,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       </Group>
                     </Group>
 
-                    {/* Jump to navigation buttons */}
                     <Group gap="xs">
                       {thread.type === 'field' &&
                         thread.entryPath &&

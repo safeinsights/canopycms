@@ -23,11 +23,11 @@ const baseConfig: CanopyConfig = {
 
 const mockEnqueueTask = vi.fn()
 
-vi.mock('../worker/task-queue', () => ({
+vi.mock('../task-queue/cms-task-queue', () => ({
   enqueueTask: (...args: unknown[]) => mockEnqueueTask(...args),
 }))
 
-vi.mock('../worker/task-queue-config', () => ({
+vi.mock('../task-queue/task-queue-config', () => ({
   getTaskQueueDir: vi.fn().mockReturnValue('/mock/.tasks'),
 }))
 

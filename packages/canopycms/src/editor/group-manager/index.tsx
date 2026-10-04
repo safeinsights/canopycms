@@ -1,12 +1,5 @@
 'use client'
 
-/**
- * GroupManager - Main component for managing internal and external groups.
- *
- * This component provides a tabbed UI for managing internal groups with
- * member assignment, and browsing external groups from the organization.
- */
-
 import React, { useState, useCallback } from 'react'
 import { Alert, Button, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
@@ -28,7 +21,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   onSearchExternalGroups,
   onClose: _,
 }) => {
-  // Group state management
   const {
     groups,
     isDirty,
@@ -47,13 +39,9 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     onSave,
   })
 
-  // User search for adding members
   const userSearch = useUserSearch({ onSearchUsers })
-
-  // External group search
   const externalGroupSearch = useExternalGroupSearch({ onSearchExternalGroups })
 
-  // Modal state for creating/editing groups
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<InternalGroup | null>(null)
   const [formData, setFormData] = useState<GroupFormData>({
@@ -203,7 +191,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   )
 }
 
-// Re-export types and hooks for external use
 export type { GroupManagerProps, InternalGroup } from './types'
 export { useGroupState } from './hooks/useGroupState'
 export { useUserSearch } from './hooks/useUserSearch'

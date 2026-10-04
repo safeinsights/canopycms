@@ -150,8 +150,10 @@ describe('CLI binary execution (source via tsx)', () => {
       const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
       expect(canopy).toContain('createClerkAuthPlugin')
 
+      // The same passthrough as dev auth: clerkMiddleware is an opt-in comment.
       const middleware = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
-      expect(middleware).toContain('clerkMiddleware')
+      expect(middleware).toContain('export default function middleware()')
+      expect(middleware).toContain('//   export default clerkMiddleware(')
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true })
     }

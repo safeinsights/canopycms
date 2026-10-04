@@ -34,7 +34,6 @@ export interface QueueStats {
 
 /**
  * Optional logger interface.
- * Pass your own logger to `createTaskQueue()`, or omit for silent operation.
  */
 export interface TaskQueueLogger {
   debug(message: string, data?: Record<string, unknown>): void

@@ -21,13 +21,11 @@ export interface ObjectFieldProps {
   path: Array<string | number>
   dataCanopyField?: string
   /**
-   * When provided, renders a "Clear" affordance next to the label that
-   * resets this object field back to its unset (`undefined`) state.
-   * Used by FormRenderer's non-list 'object' case so a non-list object with
-   * a required child can't get stuck present-but-invalid with no way back
-   * to "not filled in" (see FormRenderer.tsx's `case 'object'`). Omitted
-   * for object-list items, which are removed via the list's own per-item
-   * Remove button instead.
+   * When set, shows a "Clear" affordance that resets this field to unset
+   * (`undefined`) — used by `FormRenderer.tsx`'s non-list `case 'object'` so
+   * a required child can't strand the field present-but-invalid with no way
+   * back to "not filled in". Omitted for object-list items, which remove via
+   * the list's own per-item button.
    */
   onRemove?: () => void
 }
@@ -87,5 +85,3 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
     </Paper>
   )
 }
-
-export default ObjectField

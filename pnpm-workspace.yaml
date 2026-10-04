@@ -10,7 +10,7 @@ packages:
 # lockfile gained no `overrides:` section at all. Every entry below is a security
 # pin, so that failure mode is "advisories quietly come back", with no error to
 # notice. The repo is pinned to pnpm 10.12.1 via `packageManager` (honored by
-# pnpm/action-setup@v4 in CI), so this file is what keeps the pins working across
+# pnpm/action-setup in CI), so this file is what keeps the pins working across
 # that upgrade whenever it happens.
 overrides:
   ws: ^8.20.1

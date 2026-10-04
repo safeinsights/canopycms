@@ -1,0 +1,161 @@
+{
+  "$comment": "Comment-volume ratchet read by scripts/check-comment-budget.mjs (pnpm lint:comments). Regenerate with `node scripts/check-comment-budget.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: ratios are written as actual plus the margin, run caps (floor 30) and marker counts as measured, and a write that would raise any existing number is refused without --allow-raise.",
+  "packages": {
+    "canopycms": {
+      "directories": {
+        "packages/canopycms/src": {
+          "maxRun": 30,
+          "ratio": 0.591
+        },
+        "packages/canopycms/src/ai": {
+          "maxRun": 30,
+          "ratio": 0.466
+        },
+        "packages/canopycms/src/api": {
+          "maxRun": 30,
+          "ratio": 0.294
+        },
+        "packages/canopycms/src/assets": {
+          "maxRun": 30,
+          "ratio": 0.46
+        },
+        "packages/canopycms/src/auth": {
+          "maxRun": 30,
+          "ratio": 0.332
+        },
+        "packages/canopycms/src/authorization": {
+          "maxRun": 30,
+          "ratio": 0.508
+        },
+        "packages/canopycms/src/build": {
+          "maxRun": 30,
+          "ratio": 0.691
+        },
+        "packages/canopycms/src/cli": {
+          "maxRun": 30,
+          "ratio": 0.321
+        },
+        "packages/canopycms/src/config": {
+          "maxRun": 30,
+          "ratio": 0.577
+        },
+        "packages/canopycms/src/editor": {
+          "maxRun": 30,
+          "ratio": 0.156
+        },
+        "packages/canopycms/src/http": {
+          "maxRun": 30,
+          "ratio": 0.413
+        },
+        "packages/canopycms/src/operating-mode": {
+          "maxRun": 30,
+          "ratio": 0.542
+        },
+        "packages/canopycms/src/paths": {
+          "maxRun": 30,
+          "ratio": 0.464
+        },
+        "packages/canopycms/src/schema": {
+          "maxRun": 30,
+          "ratio": 0.414
+        },
+        "packages/canopycms/src/static": {
+          "maxRun": 30,
+          "ratio": 1.113
+        },
+        "packages/canopycms/src/task-queue": {
+          "maxRun": 30,
+          "ratio": 0.307
+        },
+        "packages/canopycms/src/utils": {
+          "maxRun": 43,
+          "ratio": 1.033
+        },
+        "packages/canopycms/src/validation": {
+          "maxRun": 30,
+          "ratio": 0.282
+        },
+        "packages/canopycms/src/worker": {
+          "maxRun": 31,
+          "ratio": 0.996
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 0.383
+    },
+    "canopycms-auth-clerk": {
+      "directories": {
+        "packages/canopycms-auth-clerk/src": {
+          "maxRun": 30,
+          "ratio": 0.22
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 0.22
+    },
+    "canopycms-auth-dev": {
+      "directories": {
+        "packages/canopycms-auth-dev/src": {
+          "maxRun": 30,
+          "ratio": 0.237
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 0.237
+    },
+    "canopycms-cdk": {
+      "directories": {
+        "packages/canopycms-cdk/canary/bin": {
+          "maxRun": 30,
+          "ratio": 1.058
+        },
+        "packages/canopycms-cdk/lambda/asset-transform": {
+          "maxRun": 30,
+          "ratio": 0.539
+        },
+        "packages/canopycms-cdk/src": {
+          "maxRun": 30,
+          "ratio": 0.205
+        },
+        "packages/canopycms-cdk/src/constructs": {
+          "maxRun": 30,
+          "ratio": 1.414
+        },
+        "packages/canopycms-cdk/test-support": {
+          "maxRun": 30,
+          "ratio": 1.67
+        },
+        "packages/canopycms-cdk/worker": {
+          "maxRun": 30,
+          "ratio": 1.392
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 1.305
+    },
+    "canopycms-next": {
+      "directories": {
+        "packages/canopycms-next/src": {
+          "maxRun": 30,
+          "ratio": 0.817
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 0.817
+    },
+    "scripts": {
+      "directories": {
+        "scripts": {
+          "maxRun": 30,
+          "ratio": 0.298
+        },
+        "scripts/smoke": {
+          "maxRun": 30,
+          "ratio": 0.163
+        }
+      },
+      "historyMarkers": 0,
+      "ratio": 0.271
+    }
+  }
+}

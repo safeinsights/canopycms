@@ -16,10 +16,10 @@
  * packages publish, so any interruption in between -- a cancelled run, or a
  * non-fast-forward failure of that final push -- leaves npm holding a version
  * main does not know about. Bumping from the committed value then re-derives a
- * version that already exists on the registry, and `npm publish` fails with
- * "cannot publish over previously published version" on EVERY subsequent run:
- * the release train stays wedged until a human intervenes. Passing the
- * registry's current version as `--min` makes that self-healing.
+ * version that already exists on the registry, so `npm publish` fails on EVERY
+ * subsequent run (npm refuses to publish over a version the registry already
+ * has) and the release train stays wedged until a human intervenes. Passing
+ * the registry's current version as `--min` makes that self-healing.
  *
  * Outputs the new version to stdout.
  */
@@ -92,10 +92,8 @@ function parseVersion(value, label) {
  * shape this mode is ever called with in production: publish-prerelease.yml
  * passes `prerelease-version.mjs`'s `X.Y.Z-int.N` output straight through.
  *
- * Returning the trimmed value rather than the caller's original closes the gap
- * where the string that was VALIDATED and the string that got WRITTEN differed
- * -- ` 1.2.3` used to validate on its trimmed form and then land in six
- * manifests with the leading space intact.
+ * Returns the trimmed value, not the caller's original, so the validated
+ * string and the written string cannot differ.
  */
 function parseExplicitVersion(value, label) {
   const trimmed = String(value).trim()
@@ -117,12 +115,9 @@ function compareVersions(a, b) {
 
 const [firstArg, secondArg] = process.argv.slice(2)
 
-// Reject anything that is not a recognised flag or a plain version BEFORE
-// writing to six package.json files. Previously any unrecognised first token
-// took the explicit-version branch verbatim: `--mim 0.0.70` wrote
-// `"version": "--mim"` across the workspace and exited 0, and the failure only
-// surfaced later at `npm publish`. Transposed args (`0.0.64 --min`) silently
-// applied the explicit version with no bump.
+// Reject anything that is not a recognised flag or a plain version, before
+// writing to six package.json files: an unrecognised token must not silently
+// fall through to the explicit-version branch and get written verbatim.
 // `''` is treated as "no argument", matching the shell reality that an unset
 // variable expands to nothing -- but say so, since the check below reads as
 // though every defined value is validated.
@@ -153,15 +148,12 @@ if (firstArg === '--min') {
   const [major, minor, patch] = compareVersions(floor, committed) > 0 ? floor : committed
   newVersion = `${major}.${minor}.${patch + 1}`
 } else if (firstArg) {
-  // Validated AND canonicalised: the returned value is what gets written, so
-  // the validated string and the written string cannot differ.
   newVersion = parseExplicitVersion(firstArg, 'the explicit version argument')
 } else {
   const [major, minor, patch] = parseVersion(corePkg.version, 'the committed version')
   newVersion = `${major}.${minor}.${patch + 1}`
 }
 
-// Update all packages
 for (const pkg of PACKAGES) {
   const pkgPath = join(ROOT, pkg, 'package.json')
   const pkgJson = JSON.parse(readFileSync(pkgPath, 'utf8'))
@@ -182,7 +174,6 @@ for (const pkg of PACKAGES) {
   writeFileSync(pkgPath, JSON.stringify(pkgJson, null, 2) + '\n')
 }
 
-// Also update root package.json version
 const rootPkgPath = join(ROOT, 'package.json')
 const rootPkg = JSON.parse(readFileSync(rootPkgPath, 'utf8'))
 rootPkg.version = newVersion

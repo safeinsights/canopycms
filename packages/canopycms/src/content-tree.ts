@@ -1,58 +1,41 @@
 /**
- * Content tree builder for adopters.
+ * Content tree builder for adopters: walks the schema + filesystem and returns a tree of
+ * content nodes for navigation, sitemaps, search indexes, breadcrumbs.
  *
- * Walks the schema + filesystem and returns a tree of content nodes that
- * adopters can use for navigation, sitemaps, search indexes, breadcrumbs, etc.
- *
- * Nodes carry Canopy's structural facts (logicalPath, contentId, collection
- * metadata, entry metadata). Display concerns like labels are left to the
- * adopter via the `extract` callback.
+ * Nodes carry Canopy's structural facts (logicalPath, contentId, collection metadata, entry
+ * metadata); display concerns like labels are left to the adopter's `extract` callback.
  */
 
 import type { FlatSchemaItem, ContentFormat } from './config'
 
 /**
- * Adopter-supplied registry mapping entry type names (as they appear in
- * filenames: `partner.index.yaml` → `'partner'`) to their data shapes.
+ * Adopter-supplied registry mapping entry type names (as they appear in filenames:
+ * `partner.index.yaml` → `'partner'`) to their data shapes.
  *
- * Pair with `TypeFromEntrySchema<typeof yourSchema>` to derive shapes from
- * schemas you've already defined — no redeclaration needed.
+ * Pair with `TypeFromEntrySchema<typeof yourSchema>` to derive shapes from schemas you have
+ * already defined — no redeclaration needed.
  *
  * @example
  * ```ts
- * import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
- *
- * const partnerSchema = defineEntrySchema([
- *   { name: 'name', type: 'string', isTitle: true },
- *   { name: 'tagline', type: 'string' },
- * ])
- * const docSchema = defineEntrySchema([
- *   { name: 'title', type: 'string' },
- * ])
- *
+ * const partnerSchema = defineEntrySchema([{ name: 'name', type: 'string', isTitle: true }])
  * interface MyEntries {
  *   partner: TypeFromEntrySchema<typeof partnerSchema>
- *   doc: TypeFromEntrySchema<typeof docSchema>
  * }
  *
- * const canopy = await getCanopyForBuild()
  * await canopy.buildContentTree<NavFields, MyEntries>({
- *   extract: (data, meta) => {
- *     if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
- *       // meta.indexEntry.data is narrowed to PartnerContent
- *       return { name: meta.indexEntry.data.name }
- *     }
- *     return { name: '' }
- *   },
+ *   // meta.indexEntry.data is narrowed to the partner shape
+ *   extract: (data, meta) =>
+ *     meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner'
+ *       ? { name: meta.indexEntry.data.name }
+ *       : { name: '' },
  * })
  * ```
  */
 export type EntryTypeMap = Record<string, object>
 
 /**
- * Default TEntryTypes when an adopter hasn't supplied one.
- * The index signature preserves the loose shape — `meta.indexEntry.data`
- * stays `Record<string, unknown>`, useful for unstructured access without
+ * Default TEntryTypes when an adopter hasn't supplied one. The index signature keeps
+ * `meta.indexEntry.data` as `Record<string, unknown>`, useful for unstructured access without
  * opting in to the discriminated-union pattern. Exported so callers wrapping
  * `buildContentTree` (e.g. CanopyBuildContext) share the same default.
  */
@@ -70,15 +53,14 @@ export interface ContentTreeExtractMeta<TEntryTypes = DefaultEntryTypes> {
   /** Content format — present when kind is 'entry'. */
   format?: ContentFormat
   /**
-   * The entry with slug 'index' inside a collection, when present.
-   * Represents the collection's "identity" under the directory-as-page pattern
-   * (e.g., a partner's metadata for /data-catalog/<partner>/, a section landing
-   * for /docs/<section>/). Only populated when kind === 'collection' AND the
-   * collection contains an entry with slug 'index'. Undefined for collections
-   * at the maxDepth cap (entries aren't loaded there).
+   * The entry with slug 'index' inside a collection, when present — the collection's
+   * "identity" under the directory-as-page pattern (a partner's metadata for
+   * /data-catalog/<partner>/, a section landing for /docs/<section>/). Populated only when
+   * kind === 'collection' AND such an entry exists; undefined for collections at the maxDepth
+   * cap, where entries are not loaded.
    *
-   * When TEntryTypes is supplied, this becomes a discriminated union: narrow
-   * on `indexEntry.entryType` and `data` is typed accordingly.
+   * With TEntryTypes supplied this is a discriminated union: narrow on `indexEntry.entryType`
+   * and `data` is typed accordingly.
    */
   indexEntry?: {
     [K in keyof TEntryTypes & string]: {
@@ -99,10 +81,6 @@ import {
   type CollectionSchemaItem,
   type ContentVisibilityOptions,
 } from './content-listing'
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 export interface ContentTreeNode<T = unknown> {
   /** URL path, e.g. "/docs/getting-started". Computed by buildPath option. */
@@ -136,24 +114,18 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
   /** Starting collection path. Defaults to content root. */
   rootPath?: string
   /**
-   * Extract typed custom fields from each node's raw data.
-   * For entries: data is frontmatter + body (md/mdx) or parsed JSON.
-   * For collections: data is `{ name, label }` from the schema.
+   * Extract typed custom fields from each node's raw data. For entries, data is frontmatter +
+   * body (md/mdx) or the parsed object; for collections it is `{ name, label }` from the
+   * schema. Supply TEntryTypes for narrowed access to `meta.indexEntry.data`.
    *
-   * Supply TEntryTypes to get narrowed access to `meta.indexEntry.data`
-   * via discriminated-union narrowing on `meta.indexEntry.entryType`.
-   *
-   * Note: extract should be a pure mapping. It may be invoked on entry nodes
-   * that `filter` later removes (the tree-walk extracts then filters), so any
-   * side effects (logging, counters, populating an external index) will see
-   * those rejected nodes too.
+   * Must be a pure mapping: it may be invoked on entry nodes that `filter` later removes (the
+   * tree-walk extracts, then filters), so side effects see those rejected nodes too.
    */
   extract?: (data: Record<string, unknown>, meta: ContentTreeExtractMeta<TEntryTypes>) => T
   /**
-   * Filter: return false to exclude a node and its descendants.
-   * Runs after extract, so `fields` is available. Rejecting a collection
-   * short-circuits descendant traversal (no recursion into child collections
-   * or entry reads beneath the rejected node).
+   * Return false to exclude a node and its descendants. Runs after extract, so `fields` is
+   * available. Rejecting a collection short-circuits descendant traversal — no recursion into
+   * child collections, no entry reads beneath it.
    */
   filter?: (node: ContentTreeNode<T>) => boolean
   /**
@@ -161,20 +133,11 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
    * with it. To extend rather than replace the default behavior, call the exported
    * `defaultBuildPath(logicalPath, contentRootName, kind)` from inside your
    * function and post-process its result (see `canopycms/server`).
-   *
-   * Default behavior (`defaultBuildPath`):
-   * - Strips the `{contentRootName}/` prefix from `logicalPath`.
-   * - For entries: collapses an `index` slug to its parent collection's path
-   *   (`content/guides/index` → `/guides`, not `/guides/index`); a collection
-   *   literally named `index` is unaffected (only entries collapse).
-   * - Lowercases the entire result.
-   * - Prepends `/`; the content root's own index collapses to `/`.
    */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
   /**
-   * Custom sort for children at each level.
-   * When provided, replaces the default sort (order array → alphabetical).
-   * Runs after extract + filter, so `fields` is available.
+   * Custom sort for children at each level; replaces the default (order array → alphabetical)
+   * entirely. Runs after extract + filter, so `fields` is available.
    */
   sort?: (a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number
   /** Max depth to traverse. Default: unlimited. */
@@ -184,17 +147,12 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
    * `read()`/`readByUrlPath()` do. Applies to both entry nodes and the `meta.indexEntry`
    * handed to a collection's `extract`. Off leaves them as the bare id string, or `null`.
    *
-   * Same flag, same default (`false`) and same reasoning as `listEntries`' option — see
-   * `ListEntriesOptions.resolveReferences` in content-listing.ts for why the default is
-   * opt-in rather than matching `read()`, what it costs, and why path ACLs are not applied
-   * to the resolved targets.
+   * Same flag, same default (`false`) and same reasoning as
+   * `ListEntriesOptions.resolveReferences` in content-listing.ts — see it for why the default
+   * is opt-in, what it costs, and why path ACLs are not applied to the resolved targets.
    */
   resolveReferences?: boolean
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 /** Group flat schema items by parentPath for O(1) child lookup. */
 const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, CollectionSchemaItem[]> => {
@@ -209,17 +167,15 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
 }
 
 /**
- * Default path builder: strips the content root prefix, lowercases, and prepends /.
- * All URL paths are lowercased unconditionally for consistency with slug normalization.
- * Adopters with case-sensitive slugs (e.g., "API-Reference") will get lowercased URLs.
+ * Default path builder: strips the content root prefix, collapses index entries, lowercases,
+ * prepends `/`. Lowercasing is unconditional, for consistency with slug normalization, so an
+ * adopter with case-sensitive slugs ("API-Reference") gets lowercased URLs. Index entries
+ * (slug 'index', any case) collapse to their parent collection path, matching the convention
+ * readByUrlPath and listEntries use.
  *
- * Index entries (slug 'index', any case) are collapsed to their parent collection path,
- * matching the URL convention used by readByUrlPath and listEntries.
- *
- * Exported (also re-exported from `canopycms/server`) so adopters who want to
- * EXTEND this behavior rather than replace it can call it from inside their own
- * `buildPath` and post-process the result, instead of reimplementing the
- * content-root-strip / index-collapse / lowercase logic verbatim.
+ * Exported (and re-exported from `canopycms/server`) so adopters who want to EXTEND this
+ * rather than replace it can call it from inside their own `buildPath` and post-process the
+ * result, instead of reimplementing strip / collapse / lowercase verbatim.
  */
 export const defaultBuildPath = (
   logicalPath: LogicalPath,
@@ -229,13 +185,11 @@ export const defaultBuildPath = (
   const prefix = contentRootName ? `${contentRootName}/` : ''
   const stripped =
     prefix && logicalPath.startsWith(prefix) ? logicalPath.slice(prefix.length) : logicalPath
-  // Collapse index entries: content/guides/index → /guides (not /guides/index)
-  // Only for entries — a collection named "index" should keep its path.
-  //
-  // The index test runs on the LAST SEGMENT through the shared `isIndexSlug`, so it is
-  // case-insensitive and agrees with `computeEntryUrl`. A string `endsWith('/index')` test
-  // did not: for an adopter-supplied `content/docs/Index` this said `/docs/index` while
-  // `computeEntryUrl` said `/docs`, and `/docs/index` is the one that does NOT round-trip.
+  // Collapse index entries: content/guides/index → /guides. Entries only — a collection named
+  // "index" keeps its path. The test runs on the LAST SEGMENT through the shared
+  // `isIndexSlug`, so it is case-insensitive and agrees with `computeEntryUrl`; a string
+  // `endsWith('/index')` test disagreed for an adopter-supplied `content/docs/Index`, and
+  // `/docs/index` is the answer that does NOT round-trip.
   const lastSlash = stripped.lastIndexOf('/')
   const lastSegment = lastSlash === -1 ? stripped : stripped.slice(lastSlash + 1)
   const collapsed =
@@ -248,18 +202,8 @@ export const defaultBuildPath = (
   return urlPath.toLowerCase()
 }
 
-// ---------------------------------------------------------------------------
-// Core builder
-// ---------------------------------------------------------------------------
-
 /**
  * Build a content tree from a flattened schema and the filesystem.
- *
- * @param branchRoot - Absolute path to the branch workspace root
- * @param flatSchema - Flattened schema items (from flattenSchema)
- * @param contentRootName - The content root name (e.g. "content")
- * @param options - Tree-building options
- * @param visibility - Internal path-ACL predicate; see `ContentVisibilityOptions`
  */
 export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTypes>(
   branchRoot: string,
@@ -299,7 +243,6 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
     return resolver ? resolveCollectionItemReferences(visible, collection, resolver) : visible
   }
 
-  // Find the starting collection(s)
   const rootPath = options?.rootPath ?? contentRootName
   const rootCollection = flatSchema.find(
     (item) => item.type === 'collection' && item.logicalPath === rootPath,
@@ -339,21 +282,17 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
       return node
     }
 
-    // Load this collection's entries first (needed for indexEntry detection).
-    // We deliberately do NOT parallelize the child-collection recursion here:
-    // if `filter` rejects this collection, returning early short-circuits all
-    // descendant I/O — preserving the pre-existing "filter prunes whole subtree"
-    // optimization that the directory-as-page reorder would otherwise lose.
+    // Load this collection's entries first (needed for indexEntry detection). The
+    // child-collection recursion deliberately does NOT run in parallel with it: if `filter`
+    // rejects this collection, returning early short-circuits all descendant I/O.
     const entries = await listVisibleEntries(collection)
 
-    // Surface the 'index' entry (when present) to extract via meta.
-    // 'index' is the same magic slug Canopy uses in defaultBuildPath to collapse
-    // /foo/index URLs to /foo/, keeping conventions consistent. If a collection
-    // contains multiple slug==='index' entries (only possible via hand-edited or
-    // merged content — the write path forbids it), the first by filename order
-    // wins.
-    // The cast bridges runtime string keys to the parametric discriminated union;
-    // the adopter narrows on `indexEntry.entryType` to get the typed `data`.
+    // Surface the 'index' entry (when present) to extract via meta. 'index' is the same magic
+    // slug defaultBuildPath collapses /foo/index to /foo with. If a collection contains
+    // several slug==='index' entries (only reachable via hand-edited or merged content -- the
+    // write path forbids it), the first by filename order wins. The cast bridges runtime
+    // string keys to the parametric discriminated union; the adopter narrows on
+    // `indexEntry.entryType` to get the typed `data`.
     const idx = entries.find((e) => e.slug === 'index')
     const indexEntry = (
       idx ? { entryType: idx.entryType, format: idx.format, data: idx.data } : undefined
@@ -368,13 +307,11 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
     }
     if (filter && !filter(node)) return null
 
-    // Now recurse into child collections (after filter has had a chance to prune)
     const childCollections = childrenByParent.get(collection.logicalPath) ?? []
     const childCollectionNodes = await Promise.all(
       childCollections.map((child) => buildNode(child, depth + 1)),
     )
 
-    // Build entry nodes
     const entryNodes: ContentTreeNode<T>[] = []
     for (const entry of entries) {
       const entryNode = buildEntryNode<T, TEntryTypes>(entry, buildPath, extract)
@@ -382,7 +319,6 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
       entryNodes.push(entryNode)
     }
 
-    // Combine and interleave by order array (or custom sort)
     const allChildren = interleaveChildren(
       childCollectionNodes.filter((n): n is ContentTreeNode<T> => n !== null),
       entryNodes,
@@ -400,7 +336,6 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
   // Start from root's children (don't include the root collection itself)
   const topLevelCollections = childrenByParent.get(rootCollection.logicalPath) ?? []
 
-  // Also get entries directly in the root collection
   const [collectionNodes, rootEntries] = await Promise.all([
     Promise.all(topLevelCollections.map((child) => buildNode(child, 1))),
     listVisibleEntries(rootCollection),

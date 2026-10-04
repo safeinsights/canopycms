@@ -5,6 +5,7 @@ import {
   parseAuthFlag,
   parseDualBuildFlag,
   isKnownAuthMode,
+  passthroughArgs,
 } from './cli'
 
 describe('parseArgs', () => {
@@ -43,6 +44,68 @@ describe('parseArgs', () => {
   it('parses sub-positional args', () => {
     const { argv } = parseArgs(['init-deploy', 'aws'])
     expect(argv._[1]).toBe('aws')
+  })
+
+  it('keeps argv after a literal -- out of the positionals', () => {
+    // `init-github-app create -- <command>` hands everything after the `--` to
+    // spawn(). Without minimist's `'--': true` these words land in `argv._`,
+    // indistinguishable from the command's own positionals, and the `--` itself
+    // is discarded — so there is no way to recover a clean argv.
+    const { argv, command } = parseArgs([
+      'init-github-app',
+      'create',
+      '--owner',
+      'an-org',
+      '--',
+      'store-it',
+      '--name',
+      'a/secret',
+    ])
+    expect(command).toBe('init-github-app')
+    expect(argv._).toEqual(['init-github-app', 'create'])
+    expect(passthroughArgs(argv)).toEqual(['store-it', '--name', 'a/secret'])
+  })
+
+  it('does not let the passthrough command steal the caller’s own flags', () => {
+    // `--name` appears on both sides of the `--`. The one before it is the
+    // App name; the one after belongs to the destination command.
+    const { flags, argv } = parseArgs([
+      'init-github-app',
+      'create',
+      '--name',
+      'Mine',
+      '--',
+      'store-it',
+      '--name',
+      'theirs',
+    ])
+    expect(flags['name']).toBe('Mine')
+    expect(passthroughArgs(argv)).toEqual(['store-it', '--name', 'theirs'])
+  })
+
+  it('reports an empty passthrough when there is no --', () => {
+    const { argv } = parseArgs(['init-github-app', 'verify', '--app-id', '1'])
+    expect(passthroughArgs(argv)).toEqual([])
+  })
+
+  it('parses the init-github-app flags', () => {
+    const { flags } = parseArgs([
+      'init-github-app',
+      'verify',
+      '--app-id',
+      '123456',
+      '--key-file',
+      '/tmp/k.pem',
+      '--key-stdin',
+      '--repo',
+      'a-site',
+    ])
+    // --app-id is declared a STRING: an id read as a number would lose
+    // precision and reach the JWT `iss` claim in exponential notation.
+    expect(flags['app-id']).toBe('123456')
+    expect(flags['key-file']).toBe('/tmp/k.pem')
+    expect(flags['key-stdin']).toBe(true)
+    expect(flags['repo']).toBe('a-site')
   })
 
   it('parses init flags together', () => {

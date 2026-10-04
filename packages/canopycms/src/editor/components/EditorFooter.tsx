@@ -1,8 +1,5 @@
 import { Group, Paper, Text } from '@mantine/core'
 
-/**
- * Props for the EditorFooter component.
- */
 export interface EditorFooterProps {
   /**
    * Optional custom footer content.
@@ -13,11 +10,6 @@ export interface EditorFooterProps {
 /**
  * Footer component for the Editor.
  * Displays static links (Terms, Privacy) and copyright notice.
- *
- * @example
- * ```tsx
- * <EditorFooter />
- * ```
  */
 export function EditorFooter({ children }: EditorFooterProps) {
   return (

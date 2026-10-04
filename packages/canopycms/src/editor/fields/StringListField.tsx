@@ -15,9 +15,6 @@ export interface StringListFieldProps {
  *
  * Uses Mantine's TagsInput: type + Enter adds an item, each item renders as a
  * removable pill, and Backspace on an empty input removes the last item.
- * (Before this component existed, string-list fields fell through to the
- * single-value TextField, which coerced the array to a comma-joined string —
- * effectively unsupported.)
  */
 export const StringListField: React.FC<StringListFieldProps> = ({
   id,
@@ -36,16 +33,13 @@ export const StringListField: React.FC<StringListFieldProps> = ({
       value={value}
       size="sm"
       onChange={onChange}
-      // Faithful generic-list semantics, not tag ergonomics: no comma
-      // splitting ("New York, NY" stays one item — TagsInput's default
-      // splitChars would break it in two) and duplicates are legitimate
-      // list data (the default silently drops them, so existing file data
-      // couldn't round-trip).
+      // Faithful generic-list semantics, not tag ergonomics: no comma-splitting
+      // ("New York, NY" stays one item) and duplicates are legitimate list
+      // data — TagsInput's defaults would break both, so existing file data
+      // couldn't round-trip.
       splitChars={[]}
       allowDuplicates
       data-canopy-field={dataCanopyField}
     />
   )
 }
-
-export default StringListField

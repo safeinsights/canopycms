@@ -1,10 +1,8 @@
 'use client'
 
 /**
- * React context for providing entry data to the InsertEntryLink toolbar button.
- *
- * The MarkdownField is lazy-loaded and its toolbar components don't have direct
- * access to the editor's entry list. This context bridges that gap.
+ * Bridges entry data to MarkdownField's lazy-loaded toolbar components (e.g.
+ * InsertEntryLink), which have no direct access to the editor's entry list.
  */
 
 import { createContext, useContext } from 'react'

@@ -33,7 +33,7 @@
   "scripts": {
     "prepack": "pnpm run build && pnpm run build:worker && pnpm run build:lambda",
     "build": "rm -rf dist && tsc && node ../../scripts/add-js-extensions.mjs dist",
-    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:lambda": "node lambda/asset-transform/build.mjs",
     "build:test-fixtures": "pnpm run build:worker && node lambda/asset-transform/build.mjs --skip-native",
     "lint": "eslint src/ 'lambda/**/*.ts' 'canary/**/*.ts' 'worker/**/*.ts' 'test-support/**/*.ts'",
@@ -65,6 +65,7 @@
     "canopycms-auth-clerk": "workspace:*",
     "@aws-sdk/client-s3": "^3.600.0",
     "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "@octokit/auth-app": "^6.1.4",
     "@smithy/util-stream": "^3.0.0 || ^4.0.0",
     "aws-sdk-client-mock": "^4.0.0",
     "constructs": "^10.0.0",

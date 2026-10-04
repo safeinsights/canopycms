@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * User search and selection component
- */
-
 import React from 'react'
 import { Paper, Stack, Text, Loader } from '@mantine/core'
 import type { UserSearchResult } from './types'

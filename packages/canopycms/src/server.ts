@@ -1,8 +1,7 @@
-// Public server-side API for adopters. JSDoc is duplicated at each named
-// re-export so it shows on hover in adopter editors — TypeScript propagation
-// through `export { X } from './module'` is inconsistent across LSP versions
-// and module-resolution modes. New top-level public re-exports should follow
-// the same pattern (see DEVELOPING.md).
+// Public server-side API for adopters. Every named re-export carries its own JSDoc, because
+// TypeScript's propagation through `export { X } from './module'` is inconsistent across LSP
+// versions and module-resolution modes and adopters would otherwise get no hover text. Follow the
+// pattern for new top-level public re-exports (see DEVELOPING.md).
 
 export * from './content-reader'
 export * from './services'
@@ -12,23 +11,18 @@ export { operatingStrategy } from './operating-mode'
 export * from './authorization/groups'
 
 /**
- * One-call factory for a **build/admin** Canopy context — for standalone
- * scripts that run entirely outside a Next.js request or build phase (index
- * builders, content audits, codegen, ad hoc reports). Reads the filesystem
- * directly as a synthetic admin user and bypasses ALL branch/path ACLs —
- * never use it in request-handling code. See the source JSDoc for the full
- * security note and the `createNextCanopyContext().getCanopyForBuild()`
- * comparison this mirrors.
+ * One-call factory for a **build/admin** Canopy context, for standalone scripts outside a
+ * Next.js request or build phase. Reads the filesystem as a synthetic admin user and bypasses
+ * ALL branch/path ACLs — never use it in request-handling code. Full security note in the
+ * source JSDoc.
  */
 export { createBuildCanopy, type CreateBuildCanopyOptions } from './build-canopy'
 
 /**
- * Resolve a CanopyUser for a request: loads internal groups from the
- * settings workspace (the single source of truth — never a content branch
- * clone) and merges them into an auth-plugin result via
- * `authResultToCanopyUser`. Shared by the core HTTP handler and the Next.js
- * SSR wrapper so the "authenticate -> load groups -> merge" pipeline can't
- * drift between the two again.
+ * Resolve a CanopyUser for a request: loads internal groups from the settings workspace (the
+ * single source of truth — never a content branch clone) and merges them into an auth-plugin
+ * result via `authResultToCanopyUser`. Shared by the core HTTP handler and the Next.js SSR
+ * wrapper so the "authenticate -> load groups -> merge" pipeline cannot drift between them.
  */
 export { resolveCanopyUser, type ResolveCanopyUserDeps } from './resolve-canopy-user'
 export * from './branch-workspace'
@@ -42,47 +36,34 @@ export {
 export type { CollectionMeta, RootCollectionMeta } from './schema'
 
 /**
- * Create a type-safe entry schema registry with runtime validation.
- *
- * Maps each entry-type's name to its `EntrySchema`. Keys are referenced by
- * `.collection.json` files via the `entry.schema` property. Recommended
- * convention is to key by entry-type name (filename token, also the value of
- * `meta.entryType` in tree-builder callbacks) — that way
- * `EntryTypesFromRegistry<typeof yourRegistry>` derives the
- * discriminated-union map for `buildContentTree`'s `TEntryTypes` parameter
- * automatically. See `createEntrySchemaRegistry`'s source-file JSDoc for the
- * full example.
+ * Create a type-safe entry schema registry with runtime validation. Keys are the strings
+ * `.collection.json` files reference via `entry.schema`; key them by entry-type name so
+ * `EntryTypesFromRegistry<typeof yourRegistry>` derives `buildContentTree`'s `TEntryTypes` map.
+ * Source JSDoc has the example and the full validation list.
  */
 export { createEntrySchemaRegistry } from './entry-schema-registry'
 
 /**
- * Validate that entry-schema references in `.collection.json` files exist in
- * the registry. Useful at build time to fail fast on stale references rather
- * than at request time.
+ * Validate that entry-schema references in `.collection.json` files exist in the registry —
+ * at build time, so a stale reference fails there rather than at request time.
  */
 export { validateEntrySchemaRegistry } from './entry-schema-registry'
 
 /**
- * Derive a discriminated-union entry-type map from a registry value. Pass
- * `typeof entrySchemaRegistry` as the type argument. The registry must be
- * keyed by entry-type name for the result to plug straight into
- * `buildContentTree`'s `TEntryTypes` generic.
+ * Derive a discriminated-union entry-type map from a registry value: pass
+ * `typeof entrySchemaRegistry`. The registry must be keyed by entry-type name for the result
+ * to plug straight into `buildContentTree`'s `TEntryTypes` generic.
  */
 export type { EntryTypesFromRegistry } from './entry-schema'
 
 /**
- * Resolve a display title for an entry using the full fallback chain: a
- * schema-marked `isTitle` field, then `data.title`/`data.name`, then an
- * entry-type label, then a humanized slug, then `"Untitled"`. Useful
- * anywhere an entry needs a display title without re-deriving this chain —
- * search-document/index builders in particular, since a search UI needs a
- * title for every result regardless of which field the schema uses.
+ * Resolve an entry's display title through the full fallback chain: a schema-marked `isTitle`
+ * field, then `data.title`/`data.name`, then an entry-type label, then a humanized slug, then
+ * `"Untitled"`. Search-document and index builders in particular need a title for every result
+ * regardless of which field the schema uses.
  *
- * Client-safe (no dependencies beyond `FieldConfig`/`InlineGroupFieldConfig`
- * type imports, which are erased at compile time) — also re-exported from
- * the root `canopycms` entry for that reason. Exported here too because
- * build/admin scripts (the primary reason this was unreachable before) are
- * more likely to `import` from `canopycms/server` than the root entry.
+ * Client-safe (its only imports are types, erased at compile time), so it is exported from the
+ * root `canopycms` entry as well as here, where build/admin scripts look for it.
  */
 export { resolveEntryTitle } from './utils/title-field'
 
@@ -93,14 +74,11 @@ export { generateId } from './id'
 export { isValidId } from './id'
 
 /**
- * Build a hierarchical tree of content nodes from the schema and filesystem.
- *
- * Pass `TEntryTypes` (typically `EntryTypesFromRegistry<typeof entrySchemaRegistry>`)
- * to get narrowed access to `meta.indexEntry.data` after switching on
- * `meta.entryType` in your `extract` callback.
- *
- * Adopters using `canopycms-next` typically call `canopy.buildContentTree(...)`
- * via `getCanopyForBuild()` rather than the bare function.
+ * Build a hierarchical tree of content nodes from the schema and filesystem. Pass `TEntryTypes`
+ * (typically `EntryTypesFromRegistry<typeof entrySchemaRegistry>`) for narrowed access to
+ * `meta.indexEntry.data` after switching on `meta.entryType` in an `extract` callback.
+ * `canopycms-next` adopters usually call `canopy.buildContentTree(...)` via
+ * `getCanopyForBuild()` instead of the bare function.
  */
 export { buildContentTree } from './content-tree'
 
@@ -113,11 +91,10 @@ export type {
 } from './content-tree'
 
 /**
- * `buildContentTree`'s default URL path builder: strips the `{contentRootName}/`
- * prefix, collapses an entry's `index` slug to its parent collection's path, and
- * lowercases the result. Call it from inside a custom `buildPath` to extend the
- * default rather than reimplement it — `buildContentTree`'s `buildPath` option
- * replaces the default outright, it does not compose with it.
+ * `buildContentTree`'s default URL path builder: strips the `{contentRootName}/` prefix,
+ * collapses an entry's `index` slug to its parent collection's path, and lowercases the result.
+ * Call it from inside a custom `buildPath` rather than reimplementing it — the `buildPath`
+ * option REPLACES the default outright, it does not compose with it.
  */
 export { defaultBuildPath } from './content-tree'
 
@@ -127,19 +104,17 @@ export { listEntries } from './content-listing'
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
 
 /**
- * Parse a content filename of the form `{type}.{slug}.{id}.{ext}` into its
- * `{ type, slug, id }` parts. `id` must be a valid 12-character Base58 content ID
- * (excludes the ambiguous characters `0`, `O`, `I`, `l`) or the parse fails.
- * Pass `entryTypes` to also require `type` to match a known entry-type name;
- * omit it to parse the filename shape without that check. See the source JSDoc
- * for the full filename grammar.
+ * Parse a content filename `{type}.{slug}.{id}.{ext}` into `{ type, slug, id }`. `id` must be a
+ * valid 12-character Base58 content ID (no ambiguous `0`, `O`, `I`, `l`) or the parse fails.
+ * Pass `entryTypes` to also require `type` to match a known entry-type name. Full grammar in
+ * the source JSDoc.
  */
 export { parseTypedFilename } from './content-listing'
 
 /**
  * Resolve a canopy entry-link to its URL. Pair with the field-walker variants
- * (`resolveEntryLinksInText`, `resolveEntryLinksInData`) when rendering MDX
- * bodies or arbitrary frontmatter that may contain link tokens.
+ * (`resolveEntryLinksInText`, `resolveEntryLinksInData`) when rendering MDX bodies or
+ * frontmatter that may contain link tokens.
  */
 export {
   resolveEntryUrl,
@@ -151,8 +126,8 @@ export {
 export type { EntryLinkUrlResolver } from './entry-link-resolver'
 
 /**
- * Compute the canonical URL for an entry given its logical path + slug, and the shared
- * "is this the collection-index slug?" predicate that decides whether it collapses.
+ * The canonical URL for an entry from its logical path + slug, plus the shared "is this the
+ * collection-index slug?" predicate that decides whether it collapses.
  */
 export { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 
@@ -168,7 +143,7 @@ export type { RoutableEntry, CollectRoutableEntriesOptions } from './static'
 
 /**
  * Find every URL claimed by more than one entry — the check a production build already runs
- * (and fails on). Exported so a content-integrity test can assert it directly rather than
+ * and fails on. Exported so a content-integrity test can assert it directly instead of
  * hand-rolling the same scan over `listEntries`.
  */
 export { findDuplicateUrlPaths } from './static'
@@ -176,7 +151,7 @@ export { findDuplicateUrlPaths } from './static'
 export type { DuplicateUrlPath } from './static'
 
 /**
- * SEO field extraction and URL shaping (framework-agnostic). `isNoindexEntry` is the single
+ * SEO field extraction and URL shaping, framework-agnostic. `isNoindexEntry` is the single
  * predicate behind both `robots: noindex` and sitemap exclusion.
  */
 export {
@@ -200,29 +175,25 @@ export type {
 } from './static'
 
 /**
- * Start a chokidar-backed watcher that detects divergence between the dev
- * working tree and the resolved branch clone. Dev mode only.
+ * Start a chokidar-backed watcher for divergence between the dev working tree and the resolved
+ * branch clone. Dev mode only.
  */
 export { startDevContentWatcher } from './dev-content-watcher'
 
 export type { StartDevContentWatcherOptions } from './dev-content-watcher'
 
 /**
- * Instantiate the AssetStore configured by a site's `media` config
- * (`config.media`). Returns undefined when no store applies: `media` is
- * unset and no `devAssetsDir` fallback was given, `adapter: 'local'` omits
- * `directory` with no fallback, or `adapter: 'lfs'` (config literal kept,
- * not yet implemented).
+ * Instantiate the AssetStore configured by a site's `config.media`. Returns undefined when no
+ * store applies: `media` unset with no `devAssetsDir` fallback, `adapter: 'local'` without
+ * `directory` and no fallback, or `adapter: 'lfs'` (config literal kept, not yet implemented).
  */
 export { createAssetStore } from './assets/factory'
 
 /**
- * The five S3/local bucket-prefix strings (`asset-originals/`, `asset-staging/`,
- * `asset-meta/`, `assets/`, `assets/t/`). Re-exported so server-only consumers
- * outside this package - notably the prod transform Lambda
- * (`packages/canopycms-cdk/lambda/asset-transform`) - can build/parse asset
- * keys through the same constants `S3AssetStore` uses, rather than
- * duplicating the literal prefix strings.
+ * The five S3/local bucket-prefix strings (`asset-originals/`, `asset-staging/`, `asset-meta/`,
+ * `assets/`, `assets/t/`). Exported so server-only consumers outside this package — notably the
+ * prod transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`) — build and parse
+ * asset keys through the same constants `S3AssetStore` uses rather than duplicating the strings.
  */
 export { ASSET_PREFIXES, type AssetPrefixes } from './assets/keys'
 
@@ -230,31 +201,28 @@ export { ASSET_PREFIXES, type AssetPrefixes } from './assets/keys'
 export type { AssetMeta } from './assets/types'
 
 /**
- * Parse the three path segments after `assets/t/` (`{directives}/{hash32}/{slug}.{ext}`)
- * into a validated `TransformDirectives` set, or a structured parse error.
- * Reused unchanged by the dev-mode lazy `/assets/t/*` emulation (`api/assets.ts`)
- * and the prod transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`)
- * so the URL grammar is defined in exactly one place.
+ * Parse the three path segments after `assets/t/` (`{directives}/{hash32}/{slug}.{ext}`) into a
+ * validated `TransformDirectives` set, or a structured parse error. Reused unchanged by the
+ * dev-mode lazy `/assets/t/*` emulation (`api/assets.ts`) and the prod transform Lambda, so the
+ * URL grammar is defined in exactly one place.
  */
 export { parseTransformPath } from './assets/transform-directives'
 
 export type { ParsedTransformPath, ParseTransformPathResult } from './assets/transform-directives'
 
 /**
- * Canonical string form of a `TransformDirectives` set - the cache key every
- * transform output is stored under (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`).
- * Equivalent directive sets (different key order/float formatting) always
- * format to the same string. Reused by the prod transform Lambda so its
- * canonical writes agree with the dev-mode emulation and `assetUrl()`.
+ * Canonical string form of a `TransformDirectives` set — the cache key every transform output is
+ * stored under (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`). Equivalent directive
+ * sets (different key order or float formatting) always format to the same string. Reused by the
+ * prod transform Lambda so its writes agree with the dev-mode emulation and `assetUrl()`.
  */
 export { formatDirectives } from './assets/transform-directives'
 
 /**
  * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
- * resize/format/quality/crop, with EXIF stripped on every re-encode (even
- * identity). Server-only (sharp) - reused unchanged by the dev-mode lazy
- * `/assets/t/*` emulation and the prod transform Lambda
- * (`packages/canopycms-cdk/lambda/asset-transform`).
+ * resize/format/quality/crop, EXIF stripped on every re-encode, identity included. Server-only
+ * (sharp); reused unchanged by the dev-mode lazy `/assets/t/*` emulation and the prod transform
+ * Lambda.
  */
 export { applyTransform } from './assets/transform'
 

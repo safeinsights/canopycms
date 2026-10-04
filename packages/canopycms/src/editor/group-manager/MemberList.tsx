@@ -1,9 +1,5 @@
 'use client'
 
-/**
- * Member list component with user search for adding members
- */
-
 import React from 'react'
 import {
   ActionIcon,
@@ -26,7 +22,6 @@ export interface MemberListProps {
   onRemoveMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
-  // User search state
   showUserSearch: boolean
   searchQuery: string
   searchResults: UserSearchResult[]

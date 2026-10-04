@@ -3,12 +3,10 @@ export * from './config'
 export * from './entry-schema'
 export * from './types'
 export * from './user'
-// Title-derivation fallback chain (schema isTitle field -> data.title/name ->
-// entry-type label -> humanized slug -> "Untitled"). Client-safe (its only
-// import is `FieldConfig`/`InlineGroupFieldConfig` types, erased at compile
-// time, so no runtime dependency at all) — re-exported here as well as from
-// 'canopycms/server' so client-side list/preview UI can compute the same
-// display title as build scripts without a second implementation.
+// Title-derivation fallback chain (schema isTitle field -> data.title/name -> entry-type label ->
+// humanized slug -> "Untitled"). Client-safe: its only imports are types, erased at compile time.
+// Exported from 'canopycms/server' too, so client list/preview UI and build scripts derive the
+// same display title from one implementation.
 export { resolveEntryTitle } from './utils/title-field'
 // AI content config helper — client-safe (no node: imports).
 // Server-only AI features (handler, generator) are in 'canopycms/ai'.
@@ -21,8 +19,8 @@ export type {
   FieldTransformFn,
   FieldTransforms,
 } from './ai/types'
-// Only re-export client-safe types from auth. Server-only implementations
-// (CachingAuthPlugin, FileBasedAuthCache) are available via 'canopycms/auth/cache'.
+// Client-safe auth types only; server-only implementations (CachingAuthPlugin, FileBasedAuthCache)
+// live at 'canopycms/auth/cache'.
 export type { AuthPlugin, AuthPluginFactory } from './auth/plugin'
 export type { UserSearchResult, GroupMetadata, AuthenticationResult } from './auth/types'
 export {
@@ -40,9 +38,8 @@ export type {
   DefaultEntryTypes,
 } from './content-tree'
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
-// Asset URL helpers — client-safe (no node: imports). Build/adjust transform
-// URLs for <img>/srcset from stored asset refs without pulling in the
-// server-only transform engine (canopycms's assets/transform.ts, sharp).
+// Asset URL helpers — client-safe (no node: imports). Build/adjust transform URLs for <img>/srcset
+// from stored asset refs without the server-only transform engine (assets/transform.ts, sharp).
 export { assetUrl, assetSrcSet } from './assets/asset-url'
 export type { AssetRef, AssetUrlOptions } from './assets/asset-url'
 export type { OutputFormat, CropRect, TransformDirectives } from './assets/transform-directives'

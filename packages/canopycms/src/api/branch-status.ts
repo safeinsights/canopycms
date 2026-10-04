@@ -55,26 +55,15 @@ const submitBranchForMergeHandler = async (
     }
   }
 
-  // Only an 'editing' branch may be submitted. This mirrors
-  // getBranchWriteProtection's rule exactly -- writes are blocked on any branch
-  // whose status has left 'editing' -- so "can I edit this?" and "can I submit
-  // this?" stay one question. Submitting a branch you are not allowed to edit
-  // is incoherent: its content cannot have changed since the last submit.
+  // Only an 'editing' branch may be submitted, mirroring
+  // getBranchWriteProtection's status gate exactly so "can I edit this?" and
+  // "can I submit this?" stay one question. Without this, an archived
+  // (merged) branch could be re-submitted by its creator, re-stamping it
+  // 'submitted' and overwriting the merged PR's title/body.
   //
-  // The 'submittableBranch' guard above answers a different question (is this
-  // the protected base branch?) and reads no status at all, so without this the
-  // submit path had no status gate anywhere -- unlike withdraw, approve and
-  // request-changes, which have always had one. An archived (merged) branch
-  // could therefore be re-submitted by its creator: the working tree is clean so
-  // nothing is committed, but it re-stamped the branch 'submitted', overwrote
-  // the merged PR's title/body via syncSubmitPr's update path, and in prod (no
-  // direct githubService) enqueued a worker task that 422s on pulls.create,
-  // since createOrUpdatePullRequest finds no OPEN PR to update.
-  //
-  // Fails closed on a missing status: branch.json is read with a bare
-  // JSON.parse (branch-metadata.ts) with no schema validation, so a damaged or
-  // hand-repaired file can yield `undefined` at runtime. Same reasoning, and
-  // same wording, as runWritableBranchGuard's unreadable-status arm.
+  // Fails closed on a missing status (branch.json is read with a bare
+  // JSON.parse, no schema validation, so a damaged file can yield
+  // `undefined`) -- same as runWritableBranchGuard's unreadable-status arm.
   const status = branchContext.branch.status
   if (status !== 'editing') {
     return {
@@ -157,14 +146,6 @@ const submitBranchForMergeHandler = async (
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
-/**
- * Get branch status
- * GET /:branch/status
- */
 const getBranchStatus = defineEndpoint({
   namespace: 'workflow',
   name: 'getStatus',
@@ -187,10 +168,6 @@ const getBranchStatus = defineEndpoint({
   handler: getBranchStatusHandler,
 })
 
-/**
- * Submit branch for merge/review
- * POST /:branch/submit
- */
 const submitBranchForMerge = defineEndpoint({
   namespace: 'workflow',
   name: 'submit',
@@ -216,9 +193,6 @@ const submitBranchForMerge = defineEndpoint({
   handler: submitBranchForMergeHandler,
 })
 
-/**
- * Exported routes for router registration
- */
 export const WORKFLOW_ROUTES = {
   getStatus: getBranchStatus,
   submit: submitBranchForMerge,

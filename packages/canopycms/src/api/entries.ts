@@ -29,13 +29,13 @@ import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
 // part of the entries API surface without pulling server deps into client bundles.
-export { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
 
 const log = createDebugLogger({ prefix: 'EntriesAPI' })
 
 /**
  * Summary of an entry type for client display.
  * Simplified from EntryTypeConfig - doesn't include full field definitions.
+ * @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md.
  */
 export interface EntryTypeSummary {
   name: string
@@ -60,6 +60,7 @@ export interface CollectionItem {
   canEdit?: boolean
 }
 
+/** @internal No importer; deletion candidate in knip-no-importer-deletion-candidates.md. */
 export interface ListEntriesParams {
   branch: string
   collection?: LogicalPath
@@ -80,10 +81,6 @@ export interface ListEntriesResponse {
 
 /** Response type for listing entries */
 export type EntriesResponse = ApiResponse<ListEntriesResponse>
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
 
 const listEntriesParamsSchema = z.object({
   branch: branchNameSchema,
@@ -134,14 +131,11 @@ const toCollectionItem = (
 /**
  * List entries in a single collection, mapped to API CollectionItem type.
  *
- * Deliberately does NOT resolve `reference` fields, unlike the `resolveReferences` option
- * that `listEntries`/`buildContentTree` grew for the same underlying primitive. This is a
- * paginated admin table rendering slug/title/canEdit — it never reads inside a reference —
- * and resolution here would land in the worst possible place: it runs BEFORE pagination
- * (`filterWithAccessControl` walks the full collection, `slice` happens at the end), on a
- * request path, so every keystroke in the admin search box would pay a full ContentId index
- * scan plus one read per distinct referenced entry. Revisit only if a column ever needs to
- * display a reference's content.
+ * Deliberately does NOT resolve `reference` fields (unlike the `resolveReferences` option
+ * elsewhere on the same primitive): this runs BEFORE pagination (`slice` happens at the end) on
+ * a search request path, so resolving would cost a full ContentId scan plus one read per
+ * referenced entry on every keystroke. Revisit only if a column needs to display a reference's
+ * content.
  */
 const listCollectionEntries = async (
   root: string,
@@ -292,13 +286,10 @@ const listEntriesHandler = async (
   }
 }
 
-// ============================================================================
-// Route Definitions with defineEndpoint
-// ============================================================================
-
 /**
  * List entries for a branch
  * GET /:branch/entries
+ * @internal Exported for tests.
  */
 export const listEntries = defineEndpoint({
   namespace: 'entries',
@@ -319,22 +310,15 @@ export const listEntries = defineEndpoint({
   handler: listEntriesHandler,
 })
 
-// ============================================================================
-// Delete Entry
-// ============================================================================
-
 /** Response type for deleting an entry */
 export type DeleteEntryResponse = ApiResponse<{
   deleted: boolean
   contentId?: string
   /**
-   * Set when the entry itself was deleted successfully but the collection's
-   * order array could not be updated afterward (C6: order cleanup is
-   * best-effort hygiene that runs AFTER the delete, so its failure must not
-   * present as a failed delete - see content.ts's `validationWarnings` for
-   * the same "warn, don't fail" precedent on the write path). The order
-   * array still contains the now-nonexistent id until a later schema
-   * mutation cleans it up.
+   * Set when the entry deleted successfully but the collection's order array couldn't be updated
+   * afterward (C6: best-effort hygiene after the delete, so its failure must not present as a
+   * failed delete — see content.ts's `validationWarnings`). The order array keeps the
+   * now-nonexistent id until the next schema mutation cleans it up.
    */
   warning?: string
 }>
@@ -357,14 +341,10 @@ const deleteEntryHandler = async (
 ): Promise<DeleteEntryResponse> => {
   const { branchContext } = gc
 
-  // Parse entryPath to get collection and slug
   // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
   // params.entryPath is already decoded exactly once, uniformly with every
-  // other route param, by http/router.ts's matchRoute (C5) - re-decoding it
-  // here was the redundant second decode that made this route inconsistent
-  // with content.ts's (undecoded) catch-all and vulnerable to a malformed
-  // `%` escape throwing past this handler's try/catch. Still re-validate the
-  // final decoded value for traversal, same as before.
+  // other route param, by http/router.ts's matchRoute (C5). Still re-validate the
+  // final decoded value for traversal.
   const entryPathResult = parseLogicalPath(params.entryPath)
   if (!entryPathResult.ok) {
     return {
@@ -397,8 +377,6 @@ const deleteEntryHandler = async (
 
   const flatSchema = branchContext.flatSchema
 
-  // Check edit permission on the entry
-  // Build the physical path for permission check
   const collection = flatSchema.find(
     (item) => item.type === 'collection' && item.logicalPath === collectionPath,
   )
@@ -430,17 +408,14 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
-    // C2: only a recognized ContentStoreError is the client's fault (bad
-    // slug/path shape); anything else - a real fs error, a bug - is a
-    // server fault and must surface as a 500, not get mislabeled as
-    // "Invalid entry path".
+    // C2: same rule as content.ts's writeContentHandler catch (ContentStoreError -> 400,
+    // everything else -> 500).
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: 'Invalid entry path' }
     }
     throw err
   }
 
-  // Check edit access using the real physical path
   const editAccess = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
@@ -462,16 +437,12 @@ const deleteEntryHandler = async (
     // Get the entry's content ID before deleting (for order update)
     const contentId = await contentStore.getIdForEntry(collectionLogicalPath, entrySlug)
 
-    // Delete the entry
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
-    // Update the collection's order array to remove the deleted item.
-    // Construct exactly like api/schema.ts's getSchemaOps: the configured
-    // content root as the first argument, the branch root passed explicitly as
-    // the fourth, and with services, so updateOrder's .collection.json write
-    // bumps the schema generation marker. Without the bump, every host durably
-    // serves the stale cached order (still containing the deleted entry) until
-    // the next unrelated schema mutation — prod has no mtime backstop.
+    // Construct exactly like api/schema.ts's getSchemaOps (content root, registry, services,
+    // branch root) so updateOrder's write bumps the schema generation marker — without it, every
+    // host keeps serving the stale cached order (still containing the deleted entry) until the
+    // next unrelated schema mutation, since prod has no mtime backstop.
     if (contentId && collection.type === 'collection' && collection.order) {
       const contentRootName = ctx.services.config.contentRoot || 'content'
       const schemaStore = new SchemaOps(
@@ -485,13 +456,9 @@ const deleteEntryHandler = async (
         try {
           await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
         } catch (err) {
-          // C6: order cleanup is best-effort hygiene that runs AFTER the
-          // entry is already deleted, so no failure here - busy schema lock,
-          // ENOSPC, a bug, anything - is allowed to turn an otherwise-
-          // successful delete into an error response (the entry is gone; a
-          // client that sees an error and retries the delete would just get
-          // a confusing 404). Surface it as a warning on the success
-          // response instead (mirrors content.ts's write-path `validationWarnings`).
+          // C6: order cleanup is best-effort hygiene after the entry is already deleted, so no
+          // failure here may turn an otherwise-successful delete into an error (a retry would
+          // just 404). Surface it as a warning instead (mirrors content.ts's `validationWarnings`).
           const reason =
             err instanceof SchemaStoreBusyError ? 'schema is busy' : getErrorMessage(err)
           log.warn('delete-entry', 'Skipped order cleanup', {
@@ -513,9 +480,8 @@ const deleteEntryHandler = async (
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
     }
-    // [SYNC-C1] Contention with the worker's rebase (or another editor) is a
-    // retriable conflict, not a server fault -- 409, with the syncing
-    // variant's own "try again" message when that is what happened.
+    // [SYNC-C1] Contention with the worker's rebase (or another editor) is a retriable conflict,
+    // not a server fault — 409, with the syncing variant's own "try again" message.
     if (err instanceof ContentConflictError) {
       return {
         ok: false,
@@ -534,11 +500,7 @@ const deleteEntryHandler = async (
   }
 }
 
-/**
- * Delete an entry
- * DELETE /:branch/entries/...entryPath
- * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
- */
+/** @internal Exported for tests. */
 export const deleteEntry = defineEndpoint({
   namespace: 'entries',
   name: 'delete',

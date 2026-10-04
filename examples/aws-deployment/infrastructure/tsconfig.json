@@ -1,0 +1,41 @@
+// Type-checks the CDK app. `canopycms init-deploy aws` generated this file, and it is yours to
+// edit.
+//
+// Nothing else checks these files. cdk.json runs the app with tsx, which strips types without
+// checking them, and the project's tsconfig.json excludes infrastructure/, so `next build` skips
+// them too. Unchecked, a misspelled CanopyCmsService prop is dropped silently and the deploy uses
+// that prop's default. .github/workflows/deploy-cms.yml runs `tsc --noEmit -p infrastructure`
+// before `cdk deploy`; run the same command after editing the stack.
+{
+  // tsx resolves the project's "paths" aliases in every file, and compiles canopycms.config.ts,
+  // which the stack imports, with the project's compiler options. So this file starts from them.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // tsx accepts extensionless relative imports, and imports ending in .ts, whether or not
+    // package.json declares "type": "module". "bundler" resolution accepts both as well.
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "skipLibCheck": true,
+    // tsx compiles the files the project's tsconfig.json excludes, infrastructure/ among them,
+    // without its compiler options. Inherited, these three would fail the generated stack on code
+    // that tsx runs: the first asks for `import type`, and the other two only add strictness. The
+    // reset reaches canopycms.config.ts here too; `next build` still checks that file with the
+    // project's own options.
+    "verbatimModuleSyntax": false,
+    "exactOptionalPropertyTypes": false,
+    "noPropertyAccessFromIndexSignature": false,
+    // Type-check only. An inherited "incremental" would write a .tsbuildinfo file here, and an
+    // inherited "composite" refuses to run without it.
+    "noEmit": true,
+    "incremental": false,
+    "composite": false
+  },
+  // Imports are followed, so canopycms.config.ts, and anything it imports, is checked too.
+  "include": ["bin/**/*.ts", "lib/**/*.ts"],
+  // Not inherited: an "exclude" from the project's tsconfig.json resolves against the project
+  // directory, and `init-deploy aws` adds infrastructure/ to that list, which would exclude every
+  // file above.
+  "exclude": []
+}

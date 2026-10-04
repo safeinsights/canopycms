@@ -14,13 +14,12 @@ import { flattenGroupFields } from '../utils/flatten-group-fields'
  * can't be sourced here via `useApiClient()`/`useOptionalApiClient()` directly; instead every
  * entry point takes an optional `apiClient`, which the caller (a hook, which CAN call
  * `useOptionalApiClient()` during render) resolves and passes down. Falls back to a
- * default-configured `createApiClient()` when no client is supplied, so direct callers/tests
- * that predate this DI path keep working unchanged.
+ * default-configured `createApiClient()` when no client is supplied.
  */
 
 /**
- * Find which fields changed between two form values.
  * Only returns top-level field configs for fields that changed.
+ * @internal Exported for tests.
  */
 export function findChangedFields(
   prevValue: FormValue,
@@ -33,7 +32,6 @@ export function findChangedFields(
     const prevFieldValue = prevValue[field.name]
     const currentFieldValue = currentValue[field.name]
 
-    // Deep equality check for objects and arrays
     if (JSON.stringify(prevFieldValue) !== JSON.stringify(currentFieldValue)) {
       changed.push(field)
     }
@@ -43,8 +41,6 @@ export function findChangedFields(
 }
 
 /**
- * Resolve changed references incrementally.
- * Only resolves reference fields that have changed.
  * Uses cache to avoid duplicate API calls.
  */
 export async function resolveChangedReferences(
@@ -63,15 +59,12 @@ export async function resolveChangedReferences(
       const refField = field as ReferenceFieldConfig
       const fieldValue = currentValue[field.name]
 
-      // Resolve this field's value
       if (refField.list && Array.isArray(fieldValue)) {
-        // List of references
         const resolved = await Promise.all(
           fieldValue.map((id) => resolveReferenceId(id, branch, cache, apiClient)),
         )
         updates[field.name] = resolved
       } else if (fieldValue) {
-        // Single reference
         const resolved = await resolveReferenceId(fieldValue, branch, cache, apiClient)
         updates[field.name] = resolved
       }
@@ -81,18 +74,12 @@ export async function resolveChangedReferences(
   return updates
 }
 
-/**
- * Resolve a single reference ID to full object.
- * Checks cache first, then makes API call if needed.
- * Returns original ID if resolution fails.
- */
 async function resolveReferenceId(
   id: unknown,
   branch: string,
   cache: Map<string, unknown>,
   apiClient?: ApiClient,
 ): Promise<unknown> {
-  // Only resolve string IDs
   if (typeof id !== 'string') {
     return id
   }
@@ -104,7 +91,6 @@ async function resolveReferenceId(
 
   const cacheKey = `${branch}:${id}`
 
-  // Check cache first
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey)
   }
@@ -117,17 +103,14 @@ async function resolveReferenceId(
     const result = await client.content.resolveReferences({ branch }, { ids: [id] })
 
     if (result.ok && result.data && result.data.resolved[id]) {
-      // Cache and return resolved object
       const resolved = result.data.resolved[id]
       cache.set(cacheKey, resolved)
       return resolved
     }
 
-    // Resolution failed - return original ID string
     return id
   } catch (error) {
     console.error(`Failed to resolve reference ID ${id}:`, error)
-    // Return original ID on error
     return id
   }
 }
