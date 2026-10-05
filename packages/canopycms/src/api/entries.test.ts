@@ -61,11 +61,11 @@ describe('listEntries', () => {
       schema,
     })
 
-    // Mock loadPathPermissions to return rules that hide 'entry.hidden.xyz789abcDEF.json' from user 'u1'
+    // Mock loadPathPermissions to return rules that hide the 'hidden' entry from user 'u1'
     // Use 'read' access restriction to actually hide the file from listing
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.hidden.xyz789abcDEF.json'),
+        path: unsafeAsPermissionPath('content/posts/hidden'),
         read: { allowedUsers: ['other'] },
       },
     ]
@@ -546,10 +546,10 @@ describe('listEntries', () => {
       schema,
     })
 
-    // Mock loadPathPermissions: 'entry.readonly.defGHJkmn456.json' is read-only for user 'u1'
+    // Mock loadPathPermissions: the 'readonly' entry is read-only for user 'u1'
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.readonly.defGHJkmn456.json'),
+        path: unsafeAsPermissionPath('content/posts/readonly'),
         read: { allowedUsers: ['u1'] },
         edit: { allowedUsers: ['admin'] }, // u1 cannot edit
       },
@@ -978,7 +978,7 @@ describe('listEntries', () => {
 
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.denied.aaa111bbb222.json'),
+        path: unsafeAsPermissionPath('content/posts/denied'),
         read: { allowedUsers: ['other'] },
       },
     ]
@@ -1984,7 +1984,7 @@ describe('deleteEntry', () => {
     // Mock edit access denied
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath(`content/posts.${postsId}/post.protected.abc123def456.json`),
+        path: unsafeAsPermissionPath('content/posts/protected'),
         edit: { allowedUsers: ['admin'] },
       },
     ]

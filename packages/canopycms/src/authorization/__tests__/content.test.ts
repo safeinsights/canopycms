@@ -9,7 +9,7 @@ import {
 } from '../'
 import { unsafeAsPermissionPath } from '../test-utils'
 import type { PathPermission } from '../../config'
-import { unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const branchContext = {
   baseRoot: '/tmp/base',
@@ -47,7 +47,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/pages/foo.md'),
+      unsafeAsLogicalPath('content/pages/foo'),
       // Not the branch creator (branchContext.branch.createdBy is 'u1') -- the
       // creator owns their own un-ACL'd branch and is covered separately below.
       { type: 'authenticated', userId: 'u2', groups: [] },
@@ -74,7 +74,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/pages/foo.md'),
+      unsafeAsLogicalPath('content/pages/foo'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -96,7 +96,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/pages/foo.md'),
+      unsafeAsLogicalPath('content/pages/foo'),
       {
         type: 'authenticated',
         userId: 'u1',
@@ -122,7 +122,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/admin/secret.md'),
+      unsafeAsLogicalPath('content/admin/secret'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -144,7 +144,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/open/page.md'),
+      unsafeAsLogicalPath('content/open/page'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -167,7 +167,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/open/page.md'),
+      unsafeAsLogicalPath('content/open/page'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -193,7 +193,7 @@ describe('checkContentAccess', () => {
     const readRes = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/open/page.md'),
+      unsafeAsLogicalPath('content/open/page'),
       user,
       'read',
     )
@@ -202,7 +202,7 @@ describe('checkContentAccess', () => {
     const editRes = await checkContent(
       branchContext,
       '/repo',
-      unsafeAsPhysicalPath('content/open/page.md'),
+      unsafeAsLogicalPath('content/open/page'),
       user,
       'edit',
     )
@@ -231,8 +231,8 @@ describe('createContentAccessChecker', () => {
     )
 
     for (let i = 0; i < 5; i++) {
-      check(unsafeAsPhysicalPath(`content/pages/foo-${i}.md`), 'read')
-      check(unsafeAsPhysicalPath(`content/pages/foo-${i}.md`), 'edit')
+      check(unsafeAsLogicalPath(`content/pages/foo-${i}`), 'read')
+      check(unsafeAsLogicalPath(`content/pages/foo-${i}`), 'edit')
     }
 
     expect(loadPathPermissions).toHaveBeenCalledTimes(1)
@@ -242,7 +242,7 @@ describe('createContentAccessChecker', () => {
 
   it('returns the same result as checkContentAccess for the same inputs', async () => {
     const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
-    const path = unsafeAsPhysicalPath('content/admin/secret.md')
+    const path = unsafeAsLogicalPath('content/admin/secret')
 
     const single = await createCheckContentAccess(deps())(
       branchContext,

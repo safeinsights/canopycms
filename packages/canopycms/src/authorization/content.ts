@@ -9,14 +9,15 @@ import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 import { createCheckPathAccess } from './path'
 import type { ContentAccessResult, ContentAccessDeps } from './types'
-import type { PhysicalPath } from '../paths/types'
+import type { LogicalPath } from '../paths/types'
 
 /**
  * A bound content-access checker: evaluates a single path/level synchronously
  * against permissions that were already loaded when the checker was created.
+ * The path is the entry's logical path (see `checkPathAccess`).
  */
 export type ContentAccessChecker = (
-  relativePath: PhysicalPath,
+  logicalPath: LogicalPath,
   level: PermissionLevel,
 ) => ContentAccessResult
 
@@ -55,9 +56,9 @@ export async function createContentAccessChecker(
   const rules = await deps.loadPathPermissions(permissionsRoot, deps.mode)
   const pathChecker = createCheckPathAccess(rules, deps.defaultPathAccess)
 
-  return (relativePath, level) => {
+  return (logicalPath, level) => {
     const path = pathChecker({
-      relativePath,
+      logicalPath,
       user,
       level,
     })
@@ -78,21 +79,21 @@ export async function checkContentAccess(
   deps: ContentAccessDeps,
   context: BranchContext,
   branchRoot: string,
-  relativePath: PhysicalPath,
+  logicalPath: LogicalPath,
   user: CanopyUser,
   level: PermissionLevel,
 ): Promise<ContentAccessResult> {
   const check = await createContentAccessChecker(deps, context, branchRoot, user)
-  return check(relativePath, level)
+  return check(logicalPath, level)
 }
 
 export function createCheckContentAccess(deps: ContentAccessDeps) {
   return (
     context: BranchContext,
     branchRoot: string,
-    relativePath: PhysicalPath,
+    logicalPath: LogicalPath,
     user: CanopyUser,
     level: PermissionLevel,
   ): Promise<ContentAccessResult> =>
-    checkContentAccess(deps, context, branchRoot, relativePath, user, level)
+    checkContentAccess(deps, context, branchRoot, logicalPath, user, level)
 }

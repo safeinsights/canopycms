@@ -142,6 +142,28 @@ describe('services submitBranch', () => {
     expect(await remoteBranchSha('feature-1')).toBe(finalLocalSha)
   })
 
+  it('retry after a failed push on an already-pushed branch actually pushes', async () => {
+    await fs.writeFile(path.join(localPath, 'a.txt'), 'first change', 'utf8')
+    await services.submitBranch({ context, message: 'first submit' })
+    const firstPushedSha = await remoteBranchSha('feature-1')
+    expect(firstPushedSha).toBe(await localSha())
+
+    await fs.writeFile(path.join(localPath, 'a.txt'), 'second change', 'utf8')
+    const pushSpy = vi.spyOn(GitManager.prototype, 'push')
+    pushSpy.mockRejectedValueOnce(new Error('simulated push failure (EFS blip)'))
+    await expect(services.submitBranch({ context, message: 'attempt 1' })).rejects.toThrow(
+      'simulated push failure',
+    )
+    expect((await simpleGit({ baseDir: localPath }).status()).files).toHaveLength(0)
+    expect(await remoteBranchSha('feature-1')).toBe(firstPushedSha)
+
+    // Clean tree, branch already on the mirror, local tip ahead of it: the
+    // retry must take the hasUnpushedCommits path and push.
+    await services.submitBranch({ context, message: 'attempt 2 (retry)' })
+
+    expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+  })
+
   it('dirty tree, first submit: commits and pushes', async () => {
     await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
 
