@@ -789,7 +789,7 @@ preserved, and code blocks are skipped. See
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
-- `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
+- `content-write-lock.ts` — cross-host exclusion between working-tree mutations and the worker's rebase loop
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in

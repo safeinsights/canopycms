@@ -1,9 +1,35 @@
 # [P1] Working-tree mutations still outside the content-write lock
 
+## Resolution (2026-10-05, branch `fix/content-write-lock-coverage`, base `int-202610-a`)
+
+Every working-tree mutator the rebase could revert now takes the lock; the full list and the
+one global acquisition order are in docs/concurrency.md ("Who takes it", "Lock acquisition
+order"). Each acquisition has a held-lock test that fails retriably with the tree untouched,
+plus a positive control, all verified red first and mutation-checked.
+
+1. **Schema.** `withBranchSchemaLock` (schema/schema-store.ts) takes the content-write lock,
+   then the `.canopy-meta/schema` surrogate. `SchemaOps` maps contention to
+   `SchemaStoreBusyError`, so api/schema.ts's 409 is unchanged, and still invalidates the
+   schema cache when the lock is lost after the mutation landed. CLI migrate uses the same
+   helper in a branch clone.
+2. **Assets: not exposed.** The store is branch-agnostic and rooted outside every branch
+   clone (assets/factory.ts), so the rebase never touches it. No lock.
+3. **Bulk mutations.** CLI sync push (`pushContentToWorkspace`, now including the
+   editor-state commit), `sync both` (the whole merge) and every merge-abort path take it;
+   the worker's base-branch refresh takes it try-only (`skipped-locked`). GitManager's
+   `checkoutBranch` runs either under provisioning (already exclusive with the rebase) or
+   from `submitBranch`; `pullCurrentBranch` is settings-workspace only.
+4. **`submitBranch` takes it**, checkout through push: unlocked, a commit made while the
+   rebase is mid-replay lands on its detached head and the `--abort` discards it after the
+   submit reported success. `commitFiles` takes it too. api/branch-status.ts maps contention
+   to a 409 worded by `ContentWriteLockBusyError.outcome`.
+
+Follow-ups: [content-write-lock-followups.md](../content-write-lock-followups.md).
+
 Found while implementing [SYNC-C1] (the cross-host content-write lock,
 `packages/canopycms/src/utils/content-write-lock.ts`), which closed the worker-rebase vs.
 `ContentStore` race — finding 2 of
-[baseline-2026-08-content-loss.md](resolved/baseline-2026-08-content-loss.md).
+[baseline-2026-08-content-loss.md](baseline-2026-08-content-loss.md).
 
 The lock is taken by `ContentStore.write`/`delete`/`renameEntry` and held by
 `CmsWorker.rebaseActiveBranches()` for the whole rebase. Three adjacent things were left out
