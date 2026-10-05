@@ -137,8 +137,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // case -- any first visit to a branch, for the whole duration of its fetch),
   // or a stale SWR slot. The editor then auto-selected one of those stale
   // entries (see the selection effect below), and a save could file its OCC
-  // token under one contentId and look it up under another. Deriving from a stamped record fixes that structurally instead of relying
-  // on every code path remembering to clear.
+  // token under one contentId and look it up under another. Deriving from a
+  // stamped record fixes that structurally instead of relying on every code
+  // path remembering to clear.
   const [view, setView] = useState<BranchView>(() => ({
     branch: options.branchName,
     entries: options.initialEntries,
@@ -325,7 +326,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (entry.entryType) writeParams.entryType = entry.entryType
     const expectedVersion = entryVersionsRef.current.get(versionKey(requestBranch, entry.contentId))
     // Every entry saved here already exists (creates go through handleCreateModalSubmit), so
-    // no token means this entry was never read on this branch and nothing could check the save
+    // no token means this entry was never successfully read on this branch and nothing could check the save
     // against other editors' work. Refused as a conflict; the server refuses it too.
     if (expectedVersion === undefined) {
       throw new SaveApiError(

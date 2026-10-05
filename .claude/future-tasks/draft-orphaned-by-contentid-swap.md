@@ -14,7 +14,7 @@ filed under the old contentId, has no entry left to show it:
 - `modifiedCount` still counts it, so the badge reports an edit nobody can open.
 - It stays in `canopycms:drafts:<branch>` in localStorage until "Discard all".
 
-Nothing is overwritten on the server (the OCC fix makes any save of it a 409). But the
+Nothing is overwritten on the server: with no entry to open, the draft cannot be saved. But the
 editor's work disappears with no message, and the count disagrees with what is on screen.
 
 ## Fix direction

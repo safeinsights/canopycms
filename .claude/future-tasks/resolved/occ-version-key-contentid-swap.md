@@ -14,7 +14,7 @@ both layers, with the server authoritative:
   and the token survives a rename.
 
 What re-verification found: through the UI, the exact sequence below no longer reached a
-version-less write. After the swap the form renders nothing until the recreated entry
+version-less write. After the swap the editor renders no form until the recreated entry
 loads and files its own token. The hook API still allowed it, and the UI reached it
 another way: a draft restored from localStorage whose load failed renders and saves with
 no token. Both now 409. Reproductions:

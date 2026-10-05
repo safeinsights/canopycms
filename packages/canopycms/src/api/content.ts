@@ -87,7 +87,8 @@ export interface WriteContentBody {
   body?: string
   /**
    * OCC token. A number from a prior read/write response makes this an update,
-   * rejected with 409 if the file has changed since. `null` or omitted makes it
+   * rejected with 409 if the file's mtime no longer matches (a file deleted
+   * since is written anew). `null` or omitted makes it
    * a create, rejected with 409 if the entry already exists. There is no blind
    * write: without a token, "no conflict detection" would be indistinguishable
    * from "lost the token", so an update has to prove which version it read.
