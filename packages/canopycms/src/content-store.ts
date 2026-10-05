@@ -102,7 +102,8 @@ export type ContentDocument = (MarkdownDocument | JsonDocument | YamlDocument) &
   version?: number
 }
 
-// expectedVersion: undefined = blind write; a number = OCC, must match the file's
+// expectedVersion: undefined = blind write, for direct store callers only (the content API maps
+// an omitted token to null); a number = OCC, must match the file's
 // current mtime; null = create-only, the file must NOT exist yet. Same three-way
 // convention as writeOccJsonFile's WriteOccJsonFileOptions.expectedVersion.
 export type WriteInput =
