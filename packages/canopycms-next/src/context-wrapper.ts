@@ -220,8 +220,8 @@ export interface NextCanopyContextResult {
    *
    * At build time this reads filesystem-direct; at request time it uses the branch-aware,
    * **ACL-enforced** runtime context, so entries the current user cannot read are omitted.
-   * Note it takes no `branch` option — see `CanopyContext['listEntries']` for the
-   * base-branch pinning caveat in prod.
+   * Pass the preview iframe's `?branch=` as `branch` on an index page so a content
+   * branch's entries show in preview — see `CanopyContext['listEntries']`.
    */
   listEntries: CanopyContext['listEntries']
   /**
@@ -343,7 +343,7 @@ export async function createNextCanopyContext(
   //
   // No base-branch context resolution needed here: request-time content reads
   // (buildContentTree/listEntries/read) already provision the base/active branch via
-  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext); build-time reads never
+  // loadOrCreateBranchContext (see context.ts's resolveListingSource); build-time reads never
   // provision, they read the checkout.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
