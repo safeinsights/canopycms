@@ -58,7 +58,6 @@ export type TaskRunnerContext = Pick<
   | 'pushBranchToGitHub'
   | 'isRunning'
   | 'ensureStatusReport'
-  | 'ensureSettingsBranch'
 >
 
 /**
@@ -136,11 +135,13 @@ function isRateLimitSignal403(err: unknown): boolean {
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
 
 /**
- * Whether `branch` is a settings branch: the configured one (an adopter-supplied
- * `settingsBranch` need not carry the reserved prefix) or any reserved-prefix name.
+ * Whether `branch` carries the reserved settings-branch prefix. Matching on the prefix
+ * alone, never on a configured name, is what keeps a content branch out: branch creation
+ * rejects the prefix, while a configured name the worker and API disagree on could be a
+ * content branch's.
  */
-function isSettingsBranch(ctx: Pick<TaskRunnerContext, 'ensureSettingsBranch'>, branch: string) {
-  return branch === ctx.ensureSettingsBranch() || branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+function isSettingsBranch(branch: string) {
+  return branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
 }
 
 function requireString(payload: Record<string, unknown>, key: string): string {
@@ -365,7 +366,7 @@ export async function executeTask(
       }
       // The settings branch is an orphan with no history in common with the
       // base, so GitHub 422s a PR for it: push it and stop.
-      if (isSettingsBranch(ctx, branch)) {
+      if (isSettingsBranch(branch)) {
         await ctx.pushBranchToGitHub(branch)
         workerLog(`Pushed settings branch ${branch}; settings branches never get a PR`)
         return { pushed: true }
