@@ -30,6 +30,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
+import { getBranchMetadataFileManager } from '../branch-metadata'
 import { mockConsole, openBareRepo } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
@@ -373,6 +374,9 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
   it("records the base clone's refresh outcome and counts a dirty base in skippedDirty", async () => {
     const basePath = path.join(workspacePath, 'content-branches', 'main')
     await simpleGit().clone(remoteGitPath, basePath, ['--branch', 'main'])
+    await getBranchMetadataFileManager(basePath, path.dirname(basePath)).save({
+      branch: { name: 'main' },
+    })
     await fs.writeFile(path.join(basePath, 'README.md'), 'uncommitted edit\n')
 
     const consoleSpy = mockConsole()

@@ -13,6 +13,11 @@ import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import {
+  holdProvisionedWorkspace,
+  releaseProvisionedWorkspace,
+  type ProvisionedWorkspaceHold,
+} from './provisioned-workspace'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
 import {
@@ -587,7 +592,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
       workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
       continue
     }
-    const outcome = await rebaseOneBranch(ctx, branchDir, branchPath)
+    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath)
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -600,6 +605,42 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
   }
 
   return { rebased, skippedDirty, skippedLocked, failed }
+}
+
+/**
+ * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
+ * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
+ * one with no `branch.json` yet is skipped as not provisioned. Lock order: provisioning, then the
+ * content-write lock inside it; see `provisioned-workspace.ts` for why that order cannot deadlock.
+ * Never throws, like rebaseOneBranch.
+ */
+async function holdAndRebaseOneBranch(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+): Promise<BranchRebaseOutcome> {
+  let hold: ProvisionedWorkspaceHold
+  try {
+    hold = await holdProvisionedWorkspace(ctx.contentBranchesPath, branchDir)
+  } catch (err: unknown) {
+    // [REDACT] failed[] is served to the browser via worker-status.json.
+    const error = redactCredentials(`could not take the provisioning lock: ${getErrorMessage(err)}`)
+    workerLogWarn(`  Skipping ${branchDir}: ${error}`)
+    return { kind: 'failed', error }
+  }
+  if (hold.kind === 'locked') {
+    workerLog(`  Skipping ${branchDir}: provisioning lock held elsewhere (retrying next cycle)`)
+    return { kind: 'skippedLocked' }
+  }
+  if (hold.kind === 'not-provisioned') {
+    workerLog(`  Skipping ${branchDir}: not yet provisioned (no branch.json)`)
+    return { kind: 'none' }
+  }
+  try {
+    return await rebaseOneBranch(ctx, branchDir, branchPath)
+  } finally {
+    await releaseProvisionedWorkspace(hold.release, branchDir)
+  }
 }
 
 /**

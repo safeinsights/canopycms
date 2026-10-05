@@ -10,7 +10,7 @@ import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 import { resolveBaseBranch } from './utils/git'
-import { acquireProvisioningLock } from './utils/provisioning-lock'
+import { acquireProvisioningLock, branchProvisioningLockName } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
@@ -72,7 +72,7 @@ export class BranchWorkspaceManager {
 
           releaseLock = await acquireProvisioningLock(
             path.dirname(options.branchRoot),
-            `.${path.basename(options.branchRoot)}.init.lock`,
+            branchProvisioningLockName(path.basename(options.branchRoot)),
           )
 
           await GitManager.initializeWorkspace({

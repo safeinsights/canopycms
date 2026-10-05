@@ -117,6 +117,7 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
   refreshed: 'fast-forwarded',
   'up-to-date': 'up to date',
   'skipped-dirty': 'refresh skipped (uncommitted changes)',
+  'skipped-locked': 'refresh skipped (workspace being provisioned or purged)',
   'skipped-not-provisioned': 'not yet provisioned',
   failed: 'refresh failed',
 }
@@ -298,10 +299,10 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           <Text size="xs" c="dimmed">
             {status.workerStatus?.lastGitSyncAt ?? 'unknown time'} · {lastGitSync.durationMs}ms ·{' '}
             {lastGitSync.rebased.length} rebased · {lastGitSync.skippedDirty.length} skipped (dirty)
-            {/* [SYNC-C1] Optional: a worker predating the content-write lock
-                writes no such field, so only render it when present. */}
+            {/* Optional: a worker predating the field writes none, so only
+                render it when present. */}
             {lastGitSync.skippedLocked && lastGitSync.skippedLocked.length > 0
-              ? ` · ${lastGitSync.skippedLocked.length} skipped (content write in progress)`
+              ? ` · ${lastGitSync.skippedLocked.length} skipped (busy: a content write, provisioning or purge)`
               : ''}
           </Text>
           {/* Optional: a worker predating the base-refresh report writes none. */}

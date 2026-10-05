@@ -106,6 +106,16 @@ function releaseIgnoringAlreadyReleased(
 }
 
 /**
+ * The provisioning lock's name for the branch workspace directory `dirName`, held in that
+ * directory's parent. Every party to a branch workspace's provisioning names it through this:
+ * the Lambda while it clones, the admin purge, branch-health's freshness rail, and the worker
+ * while it refreshes or rebases.
+ */
+export function branchProvisioningLockName(dirName: string): string {
+  return `.${dirName}.init.lock`
+}
+
+/**
  * Acquire a cross-process filesystem lock for content provisioning. Returns a release function —
  * always call it in a `finally`.
  *

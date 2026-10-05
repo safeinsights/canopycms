@@ -221,6 +221,7 @@ direction, and every invariant.
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
+- `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold base refresh and rebase run under
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
@@ -786,7 +787,7 @@ preserved, and code blocks are skipped. See
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes` and `withTrailingSlash`
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the shared OCC JSON write layer
-- `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry)
+- `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
 - `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
