@@ -1,7 +1,9 @@
 # Program E — Docs-site CMS deployment
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
-**Size:** L · **Status:** not started · **Blocked by:** D green
+**Closed 2026-10-05, resolved by events:** the first deployed editor went live on the marketing site, not here; this site follows on the same Lambda + EFS + worker shape, with its setup traps tracked in the backlog index.
+
+**Part of:** [production-readiness-program.md](../production-readiness-program.md)
+**Size:** L · **Status:** retired · **Blocked by:** D green
 **Repos:** `safeinsights/canopycms`, `safeinsights/docs-site-proto`
 
 The deliverable that gets the teams editing content themselves.
@@ -19,7 +21,7 @@ nowhere.
 ## Non-negotiable: protect `dev-docs.sandbox.safeinsights.org`
 
 The teams use it as a working docs site. Check every step against the protection
-rules in [production-readiness-program.md](production-readiness-program.md). In
+rules in [production-readiness-program.md](../production-readiness-program.md). In
 short: `dev-docs` changes only on a push to `testing-main`; Canopy content targets
 a different distribution; every change is validated through a PR preview first;
 the sync automation stays draft-PR-only until cutover; the
@@ -60,7 +62,7 @@ impact on the three existing envs.
    never by merging to `testing-main` to see what happens. Expect schema,
    API-client, and build-shape churn across ~13 versions.
 2. **Structured image field migration** — see
-   [adopter-image-field-migration.md](adopter-image-field-migration.md). Images are
+   [adopter-image-field-migration.md](../adopter-image-field-migration.md). Images are
    currently plain string paths (`logo: /images/logos/quill.png`, markdown
    `![...](/figures/...)`) with `images: { unoptimized: true }` and ~11MB under
    `public/`. Schema + content codemod to the structured `image` field. The
@@ -75,7 +77,7 @@ impact on the three existing envs.
    EFS, its own Clerk instance, its own bot credentials. This is the first use of
    `canopycms-cdk` by a real adopter.
 5. **Wire assets** — see
-   [docs-site-assets-wiring.md](docs-site-assets-wiring.md). `AssetSupport` in
+   [docs-site-assets-wiring.md](../docs-site-assets-wiring.md). `AssetSupport` in
    BYO-bucket mode onto `infrastructure/lib/artifacts-stack.ts`, with `/assets/*`
    and `/assets/t/*` behaviors added to the Canopy-targeted distribution first.
    Note the OAC-on-imported-bucket caveat: CDK cannot add the OAC grant to an

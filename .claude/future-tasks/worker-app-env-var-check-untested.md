@@ -1,5 +1,8 @@
 # [P3] The worker entrypoint's all-or-nothing GitHub App env-var check is untested
 
+Part of the worker-down observability cluster; see
+[worker-not-ready-permanent-failure.md](worker-not-ready-permanent-failure.md).
+
 Filed 2026-09-13 while landing PR #334 (reactive secret re-read). Noticed rather than
 caused by that PR, and deliberately not fixed in it — the fix is an `index.ts`
 restructure, which is a wider change than a secret-handling PR should carry.

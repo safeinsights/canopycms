@@ -1,5 +1,7 @@
 # [P2] Drop the `--conditions=import` workaround from adopter CDK apps once the fixed packages ship
 
+**Adopter-side work, tracked here for visibility. No priority level: the adopter schedules it.**
+
 Created 2026-09-09, alongside the fix for the missing `require` condition in every
 published package's `publishConfig.exports` (branch
 `fix/published-exports-commonjs`, PR #308). This is the half that lives in the
