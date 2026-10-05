@@ -19,3 +19,11 @@ from one value, so the adopter states it once in a place the CDK app can also im
 standalone server does serve `/<prefix>/_next/static/*` at that path on Next 15.5.21 (a built
 app answered 200 for `/edit-assets/_next/static/chunks/main-*.js`); check the other supported
 Next versions.
+
+## Also: `next/image` in preview views
+
+With `attachTo`'s `previewPrefix`, the preview route renders the site's views from the CMS build. A
+view that uses `next/image` requests `/_next/image?url=…`, which on a shared distribution is the
+site's `/_next/*` and 404s; `assetPrefix` does not move it. Reasoned from how Next builds the image
+URL, not reproduced. Either require `images.unoptimized` for the CMS build (`withCanopy` could set it
+alongside `assetPrefix`) or have `attachTo` route `/_next/image` too.

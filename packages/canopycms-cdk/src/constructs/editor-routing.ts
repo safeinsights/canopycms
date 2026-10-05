@@ -221,7 +221,7 @@ export interface CanopyCmsAttachOptions {
   viewerRequestFunction?: cloudfront.IFunction
 
   /**
-   * Options merged into all three editor behaviors, after this construct's
+   * Options merged into the editor and preview behaviors, after this construct's
    * own; keys whose value is `undefined` are ignored. A `responseHeadersPolicy`
    * here replaces the editor's framing protection, so it must carry its own.
    * `functionAssociations` here replaces the viewer-request function as well,
@@ -280,8 +280,15 @@ function prefixRoutes(
     throw fail("must start with '/' and name a path below the root")
   }
   if (prefix.endsWith('/')) throw fail("must not end with a trailing '/'")
+  // CloudFront collapses `//` in request paths, so a pattern holding one never matches.
+  if (prefix.includes('//')) throw fail("must not contain '//'")
   if (/[*?]/.test(prefix))
     throw fail('must not contain * or ?, which CloudFront reads as wildcards')
+  if (!/^[A-Za-z0-9_\-.$/~"'@:+&]+$/.test(prefix)) {
+    throw fail(
+      `may hold only the characters CloudFront allows in a path pattern: A-Z a-z 0-9 _-.$/~"'@:+&`,
+    )
+  }
   const routes: EditorRoute[] =
     option === 'previewPrefix'
       ? [
@@ -297,7 +304,7 @@ function prefixRoutes(
   if (clash) {
     throw fail(
       `overlaps '${clash.pattern}', so CloudFront would send one route's requests to the ` +
-        `other's behavior. Pick a prefix of its own`,
+        `other's behavior. Pick a prefix of its own, such as '/edit-assets' or '/preview'`,
     )
   }
   return routes

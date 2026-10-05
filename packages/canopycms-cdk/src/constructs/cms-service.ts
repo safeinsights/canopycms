@@ -1673,7 +1673,8 @@ export class CanopyCmsService extends Construct {
   /**
    * Serve the editor from a CloudFront distribution you already own, such as
    * the site's: adds `/edit`, `/edit/*` and `/api/canopycms/*` behaviors
-   * to this service's Function URL, behind OAC, with
+   * (plus any `previewPrefix` and `editorAssetPrefix` routes) to this
+   * service's Function URL, behind OAC, with
    * an origin read timeout equal to {@link timeout}, no caching, the whole
    * viewer request forwarded, an `x-forwarded-host` viewer-request function and
    * the editor's response headers policy (framing protection, `noindex`).
