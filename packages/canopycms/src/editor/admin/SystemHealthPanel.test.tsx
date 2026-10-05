@@ -11,6 +11,7 @@ import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
+import type { BaseRefreshReport, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
@@ -43,6 +44,31 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     workerStatus: null,
     ...overrides,
   }
+}
+
+/** A status whose last git sync carries `baseRefresh` (omitted when undefined). */
+function makeStatusWithSync(baseRefresh?: BaseRefreshReport): AdminStatusData {
+  const workerStatus: WorkerStatusReport = {
+    version: 1,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: new Date().toISOString(),
+    lastGitSyncAt: '2026-01-01T00:25:54.000Z',
+    lastGitSync: {
+      durationMs: 1200,
+      rebased: [],
+      skippedDirty: baseRefresh?.outcome === 'skipped-dirty' ? ['main'] : [],
+      failed: [],
+      ...(baseRefresh ? { baseRefresh } : {}),
+    },
+  }
+  return makeStatus({ workerStatus })
+}
+
+const dirtyBaseRefresh: BaseRefreshReport = {
+  outcome: 'skipped-dirty',
+  dirtyFiles: ['content/home.md'],
+  message: '1 uncommitted tracked file(s) in the base branch workspace',
+  trackedCanopyMeta: ['.canopy-meta/schema-cache.json'],
 }
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -137,6 +163,52 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
       expect(screen.getByText('Worker crash detected')).toBeTruthy()
       expect(screen.getByText('Worker crashed on boot')).toBeTruthy()
+    })
+  })
+
+  describe('Overview tab: base branch refresh', () => {
+    it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatusWithSync(dirtyBaseRefresh)),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(screen.getByTestId('base-refresh-outcome').textContent).toBe(
+          'Base branch: refresh skipped (uncommitted changes)',
+        ),
+      )
+      expect(screen.getByText(/1 skipped \(dirty\)/)).toBeTruthy()
+      const warning = screen.getByTestId('base-refresh-warning').textContent ?? ''
+      expect(warning).toContain('Uncommitted: content/home.md')
+      expect(warning).toContain('.canopy-meta/schema-cache.json')
+      expect(warning).toContain('git rm -r --cached .canopy-meta')
+    })
+
+    it('shows a healthy base refresh without a warning', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatusWithSync({ outcome: 'up-to-date' })),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(screen.getByTestId('base-refresh-outcome').textContent).toBe(
+          'Base branch: up to date',
+        ),
+      )
+      expect(screen.queryByTestId('base-refresh-warning')).toBeNull()
+    })
+
+    it('renders the git sync summary as before when the worker reports no baseRefresh', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText(/0 skipped \(dirty\)/)).toBeTruthy())
+      expect(screen.queryByTestId('base-refresh-outcome')).toBeNull()
+      expect(screen.queryByTestId('base-refresh-warning')).toBeNull()
     })
   })
 
@@ -380,6 +452,56 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing: rebased
       expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted: skipped
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
+    })
+
+    describe('base branch row', () => {
+      const healthyBase: BranchHealthEntry = {
+        dirName: 'main',
+        kind: 'healthy',
+        isBaseBranch: true,
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+        },
+      }
+
+      beforeEach(() => {
+        mockClient.admin.branchHealth.mockResolvedValue(
+          mockSuccess({
+            entries: [healthyBase, editingWithRebaseFailure],
+            generatedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        )
+      })
+
+      it('carries the base refresh warning, with its detail in the tooltip', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync(dirtyBaseRefresh)))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        const icon = await screen.findByTestId('base-refresh-warning-main')
+
+        expect(screen.queryByTestId('base-refresh-warning-feature-a')).toBeNull()
+        await userEvent.hover(icon)
+        // Scoped to the tooltip: the Overview panel stays mounted and repeats the text.
+        expect((await screen.findByRole('tooltip')).textContent).toMatch(
+          /Uncommitted: content\/home\.md/,
+        )
+      })
+
+      it('carries no warning when the worker reports no baseRefresh', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync()))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
+
+        expect(screen.queryByTestId('base-refresh-warning-main')).toBeNull()
+      })
     })
 
     it('shows the recorded syncFailureReason in the sync-failed tooltip', async () => {

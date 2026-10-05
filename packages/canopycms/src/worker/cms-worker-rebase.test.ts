@@ -71,6 +71,7 @@ interface BranchSetup {
   branchPath: string
   contentBranchesPath: string
   branchGit: SimpleGit
+  remoteGit: SimpleGit
   /** Add a commit to the origin remote (makes the branch workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
   /** Commit changes in the branch workspace. */
@@ -150,6 +151,7 @@ async function createBranchSetup(
     branchPath,
     contentBranchesPath,
     branchGit,
+    remoteGit,
     pushToRemote,
     commitToBranch,
   }
@@ -383,6 +385,124 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('clean')
       expect(meta?.conflictFiles).toEqual([])
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // canopycms's own state (.canopy-meta/)
+  // -------------------------------------------------------------------------
+
+  describe("canopycms's own state", () => {
+    const behindCount = async (setup: BranchSetup) => {
+      await setup.branchGit.fetch('origin', 'main')
+      return (await setup.branchGit.status()).behind
+    }
+
+    it('rebases when the only dirt is untracked canopycms state (a clone without the exclude)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const dirt = (await setup.branchGit.status()).files.map((f) => f.path)
+      expect(dirt).toEqual(['.canopy-meta/branch.json'])
+
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      await expect(
+        fs.readFile(path.join(setup.branchPath, 'main-update.txt'), 'utf8'),
+      ).resolves.toBe('new from main')
+    })
+
+    it('restores the retired in-tree schema cache a repo tracks, then rebases', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/schema-cache.json': '{"v":"committed"}' },
+      })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const cachePath = path.join(setup.branchPath, '.canopy-meta', 'schema-cache.json')
+      await fs.writeFile(cachePath, '{"v":"written by an older canopycms"}')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      expect(consoleSpy).toHaveLogged(/my-feature: restored the retired in-tree schema cache/)
+      consoleSpy.restore()
+      await expect(fs.readFile(cachePath, 'utf8')).resolves.toBe('{"v":"committed"}')
+    })
+
+    it('skips, naming the fix, when other tracked canopycms state is modified', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
+      })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const commentsPath = path.join(setup.branchPath, '.canopy-meta', 'comments.json')
+      await fs.writeFile(commentsPath, '{"threads":["a reviewer comment"]}')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      expect(consoleSpy).toHaveWarned(
+        /Skipping my-feature: git cannot rebase over .*\.canopy-meta\/comments\.json.*git rm -r --cached \.canopy-meta/,
+      )
+      consoleSpy.restore()
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+      // Recorded, so the Branches tab shows the wedge rather than only the log.
+      expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toMatch(
+        /git rm -r --cached \.canopy-meta/,
+      )
+      // The index is untouched: the skip is all or nothing.
+      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe(
+        '.canopy-meta/comments.json\n',
+      )
+      // canopycms never discards state it still uses.
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
+        '{"threads":["a reviewer comment"]}',
+      )
+    })
+
+    it('leaves the index and the bytes alone even after the base branch untracks the state', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
+      })
+      // A pre-fix submit committed the state on the branch; replaying this
+      // commit over an untracked live file is what makes auto-untracking unsafe.
+      await setup.commitToBranch({ '.canopy-meta/comments.json': '{"threads":["submitted"]}' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const commentsPath = path.join(setup.branchPath, '.canopy-meta', 'comments.json')
+      await fs.writeFile(commentsPath, '{"threads":["live"]}')
+      await setup.remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
+      await setup.remoteGit.commit('untrack canopycms state')
+      const headBefore = (await setup.branchGit.revparse(['HEAD'])).trim()
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe('{"threads":["live"]}')
+      expect(consoleSpy).toHaveWarned(/base branch no longer does; the clone needs manual repair/)
+      consoleSpy.restore()
+      expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(headBefore)
+      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe(
+        '.canopy-meta/comments.json\n',
+      )
+      expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toMatch(/manual repair/)
+    })
+
+    it('still skips real editor dirt when canopycms state is dirty too', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await fs.writeFile(path.join(setup.branchPath, 'unsaved-edit.txt'), 'editor draft')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      expect(consoleSpy).toHaveLogged(/Skipping my-feature: has uncommitted changes/)
+      consoleSpy.restore()
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
     })
   })
 
