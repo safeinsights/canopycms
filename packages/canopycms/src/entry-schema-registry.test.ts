@@ -30,6 +30,24 @@ describe('createEntrySchemaRegistry', () => {
     expect(() => createEntrySchemaRegistry({})).toThrow('Entry schema registry cannot be empty')
   })
 
+  it('rejects an itemTitleField that names no child of its object', () => {
+    const items = (itemTitleField: string) => ({
+      pageSchema: [
+        {
+          type: 'object' as const,
+          name: 'items',
+          list: true,
+          itemTitleField,
+          fields: [{ type: 'string' as const, name: 'title' }],
+        },
+      ],
+    })
+    expect(() => createEntrySchemaRegistry(items('title'))).not.toThrow()
+    expect(() => createEntrySchemaRegistry(items('nope'))).toThrow(
+      'Object field "items" has itemTitleField "nope"',
+    )
+  })
+
   it('throws error for non-array schema', () => {
     expect(() =>
       createEntrySchemaRegistry({

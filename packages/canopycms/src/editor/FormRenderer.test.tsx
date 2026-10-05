@@ -196,6 +196,20 @@ describe('FormRenderer', () => {
       }
     })
 
+    // YAML's `.nan` and `.inf` parse to non-finite numbers, which must not title a card.
+    it('falls back to the numbered heading for a non-finite number', () => {
+      render(
+        <StatefulForm
+          fields={listFields('rank')}
+          initialValue={{ features: [{ rank: Number.NaN }, { rank: Infinity }, { rank: 3 }] }}
+        />,
+      )
+
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Features #2')).toBeTruthy()
+      expect(screen.getByText('3')).toBeTruthy()
+    })
+
     it('updates the card heading as the title field is edited', async () => {
       const user = userEvent.setup()
       render(<StatefulForm fields={listFields('title')} initialValue={{ features: [{}] }} />)

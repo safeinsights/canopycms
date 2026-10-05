@@ -830,6 +830,31 @@ describe('ensureItemTitleFieldsExist', () => {
     )
   })
 
+  it('accepts a number child and rejects a child whose value is not shown as typed', () => {
+    const withChild = (type: string) => [
+      {
+        name: 'features',
+        type: 'object',
+        list: true,
+        itemTitleField: 'pick',
+        fields: [{ name: 'pick', type, ...(type === 'reference' ? { collections: ['x'] } : {}) }],
+      },
+    ]
+    expect(() => ensureItemTitleFieldsExist(withChild('number'))).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist(withChild('reference'))).toThrow(
+      'must name a string or number field',
+    )
+    expect(() => ensureItemTitleFieldsExist(withChild('markdown'))).toThrow(
+      'must name a string or number field',
+    )
+  })
+
+  it('rejects itemTitleField on an object that is not a list', () => {
+    expect(() => ensureItemTitleFieldsExist([{ ...listObject('title'), list: false }])).toThrow(
+      'applies only to list: true objects',
+    )
+  })
+
   it('does not accept a field that is only nested deeper', () => {
     expect(() =>
       ensureItemTitleFieldsExist([
