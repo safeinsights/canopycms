@@ -490,6 +490,14 @@ looked — and acting on that stale sample is exactly the destructive path.
 > [`.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
 > explains why both readings fail.
 
+**Once ensured, a process does not ensure again.** `ensureGitWorkspace` keeps a per-process
+set of (settings root, branch name) pairs it has fully ensured, and on a hit only `stat`s
+`.git`. That is not a cache of settings data: `groups.json` and `permissions.json` are still
+read from disk on every request. It memoizes only the provisioning, whose inputs are fixed
+for the process lifetime. A hit never stands in for the rename guard. The key includes the
+branch name, a different name is a miss that runs the guard, and a workspace moved aside
+fails the `stat` and re-provisions in full.
+
 **The settings-workspace init lock is layer 3, `acquireProvisioningLock`**, exactly as
 `branch-workspace.ts` uses for content clones: server-enforced acquisition,
 heartbeat-refreshed while the holder lives (so a slow clone is not mistaken for a

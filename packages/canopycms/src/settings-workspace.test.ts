@@ -21,6 +21,7 @@ import { simpleGit } from 'simple-git'
 import { initTestRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
+import { GitManager } from './git-manager'
 import type { CanopyConfig } from './config'
 
 const baseConfig: Partial<CanopyConfig> = {
@@ -290,5 +291,70 @@ describe('SettingsWorkspaceManager cross-process init lock', () => {
 
     const status = await simpleGit({ baseDir: settingsRoot }).status()
     expect(status.current).toBe('canopycms-settings-prod')
+  }, 60_000)
+})
+
+describe('SettingsWorkspaceManager per-process ensure memo', () => {
+  let tmpRoot: string | undefined
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    if (tmpRoot) {
+      await fs.rm(tmpRoot, { recursive: true, force: true })
+      tmpRoot = undefined
+    }
+  })
+
+  async function ensuredWorkspace() {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-memo-'))
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    const remoteUrl = await seedBareRemote(tmpRoot)
+    const manager = new SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: 'main',
+    } as CanopyConfig)
+    const options = {
+      settingsRoot,
+      branchName: 'canopycms-settings-memo',
+      mode: 'dev' as const,
+      remoteUrl,
+    }
+    await manager.ensureGitWorkspace(options)
+    return { manager, options, settingsRoot }
+  }
+
+  it('skips the guard and initializeWorkspace once this process has ensured the workspace', async () => {
+    const { manager, options } = await ensuredWorkspace()
+    const repoExists = vi.spyOn(GitManager, 'repoExistsAt')
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+
+    await manager.ensureGitWorkspace(options)
+    await new SettingsWorkspaceManager(baseConfig as CanopyConfig).ensureGitWorkspace(options)
+
+    expect(repoExists).not.toHaveBeenCalled()
+    expect(init).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('re-provisions a workspace that was moved aside', async () => {
+    const { manager, options, settingsRoot } = await ensuredWorkspace()
+    await fs.rename(settingsRoot, `${settingsRoot}.moved`)
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+
+    await manager.ensureGitWorkspace(options)
+
+    expect(init).toHaveBeenCalledOnce()
+    const status = await simpleGit({ baseDir: settingsRoot }).status()
+    expect(status.current).toBe('canopycms-settings-memo')
+  }, 60_000)
+
+  it('still runs the rename guard for a different settings-branch name on the same root', async () => {
+    const { manager, options, settingsRoot } = await ensuredWorkspace()
+    await fs.writeFile(path.join(settingsRoot, 'permissions.json'), '{"keep":true}')
+
+    await expect(
+      manager.ensureGitWorkspace({ ...options, branchName: 'canopycms-settings-renamed' }),
+    ).rejects.toThrow(/refusing to initialize settings workspace/)
+    const status = await simpleGit({ baseDir: settingsRoot }).status()
+    expect(status.current).toBe('canopycms-settings-memo')
   }, 60_000)
 })
