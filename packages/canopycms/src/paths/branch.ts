@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import type { BranchContext } from '../types'
 import { OperatingMode, operatingStrategy } from '../operating-mode'
+import { isNodeError } from '../utils/error'
 
 export interface BranchPathOptions {
   mode: OperatingMode
@@ -20,6 +21,15 @@ export interface BranchPathResult {
 
 /** @internal Exported for tests. */
 export class BranchPathError extends Error {}
+
+/**
+ * True when a branch load failed because the name names no workspace: a traversal segment, a name
+ * too long for a filename, or a path through a file (ENOTDIR), as `?branch=branches.json` gives.
+ */
+export function namesNoWorkspace(err: unknown): boolean {
+  if (err instanceof BranchPathError) return true
+  return isNodeError(err) && (err.code === 'ENAMETOOLONG' || err.code === 'ENOTDIR')
+}
 
 // Lives in ./branch-name (dependency-free); re-exported here for server-side
 // importers, who may safely reach this module's node:fs imports.

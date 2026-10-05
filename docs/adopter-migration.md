@@ -51,6 +51,20 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**
+
+**What changed.** Resolution applied no path rule to the referenced entry, so a reader of A saw
+B's data through A's reference even when denied B. A denied target now resolves to
+`{ id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }`, so a
+`resolvedSchema` reference infers as `Target | RestrictedReference | null`. Static builds are
+unchanged. A schema may no longer declare a top-level field named `unavailable`.
+
+**To adopt.** Narrow before reading the target's own fields:
+`if (ref?.unavailable) return <a href={ref.urlPath}>{ref.title}</a>`. Rename any `unavailable`
+field.
+
+**Now deletable.** Nothing.
+
 ### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
 **What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
@@ -106,6 +120,17 @@ that re-submits replace, keeping human text.
 ([reference](../README.md#definecanopyconfig-options)).
 
 **Now deletable.** Nothing.
+
+### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+
+**What changed.** `read()`/`readByUrlPath()` created a workspace for any `branch`, one per
+`?branch=` value. Now a branch other than the active one must exist and be readable by the user,
+or it reads as not found. `createContentReader` defaults `allowCreateBranch` to `false`.
+
+**To adopt.** Nothing via `getCanopy()`. A script creating a branch through `createContentReader`
+passes `allowCreateBranch: true`, never with a request's branch.
+
+**Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
 
 ---
 

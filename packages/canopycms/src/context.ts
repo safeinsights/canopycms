@@ -15,6 +15,10 @@
  * Only request-time reads on a server deployment resolve a branch workspace —
  * in dev, the clone under `.canopy-dev/content-branches/`.
  *
+ * A `branch` arrives from the request (a page passing `?branch=`), so only the
+ * active branch is ever provisioned here; any other name must already exist and
+ * pass the user's branch access before its files are read (`resolveBranch`).
+ *
  * The Next.js adapter wraps this in React `cache()` for per-request memoization
  * (`canopycms-next/src/context-wrapper.ts`).
  *
@@ -30,8 +34,8 @@ import { isDeployedStatic, isBuildMode, readsFromCheckout, STATIC_DEPLOY_USER } 
 import { createContentReader } from './content-reader'
 import { ContentStoreError } from './content-store'
 import {
-  BranchPathError,
   createLogicalPath,
+  namesNoWorkspace,
   parseSlug,
   resolveBranchPaths,
   type Slug,
@@ -70,6 +74,16 @@ function isPageSwallowable(err: ContentStoreError): boolean {
   return isLookupFailure(err) || err.code === 'FORBIDDEN'
 }
 
+/**
+ * A `branch` option is typed `string` but usually handed over from untyped
+ * request input: a repeated `?branch=` arrives as an array, which names no
+ * branch, and `URLSearchParams.get` gives null for an absent one, which is no
+ * `branch` at all.
+ */
+function isBranchOption(branch: unknown): branch is string | null | undefined {
+  return branch == null || typeof branch === 'string'
+}
+
 interface ListingSource {
   branchRoot: string
   flatSchema: FlatSchemaItem[]
@@ -78,9 +92,9 @@ interface ListingSource {
 }
 
 /**
- * A branch that already has a workspace, or null. A name the path layer
- * rejects (a traversal segment) is null too: it arrives from the request, so it
- * lists nothing rather than failing the page.
+ * A branch that already has a workspace, or null. A name that cannot name one
+ * is null too (`namesNoWorkspace`): it arrives from the request, so it reads as
+ * not-found rather than failing the page.
  */
 async function loadExistingBranch(
   branchName: string,
@@ -89,7 +103,7 @@ async function loadExistingBranch(
   try {
     return await loadBranchContext({ branchName, mode })
   } catch (err) {
-    if (err instanceof BranchPathError) return null
+    if (namesNoWorkspace(err)) return null
     throw err
   }
 }
@@ -148,7 +162,7 @@ export interface CanopyBuildContext {
    * iframe's `?branch=` as `branch`, as for `read`, so an index page previewed
    * on a content branch lists that branch. Any other branch must already exist
    * and, on the request-scoped context, be readable by the user; otherwise, or
-   * for a non-string value, the result is empty. It selects nothing at build
+   * for an array, the result is empty. It selects nothing at build
    * time or on static deployments.
    */
   listEntries: <T = Record<string, unknown>>(
@@ -164,6 +178,11 @@ export interface CanopyBuildContext {
    * output, since it reveals the deployment's filesystem layout (home dir, EFS
    * mount, branch name). It is for build-time reads of colocated artifacts, e.g.
    * `fs.readFile(path.join(path.dirname(result.meta.physicalPath), 'profile.json'))`.
+   *
+   * Branch: with no `branch` it reads the active branch, provisioning its workspace if missing.
+   * Any other branch must already exist and, on the request-scoped context, be readable by the
+   * user; otherwise, or for an array, it throws NOT_FOUND, so a hidden branch reads as a missing
+   * one. It selects nothing at build time or on static deployments.
    */
   read: <T = unknown>(input: {
     entryPath: string
@@ -191,8 +210,8 @@ export interface CanopyBuildContext {
    *
    * Null when nothing matches — a collection URL with no index entry (use
    * buildContentTree), a non-entry path like `/favicon.ico` the slug validator
-   * rejects, or a path the user may not read, so a FORBIDDEN denial renders as
-   * a 404 via `notFound()` rather than a 500. Strict `read()` still throws.
+   * rejects, a missing branch, or a path or branch the user may not read, so a
+   * denial renders as a 404 via `notFound()`, not a 500. Strict `read()` throws.
    *
    * `meta.physicalPath` is **server-only**, for the reason given on `read`.
    * `meta.entryType`/`entryId` come free with path resolution, so one catch-all
@@ -252,7 +271,72 @@ export function createCanopyContext(options: CanopyContextOptions) {
     await services.refreshActiveBranch()
     const user = await getUser()
 
-    const baseReader = createContentReader({ services })
+    // Read once, so every read and listing in this request agrees on it even if
+    // a concurrent request's refreshActiveBranch() replaces services.config.
+    const activeBranch =
+      services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
+
+    // No ACL enforcement at build time, on static deployments, or for the
+    // synthetic admin. For the last this is load-bearing, not an optimization:
+    // that user has unconditional access anyway (path checks bypass entirely for
+    // an Admins-group user — authorization/path.ts), but BUILDING a path checker
+    // costs a getSettingsBranchRoot() call, which in modes with a separate
+    // settings branch provisions that branch's git workspace: an EFS round trip
+    // in prod. `createBuildCanopy` (build-canopy.ts) runs outside a request or
+    // Next.js build phase, so neither other guard fires for it, and without this
+    // one every such script pays for a settings-workspace clone it never needed —
+    // and hard-fails where that workspace cannot be provisioned. Compared by
+    // reference to the STATIC_DEPLOY_USER singleton, not by group membership, so
+    // a real authenticated admin at request time still goes through the real
+    // check.
+    const enforceAcls = !(
+      isDeployedStatic(services.config) ||
+      isBuildMode() ||
+      user === STATIC_DEPLOY_USER
+    )
+
+    /**
+     * `branch` when it names a branch other than the active one, else undefined:
+     * no `branch`, an empty one, the active one named explicitly, or any name
+     * when reading from the checkout, where it selects nothing.
+     */
+    const otherBranch = (branch: string | null | undefined): string | undefined =>
+      branch && branch !== activeBranch && !readsFromCheckout(services.config) ? branch : undefined
+
+    /**
+     * The workspace for the active branch (undefined) or another named one, or
+     * null when it yields nothing this user may see.
+     *
+     * The active branch is provisioned if missing. Any other name is load-only,
+     * never provisioned — a name with no workspace is null (`loadExistingBranch`) — and its branch
+     * access, held in its own metadata, is checked here, before its schema or
+     * content files are read, so a denied branch is indistinguishable from a
+     * missing one. The active branch's access is left to the caller: a listing
+     * of it lists nothing, and a strict `read` of it throws FORBIDDEN.
+     */
+    const resolveBranch = async (requested: string | undefined): Promise<BranchContext | null> => {
+      if (requested === undefined) {
+        return loadOrCreateBranchContext({
+          config: services.config,
+          branchName: activeBranch,
+          mode: services.config.mode,
+          createdBy: 'canopycms-context',
+          remoteUrl: services.config.defaultRemoteUrl,
+        })
+      }
+      const context = await loadExistingBranch(requested, services.config.mode)
+      if (!context) return null
+      if (enforceAcls && !services.checkBranchAccess(context, user).allowed) return null
+      return context
+    }
+
+    // The reader resolves every branch through resolveBranch; a null reads as
+    // NOT_FOUND. Reads from the checkout bypass the resolver inside the reader.
+    const baseReader = createContentReader({
+      services,
+      defaultBranch: activeBranch,
+      getBranchContext: (branchName) => resolveBranch(otherBranch(branchName)),
+    })
 
     // Injects the user and validates strings → branded types at this boundary.
     // `extra` carries options that are NOT part of the public `read` surface —
@@ -278,10 +362,13 @@ export function createCanopyContext(options: CanopyContextOptions) {
         }
         slug = slugResult.slug
       }
+      if (!isBranchOption(input.branch)) {
+        throw new ContentStoreError(`Branch not found: ${String(input.branch)}`, 'NOT_FOUND')
+      }
       const readInput: ReadContentInput = {
         entryPath,
         slug,
-        branch: input.branch,
+        branch: input.branch ?? undefined,
         user,
         resolveReferences: input.resolveReferences ?? true,
         ...extra,
@@ -345,14 +432,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
     /**
      * What a batch read (listEntries / buildContentTree) lists from: the branch's
      * schema plus its path-ACL predicate, or null when the branch yields nothing
-     * this user may see.
-     *
-     * With no `branch`, or the active branch named explicitly, it is the active
-     * branch, provisioned if missing. Any other name arrives from the request
-     * (an index page passing the preview iframe's `?branch=`), so it is
-     * load-only, never provisioned — a missing, non-string or traversal name
-     * lists nothing — and its branch access, held in its own metadata, is
-     * checked before its schema or content files are read. At
+     * this user may see. The branch resolves as for `read` (`resolveBranch`). At
      * build time and on static deployments `branch` selects nothing, as for
      * `read` (see the module doc).
      *
@@ -362,18 +442,9 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * generation protocol (docs/concurrency.md, "Adding a call-scoped memo").
      */
     const listingSources = new Map<string, Promise<ListingSource | null>>()
-    // Read once, so every listing in this request agrees on it even if a
-    // concurrent request's refreshActiveBranch() replaces services.config.
-    const activeBranch =
-      services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
     const resolveListingSource = (branch: unknown): Promise<ListingSource | null> => {
-      // Typed `string`, but usually handed over from untyped `searchParams`,
-      // where a repeated `?branch=` arrives as an array.
-      if (branch !== undefined && typeof branch !== 'string') return Promise.resolve(null)
-      const requested =
-        branch && branch !== activeBranch && !readsFromCheckout(services.config)
-          ? branch
-          : undefined
+      if (!isBranchOption(branch)) return Promise.resolve(null)
+      const requested = otherBranch(branch)
       const key = requested ?? activeBranch
       let source = listingSources.get(key)
       if (!source) {
@@ -386,48 +457,14 @@ export function createCanopyContext(options: CanopyContextOptions) {
       requested: string | undefined,
     ): Promise<ListingSource | null> => {
       const operatingMode = services.config.mode
-      const branchContext =
-        requested === undefined
-          ? await loadOrCreateBranchContext({
-              config: services.config,
-              branchName: activeBranch,
-              mode: operatingMode,
-              createdBy: 'canopycms-context',
-              remoteUrl: services.config.defaultRemoteUrl,
-            })
-          : await loadExistingBranch(requested, operatingMode)
+      const branchContext = await resolveBranch(requested)
       if (!branchContext) return null
-
-      // The path-ACL predicate keeps an unfiltered listing on this ACL-enforcing
-      // context from disclosing entry `data` for paths the user cannot `read()`.
-      // `services.createContentAccessChecker` is the shared batch primitive
-      // (api/entries.ts uses it too): it resolves the request-constant work —
-      // branch access, the settings/permissions root, the rule set — once, and
-      // returns a synchronous per-path check, so the per-entry cost is an admin
-      // short-circuit or one minimatch per configured rule, with no extra I/O.
-      //
-      // No predicate (unfiltered) at build time, on static deployments, and for
-      // the synthetic admin is load-bearing, not an optimization. That user has
-      // unconditional access anyway (path checks bypass entirely for an
-      // Admins-group user — authorization/path.ts), but BUILDING the checker costs
-      // a getSettingsBranchRoot() call, which in modes with a separate settings
-      // branch provisions that branch's git workspace: an EFS round trip in prod.
-      // `createBuildCanopy` (build-canopy.ts) runs outside a request or Next.js
-      // build phase, so neither other guard fires for it, and without this one
-      // every such script pays for a settings-workspace clone it never needed —
-      // and hard-fails where that workspace cannot be provisioned. Compared by
-      // reference to the STATIC_DEPLOY_USER singleton, not by group membership,
-      // so a real authenticated admin at request time still goes through the
-      // real check.
-      //
-      // Deliberately NOT wrapped in try/catch — createContentAccessChecker is
-      // fail-loud by contract, and swallowing would serve an unfiltered listing.
-      const enforceAcls = !(
-        isDeployedStatic(services.config) ||
-        isBuildMode() ||
-        user === STATIC_DEPLOY_USER
-      )
-      if (enforceAcls && !services.checkBranchAccess(branchContext, user).allowed) {
+      // resolveBranch has already checked any other branch.
+      if (
+        requested === undefined &&
+        enforceAcls &&
+        !services.checkBranchAccess(branchContext, user).allowed
+      ) {
         return null
       }
 
@@ -440,6 +477,16 @@ export function createCanopyContext(options: CanopyContextOptions) {
       )
       if (!enforceAcls) return { branchRoot, flatSchema, contentRootName, visibility: {} }
 
+      // The path-ACL predicate keeps an unfiltered listing on this ACL-enforcing
+      // context from disclosing entry `data` for paths the user cannot `read()`.
+      // `services.createContentAccessChecker` is the shared batch primitive
+      // (api/entries.ts uses it too): it resolves the request-constant work —
+      // branch access, the settings/permissions root, the rule set — once, and
+      // returns a synchronous per-path check, so the per-entry cost is an admin
+      // short-circuit or one minimatch per configured rule, with no extra I/O.
+      //
+      // Deliberately NOT wrapped in try/catch — createContentAccessChecker is
+      // fail-loud by contract, and swallowing would serve an unfiltered listing.
       const checkAccess = await services.createContentAccessChecker(branchContext, branchRoot, user)
       return {
         branchRoot,

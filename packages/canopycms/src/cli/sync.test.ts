@@ -5,6 +5,7 @@ import os from 'node:os'
 import { simpleGit } from 'simple-git'
 import { sync } from './sync'
 import { mockConsole } from '../test-utils/console-spy'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
 vi.mock('@clack/prompts', () => ({
@@ -978,6 +979,86 @@ describe('canopycms sync', () => {
       const status = await branchGit.status()
       expect(status.conflicted.length).toBe(0)
       expect(pMock.log.success).toHaveBeenCalledWith(expect.stringContaining('Merge aborted'))
+    })
+  })
+
+  describe('[SYNC-C1] content-write lock', () => {
+    /** HEAD, branch and working-tree state: everything a sync could have changed. */
+    async function workspaceState(branchPath: string) {
+      const git = simpleGit({ baseDir: branchPath })
+      const status = await git.status()
+      return {
+        head: (await git.revparse(['HEAD'])).trim(),
+        branch: status.current,
+        files: status.files.map((f) => `${f.index}${f.working_dir} ${f.path}`).sort(),
+        index: await fs.readFile(path.join(branchPath, 'content', 'index.md'), 'utf-8'),
+      }
+    }
+
+    /** An editor save in the workspace and a developer edit in the source tree. */
+    async function setupDivergedEdits(): Promise<string> {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+      await fs.writeFile(
+        path.join(workspace.branchPath, 'content', 'about.md'),
+        '# About\n\nEditor save.\n',
+      )
+      await fs.writeFile(path.join(projectDir, 'content', 'index.md'), '# Hello\n\nDeveloper.\n')
+      return workspace.branchPath
+    }
+
+    it.each(['push', 'both'] as const)(
+      '%s leaves the workspace untouched while the lock is held, then syncs once it is free',
+      async (direction) => {
+        const branchPath = await setupDivergedEdits()
+        const before = await workspaceState(branchPath)
+
+        const release = await tryAcquireContentWriteLock(branchPath)
+        try {
+          await expect(
+            sync({ projectDir, direction, branch: 'test-branch', force: true }),
+          ).rejects.toThrow(/busy/i)
+          expect(await workspaceState(branchPath)).toEqual(before)
+        } finally {
+          await release()
+        }
+
+        const result = await sync({ projectDir, direction, branch: 'test-branch', force: true })
+        expect(result.pushed).toBeGreaterThan(0)
+        expect(await workspaceState(branchPath)).not.toEqual(before)
+      },
+    )
+
+    it('abort leaves the merge in place while the lock is held, then aborts once it is free', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+      await sync({ projectDir, direction: 'push', branch: 'test-branch', force: true })
+      const branchGit = simpleGit({ baseDir: workspace.branchPath })
+      await fs.writeFile(
+        path.join(workspace.branchPath, 'content', 'index.md'),
+        '# Hello\n\nEditor version.\n',
+      )
+      await branchGit.add('-A')
+      await branchGit.commit('editor: conflicting change')
+      await fs.writeFile(
+        path.join(projectDir, 'content', 'index.md'),
+        '# Hello\n\nDeveloper version.\n',
+      )
+      await sync({ projectDir, direction: 'both', branch: 'test-branch', force: true })
+      expect((await branchGit.status()).conflicted.length).toBeGreaterThan(0)
+
+      const release = await tryAcquireContentWriteLock(workspace.branchPath)
+      try {
+        await expect(
+          sync({ projectDir, direction: 'abort', branch: 'test-branch' }),
+        ).rejects.toThrow(/busy/i)
+        expect((await branchGit.status()).conflicted.length).toBeGreaterThan(0)
+      } finally {
+        await release()
+      }
+
+      await sync({ projectDir, direction: 'abort', branch: 'test-branch' })
+      expect((await branchGit.status()).conflicted).toEqual([])
     })
   })
 })
