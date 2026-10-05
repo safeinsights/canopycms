@@ -15,6 +15,7 @@ import {
   assertOriginReadTimeout,
   createEditorResponseHeadersPolicy,
   createForwardedHostFunction,
+  createStaticCachePolicy,
   lambdaBehaviorOptions,
 } from './editor-routing'
 import type { AssetSupport } from './asset-support'
@@ -367,14 +368,7 @@ export class CanopyCmsDistribution extends Construct {
       readTimeout,
     })
 
-    const staticCachePolicy = new cloudfront.CachePolicy(this, 'StaticCachePolicy', {
-      defaultTtl: Duration.days(365),
-      maxTtl: Duration.days(365),
-      minTtl: Duration.days(365),
-      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
-      queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
-      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
-    })
+    const staticCachePolicy = createStaticCachePolicy(this, 'StaticCachePolicy')
 
     const forwardedHostFunction = createForwardedHostFunction(this, 'ForwardedHostFunction')
     const responseHeadersPolicy = createEditorResponseHeadersPolicy(

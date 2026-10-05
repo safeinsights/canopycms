@@ -18,8 +18,9 @@ export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
  * `/editorial` and `/edit-assets/…` and so takes site pages away from the site.
  *
  * Not included, because on a shared distribution they belong to the site:
- * `/_next/static/*` (the CMS build's chunks must be reachable there too) and
- * `/assets/*` (`AssetSupport.attachTo` owns it).
+ * `/_next/static/*` (the CMS build moves its chunks out of it with Next's
+ * `assetPrefix`; see `editorAssetPrefix`) and `/assets/*`
+ * (`AssetSupport.attachTo` owns it).
  */
 export const EDITOR_PATH_PATTERNS = ['/edit', '/edit/*', '/api/canopycms/*'] as const
 
@@ -32,6 +33,23 @@ const EDITOR_PROBE_PATHS: Record<(typeof EDITOR_PATH_PATTERNS)[number], string[]
   '/edit/*': ['/edit/', '/edit/x'],
   '/api/canopycms/*': ['/api/canopycms/x'],
 }
+
+/** A path pattern this module attaches, with the request paths only it serves. */
+interface EditorRoute {
+  pattern: string
+  probes: string[]
+}
+
+const EDITOR_ROUTES: EditorRoute[] = EDITOR_PATH_PATTERNS.map((pattern) => ({
+  pattern,
+  probes: EDITOR_PROBE_PATHS[pattern],
+}))
+
+/** Patterns an `editorAssetPrefix` must not overlap in either direction. */
+const RESERVED_ROUTES: EditorRoute[] = [
+  ...EDITOR_ROUTES,
+  { pattern: '/_next/*', probes: ['/_next/x'] },
+]
 
 /** Id of the marker construct `attachEditorBehaviors` adds to the distribution. */
 const EDITOR_ATTACHED_MARKER_ID = 'CanopyEditorBehaviorsAttached'
@@ -145,6 +163,21 @@ export function createEditorResponseHeadersPolicy(
 }
 
 /**
+ * A year-long cache for content-hashed build output. The cache key carries no
+ * header, cookie or query string, so every viewer shares one copy.
+ */
+export function createStaticCachePolicy(scope: Construct, id: string): cloudfront.CachePolicy {
+  return new cloudfront.CachePolicy(scope, id, {
+    defaultTtl: Duration.days(365),
+    maxTtl: Duration.days(365),
+    minTtl: Duration.days(365),
+    headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+    queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+    cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+  })
+}
+
+/**
  * Behavior options for a route the CMS Lambda serves. The managed
  * CACHING_DISABLED policy as it is: CloudFront rejects any non-none cache-key
  * setting on a caching-disabled policy, and the origin still gets the whole
@@ -194,6 +227,49 @@ export interface CanopyCmsAttachOptions {
    * @default - no overrides
    */
   behaviorOverrides?: Partial<cloudfront.AddBehaviorOptions>
+
+  /**
+   * The CMS build's Next `assetPrefix`, such as `'/edit-assets'`: adds a
+   * `/<prefix>/*` behavior to the Lambda with a year-long cache, since the
+   * chunks under it are content-hashed.
+   *
+   * A CMS build that shares a distribution with a static site needs one.
+   * Without it the editor page loads its chunks from `/_next/static/*`, which
+   * the site serves, and they 404. Set `assetPrefix` in the CMS build's
+   * `next.config` only (not the static export's) and pass the same value here.
+   *
+   * A path starting with `/`, without a trailing `/` or wildcards, and
+   * overlapping neither the editor's routes nor `/_next/*`. `behaviorOverrides`
+   * does not apply to this behavior.
+   *
+   * @default - no asset-prefix behavior
+   */
+  editorAssetPrefix?: string
+}
+
+/** Throws unless `prefix` is a usable `editorAssetPrefix`; returns its pattern. */
+function editorAssetPrefixPattern(prefix: string): string {
+  const fail = (reason: string) =>
+    new Error(`CanopyCmsService.attachTo: editorAssetPrefix '${prefix}' ${reason}.`)
+  if (!prefix.startsWith('/') || prefix === '/') {
+    throw fail("must start with '/' and name a path below the root")
+  }
+  if (prefix.endsWith('/')) throw fail("must not end with a trailing '/'")
+  if (/[*?]/.test(prefix))
+    throw fail('must not contain * or ?, which CloudFront reads as wildcards')
+  const pattern = `${prefix}/*`
+  const clash = RESERVED_ROUTES.find(
+    (route) =>
+      cloudFrontPathPatternMatches(route.pattern, `${prefix}/x`) ||
+      route.probes.some((path) => cloudFrontPathPatternMatches(pattern, path)),
+  )
+  if (clash) {
+    throw fail(
+      `overlaps '${clash.pattern}', so CloudFront would send one route's requests to the ` +
+        `other's behavior. Pick a prefix of its own, such as '/edit-assets'`,
+    )
+  }
+  return pattern
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -217,22 +293,21 @@ function resolvedConfigList(
  * Error messages for every behavior that CloudFront would match before one of
  * the editor's, which leaves that editor route unreachable.
  */
-function shadowedEditorRoutes(distribution: cloudfront.Distribution): string[] {
+function shadowedEditorRoutes(
+  distribution: cloudfront.Distribution,
+  routes: EditorRoute[],
+): string[] {
   const patterns = resolvedConfigList(distribution, 'cacheBehaviors')
     .map((behavior) => behavior.pathPattern)
     .filter((pattern): pattern is string => typeof pattern === 'string')
   const errors: string[] = []
-  for (const editorPattern of EDITOR_PATH_PATTERNS) {
+  for (const { pattern: editorPattern, probes } of routes) {
     // The last occurrence, so a duplicate of an editor pattern on either side
     // of it is reported too.
     const index = patterns.lastIndexOf(editorPattern)
     const shadow = patterns
       .slice(0, index)
-      .find((earlier) =>
-        EDITOR_PROBE_PATHS[editorPattern].some((path) =>
-          cloudFrontPathPatternMatches(earlier, path),
-        ),
-      )
+      .find((earlier) => probes.some((path) => cloudFrontPathPatternMatches(earlier, path)))
     if (index !== -1 && shadow !== undefined) {
       errors.push(
         `CanopyCmsService.attachTo: the distribution's '${shadow}' behavior is listed before ` +
@@ -281,6 +356,10 @@ export function attachEditorBehaviors(
     )
   }
   assertOriginReadTimeout(readTimeout, 'CanopyCmsService.attachTo')
+  const assetPattern =
+    options.editorAssetPrefix === undefined
+      ? undefined
+      : editorAssetPrefixPattern(options.editorAssetPrefix)
   const marker = new Construct(distribution, EDITOR_ATTACHED_MARKER_ID)
 
   // Scoped to the distribution so everything lands in its stack, which may
@@ -288,17 +367,25 @@ export function attachEditorBehaviors(
   const viewerRequestFunction =
     options.viewerRequestFunction ??
     createForwardedHostFunction(distribution, 'CanopyEditorForwardedHostFunction')
-  const behavior = lambdaBehaviorOptions(
-    viewerRequestFunction,
+  const responseHeadersPolicy =
     options.behaviorOverrides?.responseHeadersPolicy ??
-      createEditorResponseHeadersPolicy(distribution, 'CanopyEditorResponseHeadersPolicy'),
-  )
+    createEditorResponseHeadersPolicy(distribution, 'CanopyEditorResponseHeadersPolicy')
+  const behavior = lambdaBehaviorOptions(viewerRequestFunction, responseHeadersPolicy)
   const definedOverrides = Object.fromEntries(
     Object.entries(options.behaviorOverrides ?? {}).filter(([, value]) => value !== undefined),
   )
   const origin = origins.FunctionUrlOrigin.withOriginAccessControl(functionUrl, { readTimeout })
   for (const pattern of EDITOR_PATH_PATTERNS) {
     distribution.addBehavior(pattern, origin, { ...behavior, ...definedOverrides })
+  }
+  const routes = [...EDITOR_ROUTES]
+  if (assetPattern !== undefined) {
+    distribution.addBehavior(assetPattern, origin, {
+      cachePolicy: createStaticCachePolicy(distribution, 'CanopyEditorAssetCachePolicy'),
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      responseHeadersPolicy,
+    })
+    routes.push({ pattern: assetPattern, probes: [`${options.editorAssetPrefix}/x`] })
   }
 
   // Custom error responses are fixed at construction, so they are known now.
@@ -314,5 +401,5 @@ export function attachEditorBehaviors(
   }
 
   // Behaviors can still be added after this call, so shadowing is checked at synth.
-  marker.node.addValidation({ validate: () => shadowedEditorRoutes(distribution) })
+  marker.node.addValidation({ validate: () => shadowedEditorRoutes(distribution, routes) })
 }

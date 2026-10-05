@@ -1683,7 +1683,8 @@ export class CanopyCmsService extends Construct {
    * It warns when the distribution has custom error responses, which also
    * rewrite the API's errors.
    *
-   * The site still has to serve this build's `/_next/static/*` files, and
+   * Pass `editorAssetPrefix` with the CMS build's Next `assetPrefix`, so the
+   * editor's chunks stay out of the site's `/_next/static/*`.
    * `AssetSupport.attachTo` adds `/assets/*`. Use `CanopyCmsDistribution`
    * instead when the CMS gets a domain of its own.
    */

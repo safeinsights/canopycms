@@ -383,6 +383,71 @@ describe('CanopyCmsService.attachTo', () => {
   })
 })
 
+describe('CanopyCmsService.attachTo: editorAssetPrefix', () => {
+  it('adds a long-cached /<prefix>/* behavior on the same Lambda origin, after the editor routes', () => {
+    const { stack, service } = buildStack('PrefixStack')
+    service.attachTo(siteDistribution(stack), { editorAssetPrefix: '/edit-assets' })
+    const template = Template.fromStack(stack)
+    const behaviors = distributionConfig(template).CacheBehaviors!
+
+    expect(behaviors.map((b) => b.PathPattern)).toEqual([...EDITOR_PATTERNS, '/edit-assets/*'])
+    const prefixed = behaviors[3]
+    expect(prefixed.TargetOriginId).toBe(behaviors[0].TargetOriginId)
+    expect(prefixed.FunctionAssociations).toBeUndefined()
+    expect(prefixed.ViewerProtocolPolicy).toBe('redirect-to-https')
+    // Omitted means CloudFront's default, GET and HEAD.
+    expect(prefixed.AllowedMethods).toBeUndefined()
+    expect(prefixed.ResponseHeadersPolicyId).toEqual(behaviors[0].ResponseHeadersPolicyId)
+    const policyRef = (prefixed.CachePolicyId as { Ref?: string }).Ref
+    expect(policyRef, 'a custom cache policy, not a managed id').toEqual(expect.any(String))
+    const cacheConfig = template.findResources('AWS::CloudFront::CachePolicy')[policyRef!]
+      .Properties.CachePolicyConfig
+    expect(cacheConfig.MinTTL).toBe(31536000)
+    expect(cacheConfig.DefaultTTL).toBe(31536000)
+  })
+
+  it('does not apply behaviorOverrides to the asset behavior', () => {
+    const { stack, service } = buildStack('PrefixOverridesStack')
+    service.attachTo(siteDistribution(stack), {
+      editorAssetPrefix: '/edit-assets',
+      behaviorOverrides: { allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS },
+    })
+    const behaviors = distributionConfig(Template.fromStack(stack)).CacheBehaviors!
+    expect(behaviors[0].AllowedMethods).toEqual(['GET', 'HEAD', 'OPTIONS'])
+    expect(behaviors[3].AllowedMethods).toBeUndefined()
+  })
+
+  it.each([
+    ['edit-assets', /start with '\/'/],
+    ['/edit-assets/', /trailing '\/'/],
+    ['/', /start with '\/'/],
+    ['/edit*', /\* or \?/],
+    ['/edit', /overlaps/],
+    ['/edit/assets', /overlaps/],
+    ['/api/canopycms/static', /overlaps/],
+    ['/api', /overlaps/],
+    ['/_next', /overlaps/],
+    ['/_next/static', /overlaps/],
+  ])('refuses editorAssetPrefix %s', (prefix, message) => {
+    const { stack, service } = buildStack(`PrefixBad${prefix.replace(/[^A-Za-z0-9]/g, '')}Stack`)
+    expect(() => service.attachTo(siteDistribution(stack), { editorAssetPrefix: prefix })).toThrow(
+      message,
+    )
+  })
+
+  it('fails synth when an earlier behavior shadows the asset prefix', () => {
+    const { stack, service } = buildStack('PrefixShadowStack')
+    const fnUrlOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+    service.attachTo(
+      siteDistribution(stack, {
+        additionalBehaviors: { '/edit-assets/*': { origin: fnUrlOrigin } },
+      }),
+      { editorAssetPrefix: '/edit-assets' },
+    )
+    expect(() => Template.fromStack(stack)).toThrow(/'\/edit-assets\/\*' behavior is listed before/)
+  })
+})
+
 describe('CanopyCmsDistribution: editor response headers', () => {
   it('puts the editor headers policy on its default and /_next/static/* behaviors', () => {
     const { stack, service } = buildStack('DistHeadersStack')
