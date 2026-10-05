@@ -195,16 +195,29 @@ describe('read / readByUrlPath with a branch option', () => {
     expect((await readHello(ctx)).data.title).toBe('on main')
   })
 
-  it('reads a traversal or over-long branch name as not-found rather than failing the page', async () => {
+  it('reads a name that cannot name a workspace as not-found rather than failing the page', async () => {
     const { ctx } = await contextFor()
+    // A file beside the workspaces, as the branch registry's branches.json is.
+    await fs.writeFile(path.join(workspaceRoot, 'content-branches', 'stray.json'), '{}')
 
-    // Longer than any filesystem's NAME_MAX, so loading it fails ENAMETOOLONG.
-    for (const branch of ['../main', 'a'.repeat(300)]) {
+    // Over-long: past any filesystem's NAME_MAX, so loading it fails ENAMETOOLONG.
+    for (const branch of ['../main', 'a'.repeat(300), 'stray.json']) {
       await expectNotFound(readHello(ctx, branch))
       expect(await ctx.readByUrlPath('/posts/hello', { branch })).toBeNull()
       expect(await ctx.listEntries({ branch })).toEqual([])
     }
     expect(provisioned).toEqual([])
+  })
+
+  it('reads the active branch for a null branch, as URLSearchParams.get gives for an absent one', async () => {
+    const { ctx } = await contextFor()
+    const branch = null as unknown as string
+
+    expect((await readHello(ctx, branch)).data.title).toBe('on main')
+    expect((await ctx.readByUrlPath<{ title: string }>('/posts/hello', { branch }))?.data).toEqual({
+      title: 'on main',
+    })
+    expect((await ctx.listEntries({ branch })).map((e) => e.slug)).toEqual(['hello'])
   })
 
   it('reads a repeated ?branch= that arrives as an array as not-found', async () => {

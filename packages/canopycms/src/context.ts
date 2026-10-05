@@ -76,11 +76,12 @@ function isPageSwallowable(err: ContentStoreError): boolean {
 
 /**
  * A `branch` option is typed `string` but usually handed over from untyped
- * `searchParams`, where a repeated `?branch=` arrives as an array, which names
- * no branch.
+ * request input: a repeated `?branch=` arrives as an array, which names no
+ * branch, and `URLSearchParams.get` gives null for an absent one, which is no
+ * `branch` at all.
  */
-function isBranchOption(branch: unknown): branch is string | undefined {
-  return branch === undefined || typeof branch === 'string'
+function isBranchOption(branch: unknown): branch is string | null | undefined {
+  return branch == null || typeof branch === 'string'
 }
 
 interface ListingSource {
@@ -299,7 +300,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * no `branch`, an empty one, the active one named explicitly, or any name
      * when reading from the checkout, where it selects nothing.
      */
-    const otherBranch = (branch: string | undefined): string | undefined =>
+    const otherBranch = (branch: string | null | undefined): string | undefined =>
       branch && branch !== activeBranch && !readsFromCheckout(services.config) ? branch : undefined
 
     /**
@@ -367,7 +368,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
       const readInput: ReadContentInput = {
         entryPath,
         slug,
-        branch: input.branch,
+        branch: input.branch ?? undefined,
         user,
         resolveReferences: input.resolveReferences ?? true,
         ...extra,
