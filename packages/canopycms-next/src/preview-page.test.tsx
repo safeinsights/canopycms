@@ -7,9 +7,7 @@ vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error(NOT_FOUND)
   },
-  useSearchParams: () => new URLSearchParams(),
 }))
-vi.mock('canopycms/client', () => ({ CanopyEditorPage: vi.fn(), useCanopyPreview: vi.fn() }))
 
 const { createPreviewPageFor } = await import('./preview-page')
 
@@ -67,7 +65,7 @@ describe('createPreviewPageFor', () => {
     expect(element.type).toBe(DocView)
   })
 
-  it('passes a configured editorOrigin to the view wrapper', async () => {
+  it('passes a configured editorOrigin to the view', async () => {
     readByUrlPath.mockResolvedValue(entry('post'))
 
     const element = (await createPreviewPageFor(getCanopy, {

@@ -8,14 +8,42 @@ import { describe, expect, it } from 'vitest'
  * it. The server entrypoints are imported by every adopter page that reads content, so one
  * runtime import of a `'use client'` module from them puts the editor in every public page.
  * `apps/dual-build-fixture` catches that in a full build; this catches it in the unit suite.
+ *
+ * The walk follows relative imports and `canopycms` entrypoints (through that package's
+ * `exports`), and fails closed on a relative or `canopycms` specifier it cannot resolve.
  */
 
 const SRC = path.dirname(new URL(import.meta.url).pathname)
-const SERVER_ENTRIES = ['index.ts', 'config.ts']
+const PACKAGES = path.resolve(SRC, '../..')
+const SERVER_ENTRIES = ['index.ts', 'config.ts'].map((entry) => path.join(SRC, entry))
+const CANOPYCMS = path.join(PACKAGES, 'canopycms')
+const canopycmsExports = JSON.parse(readFileSync(path.join(CANOPYCMS, 'package.json'), 'utf8'))
+  .exports as Record<string, string>
 
-const resolveLocal = (from: string, specifier: string): string | undefined => {
-  const base = path.resolve(path.dirname(from), specifier)
-  return [`${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')].find((file) => existsSync(file))
+const resolveFile = (base: string): string | undefined => {
+  const stem = base.replace(/\.(?:m?js|jsx)$/, '')
+  return [
+    stem,
+    `${stem}.ts`,
+    `${stem}.tsx`,
+    path.join(stem, 'index.ts'),
+    path.join(stem, 'index.tsx'),
+  ].find((file) => /\.tsx?$/.test(file) && existsSync(file))
+}
+
+type Resolution = { file: string } | { unresolved: true } | { external: true }
+
+const resolveSpecifier = (from: string, specifier: string): Resolution => {
+  if (specifier.startsWith('.')) {
+    const file = resolveFile(path.resolve(path.dirname(from), specifier))
+    return file ? { file } : { unresolved: true }
+  }
+  if (specifier === 'canopycms' || specifier.startsWith('canopycms/')) {
+    const target = canopycmsExports[`.${specifier.slice('canopycms'.length)}`]
+    const file = target ? resolveFile(path.join(CANOPYCMS, target)) : undefined
+    return file ? { file } : { unresolved: true }
+  }
+  return { external: true }
 }
 
 const isTypeOnlyClause = (node: ts.ImportDeclaration | ts.ExportDeclaration): boolean => {
@@ -69,52 +97,51 @@ const runtimeSpecifiers = (file: string): string[] => {
   return specifiers
 }
 
+/** A `'use client'` directive anywhere in the prologue, after comments or other directives. */
 const isUseClient = (file: string): boolean =>
-  /^\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*['"]use client['"]/.test(readFileSync(file, 'utf8'))
+  /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|(['"])use [a-z]+\1;?)*(['"])use client\2/.test(
+    readFileSync(file, 'utf8'),
+  )
 
-/** Every client boundary reachable at runtime from the server entrypoints, as `importer -> target`. */
-const clientImports = (): string[] => {
-  const found: string[] = []
-  const seen = new Set<string>()
-  const queue = SERVER_ENTRIES.map((entry) => path.join(SRC, entry))
+const walk = () => {
+  const problems: string[] = []
+  const reached = new Set<string>()
+  const queue = [...SERVER_ENTRIES]
   while (queue.length > 0) {
     const file = queue.shift()!
-    if (seen.has(file)) continue
-    seen.add(file)
+    if (reached.has(file)) continue
+    reached.add(file)
+    const importer = path.relative(PACKAGES, file)
     for (const specifier of runtimeSpecifiers(file)) {
-      const importer = path.relative(SRC, file)
-      if (specifier.startsWith('.')) {
-        const target = resolveLocal(file, specifier)
-        if (!target) continue
-        if (isUseClient(target)) found.push(`${importer} -> ${path.relative(SRC, target)}`)
-        else queue.push(target)
+      const resolution = resolveSpecifier(file, specifier)
+      if ('unresolved' in resolution) {
+        problems.push(`${importer} -> UNRESOLVED ${specifier}`)
+      } else if ('file' in resolution) {
+        if (isUseClient(resolution.file)) {
+          problems.push(`${importer} -> ${path.relative(PACKAGES, resolution.file)}`)
+        } else {
+          queue.push(resolution.file)
+        }
       } else if (/\/client$/.test(specifier)) {
-        found.push(`${importer} -> ${specifier}`)
+        problems.push(`${importer} -> ${specifier}`)
       }
     }
   }
-  return found
+  return { problems, reached: [...reached].map((file) => path.relative(PACKAGES, file)) }
 }
 
 describe('canopycms-next server entrypoints', () => {
   it("import no 'use client' module or client entrypoint at runtime", () => {
-    expect(clientImports()).toEqual([])
+    expect(walk().problems).toEqual([])
   })
 
-  it('reach the preview page, so the check above covers it', () => {
-    const reached = new Set<string>()
-    const queue = SERVER_ENTRIES.map((entry) => path.join(SRC, entry))
-    while (queue.length > 0) {
-      const file = queue.shift()!
-      if (reached.has(file)) continue
-      reached.add(file)
-      for (const specifier of runtimeSpecifiers(file)) {
-        const target = specifier.startsWith('.') ? resolveLocal(file, specifier) : undefined
-        if (target) queue.push(target)
-      }
-    }
-    expect([...reached].map((file) => path.relative(SRC, file))).toEqual(
-      expect.arrayContaining(['context-wrapper.ts', 'preview-page.tsx']),
+  it('reach the preview page and canopycms, so the check above covers them', () => {
+    expect(walk().reached).toEqual(
+      expect.arrayContaining([
+        'canopycms-next/src/context-wrapper.ts',
+        'canopycms-next/src/preview-page.tsx',
+        'canopycms/src/server.ts',
+      ]),
     )
   })
 })

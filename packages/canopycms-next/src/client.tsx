@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, type ReactNode } from 'react'
+import { Suspense, type ReactElement, type ReactNode } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { CanopyEditorPage, useCanopyPreview } from 'canopycms/client'
 import type { CanopyClientConfig, CustomFieldRenderers } from 'canopycms/client'
@@ -77,11 +77,12 @@ export interface CanopyPreviewProps<T> {
  * context would put the editor in every page that reads content.
  *
  * The returned type is a call signature rather than `ComponentType`, whose `propTypes` would make
- * a view for one content type unassignable to a map of views for many.
+ * a view for one content type unassignable to a map of views for many. It returns `ReactElement`,
+ * which JSX accepts on every supported TypeScript, where `ReactNode` needs `JSX.ElementType`.
  */
 export function withCanopyPreview<T>(
   View: (props: CanopyPreviewViewProps<T>) => ReactNode,
-): (props: CanopyPreviewProps<T>) => ReactNode {
+): (props: CanopyPreviewProps<T>) => ReactElement {
   return function CanopyPreview({ initialData, editorOrigin }: CanopyPreviewProps<T>) {
     const preview = useCanopyPreview<T>({ initialData, editorOrigin })
     return <View {...preview} />

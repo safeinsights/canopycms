@@ -265,9 +265,10 @@ export interface NextCanopyContextResult {
    * CMS build has it:
    *
    * ```tsx
-   * export default createPreviewPage({ views: { post: PostView, doc: DocView } })
+   * export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview } })
    * ```
    *
+   * Each view is made by `withCanopyPreview` (`canopycms-next/client`) in a `'use client'` module.
    * It renders each entry from the `?branch=` the editor names, through `views[entryType]` with
    * the live draft. Reads are request-scoped and ACL-checked, and anything not readable is a 404.
    */
