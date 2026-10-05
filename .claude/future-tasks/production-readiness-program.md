@@ -1,8 +1,9 @@
 # Production-Readiness Program
 
-**Status:** active — started 2026-07-30
-**Goal:** CanopyCMS running as the content system for `safeinsights/docs-site-proto`
-in production on AWS, with `safeinsights/website@v2` following the same pattern.
+**Status:** active — started 2026-07-30. The first deployed editor went live 2026-10-05
+(see [program-log.md](program-log.md)); workstreams D, E and F are retired as resolved by events,
+and G (operational readiness) is the one open workstream.
+**Goal:** CanopyCMS running as the content system for the adopter sites in production on AWS.
 
 This is the hub document. Each workstream has its own file with enough context to
 execute cold. Learnings go in [program-log.md](program-log.md) (append-only).
@@ -16,13 +17,12 @@ The July deployment-test epic proved the whole prod-mode stack end-to-end on AWS
 transform, submit → bot PR → merge → static rebuild). See
 [resolved/cms-service-deployment-test.md](resolved/cms-service-deployment-test.md).
 
-What has never happened: **a real site running the deployed editor.** Both
-adopters — `docs-site-proto` (canopycms `^0.0.54`) and `website@v2` (canopycms
-`^0.0.41`) — have `/edit` routes, catch-all API routes, schemas, and
-Canopy-managed content, but both run Canopy in `mode: 'dev'` locally. Their
-deployed infrastructure is static-only. Content changes require a developer.
-
-Closing that gap is what this program covers.
+What had not happened as of the program's start: **a real site running the deployed
+editor.** Both adopters had `/edit` routes, catch-all API routes, schemas and
+Canopy-managed content, but ran Canopy in `mode: 'dev'` locally, with static-only
+deployed infrastructure. That gap closed on 2026-10-05: the marketing site's
+editor runs on Lambda + EFS + worker with real auth and group path rules. The
+knowledge base follows on the same shape.
 
 ---
 
@@ -33,10 +33,10 @@ Closing that gap is what this program covers.
 | A | Release path (prerelease channel + standing draft PR) | S | **done** 2026-07-30 | [resolved/program-a-release-path.md](resolved/program-a-release-path.md) |
 | B | Canopy hardening (multi-deployment safety, ops gaps, editor correctness, build shapes) | L | **done** 2026-07-30 | [resolved/program-b-canopy-hardening.md](resolved/program-b-canopy-hardening.md) |
 | C | E2E coverage sweep (3.5-month gap) | L | **done** 2026-07-30 — 52→97 tests; matrix in [COVERAGE-MATRIX.md](../../apps/test-app/e2e/COVERAGE-MATRIX.md) | [resolved/program-c-e2e-coverage.md](resolved/program-c-e2e-coverage.md) |
-| D | Rebuild + exercise the deploy-test stack | M | not started | [program-d-stack-rebuild.md](program-d-stack-rebuild.md) |
-| E | Docs-site CMS deployment | L | not started | [program-e-docs-site-cms.md](program-e-docs-site-cms.md) |
-| F | Production + shared site-CDK for the second site | L | not started | [program-f-production.md](program-f-production.md) |
-| G | Operational readiness | M | not started | [program-g-operational-readiness.md](program-g-operational-readiness.md) |
+| D | Rebuild + exercise the deploy-test stack | M | **retired** 2026-10-05, resolved by events | [resolved/program-d-stack-rebuild.md](resolved/program-d-stack-rebuild.md) |
+| E | Docs-site CMS deployment | L | **retired** 2026-10-05, resolved by events | [resolved/program-e-docs-site-cms.md](resolved/program-e-docs-site-cms.md) |
+| F | Production + shared site-CDK for the second site | L | **retired** 2026-10-05, resolved by events | [resolved/program-f-production.md](resolved/program-f-production.md) |
+| G | Operational readiness | M | open, a normal P2 task | [program-g-operational-readiness.md](program-g-operational-readiness.md) |
 
 ### Sequencing
 
@@ -56,10 +56,9 @@ F ──────────────────────────
 G ───────────────────────────────────────┴──►
 ```
 
-A unblocks both sites and is hours of work. B + C are the bulk of the Canopy
-work. **B is complete as of 2026-07-30, so D's Canopy-side gate is cleared.**
-D is the gate before any real-site deployment. E is the deliverable that
-gets editors working. F and G make it production and team-ownable.
+A, B and C are done. The D, E, F ordering above was overtaken by events: the first
+deployed editor shipped on the marketing site without it, so D, E and F are retired and G
+no longer waits on F.
 
 ---
 

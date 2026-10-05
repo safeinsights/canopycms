@@ -22,7 +22,7 @@
 
 Found 2026-08-12 while auditing exclusive-create primitives for the Workstream D
 force-with-lease verification
-([program-d-stack-rebuild.md](../program-d-stack-rebuild.md), item 11).
+([program-d-stack-rebuild.md](program-d-stack-rebuild.md), item 11).
 Independently re-derived twice, in both directions — an earlier draft of this
 file had the severity reasoning wrong, and the correction is the finding.
 

@@ -1,75 +1,50 @@
-# `branch.json` is never schema-validated
+# `branch.json` is never shape-validated
 
-**Priority:** P2 — no live defect today, but it is the substrate under a whole
-class of them
-**Found:** 2026-08-12, by the independent review of PR #189
-(submitted-branch write locking)
+**Priority:** P2 [BOTH]. A partially written or hand-repaired `branch.json` on EFS reaches guards that
+treat an undefined field as open, and readers that crash on a missing `branch` object.
 
 ## Problem
 
-`branch-metadata.ts` parses branch metadata with a bare cast and no runtime
-validation:
+`branch-metadata.ts` (line 88) and `branch-metadata-file.ts` (line 67) parse branch metadata with a
+bare `JSON.parse(raw) as BranchMetadataFile` and no runtime validation. Every field on
+`BranchMetadata` (`status`, `name`, `access`, the OCC envelope's `version` / `writeId`) is typed as
+required but can be absent, misspelled or the wrong type at runtime.
 
-```ts
-return JSON.parse(raw) as BranchMetadataFile   // branch-metadata.ts:112
-const parsed = JSON.parse(raw) as BranchMetadataFile   // and again ~:139
-```
+- **Fails open.** A guard written as `writeBlocked: readOnly || (status !== undefined && status !==
+  'editing')` reads as defensive but allows the write when `status` is `undefined`. The type system
+  says `status` is always present, so that branch looks unreachable; it is only unreachable if the data
+  is validated. `getBranchWriteProtection()` takes a required status typed to admit `undefined` so
+  "caller did not ask" and "file had no status" cannot be confused: a local fix for one call path (see
+  [resolved/submitted-branch-edit-locking.md](resolved/submitted-branch-edit-locking.md)).
+- **Crashes readers.** `BranchMetadataFileManager.loadOnly` checks valid JSON, not shape. A file such
+  as `{"committed":true}` loads "successfully", and `worker/git-sync.ts` (base-refresh hygiene step,
+  line 719) then reads `currentMeta?.branch.conflictStatus` and throws `TypeError: Cannot read
+  properties of undefined (reading 'conflictStatus')`, so the refresh reports `failed` with that message
+  instead of a corrupt-metadata diagnosis. The same `?.branch.` pattern appears in `worker/rebase.ts`
+  and elsewhere.
 
-There is **zero Zod in the file**. Every field on `BranchMetadata` — `status`,
-`name`, `access`, the OCC envelope's `version`/`writeId` — is typed as required
-but can be absent, misspelled, or the wrong type at runtime, and nothing notices.
+The file is an OCC envelope (`{schemaVersion, version, writeId, branch: {...}}`), so a fixture or repair
+script that patches the top level writes fields nothing reads.
 
-The file is an OCC envelope (`{schemaVersion, version, writeId, branch: {...}}`),
-so a fixture or repair script that patches the top level writes fields nothing
-reads — a failure mode the e2e sweep already hit once and recorded.
+Realistic sources of a malformed file: a partial write on EFS with a concurrent Lambda writer, an
+operator hand-repairing metadata (the runbook in `docs/deploying-to-aws.md` contemplates it), an adopter
+repo that commits `.canopy-meta/branch.json`, and any directory `branch-health.ts` classifies as
+corrupt-metadata, a subsystem whose existence is itself the argument.
 
-## Why it matters
+## Fix
 
-This is what made PR #189's guard bug *reachable*, and it is worth understanding
-as a pattern rather than a one-off. The fix there computed:
+One zod schema at the read boundary (schemaVersion, version, `branch` object, `status` among the known
+values), consistent with how the settings workspace treats `permissions.json` and `groups.json`. A
+parse or shape failure raises `BranchMetadataCorruptError`, so every caller gets the existing
+corrupt-metadata handling (registry quarantine, branch-health `corrupt-metadata`, repair) instead of
+throwing into whatever called `load()`.
 
-```ts
-writeBlocked: readOnly || (status !== undefined && status !== 'editing')
-```
-
-which reads as defensive, and is — but it fails **open**: an `undefined` status
-allows the write, where the pre-existing guard (`status !== 'editing'`) blocked
-it. The type system said `status` was always present, so the `undefined` branch
-looked unreachable. It is only unreachable if the data is validated, and it is
-not.
-
-`getBranchWriteProtection()` now takes a **required** status typed to admit
-`undefined` precisely so that "the caller did not ask about status" and "the file
-had no status" cannot be confused — see the reasoning recorded inline in
-[resolved/submitted-branch-edit-locking.md](resolved/submitted-branch-edit-locking.md).
-That is a local fix for one call path. The underlying gap is repo-wide.
-
-The realistic sources of a malformed `branch.json` are not hypothetical:
-
-- a partially-written file on EFS with a concurrent Lambda writer
-- an operator hand-repairing metadata during recovery (the runbook in
-  `docs/deploying-to-aws.md` contemplates exactly this)
-- a directory that `branch-health.ts` classifies as corrupt-metadata — the fact
-  that a whole admin subsystem exists to detect and quarantine corrupt branch
-  metadata is itself the argument that it happens
-
-## Fix direction
-
-Validate at the read boundary with a Zod schema, consistent with how the settings
-workspace already treats `permissions.json` and `groups.json`. Decide explicitly
-what a parse failure means — most likely: surface it as corrupt-metadata so the
-existing quarantine/branch-health path handles it, rather than throwing into
-whatever called `load()`.
-
-Note the constraint that shaped the current design: the git-committed
-`.collection.json` deliberately carries no OCC fields (an approved deviation
-recorded in [resolved/schema-store-rmw-protection.md](resolved/schema-store-rmw-protection.md)),
-so whatever validation lands must not assume every on-disk JSON shares one
-envelope shape.
+Constraint: the git-committed `.collection.json` deliberately carries no OCC fields
+([resolved/schema-store-rmw-protection.md](resolved/schema-store-rmw-protection.md)), so the schema
+must not assume every on-disk JSON shares one envelope shape.
 
 ## Related
 
-- [resolved/submitted-branch-edit-locking.md](resolved/submitted-branch-edit-locking.md)
-  — carries the fail-closed rationale inline
-- [program-b-final-review-followups.md](resolved/program-b-final-review-followups.md)
-- `branch-health.ts` — the corrupt-metadata classifier this should feed
+- [branch-registry-corrupt-snapshot.md](branch-registry-corrupt-snapshot.md): the same failure class
+  for `branches.json`
+- `branch-health.ts`: the corrupt-metadata classifier this should feed
