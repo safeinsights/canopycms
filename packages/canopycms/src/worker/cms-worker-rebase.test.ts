@@ -20,6 +20,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { ROOT_COLLECTION_ID } from '../paths/types'
 import { initTestRepo, mockConsole } from '../test-utils'
+import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { CmsWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
@@ -391,6 +392,58 @@ describe('CmsWorker rebaseActiveBranches', () => {
   // -------------------------------------------------------------------------
   // canopycms's own state (.canopy-meta/)
   // -------------------------------------------------------------------------
+
+  describe('provisioning lock', () => {
+    const behindCount = async (setup: BranchSetup) => {
+      await setup.branchGit.fetch('origin', 'main')
+      return (await setup.branchGit.status()).behind
+    }
+
+    it('skips a branch whose provisioning lock is held elsewhere', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const release = await tryAcquireProvisioningLock(
+        setup.contentBranchesPath,
+        branchProvisioningLockName('my-feature'),
+      )
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir)).finally(release)
+      expect(consoleSpy).toHaveLogged(/Skipping my-feature: provisioning lock held elsewhere/)
+      consoleSpy.restore()
+
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+    })
+
+    it('skips a clone that has .git but no branch.json, writing nothing', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+      expect(consoleSpy).toHaveLogged(/Skipping my-feature: not yet provisioned/)
+      consoleSpy.restore()
+
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+      await expect(readMeta(setup.branchPath)).resolves.toBeUndefined()
+    })
+
+    it('rebases a provisioned branch and releases the lock afterwards', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      const release = await tryAcquireProvisioningLock(
+        setup.contentBranchesPath,
+        branchProvisioningLockName('my-feature'),
+      )
+      await release()
+    })
+  })
 
   describe("canopycms's own state", () => {
     const behindCount = async (setup: BranchSetup) => {

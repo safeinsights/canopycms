@@ -87,8 +87,8 @@ segment path in one place. What request #11 buys them now is the N+1 and a
 - [authorization-enforcement-consolidation.md](../authorization-enforcement-consolidation.md)
   — the runtime context is now another caller of matcher #1 and must be migrated
   with the rest when the shared matcher lands
-- [context-listing-branch-pinning.md](../context-listing-branch-pinning.md) —
-  split out of this work: neither method takes a `branch` option, and in prod
-  they always list the base branch
+- [context-listing-branch-pinning.md](context-listing-branch-pinning.md) —
+  split out of this work: neither method took a `branch` option, so in prod
+  they always listed the base branch (resolved 2026-10-04)
 - [list-permission-level.md](../list-permission-level.md) — a `'list'` level
   would change what these two filter on (`'list'` rather than `'read'`)

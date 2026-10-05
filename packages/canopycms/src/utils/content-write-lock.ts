@@ -21,9 +21,9 @@
  *
  * The marker lives under `{branchRoot}/.canopy-meta` and the lock anchors on that marker path like
  * every other lock (see provisioning-lock.ts), so it can never alias the branch's provisioning
- * lock; the two are never both required and the only possible order (provision, then write) is
- * consistent, so they cannot deadlock. `.canopy-meta/` is git-excluded in every branch clone
- * (`ensureGitExclude`), so the lock directory cannot dirty the tree or be swept into `git add .`.
+ * lock. The worker's rebase holds both, provisioning outside this one, and takes each try-only,
+ * so they cannot deadlock. `.canopy-meta/` is git-excluded in every branch clone
+ * (`ensureGitExclude`), so the lock directory cannot dirty the tree or be staged.
  *
  * Mutual exclusion is not proven: on EFS a stale cached mtime lets a waiter take over a live lock,
  * leaving two unsynchronized writers -- the unlocked behaviour, so still a strict improvement.
@@ -93,6 +93,9 @@ const sleep = (ms: number): Promise<void> =>
  * Acquire the branch's content-write lock WITHOUT waiting, for the worker's rebase loop, which
  * skips the branch and retries next cycle. Throws with `code === 'ELOCKED'` on a live holder.
  */
+/** Below provisioning's, so a crashed worker blocks saves for at most 30s (docs/concurrency.md). */
+const CONTENT_WRITE_LOCK_STALE_MS = 30_000
+
 export function tryAcquireContentWriteLock(
   branchRoot: string,
   onCompromised?: OnLockCompromised,
@@ -101,6 +104,7 @@ export function tryAcquireContentWriteLock(
     lockTargetDir(branchRoot),
     CONTENT_WRITE_LOCK_NAME,
     onCompromised,
+    CONTENT_WRITE_LOCK_STALE_MS,
   )
 }
 

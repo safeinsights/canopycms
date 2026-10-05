@@ -51,6 +51,21 @@ export type CustomFieldRenderers = Record<
   (props: CustomFieldRenderProps) => React.ReactNode
 >
 
+/**
+ * Card heading for an object-list item: the value of its `itemTitleField` when that is a
+ * non-blank string or a number, otherwise `fallback`.
+ */
+const listItemTitle = (
+  item: Record<string, unknown>,
+  itemTitleField: string | undefined,
+  fallback: string,
+): string => {
+  const raw = itemTitleField ? item?.[itemTitleField] : undefined
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
+  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim()
+  return fallback
+}
+
 const normalizeOptions = (
   options: Array<string | { label: string; value: string }> | undefined,
 ): Array<{ label: string; value: string }> => {
@@ -420,38 +435,52 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                   </Button>
                 </Group>
                 <Stack gap="sm">
-                  {items.map((item, idx) => (
-                    <Paper key={fieldKey([...path, idx])} withBorder radius="md" p="sm" shadow="xs">
-                      <Stack gap="xs">
-                        <Group justify="space-between">
-                          <Text size="xs" fw={700}>
-                            {label} #{idx + 1}
-                          </Text>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            color="red"
-                            onClick={() => update(items.filter((_, i) => i !== idx))}
-                          >
-                            Remove
-                          </Button>
-                        </Group>
-                        <ObjectField
-                          label={objectField.label}
-                          fields={objectField.fields}
-                          value={item}
-                          onChange={(next) => {
-                            const nextItems = [...items]
-                            nextItems[idx] = next
-                            update(nextItems)
-                          }}
-                          renderField={renderField}
-                          path={[...path, idx]}
-                          dataCanopyField={normalizeCanopyPath([...path, idx])}
-                        />
-                      </Stack>
-                    </Paper>
-                  ))}
+                  {items.map((item, idx) => {
+                    const itemTitle = listItemTitle(
+                      item,
+                      objectField.itemTitleField,
+                      `${label} #${idx + 1}`,
+                    )
+                    return (
+                      <Paper
+                        key={fieldKey([...path, idx])}
+                        role="group"
+                        aria-label={itemTitle}
+                        withBorder
+                        radius="md"
+                        p="sm"
+                        shadow="xs"
+                      >
+                        <Stack gap="xs">
+                          <Group justify="space-between">
+                            <Text size="xs" fw={700}>
+                              {itemTitle}
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              color="red"
+                              onClick={() => update(items.filter((_, i) => i !== idx))}
+                            >
+                              Remove
+                            </Button>
+                          </Group>
+                          <ObjectField
+                            fields={objectField.fields}
+                            value={item}
+                            onChange={(next) => {
+                              const nextItems = [...items]
+                              nextItems[idx] = next
+                              update(nextItems)
+                            }}
+                            renderField={renderField}
+                            path={[...path, idx]}
+                            dataCanopyField={normalizeCanopyPath([...path, idx])}
+                          />
+                        </Stack>
+                      </Paper>
+                    )
+                  })}
                   {items.length === 0 && (
                     <Text size="xs" c="dimmed">
                       No items yet. Add one to get started.

@@ -444,7 +444,7 @@ In dev, the editor and dev server read a branch clone under `.canopy-dev/content
 
 **There is intentionally no auto-push mode**, because it would clobber unsubmitted editor saves ([ARCHITECTURE.md](ARCHITECTURE.md#operating-modes)); reconcile with `canopycms sync push`.
 
-All the logic is in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); adapters call it once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`). It no-ops outside dev mode, under `'off'`, and when the working-tree content directory is absent. Each check re-resolves the active branch, so it follows git HEAD switches, and it dedupes across HMR reloads so a dev restart does not double-warn.
+The logic is in `src/dev-content-watcher.ts` (`startDevContentWatcher()`), which adapters call once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`); its comments carry the no-op and HMR-dedupe rules.
 
 ### Committing and Pushing: Toolchain Gotchas
 
@@ -452,6 +452,10 @@ Two things bite in a scratch worktree or any non-interactive shell, where `pnpm`
 
 - **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with `pre-push script failed (code 127)`** — a `pnpm: command not found` inside the hook, not a push or auth error. Hooks see neither aliases nor shell functions, so the shim directory has to be exported on `PATH` in the _same_ command as the push. Same for `lint-staged` on `pre-commit`.
 - **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are prettier-ignored. Prettier reports only the files it formatted, so passing a task file and seeing no mention of it is a skip, not a no-op-because-clean. Match the surrounding style by hand.
+
+### Request Timing (`CANOPYCMS_DEBUG=true`)
+
+The API handler logs one `[CanopyCMS:timing]` line per request: route pattern, status, total, then phases. `a>b` is `b` nested in `a`, `(xN)` is a phase that ran N times, and `untimed` is the total minus the top-level phases. To time a new step on the request path, wrap it in `timeRequestPhase('<name>', () => ...)`; outside a request, or with debug off, it is a plain call. The rules are in the header comment of `utils/request-timing.ts`.
 
 ## Testing
 

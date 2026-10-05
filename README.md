@@ -498,7 +498,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
-- `object` — nested object; takes `fields: FieldConfig[]`
+- `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string` or `number` child to title each card with its value
 - `block` — page blocks / "flexible content"; takes `templates: BlockTemplate[]`, each from `defineBlockTemplate` (see [Page Blocks](#page-blocks-flexible-content))
 
 Common options on any field:
@@ -1359,6 +1359,17 @@ const entries = await (await getCanopyForBuild()).listEntries()
 
 // urlPath has index collapsing applied -- preferred for URL generation
 const slugs = entries.map((entry) => entry.urlPath.split('/').filter(Boolean))
+```
+
+On the request-scoped context, pass `branch` so an index page previewed in the editor lists the content branch being edited. The preview iframe's URL carries it as `?branch=`, as for [`read()`](#reading-content-in-server-components). Without it a `prod` deployment lists the base branch, and an editor's new entry is missing from the index preview. A branch the user cannot read, or one that does not exist, lists nothing. `buildContentTree()` takes the same option. It selects nothing at build time or on static deployments.
+
+```typescript
+// app/posts/page.tsx
+export default async function PostsIndex({ searchParams }) {
+  const { branch } = await searchParams
+  const posts = await listEntries<PostContent>({ rootPath: 'content/posts', branch })
+  return <PostList posts={posts} />
+}
 ```
 
 Each entry's `urlPath` is URL-ready with index entries collapsed to their parent path (`'/guides'`, not `'/guides/index'`; `'/'` for a root index entry), and is round-trip safe with `readByUrlPath()`. The raw `pathSegments` array is also available for consumers needing the unmodified filesystem structure.

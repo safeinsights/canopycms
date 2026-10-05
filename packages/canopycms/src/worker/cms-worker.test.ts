@@ -13,7 +13,7 @@ import { simpleGit } from 'simple-git'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask, dequeueTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
-import { BranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
@@ -1735,6 +1735,11 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     await branchGit.addConfig('core.editor', 'true')
     await branchGit.checkoutBranch(branchName, 'origin/main')
     await branchGit.raw(['branch', '--set-upstream-to=origin/main', branchName])
+    // A provisioned workspace has branch metadata; the worker skips one without it.
+    await getBranchMetadataFileManager(
+      branchPath,
+      path.join(workspacePath, 'content-branches'),
+    ).save({ branch: { name: branchName } })
 
     return { branchPath, branchGit, originGit, originPath }
   }

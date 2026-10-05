@@ -114,7 +114,13 @@ export interface BranchContextWithSchema extends BranchContext {
  * that clone.
  */
 export interface BaseRefreshReport {
-  outcome: 'refreshed' | 'up-to-date' | 'skipped-dirty' | 'skipped-not-provisioned' | 'failed'
+  outcome:
+    | 'refreshed'
+    | 'up-to-date'
+    | 'skipped-dirty'
+    | 'skipped-locked'
+    | 'skipped-not-provisioned'
+    | 'failed'
   /** Tracked files blocking the refresh, at most 10; set when `skipped-dirty`. */
   dirtyFiles?: string[]
   /** What went wrong, credential-redacted; set when `failed` or `skipped-dirty`. */
@@ -145,8 +151,9 @@ export interface WorkerStatusReport {
     rebased: string[]
     skippedDirty: string[]
     /**
-     * [SYNC-C1] Branches skipped because a content write held the branch's
-     * cross-host content-write lock (utils/content-write-lock.ts); the worker
+     * Branches skipped because another process held a lock the worker
+     * try-acquires: the [SYNC-C1] content-write lock (utils/content-write-lock.ts)
+     * or the provisioning lock (worker/provisioned-workspace.ts). The worker
      * yields and retries next cycle. Optional for the same reason as `tracked`
      * below, and readers must tolerate its absence.
      */

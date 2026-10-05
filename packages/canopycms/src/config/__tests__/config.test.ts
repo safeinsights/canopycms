@@ -7,9 +7,11 @@ import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
 import { mediaSchema } from '../schemas/media'
+import { fieldSchema } from '../schemas/field'
 import {
   ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
+  ensureItemTitleFieldsExist,
   ensureNoGroupsInsideComplexFields,
   ensureNoFlattenedFieldNameCollisions,
   validateCanopyConfig,
@@ -803,6 +805,86 @@ describe('ensureReferenceFieldsHaveScope', () => {
         },
       ]),
     ).toThrow('Reference field "ref"')
+  })
+})
+
+describe('ensureItemTitleFieldsExist', () => {
+  const listObject = (itemTitleField?: string) => ({
+    name: 'features',
+    type: 'object',
+    list: true,
+    ...(itemTitleField === undefined ? {} : { itemTitleField }),
+    fields: [{ name: 'title', type: 'string' }],
+  })
+
+  it('passes when itemTitleField names a direct child, or is absent', () => {
+    expect(() => ensureItemTitleFieldsExist([listObject('title')])).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist([listObject()])).not.toThrow()
+  })
+
+  it('throws when itemTitleField names no direct child', () => {
+    expect(() => ensureItemTitleFieldsExist([listObject('missing')])).toThrow(
+      'Object field "features" has itemTitleField "missing"',
+    )
+  })
+
+  it('accepts a number child and rejects a child whose value is not shown as typed', () => {
+    const withChild = (type: string) => [
+      {
+        name: 'features',
+        type: 'object',
+        list: true,
+        itemTitleField: 'pick',
+        fields: [{ name: 'pick', type, ...(type === 'reference' ? { collections: ['x'] } : {}) }],
+      },
+    ]
+    expect(() => ensureItemTitleFieldsExist(withChild('number'))).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist(withChild('reference'))).toThrow(
+      'must name a string or number field',
+    )
+    expect(() => ensureItemTitleFieldsExist(withChild('markdown'))).toThrow(
+      'must name a string or number field',
+    )
+  })
+
+  it('rejects itemTitleField on an object that is not a list', () => {
+    expect(() => ensureItemTitleFieldsExist([{ ...listObject('title'), list: false }])).toThrow(
+      'applies only to list: true objects',
+    )
+  })
+
+  it('does not accept a field that is only nested deeper', () => {
+    expect(() =>
+      ensureItemTitleFieldsExist([
+        {
+          name: 'outer',
+          type: 'object',
+          list: true,
+          itemTitleField: 'title',
+          fields: [{ name: 'inner', type: 'object', fields: [{ name: 'title', type: 'string' }] }],
+        },
+      ]),
+    ).toThrow('itemTitleField "title"')
+  })
+
+  it('checks objects nested in groups, objects and block templates', () => {
+    const bad = listObject('missing')
+    expect(() =>
+      ensureItemTitleFieldsExist([{ type: 'group', name: 'g', fields: [bad] }]),
+    ).toThrow()
+    expect(() =>
+      ensureItemTitleFieldsExist([{ name: 'o', type: 'object', fields: [bad] }]),
+    ).toThrow()
+    expect(() =>
+      ensureItemTitleFieldsExist([
+        { name: 'b', type: 'block', templates: [{ name: 't', fields: [bad] }] },
+      ]),
+    ).toThrow()
+  })
+
+  it('is kept by the field schema rather than stripped', () => {
+    const parsed = fieldSchema.parse(listObject('title'))
+    expect(parsed).toMatchObject({ itemTitleField: 'title' })
   })
 })
 

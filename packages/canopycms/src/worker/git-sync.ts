@@ -26,6 +26,7 @@ import { runRebaseCycle, type RebaseContext } from './rebase'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
+import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -460,7 +461,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
         baseRefresh.outcome === 'skipped-dirty'
           ? [ctx.sanitizedBaseBranch, ...rebaseSummary.skippedDirty]
           : rebaseSummary.skippedDirty,
-      skippedLocked: rebaseSummary.skippedLocked,
+      skippedLocked:
+        baseRefresh.outcome === 'skipped-locked'
+          ? [ctx.sanitizedBaseBranch, ...rebaseSummary.skippedLocked]
+          : rebaseSummary.skippedLocked,
       failed: rebaseSummary.failed,
       baseRefresh,
       tracked: trackedSummary,
@@ -567,19 +571,31 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
   // Sanitized name for the workspace directory (a base branch containing
   // e.g. '/' would otherwise stat a wrong nested path here forever).
   const basePath = path.join(ctx.contentBranchesPath, ctx.sanitizedBaseBranch)
-  const gitDir = path.join(basePath, '.git')
   let trackedCanopyMeta: string[] | undefined
+  let releaseProvisioning: (() => Promise<void>) | undefined
 
   try {
-    let gitDirStat
-    try {
-      gitDirStat = await fs.stat(gitDir)
-    } catch {
-      gitDirStat = null
+    // Held to the end, so no git step below races a clone of this directory.
+    const hold = await holdProvisionedWorkspace(ctx.contentBranchesPath, ctx.sanitizedBaseBranch)
+    if (hold.kind === 'locked') {
+      workerLog(
+        `Base branch workspace (${ctx.baseBranch}): provisioning lock held elsewhere, skipping refresh`,
+      )
+      return { outcome: 'skipped-locked' }
     }
-    if (!gitDirStat || !gitDirStat.isDirectory()) {
+    if (hold.kind === 'not-provisioned') {
       workerLog(`Base branch workspace (${ctx.baseBranch}): not yet provisioned, skipping refresh`)
       return { outcome: 'skipped-not-provisioned' }
+    }
+    releaseProvisioning = hold.release
+    // Checked before each destructive step: a lost lock means another process
+    // may be cloning into this directory.
+    const lockLost = (): BaseRefreshReport | null => {
+      if (!hold.isCompromised()) return null
+      workerLogWarn(
+        `Base branch workspace (${ctx.baseBranch}): provisioning lock lost mid-refresh, stopping`,
+      )
+      return { outcome: 'skipped-locked', trackedCanopyMeta }
     }
 
     // Idempotent, and applied every cycle so any clone lacking it gets it.
@@ -613,6 +629,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     }
 
     let status = await baseGit.status()
+    const lostBeforeRestore = lockLost()
+    if (lostBeforeRestore) return lostBeforeRestore
     if (await restoreRetiredSchemaCache(baseGit, status)) {
       workerLog(
         `Base branch workspace (${ctx.baseBranch}): restored the retired in-tree schema cache`,
@@ -661,6 +679,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     )
 
     if (behindCount > 0) {
+      const lostBeforeMerge = lockLost()
+      if (lostBeforeMerge) return lostBeforeMerge
       // Untrack, in the index only, any state the tip has stopped tracking:
       // the merge would otherwise refuse to overwrite a modified copy, or
       // delete a clean one from disk. Safe here and not in the rebase loop,
@@ -729,6 +749,10 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       outcome: 'failed',
       message: redactCredentials(getErrorMessage(err)),
       trackedCanopyMeta,
+    }
+  } finally {
+    if (releaseProvisioning) {
+      await releaseProvisionedWorkspace(releaseProvisioning, ctx.sanitizedBaseBranch)
     }
   }
 }

@@ -1112,11 +1112,18 @@ If you are not ready to wire the narrow version, scoping the bucket policy to th
 
 **Lambda cold start is slow**: Consider adding provisioned concurrency (1 instance, ~$15/month).
 
+**Editor API calls are slow**: Set `CANOPYCMS_DEBUG=true` on the CMS Lambda. Each API
+request then logs one `[CanopyCMS:timing]` line with its route, status, total and per-phase
+milliseconds (`filter @message like /CanopyCMS:timing/` in Logs Insights). Unset it afterwards,
+because it also enables every other debug line.
+
 **Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
 CloudWatch log group (`/canopycms/<stackName>/worker` — see
 [Worker observability](#worker-observability)); no shell access needed. If you can
 shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
 works.
+
+**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 

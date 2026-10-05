@@ -38,6 +38,7 @@ import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
+import { timeRequestPhase } from './utils/request-timing'
 import { BRANCH_META_DIR } from './branch-metadata-file'
 import {
   appendTrailers,
@@ -235,7 +236,7 @@ async function _createCanopyServicesInternal(
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
   // Content access loads permissions dynamically from the settings branch (orphan git branch)
-  const getSettingsBranchRoot =
+  const ensureSettingsBranchRoot =
     options.getSettingsBranchRoot ??
     (async (): Promise<string> => {
       const strategy = operatingStrategy(config.mode)
@@ -253,10 +254,12 @@ async function _createCanopyServicesInternal(
 
       return settingsRoot
     })
+  const getSettingsBranchRoot = () => timeRequestPhase('settingsRoot', ensureSettingsBranchRoot)
 
   const contentAccessDeps = {
     checkBranchAccess,
-    loadPathPermissions,
+    loadPathPermissions: (repoRoot: string, mode: CanopyConfig['mode']) =>
+      timeRequestPhase('permissions', () => loadPathPermissions(repoRoot, mode)),
     defaultPathAccess: config.defaultPathAccess ?? 'deny',
     mode: config.mode,
     getSettingsBranchRoot,

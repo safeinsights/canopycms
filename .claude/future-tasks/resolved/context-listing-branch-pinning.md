@@ -1,8 +1,28 @@
 # `listEntries` / `buildContentTree` always list the base branch in prod
 
+## RESOLVED 2026-10-04, branch `fix/prod-listing-branch-pinning` (option 1)
+
+Both methods take `branch?: string`, matching `read`/`readByUrlPath`; an index
+page passes the preview iframe's `?branch=` the way the README already shows for
+`read`. A requested branch other than the active one is load-only (never
+provisioned), its branch access is checked before its files are read, and a
+missing, unreadable, non-string or traversal name lists nothing. Build time and static
+deployments ignore it. Tests: `context-listing-branch.test.ts`.
+
+Option 2 (automatic, no adopter change) was not taken: the context sees only the
+request's headers and cookies, never its URL, so it would need a new editor-to-adapter channel such as a
+cookie, which would also leak branch content into an editor's ordinary browsing
+of the live site.
+
+Two corrections to the write-up below, found during the fix: `read`/
+`readByUrlPath` are **not** branch-correct in prod either unless the page passes
+`branch` (the single-entry preview only looks right because `useCanopyPreview`
+overlays draft data), and dev does not track the editor's branch, only the
+developer's git HEAD.
+
 ## Priority: P2 [BOTH]
 
-Split out of [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md)
+Split out of [listentries-acl-awareness.md](listentries-acl-awareness.md)
 on 2026-08-14, found while wiring path-ACL enforcement into those two methods.
 Not an ACL bug — a branch-resolution one, in the same two methods.
 
@@ -61,7 +81,7 @@ Latent today only because neither adopter has deployed a prod editor yet.
 
 ## Related
 
-- [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — the
+- [listentries-acl-awareness.md](listentries-acl-awareness.md) — the
   ACL half of the same two methods, resolved 2026-08-14
-- [reference-resolution-branch-switch-stale.md](reference-resolution-branch-switch-stale.md)
+- [reference-resolution-branch-switch-stale.md](../reference-resolution-branch-switch-stale.md)
   — same "branch switch not reflected in a derived read" family

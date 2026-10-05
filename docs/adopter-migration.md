@@ -60,6 +60,16 @@ left a failed task in System health. Saves now only push the branch.
 
 **Now deletable.** Filters that hid the failed settings-PR tasks.
 
+### A list of objects can title each card after one of its fields
+
+**What changed.** An `object` field with `list: true` takes `itemTitleField`, naming a direct
+`string` or `number` child whose value titles each card (else `<label> #N`). Cards no longer repeat
+the label as an inner legend.
+
+**To adopt.** `{ type: 'object', list: true, itemTitleField: 'label', fields: [...] }`.
+
+**Now deletable.** Nothing.
+
 ### `.canopy-meta/` must not be committed, and System health now says so
 
 **What changed.** The schema cache moved into each branch clone's `.git/canopycms/`. Sync, editor
@@ -114,6 +124,15 @@ paths, branches, hosts or identifiers from a specific adopter's repo: this packa
 public and its adopters' repos generally are not. If nothing becomes deletable, say so
 explicitly — that is a real and useful answer.
 -->
+
+### Listings take a `branch`
+
+**What changed.** `listEntries()`/`buildContentTree()` accept `branch`, like `read()`.
+
+**To adopt.** Index pages pass `searchParams`' `branch` through, so editor previews list that
+branch.
+
+**Now deletable.** Nothing.
 
 ---
 
