@@ -709,7 +709,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/canopycms-settings-prod')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings-prod')
   })
 
   it('should pull from the correct settings branch', async () => {
@@ -730,7 +730,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/my-settings')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'my-settings')
   })
 
   it('should use configured settingsBranch value', async () => {
@@ -766,7 +766,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/custom-settings-branch')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
     // push() now goes through raw(['push', ...]) to place --end-of-options
     // before the positional refspec (SEC-H2 guard).
     expect(rawMock).toHaveBeenCalledWith(expect.arrayContaining(['push', '--end-of-options']))

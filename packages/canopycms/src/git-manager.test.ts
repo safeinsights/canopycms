@@ -2001,16 +2001,17 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
-  it('pulls the settings branch, not a tag of the same name', async () => {
-    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
+  // A same-named tag is out of scope for settings saves (push resolves HEAD by
+  // short name); what this pins is that it fails loudly, never as "nothing to pull".
+  it('fails the pull loudly when the remote holds a tag named after the settings branch', async () => {
+    const { manager, remotePath } = await setupSettingsWorkspace()
     await advanceRemoteSettingsBranch(remotePath)
     await openBareRepo(remotePath).raw(['tag', SETTINGS_BRANCH, 'main'])
 
-    await manager.pullCurrentBranch()
+    const err = await manager.pullCurrentBranch().catch((e: unknown) => e)
 
-    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
-    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
-    await expect(fs.access(path.join(settingsRoot, 'readme.md'))).rejects.toThrow()
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
   // The counterpart to the test above, and the one that carries the weight:

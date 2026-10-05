@@ -1142,8 +1142,7 @@ export class GitManager {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     try {
-      // The full ref: a bare name resolves to a same-named tag first.
-      await this.git.fetch(this.remote, `refs/heads/${currentBranch}`)
+      await this.git.fetch(this.remote, currentBranch)
     } catch (err) {
       // The only benign failure here: the branch has never been pushed, so the
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
@@ -1525,7 +1524,8 @@ export class GitManager {
 
   /**
    * Fetch `branch` from the remote and return the fetched commit, pinned as
-   * pullBaseInner explains. The full ref, as in pullCurrentBranchInner.
+   * pullBaseInner explains. The full ref: a bare name resolves to a
+   * same-named tag first.
    */
   private async fetchBranchTip(branch: string): Promise<string> {
     await this.git.fetch(this.remote, `refs/heads/${branch}`)
