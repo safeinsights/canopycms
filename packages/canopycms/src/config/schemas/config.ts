@@ -9,6 +9,7 @@ import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
+import { previewPrefixSchema } from './url'
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
 const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
@@ -59,6 +60,7 @@ const editorConfigSchema = z.object({
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
   previewBase: z.record(z.string()).optional(),
+  previewPrefix: previewPrefixSchema.optional(),
   // UI handler functions (runtime only, don't serialize)
   onAccountClick: z.function().returns(z.void()).optional(),
   onLogoutClick: z.function().returns(z.void()).optional(),

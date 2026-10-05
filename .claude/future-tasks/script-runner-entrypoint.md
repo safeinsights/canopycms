@@ -25,7 +25,7 @@ indexing guarantees the editor save path gets.
 **Direction:** a server-side function that performs the same write as the editor save path (schema
 validation, ID assignment, index update), documented as the scripting write entrypoint and reachable
 from `createBuildCanopy`'s context. It must not bypass the content-write lock
-(see [content-write-lock-coverage-gaps.md](content-write-lock-coverage-gaps.md)).
+(see [content-write-lock-coverage-gaps.md](resolved/content-write-lock-coverage-gaps.md)).
 
 ## Related
 

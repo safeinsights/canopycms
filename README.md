@@ -109,7 +109,7 @@ export default withCanopy({
 - **Dual-build page extensions** — adds `server.ts`/`server.tsx` to `pageExtensions`, enabling the convention below.
 - **Standalone image tracing** — for any build except a static export, adds sharp's libvips shared library to Next's file tracing so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp, which Next can miss for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail. Without `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also covers the webpack case.
 - **Turbopack guard (Next 16+)** — sets `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your Next version, since Next 16 defaults to Turbopack and exits when it sees the React-aliasing `webpack` function with no `turbopack` config. Your own `webpack`/`turbopack` config is left as-is.
-- **Trailing slash** — when the config you pass in sets `trailingSlash: true`, the editor's API calls use a trailing slash (`/api/canopycms/branches/`), so Next does not answer each one with a 308 redirect. An `env.CANOPY_API_TRAILING_SLASH` you set yourself wins.
+- **Trailing slash** — with `trailingSlash: true`, the editor's API calls and preview URLs end in `/`, so Next sends no 308. Your own `env.CANOPY_TRAILING_SLASH` wins.
 
 **Make `withCanopy()` the outermost wrapper** when combining it with other config plugins: `withCanopy(withBundleAnalyzer({ ... }))`, not the reverse. It decides whether to add `turbopack: {}` from the config it receives, so a plugin wrapped around it adds its `webpack` afterwards and, on Next 16, that `turbopack: {}` silences the error Next would raise about a `webpack` function Turbopack does not run.
 
@@ -843,6 +843,8 @@ export default async function PostPage({ params, searchParams }) {
 
 > **Request-time errors:** `read()` throws if the entry is missing or the current user cannot read it (an anonymous visitor on a `server` deployment with [public read](#public-read-on-server-deployments) enabled, say) — and an uncaught throw becomes a 500 page, not a 404. Catch it explicitly (see [Error Handling Utilities](#error-handling-utilities)) or prefer [`readByUrlPath()`](#load-content-by-url-path), which returns `null`.
 
+`branch` comes from the request, so any visitor can set it. Any branch other than the active one must already exist and be readable by the current user. Otherwise `read()` throws `NOT_FOUND` and `readByUrlPath()` returns `null`, so a missing branch and a hidden one look the same. A repeated `?branch=` (an array) gets the same answer. Only the active branch's workspace is created on first read. `readByUrlPath()` takes the same `branch` option.
+
 The context extracts the current user from request headers via the auth plugin, applies bootstrap admin groups, and is cached for the request lifecycle with React's `cache()`. During `next build` permissions are bypassed and content is read from the working tree, never a branch workspace, so a build renders exactly what is on disk. Besides `read()` it exposes `readByUrlPath()` (below), `buildContentTree()` (see [Content Tree Builder](#content-tree-builder)), `listEntries()` (see [Listing Entries](#listing-entries)), `user`, and `services`.
 
 ### Load Content by URL Path
@@ -1057,10 +1059,10 @@ The phase-selecting `readByUrlPath` and `read` are the top-level helpers `create
 
 ### Advanced: Using createContentReader Directly
 
-For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly:
+For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly. A branch with no workspace reads as `NOT_FOUND`. Pass `allowCreateBranch: true` to create one instead, but only when every branch name the reader sees is trusted:
 
 ```typescript
-const reader = createContentReader({ config: config.server })
+const reader = createContentReader({ services })
 
 const { data } = await reader.read({
   entryPath: 'content/posts',
@@ -1219,6 +1221,8 @@ editor: {
   },
 }
 ```
+
+**Preview URLs.** The pane loads each entry's route (collection path plus slug) with `?branch=`. `previewBase` remaps a collection, or a root entry keyed `'<contentRoot>/<slug>'`. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` gets only the slug and branch; an absolute prefix skips `basePath`.
 
 ### Custom Field Renderers
 
@@ -1532,6 +1536,23 @@ useEffect(() => {
 ```
 
 Pair it with the [`validateEntry` hook](#save-time-validation-validateentry) to reject such saves server-side too.
+
+**Previewing a static export.** A prerendered page cannot render a content branch, so set `editor.previewPrefix: '/preview'` and serve that route from your CMS build only:
+
+```tsx
+// lib/canopy.ts
+export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
+  (options) => async (props) =>
+    (await canopyContextPromise).createPreviewPage(options)(props)
+
+// components/PostView.tsx ('use client'): `data` is the live draft
+export const PostPreview = withCanopyPreview(PostView) // from canopycms-next/client
+
+// app/preview/[[...path]]/page.server.tsx
+export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview } })
+```
+
+It reads the entry from the editor's `?branch=` under the request's ACLs and never creates a branch. Anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
 
 ## AI-Ready Content
 

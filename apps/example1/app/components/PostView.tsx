@@ -4,7 +4,7 @@ import type { ComponentType } from 'react'
 import React from 'react'
 
 import type { BlockComponentRegistry } from 'canopycms'
-import { useCanopyPreview } from 'canopycms/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
 
 import type { PostContent } from '../schemas'
 import { AuthorCard } from './AuthorCard'
@@ -13,11 +13,10 @@ import { MarkdownBody } from './MarkdownBody'
 type Blocks = PostContent['blocks'][number]
 
 // Extra props threaded into every block component: which index this block sits at (for
-// building live-preview field paths) and the fieldProps helper itself, from
-// useCanopyPreview below.
+// building live-preview field paths) and the fieldProps helper PostView receives.
 type BlockExtraProps = {
   index: number
-  fieldProps: ReturnType<typeof useCanopyPreview<PostContent>>['fieldProps']
+  fieldProps: CanopyPreviewViewProps<PostContent>['fieldProps']
 }
 
 // One component per block template, keyed off the schema's own template names.
@@ -114,16 +113,12 @@ const renderBlock = (block: Blocks, extra: BlockExtraProps) => {
   return <Component data={block.value} {...extra} />
 }
 
-export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
-  const {
-    data: liveData,
-    isLoading,
-    highlightEnabled,
-    fieldProps,
-  } = useCanopyPreview<PostContent>({
-    initialData: data,
-  })
-
+export const PostView: React.FC<CanopyPreviewViewProps<PostContent>> = ({
+  data: liveData,
+  isLoading,
+  highlightEnabled,
+  fieldProps,
+}) => {
   return (
     <article
       className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
@@ -170,5 +165,8 @@ export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
     </article>
   )
 }
+
+// The live-preview form, rendered by app/preview and the public pages alike.
+export const PostPreview = withCanopyPreview(PostView)
 
 export default PostView

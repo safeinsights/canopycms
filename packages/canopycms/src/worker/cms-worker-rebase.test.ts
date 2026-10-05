@@ -269,6 +269,41 @@ describe('CmsWorker rebaseActiveBranches', () => {
       saveSpy.mockRestore()
     })
 
+    it.each([
+      ['a reserved-prefix name', 'canopycms-settings-other', undefined],
+      ["the worker's configured settings branch", 'site-settings', 'site-settings'],
+    ])(
+      'never rebases a settings-branch directory: %s',
+      async (_label, branchName, settingsBranch) => {
+        // Provisioned, behind, and clean: everything an ordinary branch needs to be rebased.
+        const setup = await createBranchSetup(tmpDir, branchName)
+        await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+        await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+        await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+        const head = await setup.branchGit.revparse(['HEAD'])
+        const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+        const consoleSpy = mockConsole()
+
+        try {
+          const worker = new CmsWorker({
+            workspacePath: tmpDir,
+            githubOwner: 'test-owner',
+            githubRepo: 'test-repo',
+            githubToken: 'fake-token',
+            settingsBranch,
+          })
+          await runRebase(worker)
+
+          expect(await setup.branchGit.revparse(['HEAD'])).toBe(head)
+          expect(saveSpy).not.toHaveBeenCalled()
+          expect(consoleSpy).toHaveWarned(/settings branch, never a content workspace/)
+        } finally {
+          consoleSpy.restore()
+          saveSpy.mockRestore()
+        }
+      },
+    )
+
     it('logs when skipping a directory without a .git subdirectory', async () => {
       const notABranchDir = path.join(tmpDir, 'content-branches', 'not-a-branch')
       await fs.mkdir(notABranchDir, { recursive: true })

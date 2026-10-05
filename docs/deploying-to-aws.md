@@ -37,7 +37,6 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
   persistence under the real `remote.git` name. Closing the window entirely needs a
   credential helper instead of a token-bearing clone URL
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
-- **Preview works** — The CMS Lambda renders the same React components as the public site, so the editor's preview iframe shows accurate previews
 
 ## Prerequisites
 
@@ -139,23 +138,9 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 ### Preview Support
 
-Add `useCanopyPreview` to your page components so the editor can show live previews:
+A static export cannot render the branch being edited, so preview through the CMS-only route in [README Live Preview](../README.md#live-preview).
 
-```tsx
-'use client'
-import { useCanopyPreview } from 'canopycms/client'
-
-export function PageView({ data }: { data: PageContent }) {
-  const { data: liveData } = useCanopyPreview<PageContent>({
-    initialData: data,
-  })
-  return (
-    <article>
-      <h1>{liveData.title}</h1>
-    </article>
-  )
-}
-```
+On a hostname shared with the public site, `CanopyCmsService.attachTo` routes the editor to the CMS ([below](#serving-the-editor-from-a-distribution-you-already-own)); it does not route `/preview/*` yet, so add that behavior yourself, and serve it with `Content-Security-Policy: frame-ancestors 'self'`, not `X-Frame-Options: DENY`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 
@@ -855,7 +840,7 @@ The env var deliberately wins over config, and if both are set and disagree the 
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 
@@ -1150,7 +1135,7 @@ works.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
-**Preview not rendering**: Make sure your page components use `useCanopyPreview` and the CMS Lambda has the same React components as the public site (same app, two builds).
+**Preview not rendering**: `editor.previewPrefix` must name the preview route's folder, and an entry type missing from `views` is a 404. A pane the browser will not frame lacks `frame-ancestors`.
 
 **Stranded edits on the base branch** (editor saves made directly on `main` before
 base-branch protection existed, or via any future bypass): the base clone on EFS has

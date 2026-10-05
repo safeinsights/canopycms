@@ -71,6 +71,22 @@ distribution has custom error responses.
 **Now deletable.** Hand-wired `/edit*`, API and asset-prefix behaviors, the origin, OAC and `x-forwarded-host`
 function made for them, and any response-headers policy added only to stop framing.
 
+### Static-export sites can preview a branch through `createPreviewPage`
+
+**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the editor's `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`.
+
+**To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
+
+**Now deletable.** A hand-built branch-preview route.
+
+### Preview URLs take one prefix and follow `trailingSlash` — **breaking (env): `CANOPY_API_TRAILING_SLASH` is renamed `CANOPY_TRAILING_SLASH`**
+
+**What changed.** `editor.previewPrefix` (a path or `https://` URL) goes in front of every preview URL, site-relative `previewBase` routes included, so a static-export site can preview through routes its CMS build renders. Preview URLs follow `trailingSlash`, so they draw no 308, and the preview bridge matches a page with or without a trailing slash.
+
+**To adopt.** Set `editor: { previewPrefix: '/preview' }` once that route exists, and drop the prefix from any `previewBase` value that spells it. Rename a `CANOPY_API_TRAILING_SLASH` you set yourself.
+
+**Now deletable.** `previewBase` keys that only added a shared prefix.
+
 ### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**
 
 **What changed.** Resolution applied no path rule to the referenced entry, so a reader of A saw
@@ -140,6 +156,17 @@ that re-submits replace, keeping human text.
 ([reference](../README.md#definecanopyconfig-options)).
 
 **Now deletable.** Nothing.
+
+### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+
+**What changed.** `read()`/`readByUrlPath()` created a workspace for any `branch`, one per
+`?branch=` value. Now a branch other than the active one must exist and be readable by the user,
+or it reads as not found. `createContentReader` defaults `allowCreateBranch` to `false`.
+
+**To adopt.** Nothing via `getCanopy()`. A script creating a branch through `createContentReader`
+passes `allowCreateBranch: true`, never with a request's branch.
+
+**Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
 
 ---
 

@@ -18,10 +18,10 @@ import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { initTestRepo } from './test-utils'
+import { initTestRepo, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { GitManager } from './git-manager'
+import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import type { CanopyConfig } from './config'
 
 const baseConfig: Partial<CanopyConfig> = {
@@ -477,5 +477,423 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
     ).rejects.toThrow(/refusing to initialize settings workspace/)
     const status = await simpleGit({ baseDir: settingsRoot }).status()
     expect(status.current).toBe('canopycms-settings-memo')
+  }, 60_000)
+})
+
+describe('SettingsWorkspaceManager provisioning from the remote settings branch', () => {
+  const BRANCH = 'canopycms-settings-reprovision'
+  const GROUPS = JSON.stringify({ version: 1, groups: [{ id: 'Insiders', members: ['u1'] }] })
+  let tmpRoot: string
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await fs.rm(tmpRoot, { recursive: true, force: true })
+  })
+
+  async function setup() {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-reprovision-'))
+    const remoteUrl = await seedBareRemote(tmpRoot)
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    const options = { settingsRoot, branchName: BRANCH, mode: 'dev' as const, remoteUrl }
+    // Fresh module graphs stand in for cold starts: each has its own ensure memo.
+    const coldStart = async () => {
+      vi.resetModules()
+      const mod = await import('./settings-workspace')
+      return new mod.SettingsWorkspaceManager({
+        ...baseConfig,
+        defaultBaseBranch: 'main',
+      } as CanopyConfig)
+    }
+    return { remoteUrl, settingsRoot, options, coldStart }
+  }
+
+  /** Commit groups.json on the settings branch and push it, as a settings save does. */
+  async function saveGroups(settingsRoot: string): Promise<void> {
+    const git = simpleGit({ baseDir: settingsRoot })
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), GROUPS)
+    await git.add('groups.json')
+    await git.commit('save groups')
+    await git.push('origin', BRANCH)
+  }
+
+  /**
+   * A second settings workspace provisioned before the remote had a settings branch. Its empty
+   * initial commit is made distinct: two hosts with one bot identity provisioning in the same
+   * second hash identical commits, which share history and so are not stuck at all.
+   */
+  async function provisionStuckWorkspace(
+    stuckRoot: string,
+    options: { mode: 'dev'; remoteUrl: string; branchName: string },
+  ): Promise<void> {
+    await GitManager.initializeWorkspace({
+      ...options,
+      workspacePath: stuckRoot,
+      baseBranch: 'main',
+      branchType: 'orphan',
+      gitBotAuthorName: 'Other Bot',
+      gitBotAuthorEmail: 'other@canopycms.test',
+    })
+    await simpleGit({ baseDir: stuckRoot }).raw([
+      'commit',
+      '--amend',
+      '--allow-empty',
+      '--no-edit',
+      '--author=Stuck Host <stuck@canopycms.test>',
+      '--date=2001-01-01T00:00:00Z',
+    ])
+  }
+
+  async function log(settingsRoot: string): Promise<string[]> {
+    const out = await simpleGit({ baseDir: settingsRoot }).raw([
+      'log',
+      '--format=%s',
+      `refs/heads/${BRANCH}`,
+    ])
+    return out.trim().split('\n')
+  }
+
+  it('checks out the remote settings branch, so settings survive and the next save pulls and pushes', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+    expect(await log(settingsRoot)).toEqual(['save groups', 'Initialize settings branch'])
+
+    const manager = new GitManager({ repoPath: settingsRoot, skipIndexMarker: true })
+    await manager.pullCurrentBranch()
+    await fs.writeFile(path.join(settingsRoot, 'permissions.json'), '{}')
+    await manager.add('permissions.json')
+    await manager.commit('save permissions')
+    await manager.push()
+    expect(await log(settingsRoot)).toHaveLength(3)
+  }, 60_000)
+
+  it('checks out the remote settings branch, not a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await openBareRepo(remoteUrl).raw(['tag', BRANCH, 'main'])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await log(settingsRoot)).toEqual(['save groups', 'Initialize settings branch'])
+  }, 60_000)
+
+  it('starts a healthy workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await simpleGit({ baseDir: settingsRoot }).raw(['tag', BRANCH, 'main'])
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('saves onto the settings branch when the workspace holds a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    const remote = openBareRepo(remoteUrl)
+    // The clone imports the remote's tag; the remote then drops it.
+    await remote.raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await remote.raw(['tag', '-d', BRANCH])
+
+    const manager = new GitManager({ repoPath: settingsRoot, skipIndexMarker: true })
+    await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), GROUPS)
+    await manager.add('groups.json')
+    await manager.commit('save groups')
+    await manager.push()
+
+    const heads = await remote.raw(['for-each-ref', '--format=%(refname)', 'refs/heads'])
+    expect(heads.split('\n').filter(Boolean).sort()).toEqual([
+      `refs/heads/${BRANCH}`,
+      'refs/heads/main',
+    ])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+    await (await coldStart()).ensureGitWorkspace(options)
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('creates an empty orphan when the remote has no settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+    expect(await log(settingsRoot)).toEqual(['Initialize settings branch'])
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
+  }, 60_000)
+
+  it('fails closed, creating no orphan, when it cannot read the remote', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    // A clone interrupted before its settings branch existed, whose remote is now unreadable.
+    await simpleGit().clone(remoteUrl, settingsRoot, ['--branch', 'main', '--single-branch'])
+    await fs.rename(remoteUrl, `${remoteUrl}.gone`)
+
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
+      /could not read settings branch/,
+    )
+
+    const git = simpleGit({ baseDir: settingsRoot })
+    expect((await git.status()).current).toBe('main')
+    expect((await git.branchLocal()).all).not.toContain(BRANCH)
+  }, 60_000)
+
+  it('repairs a workspace stuck on an empty orphan while the remote holds the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    // Both provision before either saves; the first save then leaves the other
+    // holding only an unrelated "Initialize settings branch" commit.
+    await provisionStuckWorkspace(stuckRoot, options)
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+
+    await (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+    expect(await log(stuckRoot)).toEqual(['save groups', 'Initialize settings branch'])
+    await new GitManager({ repoPath: stuckRoot, skipIndexMarker: true }).pullCurrentBranch()
+  }, 60_000)
+
+  it('repairs a stuck workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await provisionStuckWorkspace(stuckRoot, options)
+    await simpleGit({ baseDir: stuckRoot }).raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+
+    await (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('refuses to repair a stuck workspace holding uncommitted settings, and leaves it untouched', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await provisionStuckWorkspace(stuckRoot, options)
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await fs.writeFile(path.join(stuckRoot, 'permissions.json'), '{"unsaved":true}')
+
+    await expect(
+      (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot }),
+    ).rejects.toThrow(/permissions\.json/)
+
+    expect(await fs.readFile(path.join(stuckRoot, 'permissions.json'), 'utf-8')).toBe(
+      '{"unsaved":true}',
+    )
+    expect(await log(stuckRoot)).toEqual(['Initialize settings branch'])
+  }, 60_000)
+
+  it('refuses to repair a stuck workspace holding a commit of its own, and keeps that commit', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await provisionStuckWorkspace(stuckRoot, options)
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    const stuck = simpleGit({ baseDir: stuckRoot })
+    await fs.writeFile(path.join(stuckRoot, 'permissions.json'), '{"admin":"after the wipe"}')
+    await stuck.add('permissions.json')
+    await stuck.commit('save permissions after the wipe')
+
+    await expect(
+      (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot }),
+    ).rejects.toThrow(/shares no history.*commits beyond its empty initial commit/)
+
+    expect(await log(stuckRoot)).toEqual([
+      'save permissions after the wipe',
+      'Initialize settings branch',
+    ])
+  }, 60_000)
+
+  /**
+   * Push content history under the settings name, as a submit of a content workspace would.
+   * `pruned` leaves only a settings file in its tree, so only its history gives it away.
+   */
+  async function pushContentHistoryAsSettings(
+    remoteUrl: string,
+    { pruned = false } = {},
+  ): Promise<void> {
+    const content = path.join(tmpRoot, 'content-clone')
+    await simpleGit().clone(remoteUrl, content, ['--branch', 'main'])
+    const git = await initTestRepo(content)
+    await git.checkoutLocalBranch(BRANCH)
+    if (pruned) {
+      await git.rm('readme.md')
+      await fs.writeFile(path.join(content, 'groups.json'), '{}')
+      await git.add('groups.json')
+    } else {
+      await fs.writeFile(path.join(content, 'readme.md'), '# edited as content')
+      await git.add('readme.md')
+    }
+    await git.commit(`Submit ${BRANCH}`)
+    await git.push('origin', BRANCH)
+  }
+
+  /** A cold start whose base branch is `base` rather than `main`. */
+  async function coldStartOnBase(base: string) {
+    vi.resetModules()
+    const mod = await import('./settings-workspace')
+    return new mod.SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: base,
+    } as CanopyConfig)
+  }
+
+  it('refuses to check out a remote settings branch that carries content history', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await pushContentHistoryAsSettings(remoteUrl)
+
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
+      /holds content, not settings \(it holds readme\.md\)/,
+    )
+
+    const git = simpleGit({ baseDir: settingsRoot })
+    expect((await git.status()).current).toBe('main')
+    expect((await git.branchLocal()).all).not.toContain(BRANCH)
+  }, 60_000)
+
+  it('refuses to repair an empty orphan onto a remote settings branch that carries content history', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    // Provisioned, never saved: the workspace sits on its empty initial commit.
+    await (await coldStart()).ensureGitWorkspace(options)
+    await pushContentHistoryAsSettings(remoteUrl)
+
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
+      /holds content, not settings/,
+    )
+
+    expect(await log(settingsRoot)).toEqual(['Initialize settings branch'])
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
+  }, 60_000)
+
+  it('refuses content history even when the current base has a root of its own', async () => {
+    const { remoteUrl, settingsRoot, options } = await setup()
+    // A base with its own parentless root, as dev seeds a sourceRoot snapshot.
+    const snapshot = path.join(tmpRoot, 'snapshot')
+    await fs.mkdir(snapshot)
+    const snapGit = await initTestRepo(snapshot)
+    await snapGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/trunk'])
+    await fs.writeFile(path.join(snapshot, 'readme.md'), '# snapshot')
+    await snapGit.add('readme.md')
+    await snapGit.commit('snapshot')
+    await snapGit.push(remoteUrl, 'trunk')
+    await pushContentHistoryAsSettings(remoteUrl)
+
+    await expect((await coldStartOnBase('trunk')).ensureGitWorkspace(options)).rejects.toThrow(
+      /holds content, not settings \(it holds readme\.md\)/,
+    )
+    expect((await simpleGit({ baseDir: settingsRoot }).branchLocal()).all).not.toContain(BRANCH)
+  }, 60_000)
+
+  it('refuses a pruned content branch by its history, reading a base the clone lacks from the remote', async () => {
+    const { remoteUrl, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+    await pushContentHistoryAsSettings(remoteUrl, { pruned: true })
+    await simpleGit({ baseDir: path.join(tmpRoot, 'seed') }).push(
+      remoteUrl,
+      'main:refs/heads/trunk',
+    )
+
+    await expect(
+      (await coldStartOnBase('trunk')).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot }),
+    ).rejects.toThrow(
+      /holds content, not settings \(it shares history with the base branch 'trunk'\)/,
+    )
+    expect(await log(stuckRoot)).toEqual(['Initialize settings branch'])
+  }, 60_000)
+
+  it('reads the base from the remote when the clone was made at an earlier base, and still repairs', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await provisionStuckWorkspace(stuckRoot, options)
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    // The deployment's base changes after the stuck clone was made at `main`.
+    await simpleGit({ baseDir: path.join(tmpRoot, 'seed') }).push(
+      remoteUrl,
+      'main:refs/heads/trunk',
+    )
+
+    await (
+      await coldStartOnBase('trunk')
+    ).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('leaves a branch related to the remote one for the next settings pull', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    // The remote moves ahead, as when the worker fast-forwards it from GitHub.
+    const other = path.join(tmpRoot, 'other')
+    await simpleGit().clone(remoteUrl, other, ['--branch', BRANCH])
+    await initTestRepo(other)
+    await fs.writeFile(path.join(other, 'permissions.json'), '{}')
+    await simpleGit({ baseDir: other }).add('permissions.json')
+    await simpleGit({ baseDir: other }).commit('remote save')
+    await simpleGit({ baseDir: other }).push('origin', BRANCH)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await log(settingsRoot)).toEqual(['save groups', 'Initialize settings branch'])
+  }, 60_000)
+
+  it('serves a populated settings branch while the remote is unreadable', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await fs.rename(remoteUrl, `${remoteUrl}.gone`)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('answers 503-shaped RemoteNotReadyError in prod while remote.git is missing', async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-reprovision-'))
+    const workspaceRoot = path.join(tmpRoot, 'workspace')
+    const remotePath = path.join(workspaceRoot, 'remote.git')
+    await fs.mkdir(workspaceRoot)
+    await fs.rename(await seedBareRemote(tmpRoot), remotePath)
+    const originalRoot = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+      const settingsRoot = path.join(workspaceRoot, 'settings')
+      const options = { settingsRoot, branchName: BRANCH, mode: 'prod' as const }
+      const coldStart = async () => {
+        vi.resetModules()
+        const mod = await import('./settings-workspace')
+        const git = await import('./git-manager')
+        return { manager: new mod.SettingsWorkspaceManager(baseConfig as CanopyConfig), git }
+      }
+      await (await coldStart()).manager.ensureGitWorkspace(options)
+      // The operator deletes remote.git so the worker re-clones it from GitHub.
+      await fs.rename(remotePath, `${remotePath}.old`)
+
+      const { manager, git } = await coldStart()
+      const err = await manager.ensureGitWorkspace(options).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(git.RemoteNotReadyError)
+      expect(await log(settingsRoot)).toEqual(['Initialize settings branch'])
+    } finally {
+      if (originalRoot === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      else process.env.CANOPYCMS_WORKSPACE_ROOT = originalRoot
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+      vi.resetModules()
+    }
   }, 60_000)
 })

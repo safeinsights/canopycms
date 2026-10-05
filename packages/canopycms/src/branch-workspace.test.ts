@@ -90,6 +90,26 @@ describe('BranchWorkspaceManager', () => {
     expect(context.branchRoot).toContain('.canopy-dev/content-branches/feature-foo')
   })
 
+  it.each([
+    ['the reserved prefix', 'canopycms-settings-other'],
+    ['the configured settings branch', 'site-settings'],
+  ])('refuses to provision a content workspace named for %s', async (_label, branchName) => {
+    const root = await tmpDir()
+    const manager = new BranchWorkspaceManager(
+      defineCanopyTestConfig({ settingsBranch: 'site-settings', schema: testSchema }),
+    )
+
+    await expect(
+      manager.openOrCreateBranch({
+        branchName,
+        mode: 'dev',
+        basePathOverride: root,
+        createdBy: 'user-1',
+      }),
+    ).rejects.toThrow('Settings branches are not content branches')
+    expect(await fs.readdir(root)).toEqual([])
+  })
+
   it('creates metadata and registry entry when opening a branch in multi-branch mode', async () => {
     const root = await tmpDir()
     const remotePath = path.join(root, 'remote.git')

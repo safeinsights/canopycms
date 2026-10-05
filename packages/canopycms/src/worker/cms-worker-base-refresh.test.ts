@@ -22,6 +22,7 @@ import { readContentIndexGeneration } from '../content-index-generation'
 import type { ContentId } from '../paths/types'
 import { initTestRepo, mockConsole } from '../test-utils'
 import type { BaseRefreshReport } from '../types'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { CmsWorker } from './cms-worker'
 
@@ -341,6 +342,29 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
         branchProvisioningLockName('main'),
       )
       await release()
+    })
+  })
+
+  // [SYNC-C1] In dev the base branch is writable, so its fast-forward must not
+  // race an editor save into the same tree.
+  describe('content-write lock', () => {
+    it('skips and reports skipped-locked while a content write holds the lock, then refreshes', async () => {
+      const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+      await pushToRemote({ 'remote-update.txt': 'from origin' })
+      const release = await tryAcquireContentWriteLock(basePath)
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir)).finally(release)
+      expect(consoleSpy).toHaveLogged(/content write in progress/)
+
+      expect(report).toEqual({ outcome: 'skipped-locked' })
+      await expect(fs.stat(path.join(basePath, 'remote-update.txt'))).rejects.toThrow()
+
+      expect((await refreshBase(makeWorker(tmpDir))).outcome).toBe('refreshed')
+      consoleSpy.restore()
+      // Released afterwards.
+      const again = await tryAcquireContentWriteLock(basePath)
+      await again()
     })
   })
 

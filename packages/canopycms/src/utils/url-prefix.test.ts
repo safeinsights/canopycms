@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   isAbsoluteUrl,
   isUnprefixablePath,
   joinUrlPrefix,
+  matchTrailingSlash,
+  readTrailingSlashEnv,
   sanitizeUnprefixedPath,
   stripTrailingSlashes,
   toSameOriginPath,
@@ -136,5 +138,55 @@ describe('stripTrailingSlashes', () => {
     expect(stripTrailingSlashes('/a/b')).toBe('/a/b')
     expect(stripTrailingSlashes('///')).toBe('')
     expect(stripTrailingSlashes('')).toBe('')
+  })
+})
+
+describe('matchTrailingSlash', () => {
+  it.each([
+    ['/docs/a', '/docs/a/'],
+    ['/docs/a/', '/docs/a/'],
+    ['/', '/'],
+    ['/docs/a?branch=b', '/docs/a/?branch=b'],
+    ['/feed.xml?branch=b', '/feed.xml?branch=b'],
+    ['https://cms.example.com/p/a?branch=b', 'https://cms.example.com/p/a/?branch=b'],
+    ['https://cms.example.com?branch=b', 'https://cms.example.com/?branch=b'],
+  ])('slashes %s as %s when on', (input, expected) => {
+    expect(matchTrailingSlash(input, true)).toBe(expected)
+  })
+
+  it.each([
+    ['/docs/a/', '/docs/a'],
+    ['/docs/a', '/docs/a'],
+    ['/', '/'],
+    ['/base/?branch=b', '/base?branch=b'],
+    ['/?branch=b', '/?branch=b'],
+    ['/docs/a/#top', '/docs/a#top'],
+    ['https://cms.example.com/p/a/?branch=b', 'https://cms.example.com/p/a?branch=b'],
+  ])('unslashes %s as %s when off', (input, expected) => {
+    expect(matchTrailingSlash(input, false)).toBe(expected)
+  })
+})
+
+describe('readTrailingSlashEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('is true only for the exact value withCanopy sets', () => {
+    vi.stubEnv('CANOPY_TRAILING_SLASH', 'true')
+    expect(readTrailingSlashEnv()).toBe(true)
+    vi.stubEnv('CANOPY_TRAILING_SLASH', '1')
+    expect(readTrailingSlashEnv()).toBe(false)
+    vi.stubEnv('CANOPY_TRAILING_SLASH', undefined)
+    expect(readTrailingSlashEnv()).toBe(false)
+  })
+
+  it('is false, not a throw, where there is no process global', () => {
+    vi.stubGlobal('process', undefined)
+    try {
+      expect(readTrailingSlashEnv()).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

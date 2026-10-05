@@ -108,6 +108,15 @@ export const getCanopyForBuild = async () => {
   return context.getCanopyForBuild()
 }
 
+// The page for the editor's preview route, app/preview/[[...path]]/page.server.tsx: it renders an
+// entry from the `?branch=` the editor names, so a site whose public pages are a static export can
+// still preview a branch. See canopycms.config.ts's `editor.previewPrefix`.
+export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
+  (options) => async (props) => {
+    const context = await canopyContextPromise
+    return context.createPreviewPage(options)(props)
+  }
+
 // Export for API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise

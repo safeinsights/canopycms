@@ -83,7 +83,7 @@ Content, git and branch files have their own sections below; the rest:
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
 - `resource-generation.ts` — the on-disk generation-marker primitive behind durable cache invalidation
 - `dev-content-watcher.ts` — dev-mode working-tree vs branch-clone divergence warning
-- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync
+- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
 - `url-exclusivity-fixtures.ts` — vitest-free enumerate-then-probe check for the one-URL invariant
 
 ### Static-Export Helpers
@@ -136,7 +136,6 @@ Support files:
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
-- `request-url.ts` — `readApiTrailingSlashEnv()`, build-time default for `trailingSlash`
 
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
@@ -297,12 +296,13 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 
 **Location**: `packages/canopycms-next/src/`
 
-- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_API_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
+- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
 - `sharp-tracing.ts` — locates sharp's libvips directories the way a bundler would, for Next's file tracing
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
-- `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `guardBuildContext`
+- `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `createPreviewPage`, `guardBuildContext`
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
-- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
+- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` wraps a view to render `useCanopyPreview`'s live draft
+- `preview-page.tsx` — `createPreviewPageFor`, the page behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]`, else `notFound()`; imports only types from `client.tsx`, which `server-entry-client-boundary.test.ts` holds
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
@@ -448,7 +448,7 @@ Every key, its default and its adopter-facing meaning are in
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
 - `resolver.ts` — `resolveSchema`, the high-level resolution API
-- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`
+- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for callers outside `SchemaOps`
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
 - `index.ts` — module exports
@@ -478,6 +478,7 @@ Top-level components and helpers:
 - `preview-bridge.tsx` — editor-to-preview `postMessage` bridge; see [Preview Bridge](#preview-bridge)
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
+- `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
@@ -589,9 +590,11 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 **Location**: `packages/canopycms/src/editor/editor-utils.ts`
 
-`buildPreviewSrc(entry, context)` wraps the module-local `buildRawPreviewSrc` (a `previewSrc`
-override, then `previewBaseByCollection`, then collection path plus encoded slug, plus `?branch=`)
-and applies `joinUrlPrefix(context.basePath, …)` once; why is in
+`buildPreviewSrc(entry, context)` takes the module-local `buildPreviewRoute` (`previewBaseByCollection`,
+else collection path plus encoded slug), joins `previewPrefix` then `basePath`, applies
+`matchTrailingSlash`, and appends `?branch=`. An absolute route gets only `?branch=`, and a
+`previewSrc` override only `basePath`. The
+bridge compares through `editor/preview-path.ts`'s `isSamePreviewPath`; why is in
 [ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity).
 
 ### Preview Bridge
@@ -699,7 +702,7 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX` and `RESERVED_ROUTE_BRANCH_NAMES`
+- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
@@ -786,11 +789,11 @@ preserved, and code blocks are skipped. See
 - `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
-- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes` and `withTrailingSlash`
+- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (the `CANOPY_TRAILING_SLASH` build-time flag)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
-- `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in

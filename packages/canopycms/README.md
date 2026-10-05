@@ -104,6 +104,7 @@ export default defineCanopyConfig({
       colors: { brand: '#4f46e5' },
     },
     // previewBase: { 'content/posts': '/blog' }, // optional overrides
+    // previewPrefix: '/preview', // optional, in front of every preview URL
   },
   // For prod mode, defaultRemoteUrl is required.
   // For dev, it's optional - if omitted, uses auto-initialized local remote at .canopy-dev/remote.git
@@ -323,7 +324,7 @@ name) works, but leaves the entry's real `urlPath` as
 URL-derived surface then has to be told about one at a time. The example app in this repo used to
 do that and no longer does.
 
-Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
+Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to the active branch: `defaultActiveBranch`, or when that is unset, git HEAD in `dev` and your base branch in `prod`. Any other branch must already exist and be readable by the current user, or it reads as not found. Both enforce the same branch/path access rules as the API handlers.
 
 **Index entries and URL resolution**
 
@@ -401,7 +402,7 @@ _TODO_ show real examples of what to do
 
 ### Preview branch awareness
 
-- When building preview URLs, include the current branch as a query param (e.g., `/?branch=feature-foo` or `/posts/hello?branch=feature-foo`) so SSR preview pages read from the same branch workspace the editor is editing. The `Editor` component appends the branch param automatically to `previewBaseByCollection`; your page loaders should read `searchParams.branch` and pass it into `createContentReader`.
+- When building preview URLs, include the current branch as a query param (e.g., `/?branch=feature-foo` or `/posts/hello?branch=feature-foo`) so SSR preview pages read from the same branch workspace the editor is editing. The `Editor` component appends the branch param automatically to `previewBaseByCollection`; your page loaders should read `searchParams.branch` and pass it as the `branch` option to `getCanopy()`'s `read`/`readByUrlPath`.
 - For public static builds, omit/ignore the branch param; this pattern is only for the editor/preview environment.
 - Likewise, include `branch` in your editor route (e.g., `/edit?branch=feature-foo`) and have your editor page pass it to `<Editor>` so reloads/links preserve the selected branch. The `Editor` will also reflect branch switches back into the query string.
 

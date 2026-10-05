@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import type { CanopyConfig } from './config'
-import { ensureBranchRoot } from './paths'
+import { BranchPathError, ensureBranchRoot, isSettingsBranchName } from './paths'
 import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
 import { readsFromCheckout } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
@@ -112,6 +112,13 @@ export class BranchWorkspaceManager {
   async openOrCreateBranch(options: OpenBranchOptions): Promise<BranchContext> {
     const { branchName, mode, basePathOverride, title, description, access, createdBy, remoteUrl } =
       options
+    // resolveBranchPath refuses the reserved prefix; this also refuses an adopter's
+    // configured settings branch name, which only the config knows.
+    if (
+      isSettingsBranchName(branchName, operatingStrategy(mode).getSettingsBranchName(this.config))
+    ) {
+      throw new BranchPathError('Settings branches are not content branches')
+    }
     const {
       branchRoot,
       baseRoot,

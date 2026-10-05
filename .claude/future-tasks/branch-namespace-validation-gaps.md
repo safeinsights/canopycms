@@ -3,8 +3,8 @@
 ## Priority: P3 [BOTH]
 
 The settings-branch half (finding B2: the settings branch reachable through the generic `/:branch`
-routes) is part of
-[settings-branch-as-content-workspace.md](settings-branch-as-content-workspace.md).
+routes) is resolved in
+[settings-branch-as-content-workspace.md](resolved/settings-branch-as-content-workspace.md).
 
 `parseBranchName` (`paths/validation.ts`, line 179) rejects a *raw* leading `-`, but permits `!`,
 `$`, `%`, `&`, backtick and all non-ASCII. `sanitizeBranchName` (`paths/branch-name.ts`, line 15) maps

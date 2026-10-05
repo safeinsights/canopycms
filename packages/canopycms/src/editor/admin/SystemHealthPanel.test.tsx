@@ -166,6 +166,32 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: settings workspace', () => {
+    it('alerts with the reason when the settings workspace cannot be provisioned', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatus({ settingsWorkspaceError: 'settings branch shares no history' })),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(
+          screen.getByText('Settings workspace unavailable: groups and path rules are not loading'),
+        ).toBeTruthy(),
+      )
+      expect(screen.getByText('settings branch shares no history')).toBeTruthy()
+    })
+
+    it('shows no settings alert while the settings workspace is healthy', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByText(/Settings workspace unavailable/)).toBeNull()
+    })
+  })
+
   describe('Overview tab: base branch refresh', () => {
     it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
       mockClient.admin.status.mockResolvedValueOnce(

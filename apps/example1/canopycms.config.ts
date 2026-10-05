@@ -12,6 +12,8 @@ export default defineCanopyConfig({
   gitBotAuthorName: 'CanopyCMS Example Bot',
   gitBotAuthorEmail: 'canopycms@example.com',
   editor: {
+    // The editor previews through app/preview/[[...path]], which renders a branch on request.
+    previewPrefix: '/preview',
     title: 'CanopyCMS Editor',
     subtitle: 'Edit entries with live preview',
     theme: {
