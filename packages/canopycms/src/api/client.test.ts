@@ -449,8 +449,8 @@ describe('CanopyApiClient', () => {
       ).toBe('/api/canopycms/release-1.2/entries/?q=a.json')
     })
 
-    it('defaults to the build-time CANOPY_API_TRAILING_SLASH value', async () => {
-      vi.stubEnv('CANOPY_API_TRAILING_SLASH', 'true')
+    it('defaults to the build-time CANOPY_TRAILING_SLASH value', async () => {
+      vi.stubEnv('CANOPY_TRAILING_SLASH', 'true')
       expect(await requestedUrl({}, (c) => c.branches.list())).toBe('/api/canopycms/branches/')
       expect(await requestedUrl({ trailingSlash: false }, (c) => c.branches.list())).toBe(
         '/api/canopycms/branches',
@@ -458,7 +458,7 @@ describe('CanopyApiClient', () => {
     })
 
     it('is off when neither the option nor the build-time value is set', async () => {
-      vi.stubEnv('CANOPY_API_TRAILING_SLASH', undefined)
+      vi.stubEnv('CANOPY_TRAILING_SLASH', undefined)
       expect(await requestedUrl({}, (c) => c.branches.list())).toBe('/api/canopycms/branches')
       expect(await requestedUrl({}, (c) => c.entries.list({ branch: 'main', q: 'x' }))).toBe(
         '/api/canopycms/main/entries?q=x',

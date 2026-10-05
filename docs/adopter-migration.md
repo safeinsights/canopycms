@@ -51,6 +51,14 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Preview URLs take one prefix and follow `trailingSlash` — **breaking (env): `CANOPY_API_TRAILING_SLASH` is renamed `CANOPY_TRAILING_SLASH`**
+
+**What changed.** `editor.previewPrefix` (a path or `https://` URL) goes in front of every preview URL, site-relative `previewBase` routes included, so a static-export site can preview through routes its CMS build renders. Preview URLs follow `trailingSlash`, so they draw no 308, and the preview bridge matches a page with or without a trailing slash.
+
+**To adopt.** Set `editor: { previewPrefix: '/preview' }` once that route exists, and drop the prefix from any `previewBase` value that spells it. Rename a `CANOPY_API_TRAILING_SLASH` you set yourself.
+
+**Now deletable.** `previewBase` keys that only added a shared prefix.
+
 ### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
 **What changed.** The orphan settings branch can never get a PR, so each groups or permissions save

@@ -44,6 +44,7 @@ const baseConfig = {
     subtitle: 'Config Subtitle',
     theme: { colors: { brand: '#123456' } },
     previewBase: { 'content/posts': '/blog' },
+    previewPrefix: '/preview',
   },
 } as const
 
@@ -80,6 +81,7 @@ describe('CanopyEditor', () => {
     expect(props?.collections?.[0]?.path).toBe('content')
     expect(props?.collections?.[0]?.children?.[0]?.path).toBe('content/posts')
     expect(props?.previewBaseByCollection?.['content/posts']).toBe('/blog')
+    expect(props?.previewPrefix).toBe('/preview')
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })
 

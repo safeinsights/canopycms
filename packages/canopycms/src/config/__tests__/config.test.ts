@@ -1191,4 +1191,36 @@ describe('defineCanopyConfig().client()', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor })
     expect(client().basePath).toBeUndefined()
   })
+  it('carries editor.previewPrefix through to the client config', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor, editor: { previewPrefix: '/preview' } })
+    expect(client().editor?.previewPrefix).toBe('/preview')
+  })
+})
+
+describe('editor.previewPrefix validation', () => {
+  const withPrefix = (previewPrefix: string) =>
+    validateCanopyConfig({ ...gitAuthor, editor: { previewPrefix } })
+
+  it.each(['/preview', '/preview/', '/a/b', 'https://cms.example.com', 'http://localhost:3000/p'])(
+    'accepts %s',
+    (value) => {
+      expect(withPrefix(value).editor?.previewPrefix).toBe(value)
+    },
+  )
+
+  it.each([
+    'preview',
+    '',
+    '//cdn.example.com',
+    '/\\evil.example.com',
+    '/preview\\x',
+    'https://cms.example.com\\evil',
+    '/preview?x=1',
+    '/preview#top',
+    'https://cms.example.com?x=1',
+    'javascript:alert(1)',
+    'ftp://cms.example.com',
+  ])('rejects %s', (value) => {
+    expect(() => withPrefix(value)).toThrow(/previewPrefix/)
+  })
 })

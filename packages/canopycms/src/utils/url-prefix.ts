@@ -188,3 +188,37 @@ export function withTrailingSlash(path: string): string {
   if (lastSegment.includes('.')) return withLeading + suffix
   return `${withLeading}/${suffix}`
 }
+
+/**
+ * Give a URL's path the trailing-slash form a Next host serves, so loading it draws no 308:
+ * `withTrailingSlash`'s rule when `trailingSlash` is true, else no trailing slash on any path
+ * but the root (Next also redirects a `basePath` root with a slash to the bare `basePath`). An
+ * absolute URL's origin, and any query or fragment, are kept as they are.
+ */
+export function matchTrailingSlash(url: string, trailingSlash: boolean): string {
+  const origin = isAbsoluteUrl(url)
+    ? (/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*/i.exec(url)?.[0] ?? '')
+    : ''
+  const rest = url.slice(origin.length)
+  if (trailingSlash) return origin + withTrailingSlash(rest)
+  const splitIndex = rest.search(/[?#]/)
+  const base = splitIndex === -1 ? rest : rest.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : rest.slice(splitIndex)
+  const trimmed = stripTrailingSlashes(base)
+  return origin + (trimmed || (origin ? '' : '/')) + suffix
+}
+
+/**
+ * Whether the host is built with Next's `trailingSlash: true`. `withCanopy` sets
+ * `CANOPY_TRAILING_SLASH` in Next's `env` config, which Next substitutes for this literal member
+ * expression in server and browser bundles (`getNextConfigEnv`, `next/dist/build/define-env.js:54`).
+ * The try/catch covers a host whose bundler neither substitutes it nor shims `process` in the
+ * browser.
+ */
+export function readTrailingSlashEnv(): boolean {
+  try {
+    return process.env.CANOPY_TRAILING_SLASH === 'true'
+  } catch {
+    return false
+  }
+}

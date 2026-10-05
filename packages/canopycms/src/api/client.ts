@@ -7,9 +7,8 @@
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
-import { readApiTrailingSlashEnv } from './request-url'
 import type { ApiResponse } from './types'
-import { withTrailingSlash } from '../utils/url-prefix'
+import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
@@ -35,7 +34,7 @@ export interface ApiClientOptions {
   /**
    * End request paths with `/` (by `withTrailingSlash`'s rule), matching a Next host built with
    * `trailingSlash: true`. Defaults to the value `withCanopy` inlines at build time (see
-   * `request-url.ts`), else false.
+   * `readTrailingSlashEnv`), else false.
    */
   trailingSlash?: boolean
 
@@ -358,7 +357,7 @@ export class CanopyApiClient {
     this.baseUrl = options.baseUrl ?? '/api/canopycms'
     // An unbound fetch throws "Illegal invocation" in browsers; Node has no window.
     this.fetchFn = options.fetch ?? (typeof window !== 'undefined' ? fetch.bind(window) : fetch)
-    this.trailingSlash = options.trailingSlash ?? readApiTrailingSlashEnv()
+    this.trailingSlash = options.trailingSlash ?? readTrailingSlashEnv()
     this.onUnauthorized = options.onUnauthorized
   }
 

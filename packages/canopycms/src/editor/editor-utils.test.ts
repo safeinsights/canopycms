@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { FieldConfig, FlatSchemaItem } from '../config'
 import type { ListEntriesResponse } from '../api/entries'
@@ -178,7 +178,8 @@ describe('buildPreviewSrc', () => {
           basePath: '/preview-123',
         },
       )
-      expect(result).toBe('/preview-123/?branch=main')
+      // Next redirects `<basePath>/` to the bare `<basePath>` when `trailingSlash` is off.
+      expect(result).toBe('/preview-123?branch=main')
     })
 
     it('prefixes a previewBaseByCollection override -- the collection escape hatch still applies, basePath still wraps it', () => {
@@ -217,6 +218,204 @@ describe('buildPreviewSrc', () => {
       }
       const resolvedFromWindow = `${windowLocation.pathname}${windowLocation.search}`
       expect(src).toBe(resolvedFromWindow)
+    })
+  })
+
+  describe('with a previewPrefix', () => {
+    const prefixed = (
+      entry: Parameters<typeof buildPreviewSrc>[0],
+      context: Partial<Parameters<typeof buildPreviewSrc>[1]> = {},
+    ) =>
+      buildPreviewSrc(entry, {
+        branchName: 'main',
+        contentRoot: 'content',
+        previewPrefix: '/preview',
+        ...context,
+      })
+
+    it.each([
+      ['content/posts', 'hello', '/preview/posts/hello?branch=main'],
+      ['content/docs', 'overview', '/preview/docs/overview?branch=main'],
+      ['content/docs/api', 'intro', '/preview/docs/api/intro?branch=main'],
+      ['content/docs/guides', 'index', '/preview/docs/guides?branch=main'],
+      ['content/new-collection', 'first', '/preview/new-collection/first?branch=main'],
+    ])(
+      'prefixes every collection with no per-collection key: %s/%s',
+      (collectionPath, slug, expected) => {
+        expect(prefixed({ collectionPath, slug })).toBe(expected)
+      },
+    )
+
+    it('prefixes a root entry', () => {
+      expect(prefixed({ collectionPath: 'content', slug: 'home' })).toBe('/preview?branch=main')
+    })
+
+    it("prefixes a root entry's previewBase route", () => {
+      expect(
+        prefixed(
+          { collectionPath: 'content', slug: 'about' },
+          { previewBaseByCollection: { 'content/about': '/about-us' } },
+        ),
+      ).toBe('/preview/about-us?branch=main')
+    })
+
+    it('prefixes a site-relative previewBase route, which wins over the collection path', () => {
+      expect(
+        prefixed(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '/blog' } },
+        ),
+      ).toBe('/preview/blog/hello?branch=main')
+      expect(
+        prefixed(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { posts: '/articles' } },
+        ),
+      ).toBe('/preview/articles/hello?branch=main')
+    })
+
+    it('leaves an absolute previewBase alone, prefix and basePath included', () => {
+      expect(
+        prefixed(
+          { collectionPath: 'content/posts', slug: 'hello' },
+          {
+            previewBaseByCollection: { 'content/posts': 'https://other.example.com/blog' },
+            basePath: '/base',
+          },
+        ),
+      ).toBe('https://other.example.com/blog/hello?branch=main')
+    })
+
+    it('puts the basePath in front of the prefix', () => {
+      expect(prefixed({ collectionPath: 'content/docs', slug: 'a' }, { basePath: '/base' })).toBe(
+        '/base/preview/docs/a?branch=main',
+      )
+    })
+
+    it('uses an absolute prefix as the origin, without the basePath', () => {
+      expect(
+        prefixed(
+          { collectionPath: 'content/docs', slug: 'a' },
+          { previewPrefix: 'https://cms.example.com/preview', basePath: '/base' },
+        ),
+      ).toBe('https://cms.example.com/preview/docs/a?branch=main')
+    })
+
+    it("does not prefix an entry's own previewSrc", () => {
+      expect(prefixed({ previewSrc: '/custom', collectionPath: 'content/docs', slug: 'a' })).toBe(
+        '/custom',
+      )
+    })
+
+    it('tolerates a trailing slash on the prefix', () => {
+      expect(
+        prefixed({ collectionPath: 'content/docs', slug: 'a' }, { previewPrefix: '/preview/' }),
+      ).toBe('/preview/docs/a?branch=main')
+    })
+  })
+
+  describe('trailing slash', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    const slashed = (
+      entry: Parameters<typeof buildPreviewSrc>[0],
+      context: Partial<Parameters<typeof buildPreviewSrc>[1]> = {},
+    ) =>
+      buildPreviewSrc(entry, {
+        branchName: 'main',
+        contentRoot: 'content',
+        trailingSlash: true,
+        ...context,
+      })
+
+    it('slashes a collection entry ahead of the query', () => {
+      expect(slashed({ collectionPath: 'content/docs', slug: 'overview' })).toBe(
+        '/docs/overview/?branch=main',
+      )
+    })
+
+    it('slashes a root entry, a basePath root and a prefix root', () => {
+      expect(slashed({ collectionPath: 'content', slug: 'home' })).toBe('/?branch=main')
+      expect(slashed({ collectionPath: 'content', slug: 'home' }, { basePath: '/base' })).toBe(
+        '/base/?branch=main',
+      )
+      expect(
+        slashed({ collectionPath: 'content', slug: 'home' }, { previewPrefix: '/preview' }),
+      ).toBe('/preview/?branch=main')
+    })
+
+    it('slashes an absolute prefix', () => {
+      expect(
+        slashed(
+          { collectionPath: 'content/docs', slug: 'a' },
+          { previewPrefix: 'https://cms.example.com/preview' },
+        ),
+      ).toBe('https://cms.example.com/preview/docs/a/?branch=main')
+    })
+
+    it('leaves a file-like last segment unslashed, as Next does', () => {
+      expect(slashed({ collectionPath: 'content/docs', slug: 'v1.2' })).toBe(
+        '/docs/v1.2?branch=main',
+      )
+    })
+
+    it('keeps a previewBase query and appends the slug and branch around it', () => {
+      expect(
+        slashed(
+          { collectionPath: 'content/posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '/blog?lang=en' } },
+        ),
+      ).toBe('/blog/hello/?lang=en&branch=main')
+      expect(
+        buildPreviewSrc(
+          { collectionPath: 'content/posts', slug: 'hello' },
+          {
+            branchName: 'main',
+            previewBaseByCollection: { 'content/posts': '/blog/?lang=en' },
+            trailingSlash: false,
+          },
+        ),
+      ).toBe('/blog/hello?lang=en&branch=main')
+    })
+
+    it('puts the branch ahead of a previewBase fragment', () => {
+      expect(
+        slashed(
+          { collectionPath: 'content/posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '/blog#top' } },
+        ),
+      ).toBe('/blog/hello/?branch=main#top')
+    })
+
+    it("does not touch an entry's own previewSrc", () => {
+      expect(slashed({ previewSrc: '/custom' })).toBe('/custom')
+    })
+
+    it('drops a trailing slash when off', () => {
+      expect(
+        buildPreviewSrc(
+          { collectionPath: 'content', slug: 'home' },
+          {
+            branchName: 'main',
+            contentRoot: 'content',
+            previewPrefix: '/preview/',
+            trailingSlash: false,
+          },
+        ),
+      ).toBe('/preview?branch=main')
+    })
+
+    it('defaults to the build-time CANOPY_TRAILING_SLASH value', () => {
+      const entry = { collectionPath: 'content/docs', slug: 'overview' }
+      vi.stubEnv('CANOPY_TRAILING_SLASH', 'true')
+      expect(buildPreviewSrc(entry, { branchName: 'main' })).toBe('/docs/overview/?branch=main')
+      expect(buildPreviewSrc(entry, { branchName: 'main', trailingSlash: false })).toBe(
+        '/docs/overview?branch=main',
+      )
+      vi.stubEnv('CANOPY_TRAILING_SLASH', undefined)
+      expect(buildPreviewSrc(entry, { branchName: 'main' })).toBe('/docs/overview?branch=main')
     })
   })
 })

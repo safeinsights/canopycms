@@ -311,8 +311,21 @@ export interface CanopyEditorConfig {
    * on top of whatever this yields (see `CanopyConfig.basePath`), so including it here would
    * prefix it twice. An absolute value (`https://…`) is passed through untouched instead, which
    * is the escape hatch for previewing against a different origin entirely.
+   *
+   * A site-relative value is a route on the host site, so `previewPrefix` is applied to it too.
    */
   previewBase?: Record<string, string>
+  /**
+   * Where the host mounts the pages the preview pane loads, put in front of every entry's preview
+   * URL (`'/preview'` makes `/blog/hello` load `/preview/blog/hello`). Set it when the site's
+   * public pages are a static export, which cannot render a requested branch, so the preview
+   * must load a route the CMS server renders.
+   *
+   * A path starting with `/`, without the deployment `basePath` (applied on top, as for
+   * `previewBase`), or an absolute `http(s)://` URL, which skips the `basePath`. An absolute
+   * `previewBase` value skips this prefix.
+   */
+  previewPrefix?: string
   onAccountClick?: () => void
   onLogoutClick?: () => void
   AccountComponent?: React.ComponentType

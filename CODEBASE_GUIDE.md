@@ -136,7 +136,6 @@ Support files:
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
 - `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
-- `request-url.ts` — `readApiTrailingSlashEnv()`, build-time default for `trailingSlash`
 
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
@@ -296,7 +295,7 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 
 **Location**: `packages/canopycms-next/src/`
 
-- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_API_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
+- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
 - `sharp-tracing.ts` — locates sharp's libvips directories the way a bundler would, for Next's file tracing
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
 - `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `guardBuildContext`
@@ -477,6 +476,7 @@ Top-level components and helpers:
 - `preview-bridge.tsx` — editor-to-preview `postMessage` bridge; see [Preview Bridge](#preview-bridge)
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
+- `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
@@ -588,9 +588,10 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 **Location**: `packages/canopycms/src/editor/editor-utils.ts`
 
-`buildPreviewSrc(entry, context)` wraps the module-local `buildRawPreviewSrc` (a `previewSrc`
-override, then `previewBaseByCollection`, then collection path plus encoded slug, plus `?branch=`)
-and applies `joinUrlPrefix(context.basePath, …)` once; why is in
+`buildPreviewSrc(entry, context)` takes the module-local `buildPreviewRoute` (`previewBaseByCollection`,
+else collection path plus encoded slug), joins `previewPrefix` then `basePath`, applies
+`matchTrailingSlash`, and appends `?branch=`. A `previewSrc` override gets only `basePath`. The
+bridge compares through `editor/preview-path.ts`'s `isSamePreviewPath`; why is in
 [ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity).
 
 ### Preview Bridge
@@ -785,7 +786,7 @@ preserved, and code blocks are skipped. See
 - `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
-- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes` and `withTrailingSlash`
+- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (the `CANOPY_TRAILING_SLASH` build-time flag)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock

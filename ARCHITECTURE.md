@@ -803,9 +803,9 @@ It is also deliberately **not** an argument to the static-params helper, even th
 
 ### Preview Path Identity
 
-The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the string compared against the browser-reported location path to decide which entry a framed page is showing, which drives draft sync and click-to-focus. Browsers report that path _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value prefixed on some code paths but not others breaks draft sync even when the iframe itself resolves.
+The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the identity matched against the framed page's own location to decide which entry it is showing, which drives draft sync and click-to-focus. Browsers report that location _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value prefixed on some code paths but not others breaks draft sync even when the iframe itself resolves.
 
-The builder is therefore split into an unprefixed core plus a thin wrapper applying the prefix **exactly once**, at the end, uniformly across every branch of the builder — including the fully-custom per-entry preview override, whose absolute form passes through untouched by the join's own rule. One prefix, applied in one place, is what keeps the two uses of that string in agreement.
+The builder therefore emits the URL the host serves: the entry's route, under `previewPrefix`, under `basePath`, each applied **exactly once** at the end, then put in the host's trailing-slash form, which `withCanopy` inlines at build time. The per-entry preview override gets only the `basePath`. Both ends of the bridge then compare URLs reduced to path plus query, with no origin and no trailing slash. Emitting the served form saves a redirect on every load. Reducing both sides keeps draft sync working when the two still differ, as with an absolute `src` or a host redirect.
 
 ## Extensibility Points
 

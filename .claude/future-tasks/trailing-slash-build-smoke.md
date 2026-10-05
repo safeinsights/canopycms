@@ -8,7 +8,7 @@ Filed 2026-10-04 from the round-1 review of PR #366 (editor-API trailing slash).
 
 The API client avoids Next's `trailingSlash` 308s only because of two things no CI job runs:
 
-- Next substitutes `process.env.CANOPY_API_TRAILING_SLASH` (set by `withCanopy` through `env`)
+- Next substitutes `process.env.CANOPY_TRAILING_SLASH` (set by `withCanopy` through `env`)
   inside canopycms's own transpiled code. The unit tests stub `process.env` directly.
 - The catch-all route answers `/api/canopycms/<path>/` without a redirect.
 
@@ -23,11 +23,11 @@ Pick the cheaper of the two:
 
 - In the path-gated `example1-build` job, run one extra build with `trailingSlash: true` and
   assert that the editor's client chunk holds the substituted literal (`try{return!0}`) and no
-  `CANOPY_API_TRAILING_SLASH` name.
+  `CANOPY_TRAILING_SLASH` name. The same flag shapes the editor's preview URLs.
 - Add a `trailingSlash: true` variant to an e2e shard, and assert that an editor load makes no
   308s to `/api/canopycms/*`.
 
 ## Related
 
 - [trailing-slash-router-helpers.md](trailing-slash-router-helpers.md)
-- [preview-src-trailing-slash.md](preview-src-trailing-slash.md)
+- [preview-src-trailing-slash.md](resolved/preview-src-trailing-slash.md)

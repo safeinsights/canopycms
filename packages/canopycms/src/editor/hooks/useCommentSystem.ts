@@ -6,6 +6,7 @@ import type { EditorEntry } from '../Editor'
 import { normalizeCanopyPath } from '../canopy-path'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
+import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
 
 export interface UseCommentSystemOptions {
@@ -190,9 +191,12 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         fieldPath?: string
       }
       if (msg?.type !== 'canopycms:preview:focus') return
+      const currentPath = options.currentEntry?.previewSrc ?? options.currentEntry?.path
       if (
         msg.entryPath &&
-        msg.entryPath !== (options.currentEntry?.previewSrc ?? options.currentEntry?.path)
+        (typeof msg.entryPath !== 'string' ||
+          currentPath === undefined ||
+          !isSamePreviewPath(msg.entryPath, currentPath))
       )
         return
       const normalizedPath = msg.fieldPath ? normalizeCanopyPath(msg.fieldPath) : undefined

@@ -59,6 +59,15 @@ const editorConfigSchema = z.object({
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
   previewBase: z.record(z.string()).optional(),
+  // A same-origin path or an http(s) URL. No query or fragment, since routes are appended after
+  // it, and no backslash, which browsers read as `/` (so `/\host` would leave the origin).
+  previewPrefix: z
+    .string()
+    .regex(/^(?:\/(?![/\\])|https?:\/\/[^/?#\\]+(?:\/|$))[^?#\\]*$/, {
+      message:
+        "editor.previewPrefix must be a path starting with '/' or an http(s) URL, with no query, fragment or backslash",
+    })
+    .optional(),
   // UI handler functions (runtime only, don't serialize)
   onAccountClick: z.function().returns(z.void()).optional(),
   onLogoutClick: z.function().returns(z.void()).optional(),

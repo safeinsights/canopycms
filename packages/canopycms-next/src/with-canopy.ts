@@ -423,7 +423,7 @@ function sharpTracingConfig(
  *   (kept under `experimental` on Next 13/14 or legacy spellings; your own includes stay), so a
  *   Turbopack `output: 'standalone'` server can load sharp — Next's tracing misses that library
  *   for sharp 0.35 (doesn't fix webpack builds); warns if the directory or version can't be found.
- * - `trailingSlash: true` sets `env.CANOPY_API_TRAILING_SLASH`, so editor API calls skip Next's 308.
+ * - `trailingSlash: true` sets `env.CANOPY_TRAILING_SLASH`, so the editor's requests skip Next's 308.
  * - On Next 16+, sets `turbopack: {}` when your config has neither `turbopack` nor `webpack` and
  *   the Next version can be read — Next 16 defaults to Turbopack and exits when a config exports
  *   `webpack` (the React aliases above add one) with no `turbopack` key; a `turbopack` you set is
@@ -549,10 +549,10 @@ export function withCanopy(
   const generateBuildId =
     nextConfig.generateBuildId ?? (options.staticBuild ? resolveStaticBuildId : undefined)
 
-  // Next substitutes `env` into every bundle at build time, where the API client reads it
-  // (`readApiTrailingSlashEnv` in canopycms's `api/request-url.ts`).
+  // Next substitutes `env` into every bundle at build time, where the API client and the editor's
+  // preview URLs read it (`readTrailingSlashEnv` in canopycms's `utils/url-prefix.ts`).
   const env = nextConfig.trailingSlash
-    ? { CANOPY_API_TRAILING_SLASH: 'true', ...nextConfig.env }
+    ? { CANOPY_TRAILING_SLASH: 'true', ...nextConfig.env }
     : undefined
 
   return {

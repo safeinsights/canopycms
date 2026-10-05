@@ -14,6 +14,7 @@ export interface CanopyEditorProps extends Omit<
   EditorProps,
   | 'collections'
   | 'previewBaseByCollection'
+  | 'previewPrefix'
   | 'title'
   | 'subtitle'
   | 'themeOptions'
@@ -71,6 +72,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           contentRoot={config.contentRoot}
           entryLinkUrl={config.entryLinkUrl}
           previewBaseByCollection={previewBase}
+          previewPrefix={config.editor?.previewPrefix}
           assetBaseUrl={config.assetBaseUrl}
           basePath={config.basePath}
           themeOptions={resolvedTheme}

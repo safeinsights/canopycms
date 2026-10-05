@@ -104,6 +104,7 @@ export default defineCanopyConfig({
       colors: { brand: '#4f46e5' },
     },
     // previewBase: { 'content/posts': '/blog' }, // optional overrides
+    // previewPrefix: '/preview', // optional, in front of every preview URL
   },
   // For prod mode, defaultRemoteUrl is required.
   // For dev, it's optional - if omitted, uses auto-initialized local remote at .canopy-dev/remote.git

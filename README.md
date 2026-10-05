@@ -109,7 +109,7 @@ export default withCanopy({
 - **Dual-build page extensions** — adds `server.ts`/`server.tsx` to `pageExtensions`, enabling the convention below.
 - **Standalone image tracing** — for any build except a static export, adds sharp's libvips shared library to Next's file tracing so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp, which Next can miss for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail. Without `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also covers the webpack case.
 - **Turbopack guard (Next 16+)** — sets `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your Next version, since Next 16 defaults to Turbopack and exits when it sees the React-aliasing `webpack` function with no `turbopack` config. Your own `webpack`/`turbopack` config is left as-is.
-- **Trailing slash** — when the config you pass in sets `trailingSlash: true`, the editor's API calls use a trailing slash (`/api/canopycms/branches/`), so Next does not answer each one with a 308 redirect. An `env.CANOPY_API_TRAILING_SLASH` you set yourself wins.
+- **Trailing slash** — when the config you pass in sets `trailingSlash: true`, the editor's API calls and preview pane use a trailing slash (`/api/canopycms/branches/`), so Next does not answer each one with a 308 redirect. An `env.CANOPY_TRAILING_SLASH` you set yourself wins.
 
 **Make `withCanopy()` the outermost wrapper** when combining it with other config plugins: `withCanopy(withBundleAnalyzer({ ... }))`, not the reverse. It decides whether to add `turbopack: {}` from the config it receives, so a plugin wrapped around it adds its `webpack` afterwards and, on Next 16, that `turbopack: {}` silences the error Next would raise about a `webpack` function Turbopack does not run.
 
@@ -1203,8 +1203,12 @@ editor: {
   theme: {
     colors: { brand: '#4f46e5', accent: '#0ea5e9', neutral: '#0f172a' },
   },
+  previewPrefix: '/preview', // optional
+  previewBase: { 'content/posts': '/blog' }, // optional
 }
 ```
+
+**Preview URLs.** The preview pane loads each entry at its site route plus `?branch=`: its collection path and slug (`content/docs/intro` → `/docs/intro`), or `/` for a root entry. `previewBase` maps a collection (keyed by path or name) or a root entry (keyed `'<contentRoot>/<slug>'`) to another route. `previewPrefix` goes in front of every route, so `/blog/hello` above loads `/preview/blog/hello`. Set it when your public pages are a static export, which cannot render a branch, so the preview must load a route your CMS build renders. Both are site-relative and get `basePath` on top. An absolute `https://…` value skips the prefixes before it. Preview URLs follow `trailingSlash` when `withCanopy()` wraps your Next config.
 
 ### Custom Field Renderers
 
