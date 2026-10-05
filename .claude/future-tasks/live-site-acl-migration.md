@@ -1,6 +1,9 @@
 # Migrating a live site off permissive ACL defaults
 
-## Priority: P1 — before any site goes live with real editors
+## Priority: P2 [KB]
+
+The marketing site already runs group path rules on its deployed editor; what remains is sequencing
+the same migration for the KB before it deploys.
 
 Split out of [acl-defaults-and-dead-path-checker.md](resolved/acl-defaults-and-dead-path-checker.md)
 on 2026-08-14, when the package-side half was decided and shipped. The package now

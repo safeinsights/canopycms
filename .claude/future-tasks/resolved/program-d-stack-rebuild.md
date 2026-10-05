@@ -1,7 +1,9 @@
 # Program D — Rebuild and exercise the deploy-test stack
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
-**Size:** M · **Status:** not started · **Blocked by:** B1 + B2 · **Blocks:** E
+**Closed 2026-10-05, resolved by events:** the first real deployed editor went live without this rebuild; the checks that remain live as [infra-review-2026-08-deploy-verification.md](../infra-review-2026-08-deploy-verification.md).
+
+**Part of:** [production-readiness-program.md](../production-readiness-program.md)
+**Size:** M · **Status:** retired · **Blocked by:** B1 + B2 · **Blocks:** E
 
 ## Purpose
 
@@ -75,7 +77,7 @@ fixed or documented:
 - Transform URL format: `/assets/t/f=webp,w=160/<hash>/<slug>.<ext>` — directives
   first, width a multiple of 160.
 
-**Ride-along:** land [efs-tls-in-transit.md](efs-tls-in-transit.md) as part of this
+**Ride-along:** land [efs-tls-in-transit.md](../efs-tls-in-transit.md) as part of this
 rebuild. It adds the `tls` option (efs-utils stunnel) to the worker's EFS mount in
 both places — the `mount -t efs` bootstrap command and the `/etc/fstab` line in
 `canopycms-cdk/src/constructs/cms-service.ts`. It was deferred only because it
@@ -106,7 +108,7 @@ against any deployment URL:
 user with programmatic sign-in (fully automated, needs a test-user strategy that
 does not weaken the real instance) and a scripted runbook with human checkpoints
 (cheaper, not agent-runnable). Record the choice and reasoning in
-[program-log.md](program-log.md).
+[program-log.md](../program-log.md).
 
 #### 11. Does a refused `--force-with-lease` leave the loser's ref untouched? (EFS/NFS)
 
@@ -119,7 +121,7 @@ D is the only place a real EFS mount and a real Lambda exist together.
 
 **This is not really about #198 — but be careful about *why*.** The tempting
 argument is that the primitive underneath is the same one
-[concurrency.md](../../docs/concurrency.md)'s Layer 3 ("Server-enforced lock",
+[concurrency.md](../../../docs/concurrency.md)'s Layer 3 ("Server-enforced lock",
 `proper-lockfile`) already bets the settings and metadata design on, so a failure
 would break far more than the worker. That argument is **half right, and it
 overclaims in the direction that matters.** It was made and then withdrawn by
@@ -174,11 +176,11 @@ the git-path soak is also their first real coverage:
   workspace, and **that attribution is wrong** — `initializeWorkspace` is called
   unconditionally, lock or no lock, and a lock-free rename guard is the actual
   protection. Tracked in
-  [settings-workspace-init-lock-uncatalogued.md](resolved/settings-workspace-init-lock-uncatalogued.md),
+  [settings-workspace-init-lock-uncatalogued.md](settings-workspace-init-lock-uncatalogued.md),
   which carries a "do not tidy this" warning worth reading before anyone touches
   that function.
 - `assets/store-local.ts` — `putMetaIfAbsent` writes with `{ flag: 'wx' }`. See
-  [asset-meta-wx-vs-link.md](asset-meta-wx-vs-link.md).
+  [asset-meta-wx-vs-link.md](../asset-meta-wx-vs-link.md).
 
 **One exception to the directional-coverage caveat above, and it is worth stating
 because a careful reader would otherwise discount coverage the soak genuinely
@@ -238,10 +240,10 @@ that phrasing invites a test that passes trivially. It is:
 
 Relevant code: `forcePublishToLocalRemote` and `pushBranchToGitHub` in
 `packages/canopycms/src/worker/cms-worker.ts`, plus the `remote.git` refs row
-#198 adds to [concurrency.md](../../docs/concurrency.md) describing the intended
+#198 adds to [concurrency.md](../../../docs/concurrency.md) describing the intended
 invariant.
 
-If it holds, record it in [program-log.md](program-log.md) — it retires a
+If it holds, record it in [program-log.md](../program-log.md) — it retires a
 standing unknown behind the worker's whole publish path *and* behind Layer 3. If
 it does not, it is a production data-loss bug that outranks the rest of this
 workstream.

@@ -1,4 +1,7 @@
-# [P2] `deploy-test` passes `CLERK_SECRET_KEY` to the CMS Lambda in plaintext
+# [P1, pending check] `deploy-test` passes `CLERK_SECRET_KEY` to the CMS Lambda in plaintext
+
+**Pending check:** JP checks the live Lambda environment in the AWS console for `CLERK_SECRET_KEY`.
+P1 if the secret is there, P2 otherwise.
 
 Filed 2026-09-08 while fixing the `CLERK_JWT_KEY` classification (adopter request
 #37). **The fix is in a different repository**, which is the only reason this is a
@@ -84,7 +87,7 @@ editor's own sign-in screen instead ([clerk-no-middleware-signin-gap.md](resolve
 as a supported shape, and since 2026-10-01 `canopycms init` scaffolds it: the passthrough, with
 `clerkMiddleware` and its cost as a commented opt-in. Not yet
 exercised against a live Clerk instance; see
-[clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md)
+[clerk-middleware-runtime-key-unverified.md](resolved/clerk-middleware-runtime-key-unverified.md)
 and [clerk-signed-out-followups.md](clerk-signed-out-followups.md). For
 deploy-test, it makes the middleware and the plaintext `CLERK_SECRET_KEY` passthrough removable
 **together**. Removing only the passthrough still breaks the editor, per the correction above.
