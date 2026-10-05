@@ -193,19 +193,21 @@ const readContentHandler = async (
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
-  const access = await ctx.services.checkContentAccess(
+  // One checker for the entry and every reference target it resolves, so a reference cannot
+  // carry a target's data past the rules that would refuse a direct read of it.
+  const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
-    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
-    'read',
   )
-  if (!access.allowed) {
+  if (!checkAccess(entryLogicalPath(schemaItem.logicalPath, slug), 'read').allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
   try {
-    const doc = await store.read(schemaItem.logicalPath, slug)
+    const doc = await store.read(schemaItem.logicalPath, slug, {
+      referenceAccess: (targetPath) => checkAccess(targetPath, 'read').allowed,
+    })
     return { ok: true, status: 200, data: doc }
   } catch (err: unknown) {
     if (isNotFoundError(err)) {
