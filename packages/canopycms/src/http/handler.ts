@@ -1,5 +1,6 @@
 import type { CanopyBinaryResponse, CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse, isCanopyBinaryResponse } from './types'
+import { workerNotReadyResponse } from './worker-not-ready'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
@@ -199,6 +200,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
+        const notReady = workerNotReadyResponse(err)
+        if (notReady) return notReady
         return jsonResponse(
           {
             ok: false,
@@ -229,6 +232,12 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       canopyLogError(
         `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
       )
+
+      // No remote means no settings workspace, so /admin cannot load either:
+      // the worker has not created the remote yet, so every caller gets the
+      // not-ready 503, bootstrap admins included.
+      const notReady = workerNotReadyResponse(err)
+      if (notReady) return notReady
 
       // Same trade as the base-branch degradation above: /admin is the recovery
       // surface for exactly this failure (a renamed settings branch trips
@@ -340,6 +349,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       // Last-resort boundary (API-C1): see handleRequest's doc comment above.
       const message = getErrorMessage(err)
       console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      const notReady = workerNotReadyResponse(err)
+      if (notReady) return notReady
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }
