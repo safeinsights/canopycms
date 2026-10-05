@@ -505,6 +505,12 @@ looked — and acting on that stale sample is exactly the destructive path.
 > [`.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md`](../.claude/future-tasks/resolved/settings-workspace-init-lock-uncatalogued.md)
 > explains why both readings fail.
 
+**Once ensured, a process does not ensure again.** `ensureGitWorkspace` remembers each
+(settings root, branch name) it fully ensured, on success only, and on a hit reads only
+`.git/HEAD`. Settings data is not cached: the files are read every request, and the full pass
+never fetched, pulled or reset the settings branch. A new branch name, or a HEAD off the
+settings branch (removed, re-cloned, mid-clone), runs the full path, guard and lock included.
+
 **The settings-workspace init lock is layer 3, `acquireProvisioningLock`**, exactly as
 `branch-workspace.ts` uses for content clones: server-enforced acquisition,
 heartbeat-refreshed while the holder lives (so a slow clone is not mistaken for a
@@ -518,15 +524,8 @@ inode/content identity check (otherwise two waiters both judge a lock stale and 
 second `unlink`s a fresh one) and a heartbeat (an ordinary EFS clone outlasts a fixed
 window such as 30s).
 
-Its anchor path is deliberately its own dot-directory,
-`{workspaceRoot}/.settings-init` (`settingsInitLockTarget()`), for two reasons. It cannot
-live inside the settings root, because `acquireProvisioningLock` mkdir's the directory its
-marker goes in and `git clone` refuses a destination with content in it. Keeping it in a
-dedicated dot-directory also keeps it clear of `.remote-init.lock`, which
-`ensureLocalSimulatedRemote` creates in `path.dirname(settingsRoot)` (= `{workspaceRoot}`)
-and which settings init calls into while holding this lock. That nesting is not a
-registry hazard, because locks anchor on their own marker paths and never share a key;
-the separate directories keep the nesting obvious rather than incidental.
+Its anchor is its own dot-directory, `{workspaceRoot}/.settings-init`;
+`settingsInitLockTarget()` (settings-workspace.ts) says why.
 
 **Background analysis.** The ContentId index marker and the EFS cross-process
 primitives (shared primitives, branch-registry GIT-M1, branch-schema-cache GIT-M2,

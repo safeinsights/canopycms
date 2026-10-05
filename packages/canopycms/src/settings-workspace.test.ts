@@ -21,6 +21,7 @@ import { simpleGit } from 'simple-git'
 import { initTestRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
+import { GitManager } from './git-manager'
 import type { CanopyConfig } from './config'
 
 const baseConfig: Partial<CanopyConfig> = {
@@ -290,5 +291,191 @@ describe('SettingsWorkspaceManager cross-process init lock', () => {
 
     const status = await simpleGit({ baseDir: settingsRoot }).status()
     expect(status.current).toBe('canopycms-settings-prod')
+  }, 60_000)
+})
+
+describe('SettingsWorkspaceManager per-process ensure memo', () => {
+  let tmpRoot: string | undefined
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    if (tmpRoot) {
+      await fs.rm(tmpRoot, { recursive: true, force: true })
+      tmpRoot = undefined
+    }
+  })
+
+  async function ensuredWorkspace() {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-memo-'))
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    const remoteUrl = await seedBareRemote(tmpRoot)
+    const manager = new SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: 'main',
+    } as CanopyConfig)
+    const options = {
+      settingsRoot,
+      branchName: 'canopycms-settings-memo',
+      mode: 'dev' as const,
+      remoteUrl,
+    }
+    await manager.ensureGitWorkspace(options)
+    return { manager, options, settingsRoot }
+  }
+
+  it('skips the guard and initializeWorkspace once this process has ensured the workspace', async () => {
+    const { manager, options } = await ensuredWorkspace()
+    const repoExists = vi.spyOn(GitManager, 'repoExistsAt')
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+
+    await manager.ensureGitWorkspace(options)
+    await new SettingsWorkspaceManager(baseConfig as CanopyConfig).ensureGitWorkspace(options)
+
+    expect(repoExists).not.toHaveBeenCalled()
+    expect(init).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('re-provisions a workspace that was moved aside', async () => {
+    const { manager, options, settingsRoot } = await ensuredWorkspace()
+    await fs.rename(settingsRoot, `${settingsRoot}.moved`)
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+
+    await manager.ensureGitWorkspace(options)
+
+    expect(init).toHaveBeenCalledOnce()
+    const status = await simpleGit({ baseDir: settingsRoot }).status()
+    expect(status.current).toBe('canopycms-settings-memo')
+  }, 60_000)
+
+  it('re-provisions when the workspace is found on another branch (re-cloned, or mid-clone)', async () => {
+    const { manager, options, settingsRoot } = await ensuredWorkspace()
+    await simpleGit({ baseDir: settingsRoot }).checkout('main')
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+
+    await manager.ensureGitWorkspace(options)
+
+    expect(init).toHaveBeenCalledOnce()
+    const status = await simpleGit({ baseDir: settingsRoot }).status()
+    expect(status.current).toBe('canopycms-settings-memo')
+  }, 60_000)
+
+  it('never records a failure: the next call retries, succeeds, and is then remembered', async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-memo-'))
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    const manager = new SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: 'main',
+    } as CanopyConfig)
+    const options = {
+      settingsRoot,
+      branchName: 'canopycms-settings-memo',
+      mode: 'dev' as const,
+      // The remote is not there yet, as when the worker has not created it.
+      remoteUrl: path.join(tmpRoot, 'remote.git'),
+    }
+
+    await expect(manager.ensureGitWorkspace(options)).rejects.toThrow(/Failed to clone/)
+
+    await seedBareRemote(tmpRoot)
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+    await manager.ensureGitWorkspace(options)
+    await manager.ensureGitWorkspace(options)
+
+    expect(init).toHaveBeenCalledOnce()
+  }, 60_000)
+
+  it('runs concurrent first calls through one provisioning pass', async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-memo-'))
+    const remoteUrl = await seedBareRemote(tmpRoot)
+    const init = vi.spyOn(GitManager, 'initializeWorkspace')
+    const manager = new SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: 'main',
+    } as CanopyConfig)
+    const options = {
+      settingsRoot: path.join(tmpRoot, 'settings'),
+      branchName: 'canopycms-settings-memo',
+      mode: 'dev' as const,
+      remoteUrl,
+    }
+
+    await Promise.all([1, 2, 3].map(() => manager.ensureGitWorkspace(options)))
+
+    expect(init).toHaveBeenCalledOnce()
+  }, 60_000)
+
+  it('shows a group change made through one process on another process’s next request', async () => {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-memo-'))
+    const workspaceRoot = path.join(tmpRoot, 'workspace')
+    await fs.mkdir(workspaceRoot)
+    // Prod auto-detects {workspaceRoot}/remote.git, as on EFS.
+    await fs.rename(await seedBareRemote(tmpRoot), path.join(workspaceRoot, 'remote.git'))
+    const originalRoot = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    try {
+      // Two module graphs stand in for two Lambda containers: each has its own memo.
+      const loadProcess = async () => {
+        vi.resetModules()
+        return {
+          services: await import('./services'),
+          resolveUser: await import('./resolve-canopy-user'),
+          groups: await import('./authorization/groups/loader'),
+          git: await import('./git-manager'),
+        }
+      }
+      const a = await loadProcess()
+      const b = await loadProcess()
+      const config = {
+        ...baseConfig,
+        mode: 'prod',
+        defaultBaseBranch: 'main',
+        deploymentName: 'memo',
+      } as CanopyConfig
+      const servicesA = await a.services.createCanopyServices(config)
+      const servicesB = await b.services.createCanopyServices(config)
+      const resolveOnB = () =>
+        b.resolveUser.resolveCanopyUser(
+          { success: true, user: { userId: 'user-b', externalGroups: [] } },
+          {
+            getSettingsBranchRoot: servicesB.getSettingsBranchRoot,
+            mode: 'prod',
+            bootstrapAdminIds: new Set(['admin-a']),
+          },
+        )
+
+      expect((await resolveOnB()).groups).not.toContain('Editors')
+      const rootA = await servicesA.getSettingsBranchRoot()
+      const initOnB = vi.spyOn(b.git.GitManager, 'initializeWorkspace')
+
+      await a.groups.mutateGroupsFile(
+        rootA,
+        'prod',
+        (_current, version) => ({
+          version,
+          updatedAt: new Date().toISOString(),
+          updatedBy: 'admin-a',
+          groups: [{ id: 'Editors', name: 'Editors', members: ['user-b'] }],
+        }),
+        { settleMs: 0 },
+      )
+
+      expect((await resolveOnB()).groups).toContain('Editors')
+      expect(initOnB).not.toHaveBeenCalled()
+    } finally {
+      if (originalRoot === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      else process.env.CANOPYCMS_WORKSPACE_ROOT = originalRoot
+      vi.resetModules()
+    }
+  }, 60_000)
+
+  it('still runs the rename guard for a different settings-branch name on the same root', async () => {
+    const { manager, options, settingsRoot } = await ensuredWorkspace()
+    await fs.writeFile(path.join(settingsRoot, 'permissions.json'), '{"keep":true}')
+
+    await expect(
+      manager.ensureGitWorkspace({ ...options, branchName: 'canopycms-settings-renamed' }),
+    ).rejects.toThrow(/refusing to initialize settings workspace/)
+    const status = await simpleGit({ baseDir: settingsRoot }).status()
+    expect(status.current).toBe('canopycms-settings-memo')
   }, 60_000)
 })

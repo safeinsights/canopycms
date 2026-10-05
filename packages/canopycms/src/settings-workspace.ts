@@ -14,6 +14,37 @@ const log = createDebugLogger({ prefix: 'SettingsWorkspace' })
 // unlike content branches, which need one per branch.
 let settingsInitLock: Promise<void> | null = null
 
+/**
+ * Settings workspaces this process has fully ensured, keyed by {@link ensuredKey}. A hit
+ * skips the guard, the init lock and initializeWorkspace's dozen git subprocesses, which
+ * otherwise ran on every API request. It is sound because that pass never fetched, pulled or
+ * reset the settings branch, so settings freshness never came from it: every process reads the
+ * one shared workspace. Everything it verified is fixed for the process: the settings-branch name resolves once
+ * from config, the remote URL comes from config, and nothing in CanopyCMS checks the settings
+ * workspace out onto another branch. groups.json and permissions.json are still read from
+ * disk on every request; only the provisioning is memoized. Failures are never recorded. In
+ * dev, a hit also skips re-seeding a deleted `.canopy-dev/remote.git`; a dev-server restart
+ * re-seeds it.
+ *
+ * A hit still reads `.git/HEAD`, so a workspace removed, re-cloned onto another branch, or
+ * caught mid-clone by another process (HEAD still on the base branch) misses and runs the full
+ * path, guard and lock included.
+ */
+const ensuredSettingsWorkspaces = new Set<string>()
+
+function ensuredKey(options: EnsureSettingsWorkspaceOptions): string {
+  return `${path.resolve(options.settingsRoot)}\0${options.branchName}`
+}
+
+async function checkedOutOn(settingsRoot: string, branchName: string): Promise<boolean> {
+  try {
+    const head = await fs.readFile(path.join(settingsRoot, '.git', 'HEAD'), 'utf-8')
+    return head.trim() === `ref: refs/heads/${branchName}`
+  } catch {
+    return false
+  }
+}
+
 const SETTINGS_INIT_LOCK_DIR = '.settings-init'
 const SETTINGS_INIT_LOCK_NAME = 'lock'
 
@@ -146,6 +177,12 @@ export class SettingsWorkspaceManager {
   }
 
   async ensureGitWorkspace(options: EnsureSettingsWorkspaceOptions): Promise<void> {
+    const key = ensuredKey(options)
+    if (ensuredSettingsWorkspaces.has(key)) {
+      if (await checkedOutOn(options.settingsRoot, options.branchName)) return
+      ensuredSettingsWorkspaces.delete(key)
+    }
+
     return log.timed('workspace', 'ensureGitWorkspace', async () => {
       // Layer 1: In-memory lock (prevents redundant async calls within same process)
       if (settingsInitLock) {
@@ -202,6 +239,7 @@ export class SettingsWorkspaceManager {
               gitBotAuthorName: this.config.gitBotAuthorName,
               gitBotAuthorEmail: this.config.gitBotAuthorEmail,
             })
+            ensuredSettingsWorkspaces.add(key)
           } finally {
             try {
               await releaseLock()
