@@ -20,6 +20,13 @@ import { canopyLogWarn } from './logger'
 export type OnLockCompromised = (err: Error) => void
 
 /**
+ * When an acquirer may take a provisioning marker over. Staleness is read from the marker's mtime,
+ * which EFS serves from the NFS attribute cache for up to 60s, so a live holder's 15s refreshes
+ * can look 60s late; one threshold above that for every acquirer means none reaps a live hold.
+ */
+const PROVISIONING_LOCK_STALE_MS = 90_000
+
+/**
  * Shared option set for both provisioning-lock variants.
  *
  * **The lock is anchored on the lock file's own path, not its directory.** proper-lockfile keys
@@ -36,15 +43,14 @@ function provisioningLockOptions(
   lockPath: string,
   retries: LockOptions['retries'],
   onCompromised: OnLockCompromised | undefined,
-  staleMs = 30_000,
+  staleMs: number,
 ): LockOptions {
   return {
     lockfilePath: lockPath,
     realpath: false,
     retries,
     stale: staleMs,
-    // Fixed at 15s rather than stale/2: a holder that passes a longer staleMs must still refresh
-    // often enough for peers judging with the default 30s.
+    // Fixed, not stale/2: every holder refreshes at 15s whatever threshold it judges others by.
     update: 15_000,
     // proper-lockfile invokes this from inside its refresh timer, so ANY throw escaping here is
     // an uncaught exception that kills the process. Call sites are told not to throw (see
@@ -142,14 +148,15 @@ export async function acquireProvisioningLock(
   // Generous, jittered retries: several processes may contend for one workspace (Lambda
   // containers cold-starting together against one EFS root), and the holder can take seconds to
   // init plus clone/push. `randomize` de-syncs the herd so a waiter is not perpetually colliding
-  // on the same tick. `stale` stays modest because proper-lockfile auto-refreshes a live holder's
-  // lock, so it expires only when a process actually dies.
+  // on the same tick. A live holder's lock never goes stale, because proper-lockfile refreshes it;
+  // it expires only when a process actually dies.
   const release = await lockfile.lock(
     lockPath,
     provisioningLockOptions(
       lockPath,
       { retries: 600, factor: 1, minTimeout: 300, maxTimeout: 800, randomize: true },
       onCompromised,
+      PROVISIONING_LOCK_STALE_MS,
     ),
   )
   return releaseIgnoringAlreadyReleased(release, lockPath)
@@ -160,22 +167,22 @@ export async function acquireProvisioningLock(
  * request/response cycle (a Lambda-backed API handler). `acquireProvisioningLock`'s ~600-retry
  * budget waits minutes for a live provisioner; an admin request must fail fast instead.
  *
- * `stale: 30_000` is unchanged from the patient variant: a genuinely stale lock (holder crashed
- * more than 30s ago) is still taken over normally. Only the RETRY loop for live contention is
- * removed, not the staleness recovery a caller depends on -- see branch-health.ts's [H1]
- * freshness rail, which reads this lock's mtime before an admin purge/repair proceeds.
+ * Staleness recovery is unchanged from the patient variant: a genuinely stale lock is still taken
+ * over normally. Only the RETRY loop for live contention is removed, not the staleness recovery a
+ * caller depends on -- see branch-health.ts's [H1] freshness rail, which reads this lock's mtime
+ * before an admin purge/repair proceeds.
  *
  * Throws with `err.code === 'ELOCKED'` on contention (a live, non-stale holder) -- callers
  * translate that into a 409.
  *
- * @param staleMs how old the marker must look before this caller takes it over; see the worker's
- *   use in worker/provisioned-workspace.ts for why one caller raises it
+ * @param staleMs how old the marker must look before this caller takes it over; defaults to
+ *   {@link PROVISIONING_LOCK_STALE_MS}
  */
 export async function tryAcquireProvisioningLock(
   lockTargetDir: string,
   lockName: string,
   onCompromised?: OnLockCompromised,
-  staleMs?: number,
+  staleMs: number = PROVISIONING_LOCK_STALE_MS,
 ): Promise<() => Promise<void>> {
   await fs.mkdir(lockTargetDir, { recursive: true })
   const lockPath = path.join(lockTargetDir, lockName)
