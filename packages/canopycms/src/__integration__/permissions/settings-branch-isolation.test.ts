@@ -21,7 +21,7 @@ import type { PathPermission } from '../../config'
 import type { AuthenticatedUser } from '../../user'
 import { operatingStrategy } from '../../operating-mode'
 import { unsafeAsPermissionPath } from '../../authorization/test-utils'
-import { unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 describe('Settings Branch Isolation', () => {
   let workspace: TestWorkspace
@@ -102,7 +102,7 @@ describe('Settings Branch Isolation', () => {
     const settingsPermissionsFile = path.join(settingsRoot, 'permissions.json')
     const restrictiveRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/hello.mdx'),
+        path: unsafeAsPermissionPath('content/posts/hello'),
         read: {
           allowedUsers: [allowedUser.userId], // Only allowedUser can read
         },
@@ -131,7 +131,7 @@ describe('Settings Branch Isolation', () => {
     const restrictedUserAccess = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      unsafeAsPhysicalPath('content/posts/hello.mdx'),
+      unsafeAsLogicalPath('content/posts/hello'),
       restrictedUser,
       'read',
     )
@@ -148,7 +148,7 @@ describe('Settings Branch Isolation', () => {
     const allowedUserAccess = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      unsafeAsPhysicalPath('content/posts/hello.mdx'),
+      unsafeAsLogicalPath('content/posts/hello'),
       allowedUser,
       'read',
     )
@@ -225,7 +225,7 @@ describe('Settings Branch Isolation', () => {
     const access = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      unsafeAsPhysicalPath('content/posts/test.mdx'),
+      unsafeAsLogicalPath('content/posts/test'),
       user,
       'read',
     )
@@ -305,7 +305,7 @@ describe('Settings Branch Isolation', () => {
     const access = await services.checkContentAccess(
       featureBranch,
       featureBranch.branchRoot,
-      unsafeAsPhysicalPath('content/posts/test.mdx'),
+      unsafeAsLogicalPath('content/posts/test'),
       user,
       'read',
     )
