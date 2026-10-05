@@ -4,10 +4,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
-import { ReferenceResolver } from '../reference-resolver'
-import { buildResolvedReference } from '../entry-schema'
-import { computeEntryUrl } from '../utils/entry-url'
-import { entryLogicalPath } from '../paths'
+import type { LogicalPath } from '../paths'
 import { branchNameSchema, contentIdSchema } from './validators'
 
 export interface ResolveReferencesBody {
@@ -44,54 +41,27 @@ const resolveReferencesHandler = async (
 
   const { ids } = body
 
-  const flatSchema = branchContext.flatSchema
-  const contentRootName = ctx.services.config.contentRoot || 'content'
-  const store = new ContentStore(branchContext.branchRoot, flatSchema, {
-    contentRootName,
+  const store = new ContentStore(branchContext.branchRoot, branchContext.flatSchema, {
+    contentRootName: ctx.services.config.contentRoot || 'content',
   })
 
-  // Get ID index (automatically loads if needed)
-  const idIndex = await store.idIndex()
-
-  // Resolve each ID to full document
-  const resolver = new ReferenceResolver(store, idIndex)
-
-  // Build the access checker once, reused for every id instead of re-loading per id in the loop.
-  // A failure here (e.g. settings workspace unavailable) surfaces as a handler error, not
-  // swallowed silently per id.
+  // Built once for every id. A failure here (e.g. settings workspace unavailable) surfaces as a
+  // handler error rather than being swallowed per id.
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
     req.user,
   )
+  const access = (logicalPath: LogicalPath) => checkAccess(logicalPath, 'read').allowed
 
+  // The resolution `read()` applies to a reference field, so live preview shows this user what
+  // `read()` would: the target's data, or a `RestrictedReference` for a target they may not
+  // read. The target's own references stay ids, as in `read()`.
   const resolved: Record<string, unknown> = {}
-
   for (const id of ids) {
     try {
-      const result = await resolver.resolve(id)
-      if (result && result.exists && result.collection && result.slug) {
-        // Check path-level read permission before returning content
-        const access = checkAccess(entryLogicalPath(result.collection, result.slug), 'read')
-        if (!access.allowed) continue
-
-        // `resolveReferences: false` matches the server-side resolver (content-store.ts's
-        // resolveSingleReferenceOnce), so a nested reference inside a target renders the same way
-        // in live preview as on the published site, instead of resolving one level deeper.
-        const doc = await store.read(result.collection, result.slug, { resolveReferences: false })
-        if (doc && doc.data) {
-          // Same shape as the server-side resolver: target data first, then the reserved keys.
-          // Order is the corruption guard (a target modelling `id` as content must not shadow the
-          // real content ID); the extra keys (incl. `urlPath`) keep live preview and production
-          // in sync for consumers like client-reference-resolver.ts.
-          resolved[id] = buildResolvedReference(doc.data, {
-            id,
-            slug: result.slug,
-            collection: result.collection,
-            urlPath: computeEntryUrl(result.collection, result.slug, contentRootName),
-          })
-        }
-      }
+      const value = await store.resolveReferenceTarget(id, access)
+      if (value) resolved[id] = value
     } catch (error) {
       // Skip failed resolutions, don't block entire request
       console.error(`Failed to resolve reference ID ${id}:`, error)
@@ -106,7 +76,8 @@ const resolveReferencesHandler = async (
 }
 
 /**
- * Resolve reference IDs to full document objects
+ * Resolve reference IDs as a reference field would: full target data, or title + URL tagged
+ * `unavailable` for a target the user may not read. An id naming no entry is omitted.
  * POST /:branch/resolve-references
  * Body: { ids: string[] }
  */

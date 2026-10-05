@@ -686,6 +686,15 @@ const { data } = await canopy.read<Post>({ entryPath: 'content/posts', slug: 'my
 // data.author is the resolved author entry
 ```
 
+**A reference the current user may not read resolves to its title and URL only**, tagged so you can render it deliberately (a lock, a sign-in link) instead of a half-empty card:
+
+```tsx
+// { id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }
+if (data.author?.unavailable) return <a href={data.author.urlPath}>{data.author.title} (sign in)</a>
+```
+
+Path rules decide it, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value. A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
+
 Pass `resolveReferences: false` to get the bare ids instead. Declare `resolvedSchema` on the field to have the inferred type match the resolved shape (see [Typed References with `resolvedSchema`](#typed-references-with-resolvedschema)). A **listing** is the opposite default — it resolves nothing unless asked; see [Resolving References in a Listing](#resolving-references-in-a-listing).
 
 ### Type Inference
@@ -803,8 +812,11 @@ const postSchema = defineEntrySchema([
 
 type Post = TypeFromEntrySchema<typeof postSchema>
 // Without resolvedSchema: Post['author'] is string | null
-// With resolvedSchema:    Post['author'] is { name: string; bio: string } | null
+// With resolvedSchema:    Post['author'] is
+//   ({ name: string; bio: string } & ResolvedReferenceMeta) | RestrictedReference | null
 ```
+
+`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives. Narrow on `unavailable` before reading the target's own fields.
 
 `resolvedSchema` is used only for type inference — it does not affect how content is read, written or validated at runtime, and is stripped from API responses. It accepts any schema created with `defineEntrySchema`, so the same schema objects can be shared between entry type definitions and reference fields.
 
@@ -1429,7 +1441,7 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name — a no-op for json/yaml targets, whose whole document is already their data. The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call: a reference that **embeds** its target (a shared CTA rendered inline) wants the prose, while one that **links** to it (related posts, an author byline) wants `urlPath` and a title, not the target's whole body inlined into every page read. Turning it on makes the body part of every referencing entry's resolved value, so a long document embedded by many pages is copied once per page.
 
-**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()`, so a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered, and an entry filtered out is never resolved.) And within one call a given id is looked up once and every occurrence shares that answer, so a listing is internally consistent rather than deciding per entry.
+**Path permissions apply to the resolved _targets_, as in `read()`**: a target the current user may not read resolves to its [title and URL, tagged `unavailable`](#using-references-in-your-code). And within one call a given id is looked up once and every occurrence shares that answer, so a listing is internally consistent rather than deciding per entry.
 
 ### Options Reference
 

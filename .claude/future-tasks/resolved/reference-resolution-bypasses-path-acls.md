@@ -1,5 +1,26 @@
 # Reference resolution embeds a referenced entry's data without checking access to it
 
+## Status: RESOLVED 2026-10-05 (request-time half), branch `fix/reference-resolution-acl`
+
+The static-build half is split out to
+[static-build-reference-acl.md](../static-build-reference-acl.md): a build has no path rules
+to evaluate "is B public?" against, which needs a decision first.
+
+**What shipped.** A target the reader may not read resolves to a `RestrictedReference`
+(entry-schema.ts): `{ id, slug, collection, urlPath, title, unavailable: true, reason:
+'restricted' }` and no other field. The tag is `unavailable` + `reason` rather than
+`restricted: true` so the tombstone for a deleted target
+([dangling-reference-null-overwrites-id.md](../dangling-reference-null-overwrites-id.md)) can
+join it as another `reason`. The check is the request's `createContentAccessChecker`, passed as a
+predicate into `ContentStore`'s one resolution walk, and is wired at every request-time surface:
+`read()`/`readByUrlPath()` (content-reader.ts), the editor's content read (api/content.ts), the
+live-preview endpoint (now `ContentStore.resolveReferenceTarget`, so it shares the walk), and
+opted-in `listEntries`/`buildContentTree` (the listing's visibility predicate). Reference options
+were already filtered before read. The `id` is always present, so an editor denied B who saves A
+writes B's id back unchanged (`normalizeReferenceValues`); a test pins it. The inferred type of a
+`resolvedSchema` reference is now a union with `RestrictedReference`, narrowed on `unavailable`.
+Tests 1 and 3 below live in `api/reference-resolution-acl.test.ts`.
+
 ## Priority: P1 [BOTH] — pre-existing, but it becomes load-bearing at the first real ACL deployment
 
 Found by the independent security review of the go-live epic (2026-08-14). **Not
@@ -26,7 +47,7 @@ mitigation it was implicitly relying on:
 1. **Path ACLs became real.** Listing and tree building are now filtered
    (`listentries-acl-awareness.md`), so path rules stop being decorative. Reference
    resolution is now the one place behind that new layer that does not consult them.
-2. **Publish state is branch-only** ([draft-publish-lifecycle.md](draft-publish-lifecycle.md)).
+2. **Publish state is branch-only** ([draft-publish-lifecycle.md](../draft-publish-lifecycle.md)).
    There is no per-entry draft flag and there never will be, so there is no second
    signal that could independently mark the referenced entry as not-for-this-reader.
 3. **Two deployments with multiple editors of differing permission are imminent.** Until
@@ -35,7 +56,7 @@ mitigation it was implicitly relying on:
 
 The listing path is not affected — `listEntries` never resolves references at all, which
 is separately documented as a limitation
-([resolved/shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md)).
+([resolved/shared-blocks-listentries-caveat.md](shared-blocks-listentries-caveat.md)).
 That asymmetry is itself worth noting: the same content is filtered when listed and
 unfiltered when resolved.
 
@@ -44,7 +65,7 @@ unfiltered when resolved.
 Check access to the **referenced** entry before embedding its data, using the same
 `services.createContentAccessChecker(branchContext, branchRoot, user)` the listing and
 tree paths now use — so this does not add a sixth ACL matcher (see
-[authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md),
+[authorization-enforcement-consolidation.md](../authorization-enforcement-consolidation.md),
 which counts the existing divergence).
 
 ### DECIDED 2026-08-15 by JP: a denied reference resolves to **title + URL, tagged**
@@ -104,7 +125,7 @@ Three tests, because the decision above has three distinct failure modes:
 
 ## Related — and what the decision above means for each
 
-- [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md) — the listing
+- [listentries-acl-awareness.md](listentries-acl-awareness.md) — the listing
   half, already enforced. **No security interaction, despite appearances.** An earlier
   draft of this file claimed the decision let a *denied* reference carry more information
   through `read()` than a *permitted* one does through `listEntries()`. That compared
@@ -117,21 +138,20 @@ Three tests, because the decision above has three distinct failure modes:
   What is real is a shape inconsistency an adopter will notice: navigation built from
   `listEntries` must resolve titles itself, while the same field arrives resolved through
   `read`. That predates this decision and is documented as the shared-blocks caveat below.
-- [resolved/shared-blocks-listentries-caveat.md](resolved/shared-blocks-listentries-caveat.md)
+- [resolved/shared-blocks-listentries-caveat.md](shared-blocks-listentries-caveat.md)
   — the same shape inconsistency from the other side, and **the one forward constraint
   worth carrying**: if `listEntries` ever gains reference resolution, it inherits this
   decision wholesale, including the phase-dependent question — "is B public?" at build,
   "can this reader see B?" at request. Implementing it with the request-time question
   only would pass every test and leak in a static build.
-- [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
+- [authorization-enforcement-consolidation.md](../authorization-enforcement-consolidation.md)
   — reuse `createContentAccessChecker`; do not add a sixth matcher. **The static case
   needs care here:** "evaluate against anonymous" must go through the same matcher with
   an anonymous principal, not a separate is-this-public code path, or the count goes to
   six after all.
-- [draft-publish-lifecycle.md](draft-publish-lifecycle.md) — why there is no fallback
+- [draft-publish-lifecycle.md](../draft-publish-lifecycle.md) — why there is no fallback
   signal. **The decision softens this:** a tagged partial *is* graceful degradation, so
   the absence of a per-entry publish flag stops being the only thing standing between a
   denied reader and a blank render. It does not remove the reason this file is P1 — the
   full-data leak is still a leak — but it means the fix does not depend on a draft
   concept ever existing.
-  signal

@@ -51,8 +51,9 @@ Option 1 also improves the read side: a page rendering a broken reference curren
 
 - [resolved-reference-shape.md](resolved/resolved-reference-shape.md) — the write-boundary
   normalization this sits beside.
-- [reference-resolution-bypasses-path-acls.md](reference-resolution-bypasses-path-acls.md) —
-  note an ACL-denied target could produce the same `null` if resolution ever starts filtering,
-  so decide the tombstone shape with that in mind.
+- [reference-resolution-bypasses-path-acls.md](resolved/reference-resolution-bypasses-path-acls.md) —
+  an ACL-denied target now resolves to a `RestrictedReference` carrying its `id` and tagged
+  `unavailable: true, reason: 'restricted'`, never `null`. Option 1's tombstone fits that tag as
+  another `reason` (say `'missing'`, with no title or URL), so renderers branch on one key.
 
 [BOTH]

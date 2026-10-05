@@ -82,9 +82,6 @@ export interface ResolvedReferenceMeta {
  * Assemble a resolved reference: the target's own data, then its body if the field asked to
  * embed it, then the reserved metadata.
  *
- * Exists so the two places that construct one — the server resolver in content-store.ts and
- * the editor's live-preview endpoint in api/resolve-references.ts — cannot drift.
- *
  * The ordering is the contract, not a detail. Metadata LAST means a target that models `id` as
  * a content field cannot shadow the real content ID, which the write boundary recovers from
  * `value.id` (`referenceValueId`) — a shadowed id makes a re-save persist the wrong value and
@@ -107,6 +104,42 @@ export function buildResolvedReference(
   resolved.collection = meta.collection
   resolved.urlPath = meta.urlPath
   return resolved
+}
+
+/**
+ * What a reference resolves to when the reader may not read its target: enough to render a
+ * link (a title and the URL, which a denied reader can follow to a sign-in page) and nothing
+ * else of the target's data.
+ *
+ * `unavailable: true` is the marker a renderer branches on, so a denied target never arrives
+ * looking like a full one with its fields `undefined`; `reason` says why, leaving room for
+ * other reasons a target cannot be shown. A reference the reader may see in full never carries
+ * either key. `id` is always present, so a save of the referring entry writes the reference
+ * back unchanged (`normalizeReferenceValues` recovers it from `value.id`).
+ */
+export type RestrictedReference = Simplify<
+  ResolvedReferenceMeta & {
+    /** The target's display title, by `resolveEntryTitle`'s fallback chain. */
+    title: string
+    unavailable: true
+    reason: 'restricted'
+  }
+>
+
+/** Assemble a {@link RestrictedReference}. Takes no target data, so none can leak into it. */
+export function buildRestrictedReference(
+  meta: ResolvedReferenceMeta,
+  title: string,
+): RestrictedReference {
+  return {
+    id: meta.id,
+    slug: meta.slug,
+    collection: meta.collection,
+    urlPath: meta.urlPath,
+    title,
+    unavailable: true,
+    reason: 'restricted',
+  }
 }
 
 /**
@@ -228,7 +261,9 @@ type FieldValue<F extends InferableField> = F extends {
       : F extends { type: 'reference'; resolvedSchema: infer S }
         ? ScalarValue<
             F,
-            | (InferContentShape<Extract<S, readonly InferableField[]>> & ResolvedReferenceMeta)
+            | (InferContentShape<Extract<S, readonly InferableField[]>> &
+                ResolvedReferenceMeta & { unavailable?: undefined })
+            | RestrictedReference
             | null
           >
         : F extends { type: 'reference' }
