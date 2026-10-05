@@ -602,3 +602,13 @@ alphabet), and a supported script-runner entrypoint (both sites carry
 
 Full detail for every item above lives in its own file; see `index.md`'s
 P0–P3 tables and "Do next" list for links.
+
+---
+
+## 2026-10-05 — [program] First deployed editor is live; D, E and F retired
+
+- The first deployed editor, the marketing site's (Lambda + EFS + EC2 worker, real auth, group path
+  rules), went live on 2026-10-05 at `0.0.67-int.91`. The fixes it surfaced are on `int-202610-a`.
+- It overtook workstreams D, E and F: the 2026-08-14 "knowledge base first" sequencing did not hold, and
+  the deploy-test rebuild was never needed to get there. D, E and F are retired as resolved by events;
+  G (operational readiness) stays open as a normal P2 task. The knowledge base follows on the same shape.

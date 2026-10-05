@@ -1,7 +1,16 @@
 # Saving an entry with a dangling reference replaces the ID with `null`
 
-**Status:** Open. **Priority: P2** — silent, irreversible loss of which entry was referenced,
-on a path an editor reaches without doing anything unusual.
+**Status:** Open. **Priority: P1 [BOTH]** — silent, irreversible loss of which entry was referenced,
+on a path an editor reaches without doing anything unusual. Any save of an entry that references a
+deleted target overwrites the ID with `null`: `content-store.ts` (`resolveSingleReferenceOnce`)
+returns `null` and `entry-validator.ts` skips nulls on write.
+
+**Decided:** one shape for denied and deleted targets that keeps the id
+(`{ id, unavailable: true, … }`), and the write path never stores `null` or a resolved object. The
+ACL fix ([reference-resolution-bypasses-path-acls.md](resolved/reference-resolution-bypasses-path-acls.md))
+shipped that shape for a reference the reader is denied: `RestrictedReference` in
+`entry-schema.ts`, `reason: 'restricted'`, which this file's case joins as another `reason`. This subsumes option 1 below, with `unavailable: true`
+in place of `exists: false`.
 
 ## What happens
 

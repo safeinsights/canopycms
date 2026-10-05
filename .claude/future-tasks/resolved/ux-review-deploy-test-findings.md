@@ -21,7 +21,7 @@ Source: interactive UX review of the AWS test deployment as an admin (2026-07-24
 
 ## Explicitly not fixed (with reasons)
 
-- **Raw Clerk user IDs as authors/owners**: the UI already resolves names via `UserBadge` + `onGetUserMetadata`; raw IDs are its documented fallback when the metadata endpoint has no data for the user (the deploy-test instance's condition). Environment/data issue, not a code defect — see existing [user-metadata-caching](../user-metadata-caching.md) / [user-metadata-optimization](../user-metadata-optimization.md) tasks.
+- **Raw Clerk user IDs as authors/owners**: the UI already resolves names via `UserBadge` + `onGetUserMetadata`; raw IDs are its documented fallback when the metadata endpoint has no data for the user (the deploy-test instance's condition). Environment/data issue, not a code defect — see existing [user-metadata-caching](user-metadata-caching.md) / [user-metadata-optimization](../user-metadata-optimization.md) tasks.
 - **Unresolve for resolved comment threads**: needs a new comment-store primitive + API route — captured as [comment-thread-unresolve](../comment-thread-unresolve.md).
 - **"No save toast" finding**: retracted — the green "Saved" toast already existed; the review environment (throttled hidden tab) obscured it.
 - **`/editor` 404 on the deploy-test harness**: harness-specific middleware matcher; deployment being destroyed.
