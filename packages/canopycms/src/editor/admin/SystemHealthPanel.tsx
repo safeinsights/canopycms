@@ -249,6 +249,14 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const lastFatalError = status.workerStatus?.lastFatalError
   const lastGitSync = status.workerStatus?.lastGitSync
   const baseWarning = baseRefreshWarning(lastGitSync?.baseRefresh)
+  const { build } = status
+  // Absent for a worker that predates the field, which is not evidence of skew;
+  // nor is a stale or absent worker's leftover status file, which names no running build.
+  const workerVersion = status.workerStatus?.workerVersion || undefined
+  const versionSkew =
+    status.worker.state === 'alive' &&
+    workerVersion !== undefined &&
+    workerVersion !== build.canopycmsVersion
 
   return (
     <Stack gap="md">
@@ -302,6 +310,46 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           </Text>
         </Alert>
       )}
+
+      {versionSkew && (
+        <Alert
+          color="orange"
+          icon={<IconAlertCircle size={16} />}
+          title="API and worker versions differ"
+          data-testid="version-skew-warning"
+        >
+          <Text size="sm">
+            The API runs canopycms {build.canopycmsVersion} but the worker runs canopycms{' '}
+            {workerVersion}. They were deployed from different builds.
+          </Text>
+        </Alert>
+      )}
+
+      <Paper withBorder p="sm" radius="md">
+        <Text size="sm" fw={600}>
+          Build
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-api-version">
+          API: canopycms {build.canopycmsVersion}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-source-revision">
+          Source revision:{' '}
+          {build.sourceRevision ? (
+            <Tooltip label={build.sourceRevision}>
+              <Code>{build.sourceRevision.slice(0, 12)}</Code>
+            </Tooltip>
+          ) : (
+            'not set (pass the CANOPY_SOURCE_SHA build arg to the image build)'
+          )}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-worker-version">
+          Worker version: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-media">
+          Media storage:{' '}
+          {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}
+        </Text>
+      </Paper>
 
       {lastGitSync && (
         <Paper withBorder p="sm" radius="md">

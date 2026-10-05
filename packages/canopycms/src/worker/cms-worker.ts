@@ -18,7 +18,8 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { writeWorkerStatus } from '../task-queue/worker-status'
+import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
+import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
@@ -200,7 +201,12 @@ export class CmsWorker {
   private ensureStatusReport(): WorkerStatusReport {
     if (!this.statusReport) {
       const now = new Date().toISOString()
-      this.statusReport = { version: 1, startedAt: now, updatedAt: now }
+      this.statusReport = {
+        version: 1,
+        workerVersion: CANOPYCMS_VERSION,
+        startedAt: now,
+        updatedAt: now,
+      }
     }
     return this.statusReport
   }
@@ -281,6 +287,24 @@ export class CmsWorker {
     this.ensureStatusReport()
 
     await this.acquireLock()
+
+    // Replace the previous holder's status file now: the first sync can take
+    // minutes, and until then System health would report the old worker's
+    // version. Best-effort, like the startup-failure write below. The previous
+    // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
+    // its alert between restarts while the first successful sync still clears it.
+    try {
+      const lastFatalError = await readLastFatalError(this.taskDir)
+      await writeWorkerStatus(this.taskDir, {
+        ...this.ensureStatusReport(),
+        ...(lastFatalError ? { lastFatalError } : {}),
+      })
+    } catch (err) {
+      workerLogError(
+        'Failed to write worker status after acquiring the lock:',
+        getErrorMessage(err),
+      )
+    }
 
     // Everything below runs while holding the cross-host worker lock. A failure
     // here (most notably the empty-remote guard inside ensureRemoteGit) means

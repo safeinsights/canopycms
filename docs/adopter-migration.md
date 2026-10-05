@@ -168,6 +168,19 @@ passes `allowCreateBranch: true`, never with a request's branch.
 
 **Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
 
+### System health shows which build is running
+
+**What changed.** System health gains a Build section (canopycms version, source revision, worker
+version, media-storage state) and warns when API and worker versions differ.
+
+**To adopt.** Optional; without it the revision reads "not set". Copy the template changes
+(`init-deploy aws` overwrites whole files): `Dockerfile.cms` (runner-stage `ARG`/`ENV`/`LABEL` for `CANOPY_SOURCE_SHA`),
+`infrastructure/lib/cms-stack.ts` (`sourceRevision` prop, passed in `buildArgs`),
+`infrastructure/bin/app.ts`, and `.github/workflows/deploy-cms.yml`
+(`CANOPY_SOURCE_SHA: ${{ github.sha }}`).
+
+**Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
+
 ---
 
 <!--

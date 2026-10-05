@@ -133,6 +133,14 @@ export interface BaseRefreshReport {
   trackedCanopyMeta?: string[]
 }
 
+/** What a running CMS process reports about the build it was started from. */
+export interface BuildIdentity {
+  /** canopycms package version this process runs. */
+  canopycmsVersion: string
+  /** Adopter source revision the deployed image was built from (CANOPY_SOURCE_SHA); absent when unset. */
+  sourceRevision?: string
+}
+
 /**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
@@ -140,6 +148,7 @@ export interface BaseRefreshReport {
  */
 export interface WorkerStatusReport {
   version: 1
+  /** canopycms version the worker runs. Optional: status files from older workers lack it. */
   workerVersion?: string
   startedAt: string
   updatedAt: string

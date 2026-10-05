@@ -2057,6 +2057,9 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         'githubAppInstallationId: props.githubAppInstallationId,',
         'githubAppPrivateKeySecretArn: githubAppPrivateKey?.secretArn,',
         'githubAppPrivateKeySecretJsonField: props.githubAppPrivateKeySecretJsonField,',
+        // Source revision: an optional prop whose build arg is the only route to the image.
+        'sourceRevision?: string',
+        'CANOPY_SOURCE_SHA: props.sourceRevision',
       ],
     ],
     [
@@ -2079,6 +2082,8 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         // must be set" -- telling the adopter to restore the credential the
         // migration guide just told them to remove.
         'githubTokenSecretArn: usingGitHubApp',
+        // `|| undefined`, never `required()`: the revision is optional.
+        'sourceRevision: process.env.CANOPY_SOURCE_SHA || undefined,',
       ],
     ],
     [
@@ -2094,6 +2099,7 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         'GITHUB_APP_ID: ${{ vars.CANOPY_GITHUB_APP_ID }}',
         'GITHUB_APP_INSTALLATION_ID: ${{ vars.CANOPY_GITHUB_APP_INSTALLATION_ID }}',
         'GITHUB_APP_PRIVATE_KEY_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN }}',
+        'CANOPY_SOURCE_SHA: ${{ github.sha }}',
       ],
     ],
   ]
@@ -2103,7 +2109,7 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
   for (const [exampleRelative, templatePath, required] of PAIRS) {
     const examplePath = examplePathFor(exampleRelative)
 
-    it(`${templatePath} carries the JSON-field wiring`, () => {
+    it(`${templatePath} carries the pinned wiring`, () => {
       const source = read(templatePath)
       for (const line of required) expect(source).toContain(line)
     })

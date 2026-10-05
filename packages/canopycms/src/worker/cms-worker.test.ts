@@ -16,6 +16,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
+import { CANOPYCMS_VERSION } from '../version'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const makeWorker = () =>
@@ -1564,6 +1565,43 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     expect(status.lastFatalError?.at).toBeTruthy()
   })
 
+  it('replaces a previous worker status file as soon as it holds the lock, before any git work', async () => {
+    const statusPath = path.join(workspacePath, '.tasks', WORKER_STATUS_FILE)
+    await fs.mkdir(path.dirname(statusPath), { recursive: true })
+    const stale: WorkerStatusReport = {
+      version: 1,
+      workerVersion: '0.0.1-previous',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: '2020-01-01T00:00:00.000Z',
+      lastFatalError: {
+        message: 'previous crash',
+        at: '2020-01-01T00:00:00.000Z',
+        phase: 'startup',
+      },
+    }
+    await fs.writeFile(statusPath, JSON.stringify(stale), 'utf-8')
+
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals & {
+      ensureStatusReport(): WorkerStatusReport
+    }
+    let seenDuringStartup: WorkerStatusReport | undefined
+    let inMemoryFatalError: WorkerStatusReport['lastFatalError']
+    internals.ensureRemoteGit = async () => {
+      seenDuringStartup = JSON.parse(await fs.readFile(statusPath, 'utf-8')) as WorkerStatusReport
+      inMemoryFatalError = internals.ensureStatusReport().lastFatalError
+      throw new Error('stop after observing')
+    }
+    await expect(worker.start()).rejects.toThrow(/stop after observing/)
+
+    expect(seenDuringStartup?.workerVersion).toBe(CANOPYCMS_VERSION)
+    expect(seenDuringStartup?.startedAt).not.toBe(stale.startedAt)
+    // A crash loop keeps its crash alert between restarts, but the carried error
+    // stays out of the in-memory report, so the first successful sync clears it.
+    expect(seenDuringStartup?.lastFatalError).toEqual(stale.lastFatalError)
+    expect(inMemoryFatalError).toBeUndefined()
+  })
+
   it('clones successfully when the fixture already has a base branch commit (happy path unaffected)', async () => {
     await pushInitialCommitToFixture('seed-happy')
 
@@ -1793,6 +1831,13 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSyncError?.message).toBeTruthy()
     expect(status.lastGitSyncError?.at).toBeTruthy()
     expect(status.lastGitSyncAt).toBeUndefined()
+  })
+
+  it('stamps the status file with the canopycms version the worker runs', async () => {
+    const worker = makeSyncWorker()
+    await worker.syncGit()
+
+    expect((await readStatus()).workerVersion).toBe(CANOPYCMS_VERSION)
   })
 
   it('redacts a token-bearing error message before persisting it to worker-status.json (HIGH-1)', async () => {

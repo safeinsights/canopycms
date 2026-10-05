@@ -520,6 +520,10 @@ repository variable; if it is missing, the deploy still succeeds and the editor
 ships with an empty publishable key. `NEXT_PUBLIC_CANOPY_MODE` is a literal, for
 the reason [Operating mode](#operating-mode) gives.
 
+The stack also passes the workflow's commit as the `CANOPY_SOURCE_SHA` build arg, which System
+health shows. It is a build arg, not a Lambda variable, because a Lambda variable would name the
+infrastructure's commit and hide an image/infrastructure skew.
+
 That bakes one Clerk instance into each image, which is what the generated
 `clerkMiddleware` needs, since it reads the build-time publishable key rather
 than the one a `<ClerkProvider>` receives. Without the middleware the key can

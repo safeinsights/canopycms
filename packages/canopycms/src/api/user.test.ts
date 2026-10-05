@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
 import { USER_ROUTES } from './user'
+import { CANOPYCMS_VERSION } from '../version'
+import { RESERVED_GROUPS } from '../authorization/helpers'
 
 // Extract handler for testing
 const getUserInfo = USER_ROUTES.whoami.handler
@@ -64,10 +66,39 @@ describe('user API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(result.data).toEqual({
+      expect(result.data).toMatchObject({
         userId: 'admin-user',
         groups: ['admins', 'reviewers', 'editors'],
       })
+    })
+
+    it('includes the build identity for an admin', async () => {
+      const req: ApiRequest<undefined> = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-user' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS as CanopyGroupId],
+        },
+      }
+
+      const result = await getUserInfo(mockContext, req)
+
+      expect(result.data?.build?.canopycmsVersion).toBe(CANOPYCMS_VERSION)
+    })
+
+    it('omits the build identity for a non-admin', async () => {
+      const req: ApiRequest<undefined> = {
+        user: {
+          type: 'authenticated',
+          userId: 'reviewer-user' as CanopyUserId,
+          groups: [RESERVED_GROUPS.REVIEWERS as CanopyGroupId],
+        },
+      }
+
+      const result = await getUserInfo(mockContext, req)
+
+      expect(result.ok).toBe(true)
+      expect('build' in (result.data ?? {})).toBe(false)
     })
 
     it('should return user info with single group', async () => {
