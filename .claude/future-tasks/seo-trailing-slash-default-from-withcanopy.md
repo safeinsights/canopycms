@@ -13,7 +13,7 @@ sitemap and canonical tags that all 308 on a `trailingSlash: true` site.
 
 `withCanopy` now reads `nextConfig.trailingSlash` and, when it is true, sets
 `env.CANOPY_API_TRAILING_SLASH`, which Next inlines into server and browser bundles (measured in
-a real `next build` of `apps/example1`, webpack and Turbopack). The API client reads it through
+a real `next build` of `apps/example1`, webpack and Turbopack; output quoted in PR #366). The API client reads it through
 `readApiTrailingSlashEnv()` in `packages/canopycms/src/api/request-url.ts`.
 
 ## Proposed solution

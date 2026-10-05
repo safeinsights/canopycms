@@ -167,9 +167,10 @@ export function joinUrlPrefix(prefix: string | undefined, path: string): string 
  * Append a trailing slash to a site-relative path, matching a site that serves `/contact/`.
  *
  * Leaves the root (`/`) and file-like paths (a last segment containing a dot, e.g.
- * `/blog/rss.xml`) alone, and never doubles an existing slash. That mirrors Next's own
- * `trailingSlash` redirects (`next/dist/lib/load-custom-routes.js`), which add a slash only to a
- * last segment with no dot and strip one from a segment ending `.ext`.
+ * `/blog/rss.xml`) alone, and never doubles an existing slash. So it never produces a URL that
+ * Next's `trailingSlash: true` redirects (`next/dist/lib/load-custom-routes.js:489,502` in
+ * 15.5.21): Next adds a slash only to a last segment with no dot, and strips one from a segment
+ * ending `.ext`.
  *
  * A query string and/or fragment (`?page=2`, `#section`) is split off BEFORE the slash decision
  * and placement, then reattached after — so `/blog?page=2` becomes `/blog/?page=2`, never
