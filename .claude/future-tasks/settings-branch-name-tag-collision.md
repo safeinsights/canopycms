@@ -1,34 +1,27 @@
-# A git tag named after the settings branch breaks settings saves
+# The worker's GitHub pushes resolve branch names that a same-named tag can shadow
 
-## Priority: P3 [BOTH] — needs an adopter tag named exactly like the settings branch
+## Priority: P3 [BOTH] — needs an adopter tag named exactly like a branch; fails loudly
 
-Found 2026-10-05 by review round 2 of the settings re-provision fix; verified by running against
+Found 2026-10-05 by the review rounds of the settings re-provision fix; verified by running against
 git 2.55.
 
 ## What happens
 
-Git resolves a bare name to `refs/tags/<name>` before `refs/heads/<name>`, and both the workspace
-clone and the worker's `remote.git` carry tags. With a tag named like the settings branch (for
-example `canopycms-settings-prod`):
+Git resolves a bare name to `refs/tags/<name>` before `refs/heads/<name>`, and the worker's
+`remote.git` is a bare clone of GitHub, so it carries every tag. The API side is not affected:
+`GitManager`'s settings fetches, its pull and `push()` all use `refs/heads/<name>`.
 
-- `GitManager.pullCurrentBranch` fetches the bare name, gets the tag, and the merge fails with
-  "refusing to merge unrelated histories". Every settings save fails, loudly. A test in
-  `git-manager.test.ts` pins that it stays loud.
-- `GitManager.push()` takes the branch from `rev-parse --abbrev-ref HEAD`, which prints
-  `heads/<name>` when a same-named tag exists, so the push would create `refs/heads/heads/<name>`
-  on the remote. Only the loud pull failure above stops a save from getting this far; switching
-  the pull to `refs/heads/<name>` alone turns the failure into silently lost settings.
-- The worker's settings push (`worker/task-runner.ts`, `git.push(githubUrl, branch)`) fails with
-  "src refspec matches more than one".
+The worker's pushes from `remote.git` to GitHub still pass the bare name:
 
-Provisioning already resolves the settings branch by full ref (`fetchBranchTip`,
-`isEmptyInitialBranch`, `reconcileLocalSettingsBranch`), so it is unaffected.
+- `worker/git-sync.ts` `pushSettingsBranches`: `git.push(githubUrl, settingsBranch)`;
+- `worker/task-runner.ts` `pushBranchToGitHub`: `git.push(githubUrl, branch)` and the
+  `${branch}:${branch}` lease refspec.
 
-## Options
+With a same-named tag in `remote.git` the push fails ("src refspec matches more than one"), so that
+branch never reaches GitHub and the worker logs a warning or fails the task. Nothing is lost:
+`remote.git` keeps the branch.
 
-- Refuse at provisioning: when `ls-remote` or the workspace shows `refs/tags/<settings branch>`,
-  throw a clear error naming the tag. Smallest change, and it surfaces in System Health.
-- Or move every settings-branch git call to full refs together: the pull's fetch, `push()`'s
-  refspec (`symbolic-ref --short HEAD`, then `refs/heads/X:refs/heads/X`), and the worker push.
-  Test: tag in `remote.git` before the clone, save twice, assert `refs/heads/<branch>` on the
-  remote holds both saves.
+## Fix
+
+Push `refs/heads/<branch>:refs/heads/<branch>` at both sites, including the lease retry. Test: a
+tag named like the branch in `remote.git`, then the push lands on GitHub's `refs/heads/<branch>`.

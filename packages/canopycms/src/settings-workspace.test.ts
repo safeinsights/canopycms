@@ -21,7 +21,7 @@ import { simpleGit } from 'simple-git'
 import { initTestRepo, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { GitManager } from './git-manager'
+import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import type { CanopyConfig } from './config'
 
 const baseConfig: Partial<CanopyConfig> = {
@@ -593,6 +593,31 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
 
     await (await coldStart()).ensureGitWorkspace(options)
 
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('saves onto the settings branch when the workspace holds a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    const remote = openBareRepo(remoteUrl)
+    // The clone imports the remote's tag; the remote then drops it.
+    await remote.raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await remote.raw(['tag', '-d', BRANCH])
+
+    const manager = new GitManager({ repoPath: settingsRoot, skipIndexMarker: true })
+    await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), GROUPS)
+    await manager.add('groups.json')
+    await manager.commit('save groups')
+    await manager.push()
+
+    const heads = await remote.raw(['for-each-ref', '--format=%(refname)', 'refs/heads'])
+    expect(heads.split('\n').filter(Boolean).sort()).toEqual([
+      `refs/heads/${BRANCH}`,
+      'refs/heads/main',
+    ])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+    await (await coldStart()).ensureGitWorkspace(options)
     expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
   }, 60_000)
 

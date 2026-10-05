@@ -2001,17 +2001,22 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
-  // A same-named tag is out of scope for settings saves (push resolves HEAD by
-  // short name); what this pins is that it fails loudly, never as "nothing to pull".
-  it('fails the pull loudly when the remote holds a tag named after the settings branch', async () => {
-    const { manager, remotePath } = await setupSettingsWorkspace()
+  it('refuses to push from a detached HEAD', async () => {
+    const { manager, settingsRoot } = await setupSettingsWorkspace()
+    await simpleGit({ baseDir: settingsRoot }).raw(['checkout', '--detach'])
+
+    await expect(manager.push()).rejects.toThrow(/detached HEAD/)
+  })
+
+  it('pulls the settings branch, not a tag of the same name', async () => {
+    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
     await advanceRemoteSettingsBranch(remotePath)
     await openBareRepo(remotePath).raw(['tag', SETTINGS_BRANCH, 'main'])
 
-    const err = await manager.pullCurrentBranch().catch((e: unknown) => e)
+    await manager.pullCurrentBranch()
 
-    expect(err).toBeInstanceOf(Error)
-    expect(err).not.toBeInstanceOf(GitRemoteRefMissingError)
+    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
+    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
   })
 
   // The counterpart to the test above, and the one that carries the weight:

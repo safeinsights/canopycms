@@ -1142,7 +1142,8 @@ export class GitManager {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     try {
-      await this.git.fetch(this.remote, currentBranch)
+      // The full ref: a bare name resolves to a same-named tag first.
+      await this.git.fetch(this.remote, `refs/heads/${currentBranch}`)
     } catch (err) {
       // The only benign failure here: the branch has never been pushed, so the
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
@@ -1222,9 +1223,11 @@ export class GitManager {
   }
 
   async push(branch?: string): Promise<void> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // Explicit refspec (local:remote) so push works for branches not yet in the
-    // remote (e.g. orphan settings branches). Built via raw() rather than the
+    const target = branch ?? (await this.currentBranchName())
+    // Explicit full-ref refspec (local:remote) so push works for branches not
+    // yet in the remote (e.g. orphan settings branches), and a same-named tag
+    // cannot redirect it: a short name for a new remote branch would create
+    // `refs/heads/heads/<name>`. Built via raw() rather than the
     // push() wrapper so `--end-of-options` sits immediately before the
     // positional remote/refspec, guarding against a refspec starting with '-'
     // being parsed as a git option (e.g. --receive-pack=...). Real flags must
@@ -1234,8 +1237,20 @@ export class GitManager {
       '--set-upstream',
       '--end-of-options',
       this.remote,
-      `${target}:${target}`,
+      `refs/heads/${target}:refs/heads/${target}`,
     ])
+  }
+
+  /**
+   * The checked-out branch's plain name. `rev-parse --abbrev-ref HEAD` prints
+   * `heads/<name>` when a same-named tag exists, which is not a branch name.
+   */
+  private async currentBranchName(): Promise<string> {
+    const branches = await this.git.branch()
+    if (branches.detached || !branches.current) {
+      throw new Error(`CanopyCMS: cannot push from a detached HEAD in ${this.repoPath}`)
+    }
+    return branches.current
   }
 
   /**
