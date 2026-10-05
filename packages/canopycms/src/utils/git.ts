@@ -94,6 +94,24 @@ export function isStaleLeaseRejection(message: string): boolean {
   return message.includes(REJECTED_MARKER) && message.includes(STALE_LEASE_REASON)
 }
 
+// GitHub's reason text when a push would introduce workflow content the credential may not write.
+// It names the credential kind ("a GitHub App", "an OAuth App", ...) and then the file.
+// Both classes stop at a newline, so the match stays on the one status line that carries it.
+const WORKFLOW_REFUSAL_PATTERN =
+  /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
+
+/**
+ * The workflow file named by GitHub's refusal of a push that would add workflow content the
+ * credential lacks the workflows permission for, or null if the message is not that refusal.
+ *
+ * GitHub refuses only content it does not already hold: carrying a base-branch workflow change by
+ * rebase, merge or fast-forward is accepted. Retrying the identical push can never succeed, so the
+ * worker fails it fast. The text is GitHub's own, not git's, so no locale pinning is needed.
+ */
+export function workflowPushRefusalFile(message: string): string | null {
+  return WORKFLOW_REFUSAL_PATTERN.exec(message)?.[1] ?? null
+}
+
 // git's message when `git fetch <remote> <branch>` names a ref the remote does not have. Both
 // spellings occur: modern git prints the lowercase form, older versions and some transports
 // capitalize it.
