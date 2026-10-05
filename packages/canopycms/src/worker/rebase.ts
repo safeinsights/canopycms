@@ -14,7 +14,13 @@ import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isRebaseInProgress } from '../utils/git'
+import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
+import {
+  TRACKED_CANOPY_STATE_FIX,
+  restoreRetiredSchemaCache,
+  splitByUpstreamTracking,
+  trackedCanopyStateChanges,
+} from './canopy-state'
 import {
   enqueueGitHubPush,
   forcePublishToLocalRemote,
@@ -763,11 +769,38 @@ async function rebaseOneBranch(
 
       // Skip dirty branches — the editor has changes that cannot be rebased.
       // Inside the lock, so no write can land between this check and the rebase
-      // below.
-      const dirtyCheck = await branchGit.status()
-      if (dirtyCheck.files.length > 0) {
+      // below. canopycms's own untracked state is not dirt.
+      let dirtyCheck = await branchGit.status()
+      if (await restoreRetiredSchemaCache(branchGit, dirtyCheck)) {
+        workerLog(`  ${branchDir}: restored the retired in-tree schema cache`)
+        dirtyCheck = await branchGit.status()
+      }
+      const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
+      if (editorDirt.length > 0) {
         workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
         return { kind: 'skippedDirty' }
+      }
+
+      // `git rebase` refuses to start over ANY modified tracked file, so
+      // tracked canopycms state blocks. The worker never untracks it here:
+      // replaying a branch commit that touched it writes historical bytes over
+      // the live file, and the abort that follows deletes it. So the index and
+      // the bytes stay untouched, and the wedge is recorded for an operator.
+      const trackedState = trackedCanopyStateChanges(dirtyCheck)
+      if (trackedState.length > 0) {
+        await branchGit.fetch('origin', ctx.baseBranch)
+        const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
+        const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
+        const reason =
+          stillTracked.length > 0
+            ? `git cannot rebase over modified canopycms state the repo tracks ` +
+              `(${trackedState.join(', ')}). To fix, ${TRACKED_CANOPY_STATE_FIX}.`
+            : `git cannot rebase over modified canopycms state this clone still tracks ` +
+              `(${trackedState.join(', ')}), though the base branch no longer does; ` +
+              `the clone needs manual repair`
+        workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+        await recordRebaseFailure(ctx, branchPath, branchDir, reason)
+        return { kind: 'failed', error: reason }
       }
 
       // The clone's own ref name: branchDir is the sanitized DIRECTORY name and

@@ -18,11 +18,12 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `git-sync.ts`        | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                                                                                                                             |
 | `rebase.ts`          | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                                                  |
 | `history-rewrite.ts` | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                                              |
+| `canopy-state.ts`    | Sync's handling of `.canopy-meta/`: tracked-state listing, retired schema-cache restore                                                                                                                                                                                    |
 | `log.ts`             | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
 | `github-auth.ts`     | GitHub credential selection (token or App), installation-token minting, the PAT swap in `refreshCredential` behind its 60s floor, PEM normalization                                                                                                                        |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`. `github-auth` sits outside that chain as a leaf:
+`history-rewrite` → `worker-context`, with `canopy-state` a leaf under `git-sync` and `rebase`. `github-auth` sits outside that chain as a leaf:
 `cms-worker` imports it, and it imports nothing from `worker/`. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.

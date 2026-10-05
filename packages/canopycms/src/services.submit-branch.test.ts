@@ -190,6 +190,57 @@ describe('services submitBranch', () => {
 
     expect(await remoteBranchSha('feature-1')).toBe(await localSha())
   })
+  describe("canopycms's own state", () => {
+    const CACHE = '.canopy-meta/schema-cache.json'
+
+    /** Commit `.canopy-meta/schema-cache.json` upstream, as an adopter repo can, and sync the clone to it. */
+    async function trackCanopyMetaUpstream(): Promise<string> {
+      const seedPath = path.join(tmpDir, 'seed')
+      await fs.mkdir(path.join(seedPath, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(path.join(seedPath, CACHE), '{"committed":true}', 'utf8')
+      const seedGit = simpleGit({ baseDir: seedPath })
+      await seedGit.add(['.'])
+      await seedGit.commit('adopter commits canopycms state')
+      await seedGit.push('origin', 'main')
+      const local = simpleGit({ baseDir: localPath })
+      await local.fetch('origin', 'main')
+      await local.raw(['reset', '--hard', 'origin/main'])
+      return localSha()
+    }
+
+    async function filesInCommit(sha: string): Promise<string[]> {
+      const out = await openBareRepo(remotePath).raw(['show', '--name-only', '--format=', sha])
+      return out.split('\n').filter((line) => line.length > 0)
+    }
+
+    it('commits the content change but never canopycms state, tracked or not', async () => {
+      await trackCanopyMetaUpstream()
+      await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
+      await fs.writeFile(path.join(localPath, '.canopy-meta', 'branch.json'), '{}', 'utf8')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      await services.submitBranch({ context, message: 'submit' })
+
+      const pushed = await remoteBranchSha('feature-1')
+      expect(pushed).toBe(await localSha())
+      expect(await filesInCommit(pushed!)).toEqual(['a.txt'])
+      // The state stays on disk, unstaged.
+      const status = await simpleGit({ baseDir: localPath }).status()
+      expect(status.files.map((f) => `${f.index}${f.working_dir} ${f.path}`)).toEqual([
+        ` M ${CACHE}`,
+      ])
+    })
+
+    it('creates no commit when canopycms state is the only change', async () => {
+      const upstreamSha = await trackCanopyMetaUpstream()
+      await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
+
+      await services.submitBranch({ context, message: 'submit' })
+
+      expect(await localSha()).toBe(upstreamSha)
+      expect(await remoteBranchSha('feature-1')).toBe(upstreamSha)
+    })
+  })
 
   describe('records the submitting user', () => {
     const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
