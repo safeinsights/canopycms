@@ -24,7 +24,7 @@ export class BranchPathError extends Error {}
 
 /**
  * True when a branch load failed because the name names no workspace: a traversal segment, a name
- * too long for a filename, or one naming a file under the branches root (ENOTDIR).
+ * too long for a filename, or a path through a file (ENOTDIR), as `?branch=branches.json` gives.
  */
 export function namesNoWorkspace(err: unknown): boolean {
   if (err instanceof BranchPathError) return true
