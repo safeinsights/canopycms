@@ -51,6 +51,14 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Static-export sites can preview a branch through `createPreviewPage`
+
+**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the editor's `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`.
+
+**To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
+
+**Now deletable.** A hand-built branch-preview route.
+
 ### Preview URLs take one prefix and follow `trailingSlash` — **breaking (env): `CANOPY_API_TRAILING_SLASH` is renamed `CANOPY_TRAILING_SLASH`**
 
 **What changed.** `editor.previewPrefix` (a path or `https://` URL) goes in front of every preview URL, site-relative `previewBase` routes included, so a static-export site can preview through routes its CMS build renders. Preview URLs follow `trailingSlash`, so they draw no 308, and the preview bridge matches a page with or without a trailing slash.

@@ -6,6 +6,8 @@ export {
   type NextCanopyContextResult,
 } from './context-wrapper'
 
+export type { CreatePreviewPageOptions, PreviewPageProps } from './preview-page'
+
 export {
   collectStaticParams,
   generateContentSitemap,

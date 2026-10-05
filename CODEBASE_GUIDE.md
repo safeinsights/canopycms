@@ -298,9 +298,10 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
 - `sharp-tracing.ts` — locates sharp's libvips directories the way a bundler would, for Next's file tracing
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
-- `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `guardBuildContext`
+- `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `createPreviewPage`, `guardBuildContext`
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
-- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
+- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` wraps a view to render `useCanopyPreview`'s live draft
+- `preview-page.tsx` — `createPreviewPageFor`, the page behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]`, else `notFound()`; imports only types from `client.tsx`, which `server-entry-client-boundary.test.ts` holds
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
