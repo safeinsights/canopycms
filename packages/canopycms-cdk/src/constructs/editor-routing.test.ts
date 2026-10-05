@@ -262,6 +262,27 @@ describe('CanopyCmsService.attachTo', () => {
     template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 0)
   })
 
+  it('creates no forwarded-host function when behaviorOverrides supplies the associations', () => {
+    const { stack, service } = buildStack('AttachOverrideFnStack')
+    const fn = new cloudfront.Function(stack, 'Mine', {
+      code: cloudfront.FunctionCode.fromInline('function handler(e){return e.request}'),
+    })
+    service.attachTo(siteDistribution(stack), {
+      behaviorOverrides: {
+        functionAssociations: [
+          { function: fn, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
+      },
+    })
+    const template = Template.fromStack(stack)
+    expect(Object.keys(template.findResources('AWS::CloudFront::Function'))).toEqual([
+      stack.getLogicalId(fn.node.defaultChild as cloudfront.CfnFunction),
+    ])
+    for (const behavior of distributionConfig(template).CacheBehaviors!) {
+      expect(behavior.FunctionAssociations).toHaveLength(1)
+    }
+  })
+
   it('refuses viewerRequestFunction together with behaviorOverrides.functionAssociations', () => {
     const { stack, service } = buildStack('AttachBothFnStack')
     const fn = new cloudfront.Function(stack, 'Mine', {
@@ -428,6 +449,8 @@ describe('CanopyCmsService.attachTo: editorAssetPrefix', () => {
     ['/api', /overlaps/],
     ['/_next', /overlaps/],
     ['/_next/static', /overlaps/],
+    ['/assets', /overlaps/],
+    ['/assets/t', /overlaps/],
   ])('refuses editorAssetPrefix %s', (prefix, message) => {
     const { stack, service } = buildStack(`PrefixBad${prefix.replace(/[^A-Za-z0-9]/g, '')}Stack`)
     expect(() => service.attachTo(siteDistribution(stack), { editorAssetPrefix: prefix })).toThrow(

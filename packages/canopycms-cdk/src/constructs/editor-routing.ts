@@ -7,6 +7,7 @@ import {
   aws_cloudfront_origins as origins,
   aws_lambda as lambda,
 } from 'aws-cdk-lib'
+import { ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
 
 /** CloudFront's maximum origin read timeout without a service-quota increase. */
 export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
@@ -49,6 +50,8 @@ const EDITOR_ROUTES: EditorRoute[] = EDITOR_PATH_PATTERNS.map((pattern) => ({
 const RESERVED_ROUTES: EditorRoute[] = [
   ...EDITOR_ROUTES,
   { pattern: '/_next/*', probes: ['/_next/x'] },
+  { pattern: ASSETS_TRANSFORM_PATH_PATTERN, probes: ['/assets/t/x'] },
+  { pattern: ASSETS_PATH_PATTERN, probes: ['/assets/x'] },
 ]
 
 /** Id of the marker construct `attachEditorBehaviors` adds to the distribution. */
@@ -185,7 +188,7 @@ export function createStaticCachePolicy(scope: Construct, id: string): cloudfron
  * break the OAC signature) through ALL_VIEWER_EXCEPT_HOST_HEADER.
  */
 export function lambdaBehaviorOptions(
-  viewerRequestFunction: cloudfront.FunctionAssociation['function'],
+  viewerRequestFunction: cloudfront.FunctionAssociation['function'] | undefined,
   responseHeadersPolicy: NonNullable<cloudfront.AddBehaviorOptions['responseHeadersPolicy']>,
 ): cloudfront.AddBehaviorOptions {
   return {
@@ -194,7 +197,7 @@ export function lambdaBehaviorOptions(
     viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
     allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
     responseHeadersPolicy,
-    functionAssociations: [
+    functionAssociations: viewerRequestFunction && [
       { function: viewerRequestFunction, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
     ],
   }
@@ -364,9 +367,13 @@ export function attachEditorBehaviors(
 
   // Scoped to the distribution so everything lands in its stack, which may
   // not be the service's.
+  // None at all when the overrides bring their own associations, which would
+  // otherwise leave a deployed function associated with nothing.
   const viewerRequestFunction =
     options.viewerRequestFunction ??
-    createForwardedHostFunction(distribution, 'CanopyEditorForwardedHostFunction')
+    (options.behaviorOverrides?.functionAssociations
+      ? undefined
+      : createForwardedHostFunction(distribution, 'CanopyEditorForwardedHostFunction'))
   const responseHeadersPolicy =
     options.behaviorOverrides?.responseHeadersPolicy ??
     createEditorResponseHeadersPolicy(distribution, 'CanopyEditorResponseHeadersPolicy')
