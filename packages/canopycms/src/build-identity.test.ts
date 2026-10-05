@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { getBuildIdentity, SOURCE_REVISION_ENV } from './build-identity'
+import { getBuildIdentity } from './build-identity'
 import { CANOPYCMS_VERSION } from './version'
+
+const SOURCE_REVISION_ENV = 'CANOPY_SOURCE_SHA'
 
 describe('getBuildIdentity', () => {
   it('reports the package version', () => {
