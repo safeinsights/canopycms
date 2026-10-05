@@ -643,6 +643,45 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     ])
   }, 60_000)
 
+  /** Push content history under the settings name, as a submit of a content workspace would. */
+  async function pushContentHistoryAsSettings(remoteUrl: string): Promise<void> {
+    const content = path.join(tmpRoot, 'content-clone')
+    await simpleGit().clone(remoteUrl, content, ['--branch', 'main'])
+    const git = await initTestRepo(content)
+    await git.checkoutLocalBranch(BRANCH)
+    await fs.writeFile(path.join(content, 'readme.md'), '# edited as content')
+    await git.add('readme.md')
+    await git.commit(`Submit ${BRANCH}`)
+    await git.push('origin', BRANCH)
+  }
+
+  it('refuses to check out a remote settings branch that carries content history', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await pushContentHistoryAsSettings(remoteUrl)
+
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
+      /shares history with the base branch 'main', so it holds content, not settings/,
+    )
+
+    const git = simpleGit({ baseDir: settingsRoot })
+    expect((await git.status()).current).toBe('main')
+    expect((await git.branchLocal()).all).not.toContain(BRANCH)
+  }, 60_000)
+
+  it('refuses to repair an empty orphan onto a remote settings branch that carries content history', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    // Provisioned, never saved: the workspace sits on its empty initial commit.
+    await (await coldStart()).ensureGitWorkspace(options)
+    await pushContentHistoryAsSettings(remoteUrl)
+
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
+      /holds content, not settings/,
+    )
+
+    expect(await log(settingsRoot)).toEqual(['Initialize settings branch'])
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
+  }, 60_000)
+
   it('leaves a branch related to the remote one for the next settings pull', async () => {
     const { remoteUrl, settingsRoot, options, coldStart } = await setup()
     await (await coldStart()).ensureGitWorkspace(options)

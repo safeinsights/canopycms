@@ -266,6 +266,27 @@ class SettingsBranchDivergedError extends Error {
   }
 }
 
+/**
+ * The remote's settings branch shares a root commit with the base branch, so it is content
+ * history under the settings name rather than settings. Adopting it would load no groups or
+ * path rules, and settings saves would then commit onto content history.
+ */
+class SettingsBranchHasContentHistoryError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly baseBranch: string,
+    public readonly remote: string,
+  ) {
+    super(
+      `CanopyCMS: the settings branch '${branch}' on remote '${remote}' shares history with ` +
+        `the base branch '${baseBranch}', so it holds content, not settings, and was not ` +
+        `checked out. Restore '${branch}' on the remote from a copy of the settings, or delete ` +
+        `it there to start with empty settings, then restart.`,
+    )
+    this.name = 'SettingsBranchHasContentHistoryError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -1393,6 +1414,8 @@ export class GitManager {
    *   {@link SettingsBranchDivergedError}; local commits are never discarded.
    *   An unreadable remote throws only for that empty branch, since one that
    *   holds settings can serve them and the next save surfaces the remote error.
+   * Either way a remote branch sharing a root with the base branch is never
+   * adopted: {@link SettingsBranchHasContentHistoryError}.
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1439,6 +1462,7 @@ export class GitManager {
 
     if (remoteTip) {
       const fetchedTip = await this.fetchBranchTip(branchName)
+      await this.assertNotContentHistory(branchName, await this.rootCommits(fetchedTip))
       // `-b` consumes branchName as its literal value; see checkoutBranchInner.
       await this.git.raw(['checkout', '-b', branchName, fetchedTip])
       log.debug('git', 'Checked out the remote settings branch', { branchName })
@@ -1500,6 +1524,7 @@ export class GitManager {
     if (localWork.length > 0) {
       throw new SettingsBranchDivergedError(branchName, this.repoPath, localWork.join(' and '))
     }
+    await this.assertNotContentHistory(branchName, remoteRoots)
 
     // `checkout -B` resets the current branch onto the fetched tip, and
     // refuses rather than overwrite a file written since the check above.
@@ -1526,6 +1551,34 @@ export class GitManager {
   private async fetchBranchTip(branch: string): Promise<string> {
     await this.git.fetch(this.remote, branch)
     return (await this.git.revparse(['FETCH_HEAD'])).trim()
+  }
+
+  /**
+   * Refuse to adopt a remote settings branch whose roots include the base branch's: a
+   * settings branch is an orphan, so a shared root means content history under its name.
+   * A workspace without its base branch fails closed too, since it cannot tell.
+   */
+  private async assertNotContentHistory(branchName: string, tipRoots: string[]): Promise<void> {
+    const baseRef = await this.firstResolvableRef([
+      `refs/heads/${this.baseBranch}`,
+      `refs/remotes/${this.remote}/${this.baseBranch}`,
+    ])
+    const baseRoots = baseRef ? await this.rootCommits(baseRef) : []
+    if (!baseRef || tipRoots.some((root) => baseRoots.includes(root))) {
+      throw new SettingsBranchHasContentHistoryError(branchName, this.baseBranch, this.remote)
+    }
+  }
+
+  private async firstResolvableRef(refs: string[]): Promise<string | undefined> {
+    for (const ref of refs) {
+      try {
+        await this.git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+        return ref
+      } catch {
+        // Not present; try the next.
+      }
+    }
+    return undefined
   }
 
   private async rootCommits(rev: string): Promise<string[]> {

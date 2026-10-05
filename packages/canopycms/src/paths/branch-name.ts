@@ -39,6 +39,18 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
 /**
+ * Whether `branchName` is a settings branch, never a content branch: the reserved prefix, or the
+ * configured name (which need not carry it). Compared sanitized, the form git and disk use.
+ */
+export function isSettingsBranchName(branchName: string, settingsBranchName?: string): boolean {
+  const sanitized = sanitizeBranchName(branchName)
+  return (
+    sanitized.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX) ||
+    (settingsBranchName !== undefined && sanitized === sanitizeBranchName(settingsBranchName))
+  )
+}
+
+/**
  * Branch names that collide with a static top-level API route namespace.
  *
  * http/router.ts's `compareSpecificity` ranks a literal pattern segment above a

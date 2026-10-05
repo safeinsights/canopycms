@@ -23,7 +23,7 @@ export class BranchPathError extends Error {}
 
 // Lives in ./branch-name (dependency-free); re-exported here for server-side
 // importers, who may safely reach this module's node:fs imports.
-import { sanitizeBranchName } from './branch-name'
+import { sanitizeBranchName, isSettingsBranchName } from './branch-name'
 /** @internal Exported for tests. */
 export { sanitizeBranchName }
 
@@ -31,10 +31,13 @@ const resolveContentBranchesRoot = (mode: OperatingMode, override?: string): str
   return operatingStrategy(mode).getContentBranchesRoot(override)
 }
 
-/** Resolve a branch name to workspace paths, rejecting path traversal. */
+/** Resolve a branch name to workspace paths, rejecting traversal and settings-branch names. */
 export function resolveBranchPath(options: BranchPathOptions): BranchPathResult {
   if (options.branchName.includes('..')) {
     throw new BranchPathError('Branch name cannot contain traversal segments')
+  }
+  if (isSettingsBranchName(options.branchName)) {
+    throw new BranchPathError('Settings branches are not content branches')
   }
   const safeBranch = sanitizeBranchName(options.branchName)
   const strategy = operatingStrategy(options.mode)

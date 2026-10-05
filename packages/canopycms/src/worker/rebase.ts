@@ -9,6 +9,7 @@ import {
 } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
+import { isSettingsBranchName } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { PullRequestState } from '../types'
@@ -70,6 +71,7 @@ export type RebaseContext = Pick<
   | 'octokit'
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
+  | 'ensureSettingsBranch'
 >
 
 /**
@@ -590,6 +592,13 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
     // is raw.
     if (branchDir === ctx.sanitizedBaseBranch) {
       workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
+      continue
+    }
+    // A settings branch is an orphan: rebasing it onto the base would give it content
+    // history. The API never provisions one here, so a directory under that name is a
+    // leftover and is left alone.
+    if (isSettingsBranchName(branchDir, ctx.ensureSettingsBranch())) {
+      workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
     const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath)
