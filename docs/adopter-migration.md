@@ -51,6 +51,21 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### `.canopy-meta/` must not be committed, and System health now says so
+
+**What changed.** The schema cache moved from `.canopy-meta/schema-cache.json` into each branch
+clone's `.git/canopycms/`. The worker's sync, editor submits and `canopycms sync` all ignore
+`.canopy-meta/`, and System health shows the base branch's refresh outcome. It warns when your
+repo tracks `.canopy-meta/`. A committed copy of that directory used to block the base branch's
+refresh and every branch's rebase, and it put the cache into every editor PR.
+
+**To adopt.** If `git ls-files .canopy-meta` lists anything in your repo, run
+`git rm -r --cached .canopy-meta`, add `.canopy-meta/` to `.gitignore`, and commit.
+
+**Now deletable.** Any local step that resets, deletes or reformats `.canopy-meta/` files before a
+commit or a format check, and any ignore rule that only kept the schema cache away from a
+formatter.
+
 ---
 
 <!--

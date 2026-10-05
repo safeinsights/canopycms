@@ -77,6 +77,7 @@ CanopyCMS is entirely file system based: no external database, no cache server, 
 - **Branch metadata**: `.canopy-meta/branch.json` per workspace — state, the recorded base branch (the immutable fork point set at creation), PR references, sync status, conflict tracking. Excluded from git via info/exclude.
 - **Branch registry**: `branches.json` at the branches root, an inventory of all branches, gitignored.
 - **Comments**: `.canopy-meta/comments.json` per branch, not committed, automatically excluded.
+- **Schema cache**: the resolved schema per branch, kept inside the clone's `.git/` directory rather than `.canopy-meta/`. `info/exclude` cannot hide a file an adopter has already committed, whereas nothing under `.git/` is ever tracked or shown by `git status`. `.canopy-meta/` is never content: dirty checks and stage-all operations skip it ([docs/concurrency.md](docs/concurrency.md)).
 - **Settings**: `groups.json` and `permissions.json` on the orphan branch `canopycms-settings-{deploymentName}`, with the workspace under the mode's workspace root.
 
 **Deliberately not on this filesystem:** binary assets. Images and PDFs live in a separate content-addressed object store — S3 in prod, a local directory in dev — and content references them only by immutable key, which keeps git history and per-branch clones lean. See [Asset & Media System](#asset--media-system).
@@ -516,14 +517,14 @@ When the base branch receives new commits from merged PRs, active editing branch
 
 ### Rebase Behavior
 
-The worker's cycle fetches the latest base branch from GitHub into the local bare repo, **fast-forwards the base branch's own workspace clone explicitly** (`merge --ff-only`, invalidating its content caches when it advances), then iterates over all other active branch workspaces and rebases them. That dedicated step exists because the base clone must stay a linear mirror of the remote while the generic rebase loop's skip paths are silent: here an unprovisioned workspace is a quiet skip, but a dirty working tree or diverged local history is a loud error left untouched, since nothing else would surface a silently wedged base view. (That non-fast-forward condition is about the base clone falling behind `origin/<baseBranch>` when fast-forwarding inward, not the push-outward collision in [Push Rejection](#push-rejection).)
+The worker's cycle fetches the latest base branch from GitHub into the local bare repo, **fast-forwards the base branch's own workspace clone explicitly** (`merge --ff-only`, invalidating its content caches when it advances), then iterates over all other active branch workspaces and rebases them. That dedicated step exists because the base clone must stay a linear mirror of the remote while the generic rebase loop's skip paths are silent: here an unprovisioned workspace is a quiet skip, but a dirty working tree or diverged local history is a loud error left untouched, since nothing else would surface a silently wedged base view. Each refresh returns a report of what it did, persisted in the worker's status and shown in System Health. (That non-fast-forward condition is about the base clone falling behind `origin/<baseBranch>` when fast-forwarding inward, not the push-outward collision in [Push Rejection](#push-rejection).)
 
 **Branches the rebase loop skips:**
 
 - **The base branch's own workspace**: kept current by the fast-forward step, since routing it through the `--theirs` resolution below could rewrite its history.
 - **In review** (`submitted` or `approved`): rebasing would rewrite commit history under a PR someone is actively reading. They are left alone until they return to `editing` — but the same cycle still polls their PR's resolution, since nothing else tells the worker a merge or close happened.
 - **Archived**: already merged, with no open PR left to poll.
-- **Dirty working tree**: an editor is actively saving, and rebasing would fail or destroy their work. The worker skips and retries next cycle.
+- **Dirty working tree**: an editor is actively saving, and rebasing would fail or destroy their work. The worker skips and retries next cycle. canopycms's own `.canopy-meta/` state never counts as dirty, but git refuses to rebase over any modified _tracked_ file, so tracked canopycms state an adopter committed still skips the rebase, with a log naming the fix.
 
 When nothing conflicts, the rebase applies cleanly and any previous conflict state is cleared.
 

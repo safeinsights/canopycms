@@ -67,7 +67,7 @@ Content, git and branch files have their own sections below; the rest:
 - `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
 - `server.ts` — server entry point exports
 - `config.ts` — re-export shim over the `config/` module
-- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`
+- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
 - `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
@@ -218,7 +218,8 @@ direction, and every invariant.
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle, worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh, trash sweep
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep
+- `canopy-state.ts` — `listTrackedCanopyState`, `restoreRetiredSchemaCache`, `isUntracked`, `TRACKED_CANOPY_STATE_FIX`: adopter-tracked `.canopy-meta/` handling
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
@@ -612,13 +613,13 @@ always target a concrete origin — is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper; also `ensureGitExcludePattern`, `GitManager.repoExistsAt` and `gitChildEnv`
+- `git-manager.ts` — the `simple-git` wrapper; also `ensureGitExcludePattern`, `GitManager.repoExistsAt`, `gitChildEnv` and `addAllExceptCanopyState()`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable after creation; `buildMergedBranchUpdate`
 - `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
 - `branch-workspace.ts` — `BranchWorkspaceManager`: provisions and resolves a branch's clone
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`
+- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `schemaCacheDir`, `SCHEMA_CACHE_FILE` (in a clone: `.git/canopycms/`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, the rate-limit retry predicates
@@ -777,7 +778,7 @@ preserved, and code blocks are skipped. See
 - `entry-url.ts` — `computeEntryUrl`, the forward collection-plus-slug to URL rule, and the shared `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups for data-layer iteration
-- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `isRebaseInProgress`
+- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl` and `stripTrailingSlashes`
