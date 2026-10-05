@@ -8,8 +8,9 @@ When an adopter's repo tracks `.canopy-meta/` and the branch clone has modified 
 there (canopycms rewrites `branch.json` and `comments.json` continuously), `git rebase` refuses
 to start. The worker records a `rebaseFailure` and skips the branch on every cycle. That stays
 true after the adopter runs `git rm -r --cached .canopy-meta` upstream: the clone's own index and
-history still track the files. The base clone follows the adopter's fix automatically, because it
-has no commits of its own (`untrackInIndex` before its fast-forward). Branch clones do not.
+history still track the files. The base clone follows the adopter's fix on its next successful
+fast-forward, because it has no commits of its own (`untrackInIndex` before the merge). Branch
+clones do not.
 
 ## The obvious fix loses data. Do not ship it
 

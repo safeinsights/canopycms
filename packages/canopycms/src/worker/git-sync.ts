@@ -582,8 +582,7 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       return { outcome: 'skipped-not-provisioned' }
     }
 
-    // Idempotent; re-applied here because only clones made since the exclude
-    // existed have it.
+    // Idempotent, and applied every cycle so any clone lacking it gets it.
     await ensureGitExcludePattern(basePath, `${CANOPY_META_DIR}/`)
 
     const baseGit = simpleGit({
@@ -625,8 +624,10 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     // editor's view of the base branch until an operator intervenes, so a dirty
     // tree is loud, not a quiet skip. Only TRACKED content changes block the
     // refresh: canopycms's own state never does, and neither does a stray
-    // untracked file. If either would collide with incoming content, the
-    // --ff-only merge below refuses on its own and reports `failed`.
+    // untracked file. A modified tracked file or an untracked one that would
+    // collide with incoming content makes the --ff-only merge below refuse and
+    // report `failed`; an IGNORED file, which every .canopy-meta file is, git
+    // overwrites instead.
     const trackedDirty = status.files
       .filter((f) => !isUntracked(f) && !isCanopyInternalPath(f.path))
       .map((f) => f.path)
@@ -664,8 +665,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       // the merge would otherwise refuse to overwrite a modified copy, or
       // delete a clean one from disk. Safe here and not in the rebase loop,
       // because this clone has no commits of its own to replay. State still
-      // tracked upstream is left for the merge, which fails loudly only if
-      // upstream changed it.
+      // tracked upstream is left for the merge, which refuses where upstream
+      // changed a locally modified copy.
       const { droppedUpstream } = await splitByUpstreamTracking(baseGit, trackedState, fetchedTip)
       if (droppedUpstream.length > 0) {
         await untrackInIndex(baseGit, droppedUpstream)

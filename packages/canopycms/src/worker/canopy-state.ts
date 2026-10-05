@@ -5,9 +5,10 @@ import { CANOPY_META_DIR, isCanopyInternalPath } from '../utils/git'
 
 /**
  * How the sync loop treats canopycms's own state (`.canopy-meta/`) in a branch clone. It is
- * never content, so it never makes a clone "dirty" for sync, but git still refuses some
+ * never content, so untracked state never makes a clone "dirty" for sync, but git refuses some
  * operations over it while the adopter's repo tracks it. Only the adopter can stop that; once
- * they have, the base clone follows ({@link untrackInIndex}); branch clones need an operator.
+ * they have, the base clone follows on its next fast-forward ({@link untrackInIndex}), and a
+ * branch clone with modified tracked state needs an operator.
  */
 
 /** The fix an operator applies when an adopter repo tracks `.canopy-meta/`. */
@@ -39,8 +40,8 @@ export async function listTrackedCanopyState(git: SimpleGit): Promise<string[]> 
  * committed it can sync again. Nothing reads or writes that path in a clone any more, so its
  * content is dead; but while it differs from HEAD, `git rebase` refuses to start and a
  * fast-forward that touches it (including the adopter's own commit untracking it) refuses too.
- * Untracked or newly staged copies block neither, so they are left alone. Returns whether it
- * restored anything; the caller re-reads status if so.
+ * An untracked copy blocks neither and a newly staged one has nothing in HEAD to restore, so
+ * both are left alone. Returns whether it restored anything; the caller re-reads status if so.
  */
 export async function restoreRetiredSchemaCache(
   git: SimpleGit,
@@ -53,8 +54,8 @@ export async function restoreRetiredSchemaCache(
 }
 
 /**
- * The modified tracked `.canopy-meta/` files in `status`: what git refuses to rebase over, and
- * what a fast-forward refuses to overwrite.
+ * The changed tracked `.canopy-meta/` files in `status`: what git refuses to rebase over, and
+ * what a fast-forward refuses to overwrite where it touches them.
  */
 export function trackedCanopyStateChanges(status: StatusResult): string[] {
   return status.files
@@ -64,8 +65,8 @@ export function trackedCanopyStateChanges(status: StatusResult): string[] {
 
 /**
  * Split `paths` by whether the commit `tip` still tracks them. Those it no longer tracks, the
- * adopter has untracked upstream, so a fast-forward or rebase onto `tip` would delete them anyway
- * and {@link untrackInIndex} can clear the way; the rest still block.
+ * adopter has untracked upstream, so a fast-forward onto `tip` would delete them from disk unless
+ * {@link untrackInIndex} takes them out of the index first.
  */
 export async function splitByUpstreamTracking(
   git: SimpleGit,

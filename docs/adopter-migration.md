@@ -60,7 +60,10 @@ repo tracks `.canopy-meta/`. A committed copy of that directory used to block th
 refresh and every branch's rebase, and it put the cache into every editor PR.
 
 **To adopt.** If `git ls-files .canopy-meta` lists anything in your repo, run
-`git rm -r --cached .canopy-meta`, add `.canopy-meta/` to `.gitignore`, and commit.
+`git rm -r --cached .canopy-meta`, add `.canopy-meta/` to `.gitignore`, and commit. The base
+branch's workspace follows on its next refresh. An existing editing branch whose copy of that
+state has changed keeps failing to rebase, shown in System health, until an operator repairs or
+re-creates its workspace.
 
 **Now deletable.** Any local step that resets, deletes or reformats `.canopy-meta/` files before a
 commit or a format check, and any ignore rule that only kept the schema cache away from a

@@ -219,7 +219,7 @@ direction, and every invariant.
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep
-- `canopy-state.ts` — `listTrackedCanopyState`, `restoreRetiredSchemaCache`, `isUntracked`, `TRACKED_CANOPY_STATE_FIX`: adopter-tracked `.canopy-meta/` handling
+- `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting

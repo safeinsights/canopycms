@@ -208,11 +208,12 @@ markers entirely (`skipIndexMarker` on GitManager); their two mutable files foll
 mutable-JSON recipe instead (see the table row and
 `authorization/settings-file-store.ts`).
 
-`.canopy-meta/` is never content: the worker's dirty checks and every stage-all (submit, CLI
-sync) skip it, through `isCanopyInternalPath`/`stageAllExceptCanopyState` in `utils/git.ts`.
-Its files rely on `.git/info/exclude`, which cannot hide a file an adopter has committed, so
-nothing canopycms rewrites per branch may live there. The schema cache lives under `.git/`
-(see `schemaCacheDir`).
+`.canopy-meta/` is never content: every stage-all (submit, CLI sync) skips it, and the worker's
+dirty checks ignore it (`isCanopyInternalPath`/`stageAllExceptCanopyState` in `utils/git.ts`).
+It relies on `.git/info/exclude`, which cannot hide a file an adopter has committed, so a file
+that need not live there does not: the schema cache is under `.git/` (`schemaCacheDir`). Where
+an adopter has committed it anyway, `git rebase` refuses to run over the modified state, and
+`worker/canopy-state.ts` owns what the worker does about that.
 
 ## Content writes vs. the rebase loop [SYNC-C1]
 

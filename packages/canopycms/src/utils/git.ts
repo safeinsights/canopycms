@@ -143,14 +143,13 @@ async function resolveGitDir(repoPath: string): Promise<string | null> {
 /**
  * The directory, at every workspace root, holding canopycms's own per-workspace state: branch
  * metadata, comments, generation markers and lock markers. None of it is content, so it never
- * belongs in a commit, and its churn never makes a workspace "dirty" for sync purposes.
+ * belongs in a commit.
  */
 export const CANOPY_META_DIR = '.canopy-meta'
 
 /**
- * Whether a repo-relative path from `git status` / `git ls-files` lies under
- * {@link CANOPY_META_DIR}. Untracked directories arrive collapsed (`.canopy-meta/`), so the
- * directory itself matches too.
+ * Whether a repo-relative path from `git status` / `git ls-files` is {@link CANOPY_META_DIR}
+ * or lies under it.
  */
 export function isCanopyInternalPath(repoRelativePath: string): boolean {
   return repoRelativePath === CANOPY_META_DIR || repoRelativePath.startsWith(`${CANOPY_META_DIR}/`)
@@ -159,7 +158,7 @@ export function isCanopyInternalPath(repoRelativePath: string): boolean {
 /**
  * Stage every working-tree change (additions, edits, deletions) except anything under
  * {@link CANOPY_META_DIR}, including files an adopter committed there by mistake. Stage-all then
- * unstage, because git rejects every `:(exclude)` pathspec spelling with "paths are ignored" when
+ * unstage, because git rejects `:(exclude)` pathspecs (six spellings tried) with "paths are ignored" when
  * the excluded directory is itself ignored, which `.git/info/exclude` makes it in every clone.
  */
 export async function stageAllExceptCanopyState(git: SimpleGit): Promise<void> {
