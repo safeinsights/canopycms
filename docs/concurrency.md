@@ -524,15 +524,8 @@ inode/content identity check (otherwise two waiters both judge a lock stale and 
 second `unlink`s a fresh one) and a heartbeat (an ordinary EFS clone outlasts a fixed
 window such as 30s).
 
-Its anchor path is deliberately its own dot-directory,
-`{workspaceRoot}/.settings-init` (`settingsInitLockTarget()`), for two reasons. It cannot
-live inside the settings root, because `acquireProvisioningLock` mkdir's the directory its
-marker goes in and `git clone` refuses a destination with content in it. Keeping it in a
-dedicated dot-directory also keeps it clear of `.remote-init.lock`, which
-`ensureLocalSimulatedRemote` creates in `path.dirname(settingsRoot)` (= `{workspaceRoot}`)
-and which settings init calls into while holding this lock. That nesting is not a
-registry hazard, because locks anchor on their own marker paths and never share a key;
-the separate directories keep the nesting obvious rather than incidental.
+Its anchor is its own dot-directory, `{workspaceRoot}/.settings-init`;
+`settingsInitLockTarget()` (settings-workspace.ts) says why.
 
 **Background analysis.** The ContentId index marker and the EFS cross-process
 primitives (shared primitives, branch-registry GIT-M1, branch-schema-cache GIT-M2,
