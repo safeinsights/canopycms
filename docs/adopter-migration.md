@@ -107,6 +107,17 @@ that re-submits replace, keeping human text.
 
 **Now deletable.** Nothing.
 
+### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+
+**What changed.** `read()`/`readByUrlPath()` created a workspace for any `branch`, one per
+`?branch=` value. Now a branch other than the active one must exist and be readable by the user,
+or it reads as not found. `createContentReader` defaults `allowCreateBranch` to `false`.
+
+**To adopt.** Nothing via `getCanopy()`. A script creating a branch through `createContentReader`
+passes `allowCreateBranch: true`, never with a request's branch.
+
+**Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
+
 ---
 
 <!--
