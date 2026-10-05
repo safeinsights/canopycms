@@ -18,6 +18,7 @@ const branches = new Map<string, BranchContext>()
 const provisioned: string[] = []
 vi.mock('./branch-workspace', async () => {
   const { BranchPathError } = await import('./paths')
+  const { sanitizeBranchName } = await import('./paths/branch-name')
   return {
     loadOrCreateBranchContext: async ({ branchName }: { branchName: string }) => {
       provisioned.push(branchName)
@@ -29,6 +30,8 @@ vi.mock('./branch-workspace', async () => {
       if (branchName.includes('..')) {
         throw new BranchPathError('Branch name cannot contain traversal segments')
       }
+      // The real loader sanitizes next, which throws on anything but a string.
+      sanitizeBranchName(branchName)
       return branches.get(branchName) ?? null
     },
   }
@@ -191,6 +194,33 @@ describe('listEntries / buildContentTree with a branch option', () => {
   it('lists nothing for a traversal branch name rather than throwing', async () => {
     const { ctx } = await contextFor('prod', 'allow')
     expect(await ctx.listEntries({ branch: '../main' })).toEqual([])
+  })
+
+  it('lists nothing for a repeated ?branch= that arrives as an array', async () => {
+    await addBranch('feature', ['kept', 'added'])
+    const { ctx } = await contextFor('prod', 'allow')
+    // Untyped page props hand this through as-is.
+    const branch = ['feature', 'main'] as unknown as string
+    expect(await ctx.listEntries({ branch })).toEqual([])
+    expect(await treeOf(ctx, branch)).toEqual([])
+  })
+
+  it('resolves each branch once per request, and the active branch named explicitly shares the default', async () => {
+    const featureRoot = await addBranch('feature', ['kept', 'added'])
+    const { ctx, services } = await contextFor('prod', 'allow')
+    const schemaSpy = vi.spyOn(services.branchSchemaCache, 'getSchema')
+
+    await ctx.listEntries({ branch: 'feature' })
+    await treeOf(ctx, 'feature')
+    expect((await ctx.listEntries({ branch: 'main' })).map((e) => e.slug).sort()).toEqual([
+      'kept',
+      'removed',
+    ])
+    await ctx.listEntries()
+
+    const roots = schemaSpy.mock.calls.map(([branchRoot]) => branchRoot)
+    expect(roots).toEqual([featureRoot, path.join(root, 'main')])
+    expect(provisioned).toEqual(['main'])
   })
 
   it('ignores the branch option at build time, listing the checkout', async () => {

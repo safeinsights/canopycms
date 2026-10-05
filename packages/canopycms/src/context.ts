@@ -359,24 +359,27 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * generation protocol (docs/concurrency.md, "Adding a call-scoped memo").
      */
     const listingSources = new Map<string, Promise<ListingSource | null>>()
-    const resolveListingSource = (branch: string | undefined) => {
-      const activeBranch =
-        services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
+    // Read once, so every listing in this request agrees on it even if a
+    // concurrent request's refreshActiveBranch() replaces services.config.
+    const activeBranch =
+      services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
+    const resolveListingSource = (branch: unknown): Promise<ListingSource | null> => {
+      // Typed `string`, but usually handed over from untyped `searchParams`,
+      // where a repeated `?branch=` arrives as an array.
+      if (branch !== undefined && typeof branch !== 'string') return Promise.resolve(null)
       const requested =
         branch && branch !== activeBranch && !readsFromCheckout(services.config)
           ? branch
           : undefined
-      // '' is never a branch name, so it cannot collide with a requested one.
-      const key = requested ?? ''
+      const key = requested ?? activeBranch
       let source = listingSources.get(key)
       if (!source) {
-        source = resolveListingSourceImpl(activeBranch, requested)
+        source = resolveListingSourceImpl(requested)
         listingSources.set(key, source)
       }
       return source
     }
     const resolveListingSourceImpl = async (
-      activeBranch: string,
       requested: string | undefined,
     ): Promise<ListingSource | null> => {
       const operatingMode = services.config.mode
