@@ -172,11 +172,20 @@ describe('services submitBranch', () => {
   describe('records the submitting user', () => {
     const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
 
-    async function headCommit(): Promise<{ message: string; author: string; trailers: string }> {
+    async function headCommit(): Promise<{
+      message: string
+      author: string
+      botIdentity: string
+      trailers: string
+    }> {
       const git = simpleGit({ baseDir: localPath })
+      // The identity git resolves for this workspace: the configured bot, or the
+      // GIT_AUTHOR_*/GIT_COMMITTER_* env CI sets, which take precedence over it.
+      const ident = async (v: string) => (await git.raw(['var', v])).replace(/>.*$/s, '>').trim()
       return {
         message: (await git.raw(['log', '-1', '--format=%B'])).trimEnd(),
         author: (await git.raw(['log', '-1', '--format=%an <%ae> / %cn <%ce>'])).trim(),
+        botIdentity: `${await ident('GIT_AUTHOR_IDENT')} / ${await ident('GIT_COMMITTER_IDENT')}`,
         trailers: (await git.raw(['log', '-1', '--format=%(trailers:only,unfold)'])).trim(),
       }
     }
@@ -191,9 +200,8 @@ describe('services submitBranch', () => {
       // git itself parses it as a trailer, not as part of the subject.
       expect(commit.trailers).toBe('Edited-by: Jane Doe (user_2abc)')
       expect(commit.message).not.toContain('jane@example.com')
-      expect(commit.author).toBe(
-        'CanopyCMS Test Bot <canopycms-test@example.com> / CanopyCMS Test Bot <canopycms-test@example.com>',
-      )
+      expect(commit.author).toBe(commit.botIdentity)
+      expect(commit.author).not.toMatch(/Jane|jane@example\.com/)
     })
 
     it('adds Co-authored-by with the email only when the config opts in', async () => {
