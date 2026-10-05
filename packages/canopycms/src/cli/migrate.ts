@@ -23,8 +23,9 @@ import { parseSlug } from '../paths'
 import { filePathExists } from '../utils/fs'
 import { loadCollectionMetaFiles } from '../schema'
 import { getErrorMessage } from '../utils/error'
-import { withLock } from '../utils/async-mutex'
-import { withOccFileLock, OccWriteConflictError } from '../utils/occ-json-write'
+import { ContentWriteLockBusyError } from '../utils/content-write-lock'
+import { OccWriteConflictError } from '../utils/occ-json-write'
+import { withBranchSchemaLock } from '../schema/schema-store'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 
@@ -309,16 +310,21 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
 
   if (isBranchClone) {
     // projectDir IS the branch root in this case (see the invariant note
-    // above) — the same surrogate lock path SchemaOps uses for its own
-    // schema mutations (schema-store.ts's withSchemaLock), so a migrate run
-    // racing a live schema-editing request on this same branch clone
-    // serializes against it instead of silently interleaving writes.
-    const lockPath = path.join(projectDir, '.canopy-meta', 'schema')
+    // above). The renames rewrite the working tree the worker rebases, so this
+    // takes the same locks SchemaOps does for its own schema mutations: the
+    // content-write lock, then the schema surrogate.
     try {
-      await withLock(lockPath, () => withOccFileLock(lockPath, applyOps))
+      await withBranchSchemaLock(projectDir, applyOps)
     } catch (err) {
       if (err instanceof OccWriteConflictError) {
         throw new MigrateError('Another process is modifying the schema, try again.')
+      }
+      if (err instanceof ContentWriteLockBusyError) {
+        throw new MigrateError(
+          err.outcome === 'unknown'
+            ? 'The branch was being synced while migrate ran, so it may be partly applied. Check its state before running migrate again.'
+            : err.message,
+        )
       }
       throw err
     }

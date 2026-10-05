@@ -1,7 +1,7 @@
 /**
- * The worker stops before its next destructive git step once the provisioning lock it holds is
- * compromised. The hold is real; only its `isCompromised` is forced, because a genuine
- * compromise needs a refresh tick (provisioned-workspace.test.ts covers detecting one).
+ * The worker stops before its next destructive git step once a lock it holds is compromised.
+ * The holds are real; only the compromise is forced, because a genuine one needs a refresh tick
+ * (provisioned-workspace.test.ts covers detecting one).
  */
 
 import fs from 'node:fs/promises'
@@ -16,7 +16,7 @@ import { initTestRepo, mockConsole } from '../test-utils'
 import type { BaseRefreshReport } from '../types'
 import { CmsWorker } from './cms-worker'
 
-const lockState = vi.hoisted(() => ({ compromised: false }))
+const lockState = vi.hoisted(() => ({ compromised: false, contentLockCompromised: false }))
 
 vi.mock('./provisioned-workspace', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./provisioned-workspace')>()
@@ -27,6 +27,20 @@ vi.mock('./provisioned-workspace', async (importOriginal) => {
     ) => {
       const hold = await actual.holdProvisionedWorkspace(...args)
       return hold.kind === 'held' ? { ...hold, isCompromised: () => lockState.compromised } : hold
+    },
+  }
+})
+
+vi.mock('../utils/content-write-lock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/content-write-lock')>()
+  return {
+    ...actual,
+    tryAcquireContentWriteLock: async (
+      ...args: Parameters<typeof actual.tryAcquireContentWriteLock>
+    ) => {
+      const release = await actual.tryAcquireContentWriteLock(...args)
+      if (lockState.contentLockCompromised) args[1]?.(new Error('simulated lock takeover'))
+      return release
     },
   }
 })
@@ -61,6 +75,7 @@ describe('worker under a compromised provisioning lock', () => {
 
   afterEach(async () => {
     lockState.compromised = false
+    lockState.contentLockCompromised = false
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -116,6 +131,25 @@ describe('worker under a compromised provisioning lock', () => {
       }
     ).refreshBaseBranchWorkspace()
     expect(consoleSpy).toHaveWarned(/provisioning lock lost mid-refresh, stopping/)
+    consoleSpy.restore()
+
+    expect(report.outcome).toBe('skipped-locked')
+    await expect(fs.stat(path.join(contentBranchesPath, 'main', 'b.txt'))).rejects.toThrow()
+  })
+
+  it('stops the base refresh before it touches the clone when the content-write lock is lost', async () => {
+    lockState.compromised = false
+    lockState.contentLockCompromised = true
+    await provisionedClone('main', 'main')
+    await advanceRemote()
+
+    const consoleSpy = mockConsole()
+    const report = await (
+      makeWorker(tmpDir) as unknown as {
+        refreshBaseBranchWorkspace(): Promise<BaseRefreshReport>
+      }
+    ).refreshBaseBranchWorkspace()
+    expect(consoleSpy).toHaveWarned(/content-write lock lost mid-refresh, stopping/)
     consoleSpy.restore()
 
     expect(report.outcome).toBe('skipped-locked')

@@ -21,8 +21,9 @@
  *
  * The marker lives under `{branchRoot}/.canopy-meta` and the lock anchors on that marker path like
  * every other lock (see provisioning-lock.ts), so it can never alias the branch's provisioning
- * lock. The worker's rebase holds both, provisioning outside this one, and takes each try-only,
- * so they cannot deadlock. `.canopy-meta/` is git-excluded in every branch clone
+ * lock. The worker's rebase and base-branch refresh hold both, provisioning outside this one, and
+ * take each try-only; the global order is docs/concurrency.md's "Lock acquisition order".
+ * `.canopy-meta/` is git-excluded in every branch clone
  * (`ensureGitExclude`), so the lock directory cannot dirty the tree or be staged.
  *
  * Mutual exclusion is not proven: on EFS a stale cached mtime lets a waiter take over a live lock,
@@ -63,15 +64,20 @@ export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
  * Thrown when the bounded wait expires with the branch's content lock still held. Retriable --
  * callers translate it into a 409 with a message that says so.
  *
- * The message says "syncing OR another save" because BOTH produce it: the lock is taken by
- * `write`/`delete`/`renameEntry` and the admin repair-content-duplicates action as well as by the
- * worker's rebase, so naming only the rebase would claim more than is known. `api/content.ts`
+ * The message says "syncing OR another save" because BOTH produce it: the lock is taken by every
+ * working-tree mutator (docs/concurrency.md, "Who takes it") as well as by the worker's rebase,
+ * so naming only the rebase would claim more than is known. `api/content.ts`
  * routes this error ahead of the generic conflict so the editor sees this wording, making it
  * load-bearing rather than cosmetic.
  */
 export class ContentWriteLockBusyError extends Error {
   constructor(
     message = 'This branch is busy (syncing with the base branch, or another save is in flight); the change was not saved. Try again in a moment.',
+    /**
+     * `'not-run'`: the lock was never acquired, so nothing happened. `'unknown'`: the work ran
+     * but the lock was lost during it (see {@link withContentWriteLock}).
+     */
+    readonly outcome: 'not-run' | 'unknown' = 'not-run',
   ) {
     super(message)
     this.name = 'ContentWriteLockBusyError'
@@ -89,12 +95,13 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+/** Below provisioning's, so a crashed worker blocks saves for at most 30s (docs/concurrency.md). */
+const CONTENT_WRITE_LOCK_STALE_MS = 30_000
+
 /**
  * Acquire the branch's content-write lock WITHOUT waiting, for the worker's rebase loop, which
  * skips the branch and retries next cycle. Throws with `code === 'ELOCKED'` on a live holder.
  */
-/** Below provisioning's, so a crashed worker blocks saves for at most 30s (docs/concurrency.md). */
-const CONTENT_WRITE_LOCK_STALE_MS = 30_000
 
 export function tryAcquireContentWriteLock(
   branchRoot: string,
@@ -170,6 +177,7 @@ export async function withContentWriteLock<T>(
     // as a phantom editor collision.
     throw new ContentWriteLockBusyError(
       'This branch was being synced while your change was written, so the change may or may not have been recorded. Reload the entry to see the current state before saving again.',
+      'unknown',
     )
   }
   return result

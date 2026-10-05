@@ -19,6 +19,12 @@ working-tree file) and then rewrites the working-tree file twice with
 `settle()` between. Under load the watcher can observe a state between writes
 and report a divergence and its retraction again. Reasoned, not reproduced.
 
+A second sighting, the same day, was in an **unsandboxed** full run of
+`fix/content-write-lock-coverage` merged with int, so it is not the known
+sandbox-only failure of the repeat-suppression tests. Rule out the product before
+fixing the test: if two overlapping checks can each see "was divergent, now
+agrees" and both announce, the watcher has a real repeat bug that load exposes.
+
 ## Fix sketch
 
 Make the resolving writes atomic from the watcher's view, or assert on the

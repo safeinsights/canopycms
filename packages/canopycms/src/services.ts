@@ -46,6 +46,7 @@ import {
   type SubmissionEditor,
 } from './submission-attribution'
 import { getErrorMessage, redactCredentials } from './utils/error'
+import { withContentWriteLock } from './utils/content-write-lock'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -131,7 +132,10 @@ export interface CanopyServices {
   githubService?: GitHubService
   /** Bootstrap admin user IDs that are always treated as Admins */
   bootstrapAdminIds: Set<string>
-  /** Commit files to git with automatic author handling */
+  /**
+   * Commit files to git with automatic author handling. Holds the branch's
+   * content-write lock; rejects with `ContentWriteLockBusyError` when busy.
+   */
   commitFiles: (options: {
     context: BranchContext
     files: string | string[]
@@ -140,6 +144,8 @@ export interface CanopyServices {
   /**
    * Submit branch: commit all changes (with the submitter's trailers) and push
    * to remote. Resolves with every path the branch changes against its base.
+   * Holds the branch's content-write lock; rejects with
+   * `ContentWriteLockBusyError` when busy.
    */
   submitBranch: (options: {
     context: BranchContext
@@ -297,8 +303,13 @@ async function _createCanopyServicesInternal(
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
     })
-    await git.add(options.files)
-    await git.commit(options.message)
+    // [SYNC-C1] Unlocked, a commit made while a rebase is stopped on a conflict
+    // lands on its detached head with the rebase's half-resolved index, and the
+    // rebase's `--abort` discards it.
+    await withContentWriteLock(options.context.branchRoot, async () => {
+      await git.add(options.files)
+      await git.commit(options.message)
+    })
   }
 
   const submitBranch = async (options: {
@@ -324,31 +335,40 @@ async function _createCanopyServicesInternal(
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
     })
-    await git.checkoutBranch(options.context.branch.name)
-    const status = await git.status()
-    // Commit and push answer two DIFFERENT questions. Committing cleans the
-    // working tree, so one combined "tree is dirty" gate makes a retry after a
-    // failed push a silent no-op: nothing left to commit, the block is skipped,
-    // and success is reported though the commit never reached the remote. Push
-    // whenever there is something new to send — we just committed, or the local
-    // branch already had unpushed commits from an earlier attempt.
-    // canopycms's own state under .canopy-meta/ is never content, so it neither
-    // makes a commit worth creating nor gets staged into one.
-    let committed = false
-    if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
-      await git.addAllExceptCanopyState()
-      const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
-        editedBy: config.gitEditedByTrailers ?? true,
-        coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
-      })
-      await git.commit(
-        appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
-      )
-      committed = true
-    }
-    if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
-      await git.push(options.context.branch.name)
-    }
+    // [SYNC-C1] Commits the whole working tree, so it holds the branch's
+    // content-write lock from checkout through push. Unlocked, its checkout
+    // succeeds while the worker's rebase is stopped on a conflict, the commit
+    // lands on the branch, and the rebase's `--abort` resets the branch past it
+    // after this reported success. The push stays inside so no rebase rewrites
+    // the commit between commit and push.
+    const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
+      await git.checkoutBranch(options.context.branch.name)
+      const status = await git.status()
+      // Commit and push answer two DIFFERENT questions. Committing cleans the
+      // working tree, so one combined "tree is dirty" gate makes a retry after a
+      // failed push a silent no-op: nothing left to commit, the block is skipped,
+      // and success is reported though the commit never reached the remote. Push
+      // whenever there is something new to send — we just committed, or the local
+      // branch already had unpushed commits from an earlier attempt.
+      // canopycms's own state under .canopy-meta/ is never content, so it neither
+      // makes a commit worth creating nor gets staged into one.
+      let committed = false
+      if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
+        await git.addAllExceptCanopyState()
+        const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
+          editedBy: config.gitEditedByTrailers ?? true,
+          coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+        })
+        await git.commit(
+          appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
+        )
+        committed = true
+      }
+      if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
+        await git.push(options.context.branch.name)
+      }
+      return status
+    })
 
     // The list only feeds the PR body, so a failure to compute it falls back to
     // this submit's own working-tree changes rather than failing a submit that
@@ -362,7 +382,7 @@ async function _createCanopyServicesInternal(
           "the PR body lists only this submit's changes:",
         redactCredentials(getErrorMessage(err)),
       )
-      changedPaths = status.files.map((f) => f.path)
+      changedPaths = submitted.files.map((f) => f.path)
     }
     return {
       changedPaths: changedPaths.filter((p) => !p.startsWith(`${BRANCH_META_DIR}/`)),

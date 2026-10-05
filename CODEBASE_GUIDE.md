@@ -83,7 +83,7 @@ Content, git and branch files have their own sections below; the rest:
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
 - `resource-generation.ts` — the on-disk generation-marker primitive behind durable cache invalidation
 - `dev-content-watcher.ts` — dev-mode working-tree vs branch-clone divergence warning
-- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync
+- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
 - `url-exclusivity-fixtures.ts` — vitest-free enumerate-then-probe check for the one-URL invariant
 
 ### Static-Export Helpers
@@ -447,7 +447,7 @@ Every key, its default and its adopter-facing meaning are in
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
 - `resolver.ts` — `resolveSchema`, the high-level resolution API
-- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`
+- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for callers outside `SchemaOps`
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
 - `index.ts` — module exports
@@ -789,7 +789,7 @@ preserved, and code blocks are skipped. See
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
-- `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in
