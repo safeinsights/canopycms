@@ -9,8 +9,9 @@
  * without a page reload.
  */
 
-import { describe, it, expect } from 'vitest'
-import { hasInFlightBranch, IN_FLIGHT_POLL_MS } from './useBranchesData'
+import { describe, it, expect, vi } from 'vitest'
+import { CanopyApiClient } from '../../api/client'
+import { fetchBranches, hasInFlightBranch, IN_FLIGHT_POLL_MS } from './useBranchesData'
 import type { BranchesData } from './useBranchesData'
 
 const branches = (...statuses: (string | undefined)[]): BranchesData =>
@@ -39,5 +40,27 @@ describe('useBranchesData poll window', () => {
 
   it('uses a poll interval long enough not to hammer the branch clone', () => {
     expect(IN_FLIGHT_POLL_MS).toBeGreaterThanOrEqual(10_000)
+  })
+})
+
+describe('fetchBranches', () => {
+  const clientAnswering = (status: number, json: () => Promise<unknown>) =>
+    new CanopyApiClient({ fetch: vi.fn().mockResolvedValue({ ok: false, status, json }) })
+
+  it('stays branchless when the API itself answers 404', async () => {
+    const client = clientAnswering(404, async () => ({
+      ok: false,
+      status: 404,
+      error: 'Not found',
+    }))
+    expect(await fetchBranches(client)).toEqual({ branches: [] })
+  })
+
+  // A proxy's 404 page means the API was never reached: a wrong base path, say.
+  it('throws when a 404 came from in front of the API', async () => {
+    const client = clientAnswering(404, () => Promise.reject(new SyntaxError('<html>')))
+    await expect(fetchBranches(client)).rejects.toThrow(
+      'Unexpected response from server (HTTP 404)',
+    )
   })
 })

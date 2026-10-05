@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { CanopyApiClient, createApiClient } from './client'
+import { CanopyApiClient, createApiClient, isNonApiResponse } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
 
 describe('CanopyApiClient', () => {
@@ -178,45 +178,126 @@ describe('CanopyApiClient', () => {
       await expect(client.branches.list()).rejects.toThrow('Network error')
     })
 
-    it('should handle non-JSON response body', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => {
-          throw new Error('Unexpected token in JSON')
-        },
-      })
-
-      const client = new CanopyApiClient({ fetch: mockFetch })
-
-      await expect(client.branches.list()).rejects.toThrow('Unexpected token in JSON')
+    it('returns an ok:false ApiResponse naming the status for a non-JSON body from a proxy', async () => {
+      const htmlBody = () => Promise.reject(new SyntaxError('Unexpected token < in JSON'))
+      for (const status of [403, 404]) {
+        const client = new CanopyApiClient({
+          fetch: vi.fn().mockResolvedValue({ ok: false, status, json: htmlBody }),
+        })
+        expect(await client.branches.list()).toEqual({
+          ok: false,
+          status,
+          error: `Unexpected response from server (HTTP ${status})`,
+        })
+      }
     })
 
-    it('should handle malformed JSON gracefully', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new SyntaxError('Unexpected end of JSON input')
-        },
+    it('does not pass through a body whose ok is not a boolean', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: 'yes', data: { branches: [] } }),
+        }),
       })
-
-      const client = new CanopyApiClient({ fetch: mockFetch })
-
-      await expect(client.branches.list()).rejects.toThrow('Unexpected end of JSON input')
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 200,
+        error: 'Unexpected response from server (HTTP 200)',
+      })
     })
 
-    it('should handle empty response body', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => null,
+    it('marks converted responses, and only those, as not from the API', async () => {
+      const respond = (status: number, json: () => Promise<unknown>) =>
+        new CanopyApiClient({ fetch: vi.fn().mockResolvedValue({ ok: false, status, json }) })
+      const proxy = await respond(404, () =>
+        Promise.reject(new SyntaxError('<html>')),
+      ).branches.list()
+      const api = await respond(404, async () => ({
+        ok: false,
+        status: 404,
+        error: 'Not found',
+      })).branches.list()
+      expect(isNonApiResponse(proxy)).toBe(true)
+      expect(isNonApiResponse(api)).toBe(false)
+    })
+
+    it('returns an ok:false ApiResponse for an empty body', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 502,
+          json: async () => {
+            throw new SyntaxError('Unexpected end of JSON input')
+          },
+        }),
       })
 
-      const client = new CanopyApiClient({ fetch: mockFetch })
-      const result = await client.branches.list()
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 502,
+        error: 'Unexpected response from server (HTTP 502)',
+      })
+    })
 
-      // Null response returned as-is (handlers should always return ApiResponse)
-      expect(result).toBeNull()
+    it('keeps the string error of a JSON body that is not an ApiResponse', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          json: async () => ({ error: 'upstream exploded' }),
+        }),
+      })
+
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 500,
+        error: 'upstream exploded',
+      })
+    })
+
+    it('returns an ok:false ApiResponse for a 2xx whose body is not JSON', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => {
+            throw new SyntaxError('Unexpected token < in JSON')
+          },
+        }),
+      })
+
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 200,
+        error: 'Unexpected response from server (HTTP 200)',
+      })
+    })
+
+    it('returns an ok:false ApiResponse for a null JSON body', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => null }),
+      })
+
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 200,
+        error: 'Unexpected response from server (HTTP 200)',
+      })
+    })
+
+    it('passes a well-formed ApiResponse through unchanged, errors included', async () => {
+      const body = {
+        ok: false,
+        status: 422,
+        error: 'Invalid',
+        fieldErrors: [{ fieldPath: 'a', message: 'b' }],
+      }
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({ ok: false, status: 422, json: async () => body }),
+      })
+
+      expect(await client.branches.list()).toEqual(body)
     })
   })
 
