@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema, type PathPermission, type RootCollectionConfig } from '../config'
-import { createCheckBranchAccess } from '../authorization'
+import { createCheckBranchAccess, RESERVED_GROUPS } from '../authorization'
 import { createTestContentAccess, unsafeAsPermissionPath } from '../authorization/test-utils'
 import { generateId } from '../id'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
@@ -136,13 +136,19 @@ const readEntry = (ctx: ApiContext, entryPath: string, groups: string[] = []) =>
     { branch: BRANCH, path: unsafeAsLogicalPath(entryPath) },
   )
 
-const writeEntry = (ctx: ApiContext, entryPath: string, groups: string[] = []) =>
-  CONTENT_ROUTES.write.handler(
+/**
+ * Update an existing entry. An update must carry the version it read (OCC), and the writer
+ * may have no read access, so the version comes from an admin read, which path rules skip.
+ */
+const writeEntry = async (ctx: ApiContext, entryPath: string, groups: string[] = []) => {
+  const read = await readEntry(ctx, entryPath, [RESERVED_GROUPS.ADMINS])
+  return CONTENT_ROUTES.write.handler(
     ctx,
     { user: user(groups) },
     { branch: BRANCH, path: unsafeAsLogicalPath(entryPath) },
-    { format: 'json', data: { title: 'Updated' } },
+    { format: 'json', data: { title: 'Updated' }, expectedVersion: read.data?.version },
   )
+}
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-logical-acl-'))
