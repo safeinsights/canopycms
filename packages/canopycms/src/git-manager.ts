@@ -1188,6 +1188,28 @@ export class GitManager {
     return aheadCount !== '0'
   }
 
+  /**
+   * Repo-relative paths that differ between HEAD and its merge base with the
+   * base branch: everything the branch changes, across all of its commits.
+   * Diffs against the just-fetched base tip pinned to a SHA — the pullBaseInner
+   * constraint.
+   */
+  async listChangedPathsSinceBase(): Promise<string[]> {
+    await this.git.raw(['fetch', '--end-of-options', this.remote, this.baseBranch])
+    // `--verify`: without it rev-parse echoes `--end-of-options` back as output.
+    const baseTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
+    // -z: NUL-separated and unquoted, so no path needs unescaping.
+    const output = await this.git.raw([
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      `${baseTip}...HEAD`,
+      '--',
+    ])
+    return output.split('\0').filter((p) => p.length > 0)
+  }
+
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
     const config = (await this.git.listConfig()) as ConfigListSummary
 

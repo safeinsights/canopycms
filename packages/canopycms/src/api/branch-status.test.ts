@@ -317,7 +317,7 @@ describe('branch status api', () => {
           config: { defaultBranchAccess: 'allow' } as any,
         },
       })
-      ctx.services.submitBranch = vi.fn()
+      ctx.services.submitBranch = vi.fn().mockResolvedValue({ changedPaths: [] })
       return { ctx, mockGit }
     }
 
@@ -381,6 +381,50 @@ describe('branch status api', () => {
 
       expect(res.ok).toBe(true)
       expect(ctx.services.submitBranch).toHaveBeenCalled()
+    })
+  })
+  describe('records the submitting user', () => {
+    it('passes the authenticated user to submitBranch and the changed paths into the PR body', async () => {
+      const createOrUpdatePR = vi.fn().mockResolvedValue({ number: 5, url: 'https://pr/5' })
+      const ctx = createMockApiContext({
+        branchContext: baseContext,
+        allowBranchAccess: true,
+        services: {
+          config: {
+            defaultBranchAccess: 'allow',
+            mode: 'prod',
+            defaultBaseBranch: 'main',
+          } as any,
+          githubService: { createOrUpdatePR } as any,
+        },
+      })
+      ctx.services.submitBranch = vi
+        .fn()
+        .mockResolvedValue({ changedPaths: ['content/pages/home.md'] })
+
+      const res = await submitBranchForMerge(
+        ctx,
+        {
+          user: {
+            type: 'authenticated',
+            userId: 'u1',
+            groups: [],
+            name: 'Jane Doe',
+            email: 'jane@example.com',
+          },
+        },
+        { branch: 'feature/x' as BranchName },
+      )
+
+      expect(res.ok).toBe(true)
+      expect(ctx.services.submitBranch).toHaveBeenCalledWith({
+        context: baseContext,
+        submitter: { userId: 'u1', name: 'Jane Doe', email: 'jane@example.com' },
+      })
+      const body: string = createOrUpdatePR.mock.calls[0]?.[0].body
+      expect(body).toContain('Submitted by `Jane Doe` (`u1`) via CanopyCMS.')
+      expect(body).toContain('- `content/pages/home.md`')
+      expect(body).not.toContain('jane@example.com')
     })
   })
 })
