@@ -26,9 +26,10 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  * - `metadata: read` — implied by any repository permission; declared so
  *   this object states the whole surface, not just the non-automatic part.
  * Nothing else: no `issues`, `administration`, `actions`, or organisation
- * permissions. No `workflows` either, though GitHub may refuse to push
- * rebased history touching `.github/workflows/` — see
- * .claude/future-tasks/worker-push-refused-when-base-changes-workflows.md.
+ * permissions. No `workflows` either: GitHub refuses only workflow content it
+ * does not already hold, so rebasing onto a base that changed a workflow is
+ * accepted. Content that is new to GitHub fails the push task with the file
+ * named (`throwIfWorkflowRefusal` in worker/task-runner.ts).
  */
 export const CANOPY_APP_PERMISSIONS: PermissionSet = {
   contents: 'write',

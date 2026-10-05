@@ -636,10 +636,13 @@ GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
 each entry, and held there by a test that drives the worker's dispatch table and
 fails if a call is added that the set does not cover.
 
-One known gap, reported in public GitHub issues and not reproduced here: GitHub
-refuses a push that creates or updates a file under `.github/workflows/` without
-the workflows permission (the `workflow` scope, for a classic PAT), and a content
-branch rebased across a base-branch workflow change may count as one.
+Neither the App nor a token needs the workflows permission (the `workflow` scope,
+for a classic PAT). GitHub refuses a push only when it adds workflow content the
+repository does not already hold, so a content branch rebased onto a base branch
+that changed a workflow still publishes. In practice the refusal needs a workflow
+edit made outside the editor, such as a direct push to a content branch that the
+worker's rebase then merges with a base change to the same file. That publish fails
+at once, and System health and the branch list name the workflow file.
 
 **Register one App per site.** Anyone holding an App's key can mint a token for
 any of its installations, so one App shared across sites lets a compromise of
@@ -1112,6 +1115,8 @@ CloudWatch log group (`/canopycms/<stackName>/worker` — see
 [Worker observability](#worker-observability)); no shell access needed. If you can
 shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
 works.
+
+**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 

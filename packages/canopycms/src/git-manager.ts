@@ -206,6 +206,23 @@ export class GitRemoteRefMissingError extends Error {
   }
 }
 
+/**
+ * No git remote is configured and the one the strategy auto-detects does not
+ * exist yet: in prod, the EC2 worker creates `{workspaceRoot}/remote.git` on
+ * its first boot, so until then every request that needs a workspace fails
+ * here. Usually transient, unlike a missing remote in a mode with nothing to wait for.
+ * The HTTP layer maps it to a 503 (`http/worker-not-ready.ts`).
+ */
+export class RemoteNotReadyError extends Error {
+  constructor(public readonly expectedRemotePath: string) {
+    super(
+      `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
+        `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
+    )
+    this.name = 'RemoteNotReadyError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -853,6 +870,9 @@ export class GitManager {
       })
 
       if (!remoteUrl) {
+        const { operatingStrategy } = await import('./operating-mode')
+        const { autoDetectRemotePath } = operatingStrategy(options.mode).getRemoteUrlConfig()
+        if (autoDetectRemotePath) throw new RemoteNotReadyError(autoDetectRemotePath)
         throw new Error(
           'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
         )

@@ -120,6 +120,15 @@ public and its adopters' repos generally are not. If nothing becomes deletable, 
 explicitly — that is a real and useful answer.
 -->
 
+### Listings take a `branch`
+
+**What changed.** `listEntries()`/`buildContentTree()` accept `branch`, like `read()`.
+
+**To adopt.** Index pages pass `searchParams`' `branch` through, so editor previews list that
+branch.
+
+**Now deletable.** Nothing.
+
 ---
 
 ## Released

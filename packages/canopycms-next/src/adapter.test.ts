@@ -213,6 +213,43 @@ describe('Next.js adapter', () => {
         errorSpy.mockRestore()
       }
     })
+
+    it('maps RemoteNotReadyError to the friendly 503 with Retry-After', async () => {
+      const { createCanopyRequestHandler, RemoteNotReadyError } = await import('canopycms/http')
+      vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => {
+        throw new RemoteNotReadyError('/mnt/efs/workspace/remote.git')
+      })
+
+      const handler = createCanopyCatchAllHandler({
+        services: {} as any,
+        authPlugin: mockAuthPlugin,
+      })
+
+      const mockNextRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/api/canopycms/branches',
+        headers: { get: () => null },
+        json: async () => undefined,
+      } as any
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        const response: any = await handler(mockNextRequest, {
+          params: { canopycms: ['branches'] },
+        })
+
+        expect(response.status).toBe(503)
+        expect(response.body).toEqual({
+          ok: false,
+          status: 503,
+          error:
+            'CMS worker not ready — it may still be starting. Try again in a minute; if this persists, ask an admin to check the CMS worker.',
+        })
+        expect(response.headers).toEqual({ 'Retry-After': '30' })
+      } finally {
+        errorSpy.mockRestore()
+      }
+    })
   })
 })
 
