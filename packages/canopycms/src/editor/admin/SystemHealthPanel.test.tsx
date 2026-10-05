@@ -216,6 +216,31 @@ describe('SystemHealthPanel', () => {
         expect(screen.queryByTestId('version-skew-warning')).toBeNull()
       })
 
+      it.each(['stale', 'absent'] as const)(
+        'does not warn when the worker is %s, since its version is not a running build',
+        async (state) => {
+          mockClient.admin.status.mockResolvedValueOnce(
+            mockSuccess(statusWithWorkerVersion('1.2.2', { worker: { state } })),
+          )
+
+          renderPanel()
+
+          await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+          expect(screen.getByTestId('build-worker-version').textContent).toContain('1.2.2')
+          expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+        },
+      )
+
+      it('treats an empty worker version as unknown, not as skew', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('unknown')
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
       it('shows media storage as configured', async () => {
         mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
 

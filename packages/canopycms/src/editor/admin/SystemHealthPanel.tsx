@@ -250,9 +250,13 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const lastGitSync = status.workerStatus?.lastGitSync
   const baseWarning = baseRefreshWarning(lastGitSync?.baseRefresh)
   const { build } = status
-  // Absent for a worker that predates the field, which is not evidence of skew.
-  const workerVersion = status.workerStatus?.workerVersion
-  const versionSkew = workerVersion !== undefined && workerVersion !== build.canopycmsVersion
+  // Absent for a worker that predates the field, which is not evidence of skew;
+  // nor is a stale or absent worker's leftover status file, which names no running build.
+  const workerVersion = status.workerStatus?.workerVersion || undefined
+  const versionSkew =
+    status.worker.state === 'alive' &&
+    workerVersion !== undefined &&
+    workerVersion !== build.canopycmsVersion
 
   return (
     <Stack gap="md">
