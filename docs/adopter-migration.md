@@ -86,6 +86,19 @@ public and its adopters' repos generally are not. If nothing becomes deletable, 
 explicitly — that is a real and useful answer.
 -->
 
+### Index pages can list the branch being previewed
+
+**What changed.** `listEntries()` and `buildContentTree()` on the request-scoped context accept
+`branch`, as `read()`/`readByUrlPath()` already did. On a `prod` deployment an index page in the
+editor's preview used to list the base branch, so entries added on a content branch were missing
+from it.
+
+**To adopt.** On each index page built from a listing, read `branch` from the page's
+`searchParams` and pass it through: `listEntries({ rootPath, branch })`. The editor's preview
+iframe sets `?branch=`. Public visitors send none, so they keep getting the base branch.
+
+**Now deletable.** Nothing.
+
 ---
 
 ## Released
