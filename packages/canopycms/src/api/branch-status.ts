@@ -12,6 +12,7 @@ import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
+import { submissionEditorFromUser } from '../submission-attribution'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -77,8 +78,10 @@ const submitBranchForMergeHandler = async (
   }
 
   // Commit and push changes
+  const submitter = submissionEditorFromUser(req.user)
+  let changedPaths: string[]
   try {
-    await ctx.services.submitBranch({ context: branchContext })
+    ;({ changedPaths } = await ctx.services.submitBranch({ context: branchContext, submitter }))
   } catch (err) {
     const message = getErrorMessage(err)
     // Full path detail (including branchRoot, an absolute path) to server logs
@@ -125,7 +128,7 @@ const submitBranchForMergeHandler = async (
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, branchContext)
+  const prResult = await syncSubmitPr(ctx, branchContext, { submitter, changedPaths })
 
   // Update metadata with status and PR info
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
