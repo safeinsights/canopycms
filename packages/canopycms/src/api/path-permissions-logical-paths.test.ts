@@ -258,7 +258,7 @@ describe('path permissions match logical paths against an id-suffixed layout', (
       expect(optionIds).not.toContain(ids['content/private/secret-plan'])
     })
 
-    it('omits private entries from resolve-references', async () => {
+    it('resolves private entries to a restricted title + URL in resolve-references', async () => {
       const ctx = createCtx(rules)
       const res = await RESOLVE_REFERENCES_ROUTES.post.handler(
         ctx,
@@ -268,8 +268,19 @@ describe('path permissions match logical paths against an id-suffixed layout', (
       )
       expect(res.ok).toBe(true)
       const resolved = res.data?.resolved ?? {}
-      expect(resolved).toHaveProperty(ids['content/blog/other-post'])
-      expect(resolved).not.toHaveProperty(ids['content/private/secret-plan'])
+      expect(resolved[ids['content/blog/other-post']]).toMatchObject({
+        title: 'Title of other-post',
+      })
+      expect(resolved[ids['content/blog/other-post']]).not.toHaveProperty('unavailable')
+      expect(resolved[ids['content/private/secret-plan']]).toStrictEqual({
+        id: ids['content/private/secret-plan'],
+        slug: 'secret-plan',
+        collection: 'content/private',
+        urlPath: '/private/secret-plan',
+        title: 'Title of secret-plan',
+        unavailable: true,
+        reason: 'restricted',
+      })
     })
   })
 

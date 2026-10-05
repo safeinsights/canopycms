@@ -1,5 +1,5 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
-import { ContentStore, ContentStoreError } from './content-store'
+import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
   resolveBranchPaths,
   type ContentId,
@@ -289,16 +289,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       )
     }
 
-    // Check permissions BEFORE reading the file (security)
+    // Check permissions BEFORE reading the file (security). The same checker then judges every
+    // reference target, so a reference cannot carry a target's data past these rules.
     const shouldCheckPermissions = !(isDeployedStatic(services.config) || isBuildMode())
+    let referenceAccess: ReferenceTargetAccess | undefined
     if (shouldCheckPermissions) {
-      const access = await services.checkContentAccess(
-        context,
-        branchRoot,
-        logicalPath,
-        user,
-        'read',
-      )
+      const checkAccess = await services.createContentAccessChecker(context, branchRoot, user)
+      referenceAccess = (targetPath) => checkAccess(targetPath, 'read').allowed
+      const access = checkAccess(logicalPath, 'read')
       if (!access.allowed) {
         if (services.config.mode !== 'prod') {
           const reasons: string[] = []
@@ -323,6 +321,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     try {
       const doc = await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
+        referenceAccess,
       })
       return { doc, store, physicalPath, entryType, entryId }
     } catch (err: unknown) {
