@@ -303,8 +303,9 @@ async function _createCanopyServicesInternal(
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
     })
-    // [SYNC-C1] Staging reads the working tree, so a rebase mid-replay would
-    // commit its intermediate state; see submitBranch.
+    // [SYNC-C1] Unlocked, a commit made while a rebase is stopped on a conflict
+    // lands on its detached head with the rebase's half-resolved index, and the
+    // rebase's `--abort` discards it.
     await withContentWriteLock(options.context.branchRoot, async () => {
       await git.add(options.files)
       await git.commit(options.message)
