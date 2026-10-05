@@ -31,6 +31,6 @@ span files.
   and the root entry.
 - `typed-filename.ts` (`parseTypedFilename`): lives here so url-collision.ts can reach it
   without a cycle; re-exported by content-listing.ts and `canopycms/server`.
-- `url-prefix.ts` (`joinUrlPrefix`, `isAbsoluteUrl`): the one URL-prefix join for
-  static/seo.ts and assets/asset-url.ts; must stay pure (client-reachable, `pnpm lint:bundle`
+- `url-prefix.ts` (`joinUrlPrefix`, `isAbsoluteUrl`, `withTrailingSlash`): the one URL-prefix join for
+  static/seo.ts, assets/asset-url.ts and api/client.ts; must stay pure (client-reachable, `pnpm lint:bundle`
   enforces it).

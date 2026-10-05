@@ -162,3 +162,28 @@ export function joinUrlPrefix(prefix: string | undefined, path: string): string 
 
   return `${normalizedPrefix}${normalizedPath}`
 }
+
+/**
+ * Append a trailing slash to a site-relative path, matching a site that serves `/contact/`.
+ *
+ * Leaves the root (`/`) and file-like paths (a last segment containing a dot, e.g.
+ * `/blog/rss.xml`) alone, and never doubles an existing slash. That mirrors Next's own
+ * `trailingSlash` redirects (`next/dist/lib/load-custom-routes.js`), which add a slash only to a
+ * last segment with no dot and strip one from a segment ending `.ext`.
+ *
+ * A query string and/or fragment (`?page=2`, `#section`) is split off BEFORE the slash decision
+ * and placement, then reattached after — so `/blog?page=2` becomes `/blog/?page=2`, never
+ * `/blog?page=2/` (a literal trailing slash inside the query string, which is not what "serve
+ * with a trailing slash" means and breaks the URL).
+ */
+export function withTrailingSlash(path: string): string {
+  const splitIndex = path.search(/[?#]/)
+  const base = splitIndex === -1 ? path : path.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : path.slice(splitIndex)
+
+  const withLeading = base.startsWith('/') ? base : `/${base}`
+  if (withLeading === '/' || withLeading.endsWith('/')) return withLeading + suffix
+  const lastSegment = withLeading.slice(withLeading.lastIndexOf('/') + 1)
+  if (lastSegment.includes('.')) return withLeading + suffix
+  return `${withLeading}/${suffix}`
+}

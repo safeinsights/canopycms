@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { CanopyApiClient, createApiClient } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
 
@@ -275,6 +275,113 @@ describe('CanopyApiClient', () => {
       await client.branches.list()
 
       expect(mockFetch).toHaveBeenCalledWith('/api/canopycms//branches', expect.anything())
+    })
+  })
+
+  describe('trailingSlash', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    const okFetch = () =>
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: {} }),
+      })
+
+    async function requestedUrl(
+      options: { trailingSlash?: boolean },
+      call: (client: CanopyApiClient) => Promise<unknown>,
+    ): Promise<unknown> {
+      const mockFetch = okFetch()
+      await call(new CanopyApiClient({ ...options, fetch: mockFetch }))
+      return mockFetch.mock.calls[0]?.[0]
+    }
+
+    it('ends the path with a slash, POST included', async () => {
+      expect(await requestedUrl({ trailingSlash: true }, (c) => c.branches.list())).toBe(
+        '/api/canopycms/branches/',
+      )
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) => c.branches.create({ branch: 'b' })),
+      ).toBe('/api/canopycms/branches/')
+    })
+
+    it('puts the slash before the query string', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.entries.list({ branch: 'main', q: 'search & test' }),
+        ),
+      ).toBe('/api/canopycms/main/entries/?q=search+%26+test')
+    })
+
+    it('adds it after an encoded path param and a rest param', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.permissions.getUserMetadata({ userId: 'user|a b' }),
+        ),
+      ).toBe('/api/canopycms/users/user%7Ca%20b/')
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.content.read({ branch: 'main', path: 'my collection/my slug' }),
+        ),
+      ).toBe('/api/canopycms/main/content/my%20collection/my%20slug/')
+    })
+
+    it('leaves a file-like last segment unslashed, as Next does', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.admin.deleteTask({ status: 'failed', fileName: 'task-1.json' }),
+        ),
+      ).toBe('/api/canopycms/admin/tasks/failed/task-1.json')
+    })
+
+    it('keeps an encoded ? in a path param apart from the real query string', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.schema.get({ branch: 'a?b', q: 'x/y' }),
+        ),
+      ).toBe('/api/canopycms/a%3Fb/schema/?q=x%2Fy')
+    })
+
+    it('leaves a dotted last segment unslashed when a query string follows it', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.branches.delete({ branch: 'release-1.2', force: 'true' }),
+        ),
+      ).toBe('/api/canopycms/release-1.2?force=true')
+    })
+
+    it('slashes the hand-written multipart upload too', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.assets.uploadProxied(new File(['x'], 'a.png', { type: 'image/png' })),
+        ),
+      ).toBe('/api/canopycms/assets/upload/')
+    })
+
+    it('judges only the last path segment, not a dotted branch or query value', async () => {
+      expect(
+        await requestedUrl({ trailingSlash: true }, (c) =>
+          c.entries.list({ branch: 'release-1.2', q: 'a.json' }),
+        ),
+      ).toBe('/api/canopycms/release-1.2/entries/?q=a.json')
+    })
+
+    it('defaults to the build-time CANOPY_API_TRAILING_SLASH value', async () => {
+      vi.stubEnv('CANOPY_API_TRAILING_SLASH', 'true')
+      expect(await requestedUrl({}, (c) => c.branches.list())).toBe('/api/canopycms/branches/')
+      expect(await requestedUrl({ trailingSlash: false }, (c) => c.branches.list())).toBe(
+        '/api/canopycms/branches',
+      )
+    })
+
+    it('is off when neither the option nor the build-time value is set', async () => {
+      vi.stubEnv('CANOPY_API_TRAILING_SLASH', undefined)
+      expect(await requestedUrl({}, (c) => c.branches.list())).toBe('/api/canopycms/branches')
+      expect(await requestedUrl({}, (c) => c.entries.list({ branch: 'main', q: 'x' }))).toBe(
+        '/api/canopycms/main/entries?q=x',
+      )
     })
   })
 
