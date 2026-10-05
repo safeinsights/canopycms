@@ -11,6 +11,7 @@ import { ContentStore } from '../../content-store'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { createAIContentHandler } from '../handler'
 import type { AIManifest } from '../types'
+import { WORKER_NOT_READY_MESSAGE } from '../../http/worker-not-ready'
 
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-handler-'))
 
@@ -205,6 +206,31 @@ describe('createAIContentHandler', () => {
     expect(consoleSpy).toHaveErrored('AI content handler error')
 
     consoleSpy.restore()
+  })
+
+  // Drives the real prod workspace provisioning, so the typed error reaches the catch
+  // through every layer it would cross in production rather than from a mock.
+  it('returns the worker-not-ready 503 in prod before the worker creates remote.git', async () => {
+    const consoleSpy = mockConsole()
+    const workspaceRoot = await tmpDir()
+    const previous = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    try {
+      const prodHandler = createAIContentHandler({
+        config: defineCanopyTestConfig({ schema: testSchema, mode: 'prod' }),
+        entrySchemaRegistry: {},
+      })
+
+      const response = await callHandler(prodHandler, 'manifest.json')
+      expect(response.status).toBe(503)
+      expect(response.headers.get('Retry-After')).toBe('30')
+      expect(((await response.json()) as { error: string }).error).toBe(WORKER_NOT_READY_MESSAGE)
+    } finally {
+      if (previous === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      else process.env.CANOPYCMS_WORKSPACE_ROOT = previous
+      await fs.rm(workspaceRoot, { recursive: true, force: true })
+      consoleSpy.restore()
+    }
   })
 
   it('serves bundles when configured', async () => {

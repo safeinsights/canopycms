@@ -176,6 +176,22 @@ describe('useEntryManager', () => {
     await expect(result.current.loadEntry(mockEntry)).rejects.toThrow('Load failed: 404')
   })
 
+  it('appends the server error to the status when a load fails', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: 'CMS worker not ready',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await expect(result.current.loadEntry(mockEntry)).rejects.toThrow(
+      'Load failed: 503 — CMS worker not ready',
+    )
+  })
+
   it('saves entry successfully', async () => {
     const mockValue = { title: 'Updated Title', body: 'Updated Content' }
     const mockResponse = { title: 'Updated Title', body: 'Updated Content' }

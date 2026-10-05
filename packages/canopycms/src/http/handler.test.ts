@@ -6,6 +6,8 @@ import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { RemoteNotReadyError } from '../git-manager'
+import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
@@ -517,6 +519,112 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(500)
     expect(response.body).toHaveProperty('ok', false)
     expect((response.body as { error?: string }).error).toContain('config or services is required')
+  })
+
+  describe('worker not ready (no remote yet)', () => {
+    const notReady = () => new RemoteNotReadyError('/mnt/efs/workspace/remote.git')
+
+    const expectFriendly503 = (response: {
+      status: number
+      body: unknown
+      headers?: Record<string, string>
+    }) => {
+      expect(response.status).toBe(503)
+      expect(response.body).toEqual({ ok: false, status: 503, error: WORKER_NOT_READY_MESSAGE })
+      expect(response.headers).toEqual({ 'Retry-After': '30' })
+    }
+
+    it('503s with the friendly body when base-branch provisioning hits it', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw notReady()
+          },
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+        // The detailed message still reaches the server log.
+        expect(consoleSpy).toHaveErrored(/CANOPYCMS_REMOTE_URL/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s with the friendly body when resolving internal groups hits it', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.getSettingsBranchRoot = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s a bootstrap admin on /admin too rather than serving it degraded', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.bootstrapAdminIds = new Set(['test-user'])
+        services.getSettingsBranchRoot = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        const req = createMockRequest({ url: 'http://localhost:3000/api/canopycms/admin/status' })
+        expectFriendly503(await handler(req, ['admin', 'status']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('maps it to the same 503 when it surfaces from a route handler (backstop)', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.refreshActiveBranch = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('leaves a generic provisioning error on the existing message', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw new Error('clone failed: remote branch not found')
+          },
+        })
+
+        const response = await handler(createMockRequest(), ['branches'])
+        expect(response.status).toBe(503)
+        expect((response.body as { error?: string }).error).toContain('provisioning failed')
+        expect(response.headers).toBeUndefined()
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 
   describe('unguarded error boundary (API-C1)', () => {

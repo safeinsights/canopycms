@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import {
   createCanopyRequestHandler,
   isCanopyBinaryResponse,
+  workerNotReadyResponse,
   type CanopyBinaryResponse,
   type CanopyHandlerOptions,
   type CanopyRequest,
@@ -135,6 +136,8 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
         'CanopyCMS: Unhandled error in Next.js catch-all handler:',
         redactCredentials(message),
       )
+      const notReady = workerNotReadyResponse(err)
+      if (notReady) return toNextResponse(notReady)
       return toNextResponse({
         status: 500,
         body: { ok: false, status: 500, error: sanitizeErrorMessage(message) },
