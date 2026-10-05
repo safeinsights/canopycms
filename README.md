@@ -109,6 +109,7 @@ export default withCanopy({
 - **Dual-build page extensions** — adds `server.ts`/`server.tsx` to `pageExtensions`, enabling the convention below.
 - **Standalone image tracing** — for any build except a static export, adds sharp's libvips shared library to Next's file tracing so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp, which Next can miss for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail. Without `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also covers the webpack case.
 - **Turbopack guard (Next 16+)** — sets `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your Next version, since Next 16 defaults to Turbopack and exits when it sees the React-aliasing `webpack` function with no `turbopack` config. Your own `webpack`/`turbopack` config is left as-is.
+- **Trailing slash** — when the config you pass in sets `trailingSlash: true`, the editor's API calls use a trailing slash (`/api/canopycms/branches/`), so Next does not answer each one with a 308 redirect. An `env.CANOPY_API_TRAILING_SLASH` you set yourself wins.
 
 **Make `withCanopy()` the outermost wrapper** when combining it with other config plugins: `withCanopy(withBundleAnalyzer({ ... }))`, not the reverse. It decides whether to add `turbopack: {}` from the config it receives, so a plugin wrapped around it adds its `webpack` afterwards and, on Next 16, that `turbopack: {}` silences the error Next would raise about a `webpack` function Turbopack does not run.
 
@@ -383,6 +384,9 @@ Schema references are validated at startup: a missing schema, or an invalid meta
 ### `defineCanopyConfig` Options
 
 - `gitBotAuthorName` / `gitBotAuthorEmail` (`string`, **required**) — identity used for git commits made by CanopyCMS.
+- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming the submitting user (display name and auth user id; the id alone when there is no name) to each submit commit. The bot stays the author.
+- `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author to an account only when that email is associated with their GitHub account.
+  On submit, the pull request body also records the submitter (name and id, never the email), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
 - `mode` (`'dev' | 'prod'`, **required**) — see [Operating Modes](#operating-modes). No default: a deploy that omits it fails config validation at startup rather than silently running insecure dev auth semantics in production.
 - `contentRoot` (`string`, default `'content'`) — root directory for content files, relative to the project root.
 - `basePath` (`string`, optional) — the deployment prefix your Next app is served under (`'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. **Not** `contentStaticParams`'s `basePath`, and not necessarily right for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath).
@@ -967,7 +971,7 @@ export default function sitemap(): Promise<MetadataRoute.Sitemap> {
 - `extraUrls` (`SitemapExtraUrl[]`) — URLs with no entry behind them (hand-written routes, feeds)
 - `seo` (`{ fields?, group? }`, default flat) — where the SEO fields live, when not the defaults
 
-A sitemap must carry absolute URLs, which is why `siteUrl` is enforced. **Set `trailingSlash` to match your `next.config`** — CanopyCMS cannot read that file.
+A sitemap must carry absolute URLs, which is why `siteUrl` is enforced. **Set `trailingSlash` to match your `next.config`** — the sitemap helpers cannot read it.
 
 > **`lastModified` is filesystem mtime by default.** `updatedAt` is the entry file's mtime, not an editorial timestamp — a fresh CI clone resets it to checkout time, so on a clean build agent the default dates every URL to when the tree was cloned. Supply a real content date via the callback, or return `undefined` to omit `<lastmod>` rather than assert a date you cannot stand behind.
 >

@@ -14,6 +14,7 @@ import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { ApiResponse } from '../../api/types'
+import type { ContentReadResponse } from '../../api/content'
 
 describe('Input Validation', () => {
   let workspace: TestWorkspace
@@ -254,10 +255,12 @@ describe('Input Validation', () => {
         path.join(postsDir, filename.replace('.legacy-post.', '.legacy_post.')),
       )
 
-      const saved = await editorClient.put(
-        `/api/canopycms/${BRANCH}/content/posts/legacy_post`,
-        postBody('Legacy Post, edited'),
-      )
+      const opened = await editorClient.get(`/api/canopycms/${BRANCH}/content/posts/legacy_post`)
+      expect(opened.status).toBe(200)
+      const saved = await editorClient.put(`/api/canopycms/${BRANCH}/content/posts/legacy_post`, {
+        ...postBody('Legacy Post, edited'),
+        expectedVersion: (opened.body as ContentReadResponse).data?.version,
+      })
       expect(saved.status).toBe(200)
       expect(saved.ok).toBe(true)
     })

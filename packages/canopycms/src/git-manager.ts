@@ -29,7 +29,12 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { isMissingRemoteRefFailure, isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
+import {
+  isMissingRemoteRefFailure,
+  isNetworkRemoteUrl,
+  resolveBaseBranch,
+  stageAllExceptCanopyState,
+} from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -1124,6 +1129,11 @@ export class GitManager {
     await this.git.add(fileArray)
   }
 
+  /** Stage every working-tree change except canopycms's own state. See {@link stageAllExceptCanopyState}. */
+  async addAllExceptCanopyState(): Promise<void> {
+    await stageAllExceptCanopyState(this.git)
+  }
+
   async commit(message: string): Promise<void> {
     await this.git.commit(message)
   }
@@ -1166,12 +1176,15 @@ export class GitManager {
     // `--end-of-options` before every caller-influenced ref name, as in push()
     // above: names are sanitized upstream, but this file's rule is that a
     // positional is guarded where it is passed, not where it was validated.
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', '--end-of-options', 'HEAD']))
-    const localSha = (await this.git.revparse(['--end-of-options', target])).trim()
+    // Each rev-parse needs `--verify`: without it, rev-parse echoes
+    // `--end-of-options` as its own output line ahead of the result.
+    const target =
+      branch ?? (await this.git.revparse(['--verify', '--abbrev-ref', '--end-of-options', 'HEAD']))
+    const localSha = (await this.git.revparse(['--verify', '--end-of-options', target])).trim()
     let fetchedTip: string
     try {
       await this.git.raw(['fetch', '--end-of-options', this.remote, target])
-      fetchedTip = (await this.git.revparse(['--end-of-options', 'FETCH_HEAD'])).trim()
+      fetchedTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
     } catch {
       // No ref on the remote yet -- the branch has never been pushed.
       return true
@@ -1183,6 +1196,28 @@ export class GitManager {
       await this.git.raw(['rev-list', '--count', `${fetchedTip}..${localSha}`])
     ).trim()
     return aheadCount !== '0'
+  }
+
+  /**
+   * Repo-relative paths that differ between HEAD and its merge base with the
+   * base branch: everything the branch changes, across all of its commits.
+   * Diffs against the just-fetched base tip pinned to a SHA — the pullBaseInner
+   * constraint.
+   */
+  async listChangedPathsSinceBase(): Promise<string[]> {
+    await this.git.raw(['fetch', '--end-of-options', this.remote, this.baseBranch])
+    // `--verify`: without it rev-parse echoes `--end-of-options` back as output.
+    const baseTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
+    // -z: NUL-separated and unquoted, so no path needs unescaping.
+    const output = await this.git.raw([
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      `${baseTip}...HEAD`,
+      '--',
+    ])
+    return output.split('\0').filter((p) => p.length > 0)
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {

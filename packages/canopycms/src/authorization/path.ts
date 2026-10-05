@@ -11,15 +11,15 @@ import type {
 import { isAdmin } from './helpers'
 import type { CanopyUser } from '../user'
 import type { PathPermissionResult } from './types'
-import type { PhysicalPath } from '../paths/types'
+import type { LogicalPath } from '../paths/types'
 
-function normalize(p: PhysicalPath): PhysicalPath {
+function normalize(p: LogicalPath): LogicalPath {
   const normalized = (p as string).split(path.sep).join('/')
-  return normalized.replace(/^\.?\/*/, '') as PhysicalPath
+  return normalized.replace(/^\.?\/*/, '') as LogicalPath
 }
 
-function matchesRule(rule: PathPermission, relativePath: PhysicalPath): boolean {
-  return minimatch(relativePath as string, rule.path, { dot: true })
+function matchesRule(rule: PathPermission, logicalPath: LogicalPath): boolean {
+  return minimatch(logicalPath as string, rule.path, { dot: true })
 }
 
 function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean {
@@ -54,24 +54,29 @@ export function resolveDefaultPathAccess(
 }
 
 /**
- * Evaluate access for a relative path against config-defined rules.
- * Uses defaultAccess when no rule matches. First matching rule wins.
+ * Evaluate access for a path against config-defined rules. First matching rule wins;
+ * defaultAccess applies when none matches.
+ *
+ * Rule globs and the checked path are both LOGICAL paths: content-root-prefixed and
+ * id-free, the space the Permission Manager writes rules in. An entry's logical path is
+ * `<collection logical path>/<slug>` (`entryLogicalPath`), e.g. `content/blog/my-post`, never
+ * its on-disk `content/blog.<id>/post.my-post.<id>.json`.
  * @internal Exported for tests.
  */
 export function checkPathAccess({
   rules,
-  relativePath,
+  logicalPath,
   user,
   defaultAccess,
   level,
 }: {
   rules: PathPermission[]
-  relativePath: PhysicalPath
+  logicalPath: LogicalPath
   user: CanopyUser
   defaultAccess: DefaultPathAccess
   level: PermissionLevel
 }): PathPermissionResult {
-  const normalizedPath = normalize(relativePath)
+  const normalizedPath = normalize(logicalPath)
 
   // Only Admins bypass all path permissions
   if (isAdmin(user.groups)) {
@@ -105,7 +110,7 @@ export function checkPathAccess({
 
 export function createCheckPathAccess(rules: PathPermission[], defaultAccess: DefaultPathAccess) {
   return (input: {
-    relativePath: PhysicalPath
+    logicalPath: LogicalPath
     user: CanopyUser
     level: PermissionLevel
   }): PathPermissionResult => checkPathAccess({ ...input, rules, defaultAccess })

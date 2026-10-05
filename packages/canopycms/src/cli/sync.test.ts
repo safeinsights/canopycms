@@ -283,6 +283,62 @@ describe('canopycms sync', () => {
       expect(content).toBe('# Hello\n\nDeveloper edit.\n')
     })
 
+    describe("canopycms's own state, tracked by the repo", () => {
+      const CACHE = '.canopy-meta/schema-cache.json'
+
+      /** Commit a `.canopy-meta/` file into the workspace, then modify it. */
+      async function dirtyTrackedCanopyState(branchPath: string): Promise<string> {
+        const branchGit = simpleGit({ baseDir: branchPath })
+        await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+        await fs.writeFile(path.join(branchPath, CACHE), '{"committed":true}')
+        await branchGit.raw(['add', '-f', CACHE])
+        await branchGit.commit('repo tracks canopycms state')
+        await fs.writeFile(path.join(branchPath, CACHE), '{"rewritten":true}')
+        return (await branchGit.revparse(['HEAD'])).trim()
+      }
+
+      it('commits editor and working-tree changes without it', async () => {
+        const workspace = await setupTestWorkspace()
+        projectDir = workspace.projectDir
+        const before = await dirtyTrackedCanopyState(workspace.branchPath)
+        await fs.writeFile(path.join(workspace.branchPath, 'content', 'about.md'), '# Editor\n')
+        await fs.writeFile(path.join(projectDir, 'content', 'index.md'), '# Developer\n')
+
+        const result = await sync({
+          projectDir,
+          direction: 'push',
+          branch: 'test-branch',
+          force: true,
+        })
+
+        expect(result.pushed).toBeGreaterThan(0)
+        const branchGit = simpleGit({ baseDir: workspace.branchPath })
+        const log = await branchGit.raw(['log', '--name-only', '--format=%s', `${before}..HEAD`])
+        expect(log).toContain('sync: save editor state before push')
+        expect(log).toContain('content/about.md')
+        expect(log).toContain('content/index.md')
+        expect(log).not.toContain('.canopy-meta')
+        expect((await branchGit.status()).files.map((f) => f.path)).toEqual([CACHE])
+      })
+
+      it('makes no commit when it is the only change', async () => {
+        const workspace = await setupTestWorkspace()
+        projectDir = workspace.projectDir
+        const before = await dirtyTrackedCanopyState(workspace.branchPath)
+
+        const result = await sync({
+          projectDir,
+          direction: 'push',
+          branch: 'test-branch',
+          force: true,
+        })
+
+        expect(result.pushed).toBe(0)
+        const head = await simpleGit({ baseDir: workspace.branchPath }).revparse(['HEAD'])
+        expect(head.trim()).toBe(before)
+      })
+    })
+
     it('warns about uncommitted workspace changes and cancels when user declines', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir

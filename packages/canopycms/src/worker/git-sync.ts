@@ -3,10 +3,24 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { GITHUB_TRACKING_REF_PREFIX, gitNetworkChildEnv } from '../git-manager'
+import {
+  GITHUB_TRACKING_REF_PREFIX,
+  ensureGitExcludePattern,
+  gitNetworkChildEnv,
+} from '../git-manager'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isNonFastForwardRejection } from '../utils/git'
+import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
+import type { BaseRefreshReport } from '../types'
+import {
+  MAX_REPORTED_PATHS,
+  TRACKED_CANOPY_STATE_FIX,
+  isUntracked,
+  listTrackedCanopyState,
+  restoreRetiredSchemaCache,
+  splitByUpstreamTracking,
+  untrackInIndex,
+} from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
@@ -421,7 +435,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // -- this could run before or after them just as safely.
     await pushSettingsBranches(ctx, git, trackedNames)
 
-    await refreshBaseBranchWorkspace(ctx)
+    const baseRefresh = await refreshBaseBranchWorkspace(ctx)
 
     const rebaseSummary = await runRebaseCycle(ctx)
 
@@ -442,9 +456,13 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     report.lastGitSync = {
       durationMs: Date.now() - cycleStartedAt,
       rebased: rebaseSummary.rebased,
-      skippedDirty: rebaseSummary.skippedDirty,
+      skippedDirty:
+        baseRefresh.outcome === 'skipped-dirty'
+          ? [ctx.sanitizedBaseBranch, ...rebaseSummary.skippedDirty]
+          : rebaseSummary.skippedDirty,
       skippedLocked: rebaseSummary.skippedLocked,
       failed: rebaseSummary.failed,
+      baseRefresh,
       tracked: trackedSummary,
     }
     await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>
@@ -524,6 +542,13 @@ export async function cleanupTrashedBranchDirs(
 }
 
 /**
+ * Warned (base path + tracked file list) pairs, so a repo that tracks
+ * `.canopy-meta/` is called out once per worker process rather than every cycle;
+ * worker-status.json carries it every cycle regardless.
+ */
+const warnedTrackedCanopyState = new Set<string>()
+
+/**
  * Fast-forward the base branch's own working-tree clone
  * (content-branches/<baseBranch>) to match origin/<baseBranch>, every sync
  * cycle, so the drift window is bounded by gitSyncInterval.
@@ -531,17 +556,19 @@ export async function cleanupTrashedBranchDirs(
  * A dedicated, explicit and LOUD step rather than a side effect of the rebase
  * loop, whose skip paths (a dirty tree, a missing .git) are silent: a wedged
  * base clone otherwise leaves no diagnosable signal, and an editor forking a
- * new branch "from base" silently gets a stale snapshot.
+ * new branch "from base" silently gets a stale snapshot. The returned outcome
+ * goes to worker-status.json for the same reason.
  *
  * ff-only on purpose: this clone must stay a linear mirror of
  * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged local
  * history) is left untouched rather than force-resolved.
  */
-export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<void> {
+export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<BaseRefreshReport> {
   // Sanitized name for the workspace directory (a base branch containing
   // e.g. '/' would otherwise stat a wrong nested path here forever).
   const basePath = path.join(ctx.contentBranchesPath, ctx.sanitizedBaseBranch)
   const gitDir = path.join(basePath, '.git')
+  let trackedCanopyMeta: string[] | undefined
 
   try {
     let gitDirStat
@@ -552,8 +579,11 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<v
     }
     if (!gitDirStat || !gitDirStat.isDirectory()) {
       workerLog(`Base branch workspace (${ctx.baseBranch}): not yet provisioned, skipping refresh`)
-      return
+      return { outcome: 'skipped-not-provisioned' }
     }
+
+    // Idempotent, and applied every cycle so any clone lacking it gets it.
+    await ensureGitExcludePattern(basePath, `${CANOPY_META_DIR}/`)
 
     const baseGit = simpleGit({
       baseDir: basePath,
@@ -569,19 +599,48 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<v
       timeout: { block: ctx.taskTimeoutMs },
     })
 
+    const trackedState = await listTrackedCanopyState(baseGit)
+    if (trackedState.length > 0) {
+      trackedCanopyMeta = trackedState.slice(0, MAX_REPORTED_PATHS)
+      const warnKey = `${basePath}\0${trackedState.join('\0')}`
+      if (!warnedTrackedCanopyState.has(warnKey)) {
+        warnedTrackedCanopyState.add(warnKey)
+        workerLogWarn(
+          `Base branch (${ctx.baseBranch}) tracks canopycms state that must not be committed: ` +
+            `${trackedState.join(', ')}. To fix, ${TRACKED_CANOPY_STATE_FIX}.`,
+        )
+      }
+    }
+
+    let status = await baseGit.status()
+    if (await restoreRetiredSchemaCache(baseGit, status)) {
+      workerLog(
+        `Base branch workspace (${ctx.baseBranch}): restored the retired in-tree schema cache`,
+      )
+      status = await baseGit.status()
+    }
+
     // Nothing makes this clone read-only, and a direct edit here wedges every
     // editor's view of the base branch until an operator intervenes, so a dirty
-    // tree is loud, not a quiet skip. Only TRACKED changes block the refresh: a
-    // stray untracked file must not wedge the fast-forward forever, and if one
-    // would collide with incoming content the --ff-only merge below refuses on
-    // its own and that failure is already logged loudly.
-    const status = await baseGit.status()
-    const trackedDirty = status.files.filter((f) => f.index !== '?' || f.working_dir !== '?')
+    // tree is loud, not a quiet skip. Only TRACKED content changes block the
+    // refresh: canopycms's own state never does, and neither does a stray
+    // untracked file. A modified tracked file or an untracked one that would
+    // collide with incoming content makes the --ff-only merge below refuse and
+    // report `failed`; an IGNORED file, which every .canopy-meta file is, git
+    // overwrites instead.
+    const trackedDirty = status.files
+      .filter((f) => !isUntracked(f) && !isCanopyInternalPath(f.path))
+      .map((f) => f.path)
     if (trackedDirty.length > 0) {
       workerLogError(
-        `Base branch workspace (${ctx.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${trackedDirty.map((f) => f.path).join(', ')}`,
+        `Base branch workspace (${ctx.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${trackedDirty.join(', ')}`,
       )
-      return
+      return {
+        outcome: 'skipped-dirty',
+        dirtyFiles: trackedDirty.slice(0, MAX_REPORTED_PATHS),
+        message: `${trackedDirty.length} uncommitted tracked file(s) in the base branch workspace`,
+        trackedCanopyMeta,
+      }
     }
 
     // Raw (unsanitized) name from here on: these are git ref operations
@@ -602,13 +661,31 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<v
     )
 
     if (behindCount > 0) {
+      // Untrack, in the index only, any state the tip has stopped tracking:
+      // the merge would otherwise refuse to overwrite a modified copy, or
+      // delete a clean one from disk. Safe here and not in the rebase loop,
+      // because this clone has no commits of its own to replay. State still
+      // tracked upstream is left for the merge, which refuses where upstream
+      // changed a locally modified copy.
+      const { droppedUpstream } = await splitByUpstreamTracking(baseGit, trackedState, fetchedTip)
+      if (droppedUpstream.length > 0) {
+        await untrackInIndex(baseGit, droppedUpstream)
+        workerLog(
+          `Base branch workspace (${ctx.baseBranch}): stopped tracking ${droppedUpstream.join(', ')}, as upstream has`,
+        )
+      }
       try {
         await baseGit.merge(['--ff-only', fetchedTip])
       } catch (err) {
         workerLogError(
           `Base branch workspace (${ctx.baseBranch}) failed to fast-forward (diverged local history?): ${getErrorMessage(err)}`,
         )
-        return
+        return {
+          outcome: 'failed',
+          // [REDACT] Served to the browser by the admin panel.
+          message: redactCredentials(`failed to fast-forward: ${getErrorMessage(err)}`),
+          trackedCanopyMeta,
+        }
       }
       await invalidateBranchContentCaches(basePath)
     }
@@ -637,9 +714,21 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<v
         ? `Base branch workspace (${ctx.baseBranch}): fast-forwarded ${behindCount} commit(s)`
         : `Base branch workspace (${ctx.baseBranch}): up to date`,
     )
+    if (trackedCanopyMeta && behindCount > 0) {
+      const stillTracked = await listTrackedCanopyState(baseGit)
+      trackedCanopyMeta =
+        stillTracked.length > 0 ? stillTracked.slice(0, MAX_REPORTED_PATHS) : undefined
+    }
+    return { outcome: behindCount > 0 ? 'refreshed' : 'up-to-date', trackedCanopyMeta }
   } catch (err) {
     workerLogError(
       `Base branch workspace (${ctx.baseBranch}) refresh failed: ${getErrorMessage(err)}`,
     )
+    // [REDACT] Served to the browser by the admin panel.
+    return {
+      outcome: 'failed',
+      message: redactCredentials(getErrorMessage(err)),
+      trackedCanopyMeta,
+    }
   }
 }

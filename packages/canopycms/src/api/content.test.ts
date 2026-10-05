@@ -8,6 +8,8 @@ import { createMockApiContext } from '../test-utils'
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
 const writeContent = CONTENT_ROUTES.write.handler
+/** Version an update of an existing (mocked) entry sends; the API refuses a version-less one. */
+const EXISTING_VERSION = 1
 const renameEntry = CONTENT_ROUTES.renameEntry.handler
 
 vi.mock('../content-store', () => {
@@ -529,6 +531,92 @@ describe('content api', () => {
     })
   })
 
+  // A write with no expectedVersion is a create, never a blind update: an editor that lost its
+  // OCC token must get a 409, not an unchecked overwrite of someone else's save.
+  describe('version-less write', () => {
+    const mockStoreOnce = async (opts: { exists: boolean; write?: ReturnType<typeof vi.fn> }) => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy =
+        opts.write ?? vi.fn().mockResolvedValue({ collection: 'posts', format: 'json', data: {} })
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [{ name: 'post', format: 'json', schema: [] }],
+            },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+          write: writeSpy,
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(opts.exists),
+          getExistingEntryType: vi.fn().mockResolvedValue(opts.exists ? 'post' : undefined),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
+        } as never
+      })
+      return writeSpy
+    }
+    const write = (body: {
+      format: 'json'
+      data: Record<string, unknown>
+      expectedVersion?: number
+    }) =>
+      writeContent(
+        allowedCtx(),
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+        body,
+      )
+
+    it('refuses to update an existing entry without a version, before store.write', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true })
+
+      const res = await write({ format: 'json', data: { title: 'overwrite' } })
+
+      expect(res.status).toBe(409)
+      expect(res.ok ? undefined : res.error).toBe(
+        'An entry with slug "hello" already exists; an update must send the expectedVersion from its last read',
+      )
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('creates a missing entry, asking the store to refuse it if one appears first', async () => {
+      const writeSpy = await mockStoreOnce({ exists: false })
+
+      const res = await write({ format: 'json', data: { title: 'new' } })
+
+      expect(res.status).toBe(200)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(writeSpy.mock.calls[0][2]).toEqual(
+        expect.objectContaining({ expectedVersion: null, data: { title: 'new' } }),
+      )
+    })
+
+    it('reports the in-lock refusal of a racing create as a version-less update conflict', async () => {
+      const { ContentConflictError } = await import('../content-store')
+      await mockStoreOnce({
+        exists: false,
+        write: vi.fn().mockRejectedValue(new ContentConflictError()),
+      })
+
+      const res = await write({ format: 'json', data: { title: 'new' } })
+
+      expect(res.status).toBe(409)
+      expect(res.ok ? undefined : res.error).toContain('must send the expectedVersion')
+    })
+
+    it('passes a numeric version through to the store unchanged', async () => {
+      const writeSpy = await mockStoreOnce({ exists: true })
+
+      const res = await write({ format: 'json', data: { title: 'edit' }, expectedVersion: 42 })
+
+      expect(res.status).toBe(200)
+      expect(writeSpy.mock.calls[0][2]).toEqual(expect.objectContaining({ expectedVersion: 42 }))
+    })
+  })
+
   describe('validateEntry hook', () => {
     const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
     const writeParams = {
@@ -975,6 +1063,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {
           title: 'Hello',
           // Exactly what `buildResolvedReference` returns, including an embedded body.
@@ -999,6 +1088,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {
           title: 'Hello',
           author: AUTHOR_ID,
@@ -1025,6 +1115,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 'Hello', author: AUTHOR_ID },
       })
 
@@ -1044,6 +1135,7 @@ describe('content api', () => {
 
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {
           title: 'Hello',
           author: { name: 'Alice', id: AUTHOR_ID, slug: 'alice', urlPath: '/authors/alice' },
@@ -1061,6 +1153,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { author: AUTHOR_ID },
       })
       expect(res.ok).toBe(false)
@@ -1074,6 +1167,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 42, author: AUTHOR_ID },
       })
       expect(res.ok).toBe(false)
@@ -1087,6 +1181,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 'Hello', author: '' },
       })
       expect(res.ok).toBe(false)
@@ -1100,6 +1195,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 'Hello', author: DANGLING_ID },
       })
       expect(res.ok).toBe(false)
@@ -1115,6 +1211,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 'Hello', author: AUTHOR_ID },
       })
       expect(res.ok).toBe(true)
@@ -1126,6 +1223,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { title: 'Hello', author: { id: AUTHOR_ID, slug: 'alice', name: 'Alice' } },
       })
       expect(res.ok).toBe(true)
@@ -1137,6 +1235,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {
           title: 'Hello',
           author: AUTHOR_ID,
@@ -1156,6 +1255,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {
           title: 'Hello',
           author: AUTHOR_ID,
@@ -1242,7 +1342,11 @@ describe('content api', () => {
         ctx,
         writeReq,
         { ...writeParams, entryType: 'post' },
-        { format: 'json', data: { title: 'Hello', author: AUTHOR_ID } },
+        {
+          format: 'json',
+          expectedVersion: EXISTING_VERSION,
+          data: { title: 'Hello', author: AUTHOR_ID },
+        },
       )
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalled()
@@ -1274,6 +1378,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: {}, // missing required 'siteName' for the settings schema
       })
       expect(res.ok).toBe(false)
@@ -1289,6 +1394,7 @@ describe('content api', () => {
       const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
+        expectedVersion: EXISTING_VERSION,
         data: { siteName: 'My Site' },
       })
       expect(res.ok).toBe(true)
@@ -1318,7 +1424,7 @@ describe('content api', () => {
         ctx,
         writeReq,
         { ...writeParams, entryType: 'settings' },
-        { format: 'json', data: { siteName: 'My Site' } },
+        { format: 'json', expectedVersion: EXISTING_VERSION, data: { siteName: 'My Site' } },
       )
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalled()
@@ -1366,6 +1472,7 @@ describe('unknown content keys', () => {
     await storeWithSchema([{ name: 'title', type: 'string' }])
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: { title: 'hi', subtitle: 'renamed away three releases ago' },
     })
 
@@ -1384,6 +1491,7 @@ describe('unknown content keys', () => {
     await storeWithSchema([{ name: 'title', type: 'string' }])
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: { title: 'hi', alpha: 1, beta: 2, gamma: 3 },
     })
 
@@ -1404,6 +1512,7 @@ describe('unknown content keys', () => {
     for (let i = 0; i < 25; i++) data[`stale${i}`] = i
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data,
     })
 
@@ -1420,6 +1529,7 @@ describe('unknown content keys', () => {
     ])
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: { hero: { headline: 'Hi', kicker: 'stale' } },
     })
 
@@ -1431,6 +1541,7 @@ describe('unknown content keys', () => {
     await storeWithSchema([{ name: 'title', type: 'string' }])
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: { title: 'hi' },
     })
 
@@ -1479,6 +1590,7 @@ describe('unknown content keys', () => {
     })
     const res = await writeContent(allowedCtx(), writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: {
         author: {
           id: '5NVkkrB1MJUv',
@@ -1501,6 +1613,7 @@ describe('unknown content keys', () => {
 
     const res = await writeContent(ctx, writeReq, writeParams, {
       format: 'json',
+      expectedVersion: EXISTING_VERSION,
       data: { title: 'hi', subtitle: 'stale' },
     })
 

@@ -77,6 +77,7 @@ CanopyCMS is entirely file system based: no external database, no cache server, 
 - **Branch metadata**: `.canopy-meta/branch.json` per workspace — state, the recorded base branch (the immutable fork point set at creation), PR references, sync status, conflict tracking. Excluded from git via info/exclude.
 - **Branch registry**: `branches.json` at the branches root, an inventory of all branches, gitignored.
 - **Comments**: `.canopy-meta/comments.json` per branch, not committed, automatically excluded.
+- **Schema cache**: the resolved schema per branch, kept inside the clone's `.git/` directory rather than `.canopy-meta/`. `info/exclude` cannot hide a file an adopter has already committed, whereas nothing under `.git/` is ever tracked or shown by `git status`. `.canopy-meta/` is never content: stage-all operations skip it and dirty checks ignore it ([docs/concurrency.md](docs/concurrency.md)).
 - **Settings**: `groups.json` and `permissions.json` on the orphan branch `canopycms-settings-{deploymentName}`, with the workspace under the mode's workspace root.
 
 **Deliberately not on this filesystem:** binary assets. Images and PDFs live in a separate content-addressed object store — S3 in prod, a local directory in dev — and content references them only by immutable key, which keeps git history and per-branch clones lean. See [Asset & Media System](#asset--media-system).
@@ -385,7 +386,7 @@ Neither grant widens anything separately gated: `canPerformWorkflowAction` disab
 
 ### Layer 2: Path Permissions
 
-Glob patterns (e.g. `content/posts/**`) restrict who can edit which content paths. First matching rule wins, and only admins bypass path rules.
+Glob patterns over logical paths (e.g. `content/posts/**`, never the id-suffixed on-disk names) restrict who can edit which content paths. First matching rule wins, and only admins bypass path rules.
 
 **Level-scoped defaults**: `defaultPathAccess` — the verdict when no rule matches — takes either a single value for every permission level or an object scoped per level, e.g. `{ read: 'allow' }`. That lets a `deployedAs: 'server'` site declare public read while edit and review stay deny-by-default, which is the primary case: a CMS-served site that is also publicly readable without auth. **Any level left unspecified in the object form resolves to `deny`**, so scoping read access can never loosen edit or review by omission.
 
@@ -516,14 +517,14 @@ When the base branch receives new commits from merged PRs, active editing branch
 
 ### Rebase Behavior
 
-The worker's cycle fetches the latest base branch from GitHub into the local bare repo, **fast-forwards the base branch's own workspace clone explicitly** (`merge --ff-only`, invalidating its content caches when it advances), then iterates over all other active branch workspaces and rebases them. That dedicated step exists because the base clone must stay a linear mirror of the remote while the generic rebase loop's skip paths are silent: here an unprovisioned workspace is a quiet skip, but a dirty working tree or diverged local history is a loud error left untouched, since nothing else would surface a silently wedged base view. (That non-fast-forward condition is about the base clone falling behind `origin/<baseBranch>` when fast-forwarding inward, not the push-outward collision in [Push Rejection](#push-rejection).)
+The worker's cycle fetches the latest base branch from GitHub into the local bare repo, **fast-forwards the base branch's own workspace clone explicitly** (`merge --ff-only`, invalidating its content caches when it advances), then iterates over all other active branch workspaces and rebases them. That dedicated step exists because the base clone must stay a linear mirror of the remote while the generic rebase loop's skip paths are silent: here an unprovisioned workspace is a quiet skip, but a dirty working tree or diverged local history is a loud error left untouched, since nothing else would surface a silently wedged base view. Each refresh returns a report of what it did, persisted in the worker's status and shown in System Health. (That non-fast-forward condition is about the base clone falling behind `origin/<baseBranch>` when fast-forwarding inward, not the push-outward collision in [Push Rejection](#push-rejection).)
 
 **Branches the rebase loop skips:**
 
 - **The base branch's own workspace**: kept current by the fast-forward step, since routing it through the `--theirs` resolution below could rewrite its history.
 - **In review** (`submitted` or `approved`): rebasing would rewrite commit history under a PR someone is actively reading. They are left alone until they return to `editing` — but the same cycle still polls their PR's resolution, since nothing else tells the worker a merge or close happened.
 - **Archived**: already merged, with no open PR left to poll.
-- **Dirty working tree**: an editor is actively saving, and rebasing would fail or destroy their work. The worker skips and retries next cycle.
+- **Dirty working tree**: an editor is actively saving, and rebasing would fail or destroy their work. The worker skips and retries next cycle. canopycms's own untracked `.canopy-meta/` state never counts as dirty, but git refuses to rebase over any modified _tracked_ file, so tracked canopycms state an adopter committed blocks the rebase, recorded as a rebase failure naming the fix.
 
 When nothing conflicts, the rebase applies cleanly and any previous conflict state is cleared.
 
@@ -629,7 +630,7 @@ The bridge also carries a preview-to-editor **error channel**: when a draft fail
 
 Two React contexts provide dependency injection instead of module-level singletons — the API client and the editor-wide loading/modal/preview state — so components reach shared state without prop drilling and tests wrap them in providers with mocks. Complex logic lives in hooks rather than components, and three of those carry rules worth knowing here.
 
-**Drafts are optimistic-concurrency-checked.** `useDraftManager` persists a draft only where the user actually edited, since `effectiveValue` falls back to `loadedValues`; each branch's drafts live under `canopycms:drafts:<branch>` in a `{ v: 2, drafts, baseVersions }` envelope where `baseVersions[contentId]` is the server OCC version the draft was based on. **A save whose base no longer matches the currently held token surfaces the 409 conflict notification instead of writing**, including a draft restored from the pre-v2 format, which records no base.
+**Drafts are optimistic-concurrency-checked.** `useDraftManager` persists a draft only where the user actually edited, since `effectiveValue` falls back to `loadedValues`; each branch's drafts live under `canopycms:drafts:<branch>` in a `{ v: 2, drafts, baseVersions }` envelope where `baseVersions[contentId]` is the server OCC version the draft was based on. **A save whose base no longer matches the currently held token surfaces the 409 conflict notification instead of writing**, including a draft restored from the pre-v2 format, which records no base. A save with no token at all is refused the same way, and the server rejects any update that omits `expectedVersion`, because an omitted token means create-only ([concurrency.md](docs/concurrency.md)).
 
 **Automatic loads are SWR-backed, imperative reloads are not.** The three fetch-on-load resources (branches list, a branch's entries plus schema, comment threads) go through `swr` with a shared cache whose deduping collapses concurrent requests for one key. An imperative reload instead issues an independent, un-deduped fetch — a caller that just wrote content must see its own change rather than be coalesced with an in-flight automatic load — then writes the result into the cache without revalidating. The commit rules that keep those two paths from showing a stale branch's entries are in [editor/hooks/README.md](packages/canopycms/src/editor/hooks/README.md).
 

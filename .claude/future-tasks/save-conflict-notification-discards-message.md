@@ -10,10 +10,13 @@ Reload to see the latest changes." — and drops `err.message` entirely. Other s
 (validation, forbidden) do pass `err.message` through, so the conflict case is the
 exception.
 
-That is wrong for at least two distinct 409s the server deliberately words differently:
+That is wrong for at least three distinct 409s, each deliberately worded differently:
 
 - `BranchSyncingError` — the branch is being rebased right now. Nobody edited anything;
   attributing it to "another editor" misdirects the user.
+- `saveEntry`'s local refusal of a save it holds no OCC token for (the entry never
+  loaded successfully, e.g. a restored draft whose read failed). Nothing changed on the
+  server; the fix is to reload, but "another editor" is the wrong cause.
 - The compromise case added with [SYNC-C1]'s per-call-site handling: the write **landed**
   but exclusivity was lost, so the message says to reload before saving again rather
   than to retry. Retrying blind resends a now-stale `expectedVersion` and bounces off

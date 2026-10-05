@@ -1,6 +1,6 @@
 /**
- * A path used in permission rules, e.g. "content/posts".
- * SECURITY CRITICAL: always validated to prevent path traversal.
+ * A logical-path glob used in permission rules, e.g. "content/posts/**" (see
+ * `PathPermission.path`). SECURITY CRITICAL: always validated to prevent path traversal.
  */
 export type PermissionPath = string & { readonly __brand: 'PermissionPath' }
 

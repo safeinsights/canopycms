@@ -67,7 +67,7 @@ Content, git and branch files have their own sections below; the rest:
 - `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
 - `server.ts` — server entry point exports
 - `config.ts` — re-export shim over the `config/` module
-- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`
+- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
 - `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
@@ -93,7 +93,7 @@ Content, git and branch files have their own sections below; the rest:
 one-URL invariant.
 
 - `index.ts` — `collectStaticPaths`, `collectRoutableEntries`, and the four build-time guards over a raw listing
-- `seo.ts` — `extractSeoFields`, `isNoindexEntry`, `resolveSeoUrl`, `withTrailingSlash`, `DEFAULT_SEO_FIELD_NAMES`
+- `seo.ts` — `extractSeoFields`, `isNoindexEntry`, `resolveSeoUrl`, `withTrailingSlash` (re-exported from `utils/url-prefix.ts`), `DEFAULT_SEO_FIELD_NAMES`
 
 Which guards run, in what order, and what each one catches are in
 [ARCHITECTURE.md](ARCHITECTURE.md#build-time-content-validity-guard); the Next adapter over them is
@@ -135,7 +135,8 @@ Support files:
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
-- `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401
+- `client.ts` — generated API client; `ApiClientOptions.onUnauthorized` reports every 401, `trailingSlash` shapes request URLs
+- `request-url.ts` — `readApiTrailingSlashEnv()`, build-time default for `trailingSlash`
 
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
@@ -218,7 +219,8 @@ direction, and every invariant.
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle, worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh, trash sweep
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep
+- `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
@@ -293,7 +295,7 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 
 **Location**: `packages/canopycms-next/src/`
 
-- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, dual-build page extensions, sharp tracing
+- `with-canopy.ts` — `withCanopy()` Next config wrapper: package detection, transpile and alias setup, asset rewrite, `trailingSlash` to `CANOPY_API_TRAILING_SLASH` env, dual-build page extensions, sharp tracing
 - `sharp-tracing.ts` — locates sharp's libvips directories the way a bundler would, for Next's file tracing
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
 - `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `guardBuildContext`
@@ -612,16 +614,17 @@ always target a concrete origin — is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper; also `ensureGitExcludePattern`, `GitManager.repoExistsAt` and `gitChildEnv`
+- `git-manager.ts` — the `simple-git` wrapper; also `ensureGitExcludePattern`, `GitManager.repoExistsAt`, `gitChildEnv` and `addAllExceptCanopyState()`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable after creation; `buildMergedBranchUpdate`
 - `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
 - `branch-workspace.ts` — `BranchWorkspaceManager`: provisions and resolves a branch's clone
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`
+- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, the rate-limit retry predicates
+- `submission-attribution.ts` — sanitized submitter identity: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -676,7 +679,7 @@ immediately; without one they enqueue a task for the EC2 worker and the branch g
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the full submit workflow: checkout, status, commit all, push
+- `submitBranch()` — the full submit workflow: checkout, status, commit all (with the submitter's trailers), push; returns `changedPaths`
 - `commitToSettingsBranch()` — commit to the settings branch, with an optional PR
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -777,10 +780,10 @@ preserved, and code blocks are skipped. See
 - `entry-url.ts` — `computeEntryUrl`, the forward collection-plus-slug to URL rule, and the shared `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups for data-layer iteration
-- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `isRebaseInProgress`
+- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
-- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl` and `stripTrailingSlashes`
+- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes` and `withTrailingSlash`
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the shared OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry)

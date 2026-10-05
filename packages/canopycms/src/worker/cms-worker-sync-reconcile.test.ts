@@ -370,6 +370,24 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     expect(status.lastGitSync).toBeDefined()
   })
 
+  it("records the base clone's refresh outcome and counts a dirty base in skippedDirty", async () => {
+    const basePath = path.join(workspacePath, 'content-branches', 'main')
+    await simpleGit().clone(remoteGitPath, basePath, ['--branch', 'main'])
+    await fs.writeFile(path.join(basePath, 'README.md'), 'uncommitted edit\n')
+
+    const consoleSpy = mockConsole()
+    await makeWorker().syncGit()
+    expect(consoleSpy).toHaveErrored(/Base branch workspace \(main\) has uncommitted changes/)
+    consoleSpy.restore()
+
+    const sync = (await readStatus()).lastGitSync
+    expect(sync?.skippedDirty).toEqual(['main'])
+    expect(sync?.baseRefresh).toMatchObject({
+      outcome: 'skipped-dirty',
+      dirtyFiles: ['README.md'],
+    })
+  })
+
   it('does not delete a local head when the branch is removed from GitHub', async () => {
     await commitOnto(tmpDir, githubPath, 'feature-deleted-upstream', {
       'a.txt': 'will be deleted upstream',

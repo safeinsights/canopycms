@@ -18,7 +18,7 @@ import {
 import type { PathPermission } from '../../config'
 import type { OperatingMode } from '../../operating-mode'
 import { unsafeAsPermissionPath } from '../../authorization/test-utils'
-import { unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 /**
  * Thin wrapper over `mutatePermissionsFile` matching the old
@@ -83,7 +83,7 @@ describe('Path Permission Integration', () => {
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     const access = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/hello.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/hello'),
       user: editor,
       level: 'edit',
     })
@@ -128,7 +128,7 @@ describe('Path Permission Integration', () => {
 
     // Path check alone would fail for non-BlogAuthors
     const pathAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/restricted.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/restricted'),
       user: admin,
       level: 'edit',
     })
@@ -173,7 +173,7 @@ describe('Path Permission Integration', () => {
 
     // Check access to public post (should match first rule)
     const publicAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/public-announcement.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/public-announcement'),
       user: editor,
       level: 'edit',
     })
@@ -182,7 +182,7 @@ describe('Path Permission Integration', () => {
 
     // Check access to private post (should match second rule and be denied)
     const privateAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/private-draft.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/private-draft'),
       user: editor,
       level: 'edit',
     })
@@ -223,21 +223,21 @@ describe('Path Permission Integration', () => {
 
     // Reviewer can read and review, but not edit
     const reviewerReadAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: reviewer,
       level: 'read',
     })
     expect(reviewerReadAccess.allowed).toBe(true)
 
     const reviewerReviewAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: reviewer,
       level: 'review',
     })
     expect(reviewerReviewAccess.allowed).toBe(true)
 
     const reviewerEditAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: reviewer,
       level: 'edit',
     })
@@ -245,21 +245,21 @@ describe('Path Permission Integration', () => {
 
     // Editor can read and edit, but not review
     const editorReadAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: editor,
       level: 'read',
     })
     expect(editorReadAccess.allowed).toBe(true)
 
     const editorEditAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: editor,
       level: 'edit',
     })
     expect(editorEditAccess.allowed).toBe(true)
 
     const editorReviewAccess = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/posts/test.mdx'),
+      logicalPath: unsafeAsLogicalPath('content/posts/test'),
       user: editor,
       level: 'review',
     })
@@ -283,7 +283,7 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: unsafeAsPermissionPath('content/about.md'),
+          path: unsafeAsPermissionPath('content/about'),
           edit: { allowedGroups: ['ContentEditors'] },
         },
       ],
@@ -296,7 +296,7 @@ describe('Path Permission Integration', () => {
 
     // Editor should have access to about page
     const access = pathChecker({
-      relativePath: unsafeAsPhysicalPath('content/about.md'),
+      logicalPath: unsafeAsLogicalPath('content/about'),
       user: editor,
       level: 'edit',
     })

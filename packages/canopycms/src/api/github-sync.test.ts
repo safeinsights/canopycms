@@ -32,6 +32,9 @@ vi.mock('../task-queue/task-queue-config', () => ({
 }))
 
 import { syncSubmitPr } from './github-sync'
+import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
+
+const noSubmission = { changedPaths: [] }
 
 const makeGitHubService = (overrides: Record<string, unknown> = {}): GitHubService =>
   ({
@@ -42,6 +45,7 @@ const makeGitHubService = (overrides: Record<string, unknown> = {}): GitHubServi
       state: 'open',
       merged: false,
       draft: false,
+      body: '',
     }),
     convertToReady: vi.fn().mockResolvedValue(undefined),
     convertToDraft: vi.fn().mockResolvedValue(undefined),
@@ -68,7 +72,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
     })
     const branchContext = createMockBranchContext({ branchName: 'feature/x' })
 
-    const result = await syncSubmitPr(ctx, branchContext)
+    const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
     expect(result).toEqual({})
   })
@@ -88,7 +92,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'main' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result).toEqual({ syncStatus: 'sync-failed' })
       expect(githubService.createOrUpdatePR).not.toHaveBeenCalled()
@@ -104,7 +108,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'main' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result).toEqual({ syncStatus: 'sync-failed' })
       expect(mockEnqueueTask).not.toHaveBeenCalled()
@@ -119,7 +123,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'feature-foo' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result).toEqual({ syncStatus: 'sync-failed' })
       expect(mockEnqueueTask).not.toHaveBeenCalled()
@@ -140,7 +144,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         pullRequestUrl: 'https://github.com/owner/repo/pull/123',
       })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(githubService.updatePullRequest).toHaveBeenCalledWith(123, expect.any(Object))
       expect(githubService.createOrUpdatePR).not.toHaveBeenCalled()
@@ -159,6 +163,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
           state: 'open',
           merged: false,
           draft: true,
+          body: '',
         }),
       })
       const ctx = createMockApiContext({
@@ -169,7 +174,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         pullRequestNumber: 123,
       })
 
-      await syncSubmitPr(ctx, branchContext)
+      await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(githubService.convertToReady).toHaveBeenCalledWith(123)
     })
@@ -187,6 +192,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
           state: 'open',
           merged: false,
           draft: true,
+          body: '',
         }),
         convertToReady: vi.fn().mockRejectedValue(new Error('Resource not accessible')),
       })
@@ -199,7 +205,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         pullRequestUrl: 'https://github.com/owner/repo/pull/123',
       })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result).toEqual({
         prUrl: 'https://github.com/owner/repo/pull/123',
@@ -217,7 +223,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'feature/new' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(githubService.createOrUpdatePR).toHaveBeenCalledWith(
         expect.objectContaining({ head: 'feature/new', markReadyIfDraft: true }),
@@ -253,7 +259,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       const branchContext = createMockBranchContext({ branchName: 'feature/orphaned-pr' })
       expect(branchContext.branch.pullRequestNumber).toBeUndefined()
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result.syncStatus).toBe('synced')
       expect(result.prNumber).toBe(99)
@@ -272,11 +278,96 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'feature/flaky' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result.syncStatus).toBe('sync-failed')
       expect(consoleSpy).toHaveErrored('Failed to create/update PR')
       consoleSpy.restore()
+    })
+  })
+
+  describe('PR body records the submission', () => {
+    const submission = {
+      submitter: { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' },
+      changedPaths: ['content/pages/home.md'],
+    }
+
+    it('creates the PR with the canopycms section as its whole body', async () => {
+      const githubService = makeGitHubService()
+      const ctx = createMockApiContext({ services: { config: baseConfig, githubService } })
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+      branchContext.branch.description = 'Home page fix'
+
+      await syncSubmitPr(ctx, branchContext, submission)
+
+      const call = vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0]
+      expect(call?.mergeSectionIntoBody).toBe(true)
+      expect(call?.body.startsWith(PR_SECTION_START)).toBe(true)
+      expect(call?.body.endsWith(PR_SECTION_END)).toBe(true)
+      expect(call?.body).toContain('Home page fix')
+      expect(call?.body).toContain('Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.')
+      expect(call?.body).toContain('- `content/pages/home.md`')
+      expect(call?.body).not.toContain('jane@example.com')
+    })
+
+    it('updates a known PR by replacing only its section, keeping human text', async () => {
+      const existingBody = [
+        'Reviewer: please check images',
+        '',
+        PR_SECTION_START,
+        'Submitted by `Old` via CanopyCMS.',
+        PR_SECTION_END,
+        '',
+        'Closes #4',
+      ].join('\n')
+      const githubService = makeGitHubService({
+        getPullRequest: vi.fn().mockResolvedValue({
+          number: 123,
+          url: 'https://github.com/owner/repo/pull/123',
+          state: 'open',
+          merged: false,
+          draft: false,
+          body: existingBody,
+        }),
+      })
+      const ctx = createMockApiContext({ services: { config: baseConfig, githubService } })
+      const branchContext = createMockBranchContext({
+        branchName: 'feature/x',
+        pullRequestNumber: 123,
+      })
+
+      await syncSubmitPr(ctx, branchContext, submission)
+
+      const body = vi.mocked(githubService.updatePullRequest).mock.calls[0]?.[1].body ?? ''
+      expect(body.startsWith('Reviewer: please check images\n\n' + PR_SECTION_START)).toBe(true)
+      expect(body.endsWith(PR_SECTION_END + '\n\nCloses #4')).toBe(true)
+      expect(body).toContain('Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.')
+      expect(body).not.toContain('`Old`')
+    })
+
+    it('marks the worker task so the worker merges the section into an existing body', async () => {
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService: undefined },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      await syncSubmitPr(ctx, branchContext, submission)
+
+      const task = mockEnqueueTask.mock.calls[0]?.[1] as { payload: Record<string, unknown> }
+      expect(task.payload.mergeSectionIntoBody).toBe(true)
+      expect(task.payload.body).toEqual(expect.stringContaining('Submitted by `Jane Doe`'))
+    })
+
+    it('records "via CanopyCMS" with no name when the submitter is unknown', async () => {
+      const githubService = makeGitHubService()
+      const ctx = createMockApiContext({ services: { config: baseConfig, githubService } })
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      await syncSubmitPr(ctx, branchContext, noSubmission)
+
+      expect(vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0].body).toContain(
+        'Submitted via CanopyCMS.',
+      )
     })
   })
 
@@ -287,7 +378,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'feature/new' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(mockEnqueueTask).toHaveBeenCalledWith(
         '/mock/.tasks',
@@ -314,7 +405,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         pullRequestUrl: 'https://github.com/owner/repo/pull/55',
       })
 
-      await syncSubmitPr(ctx, branchContext)
+      await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(mockEnqueueTask).toHaveBeenCalledWith(
         '/mock/.tasks',
@@ -333,7 +424,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       })
       const branchContext = createMockBranchContext({ branchName: 'feature/new' })
 
-      const result = await syncSubmitPr(ctx, branchContext)
+      const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
       expect(result).toEqual({ syncStatus: 'sync-failed' })
       expect(consoleSpy).toHaveErrored('Failed to enqueue task')
