@@ -21,6 +21,7 @@ import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../bran
 import { readContentIndexGeneration } from '../content-index-generation'
 import type { ContentId } from '../paths/types'
 import { initTestRepo, mockConsole } from '../test-utils'
+import type { BaseRefreshReport } from '../types'
 import { CmsWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
@@ -37,15 +38,16 @@ const makeWorker = (workspacePath: string, baseBranch = 'main') =>
   })
 
 /** Invoke the private refreshBaseBranchWorkspace() method. */
-const refreshBase = (worker: CmsWorker): Promise<void> =>
+const refreshBase = (worker: CmsWorker): Promise<BaseRefreshReport> =>
   (
-    worker as unknown as { refreshBaseBranchWorkspace(): Promise<void> }
+    worker as unknown as { refreshBaseBranchWorkspace(): Promise<BaseRefreshReport> }
   ).refreshBaseBranchWorkspace()
 
 interface BaseWorkspaceSetup {
   basePath: string
   contentBranchesPath: string
   remotePath: string
+  remoteGit: SimpleGit
   baseGit: SimpleGit
   /** Add a commit to the origin remote (makes the base workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
@@ -58,9 +60,14 @@ interface BaseWorkspaceSetup {
  */
 async function createBaseWorkspaceSetup(
   tmpDir: string,
-  opts: { baseBranch?: string; initialFiles?: Record<string, string> } = {},
+  opts: {
+    baseBranch?: string
+    initialFiles?: Record<string, string>
+    /** Leave .git/info/exclude without `.canopy-meta/`, as an older clone has it. */
+    skipExclude?: boolean
+  } = {},
 ): Promise<BaseWorkspaceSetup> {
-  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' } } = opts
+  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, skipExclude = false } = opts
 
   const remotePath = path.join(tmpDir, 'remote')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
@@ -88,9 +95,11 @@ async function createBaseWorkspaceSetup(
   await baseGit.addConfig('core.editor', 'true')
 
   // Exclude .canopy-meta/ from git tracking (matches production ensureGitExclude)
-  const excludeFile = path.join(basePath, '.git', 'info', 'exclude')
-  await fs.mkdir(path.dirname(excludeFile), { recursive: true })
-  await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
+  if (!skipExclude) {
+    const excludeFile = path.join(basePath, '.git', 'info', 'exclude')
+    await fs.mkdir(path.dirname(excludeFile), { recursive: true })
+    await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
+  }
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
@@ -102,7 +111,7 @@ async function createBaseWorkspaceSetup(
     await remoteGit.commit(message)
   }
 
-  return { basePath, contentBranchesPath, remotePath, baseGit, pushToRemote }
+  return { basePath, contentBranchesPath, remotePath, remoteGit, baseGit, pushToRemote }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +134,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)
 
-    await expect(refreshBase(worker)).resolves.toBeUndefined()
+    await expect(refreshBase(worker)).resolves.toEqual({ outcome: 'skipped-not-provisioned' })
 
     expect(consoleSpy).toHaveLogged(/not yet provisioned/)
     consoleSpy.restore()
@@ -141,10 +150,11 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
 
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)
-    await refreshBase(worker)
+    const report = await refreshBase(worker)
 
     expect(consoleSpy).toHaveErrored(/uncommitted changes/i)
     consoleSpy.restore()
+    expect(report).toMatchObject({ outcome: 'skipped-dirty', dirtyFiles: ['tracked.txt'] })
 
     // Dirty file untouched, remote content never fetched/merged in.
     await expect(fs.readFile(path.join(basePath, 'tracked.txt'), 'utf8')).resolves.toBe(
@@ -257,7 +267,10 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)
 
-    await expect(refreshBase(worker)).resolves.toBeUndefined()
+    await expect(refreshBase(worker)).resolves.toMatchObject({
+      outcome: 'failed',
+      message: expect.stringMatching(/does not appear to be a git repository/),
+    })
 
     // Caught by refreshBaseBranchWorkspace's outer try/catch and logged.
     expect(consoleSpy).toHaveErrored(/refresh failed/i)
@@ -278,5 +291,126 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
 
     expect(saveSpy).not.toHaveBeenCalled()
     saveSpy.mockRestore()
+  })
+  describe("canopycms's own state", () => {
+    it('fast-forwards despite a modified tracked .canopy-meta file, and reports the tracking', async () => {
+      const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir, {
+        initialFiles: { '.canopy-meta/comments.json': '{"committed":true}' },
+      })
+      await pushToRemote({ 'remote-update.txt': 'from origin' })
+      await fs.writeFile(path.join(basePath, '.canopy-meta', 'comments.json'), '{"local":true}')
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir))
+
+      await expect(fs.readFile(path.join(basePath, 'remote-update.txt'), 'utf8')).resolves.toBe(
+        'from origin',
+      )
+      expect(report).toEqual({
+        outcome: 'refreshed',
+        trackedCanopyMeta: ['.canopy-meta/comments.json'],
+      })
+      expect(consoleSpy).toHaveWarned(/tracks canopycms state.*git rm -r --cached \.canopy-meta/)
+      consoleSpy.restore()
+      // canopycms's own state survives the fast-forward.
+      await expect(
+        fs.readFile(path.join(basePath, '.canopy-meta', 'comments.json'), 'utf8'),
+      ).resolves.toBe('{"local":true}')
+    })
+
+    it('warns about tracked state once per process, but reports it every cycle', async () => {
+      await createBaseWorkspaceSetup(tmpDir, {
+        initialFiles: { '.canopy-meta/comments.json': '{}' },
+      })
+      const worker = makeWorker(tmpDir)
+
+      const consoleSpy = mockConsole()
+      const first = await refreshBase(worker)
+      const second = await refreshBase(worker)
+
+      expect(consoleSpy.all().warn.filter((m) => /tracks canopycms state/.test(m))).toHaveLength(1)
+      consoleSpy.restore()
+      expect(first.trackedCanopyMeta).toEqual(['.canopy-meta/comments.json'])
+      expect(second.trackedCanopyMeta).toEqual(['.canopy-meta/comments.json'])
+    })
+
+    it("restores the retired in-tree schema cache, so the adopter's untracking commit fast-forwards", async () => {
+      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+        initialFiles: { 'content/a.md': 'a', '.canopy-meta/schema-cache.json': '{"v":"old"}' },
+      })
+      // What a pre-move canopycms left behind in the clone.
+      await fs.writeFile(path.join(basePath, '.canopy-meta', 'schema-cache.json'), '{"v":"local"}')
+      // The adopter's fix lands upstream.
+      await remoteGit.raw(['rm', '-r', '--cached', '.canopy-meta'])
+      await remoteGit.commit('untrack canopycms state')
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir))
+
+      const tracked = await simpleGit({ baseDir: basePath }).raw(['ls-files', '--', '.canopy-meta'])
+      expect(tracked).toBe('')
+      expect(report.outcome).toBe('refreshed')
+      expect(consoleSpy).toHaveLogged(/restored the retired in-tree schema cache/)
+      consoleSpy.restore()
+    })
+
+    it("fast-forwards past the adopter's untracking commit without touching live state", async () => {
+      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+        initialFiles: {
+          'content/a.md': 'a',
+          '.canopy-meta/comments.json': '{"threads":[]}',
+          '.canopy-meta/clean-état.json': '{"clean":true}',
+        },
+      })
+      const commentsPath = path.join(basePath, '.canopy-meta', 'comments.json')
+      await fs.writeFile(commentsPath, '{"threads":["live"]}')
+      await remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
+      await remoteGit.commit('untrack canopycms state')
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir))
+      expect(consoleSpy).toHaveLogged(
+        /stopped tracking \.canopy-meta\/clean-état\.json, \.canopy-meta\/comments\.json, as upstream has/,
+      )
+      consoleSpy.restore()
+
+      expect(report).toEqual({ outcome: 'refreshed' })
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe('{"threads":["live"]}')
+      // A clean tracked copy would otherwise be deleted by the fast-forward.
+      await expect(
+        fs.readFile(path.join(basePath, '.canopy-meta', 'clean-état.json'), 'utf8'),
+      ).resolves.toBe('{"clean":true}')
+      expect(await simpleGit({ baseDir: basePath }).raw(['ls-files', '--', '.canopy-meta'])).toBe(
+        '',
+      )
+    })
+
+    it('re-applies the .canopy-meta/ exclude to a clone that predates it', async () => {
+      const { basePath } = await createBaseWorkspaceSetup(tmpDir, { skipExclude: true })
+
+      await refreshBase(makeWorker(tmpDir))
+
+      const exclude = await fs.readFile(path.join(basePath, '.git', 'info', 'exclude'), 'utf8')
+      expect(exclude.split('\n')).toContain('.canopy-meta/')
+    })
+
+    it('caps the reported dirty files but counts them all in the message', async () => {
+      const files = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [`content/f${i}.md`, 'x']),
+      )
+      const { basePath } = await createBaseWorkspaceSetup(tmpDir, { initialFiles: files })
+      for (const name of Object.keys(files)) {
+        await fs.writeFile(path.join(basePath, name), 'edited')
+      }
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir))
+      expect(consoleSpy).toHaveErrored(/uncommitted changes/)
+      consoleSpy.restore()
+
+      expect(report.outcome).toBe('skipped-dirty')
+      expect(report.dirtyFiles).toHaveLength(10)
+      expect(report.message).toMatch(/^12 uncommitted/)
+    })
   })
 })

@@ -36,7 +36,7 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
-import { detectHeadBranch } from './utils/git'
+import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
 import { BRANCH_META_DIR } from './branch-metadata-file'
@@ -334,9 +334,11 @@ async function _createCanopyServicesInternal(
     // and success is reported though the commit never reached the remote. Push
     // whenever there is something new to send — we just committed, or the local
     // branch already had unpushed commits from an earlier attempt.
+    // canopycms's own state under .canopy-meta/ is never content, so it neither
+    // makes a commit worth creating nor gets staged into one.
     let committed = false
-    if (status.files.length > 0) {
-      await git.add('.')
+    if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
+      await git.addAllExceptCanopyState()
       const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
         editedBy: config.gitEditedByTrailers ?? true,
         coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,

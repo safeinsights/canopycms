@@ -8,6 +8,7 @@ import type { OperatingMode } from './operating-mode'
 import type { EntrySchemaRegistry, SchemaResolutionResult } from './schema/types'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import { resourceGenerationPath, readResourceGeneration } from './resource-generation'
+import { initTestRepo } from './test-utils'
 
 /** Test subclass exposing a resolve counter, for asserting cache-hit/miss behavior. */
 class CountingBranchSchemaCache extends BranchSchemaCache {
@@ -132,7 +133,7 @@ describe('BranchSchemaCache', () => {
       expect(duration2).toBeLessThan(100)
     })
 
-    it('should write cache file to .canopy-meta/schema-cache.json', async () => {
+    it('falls back to .canopy-meta/schema-cache.json when branchRoot is not a git clone', async () => {
       const registry = new BranchSchemaCache()
 
       await registry.getSchema(branchRoot, entrySchemaRegistry)
@@ -223,6 +224,59 @@ describe('BranchSchemaCache', () => {
         .then(() => true)
         .catch(() => false)
       expect(staleExists).toBe(false)
+    })
+  })
+
+  describe('cache location in a git clone', () => {
+    const exists = (p: string) =>
+      fs.access(p).then(
+        () => true,
+        () => false,
+      )
+
+    it('stores the cache under .git/canopycms/ and serves it from there', async () => {
+      await initTestRepo(branchRoot)
+      const registry = new CountingBranchSchemaCache()
+
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      expect(registry.resolveCount).toBe(1)
+      await expect(
+        exists(path.join(branchRoot, '.git', 'canopycms', 'schema-cache.json')),
+      ).resolves.toBe(true)
+      await expect(exists(cachePath)).resolves.toBe(false)
+    })
+
+    it('keeps a committed .canopy-meta/schema-cache.json unmodified across a resolve', async () => {
+      const git = await initTestRepo(branchRoot)
+      await fs.mkdir(path.dirname(cachePath), { recursive: true })
+      await fs.writeFile(cachePath, '{"committed":true}', 'utf-8')
+      await git.add(['.'])
+      await git.commit('adopter commits canopycms state')
+
+      await new BranchSchemaCache().getSchema(branchRoot, entrySchemaRegistry)
+
+      expect(await git.raw(['status', '--porcelain', '--untracked-files=no'])).toBe('')
+    })
+
+    it('still removes the retired .stale marker from .canopy-meta/', async () => {
+      await initTestRepo(branchRoot)
+      const staleMarkerPath = path.join(branchRoot, '.canopy-meta', 'schema-cache.stale')
+      await fs.mkdir(path.dirname(staleMarkerPath), { recursive: true })
+      await fs.writeFile(staleMarkerPath, '', 'utf-8')
+
+      await new BranchSchemaCache().getSchema(branchRoot, entrySchemaRegistry)
+
+      await expect(exists(staleMarkerPath)).resolves.toBe(false)
+    })
+
+    it('falls back to .canopy-meta/ when .git is a file (a linked worktree)', async () => {
+      await fs.writeFile(path.join(branchRoot, '.git'), 'gitdir: /elsewhere\n', 'utf-8')
+
+      await new BranchSchemaCache().getSchema(branchRoot, entrySchemaRegistry)
+
+      await expect(exists(cachePath)).resolves.toBe(true)
     })
   })
 
