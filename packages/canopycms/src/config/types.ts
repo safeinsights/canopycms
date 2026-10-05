@@ -403,6 +403,8 @@ export interface CanopyConfig {
   defaultRemoteUrl?: DefaultRemoteUrl
   gitBotAuthorName: GitBotAuthorName
   gitBotAuthorEmail: GitBotAuthorEmail
+  gitEditedByTrailers?: boolean
+  gitCoAuthoredByTrailers?: boolean
   githubTokenEnvVar?: GithubTokenEnvVar
   mode: CanopyOperatingMode
   /** How this build is deployed — see {@link CanopyConfigInput.deployedAs}. */
@@ -440,6 +442,10 @@ export interface CanopyConfigInput {
   defaultRemoteUrl?: string
   gitBotAuthorName: string
   gitBotAuthorEmail: string
+  /** Add `Edited-by: Name (user id)` for the submitter to submit commits. Default true. */
+  gitEditedByTrailers?: boolean
+  /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */
+  gitCoAuthoredByTrailers?: boolean
   githubTokenEnvVar?: string
   /**
    * Operating mode: 'prod' or 'dev'. Required — no default (SEC-C1). A prod deploy that
