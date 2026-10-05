@@ -17,16 +17,18 @@ let settingsInitLock: Promise<void> | null = null
 /**
  * Settings workspaces this process has fully ensured, keyed by {@link ensuredKey}. A hit
  * skips the guard, the init lock and initializeWorkspace's dozen git subprocesses, which
- * otherwise ran on every API request. It is sound because that pass never fetched or reset
- * anything (settings freshness comes from every process reading the one shared workspace),
- * and everything it verified is fixed for the process: the settings-branch name resolves once
+ * otherwise ran on every API request. It is sound because that pass never fetched, pulled or
+ * reset the settings branch, so settings freshness never came from it: every process reads the
+ * one shared workspace. Everything it verified is fixed for the process: the settings-branch name resolves once
  * from config, the remote URL comes from config, and nothing in CanopyCMS checks the settings
  * workspace out onto another branch. groups.json and permissions.json are still read from
- * disk on every request; only the provisioning is memoized. Failures are never recorded.
+ * disk on every request; only the provisioning is memoized. Failures are never recorded. In
+ * dev, a hit also skips re-seeding a deleted `.canopy-dev/remote.git`; a dev-server restart
+ * re-seeds it.
  *
  * A hit still reads `.git/HEAD`, so a workspace removed, re-cloned onto another branch, or
- * caught mid-provisioning by another process misses and runs the full path, guard and lock
- * included.
+ * caught mid-clone by another process (HEAD still on the base branch) misses and runs the full
+ * path, guard and lock included.
  */
 const ensuredSettingsWorkspaces = new Set<string>()
 
