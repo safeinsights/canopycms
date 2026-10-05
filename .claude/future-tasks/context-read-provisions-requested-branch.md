@@ -10,16 +10,19 @@ Reasoned from the code; not reproduced against a deployment.
 
 `context.ts` builds the request-scoped reader with
 `createContentReader({ services })`, so `allowCreateBranch` takes its default of
-`true` (`content-reader.ts`). `read`/`readByUrlPath` with a `branch` therefore
-resolve it through `loadOrCreateBranchContext`. For a name with no workspace,
-that calls `BranchWorkspaceManager.openOrCreateBranch`: a clone, branch
-metadata and a registry entry. `readDocument` runs `resolveStore` (the
-provisioning) **before** `checkContentAccess`.
+`true` (`content-reader.ts:121`). `read`/`readByUrlPath` with a `branch`
+therefore resolve it through `loadOrCreateBranchContext` (`:145`). For a name
+with no workspace, that calls `BranchWorkspaceManager.openOrCreateBranch`,
+which sets up a git workspace and saves branch metadata, invalidating the branch
+registry (`branch-workspace.ts:135-146`). `readDocument` runs `resolveStore`
+(the provisioning, `content-reader.ts:244`) **before** `checkContentAccess`
+(`:295`).
 
 The README's documented page pattern passes `branch: searchParams?.branch`
 straight through, so on a public-read `deployedAs: 'server'` site any anonymous
 visitor can create a branch workspace on EFS per distinct `?branch=` value.
-A traversal name throws `BranchPathError` (a 500, not a 404).
+A traversal name throws `BranchPathError`, which `readByUrlPath` does not
+swallow (it catches only `ContentStoreError`), so the page 500s rather than 404s.
 
 ## Fix sketch
 

@@ -6,11 +6,11 @@ Both methods take `branch?: string`, matching `read`/`readByUrlPath`; an index
 page passes the preview iframe's `?branch=` the way the README already shows for
 `read`. A requested branch other than the active one is load-only (never
 provisioned), its branch access is checked before its files are read, and a
-missing, unreadable or traversal name lists nothing. Build time and static
+missing, unreadable, non-string or traversal name lists nothing. Build time and static
 deployments ignore it. Tests: `context-listing-branch.test.ts`.
 
-Option 2 (automatic, no adopter change) was not taken: a server component cannot
-see the request URL, so it would need a new editor-to-adapter channel such as a
+Option 2 (automatic, no adopter change) was not taken: the context sees only the
+request's headers and cookies, never its URL, so it would need a new editor-to-adapter channel such as a
 cookie, which would also leak branch content into an editor's ordinary browsing
 of the live site.
 

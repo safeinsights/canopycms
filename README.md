@@ -1358,7 +1358,7 @@ const entries = await (await getCanopyForBuild()).listEntries()
 const slugs = entries.map((entry) => entry.urlPath.split('/').filter(Boolean))
 ```
 
-On the request-scoped context, pass `branch` so an index page previewed in the editor lists the content branch being edited. The preview iframe's URL carries it as `?branch=`, as for [`read()`](#reading-content-in-server-components). Without it a `prod` deployment lists the base branch, and an editor's new entry is missing from the index preview. A branch the user cannot read, or one that does not exist, lists nothing. `buildContentTree()` takes the same option, and the build context ignores it.
+On the request-scoped context, pass `branch` so an index page previewed in the editor lists the content branch being edited. The preview iframe's URL carries it as `?branch=`, as for [`read()`](#reading-content-in-server-components). Without it a `prod` deployment lists the base branch, and an editor's new entry is missing from the index preview. A branch the user cannot read, or one that does not exist, lists nothing. `buildContentTree()` takes the same option. It selects nothing at build time or on static deployments.
 
 ```typescript
 // app/posts/page.tsx

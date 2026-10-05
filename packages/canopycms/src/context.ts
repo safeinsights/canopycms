@@ -142,12 +142,14 @@ export interface CanopyBuildContext {
    * cannot `read` are omitted before `extract` runs; on the build context and
    * static deployments nothing is filtered.
    *
-   * Branch: with no `branch` it lists the active branch — in `dev` the git HEAD
-   * (`refreshActiveBranch()`), in `prod` the base branch. Pass the preview
+   * Branch: with no `branch` it lists the active branch
+   * (`defaultActiveBranch ?? defaultBaseBranch`): git HEAD in `dev` when that is
+   * unset, otherwise usually the base branch in `prod`. Pass the preview
    * iframe's `?branch=` as `branch`, as for `read`, so an index page previewed
-   * on a content branch lists that branch. Any branch other than the active one
-   * must already exist and be readable by the user, or the result is empty. It
-   * selects nothing at build time or on static deployments.
+   * on a content branch lists that branch. Any other branch must already exist
+   * and, on the request-scoped context, be readable by the user; otherwise, or
+   * for a non-string value, the result is empty. It selects nothing at build
+   * time or on static deployments.
    */
   listEntries: <T = Record<string, unknown>>(
     options?: ListEntriesOptions<T> & { branch?: string },
@@ -348,8 +350,9 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * With no `branch`, or the active branch named explicitly, it is the active
      * branch, provisioned if missing. Any other name arrives from the request
      * (an index page passing the preview iframe's `?branch=`), so it is
-     * load-only, never provisioned — a missing or unloadable name lists nothing
-     * — and its branch access is checked before any of its files are read. At
+     * load-only, never provisioned — a missing, non-string or traversal name
+     * lists nothing — and its branch access, held in its own metadata, is
+     * checked before its schema or content files are read. At
      * build time and on static deployments `branch` selects nothing, as for
      * `read` (see the module doc).
      *
