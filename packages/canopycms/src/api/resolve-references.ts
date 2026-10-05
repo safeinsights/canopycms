@@ -63,7 +63,7 @@ const resolveReferencesHandler = async (
       const value = await store.resolveReferenceTarget(id, access)
       if (value) resolved[id] = value
     } catch (error) {
-      // Skip failed resolutions, don't block entire request
+      // An id that fails to resolve is omitted rather than failing the whole request.
       console.error(`Failed to resolve reference ID ${id}:`, error)
     }
   }

@@ -1,10 +1,11 @@
 # Reference resolution embeds a referenced entry's data without checking access to it
 
-## Status: RESOLVED 2026-10-05 (request-time half), branch `fix/reference-resolution-acl`
+## Status: RESOLVED 2026-10-05, branch `fix/reference-resolution-acl`
 
-The static-build half is split out to
-[static-build-reference-acl.md](../static-build-reference-acl.md): a build has no path rules
-to evaluate "is B public?" against, which needs a decision first.
+The static-build half below was **decided against** on 2026-10-05 (JP): merged content is public
+in a static build, and path read rules govern the editor and request-time reads only. A gate for
+private static pages is kept as a future option in
+[static-build-reference-acl.md](../static-build-reference-acl.md).
 
 **What shipped.** A target the reader may not read resolves to a `RestrictedReference`
 (entry-schema.ts): `{ id, slug, collection, urlPath, title, unavailable: true, reason:
@@ -18,7 +19,8 @@ live-preview endpoint (now `ContentStore.resolveReferenceTarget`, so it shares t
 opted-in `listEntries`/`buildContentTree` (the listing's visibility predicate). Reference options
 were already filtered before read. The `id` is always present, so an editor denied B who saves A
 writes B's id back unchanged (`normalizeReferenceValues`); a test pins it. The inferred type of a
-`resolvedSchema` reference is now a union with `RestrictedReference`, narrowed on `unavailable`.
+`resolvedSchema` reference is now a union with `RestrictedReference`, narrowed on `unavailable`,
+which `createEntrySchemaRegistry` therefore rejects as a field name.
 Tests 1 and 3 below live in `api/reference-resolution-acl.test.ts`.
 
 ## Priority: P1 [BOTH] — pre-existing, but it becomes load-bearing at the first real ACL deployment

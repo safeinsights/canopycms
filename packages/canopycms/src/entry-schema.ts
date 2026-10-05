@@ -123,7 +123,7 @@ export const RESTRICTED_REFERENCE_MARKER = 'unavailable'
  * `unavailable: true` is the marker a renderer branches on, so a denied target never arrives
  * looking like a full one with its fields `undefined`; `reason` says why, leaving room for
  * other reasons a target cannot be shown. A reference the reader may see in full never carries
- * either key. `id` is always present, so a save of the referring entry writes the reference
+ * `unavailable`. `id` is always present, so a save of the referring entry writes the reference
  * back unchanged (`normalizeReferenceValues` recovers it from `value.id`).
  */
 export type RestrictedReference = Simplify<

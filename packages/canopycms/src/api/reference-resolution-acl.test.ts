@@ -454,7 +454,7 @@ describe('reference resolution applies path ACLs to the referenced entry', () =>
 
   describe('opted-in listings', () => {
     const flatSchema = () => flattenSchema(schema, 'content')
-    /** The visibility predicate context.ts builds for a reader outside `insiders`. */
+    /** Stands in for the visibility predicate context.ts builds for a reader outside `insiders`. */
     const denyPrivate = {
       shouldInclude: (logicalPath: LogicalPath) => !logicalPath.startsWith('content/private/'),
     }

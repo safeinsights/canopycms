@@ -693,7 +693,7 @@ const { data } = await canopy.read<Post>({ entryPath: 'content/posts', slug: 'my
 if (data.author?.unavailable) return <a href={data.author.urlPath}>{data.author.title} (sign in)</a>
 ```
 
-Path rules decide it, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value. A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
+Path rules decide it at request time, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value; a static build resolves every reference in full (see [Permission Model](#permission-model)). A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
 
 Pass `resolveReferences: false` to get the bare ids instead. Declare `resolvedSchema` on the field to have the inferred type match the resolved shape (see [Typed References with `resolvedSchema`](#typed-references-with-resolvedschema)). A **listing** is the opposite default — it resolves nothing unless asked; see [Resolving References in a Listing](#resolving-references-in-a-listing).
 
@@ -813,7 +813,9 @@ const postSchema = defineEntrySchema([
 type Post = TypeFromEntrySchema<typeof postSchema>
 // Without resolvedSchema: Post['author'] is string | null
 // With resolvedSchema:    Post['author'] is
-//   ({ name: string; bio: string } & ResolvedReferenceMeta) | RestrictedReference | null
+//   | ({ name: string; bio: string } & ResolvedReferenceMeta & { unavailable?: undefined })
+//   | RestrictedReference
+//   | null
 ```
 
 `RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives. Narrow on `unavailable` before reading the target's own fields.
@@ -1437,7 +1439,7 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry, not per referencing entry: all resolution in one call shares a cache, so a block referenced from 40 pages is read once. With the option off, none of that machinery is built. The cache saves the read, not the copy — each referencing entry still gets its own copy of the resolved value.
 
-**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
 
 **A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name — a no-op for json/yaml targets, whose whole document is already their data. The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call: a reference that **embeds** its target (a shared CTA rendered inline) wants the prose, while one that **links** to it (related posts, an author byline) wants `urlPath` and a title, not the target's whole body inlined into every page read. Turning it on makes the body part of every referencing entry's resolved value, so a long document embedded by many pages is copied once per page.
 
@@ -1486,7 +1488,7 @@ Set the fallbacks with `defaultBranchAccess` and `defaultPathAccess`; the [Confi
 
 **Bootstrap admin groups**: users whose IDs match `bootstrapAdminIds` automatically receive `admins` membership under `getCanopy()`, even before groups exist in the repository, which is what makes initial setup possible.
 
-**Build mode bypass**: during `next build` all permission checks are bypassed so every page can be statically generated whatever the auth configuration. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` and resolve content with the phase-selecting `read`/`readByUrlPath` to avoid request-scope errors without importing an admin context.
+**Build mode bypass**: during `next build` all permission checks are bypassed so every page can be statically generated whatever the auth configuration. Path read rules govern the editor and request-time reads only: merged content is public in a static build, references to restricted entries included. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` and resolve content with the phase-selecting `read`/`readByUrlPath` to avoid request-scope errors without importing an admin context.
 
 #### Public read on server deployments
 

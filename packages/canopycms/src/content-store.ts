@@ -307,8 +307,8 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
  * shorter than the `ContentStore` whose memoized `idIndex()` it sits on, so it adds no
  * staleness window and is out of scope for the generation-marker protocol in
  * `docs/concurrency.md`. Never make one module-global, persist one, or reuse one across
- * requests. A cached value has the batch's {@link ReferenceTargetAccess} already applied, so one
- * cache also never spans two readers.
+ * requests. A cached value has the batch's {@link ReferenceTargetAccess} already applied, so a
+ * cache must never be shared by two readers.
  *
  * Misses are memoized alongside hits so one batch stays internally coherent: a shared block
  * resolving to data on page 1 and `null` on page 40 of one sitemap is worse than either
@@ -325,8 +325,8 @@ export const createReferenceResolveCache = (): ReferenceResolveCache => new Map(
  *
  * Built from `services.createContentAccessChecker` for the request's user, so reference
  * targets are judged by the same rules as the entry being read. Omitted, every target resolves
- * in full: only phases that apply no ACL to their reader omit it (a build, a static
- * deployment), and every request-scoped caller that resolves references passes one.
+ * in full, which is what a build and a static deployment want (merged content is public there).
+ * Every request-time surface that returns resolved data to a user passes one.
  */
 export type ReferenceTargetAccess = (logicalPath: LogicalPath) => boolean
 
