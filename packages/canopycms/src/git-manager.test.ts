@@ -2001,6 +2001,18 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
+  it('pulls the settings branch, not a tag of the same name', async () => {
+    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
+    await advanceRemoteSettingsBranch(remotePath)
+    await openBareRepo(remotePath).raw(['tag', SETTINGS_BRANCH, 'main'])
+
+    await manager.pullCurrentBranch()
+
+    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
+    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
+    await expect(fs.access(path.join(settingsRoot, 'readme.md'))).rejects.toThrow()
+  })
+
   // The counterpart to the test above, and the one that carries the weight:
   // an UNREACHABLE remote is not "nothing to pull". Classifying it as
   // GitRemoteRefMissingError made commitToSettingsBranch log it as normal for

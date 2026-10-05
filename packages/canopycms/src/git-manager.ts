@@ -1142,7 +1142,8 @@ export class GitManager {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     try {
-      await this.git.fetch(this.remote, currentBranch)
+      // The full ref: a bare name resolves to a same-named tag first.
+      await this.git.fetch(this.remote, `refs/heads/${currentBranch}`)
     } catch (err) {
       // The only benign failure here: the branch has never been pushed, so the
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
@@ -1479,7 +1480,7 @@ export class GitManager {
     remoteTip: string | undefined,
   ): Promise<void> {
     if (!remoteTip) return
-    const localTip = (await this.git.revparse([branchName])).trim()
+    const localTip = (await this.git.revparse([`refs/heads/${branchName}`])).trim()
     if (localTip === remoteTip) return
 
     const fetchedTip = await this.fetchBranchTip(branchName)
@@ -1522,9 +1523,12 @@ export class GitManager {
     return undefined
   }
 
-  /** Fetch `branch` from the remote and return the fetched commit, pinned as pullBaseInner explains. */
+  /**
+   * Fetch `branch` from the remote and return the fetched commit, pinned as
+   * pullBaseInner explains. The full ref, as in pullCurrentBranchInner.
+   */
   private async fetchBranchTip(branch: string): Promise<string> {
-    await this.git.fetch(this.remote, branch)
+    await this.git.fetch(this.remote, `refs/heads/${branch}`)
     return (await this.git.revparse(['FETCH_HEAD'])).trim()
   }
 
@@ -1533,11 +1537,16 @@ export class GitManager {
     return output.split('\n').filter(Boolean)
   }
 
-  /** Whether `branch` is a single parentless commit with an empty tree, as orphan creation leaves it. */
+  /**
+   * Whether `branch` is a single parentless commit with an empty tree, as
+   * orphan creation leaves it. Full refs throughout: a bare name resolves to a
+   * same-named tag first, and clones fetch tags.
+   */
   private async isEmptyInitialBranch(branch: string): Promise<boolean> {
-    const commits = await this.git.raw(['rev-list', '--max-count=2', branch])
+    const ref = `refs/heads/${branch}`
+    const commits = await this.git.raw(['rev-list', '--max-count=2', ref])
     if (commits.split('\n').filter(Boolean).length !== 1) return false
-    const tree = await this.git.raw(['ls-tree', branch])
+    const tree = await this.git.raw(['ls-tree', ref])
     return tree.trim() === ''
   }
 }

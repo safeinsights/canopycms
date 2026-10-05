@@ -18,7 +18,7 @@ import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { initTestRepo } from './test-utils'
+import { initTestRepo, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 import { GitManager } from './git-manager'
@@ -517,7 +517,11 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
   }
 
   async function log(settingsRoot: string): Promise<string[]> {
-    const out = await simpleGit({ baseDir: settingsRoot }).raw(['log', '--format=%s', BRANCH])
+    const out = await simpleGit({ baseDir: settingsRoot }).raw([
+      'log',
+      '--format=%s',
+      `refs/heads/${BRANCH}`,
+    ])
     return out.trim().split('\n')
   }
 
@@ -540,6 +544,29 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await manager.commit('save permissions')
     await manager.push()
     expect(await log(settingsRoot)).toHaveLength(3)
+  }, 60_000)
+
+  it('checks out the remote settings branch, not a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await openBareRepo(remoteUrl).raw(['tag', BRANCH, 'main'])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await log(settingsRoot)).toEqual(['save groups', 'Initialize settings branch'])
+  }, 60_000)
+
+  it('starts a healthy workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await simpleGit({ baseDir: settingsRoot }).raw(['tag', BRANCH, 'main'])
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
   }, 60_000)
 
   it('creates an empty orphan when the remote has no settings branch', async () => {
@@ -588,6 +615,26 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
     expect(await log(stuckRoot)).toEqual(['save groups', 'Initialize settings branch'])
     await new GitManager({ repoPath: stuckRoot, skipIndexMarker: true }).pullCurrentBranch()
+  }, 60_000)
+
+  it('repairs a stuck workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await GitManager.initializeWorkspace({
+      ...options,
+      workspacePath: stuckRoot,
+      baseBranch: 'main',
+      branchType: 'orphan',
+      gitBotAuthorName: 'Other Bot',
+      gitBotAuthorEmail: 'other@canopycms.test',
+    })
+    await simpleGit({ baseDir: stuckRoot }).raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+
+    await (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
   }, 60_000)
 
   it('refuses to repair a stuck workspace holding uncommitted settings, and leaves it untouched', async () => {
