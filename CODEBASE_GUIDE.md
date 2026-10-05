@@ -620,7 +620,7 @@ always target a concrete origin — is in
 - `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
 - `branch-workspace.ts` — `BranchWorkspaceManager`: provisions and resolves a branch's clone
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `schemaCacheDir`, `SCHEMA_CACHE_FILE` (in a clone: `.git/canopycms/`)
+- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, the rate-limit retry predicates

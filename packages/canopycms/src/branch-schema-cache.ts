@@ -80,7 +80,7 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  * `.canopy-meta/`. It also lives and dies with the clone, so a re-clone never
  * reads its predecessor's snapshot.
  */
-export async function schemaCacheDir(branchRoot: string): Promise<string> {
+async function schemaCacheDir(branchRoot: string): Promise<string> {
   const gitDir = path.join(branchRoot, '.git')
   const isClone = await fs.stat(gitDir).then(
     (stat) => stat.isDirectory(),
