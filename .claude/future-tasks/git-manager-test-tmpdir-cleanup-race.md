@@ -83,6 +83,14 @@ detached) before the owning test's tmpdir is removed — a lock still held at
 `afterEach` is the actual defect, and the unhandled error is just how it
 surfaces.
 
+## Also seen outside `git-manager.test.ts` (2026-10-05)
+
+`src/__integration__/settings/groups-api.test.ts` > "dev mode > should save groups to
+.canopy-dev/settings directory" failed on CI (PR #364, run 37274088569) with
+`ENOTEMPTY: directory not empty, rmdir '…/remote.git/objects/pack'`. It passed 6/6 locally and
+on a re-run. Same shape: the test's `afterEach` removes a tree a git child is still writing, so a
+fix belongs in a shared tmpdir-cleanup helper rather than in each file.
+
 ## Related
 
 - [markdownfield-mdxeditor-mount-flake](resolved/markdownfield-mdxeditor-mount-flake.md) — the other known intermittent in this
