@@ -10,6 +10,7 @@ import {
   isNetworkRemoteUrl,
   isNonFastForwardRejection,
   resolveBaseBranch,
+  workflowPushRefusalFile,
 } from './git'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-utilsgit-'))
@@ -189,5 +190,51 @@ describe('isNonFastForwardRejection', () => {
     ['auth/permission failure', AUTH_FAILURE],
   ])('does not classify a real captured %s as non-fast-forward', (_label, message) => {
     expect(isNonFastForwardRejection(message)).toBe(false)
+  })
+})
+
+describe('workflowPushRefusalFile', () => {
+  // Refusals captured from real GitHub (LC_ALL=C), verbatim apart from the repository
+  // URL. Each is a direct edit to a
+  // workflow file pushed by a credential without the workflows permission, in the
+  // `--verbose --porcelain` shape simple-git's `.push()` produces. The App token was
+  // GitHub Actions' GITHUB_TOKEN; the OAuth token was a `gh` login holding `repo` but
+  // not `workflow`.
+  const APP_TOKEN_REFUSAL =
+    'Pushing to https://github.com/test-owner/test-repo\n' +
+    'POST git-receive-pack (654 bytes)\n' +
+    "error: failed to push some refs to 'https://github.com/test-owner/test-repo'\n" +
+    'To https://github.com/test-owner/test-repo\n' +
+    '!\tHEAD:refs/heads/app-porcelain\t[remote rejected] (refusing to allow a GitHub App to ' +
+    'create or update workflow `.github/workflows/ci.yml` without `workflows` permission)\n' +
+    'Done'
+
+  const OAUTH_TOKEN_REFUSAL =
+    'To https://github.com/test-owner/test-repo.git\n' +
+    '!\trefs/heads/s0p:refs/heads/oauth-porcelain\t[remote rejected] (refusing to allow an ' +
+    'OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope)\n' +
+    'Done\n' +
+    'Pushing to https://github.com/test-owner/test-repo.git\n' +
+    'POST git-receive-pack (671 bytes)\n' +
+    "error: failed to push some refs to 'https://github.com/test-owner/test-repo.git'\n"
+
+  it.each([
+    ['GitHub App token', APP_TOKEN_REFUSAL],
+    ['OAuth token without the workflow scope', OAUTH_TOKEN_REFUSAL],
+  ])('names the workflow file in a real captured refusal of a %s', (_label, message) => {
+    expect(workflowPushRefusalFile(message)).toBe('.github/workflows/ci.yml')
+  })
+
+  it.each([
+    [
+      'a non-fast-forward rejection',
+      '!\trefs/heads/b:refs/heads/b\t[rejected] (non-fast-forward)\n' +
+        'hint: Updates were rejected because the tip of your current branch is behind\n',
+    ],
+    ['a stale lease', ' ! [rejected]        b -> b (stale info)\n'],
+    ['a declined pre-receive hook', ' ! [remote rejected] b -> b (pre-receive hook declined)\n'],
+    ['an auth failure', 'fatal: Could not read from remote repository.\n'],
+  ])('returns null for %s', (_label, message) => {
+    expect(workflowPushRefusalFile(message)).toBeNull()
   })
 })
