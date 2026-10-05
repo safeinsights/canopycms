@@ -58,8 +58,9 @@ adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distri
 own: OAC, the Lambda's timeout as the origin-read timeout, no caching, `x-forwarded-host`, and a
 response headers policy. `CanopyCmsDistribution` now sends the same headers:
 `frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`.
-Another origin can no longer frame the editor or any page the CMS domain serves. That is unlikely to
-be deliberate anywhere; the editor's own preview is same-origin and unaffected. See
+Unless your app sends its own framing headers, no other origin can frame the editor or any page the
+CMS domain serves, and those pages are marked `noindex`. The editor's default preview is same-origin
+and unaffected. See
 [Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
 
 **To adopt.** If you wired the Function URL into your own distribution by hand, delete those

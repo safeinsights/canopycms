@@ -89,18 +89,18 @@ export function cloudFrontPathPatternMatches(pattern: string, path: string): boo
 }
 
 /**
- * Throws when CloudFront would cut the Lambda short: an origin read timeout
- * above the 60s ceiling is rejected at deploy, and a lower one than the
- * Lambda's 504s at the edge on requests that succeed.
+ * Throws when the origin read timeout exceeds the 60s CloudFront accepts
+ * without a quota increase, which it would reject at deploy. Neither construct
+ * takes a higher, quota-raised value.
  */
 export function assertOriginReadTimeout(readTimeout: Duration, owner: string): void {
   if (readTimeout.toSeconds() > MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()) {
     throw new Error(
       `${owner}: originReadTimeout is ${readTimeout.toSeconds()}s, but CloudFront ` +
         `allows at most ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s without a service-quota ` +
-        `increase. Either lower the CMS Lambda's timeout to match, or request a quota increase for ` +
-        `"Origin response timeout" and pass the higher value explicitly. Deploying with a shorter ` +
-        `origin timeout than the Lambda's would 504 at the edge on requests that actually succeed.`,
+        `increase, and these constructs do not take a higher value. Lower the CMS Lambda's ` +
+        `timeout to ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s or less. A shorter origin ` +
+        `timeout than the Lambda's would 504 at the edge on requests that actually succeed.`,
     )
   }
 }
@@ -137,12 +137,12 @@ export function createForwardedHostFunction(scope: Construct, id: string): cloud
  *   that ignore it) stops other sites framing the editor. `'self'` keeps the
  *   editor's own preview iframe working, which frames same-origin site pages.
  * - Both framing headers have `override: false`, so an origin that sends its
- *   own CSP keeps it whole; when that CSP has no `frame-ancestors`, the
- *   `X-Frame-Options` still applies.
+ *   own CSP keeps it whole; when that CSP has no `frame-ancestors` and the
+ *   origin sends no `X-Frame-Options`, this one applies.
  * - `X-Robots-Tag: noindex` overrides: nothing the Lambda serves is meant to
  *   be indexed.
- * - No `Cross-Origin-Opener-Policy`: it severs `window.opener`, which Clerk's
- *   OAuth popup sign-in needs.
+ * - No `Cross-Origin-Opener-Policy`: it can cut the `window.opener` link a
+ *   popup-based OAuth sign-in reports back through.
  */
 export function createEditorResponseHeadersPolicy(
   scope: Construct,
@@ -242,8 +242,9 @@ export interface CanopyCmsAttachOptions {
    * `next.config` only (not the static export's) and pass the same value here.
    *
    * A path starting with `/`, without a trailing `/` or wildcards, and
-   * overlapping neither the editor's routes nor `/_next/*`. `behaviorOverrides`
-   * does not apply to this behavior.
+   * overlapping neither the editor's routes, `/_next/*` nor AssetSupport's
+   * `/assets/*`. Of `behaviorOverrides`, only `responseHeadersPolicy` applies
+   * to this behavior.
    *
    * @default - no asset-prefix behavior
    */

@@ -109,7 +109,7 @@ function expectEditorHeaders(template: Template, behavior: SynthBehavior) {
   expect(config.CustomHeadersConfig?.Items).toEqual([
     { Header: 'X-Robots-Tag', Value: 'noindex', Override: true },
   ])
-  // Cross-Origin-Opener-Policy severs window.opener, which Clerk's OAuth popup needs.
+  // Cross-Origin-Opener-Policy can break popup OAuth sign-in.
   expect(JSON.stringify(config)).not.toMatch(/Cross-Origin-Opener-Policy/i)
 }
 

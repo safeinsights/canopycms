@@ -15,6 +15,7 @@ deploy that synthesizes cleanly.
 ## Suggested shape
 
 Let `withCanopy` (`packages/canopycms-next/src/with-canopy.ts`) set `assetPrefix` for the CMS build
-from one value, so the adopter states it once in a place the CDK app can also import. Check first
-that the standalone server serves `/<prefix>/_next/static/*` at that path for every supported Next
-version. One adopter runs exactly this shape today, which suggests it does.
+from one value, so the adopter states it once in a place the CDK app can also import. The
+standalone server does serve `/<prefix>/_next/static/*` at that path on Next 15.5.21 (a built
+app answered 200 for `/edit-assets/_next/static/chunks/main-*.js`); check the other supported
+Next versions.

@@ -347,9 +347,9 @@ TLS. Two things to know:
 
 - **The origin-read timeout must match the Lambda's.** CloudFront's default is 30
   seconds, so a longer request (a first-touch branch provision clones onto EFS inside
-  it) gets a 504 at the edge while the Lambda finishes behind it. The constructs set
-  both from one constant, and `CanopyCmsService.timeout` carries an override to the
-  distribution. Above 60 seconds CloudFront needs a quota increase, so synth refuses it.
+  it) gets a 504 at the edge while the Lambda finishes behind it. Both default to one
+  constant; pass `CanopyCmsService.timeout` as `originReadTimeout` when you override
+  it. Above 60 seconds CloudFront needs a quota increase, so synth refuses it.
 - **Extra behaviors keep your ordering.** CloudFront matches path patterns in order,
   so `additionalBehaviors` keeps the order you listed, overrides included. That is how
   `AssetSupport`'s behaviors join the generated distribution.
@@ -358,8 +358,8 @@ Both `CanopyCmsDistribution` and `attachTo` (below) give the Lambda's behaviors 
 response headers policy: `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`
 (no other site can frame the editor; its preview iframe is same-origin),
 `X-Content-Type-Options: nosniff`, HSTS and `X-Robots-Tag: noindex`. The framing
-headers and HSTS yield to your app's own. No `Cross-Origin-Opener-Policy`: it breaks
-Clerk's OAuth popups.
+headers and HSTS yield to your app's own. No `Cross-Origin-Opener-Policy`, which can
+break popup OAuth sign-in.
 
 ### Serving the editor from a distribution you already own
 
