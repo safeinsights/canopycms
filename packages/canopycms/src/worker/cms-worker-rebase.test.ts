@@ -71,6 +71,7 @@ interface BranchSetup {
   branchPath: string
   contentBranchesPath: string
   branchGit: SimpleGit
+  remoteGit: SimpleGit
   /** Add a commit to the origin remote (makes the branch workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
   /** Commit changes in the branch workspace. */
@@ -150,6 +151,7 @@ async function createBranchSetup(
     branchPath,
     contentBranchesPath,
     branchGit,
+    remoteGit,
     pushToRemote,
     commitToBranch,
   }
@@ -447,10 +449,46 @@ describe('CmsWorker rebaseActiveBranches', () => {
       )
       consoleSpy.restore()
       await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+      // Recorded, so the Branches tab shows the wedge rather than only the log.
+      expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toMatch(
+        /git rm -r --cached \.canopy-meta/,
+      )
+      // The index is untouched: the skip is all or nothing.
+      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe(
+        '.canopy-meta/comments.json\n',
+      )
       // canopycms never discards state it still uses.
       await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
         '{"threads":["a reviewer comment"]}',
       )
+    })
+
+    it('stops tracking state the base branch untracked, keeps its bytes, and rebases', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
+      })
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const commentsPath = path.join(setup.branchPath, '.canopy-meta', 'comments.json')
+      await fs.writeFile(commentsPath, '{"threads":["a reviewer comment"]}')
+      // The adopter applies the fix upstream.
+      await setup.remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
+      await setup.remoteGit.commit('untrack canopycms state')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+      expect(consoleSpy).toHaveLogged(/my-feature: stopped tracking \.canopy-meta\/comments\.json/)
+      consoleSpy.restore()
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
+        '{"threads":["a reviewer comment"]}',
+      )
+      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe('')
+      // The untracking commit is dropped as already upstream; only the branch's own work remains.
+      const subjects = await setup.branchGit.raw(['log', '--format=%s', 'FETCH_HEAD..HEAD'])
+      expect(subjects.trim()).toBe('branch commit')
+      expect((await setup.branchGit.status()).files).toEqual([])
     })
 
     it('still skips real editor dirt when canopycms state is dirty too', async () => {

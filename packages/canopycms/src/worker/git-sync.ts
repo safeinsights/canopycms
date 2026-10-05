@@ -18,6 +18,9 @@ import {
   isUntracked,
   listTrackedCanopyState,
   restoreRetiredSchemaCache,
+  splitByUpstreamTracking,
+  trackedCanopyStateChanges,
+  untrackInIndex,
 } from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
@@ -658,6 +661,20 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     )
 
     if (behindCount > 0) {
+      // A merge refuses to overwrite modified tracked state, including with
+      // the adopter's own commit untracking it. State still tracked upstream
+      // is left for the merge, which fails loudly only if upstream changed it.
+      const { droppedUpstream } = await splitByUpstreamTracking(
+        baseGit,
+        trackedCanopyStateChanges(status),
+        fetchedTip,
+      )
+      if (droppedUpstream.length > 0) {
+        await untrackInIndex(baseGit, droppedUpstream)
+        workerLog(
+          `Base branch workspace (${ctx.baseBranch}): stopped tracking ${droppedUpstream.join(', ')}, as upstream has`,
+        )
+      }
       try {
         await baseGit.merge(['--ff-only', fetchedTip])
       } catch (err) {
@@ -698,6 +715,11 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
         ? `Base branch workspace (${ctx.baseBranch}): fast-forwarded ${behindCount} commit(s)`
         : `Base branch workspace (${ctx.baseBranch}): up to date`,
     )
+    if (trackedCanopyMeta && behindCount > 0) {
+      const stillTracked = await listTrackedCanopyState(baseGit)
+      trackedCanopyMeta =
+        stillTracked.length > 0 ? stillTracked.slice(0, MAX_REPORTED_PATHS) : undefined
+    }
     return { outcome: behindCount > 0 ? 'refreshed' : 'up-to-date', trackedCanopyMeta }
   } catch (err) {
     workerLogError(

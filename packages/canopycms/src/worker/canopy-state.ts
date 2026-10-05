@@ -1,12 +1,13 @@
 import type { FileStatusResult, SimpleGit, StatusResult } from 'simple-git'
 
 import { SCHEMA_CACHE_FILE } from '../branch-schema-cache'
-import { CANOPY_META_DIR } from '../utils/git'
+import { CANOPY_META_DIR, isCanopyInternalPath } from '../utils/git'
 
 /**
  * How the sync loop treats canopycms's own state (`.canopy-meta/`) in a branch clone. It is
  * never content, so it never makes a clone "dirty" for sync, but git still refuses some
- * operations over it when an adopter has committed it, and only the adopter can fix that.
+ * operations over it while the adopter's repo tracks it. Only the adopter can stop that; once
+ * they have, {@link splitByUpstreamTracking} and {@link untrackInIndex} bring each clone along.
  */
 
 /** The fix an operator applies when an adopter repo tracks `.canopy-meta/`. */
@@ -45,4 +46,46 @@ export async function restoreRetiredSchemaCache(
   if (!entry || entry.index === '?' || entry.index === 'A') return false
   await git.raw(['checkout', 'HEAD', '--', RETIRED_SCHEMA_CACHE_PATH])
   return true
+}
+
+/**
+ * The modified tracked `.canopy-meta/` files in `status`: what git refuses to rebase over, and
+ * what a fast-forward refuses to overwrite.
+ */
+export function trackedCanopyStateChanges(status: StatusResult): string[] {
+  return status.files
+    .filter((f) => isCanopyInternalPath(f.path) && !isUntracked(f))
+    .map((f) => f.path)
+}
+
+/**
+ * Split `paths` by whether the commit `tip` still tracks them. Those it no longer tracks, the
+ * adopter has untracked upstream, so a fast-forward or rebase onto `tip` would delete them anyway
+ * and {@link untrackInIndex} can clear the way; the rest still block.
+ */
+export async function splitByUpstreamTracking(
+  git: SimpleGit,
+  paths: string[],
+  tip: string,
+): Promise<{ droppedUpstream: string[]; stillTracked: string[] }> {
+  if (paths.length === 0) return { droppedUpstream: [], stillTracked: [] }
+  const tracked = new Set(
+    (await git.raw(['ls-tree', '-r', '--name-only', tip, '--', CANOPY_META_DIR]))
+      .split('\n')
+      .filter((line) => line.length > 0),
+  )
+  return {
+    droppedUpstream: paths.filter((p) => !tracked.has(p)),
+    stillTracked: paths.filter((p) => tracked.has(p)),
+  }
+}
+
+/**
+ * Remove `paths` from this clone's index, leaving them on disk as untracked, excluded state.
+ * Index-only on purpose: the files' bytes never move, so a concurrent write to them (branch
+ * metadata, comments) cannot be lost. Paths already out of the index are ignored.
+ */
+export async function untrackInIndex(git: SimpleGit, paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  await git.raw(['rm', '--cached', '--ignore-unmatch', '-q', '--', ...paths])
 }
