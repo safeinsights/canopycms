@@ -1684,7 +1684,8 @@ export class CanopyCmsService extends Construct {
    * rewrite the API's errors.
    *
    * Pass `editorAssetPrefix` with the CMS build's Next `assetPrefix`, so the
-   * editor's chunks stay out of the site's `/_next/static/*`.
+   * editor's chunks stay out of the site's `/_next/static/*`, and
+   * `previewPrefix` with a static-export site's preview route.
    * `AssetSupport.attachTo` adds `/assets/*`. Use `CanopyCmsDistribution`
    * instead when the CMS gets a domain of its own.
    */

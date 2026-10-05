@@ -46,7 +46,7 @@ const EDITOR_ROUTES: EditorRoute[] = EDITOR_PATH_PATTERNS.map((pattern) => ({
   probes: EDITOR_PROBE_PATHS[pattern],
 }))
 
-/** Patterns an `editorAssetPrefix` must not overlap in either direction. */
+/** Patterns a prefix option must not overlap in either direction. */
 const RESERVED_ROUTES: EditorRoute[] = [
   ...EDITOR_ROUTES,
   { pattern: '/_next/*', probes: ['/_next/x'] },
@@ -249,31 +249,58 @@ export interface CanopyCmsAttachOptions {
    * @default - no asset-prefix behavior
    */
   editorAssetPrefix?: string
+
+  /**
+   * The path of the CMS-only preview route, the same value as
+   * `editor.previewPrefix` in the CanopyCMS config (e.g. `'/preview'`): adds
+   * `<prefix>` and `<prefix>/*` behaviors with the editor routes' options, so
+   * the editor's preview pane reaches the CMS rather than the site.
+   *
+   * Validated like `editorAssetPrefix`, and must not overlap it either. An
+   * absolute `https://` `previewPrefix` is another origin and needs nothing
+   * here.
+   *
+   * @default - no preview behaviors
+   */
+  previewPrefix?: string
 }
 
-/** Throws unless `prefix` is a usable `editorAssetPrefix`; returns its pattern. */
-function editorAssetPrefixPattern(prefix: string): string {
+/**
+ * The routes a prefix option adds, after refusing a prefix that is not a
+ * plain path below the root or that overlaps `reserved` in either direction.
+ */
+function prefixRoutes(
+  option: 'editorAssetPrefix' | 'previewPrefix',
+  prefix: string,
+  reserved: EditorRoute[],
+): EditorRoute[] {
   const fail = (reason: string) =>
-    new Error(`CanopyCmsService.attachTo: editorAssetPrefix '${prefix}' ${reason}.`)
+    new Error(`CanopyCmsService.attachTo: ${option} '${prefix}' ${reason}.`)
   if (!prefix.startsWith('/') || prefix === '/') {
     throw fail("must start with '/' and name a path below the root")
   }
   if (prefix.endsWith('/')) throw fail("must not end with a trailing '/'")
   if (/[*?]/.test(prefix))
     throw fail('must not contain * or ?, which CloudFront reads as wildcards')
-  const pattern = `${prefix}/*`
-  const clash = RESERVED_ROUTES.find(
-    (route) =>
-      cloudFrontPathPatternMatches(route.pattern, `${prefix}/x`) ||
-      route.probes.some((path) => cloudFrontPathPatternMatches(pattern, path)),
+  const routes: EditorRoute[] =
+    option === 'previewPrefix'
+      ? [
+          { pattern: prefix, probes: [prefix] },
+          { pattern: `${prefix}/*`, probes: [`${prefix}/`, `${prefix}/x`] },
+        ]
+      : [{ pattern: `${prefix}/*`, probes: [`${prefix}/x`] }]
+  const overlaps = (a: EditorRoute, b: EditorRoute) =>
+    b.probes.some((path) => cloudFrontPathPatternMatches(a.pattern, path))
+  const clash = reserved.find((route) =>
+    routes.some((own) => overlaps(route, own) || overlaps(own, route)),
   )
   if (clash) {
     throw fail(
       `overlaps '${clash.pattern}', so CloudFront would send one route's requests to the ` +
-        `other's behavior. Pick a prefix of its own, such as '/edit-assets'`,
+        `other's behavior. Pick a prefix of its own`,
     )
   }
-  return pattern
+  return routes
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -360,10 +387,14 @@ export function attachEditorBehaviors(
     )
   }
   assertOriginReadTimeout(readTimeout, 'CanopyCmsService.attachTo')
-  const assetPattern =
+  const assetRoutes =
     options.editorAssetPrefix === undefined
-      ? undefined
-      : editorAssetPrefixPattern(options.editorAssetPrefix)
+      ? []
+      : prefixRoutes('editorAssetPrefix', options.editorAssetPrefix, RESERVED_ROUTES)
+  const previewRoutes =
+    options.previewPrefix === undefined
+      ? []
+      : prefixRoutes('previewPrefix', options.previewPrefix, [...RESERVED_ROUTES, ...assetRoutes])
   const marker = new Construct(distribution, EDITOR_ATTACHED_MARKER_ID)
 
   // Scoped to the distribution so everything lands in its stack, which may
@@ -383,18 +414,17 @@ export function attachEditorBehaviors(
     Object.entries(options.behaviorOverrides ?? {}).filter(([, value]) => value !== undefined),
   )
   const origin = origins.FunctionUrlOrigin.withOriginAccessControl(functionUrl, { readTimeout })
-  for (const pattern of EDITOR_PATH_PATTERNS) {
+  for (const { pattern } of [...EDITOR_ROUTES, ...previewRoutes]) {
     distribution.addBehavior(pattern, origin, { ...behavior, ...definedOverrides })
   }
-  const routes = [...EDITOR_ROUTES]
-  if (assetPattern !== undefined) {
-    distribution.addBehavior(assetPattern, origin, {
+  for (const { pattern } of assetRoutes) {
+    distribution.addBehavior(pattern, origin, {
       cachePolicy: createStaticCachePolicy(distribution, 'CanopyEditorAssetCachePolicy'),
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       responseHeadersPolicy,
     })
-    routes.push({ pattern: assetPattern, probes: [`${options.editorAssetPrefix}/x`] })
   }
+  const routes = [...EDITOR_ROUTES, ...previewRoutes, ...assetRoutes]
 
   // Custom error responses are fixed at construction, so they are known now.
   const rewritten = rewrittenErrorCodes(distribution)
