@@ -102,7 +102,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     assetStore: options.assetStore,
     // The settings branch lives only in the settings workspace. Resolving it as a
     // content branch would let any request clone a content-history copy that a
-    // submit pushes under the settings name, where settings provisioning adopts it.
+    // submit pushes under the settings name, which settings provisioning then refuses,
+    // leaving settings unavailable.
     // Not found, like any branch the caller cannot resolve, even a workspace left on disk.
     getBranchContext: (branch, opts) =>
       isSettingsBranchName(branch, settingsBranch)

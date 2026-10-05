@@ -595,7 +595,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
       continue
     }
     // A settings branch is an orphan: rebasing it onto the base would give it content
-    // history. The API never provisions one here, so a directory under that name is a
+    // history. The API refuses to provision one, so a directory under that name is a
     // leftover and is left alone.
     if (isSettingsBranchName(branchDir, ctx.ensureSettingsBranch())) {
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)

@@ -85,6 +85,13 @@ resolves the settings branch through `getBranchContext`.
 - `worker/rebase.ts` `runRebaseCycle` skips it (warning); `refreshBaseBranchWorkspace` only
   touches the base clone.
 - `git-manager.ts`: adopting a remote settings branch (both the fresh checkout and the
-  empty-orphan repair) throws `SettingsBranchHasContentHistoryError` when its roots include the
-  base branch's.
+  empty-orphan repair) throws `SettingsBranchHasContentHistoryError` when its tree holds any file
+  besides `permissions.json`/`groups.json`, or its roots include the base branch's, read from the
+  remote when the clone lacks the base. Both are needed: dev seeds a `sourceRoot` base as its own
+  parentless snapshot, and a content tree can be pruned. **Decided trade-off:** a real settings
+  branch that someone hand-adds another file to fails closed until that file is removed.
+
+Out-of-scope findings from the review rounds:
+[content-read-settings-branch-500.md](../content-read-settings-branch-500.md) and
+[worker-republishes-leaked-settings-branch.md](../worker-republishes-leaked-settings-branch.md).
 

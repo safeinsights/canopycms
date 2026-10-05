@@ -212,8 +212,9 @@ export const createBranchHandler = async (
     // Scope note: the remote-mirror check further down applies ONLY to this
     // user-facing creation path; http/handler.ts's auto-create (base/active
     // branches) and loadOrCreateBranchContext provision known names. The two
-    // settings-branch checks below give this path a specific 400; every path is
-    // also refused one in BranchWorkspaceManager.openOrCreateBranch.
+    // settings-branch checks below give this path a specific 400; every
+    // provisioning path, this one included, also refuses a settings branch in
+    // BranchWorkspaceManager.openOrCreateBranch.
 
     // Prevent git branch name collision with the settings branch. Settings
     // live in a separate directory but share the same git remote, and

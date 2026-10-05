@@ -283,7 +283,8 @@ class SettingsBranchHasContentHistoryError extends Error {
     super(
       `CanopyCMS: the settings branch '${branch}' on remote '${remote}' holds content, not ` +
         `settings (${evidence}), so it was not checked out. Restore '${branch}' on the remote ` +
-        `from a copy of the settings, or delete it there to start with empty settings, then restart.`,
+        `from a copy of the settings (it may hold only permissions.json and groups.json), ` +
+        `then restart.`,
     )
     this.name = 'SettingsBranchHasContentHistoryError'
   }
