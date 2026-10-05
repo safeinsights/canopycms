@@ -698,7 +698,7 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX` and `RESERVED_ROUTE_BRANCH_NAMES`
+- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 

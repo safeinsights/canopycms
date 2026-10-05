@@ -266,6 +266,30 @@ class SettingsBranchDivergedError extends Error {
   }
 }
 
+/** The only files a settings branch ever commits (explicit paths at its root). */
+const SETTINGS_BRANCH_FILES = new Set(['permissions.json', 'groups.json'])
+
+/**
+ * The remote's settings branch holds content rather than settings. Adopting it would load no
+ * groups or path rules, and settings saves would then commit onto content history.
+ */
+class SettingsBranchHasContentHistoryError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly remote: string,
+    /** What shows it is content. */
+    public readonly evidence: string,
+  ) {
+    super(
+      `CanopyCMS: the settings branch '${branch}' on remote '${remote}' holds content, not ` +
+        `settings (${evidence}), so it was not checked out. Restore '${branch}' on the remote ` +
+        `from a copy of the settings (it may hold only permissions.json and groups.json), ` +
+        `then restart.`,
+    )
+    this.name = 'SettingsBranchHasContentHistoryError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -1408,6 +1432,8 @@ export class GitManager {
    *   {@link SettingsBranchDivergedError}; local commits are never discarded.
    *   An unreadable remote throws only for that empty branch, since one that
    *   holds settings can serve them and the next save surfaces the remote error.
+   * Either way a remote branch holding content is never adopted:
+   * {@link SettingsBranchHasContentHistoryError}.
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1454,6 +1480,7 @@ export class GitManager {
 
     if (remoteTip) {
       const fetchedTip = await this.fetchBranchTip(branchName)
+      await this.assertNotContentHistory(branchName, fetchedTip)
       // `-b` consumes branchName as its literal value; see checkoutBranchInner.
       await this.git.raw(['checkout', '-b', branchName, fetchedTip])
       log.debug('git', 'Checked out the remote settings branch', { branchName })
@@ -1515,6 +1542,7 @@ export class GitManager {
     if (localWork.length > 0) {
       throw new SettingsBranchDivergedError(branchName, this.repoPath, localWork.join(' and '))
     }
+    await this.assertNotContentHistory(branchName, fetchedTip)
 
     // `checkout -B` resets the current branch onto the fetched tip, and
     // refuses rather than overwrite a file written since the check above.
@@ -1545,6 +1573,55 @@ export class GitManager {
   private async fetchBranchTip(branch: string): Promise<string> {
     await this.git.fetch(this.remote, `refs/heads/${branch}`)
     return (await this.git.revparse(['FETCH_HEAD'])).trim()
+  }
+
+  /**
+   * Refuse to adopt a remote settings branch that holds content: its tip has a file other than
+   * the settings files, or its roots include the base branch's (a settings branch is an orphan).
+   * Neither alone suffices: a base can have a root of its own, and a content tree can be pruned.
+   * The base comes from the remote when the clone lacks it (it was cloned at an earlier base).
+   */
+  private async assertNotContentHistory(branchName: string, tip: string): Promise<void> {
+    const tree = await this.git.raw(['ls-tree', '-r', '--name-only', tip])
+    const strays = tree.split('\n').filter((file) => file && !SETTINGS_BRANCH_FILES.has(file))
+    if (strays.length > 0) {
+      const shown = strays.slice(0, 3).join(', ') + (strays.length > 3 ? ', …' : '')
+      throw new SettingsBranchHasContentHistoryError(branchName, this.remote, `it holds ${shown}`)
+    }
+    const [tipRoots, baseRoots] = await Promise.all([
+      this.rootCommits(tip),
+      this.baseBranchRev(branchName).then((rev) => this.rootCommits(rev)),
+    ])
+    if (tipRoots.some((root) => baseRoots.includes(root))) {
+      throw new SettingsBranchHasContentHistoryError(
+        branchName,
+        this.remote,
+        `it shares history with the base branch '${this.baseBranch}'`,
+      )
+    }
+  }
+
+  private async baseBranchRev(settingsBranch: string): Promise<string> {
+    for (const ref of [
+      `refs/heads/${this.baseBranch}`,
+      `refs/remotes/${this.remote}/${this.baseBranch}`,
+    ]) {
+      // `--quiet` makes a missing ref a silent non-zero exit, which simple-git resolves
+      // with empty output rather than rejecting.
+      const sha = await this.git
+        .raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+        .catch(() => '')
+      if (sha.trim()) return sha.trim()
+    }
+    try {
+      return await this.fetchBranchTip(this.baseBranch)
+    } catch (err) {
+      throw new Error(
+        `CanopyCMS: could not read base branch '${this.baseBranch}' from remote ` +
+          `'${this.remote}', so settings branch '${settingsBranch}' was not checked out: ` +
+          `${getErrorMessage(err)}`,
+      )
+    }
   }
 
   private async rootCommits(rev: string): Promise<string[]> {

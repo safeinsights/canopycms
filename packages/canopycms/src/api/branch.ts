@@ -17,6 +17,7 @@ import {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
   RESERVED_ROUTE_BRANCH_NAMES,
+  isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
 import { branchNameSchema, branchParamSchema } from './validators'
@@ -208,15 +209,12 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    // Scope note: the collision guards below (settings-branch collision,
-    // reserved canopycms-settings- prefix, and the remote-mirror check
-    // further down) apply ONLY to this user-facing creation path.
-    // http/handler.ts's auto-create (base/active/settings branches) and
-    // branch-workspace.ts's loadOrCreateBranchContext (reached from run-time
-    // content reads and the AI pipeline; build-time reads return the checkout
-    // and never provision) provision system/known branch names, not
-    // user-chosen ones, and deliberately stay uncovered -- intentional, not
-    // an oversight.
+    // Scope note: the remote-mirror check further down applies ONLY to this
+    // user-facing creation path; http/handler.ts's auto-create (base/active
+    // branches) and loadOrCreateBranchContext provision known names. The two
+    // settings-branch checks below give this path a specific 400; every
+    // provisioning path, this one included, also refuses a settings branch in
+    // BranchWorkspaceManager.openOrCreateBranch.
 
     // Prevent git branch name collision with the settings branch. Settings
     // live in a separate directory but share the same git remote, and
@@ -473,7 +471,14 @@ export const listBranchesHandler = async (
     }
   }
 
-  const allBranches = await ctx.services.registry.list()
+  // A settings-branch workspace is never resolvable as a content branch (see
+  // http/handler.ts), so one left on disk is hidden rather than listed unopenable.
+  const settingsBranch = operatingStrategy(ctx.services.config.mode).getSettingsBranchName(
+    ctx.services.config,
+  )
+  const allBranches = (await ctx.services.registry.list()).filter(
+    (context) => !isSettingsBranchName(context.branch.name, settingsBranch),
+  )
 
   // The branch the editor should open when none is pinned via URL/config.
   // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
