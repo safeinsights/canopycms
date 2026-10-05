@@ -140,7 +140,7 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 A static export cannot render the branch being edited, so preview through the CMS-only route in [README Live Preview](../README.md#live-preview).
 
-On a hostname shared with the public site, `CanopyCmsService.attachTo` routes the editor to the CMS ([below](#serving-the-editor-from-a-distribution-you-already-own)); it does not route `/preview/*` yet, so add that behavior yourself, and serve it with `Content-Security-Policy: frame-ancestors 'self'`, not `X-Frame-Options: DENY`.
+On a hostname shared with the public site, pass the same path to `CanopyCmsService.attachTo` as `previewPrefix` ([below](#serving-the-editor-from-a-distribution-you-already-own)). Its headers policy sends the `frame-ancestors 'self'` the route needs; don't add `X-Frame-Options: DENY`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 
@@ -351,13 +351,17 @@ break popup OAuth sign-in.
 Attach the editor rather than wiring the Function URL by hand:
 
 ```ts
-cmsService.attachTo(siteDistribution, { editorAssetPrefix: '/edit-assets' })
+cmsService.attachTo(siteDistribution, {
+  editorAssetPrefix: '/edit-assets',
+  previewPrefix: '/preview', // static-export sites
+})
 assetSupport.attachTo(siteDistribution) // if you use AssetSupport
 ```
 
 It appends `/edit`, `/edit/*` and `/api/canopycms/*` (not `/edit*`, which matches
-`/editorial`), configured like `CanopyCmsDistribution`'s default behavior.
-`behaviorOverrides` applies to all three; a `viewerRequestFunction` replaces the
+`/editorial`), plus `/preview` and `/preview/*` for `previewPrefix`, configured like
+`CanopyCmsDistribution`'s default behavior. `behaviorOverrides` applies to these; a
+`viewerRequestFunction` replaces the
 `x-forwarded-host` function and must set that header itself. Synth fails if an
 earlier behavior matches an editor route.
 
