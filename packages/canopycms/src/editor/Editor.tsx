@@ -59,6 +59,7 @@ import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
+import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
 import { AssetContextProvider, useApiClient } from './context'
@@ -1056,9 +1057,13 @@ export const Editor: React.FC<EditorProps> = ({
                             : 'Select an item to start editing.'}
                       </CenteredMessage>
                     ) : currentEntry.canEdit === false ? (
-                      <CenteredMessage>
-                        You don&apos;t have permission to edit this content.
-                      </CenteredMessage>
+                      <NoEditPermissionNotice
+                        branchName={branchNameState}
+                        branchReadOnly={currentBranch?.readOnly}
+                        branchWriteBlocked={branchContentLocked}
+                        branchStatus={currentBranch?.status}
+                        entryPath={currentEntry.path}
+                      />
                     ) : schema.length > 0 && effectiveValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <FormRenderer
