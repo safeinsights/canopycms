@@ -34,6 +34,11 @@ const personSchema = [
   { name: 'secretNote', type: 'string' as const },
 ]
 
+const memoSchema = [
+  { name: 'heading', type: 'string' as const, isTitle: true },
+  { name: 'body', type: 'markdown' as const, isBody: true },
+]
+
 const pageSchema = [
   { name: 'heading', type: 'string' as const, isTitle: true },
   { name: 'author', type: 'reference' as const, collections: ['people', 'private'] },
@@ -59,6 +64,14 @@ const pageSchema = [
     fields: [{ name: 'owner', type: 'reference' as const, collections: ['people'] }],
   },
   {
+    name: 'embed',
+    type: 'reference' as const,
+    collections: ['private'],
+    includeBody: true,
+  },
+  { name: 'backup', type: 'reference' as const, collections: ['people'] },
+  { name: 'archived', type: 'reference' as const, collections: ['private'] },
+  {
     name: 'review',
     type: 'group' as const,
     fields: [{ name: 'reviewer', type: 'reference' as const, collections: ['private'] }],
@@ -80,7 +93,17 @@ const schema: RootCollectionConfig = {
     {
       name: 'private',
       path: 'private',
-      entries: [{ name: 'person', format: 'json', schema: personSchema }],
+      entries: [
+        { name: 'person', format: 'json', schema: personSchema },
+        { name: 'memo', format: 'md', schema: memoSchema },
+      ],
+      collections: [
+        {
+          name: 'archive',
+          path: 'private/archive',
+          entries: [{ name: 'person', format: 'json', schema: personSchema }],
+        },
+      ],
     },
   ],
 }
@@ -90,7 +113,7 @@ const rules: PathPermission[] = [
   { path: unsafeAsPermissionPath('content/private/**'), read: { allowedGroups: ['insiders'] } },
 ]
 
-const SECRETS = ['classified bio', 'launch codes'] as const
+const SECRETS = ['classified bio', 'launch codes', 'memo body text', 'archived secret'] as const
 
 const BRANCH = unsafeAsBranchName('main')
 const user = (groups: string[] = []): ApiRequest['user'] => ({
@@ -102,6 +125,9 @@ const user = (groups: string[] = []): ApiRequest['user'] => ({
 let root: string
 let alice: ContentId
 let agent: ContentId
+let bob: ContentId
+let plan: ContentId
+let archiveIndex: ContentId
 let homeFile: string
 
 const writeFixture = async (): Promise<void> => {
@@ -111,7 +137,8 @@ const writeFixture = async (): Promise<void> => {
     people: path.join(content, `people.${generateId()}`),
     private: path.join(content, `private.${generateId()}`),
   }
-  for (const dir of Object.values(dirs)) await fs.mkdir(dir, { recursive: true })
+  const archiveDir = path.join(dirs.private, `archive.${generateId()}`)
+  for (const dir of [...Object.values(dirs), archiveDir]) await fs.mkdir(dir, { recursive: true })
 
   alice = generateId()
   agent = generateId()
@@ -123,6 +150,24 @@ const writeFixture = async (): Promise<void> => {
     path.join(dirs.private, `person.agent.${agent}.json`),
     JSON.stringify({ heading: 'Agent X', bio: SECRETS[0], secretNote: SECRETS[1] }),
   )
+  // A permitted target that models `unavailable` as its own content.
+  bob = generateId()
+  await fs.writeFile(
+    path.join(dirs.people, `person.bob.${bob}.json`),
+    JSON.stringify({ heading: 'Bob', bio: 'out of office', unavailable: true }),
+  )
+  // A denied md target, referenced by a field that embeds its body.
+  plan = generateId()
+  await fs.writeFile(
+    path.join(dirs.private, `memo.plan.${plan}.md`),
+    `---\nheading: The Plan\n---\n${SECRETS[2]}\n`,
+  )
+  // A denied index entry in a nested collection, whose logical path is content/private/archive/index.
+  archiveIndex = generateId()
+  await fs.writeFile(
+    path.join(archiveDir, `person.index.${archiveIndex}.json`),
+    JSON.stringify({ heading: 'Archive', bio: SECRETS[3] }),
+  )
   const pageData = (heading: string) => ({
     heading,
     author: agent,
@@ -130,6 +175,9 @@ const writeFixture = async (): Promise<void> => {
     sections: [{ template: 'cta', value: { snippet: agent } }],
     meta: { owner: alice },
     reviewer: agent,
+    embed: plan,
+    backup: bob,
+    archived: archiveIndex,
   })
   homeFile = path.join(dirs.pages, `page.home.${generateId()}.json`)
   await fs.writeFile(homeFile, JSON.stringify(pageData('Home')))
@@ -212,8 +260,21 @@ const referencesIn = (data: Record<string, unknown>) => {
     blockSnippet: sections[0].value.snippet,
     objectOwner: (data.meta as Record<string, unknown>).owner,
     groupReviewer: data.reviewer,
+    embed: data.embed,
+    backup: data.backup,
+    archived: data.archived,
   }
 }
+
+/** Bob is readable by everyone, and his own `unavailable: true` must not read as the marker. */
+const fullBob = () => ({
+  id: bob,
+  slug: 'bob',
+  collection: 'content/people',
+  urlPath: '/people/bob',
+  heading: 'Bob',
+  bio: 'out of office',
+})
 
 const expectDeniedShape = (data: Record<string, unknown>) => {
   const refs = referencesIn(data)
@@ -224,6 +285,25 @@ const expectDeniedShape = (data: Record<string, unknown>) => {
   expect(refs.groupReviewer).toStrictEqual(restrictedAgent())
   expect(refs.relatedAlice).toStrictEqual(fullAlice())
   expect(refs.objectOwner).toStrictEqual(fullAlice())
+  expect(refs.embed).toStrictEqual({
+    id: plan,
+    slug: 'plan',
+    collection: 'content/private',
+    urlPath: '/private/plan',
+    title: 'The Plan',
+    unavailable: true,
+    reason: 'restricted',
+  })
+  expect(refs.archived).toStrictEqual({
+    id: archiveIndex,
+    slug: 'index',
+    collection: 'content/private/archive',
+    urlPath: '/private/archive',
+    title: 'Archive',
+    unavailable: true,
+    reason: 'restricted',
+  })
+  expect(refs.backup).toStrictEqual(fullBob())
   for (const secret of SECRETS) expect(JSON.stringify(data)).not.toContain(secret)
 }
 
@@ -234,6 +314,12 @@ const expectAllowedShape = (data: Record<string, unknown>) => {
   expect(refs.blockSnippet).toStrictEqual(fullAgent())
   expect(refs.groupReviewer).toStrictEqual(fullAgent())
   expect(refs.relatedAlice).toStrictEqual(fullAlice())
+  expect(refs.embed).toMatchObject({
+    heading: 'The Plan',
+    body: expect.stringContaining(SECRETS[2]),
+  })
+  expect(refs.archived).toMatchObject({ heading: 'Archive', bio: SECRETS[3] })
+  expect(refs.backup).toStrictEqual(fullBob())
   expect(JSON.stringify(data)).not.toContain('unavailable')
 }
 
@@ -278,6 +364,8 @@ describe('reference resolution applies path ACLs to the referenced entry', () =>
       expect(stored.sections[0].value.snippet).toBe(agent)
       expect(stored.meta.owner).toBe(alice)
       expect(stored.reviewer).toBe(agent)
+      expect(stored.embed).toBe(plan)
+      expect(stored.archived).toBe(archiveIndex)
     })
   })
 
@@ -311,7 +399,7 @@ describe('reference resolution applies path ACLs to the referenced entry', () =>
     )
     expect(res.ok).toBe(true)
     const options = res.data?.options ?? []
-    expect(options.map((o) => o.id)).toEqual([alice])
+    expect(options.map((o) => o.id)).toEqual([alice, bob])
     expect(JSON.stringify(options)).not.toContain('Agent X')
   })
 

@@ -103,6 +103,9 @@ export function buildResolvedReference(
   resolved.slug = meta.slug
   resolved.collection = meta.collection
   resolved.urlPath = meta.urlPath
+  // `unavailable` is the marker of a `RestrictedReference`, so a full reference never carries
+  // it: a target modelling it as content would otherwise read as one the reader may not see.
+  delete resolved.unavailable
   return resolved
 }
 
