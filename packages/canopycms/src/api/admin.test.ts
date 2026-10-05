@@ -121,7 +121,7 @@ describe('admin api', () => {
       )
     })
 
-    it('omits settingsWorkspaceError while the settings workspace provisions', async () => {
+    it('omits settingsWorkspaceError when the settings workspace is provisioned', async () => {
       const result = await statusHandler(ctx, req)
 
       expect(result.data).not.toHaveProperty('settingsWorkspaceError')

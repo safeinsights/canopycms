@@ -156,8 +156,9 @@ export interface AdminStatusData {
   workerStatus: WorkerStatusReport | null
   statusReadError?: string
   /**
-   * Why the settings workspace (groups and path rules) cannot be provisioned, when it cannot.
-   * Every other request answers 503 meanwhile; bootstrap admins still reach /admin.
+   * Why this process cannot provision the settings workspace (groups and path rules), when it
+   * cannot. Its requests that resolve a user answer 503 meanwhile; bootstrap admins still reach
+   * /admin.
    */
   settingsWorkspaceError?: string
 }

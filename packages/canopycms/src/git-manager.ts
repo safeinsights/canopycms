@@ -1470,9 +1470,9 @@ export class GitManager {
   }
 
   /**
-   * The checked-out local settings branch against the remote's tip. Related
-   * histories are left for the next settings pull to reconcile; only an
-   * unrelated one is acted on here.
+   * Compares the checked-out local settings branch with the remote's tip.
+   * Related histories are left for the next settings pull to reconcile; only
+   * an unrelated one is acted on here.
    */
   private async reconcileLocalSettingsBranch(
     branchName: string,
