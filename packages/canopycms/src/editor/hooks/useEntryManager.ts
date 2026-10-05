@@ -294,7 +294,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       branch: requestBranch,
       path,
     })
-    if (!result.ok) throw new Error(`Load failed: ${result.status}`)
+    if (!result.ok)
+      throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
     // Capture OCC version token for next save
     if (entry.contentId && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)

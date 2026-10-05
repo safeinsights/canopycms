@@ -16,6 +16,7 @@ import { BranchSchemaCache } from '../branch-schema-cache'
 import type { CanopyConfig, FlatSchemaItem } from '../config'
 import type { EntrySchemaRegistry } from '../schema/types'
 import { getErrorMessage } from '../utils/error'
+import { workerNotReadyResponse } from '../http/worker-not-ready'
 import { generateAIContent, type GenerateResult } from './generate'
 import { resolveBranchRoot } from './resolve-branch'
 import type { AIContentConfig } from './types'
@@ -101,6 +102,13 @@ export function createAIContentHandler(
     } catch (error) {
       // Log the real error server-side; don't leak internals to unauthenticated callers
       console.error('AI content handler error:', getErrorMessage(error))
+      const notReady = workerNotReadyResponse(error)
+      if (notReady) {
+        return new Response(JSON.stringify({ error: notReady.body.error }), {
+          status: notReady.status,
+          headers: { 'Content-Type': 'application/json', ...notReady.headers },
+        })
+      }
       return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
