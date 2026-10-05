@@ -109,7 +109,7 @@ export default withCanopy({
 - **Dual-build page extensions** — adds `server.ts`/`server.tsx` to `pageExtensions`, enabling the convention below.
 - **Standalone image tracing** — for any build except a static export, adds sharp's libvips shared library to Next's file tracing so a Turbopack `output: 'standalone'` server (Next 16's default bundler) can load sharp, which Next can miss for sharp 0.35 ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973)). It does not fix a webpack build, where sharp is bundled into a server chunk and image transforms fail. Without `withCanopy()`, see the manual snippet in [Dual Build Support](docs/deploying-to-aws.md#dual-build-support), which also covers the webpack case.
 - **Turbopack guard (Next 16+)** — sets `turbopack: {}` when your config has neither `turbopack` nor your own `webpack` and `withCanopy()` can read your Next version, since Next 16 defaults to Turbopack and exits when it sees the React-aliasing `webpack` function with no `turbopack` config. Your own `webpack`/`turbopack` config is left as-is.
-- **Trailing slash** — when the config you pass in sets `trailingSlash: true`, the editor's API calls and preview pane use a trailing slash (`/api/canopycms/branches/`), so Next does not answer each one with a 308 redirect. An `env.CANOPY_TRAILING_SLASH` you set yourself wins.
+- **Trailing slash** — with `trailingSlash: true`, the editor's API calls and preview URLs end in `/`, so Next sends no 308. Your own `env.CANOPY_TRAILING_SLASH` wins.
 
 **Make `withCanopy()` the outermost wrapper** when combining it with other config plugins: `withCanopy(withBundleAnalyzer({ ... }))`, not the reverse. It decides whether to add `turbopack: {}` from the config it receives, so a plugin wrapped around it adds its `webpack` afterwards and, on Next 16, that `turbopack: {}` silences the error Next would raise about a `webpack` function Turbopack does not run.
 
@@ -686,6 +686,15 @@ const { data } = await canopy.read<Post>({ entryPath: 'content/posts', slug: 'my
 // data.author is the resolved author entry
 ```
 
+**A reference the current user may not read resolves to its title and URL only**, tagged so you can render it deliberately (a lock, a sign-in link) instead of a half-empty card:
+
+```tsx
+// { id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }
+if (data.author?.unavailable) return <a href={data.author.urlPath}>{data.author.title} (sign in)</a>
+```
+
+Path rules decide it at request time, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value; a static build resolves every reference in full (see [Permission Model](#permission-model)). A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
+
 Pass `resolveReferences: false` to get the bare ids instead. Declare `resolvedSchema` on the field to have the inferred type match the resolved shape (see [Typed References with `resolvedSchema`](#typed-references-with-resolvedschema)). A **listing** is the opposite default — it resolves nothing unless asked; see [Resolving References in a Listing](#resolving-references-in-a-listing).
 
 ### Type Inference
@@ -803,8 +812,13 @@ const postSchema = defineEntrySchema([
 
 type Post = TypeFromEntrySchema<typeof postSchema>
 // Without resolvedSchema: Post['author'] is string | null
-// With resolvedSchema:    Post['author'] is { name: string; bio: string } | null
+// With resolvedSchema:    Post['author'] is
+//   | ({ name: string; bio: string } & ResolvedReferenceMeta & { unavailable?: undefined })
+//   | RestrictedReference
+//   | null
 ```
+
+`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives. Narrow on `unavailable` before reading the target's own fields.
 
 `resolvedSchema` is used only for type inference — it does not affect how content is read, written or validated at runtime, and is stripped from API responses. It accepts any schema created with `defineEntrySchema`, so the same schema objects can be shared between entry type definitions and reference fields.
 
@@ -828,6 +842,8 @@ export default async function PostPage({ params, searchParams }) {
 ```
 
 > **Request-time errors:** `read()` throws if the entry is missing or the current user cannot read it (an anonymous visitor on a `server` deployment with [public read](#public-read-on-server-deployments) enabled, say) — and an uncaught throw becomes a 500 page, not a 404. Catch it explicitly (see [Error Handling Utilities](#error-handling-utilities)) or prefer [`readByUrlPath()`](#load-content-by-url-path), which returns `null`.
+
+`branch` comes from the request, so any visitor can set it. Any branch other than the active one must already exist and be readable by the current user. Otherwise `read()` throws `NOT_FOUND` and `readByUrlPath()` returns `null`, so a missing branch and a hidden one look the same. A repeated `?branch=` (an array) gets the same answer. Only the active branch's workspace is created on first read. `readByUrlPath()` takes the same `branch` option.
 
 The context extracts the current user from request headers via the auth plugin, applies bootstrap admin groups, and is cached for the request lifecycle with React's `cache()`. During `next build` permissions are bypassed and content is read from the working tree, never a branch workspace, so a build renders exactly what is on disk. Besides `read()` it exposes `readByUrlPath()` (below), `buildContentTree()` (see [Content Tree Builder](#content-tree-builder)), `listEntries()` (see [Listing Entries](#listing-entries)), `user`, and `services`.
 
@@ -1043,10 +1059,10 @@ The phase-selecting `readByUrlPath` and `read` are the top-level helpers `create
 
 ### Advanced: Using createContentReader Directly
 
-For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly:
+For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly. A branch with no workspace reads as `NOT_FOUND`. Pass `allowCreateBranch: true` to create one instead, but only when every branch name the reader sees is trusted:
 
 ```typescript
-const reader = createContentReader({ config: config.server })
+const reader = createContentReader({ services })
 
 const { data } = await reader.read({
   entryPath: 'content/posts',
@@ -1203,12 +1219,10 @@ editor: {
   theme: {
     colors: { brand: '#4f46e5', accent: '#0ea5e9', neutral: '#0f172a' },
   },
-  previewPrefix: '/preview', // optional
-  previewBase: { 'content/posts': '/blog' }, // optional
 }
 ```
 
-**Preview URLs.** The preview pane loads each entry at its site route plus `?branch=`: its collection path and slug (`content/docs/intro` → `/docs/intro`), or `/` for a root entry. `previewBase` maps a collection (keyed by path or name) or a root entry (keyed `'<contentRoot>/<slug>'`) to another route. `previewPrefix` goes in front of every route, so `/blog/hello` above loads `/preview/blog/hello`. Set it when your public pages are a static export, which cannot render a branch, so the preview must load a route your CMS build renders. Both are site-relative and get `basePath` on top, and preview URLs follow `trailingSlash` when `withCanopy()` wraps your Next config. An absolute `https://…` `previewBase` gets only the slug and `?branch=`, and an absolute prefix skips `basePath`; pages on another origin need `useCanopyPreview({ editorOrigin })`.
+**Preview URLs.** The pane loads each entry's route (collection path plus slug) with `?branch=`. `previewBase` remaps a collection, or a root entry keyed `'<contentRoot>/<slug>'`. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` gets only the slug and branch; an absolute prefix skips `basePath`.
 
 ### Custom Field Renderers
 
@@ -1429,11 +1443,11 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry, not per referencing entry: all resolution in one call shares a cache, so a block referenced from 40 pages is read once. With the option off, none of that machinery is built. The cache saves the read, not the copy — each referencing entry still gets its own copy of the resolved value.
 
-**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
 
 **A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name — a no-op for json/yaml targets, whose whole document is already their data. The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call: a reference that **embeds** its target (a shared CTA rendered inline) wants the prose, while one that **links** to it (related posts, an author byline) wants `urlPath` and a title, not the target's whole body inlined into every page read. Turning it on makes the body part of every referencing entry's resolved value, so a long document embedded by many pages is copied once per page.
 
-**Two caveats.** Path permissions are not applied to the resolved _targets_, matching `read()`, so a reference can resolve to an entry the current user could not open directly. (The entries being listed are still permission-filtered, and an entry filtered out is never resolved.) And within one call a given id is looked up once and every occurrence shares that answer, so a listing is internally consistent rather than deciding per entry.
+**Path permissions apply to the resolved _targets_, as in `read()`**: a target the current user may not read resolves to its [title and URL, tagged `unavailable`](#using-references-in-your-code). And within one call a given id is looked up once and every occurrence shares that answer, so a listing is internally consistent rather than deciding per entry.
 
 ### Options Reference
 
@@ -1478,7 +1492,7 @@ Set the fallbacks with `defaultBranchAccess` and `defaultPathAccess`; the [Confi
 
 **Bootstrap admin groups**: users whose IDs match `bootstrapAdminIds` automatically receive `admins` membership under `getCanopy()`, even before groups exist in the repository, which is what makes initial setup possible.
 
-**Build mode bypass**: during `next build` all permission checks are bypassed so every page can be statically generated whatever the auth configuration. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` and resolve content with the phase-selecting `read`/`readByUrlPath` to avoid request-scope errors without importing an admin context.
+**Build mode bypass**: during `next build` all permission checks are bypassed so every page can be statically generated whatever the auth configuration. Path read rules govern the editor and request-time reads only: merged content is public in a static build, references to restricted entries included. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` and resolve content with the phase-selecting `read`/`readByUrlPath` to avoid request-scope errors without importing an admin context.
 
 #### Public read on server deployments
 

@@ -23,6 +23,7 @@ import {
   ContentStoreError,
   createReferenceResolveCache,
   type ReferenceResolveCache,
+  type ReferenceTargetAccess,
 } from './content-store'
 import { isBuildMode } from './build-mode'
 
@@ -185,9 +186,9 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
    * not per referencing entry, since a single {@link ReferenceResolveCache} spans the whole
    * call. Nothing is constructed and nothing is scanned when this is off.
    *
-   * **Path ACLs are not applied to the resolved targets**, matching `read()` exactly: a
-   * reference can resolve to an entry the user could not `read()` directly. The entries being
-   * LISTED are still ACL-filtered, and a filtered-out entry is never resolved at all.
+   * **Targets get the same path-ACL rule as `read()`**: a target the user may not read
+   * resolves to a `RestrictedReference` (title, URL, `unavailable: true`), never its data. A
+   * filtered-out entry is never resolved at all.
    */
   resolveReferences?: boolean
 }
@@ -230,10 +231,22 @@ export const createReferenceResolver = (
   branchRoot: string,
   flatSchema: FlatSchemaItem[],
   contentRootName: string,
-): { store: ContentStore; cache: ReferenceResolveCache } => ({
+  visibility: ContentVisibilityOptions | undefined,
+): ListingReferenceResolver => ({
   store: new ContentStore(branchRoot, flatSchema, { contentRootName }),
   cache: createReferenceResolveCache(),
+  // The predicate that hides an entry from the listing is the one that restricts it as a
+  // reference target, so a target is never shown in a sibling's data that its own listing
+  // row would have hidden.
+  access: visibility?.shouldInclude,
 })
+
+/** What a listing call resolves references through; see {@link createReferenceResolver}. */
+export interface ListingReferenceResolver {
+  store: ContentStore
+  cache: ReferenceResolveCache
+  access: ReferenceTargetAccess | undefined
+}
 
 /**
  * Resolve `reference` fields in a collection's listed entries, in place of their raw data.
@@ -246,7 +259,7 @@ export const createReferenceResolver = (
 export const resolveCollectionItemReferences = async (
   items: CollectionListItem[],
   collection: CollectionSchemaItem,
-  resolver: { store: ContentStore; cache: ReferenceResolveCache },
+  resolver: ListingReferenceResolver,
 ): Promise<CollectionListItem[]> =>
   Promise.all(
     items.map(async (item) => {
@@ -254,7 +267,12 @@ export const resolveCollectionItemReferences = async (
       if (!fields) return item
       return {
         ...item,
-        data: await resolver.store.resolveReferences(item.data, fields, resolver.cache),
+        data: await resolver.store.resolveReferences(
+          item.data,
+          fields,
+          resolver.cache,
+          resolver.access,
+        ),
       }
     }),
   )
@@ -303,7 +321,7 @@ export async function listEntries<T = Record<string, unknown>>(
   // One store + cache for the whole call, or nothing at all when the caller did not opt in.
   // See the `resolveReferences` option for the cost this buys back.
   const resolver = options?.resolveReferences
-    ? createReferenceResolver(branchRoot, flatSchema, contentRootName)
+    ? createReferenceResolver(branchRoot, flatSchema, contentRootName, visibility)
     : null
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {

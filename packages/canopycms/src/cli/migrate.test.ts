@@ -6,6 +6,7 @@ import os from 'node:os'
 import { migrate, slugifyName, MigrateError } from './migrate'
 import { isValidId } from '../id'
 import { mockConsole } from '../test-utils/console-spy'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
 vi.mock('@clack/prompts', () => ({
@@ -259,15 +260,16 @@ describe('canopycms migrate', () => {
     expect(metaDirExists).toBe(false)
   })
 
-  it('applies ops under the surrogate schema lock for a branch-clone project dir, leaving no lock artifact behind', async () => {
-    projectDir = await setupPlainTree()
-    // Seed a minimal branch.json the way BranchMetadataFileManager.loadOnly
-    // expects, marking projectDir as a branch clone workspace — branch
-    // clones are full git clones that carry their own
-    // .canopy-meta/branch.json (see migrate.ts's invariant comment).
-    await fs.mkdir(path.join(projectDir, '.canopy-meta'), { recursive: true })
+  /**
+   * Seed a minimal branch.json the way BranchMetadataFileManager.loadOnly
+   * expects, marking projectDir as a branch clone workspace — branch clones
+   * are full git clones that carry their own .canopy-meta/branch.json (see
+   * migrate.ts's invariant comment).
+   */
+  async function markAsBranchClone(dir: string): Promise<void> {
+    await fs.mkdir(path.join(dir, '.canopy-meta'), { recursive: true })
     await fs.writeFile(
-      path.join(projectDir, '.canopy-meta', 'branch.json'),
+      path.join(dir, '.canopy-meta', 'branch.json'),
       JSON.stringify({
         schemaVersion: 1,
         version: 1,
@@ -281,6 +283,11 @@ describe('canopycms migrate', () => {
         },
       }),
     )
+  }
+
+  it('applies ops under the surrogate schema lock for a branch-clone project dir, leaving no lock artifact behind', async () => {
+    projectDir = await setupPlainTree()
+    await markAsBranchClone(projectDir)
 
     const result = await migrate(defaultOpts(projectDir))
     expect(result.opCount).toBeGreaterThan(0)
@@ -288,6 +295,26 @@ describe('canopycms migrate', () => {
     const metaEntries = await fs.readdir(path.join(projectDir, '.canopy-meta'))
     expect(metaEntries).not.toContain('schema.lock')
     expect(metaEntries).toContain('branch.json') // untouched by the migrate run
+    expect(metaEntries).not.toContain('content-write.lock')
+  })
+
+  it('[SYNC-C1] refuses to touch a branch clone whose content-write lock is held, then applies once it is free', async () => {
+    projectDir = await setupPlainTree()
+    await markAsBranchClone(projectDir)
+    const contentDir = path.join(projectDir, 'content')
+    const before = await listTree(contentDir)
+
+    const release = await tryAcquireContentWriteLock(projectDir)
+    try {
+      await expect(migrate(defaultOpts(projectDir))).rejects.toBeInstanceOf(MigrateError)
+      expect(await listTree(contentDir)).toEqual(before)
+    } finally {
+      await release()
+    }
+
+    const result = await migrate(defaultOpts(projectDir))
+    expect(result.opCount).toBeGreaterThan(0)
+    expect(await listTree(contentDir)).not.toEqual(before)
   })
 })
 

@@ -77,13 +77,13 @@ Content, git and branch files have their own sections below; the rest:
 - `user.ts` — user utilities
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
 - `comment-store.ts` — field, entry and branch comment persistence under layered concurrency; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
-- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`
+- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
 - `resource-generation.ts` — the on-disk generation-marker primitive behind durable cache invalidation
 - `dev-content-watcher.ts` — dev-mode working-tree vs branch-clone divergence warning
-- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync
+- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
 - `url-exclusivity-fixtures.ts` — vitest-free enumerate-then-probe check for the one-URL invariant
 
 ### Static-Export Helpers
@@ -117,7 +117,7 @@ Route handlers, one file per endpoint namespace:
 - `groups.ts` — `/groups`: internal group management
 - `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list
 - `reference-options.ts` — `/reference-options`: reference field option lookup
-- `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview
+- `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview, through `ContentStore.resolveReferenceTarget` and the request's path ACLs
 - `user.ts` — `/user`: current user info
 - `schema.ts` — `/schema`: collection, entry-type and ordering CRUD, admin only
 - `admin.ts` — admin status and task-queue endpoints, and the single `ADMIN_ROUTES` export
@@ -367,7 +367,7 @@ URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls). Adopter configuration is i
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (a denied target resolves to a `RestrictedReference`), the typed `ContentStoreError` codes, and the conflict errors
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -446,7 +446,7 @@ Every key, its default and its adopter-facing meaning are in
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
 - `resolver.ts` — `resolveSchema`, the high-level resolution API
-- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`
+- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for callers outside `SchemaOps`
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
 - `index.ts` — module exports
@@ -700,7 +700,7 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX` and `RESERVED_ROUTE_BRANCH_NAMES`
+- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
@@ -791,7 +791,7 @@ preserved, and code blocks are skipped. See
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry); `branchProvisioningLockName` names a branch workspace's lock
-- `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
+- `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
 
 The lock layers, the OCC guarantee boundary and the per-call resolve cache are in
 [docs/concurrency.md](docs/concurrency.md). The one-prefix-join rule is in

@@ -781,44 +781,69 @@ describe('createCanopyRequestHandler', () => {
   })
 })
 
-describe('buildContext auto-create: settingsBranch must match the resolved (deployment-namespaced) branch', () => {
-  // Regression test for a bug where buildContext computed `settingsBranch` as
-  // `services.config.settingsBranch ?? 'canopycms-settings'` — a THIRD,
-  // independent hardcoded default that never accounted for deploymentName. A
-  // request for a deployment-namespaced settings branch (e.g.
-  // 'canopycms-settings-acme') would then never match `branch === settingsBranch`
-  // in shouldAutoCreate, so getBranchContext() would return null for it (404)
-  // instead of auto-creating it, even though the SAME branch name is exactly
-  // what strategy.getSettingsBranchName() resolves elsewhere in the app.
-  //
-  // Deliberately does NOT override `getBranchContext` in CanopyHandlerOptions,
-  // so this exercises buildContext's own default closure (where the bug
-  // lived) rather than bypassing it like most other tests in this file do.
-  it('auto-creates a request for the deployment-namespaced settings branch, not just the hardcoded literal', async () => {
-    const { BranchWorkspaceManager } = await import('../branch-workspace')
+describe('buildContext: the settings branch is never a content branch', () => {
+  // Uses buildContext's own default getBranchContext (no override), where the
+  // auto-create lives.
+  const request = async (
+    branch: string,
+    configure?: (config: { deploymentName?: string; settingsBranch?: string }) => void,
+  ) => {
+    const { BranchWorkspaceManager, loadBranchContext } = await import('../branch-workspace')
     const services: any = createMockServices()
-    services.config.deploymentName = 'acme' // dev mode -> resolved settings branch: canopycms-settings-acme
-    const authPlugin = createMockAuthPlugin()
+    configure?.(services.config)
+    const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
+    vi.mocked(BranchWorkspaceManager).mockClear()
+    vi.mocked(loadBranchContext).mockClear()
+    const response = await handler(
+      createMockRequest({
+        method: 'GET',
+        url: `http://localhost:3000/api/canopycms/${branch}/status`,
+      }),
+      [branch, 'status'],
+    )
+    const created = vi
+      .mocked(BranchWorkspaceManager)
+      .mock.results.flatMap(
+        (r) =>
+          (r.value as { openOrCreateBranch: ReturnType<typeof vi.fn> }).openOrCreateBranch.mock
+            .calls,
+      )
+      .map(([opts]) => (opts as { branchName: string }).branchName)
+    const loaded = vi.mocked(loadBranchContext).mock.calls.map(([opts]) => opts.branchName)
+    return { response, created, loaded }
+  }
 
-    const handler = createCanopyRequestHandler({ services, authPlugin })
-
-    const req = createMockRequest({
-      method: 'GET',
-      url: 'http://localhost:3000/api/canopycms/canopycms-settings-acme/status',
+  it('answers 404 for the deployment-namespaced settings branch, provisioning and loading nothing', async () => {
+    const { response, created, loaded } = await request('canopycms-settings-acme', (config) => {
+      config.deploymentName = 'acme'
     })
-    const response = await handler(req, ['canopycms-settings-acme', 'status'])
 
-    // With the old hardcoded 'canopycms-settings' default, this branch name
-    // would never match and the branchAccess guard would 404 ("Branch not found").
-    expect(response.status).toBe(200)
-    expect((response.body as { data?: { branch?: { name: string } } }).data?.branch?.name).toBe(
-      'new-branch',
-    )
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('canopycms-settings-acme')
+    expect(loaded).not.toContain('canopycms-settings-acme')
+  })
 
-    const results = (BranchWorkspaceManager as unknown as ReturnType<typeof vi.fn>).mock.results
-    const lastInstance = results[results.length - 1]?.value
-    expect(lastInstance.openOrCreateBranch).toHaveBeenCalledWith(
-      expect.objectContaining({ branchName: 'canopycms-settings-acme' }),
-    )
+  it("answers 404 for an adopter's configured settings branch outside the reserved prefix", async () => {
+    const { response, created, loaded } = await request('site-settings', (config) => {
+      config.settingsBranch = 'site-settings'
+    })
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('site-settings')
+    expect(loaded).not.toContain('site-settings')
+  })
+
+  it("answers 404 for another deployment's settings branch", async () => {
+    const { response, created, loaded } = await request('canopycms-settings-other')
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('canopycms-settings-other')
+    expect(loaded).not.toContain('canopycms-settings-other')
+  })
+
+  it('records the base branch it provisions on every request (so the spies above can see a call)', async () => {
+    const { created } = await request('main')
+
+    expect(created).toContain('main')
   })
 })

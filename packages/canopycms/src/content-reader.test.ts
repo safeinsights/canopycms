@@ -5,12 +5,13 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { createContentReader } from './content-reader'
+import { createContentReader, type ContentReaderOptions } from './content-reader'
 import { createTestServices } from './config-test'
 import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
 import { ContentStoreError } from './content-store'
+import { resolveBranchPath } from './paths'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-content-reader-'))
@@ -371,6 +372,7 @@ describe('createContentReader', () => {
           { getSettingsBranchRoot: () => Promise.resolve(root) },
         ),
         basePathOverride: root,
+        allowCreateBranch: true,
       })
       const doc = await reader.read<{ hero: { title: string } }>({
         entryPath: unsafeAsLogicalPath('content/pages'),
@@ -389,6 +391,79 @@ describe('createContentReader', () => {
     } finally {
       cwdSpy.mockRestore()
     }
+  })
+
+  describe('a branch with no workspace', () => {
+    const pagesSchema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
+    const readerFor = async (root: string, extra: Partial<ContentReaderOptions> = {}) =>
+      createContentReader({
+        services: await createTestServices(
+          {
+            defaultBranchAccess: 'allow',
+            defaultPathAccess: 'allow',
+            mode: 'dev',
+            schema: pagesSchema,
+          },
+          { getSettingsBranchRoot: () => Promise.resolve(root) },
+        ),
+        basePathOverride: root,
+        ...extra,
+      })
+    const readPage = (reader: Awaited<ReturnType<typeof readerFor>>, branch: string) =>
+      reader.read({
+        entryPath: unsafeAsLogicalPath('content/pages'),
+        slug: unsafeAsSlug('home'),
+        branch,
+        user: ANONYMOUS_USER,
+      })
+
+    it('reads as NOT_FOUND by default, provisioning nothing', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root)
+
+      await expect(readPage(reader, 'never-created')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(await fs.readdir(root)).toEqual([])
+    })
+
+    it('reads a traversal or over-long name as NOT_FOUND', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root)
+
+      await expect(readPage(reader, '../escape')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      // Only an existing branches root makes the over-long lookup fail ENAMETOOLONG, not ENOENT.
+      const { baseRoot } = resolveBranchPath({
+        branchName: 'x',
+        mode: 'dev',
+        basePathOverride: root,
+      })
+      await fs.mkdir(baseRoot, { recursive: true })
+      await expect(readPage(reader, 'a'.repeat(300))).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    })
+
+    it('reads as NOT_FOUND when a getBranchContext resolver returns null, even with allowCreateBranch', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root, {
+        allowCreateBranch: true,
+        getBranchContext: async () => null,
+      })
+
+      await expect(readPage(reader, 'never-created')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(await fs.readdir(root)).toEqual([])
+    })
   })
 
   it('merges body into data for md format entries', async () => {

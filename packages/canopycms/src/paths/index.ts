@@ -51,6 +51,7 @@ export {
   getDefaultBranchBase,
   resolveBranchPaths,
   BranchPathError,
+  namesNoWorkspace,
   type BranchPathOptions,
   type BranchPathResult,
 } from './branch'
@@ -58,4 +59,5 @@ export {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
   RESERVED_ROUTE_BRANCH_NAMES,
+  isSettingsBranchName,
 } from './branch-name'

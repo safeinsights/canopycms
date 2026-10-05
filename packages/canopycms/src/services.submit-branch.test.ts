@@ -10,6 +10,7 @@ import { GitManager, ensureGitExcludePattern } from './git-manager'
 import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import type { BranchContext } from './types'
 import type { CanopyServices } from './services'
+import { ContentWriteLockBusyError, tryAcquireContentWriteLock } from './utils/content-write-lock'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
 // bug is about the interaction between real git state (a commit landing
@@ -365,6 +366,79 @@ describe('services submitBranch', () => {
       expect(await remoteBranchSha('feature-1')).toBe(await localSha())
       expect(consoleSpy).toHaveWarned('Could not list the changes on feature-1')
       consoleSpy.restore()
+    })
+  })
+
+  describe('[SYNC-C1] content-write lock', () => {
+    async function headBranch(): Promise<string> {
+      return (await simpleGit({ baseDir: localPath }).revparse(['--abbrev-ref', 'HEAD'])).trim()
+    }
+
+    it('neither checks out, commits nor pushes while the lock is held, then submits once it is free', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'editor save', 'utf8')
+      const shaBefore = await localSha()
+      const branchBefore = await headBranch()
+
+      const release = await tryAcquireContentWriteLock(localPath)
+      try {
+        await expect(services.submitBranch({ context })).rejects.toBeInstanceOf(
+          ContentWriteLockBusyError,
+        )
+        expect(await headBranch()).toBe(branchBefore)
+        expect(await localSha()).toBe(shaBefore)
+        expect(await remoteBranchSha('feature-1')).toBeUndefined()
+        const dirty = (await simpleGit({ baseDir: localPath }).status()).files.map((f) => f.path)
+        expect(dirty).toContain('a.txt')
+      } finally {
+        await release()
+      }
+
+      await services.submitBranch({ context })
+      expect(await localSha()).not.toBe(shaBefore)
+      expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+    })
+
+    it('holds the lock through the push', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'editor save', 'utf8')
+      const realPush = GitManager.prototype.push
+      let lockStateAtPush: unknown
+      vi.spyOn(GitManager.prototype, 'push').mockImplementation(async function (
+        this: GitManager,
+        branch?: string,
+      ) {
+        lockStateAtPush = await tryAcquireContentWriteLock(localPath).then(
+          async (release) => {
+            await release()
+            return 'free'
+          },
+          (err: unknown) => (err as NodeJS.ErrnoException).code,
+        )
+        return realPush.call(this, branch)
+      })
+
+      await services.submitBranch({ context })
+
+      expect(lockStateAtPush).toBe('ELOCKED')
+      // Released afterwards.
+      const release = await tryAcquireContentWriteLock(localPath)
+      await release()
+    })
+
+    it('commitFiles refuses to commit while the lock is held, then commits once it is free', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'editor save', 'utf8')
+      const shaBefore = await localSha()
+      const commit = () => services.commitFiles({ context, files: 'a.txt', message: 'commit a' })
+
+      const release = await tryAcquireContentWriteLock(localPath)
+      try {
+        await expect(commit()).rejects.toBeInstanceOf(ContentWriteLockBusyError)
+        expect(await localSha()).toBe(shaBefore)
+      } finally {
+        await release()
+      }
+
+      await commit()
+      expect(await localSha()).not.toBe(shaBefore)
     })
   })
 }, 30_000)

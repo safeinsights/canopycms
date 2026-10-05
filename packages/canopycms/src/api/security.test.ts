@@ -45,6 +45,7 @@ vi.mock('../content-store', () => ({
       resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'posts/hello' }),
       documentExists: vi.fn().mockResolvedValue(false),
       countEntriesOfType: vi.fn().mockResolvedValue(0),
+      resolveReferenceTarget: vi.fn().mockResolvedValue(null),
     }
   }),
   ContentStoreError: class ContentStoreError extends Error {},
@@ -57,7 +58,6 @@ vi.mock('../reference-resolver', () => ({
   ReferenceResolver: vi.fn().mockImplementation(function () {
     return {
       loadReferenceOptions: vi.fn().mockResolvedValue([]),
-      resolve: vi.fn().mockResolvedValue({ exists: true, collection: 'posts', slug: 'hello' }),
     }
   }),
 }))
@@ -203,9 +203,15 @@ describe('Security: Branch access checks', () => {
       expect(result.status).toBe(403)
     })
 
-    it('omits entries the user is not permitted to read via path-level permissions', async () => {
-      // Branch access is granted, but path-level read is denied for this specific entry.
-      // The handler must call checkContentAccess and exclude denied entries from the response.
+    it('resolves with the path-level verdict of the request checker', async () => {
+      // Branch access is granted, but path-level read is denied. The handler must hand
+      // resolution a predicate that answers with that denial; what a denied target resolves
+      // to is pinned against the real store in reference-resolution-acl.test.ts.
+      const { ContentStore } = await import('../content-store')
+      const resolveReferenceTarget = vi.fn().mockResolvedValue(null)
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return { resolveReferenceTarget } as unknown as InstanceType<typeof ContentStore>
+      })
       const ctx = createMockApiContext({
         branchContext: { ...branchContext, flatSchema: mockFlatSchema },
         allowBranchAccess: true,
@@ -221,10 +227,10 @@ describe('Security: Branch access checks', () => {
       )
 
       expect(result.ok).toBe(true)
-      // The entry should be absent because checkContentAccess denied it
-      if (result.ok) {
-        expect(Object.keys(result.data!.resolved)).toHaveLength(0)
-      }
+      expect(resolveReferenceTarget).toHaveBeenCalledTimes(1)
+      const [id, access] = resolveReferenceTarget.mock.calls[0]
+      expect(id).toBe('a1b2c3d4e5f6')
+      expect(access('content/posts/hello')).toBe(false)
     })
 
     it('surfaces a settings-root failure instead of silently returning empty results', async () => {

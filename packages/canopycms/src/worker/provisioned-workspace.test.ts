@@ -82,7 +82,10 @@ describe('holdProvisionedWorkspace', () => {
         recursive: true,
       })
       await vi.advanceTimersByTimeAsync(16_000)
-      for (let i = 0; i < 200 && !hold.isCompromised(); i++) {
+      // The refresh's stat runs on real fs I/O, so wait on wall-clock time (Date.now is not
+      // faked here) rather than a fixed number of ticks, which a slow runner can outlast.
+      const deadline = Date.now() + 5_000
+      while (!hold.isCompromised() && Date.now() < deadline) {
         await new Promise((resolve) => setImmediate(resolve))
       }
 
