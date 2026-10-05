@@ -102,7 +102,7 @@ process has fully ensured, and a hit costs one read of `.git/HEAD` (checked agai
 branch). Only a process's first request still takes the cross-host init lock (measured: 4 lock
 ops on the first request, 0 after). The groups and permissions
 files are still read every request; a different branch name still runs the rename guard; a
-workspace removed, re-cloned onto another branch, or caught mid-provisioning re-provisions. Documented in docs/concurrency.md ("Settings workspace init").
+workspace removed, re-cloned onto another branch, or caught mid-clone re-provisions. Documented in docs/concurrency.md ("Settings workspace init").
 
 ### 2. Cross-container queueing on the settings init lock (reasoned; same fix)
 
