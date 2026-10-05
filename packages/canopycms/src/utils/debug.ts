@@ -80,6 +80,10 @@ export class DebugLogger {
     }
   }
 
+  /**
+   * Keyed by label alone, so two overlapping timers with one label overwrite each other;
+   * anything that can run concurrently uses {@link timed}.
+   */
   time(label: string) {
     this.timers.set(label, Date.now())
   }
@@ -97,12 +101,16 @@ export class DebugLogger {
     return duration
   }
 
+  /**
+   * Log `<label> completed {durationMs}` once `fn` settles. The start time is local to the
+   * call, so concurrent spans with the same label on one logger never overwrite each other.
+   */
   async timed<T>(category: string, label: string, fn: () => Promise<T>): Promise<T> {
-    this.time(label)
+    const start = Date.now()
     try {
       return await fn()
     } finally {
-      this.timeEnd(category, label)
+      this.debug(category, `${label} completed`, { durationMs: Date.now() - start })
     }
   }
 }

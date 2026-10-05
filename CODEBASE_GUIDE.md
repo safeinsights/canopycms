@@ -771,21 +771,22 @@ preserved, and code blocks are skipped. See
 
 - `error.ts` — `getErrorMessage`, `isNodeError`, `isNotFoundError`, `isFileExistsError`, plus `sanitizeErrorMessage` and `redactCredentials`
 - `debug.ts` — `createDebugLogger`
-- `logger.ts` — process-scoped logger indirection for modules running in both the worker and the Lambda
+- `request-timing.ts` — per-request latency under `CANOPYCMS_DEBUG=true`: `runWithRequestTiming`, `timeRequestPhase`, one `[CanopyCMS:timing]` line
+- `logger.ts` — process-scoped logger shared by the worker and the Lambda
 - `format.ts` — content format helpers: `getFormatExtension`, `isDataOnlyFormat`
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, the comment-preserving content write path
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
 - `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
-- `entry-url.ts` — `computeEntryUrl`, the forward collection-plus-slug to URL rule, and the shared `isIndexSlug`
+- `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
-- `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups for data-layer iteration
+- `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
 - `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes` and `withTrailingSlash`
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
-- `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the shared OCC JSON write layer
+- `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient) and `tryAcquireProvisioningLock` (zero-retry)
 - `content-write-lock.ts` — cross-host exclusion between content writes and the worker's rebase loop
 

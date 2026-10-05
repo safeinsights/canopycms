@@ -15,6 +15,7 @@ import {
   isGenerationCurrent,
   type GenerationReadResult,
 } from './resource-generation'
+import { timeRequestPhase } from './utils/request-timing'
 import { CANOPY_META_DIR } from './utils/git'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
@@ -131,7 +132,9 @@ export class BranchSchemaCache {
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
+    return timeRequestPhase('schema', () =>
+      this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName),
+    )
   }
 
   /**
@@ -223,7 +226,10 @@ export class BranchSchemaCache {
       ? null
       : await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
 
-    const result = await this.resolveFresh(contentRoot, entrySchemaRegistry)
+    // Nested under `schema`, so a request summary names a cache miss (`…schema>resolve`).
+    const result = await timeRequestPhase('resolve', () =>
+      this.resolveFresh(contentRoot, entrySchemaRegistry),
+    )
 
     // Validate schema has content
     if (!isValidSchema(result.schema)) {

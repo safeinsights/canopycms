@@ -37,6 +37,8 @@ export interface RouteDefinition {
 
 export interface RouteMatch {
   handler: CanopyHandler
+  /** The matched route's pattern; empty for the synthetic malformed-path match. */
+  pattern: readonly string[]
   params: Record<string, string>
   validate?: RouteDefinition['validate']
   bodyFormat?: RouteDefinition['bodyFormat']
@@ -186,11 +188,12 @@ export function matchRoute(
       Object.entries(best.params).map(([key, value]) => [key, decodeURIComponent(value)]),
     )
   } catch {
-    return { handler: malformedPathHandler, params: {} }
+    return { handler: malformedPathHandler, pattern: [], params: {} }
   }
 
   return {
     handler: best.route.handler,
+    pattern: best.route.pattern,
     params: decodedParams,
     validate: best.route.validate, // Include validation function if present
     bodyFormat: best.route.bodyFormat,
