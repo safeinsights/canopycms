@@ -65,9 +65,9 @@ can never run in CI.
    the half that proves `verify` is worth having.
 5. **Two cases added by the epic's review (2026-09-13).**
    - Change a workflow file on the base branch, let the worker rebase a content branch across
-     it, then publish that branch. The push is expected to be refused without `workflows`
-     permission; see
-     [worker-push-refused-when-base-changes-workflows.md](worker-push-refused-when-base-changes-workflows.md).
+     it, then publish that branch. Measured with GitHub Actions' own App token and accepted;
+     confirm it with this package's App; see
+     [resolved/worker-push-refused-when-base-changes-workflows.md](resolved/worker-push-refused-when-base-changes-workflows.md).
    - Rotate the App private key (store the new one, delete the old one) on a running worker,
      and confirm the failure arrives about an hour later as a permanent 401; see
      [worker-app-auth-cannot-recover-a-rotated-key.md](worker-app-auth-cannot-recover-a-rotated-key.md).

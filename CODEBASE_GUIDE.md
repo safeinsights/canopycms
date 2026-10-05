@@ -777,7 +777,7 @@ preserved, and code blocks are skipped. See
 - `entry-url.ts` — `computeEntryUrl`, the forward collection-plus-slug to URL rule, and the shared `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups for data-layer iteration
-- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `isRebaseInProgress`
+- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl` and `stripTrailingSlashes`
