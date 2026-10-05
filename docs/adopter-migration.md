@@ -70,6 +70,20 @@ distribution has custom error responses.
 **Now deletable.** Hand-wired `/edit*` and API behaviors, the origin, OAC and `x-forwarded-host`
 function made for them, and any response-headers policy added only to stop framing.
 
+### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**
+
+**What changed.** Resolution applied no path rule to the referenced entry, so a reader of A saw
+B's data through A's reference even when denied B. A denied target now resolves to
+`{ id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }`, so a
+`resolvedSchema` reference infers as `Target | RestrictedReference | null`. Static builds are
+unchanged. A schema may no longer declare a top-level field named `unavailable`.
+
+**To adopt.** Narrow before reading the target's own fields:
+`if (ref?.unavailable) return <a href={ref.urlPath}>{ref.title}</a>`. Rename any `unavailable`
+field.
+
+**Now deletable.** Nothing.
+
 ### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
 **What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
