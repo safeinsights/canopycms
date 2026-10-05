@@ -1,4 +1,5 @@
 import type { CanopyUser } from './user'
+import { canopyLogWarn } from './utils/logger'
 
 /**
  * Who submitted (and edited) a branch, recorded in the submit commit's trailers
@@ -31,9 +32,9 @@ export const PR_SECTION_START = '<!-- canopycms:submission:start -->'
 export const PR_SECTION_END = '<!-- canopycms:submission:end -->'
 
 // Cc (C0/C1 controls incl. newlines), Cf (zero-width and bidi overrides), Zl/Zp
-// (Unicode line/paragraph separators). Any of these can forge a trailer line or
-// hide text.
-const INVISIBLE_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+// (Unicode line/paragraph separators) can forge a trailer line or hide text; Cs
+// (a lone surrogate) is stored by git as U+FFFD.
+const INVISIBLE_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu
 // `<>` would end a Co-authored-by email or open HTML / a section marker, `()`
 // would let a name forge the id that follows it, a backtick would close the
 // code span names render in, and a backslash would escape the next character.
@@ -42,6 +43,16 @@ const STRUCTURAL = /[<>()`\\]/g
 function truncate(value: string, max: number): string {
   const chars = Array.from(value)
   return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : value
+}
+
+/**
+ * A changed path for a code span: only what could break out of the span or out
+ * of the section is removed, so `app/(group)/page.mdx` stays distinct from
+ * `app/page.mdx`. No NFKC, for the same reason.
+ */
+function cleanPath(raw: string): string | undefined {
+  const cleaned = raw.replace(INVISIBLE_OR_CONTROL, ' ').replace(/[<>`]/g, '').trim()
+  return cleaned ? truncate(cleaned, 300) : undefined
 }
 
 function cleanText(raw: string | undefined, max: number): string | undefined {
@@ -56,7 +67,7 @@ function cleanText(raw: string | undefined, max: number): string | undefined {
 }
 
 /**
- *A display name safe for a single line of git trailer or Markdown, or undefined.
+ * A display name safe for a single line of git trailer or Markdown, or undefined.
  * @internal Exported for tests.
  */
 export function sanitizeDisplayName(raw: string | undefined): string | undefined {
@@ -65,10 +76,10 @@ export function sanitizeDisplayName(raw: string | undefined): string | undefined
 
 // Ids and emails are recorded exactly as the provider issued them or not at
 // all: rewriting one could merge two users or attribute an edit to someone else.
-const UNSAFE_VERBATIM_CHAR = /[\s\p{Cc}\p{Cf}<>()`\\]/u
+const UNSAFE_VERBATIM_CHAR = /[\s\p{Cc}\p{Cf}\p{Cs}<>()`\\]/u
 
 /**
- *The auth user id unchanged, or undefined if it holds characters unsafe to record.
+ * The auth user id unchanged, or undefined if it holds characters unsafe to record.
  * @internal Exported for tests.
  */
 export function sanitizeUserId(raw: string | undefined): string | undefined {
@@ -80,14 +91,20 @@ export function sanitizeUserId(raw: string | undefined): string | undefined {
 const EMAIL_SHAPE = /^[^\s@<>()"',;:\\[\]]+@[^\s@<>()"',;:\\[\]]+\.[^\s@<>()"',;:\\[\]]+$/
 
 /**
- *The email as given if it is a plain single-address email, otherwise undefined.
+ * The email as given if it is a plain single-address email, otherwise undefined.
  * @internal Exported for tests.
  */
 export function sanitizeEmail(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined
   const trimmed = raw.trim()
-  // `\s` misses most C0/C1 controls, and a NUL makes git's spawn throw.
-  if (trimmed.length > MAX_EMAIL_LENGTH || UNSAFE_VERBATIM_CHAR.test(trimmed)) return undefined
+  // `\s` misses most C0/C1 controls, and a NUL makes git's spawn throw. `#` is
+  // legal in an address but GitHub links `#12` in a commit message.
+  if (
+    trimmed.length > MAX_EMAIL_LENGTH ||
+    UNSAFE_VERBATIM_CHAR.test(trimmed) ||
+    trimmed.includes('#')
+  )
+    return undefined
   return EMAIL_SHAPE.test(trimmed) ? trimmed : undefined
 }
 
@@ -108,7 +125,14 @@ function cleanEditors(editors: readonly SubmissionEditor[]): CleanEditor[] {
   const result: CleanEditor[] = []
   for (const editor of editors) {
     const userId = sanitizeUserId(editor.userId)
-    if (!userId || seen.has(userId)) continue
+    if (!userId) {
+      // The id itself stays out of the log: it is the unsafe value.
+      if (editor.userId) {
+        canopyLogWarn('CanopyCMS: Not recording an editor whose user id is unsafe to write to git')
+      }
+      continue
+    }
+    if (seen.has(userId)) continue
     seen.add(userId)
     result.push({
       userId,
@@ -227,7 +251,7 @@ export function buildPrSection(input: PrSectionInput): string {
   }
 
   const paths = [...new Set(input.changedPaths)]
-    .map((p) => cleanText(p, 300))
+    .map(cleanPath)
     .filter((p): p is string => p !== undefined)
   if (paths.length > 0) {
     const listed = paths.slice(0, MAX_LISTED_ENTRIES).map((p) => `- ${codeSpan(p)}`)

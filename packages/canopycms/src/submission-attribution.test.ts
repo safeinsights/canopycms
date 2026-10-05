@@ -13,6 +13,7 @@ import {
   submissionEditorFromUser,
 } from './submission-attribution'
 import { ANONYMOUS_USER } from './user'
+import { mockConsole } from './test-utils/console-spy'
 
 const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
 const defaults = { editedBy: true, coAuthoredBy: false }
@@ -52,6 +53,10 @@ describe('sanitizeDisplayName', () => {
     expect(capped?.endsWith('…')).toBe(true)
   })
 
+  it('drops a lone surrogate, which git would store as U+FFFD', () => {
+    expect(sanitizeDisplayName('Eve\ud800')).toBe('Eve')
+  })
+
   it('returns undefined for a missing or all-whitespace name', () => {
     expect(sanitizeDisplayName(undefined)).toBeUndefined()
     expect(sanitizeDisplayName(' \n\t\u200b ')).toBeUndefined()
@@ -66,7 +71,17 @@ describe('sanitizeUserId', () => {
   })
 
   it('records nothing rather than a rewritten id, so distinct ids never merge', () => {
-    for (const id of ['user 2abc', 'user_1\nx', 'a(b)', 'a<b>', 'a`b', 'a\\b', 'a\u0000b', '']) {
+    for (const id of [
+      'user 2abc',
+      'user_1\nx',
+      'a(b)',
+      'a<b>',
+      'a`b',
+      'a\\b',
+      'a\u0000b',
+      'a\ud800b',
+      '',
+    ]) {
       expect(sanitizeUserId(id)).toBeUndefined()
     }
     expect(sanitizeUserId('x'.repeat(129))).toBeUndefined()
@@ -88,6 +103,8 @@ describe('sanitizeEmail', () => {
     'a\u0000@b.co',
     'a@b.co\u0085x',
     'a\u007f@b.co',
+    'a\ud800@b.co',
+    '#12@example.com',
     `${'a'.repeat(250)}@example.com`,
   ])('rejects %j', (email) => {
     expect(sanitizeEmail(email)).toBeUndefined()
@@ -193,10 +210,14 @@ describe('buildEditorTrailers', () => {
     )
   })
 
-  it('records nobody when the id is unsafe to record', () => {
+  it('records nobody when the id is unsafe to record, and says so without the id', () => {
+    const consoleSpy = mockConsole()
     expect(
       buildEditorTrailers([{ userId: 'user_1\nSigned-off-by: Mallory', name: 'Eve' }], defaults),
     ).toEqual([])
+    expect(consoleSpy).toHaveWarned('Not recording an editor whose user id is unsafe')
+    expect(consoleSpy.all().warn.join('\n')).not.toContain('Mallory')
+    consoleSpy.restore()
   })
 })
 
@@ -294,6 +315,21 @@ describe('buildPrSection', () => {
     expect(section).toContain(
       'before &lt;!-- canopycms:submission:end --&gt; &lt;!-- hidden --&gt; after',
     )
+  })
+
+  it('keeps paths distinct that differ only in parentheses or compatibility forms', () => {
+    const section = buildPrSection({
+      changedPaths: ['app/(marketing)/page.mdx', 'app/marketing/page.mdx', 'docs/\ufb01le.md'],
+    })
+    expect(section).toContain('- `app/(marketing)/page.mdx`')
+    expect(section).toContain('- `app/marketing/page.mdx`')
+    expect(section).toContain('- `docs/\ufb01le.md`')
+  })
+
+  it('removes from a path only what could break out of the code span or the section', () => {
+    const section = buildPrSection({ changedPaths: [`a\`b\n${PR_SECTION_END}.md`] })
+    expect(section).toContain('- `ab !-- canopycms:submission:end --.md`')
+    expect(section.split(PR_SECTION_END)).toHaveLength(2)
   })
 
   it('caps the entry list at 100 and says how many more there are', () => {
