@@ -342,32 +342,51 @@ CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
 
 ### CloudFront in front of the Function URL
 
-The CMS Lambda's Function URL is fronted by a CloudFront distribution for a stable
-custom domain and TLS. Two things are worth knowing before you hand-roll your own
-or override a timeout:
+The CMS Lambda's Function URL is fronted by CloudFront for a stable custom domain and
+TLS. Two things to know:
 
-- **The origin-read timeout and the Lambda's own timeout must agree.**
-  CloudFront's default origin-read timeout is 30 seconds, well under a Lambda
-  that can legitimately run longer — a first-touch branch provision doing a full
-  `git clone` onto EFS inside the request is a real case — so leaving it unset
-  caps every such request at half the Lambda's budget: CloudFront answers 504 at
-  30 seconds while the Lambda runs to completion behind it, with nothing to
-  correlate that server-side success to the viewer-facing failure. Both values
-  resolve from one constant in the constructs, and the service construct exposes
-  its resolved timeout so a caller overriding the Lambda's can pass the same
-  value to the distribution. CloudFront rejects an origin-read timeout above 60
-  seconds without a quota increase, so an override past that ceiling fails at
-  synth rather than deploying a distribution that can never work.
-- **Extra behaviors keep your ordering.** The distribution merges behaviors you
-  pass with its own defaults and preserves the order you listed them in, because
-  CloudFront matches path patterns in order — pinning an overridden key back at
-  the defaults' position could hide a specific pattern behind a general one. This
-  is how `AssetSupport`'s two behaviors attach to the generated distribution
-  instead of needing a second one.
+- **The origin-read timeout must match the Lambda's.** CloudFront's default is 30
+  seconds, so a longer request (a first-touch branch provision clones onto EFS inside
+  it) gets a 504 at the edge while the Lambda finishes behind it. The constructs set
+  both from one constant, and `CanopyCmsService.timeout` carries an override to the
+  distribution. Above 60 seconds CloudFront needs a quota increase, so synth refuses it.
+- **Extra behaviors keep your ordering.** CloudFront matches path patterns in order,
+  so `additionalBehaviors` keeps the order you listed, overrides included. That is how
+  `AssetSupport`'s behaviors join the generated distribution.
 
-A distribution you build yourself in front of a Function URL needs the managed
-`CACHING_DISABLED` cache policy and a CloudFront Function forwarding only
-`x-forwarded-host`; `CanopyCmsDistribution` does both.
+Both `CanopyCmsDistribution` and `attachTo` (below) give the Lambda's behaviors a
+response headers policy: `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`
+(no other site can frame the editor; its preview iframe is same-origin),
+`X-Content-Type-Options: nosniff`, HSTS and `X-Robots-Tag: noindex`. The framing
+headers and HSTS yield to your app's own. No `Cross-Origin-Opener-Policy`: it breaks
+Clerk's OAuth popups.
+
+### Serving the editor from a distribution you already own
+
+Attach the editor rather than wiring the Function URL by hand:
+
+```ts
+cmsService.attachTo(siteDistribution)
+assetSupport.attachTo(siteDistribution) // if you use AssetSupport
+```
+
+It appends `/edit`, `/edit/*` and `/api/canopycms/*` (not `/edit*`, which matches
+`/editorial`), configured like `CanopyCmsDistribution`'s default behavior.
+`behaviorOverrides` applies to all three; a `viewerRequestFunction` replaces the
+`x-forwarded-host` function and must set that header itself. Synth fails if an
+earlier behavior matches an editor route. The site's `/_next/static/*` must also
+serve the CMS build's chunks, which the editor page loads.
+
+**Custom error responses** are distribution-wide, so a site's "404 → `/404.html`" also
+replaces the API's JSON errors and the editor reports "Unexpected response from
+server". `attachTo` warns about them at synth; a site that needs them should give the
+editor its own `CanopyCmsDistribution`.
+
+**No HTTP Basic auth on editor routes.** Keep `/edit`, `/edit/*`, `/api/canopycms/*`
+and the asset prefix out of any Basic-auth gate. The API's 401s carry no
+`WWW-Authenticate`, and a browser that gets a 401 drops its cached Basic credential,
+so editors are prompted again mid-session. Clerk already authenticates them; the cost
+is that the tier's published assets are readable without the site's password.
 
 ### Deploy
 

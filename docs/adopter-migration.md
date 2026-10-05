@@ -51,6 +51,25 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS on purpose**
+
+**What changed.** `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
+adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distribution you already
+own: OAC, the Lambda's timeout as the origin-read timeout, no caching, `x-forwarded-host`, and a
+response headers policy. `CanopyCmsDistribution` now sends the same headers:
+`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`.
+Another origin can no longer frame the editor or any page the CMS domain serves. That is unlikely to
+be deliberate anywhere; the editor's own preview is same-origin and unaffected. See
+[Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
+
+**To adopt.** If you wired the Function URL into your own distribution by hand, delete those
+behaviors and call `attachTo`; synth fails while a hand-wired `/edit*` or `/api/*` still sits ahead
+of it. Take the editor routes out of any HTTP Basic-auth gate, and read the synth warning if your
+distribution has custom error responses.
+
+**Now deletable.** Hand-wired `/edit*` and API behaviors, the origin, OAC and `x-forwarded-host`
+function made for them, and any response-headers policy added only to stop framing.
+
 ### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
 **What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
