@@ -36,12 +36,16 @@ function provisioningLockOptions(
   lockPath: string,
   retries: LockOptions['retries'],
   onCompromised: OnLockCompromised | undefined,
+  staleMs = 30_000,
 ): LockOptions {
   return {
     lockfilePath: lockPath,
     realpath: false,
     retries,
-    stale: 30_000,
+    stale: staleMs,
+    // Fixed at 15s rather than stale/2: a holder that passes a longer staleMs must still refresh
+    // often enough for peers judging with the default 30s.
+    update: 15_000,
     // proper-lockfile invokes this from inside its refresh timer, so ANY throw escaping here is
     // an uncaught exception that kills the process. Call sites are told not to throw (see
     // OnLockCompromised); this makes it structural rather than a convention, and also covers the
@@ -163,15 +167,22 @@ export async function acquireProvisioningLock(
  *
  * Throws with `err.code === 'ELOCKED'` on contention (a live, non-stale holder) -- callers
  * translate that into a 409.
+ *
+ * @param staleMs how old the marker must look before this caller takes it over; see the worker's
+ *   use in worker/provisioned-workspace.ts for why one caller raises it
  */
 export async function tryAcquireProvisioningLock(
   lockTargetDir: string,
   lockName: string,
   onCompromised?: OnLockCompromised,
+  staleMs?: number,
 ): Promise<() => Promise<void>> {
   await fs.mkdir(lockTargetDir, { recursive: true })
   const lockPath = path.join(lockTargetDir, lockName)
 
-  const release = await lockfile.lock(lockPath, provisioningLockOptions(lockPath, 0, onCompromised))
+  const release = await lockfile.lock(
+    lockPath,
+    provisioningLockOptions(lockPath, 0, onCompromised, staleMs),
+  )
   return releaseIgnoringAlreadyReleased(release, lockPath)
 }

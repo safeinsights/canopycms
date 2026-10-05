@@ -6,9 +6,17 @@ import { getErrorMessage, isNodeError } from '../utils/error'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { workerLogWarn } from './log'
 
+/**
+ * How old a provisioning marker must look before the worker takes it over: longer than the NFS
+ * directory-attribute cache (`acdirmax`, 60s by default on EFS mounts). The worker's cycle lists
+ * `content-branches/` first, which primes that cache, so a live Lambda clone's marker, refreshed
+ * every 15s, could otherwise look 30s+ old to the worker's `stat` and be reaped mid-clone.
+ */
+const WORKER_STALE_MS = 90_000
+
 export type ProvisionedWorkspaceHold =
   | { kind: 'held'; release: () => Promise<void> }
-  /** Another process holds the provisioning lock: a clone, or an admin purge, is in flight. */
+  /** Another process holds the provisioning lock: a clone, or an admin purge or repair, is in flight. */
   | { kind: 'locked' }
   /** No clone with metadata at this path yet. */
   | { kind: 'not-provisioned' }
@@ -36,6 +44,8 @@ export async function holdProvisionedWorkspace(
     release = await tryAcquireProvisioningLock(
       contentBranchesPath,
       branchProvisioningLockName(dirName),
+      undefined,
+      WORKER_STALE_MS,
     )
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ELOCKED') return { kind: 'locked' }

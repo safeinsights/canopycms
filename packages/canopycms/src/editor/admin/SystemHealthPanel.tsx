@@ -117,7 +117,7 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
   refreshed: 'fast-forwarded',
   'up-to-date': 'up to date',
   'skipped-dirty': 'refresh skipped (uncommitted changes)',
-  'skipped-locked': 'refresh skipped (workspace being provisioned or purged)',
+  'skipped-locked': 'refresh skipped (workspace busy: provisioning or an admin action)',
   'skipped-not-provisioned': 'not yet provisioned',
   failed: 'refresh failed',
 }
