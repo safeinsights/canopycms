@@ -590,7 +590,8 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 `buildPreviewSrc(entry, context)` takes the module-local `buildPreviewRoute` (`previewBaseByCollection`,
 else collection path plus encoded slug), joins `previewPrefix` then `basePath`, applies
-`matchTrailingSlash`, and appends `?branch=`. A `previewSrc` override gets only `basePath`. The
+`matchTrailingSlash`, and appends `?branch=`. An absolute route gets only `?branch=`, and a
+`previewSrc` override only `basePath`. The
 bridge compares through `editor/preview-path.ts`'s `isSamePreviewPath`; why is in
 [ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity).
 

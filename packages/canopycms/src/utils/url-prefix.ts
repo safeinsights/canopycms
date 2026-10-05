@@ -196,7 +196,7 @@ const URL_ORIGIN = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*/i
 /**
  * Give a URL's path the trailing-slash form a Next host serves, so loading it draws no 308:
  * `withTrailingSlash`'s rule when `trailingSlash` is true, else no trailing slash on any path
- * but the root (Next also redirects a `basePath` root with a slash to the bare `basePath`). An
+ * but the root (Next also redirects `<basePath>/` to `<basePath>`, `load-custom-routes.js:528`). An
  * absolute URL's origin, and any query or fragment, are kept as they are.
  */
 export function matchTrailingSlash(url: string, trailingSlash: boolean): string {

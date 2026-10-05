@@ -1208,7 +1208,7 @@ editor: {
 }
 ```
 
-**Preview URLs.** The preview pane loads each entry at its site route plus `?branch=`: its collection path and slug (`content/docs/intro` → `/docs/intro`), or `/` for a root entry. `previewBase` maps a collection (keyed by path or name) or a root entry (keyed `'<contentRoot>/<slug>'`) to another route. `previewPrefix` goes in front of every route, so `/blog/hello` above loads `/preview/blog/hello`. Set it when your public pages are a static export, which cannot render a branch, so the preview must load a route your CMS build renders. Both are site-relative and get `basePath` on top. An absolute `https://…` value skips the prefixes before it. Preview URLs follow `trailingSlash` when `withCanopy()` wraps your Next config.
+**Preview URLs.** The preview pane loads each entry at its site route plus `?branch=`: its collection path and slug (`content/docs/intro` → `/docs/intro`), or `/` for a root entry. `previewBase` maps a collection (keyed by path or name) or a root entry (keyed `'<contentRoot>/<slug>'`) to another route. `previewPrefix` goes in front of every route, so `/blog/hello` above loads `/preview/blog/hello`. Set it when your public pages are a static export, which cannot render a branch, so the preview must load a route your CMS build renders. Both are site-relative and get `basePath` on top, and preview URLs follow `trailingSlash` when `withCanopy()` wraps your Next config. An absolute `https://…` `previewBase` is used as written, and an absolute prefix skips `basePath`; pages on another origin need `useCanopyPreview({ editorOrigin })`.
 
 ### Custom Field Renderers
 

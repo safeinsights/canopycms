@@ -105,9 +105,9 @@ const buildPreviewRoute = (
 /**
  * Builds the preview iframe `src` for an entry: its route under `previewPrefix`, under the
  * deployment `basePath` (`CanopyClientConfig.basePath`, e.g. `/preview-123`), in the host's
- * trailing-slash form, with `?branch=`. An absolute prefix skips the `basePath`; an absolute route
- * (from `previewBaseByCollection`) is used as written. An entry's own `previewSrc` gets only the
- * `basePath`.
+ * trailing-slash form, with `?branch=`. An absolute prefix skips the `basePath`. An absolute route
+ * (from `previewBaseByCollection`) skips all three and gets only `?branch=`. An entry's own
+ * `previewSrc` gets only the `basePath`.
  *
  * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
  * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
