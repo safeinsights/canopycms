@@ -195,11 +195,15 @@ describe('read / readByUrlPath with a branch option', () => {
     expect((await readHello(ctx)).data.title).toBe('on main')
   })
 
-  it('reads a traversal branch name as not-found rather than failing the page', async () => {
+  it('reads a traversal or over-long branch name as not-found rather than failing the page', async () => {
     const { ctx } = await contextFor()
 
-    await expectNotFound(readHello(ctx, '../main'))
-    expect(await ctx.readByUrlPath('/posts/hello', { branch: '../main' })).toBeNull()
+    // Longer than any filesystem's NAME_MAX, so loading it fails ENAMETOOLONG.
+    for (const branch of ['../main', 'a'.repeat(300)]) {
+      await expectNotFound(readHello(ctx, branch))
+      expect(await ctx.readByUrlPath('/posts/hello', { branch })).toBeNull()
+      expect(await ctx.listEntries({ branch })).toEqual([])
+    }
     expect(provisioned).toEqual([])
   })
 

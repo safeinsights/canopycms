@@ -34,8 +34,8 @@ import { isDeployedStatic, isBuildMode, readsFromCheckout, STATIC_DEPLOY_USER } 
 import { createContentReader } from './content-reader'
 import { ContentStoreError } from './content-store'
 import {
-  BranchPathError,
   createLogicalPath,
+  namesNoWorkspace,
   parseSlug,
   resolveBranchPaths,
   type Slug,
@@ -91,9 +91,9 @@ interface ListingSource {
 }
 
 /**
- * A branch that already has a workspace, or null. A name the path layer
- * rejects (a traversal segment) is null too: it arrives from the request, so it
- * reads as not-found rather than failing the page.
+ * A branch that already has a workspace, or null. A name that cannot name one
+ * is null too (`namesNoWorkspace`): it arrives from the request, so it reads as
+ * not-found rather than failing the page.
  */
 async function loadExistingBranch(
   branchName: string,
@@ -102,7 +102,7 @@ async function loadExistingBranch(
   try {
     return await loadBranchContext({ branchName, mode })
   } catch (err) {
-    if (err instanceof BranchPathError) return null
+    if (namesNoWorkspace(err)) return null
     throw err
   }
 }

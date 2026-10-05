@@ -1,7 +1,7 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
 import {
-  BranchPathError,
+  namesNoWorkspace,
   resolveBranchPaths,
   type ContentId,
   type LogicalPath,
@@ -163,13 +163,12 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    // A name the path layer rejects (a traversal segment) names no workspace either.
     const existing = await loadBranchContext({
       branchName,
       mode: operatingMode,
       basePathOverride,
     }).catch((err: unknown) => {
-      if (err instanceof BranchPathError) return null
+      if (namesNoWorkspace(err)) return null
       throw err
     })
     if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
