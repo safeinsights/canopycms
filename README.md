@@ -843,6 +843,8 @@ export default async function PostPage({ params, searchParams }) {
 
 > **Request-time errors:** `read()` throws if the entry is missing or the current user cannot read it (an anonymous visitor on a `server` deployment with [public read](#public-read-on-server-deployments) enabled, say) — and an uncaught throw becomes a 500 page, not a 404. Catch it explicitly (see [Error Handling Utilities](#error-handling-utilities)) or prefer [`readByUrlPath()`](#load-content-by-url-path), which returns `null`.
 
+`branch` comes from the request, so any visitor can set it. Any branch other than the active one must already exist and be readable by the current user. Otherwise `read()` throws `NOT_FOUND` and `readByUrlPath()` returns `null`, so a missing branch and a hidden one look the same. A repeated `?branch=` (an array) gets the same answer. Only the active branch's workspace is created on first read. `readByUrlPath()` takes the same `branch` option.
+
 The context extracts the current user from request headers via the auth plugin, applies bootstrap admin groups, and is cached for the request lifecycle with React's `cache()`. During `next build` permissions are bypassed and content is read from the working tree, never a branch workspace, so a build renders exactly what is on disk. Besides `read()` it exposes `readByUrlPath()` (below), `buildContentTree()` (see [Content Tree Builder](#content-tree-builder)), `listEntries()` (see [Listing Entries](#listing-entries)), `user`, and `services`.
 
 ### Load Content by URL Path
@@ -1057,10 +1059,10 @@ The phase-selecting `readByUrlPath` and `read` are the top-level helpers `create
 
 ### Advanced: Using createContentReader Directly
 
-For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly:
+For more control — reading as a specific user, or in a non-request context — use the lower-level `createContentReader` from `canopycms/server`, which takes the user explicitly. A branch with no workspace reads as `NOT_FOUND`. Pass `allowCreateBranch: true` to create one instead, but only when every branch name the reader sees is trusted:
 
 ```typescript
-const reader = createContentReader({ config: config.server })
+const reader = createContentReader({ services })
 
 const { data } = await reader.read({
   entryPath: 'content/posts',
