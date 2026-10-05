@@ -72,6 +72,7 @@ Content, git and branch files have their own sections below; the rest:
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
 - `build-mode.ts` — `isDeployedStatic` / `isBuildMode` / `readsFromCheckout`; see [ARCHITECTURE.md](ARCHITECTURE.md#static-deployment-and-build-mode)
+- `version.ts` / `build-identity.ts` — generated `CANOPYCMS_VERSION`; `getBuildIdentity` (version + `CANOPY_SOURCE_SHA`) for System health and admin `whoami`
 - `config-test.ts` — test-only config helpers, `defineCanopyTestConfig` and `createTestServices`
 - `id.ts` — `generateId`, 12-character Base58 content IDs
 - `user.ts` — user utilities
