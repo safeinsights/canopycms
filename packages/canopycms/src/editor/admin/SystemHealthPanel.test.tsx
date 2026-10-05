@@ -160,6 +160,15 @@ describe('SystemHealthPanel', () => {
         expect(screen.getByTestId('build-worker-version').textContent).toContain('1.2.3')
       })
 
+      it('keeps "Worker: " unique to the liveness badge, which the e2e page object selects by it', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getAllByText(/^Worker: /)).toHaveLength(1)
+      })
+
       it('shows "not set" with the env var name when the source revision is absent', async () => {
         mockClient.admin.status.mockResolvedValueOnce(
           mockSuccess(makeStatus({ build: { canopycmsVersion: '1.2.3' } })),

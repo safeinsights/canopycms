@@ -343,7 +343,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           )}
         </Text>
         <Text size="xs" c="dimmed" data-testid="build-worker-version">
-          Worker: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
+          Worker version: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
         </Text>
         <Text size="xs" c="dimmed" data-testid="build-media">
           Media storage:{' '}
