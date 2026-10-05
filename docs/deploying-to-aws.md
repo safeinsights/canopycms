@@ -138,9 +138,9 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 ### Preview Support
 
-A static export cannot render the branch being edited, so the editor previews through a CMS-only route: set `editor.previewPrefix: '/preview'` and add `app/preview/[[...path]]/page.server.tsx` as [README Live Preview](../README.md#live-preview) describes.
+A static export cannot render the branch being edited, so preview through the CMS-only route in [README Live Preview](../README.md#live-preview).
 
-If the public site and the CMS share a hostname, route `/preview/*` and `/edit*` to the CMS origin, giving `/preview/*` a response-headers policy of `Content-Security-Policy: frame-ancestors 'self'` with no `X-Frame-Options`. The static site keeps `X-Frame-Options: DENY`.
+On a hostname shared with the public site, route `/preview/*` and `/edit*` to the CMS, and serve `/preview/*` with `Content-Security-Policy: frame-ancestors 'self'`, not `X-Frame-Options`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 
@@ -817,7 +817,7 @@ The env var deliberately wins over config, and if both are set and disagree the 
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 

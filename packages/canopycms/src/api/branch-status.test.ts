@@ -39,6 +39,7 @@ vi.mock('../authorization', async (importOriginal) => {
 })
 
 import { WORKFLOW_ROUTES } from './branch-status'
+import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import {
   createMockApiContext,
   createMockBranchContext,
@@ -261,6 +262,46 @@ describe('branch status api', () => {
     // No raw git output (branch/ref internals, hint text) leaks to the client.
     expect(res.error).not.toContain('rejected')
     expect(res.error).not.toContain('/tmp/canopy-test')
+    consoleSpy.restore()
+  })
+
+  it('returns a retriable 409 when the branch content-write lock is busy, without stamping it submitted', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    mockMetadataUpdate.mockClear()
+    ctx.services.submitBranch = vi.fn().mockRejectedValue(new ContentWriteLockBusyError())
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
+    expect(res.error).toContain('feature/x')
+    expect(res.error).toMatch(/nothing was submitted/i)
+    expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    consoleSpy.restore()
+  })
+
+  it('says the outcome is unknown when the lock was lost during the submit', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    mockMetadataUpdate.mockClear()
+    ctx.services.submitBranch = vi
+      .fn()
+      .mockRejectedValue(new ContentWriteLockBusyError('lost', 'unknown'))
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.status).toBe(409)
+    expect(res.error).toMatch(/may not have completed/i)
+    expect(mockMetadataUpdate).not.toHaveBeenCalled()
     consoleSpy.restore()
   })
 

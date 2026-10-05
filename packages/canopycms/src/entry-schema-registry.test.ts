@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'fs/promises'
 import { join } from 'pathe'
 import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
+import type { EntrySchema } from './config'
 
 describe('createEntrySchemaRegistry', () => {
   it('accepts valid schema registry', () => {
@@ -175,6 +176,34 @@ describe('createEntrySchemaRegistry', () => {
       ).toThrow(/is reserved/)
     },
   )
+
+  it.each([
+    ['a top-level field', [{ type: 'boolean', name: 'unavailable' }]],
+    [
+      'a field inside an inline group',
+      [{ type: 'group', name: 'stock', fields: [{ type: 'boolean', name: 'unavailable' }] }],
+    ],
+  ] as const)(
+    'throws when %s is named unavailable, the restricted-reference marker',
+    (_, fields) => {
+      expect(() =>
+        createEntrySchemaRegistry({
+          product: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+        }),
+      ).toThrow(/field "unavailable" is reserved/)
+    },
+  )
+
+  it('allows unavailable nested inside an object field, which is not a top-level key', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        product: [
+          { type: 'string', name: 'title' },
+          { type: 'object', name: 'stock', fields: [{ type: 'boolean', name: 'unavailable' }] },
+        ],
+      }),
+    ).not.toThrow()
+  })
 
   it('allows a body field with any non-reserved name', () => {
     expect(() =>

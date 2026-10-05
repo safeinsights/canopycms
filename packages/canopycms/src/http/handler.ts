@@ -12,6 +12,7 @@ import { BranchMetadataCorruptError } from '../branch-metadata'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
+import { isSettingsBranchName } from '../paths/branch-name'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 // canopyLogError, not console.error: this is shared code and not guaranteed to
@@ -40,9 +41,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const operatingMode = services.config.mode
-  // Derive from the strategy, which resolves deploymentName; a literal here
-  // would not match a deployment-namespaced settings branch (say
-  // canopycms-settings-acme), so getBranchContext could never auto-create it.
+  // Derived from the strategy, which resolves deploymentName; a literal here
+  // would miss a deployment-namespaced settings branch (say canopycms-settings-acme).
   const settingsBranch = operatingStrategy(operatingMode).getSettingsBranchName(services.config)
 
   const getBranchContext =
@@ -71,7 +71,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
-        (branch === baseBranch || branch === activeBranch || branch === settingsBranch)
+        (branch === baseBranch || branch === activeBranch)
 
       if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
@@ -100,8 +100,15 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   return {
     services,
     assetStore: options.assetStore,
+    // The settings branch lives only in the settings workspace. Resolving it as a
+    // content branch would let any request clone a content-history copy that a
+    // submit pushes under the settings name, which settings provisioning then refuses,
+    // leaving settings unavailable.
+    // Not found, like any branch the caller cannot resolve, even a workspace left on disk.
     getBranchContext: (branch, opts) =>
-      timeRequestPhase('branchContext', () => getBranchContext(branch, opts)),
+      isSettingsBranchName(branch, settingsBranch)
+        ? Promise.resolve(null)
+        : timeRequestPhase('branchContext', () => getBranchContext(branch, opts)),
     authPlugin: options.authPlugin,
   }
 }

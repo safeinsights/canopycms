@@ -5,14 +5,6 @@ import type { ContentIdIndex, IdLocation } from './content-id-index'
 import { extractSlugFromFilename, extractEntryTypeFromFilename } from './content-id-index'
 import { entryLogicalPath, type LogicalPath, type PhysicalPath, type Slug } from './paths'
 
-export interface ResolvedReference {
-  id: string
-  exists: boolean
-  displayValue: string
-  collection?: LogicalPath
-  slug?: Slug
-}
-
 export interface ReferenceOption {
   id: string
   label: string
@@ -20,49 +12,14 @@ export interface ReferenceOption {
 }
 
 /**
- * ReferenceResolver resolves content IDs to display values for reference fields.
+ * Loads the options a reference field's picker offers. Resolving a stored reference to its
+ * target is `ContentStore`'s job (`read()`, `resolveReferenceTarget`).
  */
 export class ReferenceResolver {
   constructor(
     private store: ContentStore,
     private idIndex: ContentIdIndex,
   ) {}
-
-  /**
-   * Resolve a content ID to a display value.
-   * Returns null if the ID doesn't exist or points to a collection.
-   */
-  async resolve(id: string, displayField = 'title'): Promise<ResolvedReference | null> {
-    const location = this.idIndex.findById(id)
-
-    if (!location || location.type !== 'entry') {
-      return {
-        id,
-        exists: false,
-        displayValue: id, // Fallback to showing the ID itself
-      }
-    }
-
-    try {
-      const doc = await this.store.read(location.collection!, location.slug!)
-      const displayValue = String(doc.data[displayField] || doc.data.title || location.slug)
-
-      return {
-        id,
-        exists: true,
-        displayValue,
-        collection: location.collection,
-        slug: location.slug,
-      }
-    } catch (error) {
-      console.error('Failed to resolve reference:', { id, error })
-      return {
-        id,
-        exists: false,
-        displayValue: id,
-      }
-    }
-  }
 
   /**
    * Load all available reference options for a reference field.
@@ -122,7 +79,10 @@ export class ReferenceResolver {
         const filename = nodePath.basename(location.relativePath)
         const normalizedSlug = extractSlugFromFilename(filename)
 
-        const doc = await this.store.read(location.collection, normalizedSlug as Slug)
+        // Only the label is read, so the candidate's own references stay unresolved.
+        const doc = await this.store.read(location.collection, normalizedSlug as Slug, {
+          resolveReferences: false,
+        })
         const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
         if (search && !label.toLowerCase().includes(search.toLowerCase())) {
@@ -145,13 +105,5 @@ export class ReferenceResolver {
     }
 
     return options.sort((a, b) => a.label.localeCompare(b.label))
-  }
-
-  /**
-   * Resolve multiple IDs at once.
-   * Useful for displaying lists of referenced items.
-   */
-  async resolveMany(ids: string[], displayField = 'title'): Promise<(ResolvedReference | null)[]> {
-    return Promise.all(ids.map((id) => this.resolve(id, displayField)))
   }
 }

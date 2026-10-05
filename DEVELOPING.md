@@ -424,14 +424,14 @@ const result = await services.commitToSettingsBranch({
 
 ### Schema Mutations (`SchemaOps`)
 
-`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`). Every public mutator runs under one **non-reentrant, coarse per-branch lock** (`withSchemaLock`, keyed on `{branchRoot}/.canopy-meta/schema`). [docs/concurrency.md](docs/concurrency.md) explains why `.collection.json` deliberately carries no OCC `version` or lockfile of its own.
+`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`). Every public mutator runs under `withSchemaLock`: the branch's content-write lock, then a coarse per-branch surrogate keyed on `{branchRoot}/.canopy-meta/schema`. **Neither is reentrant.** [docs/concurrency.md](docs/concurrency.md) explains why `.collection.json` deliberately carries no OCC `version` or lockfile of its own.
 
-**Because the lock is non-reentrant, a public mutator must never call another public mutator from inside its critical section** — that deadlocks on a lock it already holds. Each public mutator has a private `*Inner` counterpart that does the work without acquiring the lock; call that instead:
+**So a public mutator must never call another public mutator from inside its critical section** — that fails busy on a lock it already holds. Each public mutator has a private `*Inner` counterpart that does the work without acquiring the lock; call that instead:
 
 ```typescript
 // Inside SchemaOps, already holding the lock via the public entrypoint:
 await this.updateCollectionInner(collectionPath, { order }) // safe
-// await this.updateCollection(collectionPath, { order })   // deadlocks
+// await this.updateCollection(collectionPath, { order })   // fails busy
 ```
 
 A new mutator follows the same shape: a thin public method wrapping the real logic in `withSchemaLock`, cache invalidation afterwards and outside the lock (per `withSchemaLock`'s doc comment), plus a private `*Inner` other mutators can call.
