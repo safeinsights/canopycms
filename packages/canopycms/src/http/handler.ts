@@ -168,7 +168,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const apiCtx = await timeRequestPhase('context', getContext)
 
     // In dev mode, re-check if the developer switched git branches
-    await timeRequestPhase('refreshBranch', apiCtx.services.refreshActiveBranch)
+    await timeRequestPhase('refreshBranch', () => apiCtx.services.refreshActiveBranch())
 
     const authResult = await timeRequestPhase('auth', () => options.authPlugin.authenticate(req))
 

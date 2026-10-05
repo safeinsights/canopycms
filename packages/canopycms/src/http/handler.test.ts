@@ -497,6 +497,24 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(200)
   })
 
+  it('calls refreshActiveBranch as a method of services', async () => {
+    const services = createMockServices()
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    services.refreshActiveBranch = refresh
+    const handler = createCanopyRequestHandler({
+      services: services as unknown as CanopyServices,
+      authPlugin: createMockAuthPlugin(),
+      getBranchContext: async () => null,
+    })
+
+    await handler(
+      createMockRequest({ method: 'GET', url: 'http://localhost:3000/api/canopycms/branches' }),
+      ['branches'],
+    )
+
+    expect(refresh.mock.contexts[0]).toBe(services)
+  })
+
   it('logs one timing summary per request under CANOPYCMS_DEBUG, naming the route pattern', async () => {
     const original = process.env.CANOPYCMS_DEBUG
     process.env.CANOPYCMS_DEBUG = 'true'
