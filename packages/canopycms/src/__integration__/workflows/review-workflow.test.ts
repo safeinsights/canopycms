@@ -11,6 +11,7 @@ import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
+import type { ApiResponse } from '../../api/types'
 import type {
   CommentsResponse,
   AddCommentResponse,
@@ -67,19 +68,23 @@ describe('Review Workflow Integration', () => {
     const createData = await createResponse.json<BranchResponse>()
     expect(createData.data?.branch.status).toBe('editing')
 
-    // STEP 2: Editor writes content (will fail due to collection bug)
-    await editorClient.put('/api/canopycms/feature-review-test/content/posts/test-post', {
-      collection: 'content/posts',
-      slug: 'test-post',
-      format: 'mdx',
-      data: {
-        title: 'Test Post',
-        author: 'Test Editor',
-        date: '2024-01-01',
-        tags: ['test'],
+    // STEP 2: Editor writes content
+    const firstWrite = await editorClient.put(
+      '/api/canopycms/feature-review-test/content/posts/test-post',
+      {
+        collection: 'content/posts',
+        slug: 'test-post',
+        format: 'mdx',
+        data: {
+          title: 'Test Post',
+          author: 'Test Editor',
+          date: '2024-01-01',
+          tags: ['test'],
+        },
+        body: 'This needs review',
       },
-      body: 'This needs review',
-    })
+    )
+    expect(firstWrite.status).toBe(200)
 
     // STEP 3: Editor submits for review
     const submitResponse = await editorClient.post('/api/canopycms/feature-review-test/submit', {
@@ -115,18 +120,23 @@ describe('Review Workflow Integration', () => {
     expect(requestChangesData.data?.branch.status).toBe('editing')
 
     // STEP 6: Editor updates content and resubmits
-    await editorClient.put('/api/canopycms/feature-review-test/content/posts/test-post', {
-      collection: 'content/posts',
-      slug: 'test-post',
-      format: 'mdx',
-      data: {
-        title: 'Test Post',
-        author: 'Test Editor',
-        date: '2024-01-01',
-        tags: ['test'],
+    const update = await editorClient.put(
+      '/api/canopycms/feature-review-test/content/posts/test-post',
+      {
+        expectedVersion: (firstWrite.body as ApiResponse<{ version?: number }>).data?.version,
+        collection: 'content/posts',
+        slug: 'test-post',
+        format: 'mdx',
+        data: {
+          title: 'Test Post',
+          author: 'Test Editor',
+          date: '2024-01-01',
+          tags: ['test'],
+        },
+        body: 'This needs review. Added more details as requested.',
       },
-      body: 'This needs review. Added more details as requested.',
-    })
+    )
+    expect(update.status).toBe(200)
 
     const resubmitResponse = await editorClient.post('/api/canopycms/feature-review-test/submit', {
       message: 'Updated with more details',
