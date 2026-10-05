@@ -25,7 +25,6 @@ span files.
   branch-metadata.ts.
 - `provisioning-lock.ts` (`provisioningLockOptions`): every lock anchors proper-lockfile on its
   own marker path, so two locks never alias one registry entry.
-- `request-timing.ts` (module header): `http/handler.ts` opens the scope.
 - `sanitize-href.ts` (`declaresScheme`): the one statement of the WHATWG backslash-equals-slash
   rule; every off-site check routes through it.
 - `title-field.ts` (`resolveEntryTitle`): client-safe; exported from both `canopycms/server`
