@@ -14,7 +14,7 @@ import { findBodyFieldName } from './utils/body-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
-import { validateAndNormalizePath } from './paths'
+import { entryLogicalPath, validateAndNormalizePath } from './paths'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
@@ -204,8 +204,8 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
  * unfiltered exactly as build-time callers want.
  */
 export interface ContentVisibilityOptions {
-  /** Return false to drop an entry. Receives the entry's branch-root-relative physical path. */
-  shouldInclude?: (physicalPath: PhysicalPath) => boolean
+  /** Return false to drop an entry. Receives the entry's logical path (see `entryLogicalPath`). */
+  shouldInclude?: (logicalPath: LogicalPath) => boolean
 }
 
 /** A collection node from the flattened schema. */
@@ -310,7 +310,7 @@ export async function listEntries<T = Record<string, unknown>>(
       const entries = await listCollectionEntries(branchRoot, collection, (file) =>
         skippedFiles.push(file),
       )
-      const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+      const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.logicalPath)) : entries
       // Resolve AFTER the visibility filter (a denied entry is never resolved, so its
       // references cost nothing and leak nothing) and BEFORE the mapping below, so
       // `extract` and `filter` both see resolved data — which is the entire point.
@@ -550,7 +550,7 @@ export const listCollectionEntries = async (
       ])
 
       const item: CollectionListItem = {
-        logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
+        logicalPath: entryLogicalPath(collection.logicalPath, slug),
         contentId,
         slug,
         collectionPath: collection.logicalPath,

@@ -221,7 +221,7 @@ describe('listEntries / buildContentTree path ACLs', () => {
         updatedBy: 'tester',
         pathPermissions: [
           {
-            path: 'content/docs/doc.secret.aB3cD4eF5gH6.json',
+            path: 'content/docs/secret',
             read: { allowedUsers: ['other'] },
           },
           { path: 'content/docs/guides/**', read: { allowedUsers: ['other'] } },
@@ -355,6 +355,101 @@ describe('listEntries / buildContentTree path ACLs', () => {
 
     await expect(ctx.listEntries()).rejects.toThrow('settings branch unavailable')
     await expect(ctx.buildContentTree()).rejects.toThrow('settings branch unavailable')
+  })
+
+  describe('against the id-suffixed on-disk layout', () => {
+    /** Collection directories and entry files carry content ids, as the CMS writes them. */
+    const writeIdSuffixedContent = async () => {
+      const docsDir = path.join(root, 'content/docs.bChqT78gcaLd')
+      const guidesDir = path.join(docsDir, 'guides.meiuwxTSo7UN')
+      const postsDir = path.join(root, 'content/posts.q52DCVPuH4ga')
+      await fs.mkdir(guidesDir, { recursive: true })
+      await fs.mkdir(postsDir, { recursive: true })
+      await fs.writeFile(
+        path.join(docsDir, 'doc.public.RRMDbToFJNTf.json'),
+        JSON.stringify({ title: 'Public' }),
+      )
+      await fs.writeFile(
+        path.join(guidesDir, 'guide.index.cD5eF6gH7jK8.md'),
+        matter.stringify('Guides landing', { title: 'Guides Index' }),
+      )
+      await fs.writeFile(
+        path.join(guidesDir, 'guide.setup.aB3cD4eF5gH6.md'),
+        matter.stringify('Setup', { title: 'Setup Guide' }),
+      )
+      await fs.writeFile(
+        path.join(postsDir, 'post.hello.gnVmHnnMjWrD.md'),
+        matter.stringify('Hello', { title: 'Hello Post' }),
+      )
+    }
+
+    /** Restrict `read` on the nested guides collection, written as the Permission Manager writes it. */
+    const writeLogicalRule = async () => {
+      await fs.writeFile(
+        path.join(root, 'permissions.json'),
+        JSON.stringify({
+          updatedAt: new Date().toISOString(),
+          updatedBy: 'tester',
+          pathPermissions: [
+            { path: 'content/docs/guides/**', read: { allowedGroups: ['insiders'] } },
+          ],
+        }),
+      )
+    }
+
+    const regularContext = async () =>
+      createCanopyContext({
+        services: await createServices(),
+        extractUser: async () => REGULAR_USER,
+      }).getContext()
+
+    it('omits entries under a restricted logical path from listEntries', async () => {
+      await writeIdSuffixedContent()
+      await writeLogicalRule()
+
+      const slugs = (await (await regularContext()).listEntries()).map((i) => i.slug)
+      expect(slugs).toEqual(expect.arrayContaining(['public', 'hello']))
+      expect(slugs).not.toContain('setup')
+      expect(slugs).not.toContain('index')
+    })
+
+    it('omits them from buildContentTree, including meta.indexEntry', async () => {
+      await writeIdSuffixedContent()
+      await writeLogicalRule()
+
+      const seenIndexTitles: unknown[] = []
+      const tree = await (
+        await regularContext()
+      ).buildContentTree({
+        extract: (data, meta) => {
+          if (meta.kind === 'collection' && meta.indexEntry) {
+            seenIndexTitles.push((meta.indexEntry.data as { title?: string }).title)
+          }
+          return data
+        },
+      })
+      const flatten = (nodes: typeof tree): typeof tree =>
+        nodes.flatMap((n) => [n, ...flatten(n.children ?? [])])
+      const slugs = flatten(tree).map((n) => n.entry?.slug)
+      expect(slugs).toContain('public')
+      expect(slugs).not.toContain('setup')
+      expect(seenIndexTitles).not.toContain('Guides Index')
+    })
+
+    it('forbids read() of a restricted entry and allows an unrestricted one', async () => {
+      await writeIdSuffixedContent()
+      await writeLogicalRule()
+
+      const ctx = await regularContext()
+      const allowed = await ctx.read<{ title: string }>({
+        entryPath: 'content/docs',
+        slug: 'public',
+      })
+      expect(allowed?.data.title).toBe('Public')
+      await expect(ctx.read({ entryPath: 'content/docs/guides', slug: 'setup' })).rejects.toThrow(
+        /Forbidden/,
+      )
+    })
   })
 })
 

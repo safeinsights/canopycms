@@ -51,19 +51,28 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
-### Saving groups or permissions no longer queues a doomed pull-request task — **breaking (config), for a config that sets `autoCreateSettingsPR`**
+### Saving groups or permissions no longer queues a doomed PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
-**What changed.** The settings branch is an orphan with no history in common with the base branch,
-so GitHub always rejected a PR for it, and every admin save of groups or permissions left a failed
-`push-and-create-or-update-pr` task in System health. A settings save now enqueues a `push-branch`
-task instead, and the worker refuses to open a PR for a branch carrying the reserved
-`canopycms-settings-` prefix. The `autoCreateSettingsPR` config option is removed.
+**What changed.** The settings branch is an orphan, so GitHub rejected every PR for it and each
+settings save left a failed task in System health. A save now only pushes the branch, and the
+worker never opens a PR for a `canopycms-settings-` branch.
 
-**To adopt.** Delete `autoCreateSettingsPR` from your `canopycms.config.ts`. Settings changes were
-already live when saved; nothing ever reviewed them through a PR.
+**To adopt.** Delete `autoCreateSettingsPR` from `canopycms.config.ts`.
 
-**Now deletable.** The `autoCreateSettingsPR` line, and any alert or filter written to ignore the
-failed settings-PR tasks.
+**Now deletable.** Filters that hid the failed settings-PR tasks.
+
+### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
+
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`), as the Permission
+Manager writes them. Enforcement checked the id-suffixed on-disk path, so collection and entry rules
+matched nothing; only a glob that also matched on-disk names, such as `content/**`, worked. Renaming now also requires edit access at the new path.
+
+**To adopt.** Review your rules (Settings → Manage Permissions) before upgrading: collection rules
+that never took effect will start to. Rewrite any rule naming an id-suffixed directory or a file
+extension (`content/blog.<id>/**`, `content/about.json`) in logical form (`content/blog/**`,
+`content/about`).
+
+**Now deletable.** A content-root grant that worked around inert collection grants.
 
 ---
 
