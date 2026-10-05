@@ -147,7 +147,6 @@ describe('config validation', () => {
       githubTokenEnvVar: 'MY_BOT_TOKEN',
       deployedAs: 'static',
       settingsBranch: 'canopy-settings',
-      autoCreateSettingsPR: true,
       allowNetworkRemoteInProd: true,
       editor: { title: 'My Editor' },
       entryLinkUrl: () => '/some/url',
@@ -160,7 +159,6 @@ describe('config validation', () => {
     expect(config.githubTokenEnvVar).toBe('MY_BOT_TOKEN')
     expect(config.deployedAs).toBe('static')
     expect(config.settingsBranch).toBe('canopy-settings')
-    expect(config.autoCreateSettingsPR).toBe(true)
     expect(config.allowNetworkRemoteInProd).toBe(true)
     expect(config.editor?.title).toBe('My Editor')
     expect(typeof config.entryLinkUrl).toBe('function')

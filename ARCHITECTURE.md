@@ -259,7 +259,7 @@ Full-featured local development with branching and git operations — a local si
 
 ### prod
 
-Branch workspaces live on persistent storage (EFS on AWS), and GitHub integration handles PR creation and management. Settings live on the orphan branch `canopycms-settings-{deploymentName}` (default `canopycms-settings-prod`), whose name the operating mode strategy computes; changes there open PRs, so permission changes get the same review as content. Settings PR creation follows the same dual path as content branches: directly when `githubService` is available, otherwise a `push-and-create-or-update-pr` task for the worker, which checks for an existing open PR first since the same branch is updated repeatedly.
+Branch workspaces live on persistent storage (EFS on AWS), and GitHub integration handles PR creation and management. Settings live on the orphan branch `canopycms-settings-{deploymentName}` (default `canopycms-settings-prod`), whose name the operating mode strategy computes; it is pushed to GitHub but never PR'd, because an orphan branch shares no history with the base. Changes take effect when saved; the branch history is the audit trail. The push is direct when `githubService` is available, otherwise a `push-branch` task for the worker.
 
 **Security:** in both modes the system throws if the settings branch cannot be loaded, so permissions are never accidentally read from a content branch. Concurrent admin updates to settings files are guarded by the locking stack in [Storage Architecture](#storage-architecture): a conflicting update is rejected and surfaced to the admin rather than silently overwriting another admin's change.
 
@@ -417,7 +417,7 @@ Canopy's many git clones (one per branch workspace, plus settings workspaces) li
 
 When `githubService` is unavailable because the host has no internet, PR operations are queued as task files on the shared filesystem, which the worker moves through status directories ([task-queue/README.md](packages/canopycms/src/task-queue/README.md) has the layout and crash-safety rules). The shared `github-sync.ts` helpers (`syncSubmitPr()`, `syncConvertToDraft()`) use `githubService` directly when it exists and fall back to the queue when it does not, so API handlers never encode the deployment topology.
 
-Task actions cover pushing a branch to GitHub, pushing plus creating or updating a PR, converting a PR to draft (withdraw), closing a PR, and deleting a remote branch. **`push-and-create-or-update-pr` is the standard path** for both content submits and settings syncs: it pushes, updates any existing open PR for the branch in place, and creates one only if none exists — so either can be retried after a partial failure (the PR created on GitHub but its number never recorded) without hitting GitHub's duplicate-PR error. `createOrUpdatePullRequest` is the one implementation of that idempotency, shared by the worker task and the direct-API path; content submits additionally set `markReadyIfDraft`, which settings syncs omit since they are not review requests.
+Task actions cover pushing a branch to GitHub, pushing plus creating or updating a PR, converting a PR to draft (withdraw), closing a PR, and deleting a remote branch. **`push-and-create-or-update-pr` is the standard path** for content submits: it pushes, updates any existing open PR for the branch in place, and creates one only if none exists — so either can be retried after a partial failure (the PR created on GitHub but its number never recorded) without hitting GitHub's duplicate-PR error. `createOrUpdatePullRequest` is the one implementation of that idempotency, shared by the worker task and the direct-API path; content submits additionally set `markReadyIfDraft`. The worker refuses a PR for the settings branch (it pushes only), so a task queued for one cannot fail on GitHub's no-common-history error.
 
 Branch metadata carries a `syncStatus` (`synced`, `pending-sync`, `sync-failed`) so the editor can show progress, paired with a `syncFailureReason` recording why (see [Push Rejection](#push-rejection)). Settings commits return the same values for the permissions and groups UI.
 
@@ -442,7 +442,7 @@ The worker's own settings-branch push has no task to fail into, so it logs a war
 
 ### Settings-Specific Git Helpers
 
-Content operations always work on the current branch; settings operations must route to the settings branch, whose name depends on the mode and deployment. `settings-helpers.ts` holds that mode-aware logic in one place so the permissions and groups APIs cannot drift apart. `getSettingsBranchContext()` resolves which branch to use and **throws if the settings branch cannot be loaded**, in both modes, so permissions are never read from a content branch. `commitSettings()` commits and pushes with mode-specific behavior: in dev to the settings branch in the local bare remote with no PR, in prod through `commitToSettingsBranch()` with the dual-path PR creation above, under `autoCreateSettingsPR` (default true).
+Content operations always work on the current branch; settings operations must route to the settings branch, whose name depends on the mode and deployment. `settings-helpers.ts` holds that mode-aware logic in one place so the permissions and groups APIs cannot drift apart. `getSettingsBranchContext()` resolves which branch to use and **throws if the settings branch cannot be loaded**, in both modes, so permissions are never read from a content branch. `commitSettings()` commits and pushes with mode-specific behavior: in dev to the settings branch in the local bare remote, in prod through `commitToSettingsBranch()`, which also pushes to GitHub as above. Neither mode opens a PR.
 
 **Cross-process locking.** Settings workspace initialization takes an in-process lock and then the same server-enforced provisioning lock content clones use, because Lambda containers share EFS but not memory, and two cold starts would otherwise clone into one directory. See [docs/concurrency.md](docs/concurrency.md#settings-workspace-init-and-background).
 
@@ -601,7 +601,7 @@ Around that core: the resolver skips fenced code blocks and inline code spans, s
 
 Comments support asynchronous review at three attachment levels — **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments on the changeset — stored per branch in `.canopy-meta/comments.json`. Thread resolution is controlled by the thread author, users with review access, or admins.
 
-Comments are **not committed to git**, automatically excluded via git info/exclude: they are ephemeral discussion about a change rather than published content. Groups and permissions go the other way, onto a version-controlled settings branch, because who can edit what should be reviewable as a PR and revertible like anything else.
+Comments are **not committed to git**, automatically excluded via git info/exclude: they are ephemeral discussion about a change rather than published content. Groups and permissions go the other way, onto a version-controlled settings branch, because who can edit what should be revertible like anything else, with the branch history as the audit trail.
 
 Comment writes are safe under concurrent authors, including two Lambda containers writing at the same moment: an in-process mutex, a server-enforced cross-host lock, and per-write version checks compose so a comment cannot be silently lost to a write on another host (see [docs/concurrency.md](docs/concurrency.md)).
 
@@ -853,7 +853,7 @@ Two consequences. CDK attaches baseline execution policies, and a VPC-attached f
 
 ### Why do settings use a separate branch?
 
-So that permission updates never interfere with content editing and content PRs cannot accidentally carry permission changes. A settings PR must be explicitly merged, which is what prevents accidental permission escalation or lockout, and the branch's history is the audit trail for who changed access and when.
+So that permission updates never interfere with content editing and content PRs cannot accidentally carry permission changes. The branch's history is the audit trail for who changed access and when.
 
 ### Why does `canopycms init` scaffold `defaultBranchAccess: 'deny'`?
 

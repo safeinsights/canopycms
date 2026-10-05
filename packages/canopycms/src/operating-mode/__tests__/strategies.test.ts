@@ -262,16 +262,6 @@ describe('Operating Mode Strategies', () => {
         }).not.toThrow()
       })
 
-      it('should create permissions PR by default', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({})).toBe(true)
-      })
-
-      it('should respect autoCreatePermissionsPR config', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({ autoCreateSettingsPR: false })).toBe(false)
-      })
-
       it('should return git exclude pattern', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
@@ -338,11 +328,6 @@ describe('Operating Mode Strategies', () => {
       it('should use separate settings branch', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.usesSeparateSettingsBranch()).toBe(true)
-      })
-
-      it('should NOT create permissions PR', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({})).toBe(false)
       })
 
       it('should return git exclude pattern', () => {

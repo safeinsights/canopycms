@@ -126,16 +126,14 @@ export interface CanopyServices {
   }) => Promise<void>
   /** Submit branch: commit all changes and push to remote */
   submitBranch: (options: { context: BranchContext; message?: string }) => Promise<void>
-  /** Commit to settings branch (for permissions/groups), with optional PR creation */
+  /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
   commitToSettingsBranch: (options: {
     branchRoot: string
     files: string | string[]
     message: string
-    createPR?: boolean
   }) => Promise<{
     committed: boolean
     pushed: boolean
-    prUrl?: string
     error?: string
     syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }>
@@ -343,11 +341,9 @@ async function _createCanopyServicesInternal(
     branchRoot: string
     files: string | string[]
     message: string
-    createPR?: boolean
   }): Promise<{
     committed: boolean
     pushed: boolean
-    prUrl?: string
     error?: string
     syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }> => {
@@ -397,58 +393,30 @@ async function _createCanopyServicesInternal(
         }
       }
 
-      // Create or update PR — dual-path like content branches (api/github-sync.ts)
-      if (options.createPR !== false) {
-        // Permissions and groups are read live from the settings workspace
-        // (getSettingsBranchRoot), never from this PR's base branch, so the
-        // change took effect when it was committed and pushed above, before
-        // this PR existed. Merging re-activates nothing; it only records the
-        // change on `base` for review and audit history.
-        const settingsPRBody =
-          'Automated PR for permission and group changes. These changes already took ' +
-          'effect in the CMS when they were saved — merging this PR does not change ' +
-          "what's live; it only records the change here for review and audit history."
-        // Direct path: githubService available (has internet)
-        if (githubService) {
-          let prUrl: string | undefined
-          try {
-            // Settings-branch PRs never pass markReadyIfDraft: a settings sync
-            // has no explicit "submit for review" step the way a content submit
-            // does, so an existing draft PR stays draft until an admin says so.
-            const result = await githubService.createOrUpdatePR({
-              head: settingsBranch,
-              base: config.defaultBaseBranch ?? 'main',
-              title: 'Update permissions and groups',
-              body: settingsPRBody,
-            })
-            prUrl = result.url
-          } catch (err) {
-            console.warn('Failed to create/update PR:', err)
-            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-          }
-          return { committed: true, pushed: true, prUrl, syncStatus: 'synced' }
-        }
-
-        // Async path: queue task for worker (prod Lambda has no internet)
-        const taskDir = getTaskQueueDir(config)
-        try {
-          await enqueueTask(taskDir, {
-            action: 'push-and-create-or-update-pr',
-            payload: {
-              branch: settingsBranch,
-              baseBranch: config.defaultBaseBranch ?? 'main',
-              title: 'Update permissions and groups',
-              body: settingsPRBody,
-            },
-          })
-          return { committed: true, pushed: true, syncStatus: 'pending-sync' }
-        } catch (err) {
-          console.warn('Failed to enqueue settings PR task:', err)
-          return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-        }
+      // The settings branch is an orphan: it shares no history with the base
+      // branch, so GitHub rejects a PR for it. The change took effect when it
+      // was committed and pushed above (permissions and groups are read live
+      // from the settings workspace); the only GitHub step is mirroring the
+      // branch, so there is never a PR.
+      if (!operatingStrategy(mode).supportsPullRequests()) {
+        return { committed: true, pushed: true }
       }
-
-      return { committed: true, pushed: true }
+      // With a githubService the push above already reached GitHub, as for a
+      // content submit. Without one (prod Lambda has no internet) the worker
+      // pushes it.
+      if (githubService) {
+        return { committed: true, pushed: true, syncStatus: 'synced' }
+      }
+      try {
+        await enqueueTask(getTaskQueueDir(config), {
+          action: 'push-branch',
+          payload: { branch: settingsBranch },
+        })
+        return { committed: true, pushed: true, syncStatus: 'pending-sync' }
+      } catch (err) {
+        console.warn('Failed to enqueue settings push task:', err)
+        return { committed: true, pushed: true, syncStatus: 'sync-failed' }
+      }
     } catch (error) {
       return {
         committed: false,

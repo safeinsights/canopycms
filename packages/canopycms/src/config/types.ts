@@ -409,7 +409,6 @@ export interface CanopyConfig {
   /** Escape hatch for a prod host with real internet access — see {@link CanopyConfigInput.allowNetworkRemoteInProd}. */
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
-  autoCreateSettingsPR?: boolean
   deploymentName?: string
   contentRoot: ContentRoot
   sourceRoot?: SourceRoot
@@ -459,7 +458,6 @@ export interface CanopyConfigInput {
    */
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
-  autoCreateSettingsPR?: boolean
   deploymentName?: string
   contentRoot?: string
   sourceRoot?: string

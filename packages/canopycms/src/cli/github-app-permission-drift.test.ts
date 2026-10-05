@@ -175,6 +175,7 @@ function taskContext(octokit: Octokit): TaskRunnerContext {
     githubOwner: 'an-org',
     githubRepo: 'a-content-site',
     baseBranch: 'main',
+    ensureSettingsBranch: () => 'canopycms-settings-prod',
     octokit: () => octokit,
     // Git-over-HTTPS is covered by `contents: write` and is not an Octokit
     // call, so the push itself is stubbed out — this harness is about the REST

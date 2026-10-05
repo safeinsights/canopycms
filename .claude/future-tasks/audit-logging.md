@@ -10,13 +10,11 @@ Add comprehensive audit logging for permission and group changes beyond git hist
 
 - `updatedAt` and `updatedBy` fields in permissions.json and groups.json
 - Git history provides commit-level tracking
-- PR creation for settings changes in prod mode
 
 **Limitations:**
 
 - No structured audit log queryable without git access
 - No change notifications/webhooks
-- PR descriptions are generic (don't include detailed diffs)
 - No compliance-friendly audit reports
 
 ## Proposed Features
@@ -91,9 +89,9 @@ interface AuditQuery {
 - Notify admins when permissions change
 - Show "who changed what when" in UI
 
-### 4. Enhanced PR Descriptions
+### 4. Structured Commit Messages
 
-When creating settings PRs, include:
+Settings branches never get a PR (they are orphans), so put the diff in the commit message body of each settings commit:
 
 ```markdown
 ## Permission Changes by user-123 at 2024-01-12T15:30:00Z
@@ -115,7 +113,6 @@ When creating settings PRs, include:
 - **Editors**: Added user-789, removed user-012
 - **Reviewers**: No changes
 
-⚠️ **Note**: Changes are already active in the CMS. This PR provides review and persistence when merged.
 ```
 
 ### 5. Compliance Reports
@@ -143,10 +140,10 @@ Generate reports for compliance audits:
 2. Create `/api/audit` endpoint with filtering
 3. Add UI to view audit history (admin-only)
 
-### Phase 3: Enhanced PR Descriptions
+### Phase 3: Structured Commit Messages
 
 1. Generate structured diff in `commitToSettingsBranch`
-2. Include in PR body template
+2. Include in the commit message body
 3. Add links to specific changed rules
 
 ### Phase 4: Webhooks & Notifications

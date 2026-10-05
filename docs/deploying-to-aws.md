@@ -800,13 +800,15 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 1. Admin changes permissions/groups in the CMS UI
 2. Lambda commits changes to the settings branch workspace on EFS
 3. Lambda pushes the commit to `remote.git` (local bare repo on EFS)
-4. Lambda queues a `push-and-create-or-update-pr` task for the worker
-5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
+4. Lambda queues a `push-branch` task for the worker
+5. EC2 worker dequeues the task and pushes the settings branch from `remote.git` to GitHub
 6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
+
+The settings branch never gets a PR: it is an orphan with no history in common with the base branch, so GitHub rejects one. The change is live as soon as step 3 completes.
 
 ## Two deployments, one repository
 
-Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, permissions/groups PRs from one deployment get silently clobbered by the other's push, and a single PR ends up carrying unattributable diffs from two unrelated CMS instances.
+Two `CanopyCmsService` stacks can point at the same GitHub repo (e.g. a test stack and a prod stack, or two independently-deployed sites sharing one monorepo). If both are left at their defaults, **both resolve the same settings branch — `canopycms-settings-prod` — and fight over it**: whichever deployment's worker pushes last wins, one deployment's permissions and groups get silently clobbered by the other's push.
 
 The fix is to give each stack a distinct `deploymentName`:
 

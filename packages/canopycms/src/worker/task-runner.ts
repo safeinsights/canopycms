@@ -10,7 +10,7 @@ import {
 import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { sanitizeBranchName } from '../paths/branch-name'
+import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
@@ -58,6 +58,7 @@ export type TaskRunnerContext = Pick<
   | 'pushBranchToGitHub'
   | 'isRunning'
   | 'ensureStatusReport'
+  | 'ensureSettingsBranch'
 >
 
 /**
@@ -133,6 +134,14 @@ function isRateLimitSignal403(err: unknown): boolean {
 }
 
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
+
+/**
+ * Whether `branch` is a settings branch: the configured one (an adopter-supplied
+ * `settingsBranch` need not carry the reserved prefix) or any reserved-prefix name.
+ */
+function isSettingsBranch(ctx: Pick<TaskRunnerContext, 'ensureSettingsBranch'>, branch: string) {
+  return branch === ctx.ensureSettingsBranch() || branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+}
 
 function requireString(payload: Record<string, unknown>, key: string): string {
   const val = payload[key]
@@ -354,6 +363,13 @@ export async function executeTask(
           `Refusing to push-and-create-or-update-pr for "${branch}": it is the base branch -- submitting the base branch is never valid`,
         )
       }
+      // The settings branch is an orphan with no history in common with the
+      // base, so GitHub 422s a PR for it: push it and stop.
+      if (isSettingsBranch(ctx, branch)) {
+        await ctx.pushBranchToGitHub(branch)
+        workerLog(`Pushed settings branch ${branch}; settings branches never get a PR`)
+        return { pushed: true }
+      }
       await ctx.pushBranchToGitHub(branch)
 
       const result = await createOrUpdatePullRequest({
@@ -364,8 +380,6 @@ export async function executeTask(
         base,
         title: optionalString(payload, 'title', `Submit ${branch}`),
         body: optionalString(payload, 'body', ''),
-        // Content submits (api/github-sync.ts) set this; settings-branch
-        // syncs (services.ts) deliberately don't.
         markReadyIfDraft: payload.markReadyIfDraft === true,
         signal,
       })

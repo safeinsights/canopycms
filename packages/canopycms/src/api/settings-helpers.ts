@@ -48,7 +48,7 @@ export interface CommitSettingsResult {
 /**
  * Commit and push settings changes based on the mode.
  * Both prod and dev use commitToSettingsBranch.
- * In dev mode, commits to the settings branch but does not create a PR.
+ * Settings changes are never reviewed through a PR (see commitToSettingsBranch).
  */
 export async function commitSettings(
   ctx: ApiContext,
@@ -74,9 +74,6 @@ export async function commitSettings(
       branchRoot: options.branchRoot,
       files: options.fileName,
       message: options.message,
-      createPR: strategy.shouldCreateSettingsPR({
-        autoCreateSettingsPR: ctx.services.config.autoCreateSettingsPR,
-      }),
     })
 
     if (!result.pushed) {
