@@ -129,4 +129,22 @@ describe('DebugLogger', () => {
     expect(line).toContain('[CanopyCMS:cat]')
     expect(line).toContain('[DEBUG]')
   })
+
+  it('times concurrent same-label spans independently', async () => {
+    const logger = createDebugLogger({ enabled: true })
+    // A starts at 1000; B starts at 1010 and ends at 1015; A ends at 1100.
+    const clock = [1000, 1010, 1015, 1100]
+    vi.spyOn(Date, 'now').mockImplementation(() => clock.shift() ?? 0)
+    let releaseA!: () => void
+    const a = logger.timed('cat', 'ensure', () => new Promise<void>((r) => (releaseA = r)))
+    await logger.timed('cat', 'ensure', async () => undefined)
+    releaseA()
+    await a
+
+    expect(console.warn).not.toHaveBeenCalled()
+    const durations = vi
+      .mocked(console.log)
+      .mock.calls.map((call) => (call[1] as { durationMs: number }).durationMs)
+    expect(durations).toEqual([5, 100])
+  })
 })
