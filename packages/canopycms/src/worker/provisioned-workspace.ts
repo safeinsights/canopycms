@@ -15,7 +15,16 @@ import { workerLogWarn } from './log'
 const WORKER_STALE_MS = 90_000
 
 export type ProvisionedWorkspaceHold =
-  | { kind: 'held'; release: () => Promise<void> }
+  | {
+      kind: 'held'
+      release: () => Promise<void>
+      /**
+       * Whether the lock was lost mid-hold (its marker vanished or was taken over), so another
+       * process may now be cloning into this directory. Callers check it before each destructive
+       * git step and stop rather than carry on unguarded.
+       */
+      isCompromised: () => boolean
+    }
   /** Another process holds the provisioning lock: a clone, or an admin purge or repair, is in flight. */
   | { kind: 'locked' }
   /** No clone with metadata at this path yet. */
@@ -40,11 +49,17 @@ export async function holdProvisionedWorkspace(
   dirName: string,
 ): Promise<ProvisionedWorkspaceHold> {
   let release: () => Promise<void>
+  let compromised = false
   try {
     release = await tryAcquireProvisioningLock(
       contentBranchesPath,
       branchProvisioningLockName(dirName),
-      undefined,
+      (err) => {
+        compromised = true
+        workerLogWarn(
+          `  Provisioning lock for ${dirName} was compromised mid-hold: ${getErrorMessage(err)}`,
+        )
+      },
       WORKER_STALE_MS,
     )
   } catch (err: unknown) {
@@ -63,7 +78,7 @@ export async function holdProvisionedWorkspace(
       () => false,
     ),
   ])
-  if (gitIsDir && hasMetadata) return { kind: 'held', release }
+  if (gitIsDir && hasMetadata) return { kind: 'held', release, isCompromised: () => compromised }
 
   await releaseProvisionedWorkspace(release, dirName)
   return { kind: 'not-provisioned' }

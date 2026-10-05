@@ -91,7 +91,9 @@ function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: 
   }
   return {
     disabled: lockFresh,
-    tooltip: lockFresh ? 'Provisioning may be in progress' : undefined,
+    tooltip: lockFresh
+      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      : undefined,
   }
 }
 

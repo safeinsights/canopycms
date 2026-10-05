@@ -2,7 +2,9 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { mockConsole } from '../test-utils'
 
 import { branchProvisioningLockName } from '../utils/provisioning-lock'
 import { holdProvisionedWorkspace } from './provisioned-workspace'
@@ -61,5 +63,35 @@ describe('holdProvisionedWorkspace', () => {
     const again = await holdProvisionedWorkspace(contentBranchesPath, 'feature')
     expect(again.kind).toBe('held')
     if (again.kind === 'held') await again.release()
+  })
+
+  it('reports a compromise once its marker vanishes mid-hold', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const consoleSpy = mockConsole()
+    try {
+      const root = path.join(contentBranchesPath, 'feature')
+      await fs.mkdir(path.join(root, '.git'), { recursive: true })
+      await fs.mkdir(path.join(root, '.canopy-meta'))
+      await fs.writeFile(path.join(root, '.canopy-meta', 'branch.json'), '{}')
+      const hold = await holdProvisionedWorkspace(contentBranchesPath, 'feature')
+      if (hold.kind !== 'held') throw new Error(`expected a hold, got ${hold.kind}`)
+      expect(hold.isCompromised()).toBe(false)
+
+      // Another process took the marker over; the next 15s refresh finds it gone.
+      await fs.rm(path.join(contentBranchesPath, branchProvisioningLockName('feature')), {
+        recursive: true,
+      })
+      await vi.advanceTimersByTimeAsync(16_000)
+      for (let i = 0; i < 200 && !hold.isCompromised(); i++) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
+
+      expect(hold.isCompromised()).toBe(true)
+      expect(consoleSpy).toHaveWarned(/Provisioning lock for feature was compromised mid-hold/)
+      await hold.release()
+    } finally {
+      vi.useRealTimers()
+      consoleSpy.restore()
+    }
   })
 })

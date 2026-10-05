@@ -588,6 +588,15 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       return { outcome: 'skipped-not-provisioned' }
     }
     releaseProvisioning = hold.release
+    // Checked before each destructive step: a lost lock means another process
+    // may be cloning into this directory.
+    const lockLost = (): BaseRefreshReport | null => {
+      if (!hold.isCompromised()) return null
+      workerLogWarn(
+        `Base branch workspace (${ctx.baseBranch}): provisioning lock lost mid-refresh, stopping`,
+      )
+      return { outcome: 'skipped-locked', trackedCanopyMeta }
+    }
 
     // Idempotent, and applied every cycle so any clone lacking it gets it.
     await ensureGitExcludePattern(basePath, `${CANOPY_META_DIR}/`)
@@ -620,6 +629,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     }
 
     let status = await baseGit.status()
+    const lostBeforeRestore = lockLost()
+    if (lostBeforeRestore) return lostBeforeRestore
     if (await restoreRetiredSchemaCache(baseGit, status)) {
       workerLog(
         `Base branch workspace (${ctx.baseBranch}): restored the retired in-tree schema cache`,
@@ -668,6 +679,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     )
 
     if (behindCount > 0) {
+      const lostBeforeMerge = lockLost()
+      if (lostBeforeMerge) return lostBeforeMerge
       // Untrack, in the index only, any state the tip has stopped tracking:
       // the merge would otherwise refuse to overwrite a modified copy, or
       // delete a clean one from disk. Safe here and not in the rebase loop,

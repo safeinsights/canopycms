@@ -235,12 +235,17 @@ const purgeBranchDirHandler = async (
   // (loadOnly threw). Only true orphans are subject to the youth rail below.
   const isTrueOrphan = !hadLoadError
 
-  // [H1] freshness rail: a fresh init lock means provisioning may genuinely
-  // be in progress; a stale one is just crash debris and does not block.
+  // [H1] freshness rail: a fresh init lock means provisioning, or the worker's
+  // sync of this branch, may genuinely be in progress; a stale one is just
+  // crash debris and does not block.
   const lockPath = path.join(baseRoot, branchProvisioningLockName(params.dirName))
   const lockStat = await fs.stat(lockPath).catch(() => null)
   if (lockStat && Date.now() - lockStat.mtimeMs < PROVISIONING_LOCK_FRESH_MS) {
-    return { ok: false, status: 409, error: 'Provisioning may be in progress' }
+    return {
+      ok: false,
+      status: 409,
+      error: 'Provisioning, or the worker syncing this branch, may be in progress',
+    }
   }
 
   // Youth rail: a brand-new orphan dir may be a clone that just hasn't
