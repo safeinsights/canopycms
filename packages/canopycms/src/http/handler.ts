@@ -234,8 +234,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       )
 
       // No remote means no settings workspace and nothing /admin could repair:
-      // the worker is still booting, so every caller gets the "still starting"
-      // 503, bootstrap admins included.
+      // the worker has not created the remote yet, so every caller gets the
+      // not-ready 503, bootstrap admins included.
       const notReady = workerNotReadyResponse(err)
       if (notReady) return notReady
 

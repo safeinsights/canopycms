@@ -221,7 +221,8 @@ describe('Next.js adapter', () => {
         expect(response.body).toEqual({
           ok: false,
           status: 503,
-          error: 'CMS worker not ready — the CMS is still starting. Try again in a minute.',
+          error:
+            'CMS worker not ready — it may still be starting. Try again in a minute; if this persists, ask an admin to check the CMS worker.',
         })
         expect(response.headers).toEqual({ 'Retry-After': '30' })
       } finally {

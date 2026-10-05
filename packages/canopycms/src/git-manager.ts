@@ -205,7 +205,7 @@ export class GitRemoteRefMissingError extends Error {
  * No git remote is configured and the one the strategy auto-detects does not
  * exist yet: in prod, the EC2 worker creates `{workspaceRoot}/remote.git` on
  * its first boot, so until then every request that needs a workspace fails
- * here. Transient, unlike a missing remote in a mode with nothing to wait for.
+ * here. Usually transient, unlike a missing remote in a mode with nothing to wait for.
  * The HTTP layer maps it to a 503 (`http/worker-not-ready.ts`).
  */
 export class RemoteNotReadyError extends Error {

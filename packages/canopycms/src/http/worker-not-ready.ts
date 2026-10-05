@@ -6,7 +6,7 @@ import { jsonResponse, type CanopyResponse } from './types'
 const RETRY_AFTER_SECONDS = '30'
 
 export const WORKER_NOT_READY_MESSAGE =
-  'CMS worker not ready — the CMS is still starting. Try again in a minute.'
+  'CMS worker not ready — it may still be starting. Try again in a minute; if this persists, ask an admin to check the CMS worker.'
 
 /**
  * The 503 for a request that hit {@link RemoteNotReadyError}, or `undefined`
