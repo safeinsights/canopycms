@@ -439,7 +439,7 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
           {
             getSettingsBranchRoot: servicesB.getSettingsBranchRoot,
             mode: 'prod',
-            bootstrapAdminIds: new Set(),
+            bootstrapAdminIds: new Set(['admin-a']),
           },
         )
 
