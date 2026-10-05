@@ -41,6 +41,14 @@ strictly to enforce it.
 
 ## Related
 
+- The editor's own API calls are a separate, solved concern (PR #366):
+  `withCanopy` sets `env.CANOPY_API_TRAILING_SLASH`, which the API client
+  reads (`packages/canopycms/src/api/request-url.ts`) and then slashes paths
+  with the same `withTrailingSlash()` (in `utils/url-prefix.ts`). That rule
+  leaves a dotted last segment unslashed, because Next's own `trailingSlash`
+  redirects treat it as a file; a site-link helper must follow it too.
+- Two more surfaces with the same rule: [seo-trailing-slash-default-from-withcanopy.md](seo-trailing-slash-default-from-withcanopy.md)
+  (sitemap/metadata) and [preview-src-trailing-slash.md](preview-src-trailing-slash.md) (editor preview iframe).
 - Trailing-slash routing is listed in the capabilities-both-sites-built table
   from the go-live briefing alongside search index, sitemap+SEO, and heading
   annotation — all independently-built-twice capabilities from the same

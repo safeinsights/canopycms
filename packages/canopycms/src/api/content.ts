@@ -86,11 +86,12 @@ export interface WriteContentBody {
   data?: Record<string, unknown>
   body?: string
   /**
-   * OCC / create-intent token. Omit for a blind write (no opinion). A number
-   * from a prior read/write response rejects the write with 409 if the file
-   * has changed since. `null` means "this entry must not already exist" —
-   * the create path uses this so a create against an existing slug is
-   * rejected with 409 instead of silently overwriting it.
+   * OCC token. A number from a prior read/write response makes this an update,
+   * rejected with 409 if the file's mtime no longer matches (a file deleted
+   * since is written anew). `null` or omitted makes it
+   * a create, rejected with 409 if the entry already exists. There is no blind
+   * write: without a token, "no conflict detection" would be indistinguishable
+   * from "lost the token", so an update has to prove which version it read.
    */
   expectedVersion?: number | null
 }
@@ -141,7 +142,7 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: boundedContentDataSchema.optional(),
   body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
-  // null = create-intent ("must not already exist"); see WriteContentBody.
+  // null or omitted = create ("must not already exist"); see WriteContentBody.
   expectedVersion: z.number().nullish(),
 })
 
@@ -321,22 +322,24 @@ const writeContentHandler = async (
 
   const data = body.data ?? {}
   const isDataOnly = isDataOnlyFormat(body.format)
+  // The store's own `undefined` (blind write) is never reachable from here: an omitted token is
+  // a create, so an update that lost its token 409s instead of overwriting unchecked.
+  const expectedVersion = body.expectedVersion ?? null
+  const createConflictError =
+    body.expectedVersion === null
+      ? `An entry with slug "${slug}" already exists`
+      : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
-    // Create-intent guard: a create request (expectedVersion === null) against a slug that
-    // already has content must never silently overwrite it — short-circuit with 409 before field
-    // validation runs, so the error names the real problem instead of "field is required" or a
-    // bare conflict. store.write() re-enforces this itself inside its per-entry lock against a
-    // fresh stat (the race-safe authoritative check); this is just a cheaper fast path for the
-    // common case.
-    if (body.expectedVersion === null && exists) {
-      return {
-        ok: false,
-        status: 409,
-        error: `An entry with slug "${slug}" already exists`,
-      }
+    // Create guard: a create against a slug that already has content must never silently
+    // overwrite it — short-circuit with 409 before field validation runs, so the error names the
+    // real problem instead of "field is required" or a bare conflict. store.write() re-enforces
+    // this itself inside its per-entry lock against a fresh stat (the race-safe authoritative
+    // check); this is just a cheaper fast path for the common case.
+    if (expectedVersion === null && exists) {
+      return { ok: false, status: 409, error: createConflictError }
     }
 
     // [SLUG] Create-only routability check: `writeContentParamsSchema.path`'s `parseLogicalPath`
@@ -505,13 +508,13 @@ const writeContentHandler = async (
       ? {
           format: body.format as 'json' | 'yaml',
           data: normalizedData ?? {},
-          expectedVersion: body.expectedVersion,
+          expectedVersion,
         }
       : {
           format: body.format as 'md' | 'mdx',
           data: normalizedData,
           body: body.body ?? '',
-          expectedVersion: body.expectedVersion,
+          expectedVersion,
         }
 
     // Pass the resolved entryTypeName (not the raw, possibly-omitted
@@ -559,12 +562,8 @@ const writeContentHandler = async (
       }
       // Race-safe fallback: the early `exists` check above catches the common case; this covers a
       // collision that lands between that check and store.write()'s in-lock stat.
-      if (body.expectedVersion === null) {
-        return {
-          ok: false,
-          status: 409,
-          error: `An entry with slug "${slug}" already exists`,
-        }
+      if (expectedVersion === null) {
+        return { ok: false, status: 409, error: createConflictError }
       }
       return {
         ok: false,
