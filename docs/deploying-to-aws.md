@@ -1121,6 +1121,8 @@ CloudWatch log group (`/canopycms/<stackName>/worker` — see
 shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
 works.
 
+**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists.
+
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
 **Preview not rendering**: Make sure your page components use `useCanopyPreview` and the CMS Lambda has the same React components as the public site (same app, two builds).

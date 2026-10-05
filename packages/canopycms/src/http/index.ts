@@ -6,3 +6,6 @@ export { createCanopyRouter } from './router'
 
 export type { CanopyHandlerOptions, CanopyRequestHandler } from './handler'
 export { createCanopyRequestHandler, createCanopyRequestHandlerFromConfig } from './handler'
+
+export { RemoteNotReadyError } from '../git-manager'
+export { workerNotReadyResponse, WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
