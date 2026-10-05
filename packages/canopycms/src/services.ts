@@ -401,9 +401,9 @@ async function _createCanopyServicesInternal(
       if (!operatingStrategy(mode).supportsPullRequests()) {
         return { committed: true, pushed: true }
       }
-      // With a githubService the push above already reached GitHub, as for a
-      // content submit. Without one (prod Lambda has no internet) the worker
-      // pushes it.
+      // With a githubService the push above already reached GitHub: both it and
+      // the workspace remote come from `defaultRemoteUrl`. Without one (prod
+      // Lambda has no internet) the worker pushes it.
       if (githubService) {
         return { committed: true, pushed: true, syncStatus: 'synced' }
       }

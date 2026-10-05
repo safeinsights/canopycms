@@ -56,8 +56,8 @@ will not let a shipped version go unlisted.
 **What changed.** The settings branch is an orphan with no history in common with the base branch,
 so GitHub always rejected a PR for it, and every admin save of groups or permissions left a failed
 `push-and-create-or-update-pr` task in System health. A settings save now enqueues a `push-branch`
-task instead, and the worker refuses to open a PR for the settings branch. The `autoCreateSettingsPR`
-config option is removed.
+task instead, and the worker refuses to open a PR for a branch carrying the reserved
+`canopycms-settings-` prefix. The `autoCreateSettingsPR` config option is removed.
 
 **To adopt.** Delete `autoCreateSettingsPR` from your `canopycms.config.ts`. Settings changes were
 already live when saved; nothing ever reviewed them through a PR.

@@ -390,17 +390,17 @@ Clean the temp directory up in `afterEach` (`fs.rm(tempDir, { recursive: true, f
 
 Permissions and groups live in `permissions.json` and `groups.json` on an orphan branch named `canopycms-settings-{deploymentName}` — no shared history with content branches — in both modes. Dev clones that branch into `.canopy-dev/settings/`; prod additionally pushes it to GitHub. It is never PR'd: an orphan branch has no history in common with the base, so GitHub rejects the PR.
 
-| Mode   | Where settings live                                  | Git behavior                        |
-| ------ | ---------------------------------------------------- | ----------------------------------- |
-| `dev`  | Orphan branch, cloned into gitignored `.canopy-dev/` | Commits to the settings branch only |
-| `prod` | Orphan branch on the configured workspace root       | Commits, then pushes to GitHub      |
+| Mode   | Where settings live                                  | Git behavior                             |
+| ------ | ---------------------------------------------------- | ---------------------------------------- |
+| `dev`  | Orphan branch, cloned into gitignored `.canopy-dev/` | Commits, then pushes to the local remote |
+| `prod` | Orphan branch on the configured workspace root       | Commits, then pushes to GitHub           |
 
 In dev this lets you log in as different test users, put them in groups through the UI, and exercise permission scenarios without polluting git history or colliding with other developers. All of `.canopy-dev/` is gitignored via the `.canopy*` pattern (added by `npx canopycms init`), settings stay in the local bare remote, and changes survive a CMS restart. Verify with `git status` — `.canopy-dev/` should not appear; `git reset HEAD .canopy-dev/` if it ever gets staged.
 
 In prod:
 
 - Each deployment environment has its own independent settings branch, named from `deploymentName`.
-- `commitToSettingsBranch` in `services.ts` commits and pushes to the local remote, then, when there is no `githubService` (the Lambda has no internet), enqueues a `push-branch` task for the worker.
+- `commitToSettingsBranch` in `services.ts` commits and pushes to the workspace remote, then, when there is no `githubService` (the Lambda has no internet), enqueues a `push-branch` task for the worker.
 - Changes take effect in the CMS immediately, read from the settings branch workspace; nothing gates them.
 - **Writes go through a mutate callback, not a `save*()` function.** `mutatePermissionsFile`/`mutateGroupsFile` (`authorization/`), built on `settings-file-store.ts`'s `mutateSettingsJsonFile`, run load → mutate → write inside the cross-host layered lock, which closes the load-compare-write TOCTOU window. The OCC `version` field is the single counter. **Your callback must be safe to call more than once** — it re-runs against freshly reloaded state on every OCC retry. Throw `SettingsVersionConflictError` from inside it when an app-level `expectedContentVersion` mismatches; the API turns that into a 409. See [docs/concurrency.md](docs/concurrency.md).
 - **Workspace provisioning has its own two locks**, separate from the per-file write lock above: an in-memory Promise lock against redundant calls inside one process, and a file-based `wx` lock (`O_CREAT|O_EXCL`) for atomic cross-process exclusion on EFS, with stale locks over 30s cleaned up.
