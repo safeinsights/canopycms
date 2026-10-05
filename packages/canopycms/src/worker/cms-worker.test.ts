@@ -1034,9 +1034,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
   /** Make `repo` refuse every pushed ref update the way GitHub refuses new workflow content. */
   const refuseLikeGitHubWorkflowCheck = async (repo: string) => {
-    // Dynamic import keeps the hook valid whether node loads it as CommonJS or ESM.
-    const hook = `#!${process.execPath}
-import('node:fs').then(({ readSync, writeSync }) => {
+    const script = `import('node:fs').then(({ readSync, writeSync }) => {
   let buf = Buffer.alloc(0)
   const readMore = () => {
     const chunk = Buffer.alloc(65536)
@@ -1069,8 +1067,15 @@ import('node:fs').then(({ readSync, writeSync }) => {
   writeSync(1, '0000')
 })
 `
+    const scriptPath = path.join(repo, 'hooks', 'proc-receive.cjs')
+    await fs.writeFile(scriptPath, script)
+    // A sh wrapper rather than a node shebang, which the kernel splits at a space in the path.
+    const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
     const hookPath = path.join(repo, 'hooks', 'proc-receive')
-    await fs.writeFile(hookPath, hook)
+    await fs.writeFile(
+      hookPath,
+      `#!/bin/sh\nexec ${shQuote(process.execPath)} ${shQuote(scriptPath)} "$@"\n`,
+    )
     await fs.chmod(hookPath, 0o755)
     await simpleGit({ baseDir: repo, config: ['safe.bareRepository=all'] }).raw([
       'config',

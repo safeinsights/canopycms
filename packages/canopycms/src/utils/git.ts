@@ -96,7 +96,9 @@ export function isStaleLeaseRejection(message: string): boolean {
 
 // GitHub's reason text when a push would introduce workflow content the credential may not write.
 // It names the credential kind ("a GitHub App", "an OAuth App", ...) and then the file.
-const WORKFLOW_REFUSAL_PATTERN = /refusing to allow an? .+? to create or update workflow `([^`]+)`/
+// Both classes stop at a newline, so the match stays on the one status line that carries it.
+const WORKFLOW_REFUSAL_PATTERN =
+  /refusing to allow an? [^`\n]+? to create or update workflow `([^`\n]+)`/
 
 /**
  * The workflow file named by GitHub's refusal of a push that would add workflow content the

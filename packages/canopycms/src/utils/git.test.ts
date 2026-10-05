@@ -234,6 +234,11 @@ describe('workflowPushRefusalFile', () => {
     ['a stale lease', ' ! [rejected]        b -> b (stale info)\n'],
     ['a declined pre-receive hook', ' ! [remote rejected] b -> b (pre-receive hook declined)\n'],
     ['an auth failure', 'fatal: Could not read from remote repository.\n'],
+    [
+      'a refusal whose file name is not closed on its own line',
+      '[remote rejected] (refusing to allow a GitHub App to create or update workflow ' +
+        '`.github/workflows/ci.yml without workflows permission)\nTo https://github.com/o/r\n `',
+    ],
   ])('returns null for %s', (_label, message) => {
     expect(workflowPushRefusalFile(message)).toBeNull()
   })
