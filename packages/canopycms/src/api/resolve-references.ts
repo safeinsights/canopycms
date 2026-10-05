@@ -7,6 +7,7 @@ import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 import { buildResolvedReference } from '../entry-schema'
 import { computeEntryUrl } from '../utils/entry-url'
+import { entryLogicalPath } from '../paths'
 import { branchNameSchema, contentIdSchema } from './validators'
 
 export interface ResolveReferencesBody {
@@ -71,8 +72,7 @@ const resolveReferencesHandler = async (
       const result = await resolver.resolve(id)
       if (result && result.exists && result.collection && result.slug) {
         // Check path-level read permission before returning content
-        const resolvedPath = await store.resolveDocumentPath(result.collection, result.slug)
-        const access = checkAccess(resolvedPath.relativePath, 'read')
+        const access = checkAccess(entryLogicalPath(result.collection, result.slug), 'read')
         if (!access.allowed) continue
 
         // `resolveReferences: false` matches the server-side resolver (content-store.ts's

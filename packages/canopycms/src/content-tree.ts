@@ -237,7 +237,7 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
     collection: CollectionSchemaItem,
   ): Promise<CollectionListItem[]> => {
     const entries = await listCollectionEntries(branchRoot, collection)
-    const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.physicalPath)) : entries
+    const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.logicalPath)) : entries
     // Resolved here rather than at the two node-building sites so BOTH inherit it — the same
     // reason the ACL filter lives here. A denied entry is filtered above and never resolved.
     return resolver ? resolveCollectionItemReferences(visible, collection, resolver) : visible

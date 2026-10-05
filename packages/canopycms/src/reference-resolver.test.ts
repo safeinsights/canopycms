@@ -118,7 +118,7 @@ describe('ReferenceResolver', () => {
         'name',
         undefined,
         undefined,
-        (relativePath) => !relativePath.includes('bob'),
+        (logicalPath) => logicalPath !== 'content/authors/bob',
       )
 
       // Only the allowed candidate (alice) comes back...

@@ -369,7 +369,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
         return {}
       const { branchContext, branchRoot } = await resolveSchemaContext()
       const checkAccess = await services.createContentAccessChecker(branchContext, branchRoot, user)
-      return { shouldInclude: (physicalPath) => checkAccess(physicalPath, 'read').allowed }
+      return { shouldInclude: (logicalPath) => checkAccess(logicalPath, 'read').allowed }
     }
     const resolveVisibility = () => {
       if (!visibilityPromise) {
