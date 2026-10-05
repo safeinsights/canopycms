@@ -1,6 +1,7 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
 import {
+  BranchPathError,
   resolveBranchPaths,
   type ContentId,
   type LogicalPath,
@@ -22,7 +23,16 @@ export interface ContentReaderOptions {
   basePathOverride?: string
   defaultBranch?: string
   createdBy?: string
+  /**
+   * Provision a workspace for a branch that has none. Off by default: a `branch` handed in from a
+   * request (`?branch=`) would otherwise let any visitor create a workspace per distinct name, so
+   * turn it on only when every branch name the reader sees is trusted.
+   */
   allowCreateBranch?: boolean
+  /**
+   * The sole branch resolver when given, replacing `allowCreateBranch`: null reads as NOT_FOUND.
+   * Reads from the checkout (static deployments, builds) never call it.
+   */
   getBranchContext?: (branch: string) => Promise<BranchContext | null>
 }
 
@@ -106,8 +116,8 @@ export interface ContentReader {
 }
 
 /**
- * Server-side helper to read content directly from a branch workspace.
- * Falls back to creating the branch workspace (metadata + checkout) if missing.
+ * Server-side helper to read content directly from a branch workspace. A branch with no workspace
+ * reads as NOT_FOUND unless `allowCreateBranch` or a `getBranchContext` resolver says otherwise.
  */
 export const createContentReader = (options: ContentReaderOptions): ContentReader => {
   const services = options.services
@@ -118,7 +128,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     services.config.defaultActiveBranch ??
     services.config.defaultBaseBranch ??
     'main'
-  const allowCreateBranch = options.allowCreateBranch ?? true
+  const allowCreateBranch = options.allowCreateBranch ?? false
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
@@ -136,10 +146,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    // Check custom resolver first (e.g., from HTTP handler)
     if (options.getBranchContext) {
-      const existing = await options.getBranchContext(branchName)
-      if (existing) return existing
+      const resolved = await options.getBranchContext(branchName)
+      if (!resolved) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
+      return resolved
     }
 
     if (allowCreateBranch) {
@@ -153,11 +163,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    // Not allowed to create — must exist
+    // A name the path layer rejects (a traversal segment) names no workspace either.
     const existing = await loadBranchContext({
       branchName,
       mode: operatingMode,
       basePathOverride,
+    }).catch((err: unknown) => {
+      if (err instanceof BranchPathError) return null
+      throw err
     })
     if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
     return existing
