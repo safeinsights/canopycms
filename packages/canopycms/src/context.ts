@@ -23,12 +23,21 @@
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ReadContentInput, ContentReadMeta } from './content-reader'
-import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
+import type { BranchContext } from './types'
+import type { OperatingMode } from './operating-mode'
+import type { FlatSchemaItem } from './config'
+import { isDeployedStatic, isBuildMode, readsFromCheckout, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { ContentStoreError } from './content-store'
-import { createLogicalPath, parseSlug, resolveBranchPaths, type Slug } from './paths'
+import {
+  BranchPathError,
+  createLogicalPath,
+  parseSlug,
+  resolveBranchPaths,
+  type Slug,
+} from './paths'
 import { resolveUrlPathCandidates } from './url-path-resolver'
-import { loadOrCreateBranchContext } from './branch-workspace'
+import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import {
   buildContentTree as buildContentTreeImpl,
   type BuildContentTreeOptions,
@@ -59,6 +68,30 @@ function isLookupFailure(err: ContentStoreError): boolean {
  */
 function isPageSwallowable(err: ContentStoreError): boolean {
   return isLookupFailure(err) || err.code === 'FORBIDDEN'
+}
+
+interface ListingSource {
+  branchRoot: string
+  flatSchema: FlatSchemaItem[]
+  contentRootName: string
+  visibility: ContentVisibilityOptions
+}
+
+/**
+ * A branch that already has a workspace, or null. A name the path layer
+ * rejects (a traversal segment) is null too: it arrives from the request, so it
+ * lists nothing rather than failing the page.
+ */
+async function loadExistingBranch(
+  branchName: string,
+  mode: OperatingMode,
+): Promise<BranchContext | null> {
+  try {
+    return await loadBranchContext({ branchName, mode })
+  } catch (err) {
+    if (err instanceof BranchPathError) return null
+    throw err
+  }
 }
 
 export interface CanopyContextOptions {
@@ -95,9 +128,11 @@ export interface CanopyBuildContext {
    * `meta.indexEntry` handed to `extract`, and a collection whose children are
    * all filtered out is pruned. On the build context and on static deployments
    * nothing is filtered — the synthetic admin sees everything.
+   *
+   * Branch: the `branch` option behaves as on `listEntries`.
    */
   buildContentTree: <T = unknown, TEntryTypes = DefaultEntryTypes>(
-    options?: BuildContentTreeOptions<T, TEntryTypes>,
+    options?: BuildContentTreeOptions<T, TEntryTypes> & { branch?: string },
   ) => Promise<ContentTreeNode<T>[]>
 
   /**
@@ -107,14 +142,15 @@ export interface CanopyBuildContext {
    * cannot `read` are omitted before `extract` runs; on the build context and
    * static deployments nothing is filtered.
    *
-   * Branch: unlike `read`/`readByUrlPath` this takes no `branch` option, always
-   * listing `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. In `dev` that
-   * tracks git HEAD via `refreshActiveBranch()`; in `prod` the refresh is a
-   * no-op, so it always reads the base branch. See
-   * `.claude/future-tasks/context-listing-branch-pinning.md`.
+   * Branch: with no `branch` it lists the active branch — in `dev` the git HEAD
+   * (`refreshActiveBranch()`), in `prod` the base branch. Pass the preview
+   * iframe's `?branch=` as `branch`, as for `read`, so an index page previewed
+   * on a content branch lists that branch. Any branch other than the active one
+   * must already exist and be readable by the user, or the result is empty. It
+   * selects nothing at build time or on static deployments.
    */
   listEntries: <T = Record<string, unknown>>(
-    options?: ListEntriesOptions<T>,
+    options?: ListEntriesOptions<T> & { branch?: string },
   ) => Promise<ListEntriesItem<T>[]>
 
   /**
@@ -304,19 +340,91 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return null
     }
 
-    /** Resolve branch workspace and schema — shared by buildContentTree and listEntries. Memoized per getContext call. */
-    let schemaContextPromise: ReturnType<typeof resolveSchemaContextImpl> | null = null
-    const resolveSchemaContextImpl = async () => {
-      const operatingMode = services.config.mode
-      const defaultBranch =
+    /**
+     * What a batch read (listEntries / buildContentTree) lists from: the branch's
+     * schema plus its path-ACL predicate, or null when the branch yields nothing
+     * this user may see.
+     *
+     * With no `branch`, or the active branch named explicitly, it is the active
+     * branch, provisioned if missing. Any other name arrives from the request
+     * (an index page passing the preview iframe's `?branch=`), so it is
+     * load-only, never provisioned — a missing or unloadable name lists nothing
+     * — and its branch access is checked before any of its files are read. At
+     * build time and on static deployments `branch` selects nothing, as for
+     * `read` (see the module doc).
+     *
+     * Memoized per getContext call and per branch name, on the in-flight
+     * promise; a null result is memoized too, so one request answers a given
+     * name consistently. The memo is request-scoped, so it carries no
+     * generation protocol (docs/concurrency.md, "Adding a call-scoped memo").
+     */
+    const listingSources = new Map<string, Promise<ListingSource | null>>()
+    const resolveListingSource = (branch: string | undefined) => {
+      const activeBranch =
         services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
-      const branchContext = await loadOrCreateBranchContext({
-        config: services.config,
-        branchName: defaultBranch,
-        mode: operatingMode,
-        createdBy: 'canopycms-context',
-        remoteUrl: services.config.defaultRemoteUrl,
-      })
+      const requested =
+        branch && branch !== activeBranch && !readsFromCheckout(services.config)
+          ? branch
+          : undefined
+      // '' is never a branch name, so it cannot collide with a requested one.
+      const key = requested ?? ''
+      let source = listingSources.get(key)
+      if (!source) {
+        source = resolveListingSourceImpl(activeBranch, requested)
+        listingSources.set(key, source)
+      }
+      return source
+    }
+    const resolveListingSourceImpl = async (
+      activeBranch: string,
+      requested: string | undefined,
+    ): Promise<ListingSource | null> => {
+      const operatingMode = services.config.mode
+      const branchContext =
+        requested === undefined
+          ? await loadOrCreateBranchContext({
+              config: services.config,
+              branchName: activeBranch,
+              mode: operatingMode,
+              createdBy: 'canopycms-context',
+              remoteUrl: services.config.defaultRemoteUrl,
+            })
+          : await loadExistingBranch(requested, operatingMode)
+      if (!branchContext) return null
+
+      // The path-ACL predicate keeps an unfiltered listing on this ACL-enforcing
+      // context from disclosing entry `data` for paths the user cannot `read()`.
+      // `services.createContentAccessChecker` is the shared batch primitive
+      // (api/entries.ts uses it too): it resolves the request-constant work —
+      // branch access, the settings/permissions root, the rule set — once, and
+      // returns a synchronous per-path check, so the per-entry cost is an admin
+      // short-circuit or one minimatch per configured rule, with no extra I/O.
+      //
+      // No predicate (unfiltered) at build time, on static deployments, and for
+      // the synthetic admin is load-bearing, not an optimization. That user has
+      // unconditional access anyway (path checks bypass entirely for an
+      // Admins-group user — authorization/path.ts), but BUILDING the checker costs
+      // a getSettingsBranchRoot() call, which in modes with a separate settings
+      // branch provisions that branch's git workspace: an EFS round trip in prod.
+      // `createBuildCanopy` (build-canopy.ts) runs outside a request or Next.js
+      // build phase, so neither other guard fires for it, and without this one
+      // every such script pays for a settings-workspace clone it never needed —
+      // and hard-fails where that workspace cannot be provisioned. Compared by
+      // reference to the STATIC_DEPLOY_USER singleton, not by group membership,
+      // so a real authenticated admin at request time still goes through the
+      // real check.
+      //
+      // Deliberately NOT wrapped in try/catch — createContentAccessChecker is
+      // fail-loud by contract, and swallowing would serve an unfiltered listing.
+      const enforceAcls = !(
+        isDeployedStatic(services.config) ||
+        isBuildMode() ||
+        user === STATIC_DEPLOY_USER
+      )
+      if (enforceAcls && !services.checkBranchAccess(branchContext, user).allowed) {
+        return null
+      }
+
       const { branchRoot } = resolveBranchPaths(branchContext, operatingMode)
       const contentRootName = services.config.contentRoot || 'content'
       const { flatSchema } = await services.branchSchemaCache.getSchema(
@@ -324,86 +432,47 @@ export function createCanopyContext(options: CanopyContextOptions) {
         services.entrySchemaRegistry,
         contentRootName,
       )
-      return { branchContext, branchRoot, flatSchema, contentRootName }
-    }
-    const resolveSchemaContext = () => {
-      if (!schemaContextPromise) {
-        schemaContextPromise = resolveSchemaContextImpl()
-      }
-      return schemaContextPromise
-    }
+      if (!enforceAcls) return { branchRoot, flatSchema, contentRootName, visibility: {} }
 
-    /**
-     * Path-ACL predicate for the batch reads (listEntries / buildContentTree),
-     * memoized per getContext call like the schema context above. Without it an
-     * unfiltered listing on this request-scoped, ACL-enforcing context would
-     * disclose full entry `data` for paths the user cannot `read()` directly.
-     *
-     * `services.createContentAccessChecker` is the shared batch primitive
-     * (api/entries.ts uses it too): it resolves the request-constant work —
-     * branch access, the settings/permissions root, the rule set — once, and
-     * returns a synchronous per-path check, so the per-entry cost is an admin
-     * short-circuit or one minimatch per configured rule, with no extra I/O.
-     *
-     * The empty object (no predicate → unfiltered) at build time, on static
-     * deployments, and for the synthetic admin is load-bearing, not an
-     * optimization. That user has unconditional access anyway (path checks
-     * bypass entirely for an Admins-group user — authorization/path.ts), but
-     * BUILDING the checker costs a getSettingsBranchRoot() call, which in modes
-     * with a separate settings branch provisions that branch's git workspace: an
-     * EFS round trip in prod. `createBuildCanopy` (build-canopy.ts) runs outside
-     * a request or Next.js build phase, so neither other guard fires for it, and
-     * without this one every such script pays for a settings-workspace clone it
-     * never needed — and hard-fails where that workspace cannot be provisioned.
-     *
-     * Compared by reference to the STATIC_DEPLOY_USER singleton, not by group
-     * membership, so it stays scoped to the synthetic build identity: a real
-     * authenticated admin at request time still goes through the real check.
-     *
-     * Deliberately NOT wrapped in try/catch — createContentAccessChecker is
-     * fail-loud by contract, and swallowing would serve an unfiltered listing.
-     */
-    let visibilityPromise: Promise<ContentVisibilityOptions> | null = null
-    const resolveVisibilityImpl = async (): Promise<ContentVisibilityOptions> => {
-      if (isDeployedStatic(services.config) || isBuildMode() || user === STATIC_DEPLOY_USER)
-        return {}
-      const { branchContext, branchRoot } = await resolveSchemaContext()
       const checkAccess = await services.createContentAccessChecker(branchContext, branchRoot, user)
-      return { shouldInclude: (logicalPath) => checkAccess(logicalPath, 'read').allowed }
-    }
-    const resolveVisibility = () => {
-      if (!visibilityPromise) {
-        visibilityPromise = resolveVisibilityImpl()
+      return {
+        branchRoot,
+        flatSchema,
+        contentRootName,
+        visibility: { shouldInclude: (logicalPath) => checkAccess(logicalPath, 'read').allowed },
       }
-      return visibilityPromise
     }
 
     const buildContentTree: CanopyContext['buildContentTree'] = async <
       T = unknown,
       TEntryTypes = DefaultEntryTypes,
     >(
-      options?: BuildContentTreeOptions<T, TEntryTypes>,
+      options?: BuildContentTreeOptions<T, TEntryTypes> & { branch?: string },
     ) => {
-      const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
+      const { branch, ...treeOptions } = options ?? {}
+      const source = await resolveListingSource(branch)
+      if (!source) return []
       return buildContentTreeImpl<T, TEntryTypes>(
-        branchRoot,
-        flatSchema,
-        contentRootName,
-        options,
-        await resolveVisibility(),
+        source.branchRoot,
+        source.flatSchema,
+        source.contentRootName,
+        treeOptions,
+        source.visibility,
       )
     }
 
     const listEntries: CanopyContext['listEntries'] = async <T = Record<string, unknown>>(
-      options?: ListEntriesOptions<T>,
+      options?: ListEntriesOptions<T> & { branch?: string },
     ) => {
-      const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
+      const { branch, ...listOptions } = options ?? {}
+      const source = await resolveListingSource(branch)
+      if (!source) return []
       return listEntriesImpl<T>(
-        branchRoot,
-        flatSchema,
-        contentRootName,
-        options,
-        await resolveVisibility(),
+        source.branchRoot,
+        source.flatSchema,
+        source.contentRootName,
+        listOptions,
+        source.visibility,
       )
     }
 

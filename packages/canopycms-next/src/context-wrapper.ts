@@ -220,8 +220,8 @@ export interface NextCanopyContextResult {
    *
    * At build time this reads filesystem-direct; at request time it uses the branch-aware,
    * **ACL-enforced** runtime context, so entries the current user cannot read are omitted.
-   * Note it takes no `branch` option — see `CanopyContext['listEntries']` for the
-   * base-branch pinning caveat in prod.
+   * Pass the preview iframe's `?branch=` as `branch` on an index page so a content
+   * branch's entries show in preview — see `CanopyContext['listEntries']`.
    */
   listEntries: CanopyContext['listEntries']
   /**
