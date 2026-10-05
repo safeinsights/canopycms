@@ -205,7 +205,7 @@ export class BranchSchemaCache {
       ? null
       : await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
 
-    // Recorded as `schema>resolve`, so a request summary shows a cache miss by name.
+    // Nested under `schema`, so a request summary names a cache miss (`…schema>resolve`).
     const result = await timeRequestPhase('resolve', () =>
       this.resolveFresh(contentRoot, entrySchemaRegistry),
     )

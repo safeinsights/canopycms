@@ -80,7 +80,7 @@ export function setRequestTimingRoute(route: string): void {
 
 /**
  * The summary line's message, after the logger's timestamp/category prefix:
- * `GET :branch/entries 200 2270ms | context=0 auth=12 route=1100 route>settingsRoot=1740(x2) untimed=3`.
+ * `GET :branch/entries 200 1172ms | context=0 auth=12 route=1110 route>settingsRoot=1080(x2) untimed=50`.
  * @internal Exported for tests.
  */
 export function formatRequestTimingSummary(

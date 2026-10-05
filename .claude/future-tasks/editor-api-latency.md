@@ -17,7 +17,7 @@ requests took about 2 s each, reads included: save 2.75 s, `schema` 2.07 s,
 (`utils/request-timing.ts`):
 
 ```
-<ISO time> [CanopyCMS:timing] [DEBUG] GET :branch/entries 200 1172ms | context=0 refreshBranch=0 auth=0 branchContext=1 user=380 user>settingsRoot=380 user>groups=0 route=402 route>branchContext=2 route>branchContext>schema=1 route>settingsRoot=370 route>permissions=0 untimed=0
+<ISO time> [CanopyCMS:timing] [DEBUG] GET :branch/entries 200 646ms | context=0 refreshBranch=0 auth=0 branchContext=0 user=312 user>settingsRoot=312 user>groups=0 route=334 route>branchContext=2 route>branchContext>schema=1 route>settingsRoot=323 route>permissions=0 untimed=0
 ```
 
 - The route is the **pattern** (`:branch/entries`), never the raw path, so lines aggregate and carry no branch names.
@@ -31,7 +31,7 @@ requests took about 2 s each, reads included: save 2.75 s, `schema` 2.07 s,
 1. On the editor Lambda of the tier under test, set the environment variable
    `CANOPYCMS_DEBUG=true` (this is the existing debug switch; it also turns on the other DEBUG
    lines, which are harmless but chatty).
-2. Wait for a fresh container (any config change publishes a new version), then load the editor
+2. Changing the environment makes Lambda start fresh execution environments. Load the editor
    once (that is a **cold** sample), wait ~1 minute, and reload twice (**warm** samples). In the
    editor: open an editing branch, open one entry, edit it and save, and open the comments panel.
    That exercises `whoami`, `branches`, `:branch/schema`, `:branch/entries`,
@@ -53,8 +53,9 @@ Compare the warm lines against the local tables below: the same phase names, jus
 In-process harness (appendix): the real prod-mode handler, real `createCanopyServices`, the
 default `getBranchContext`, real git, against a temp workspace on local APFS. The content is the
 example app's plus 200 generated posts (224 entries). fs calls and git spawns are counted by
-wrapping `fs`, `fs/promises` and `child_process.spawn` before anything loads. Medians of 3 runs
-× 2 users (bootstrap admin, plain editor) × 2 repeats. Wall times vary with machine load; the
+wrapping `fs`, `fs/promises` and `child_process.spawn` before anything loads. Each row is the median of
+6–12 samples: 3 runs × 2 users (bootstrap admin, plain editor), × 2 repeats for the
+editing-branch endpoints. Wall times vary with machine load; the
 counts are deterministic.
 
 | Endpoint (warm)          | Before: wall | of which `settingsRoot` | git spawns | fs calls | After: wall | git | fs |
@@ -71,7 +72,7 @@ counts are deterministic.
 | first request (cold)     |      1196 ms |                  613 ms |         21 |       58 |     1348 ms |  21 | 58 |
 
 Both columns come from back-to-back runs on a quiet machine. An earlier pair, taken under load,
-had the same shape at roughly 1.5× the wall times.
+had the same shape, with before-times 1.3–1.7× higher.
 
 "Before" is int-202610-a plus the instrumentation; "after" adds the memo. The cold row clones
 both the base-branch and settings workspaces, and branch create clones its workspace; both are
@@ -88,7 +89,7 @@ finishes, so nothing remembered success. Per call (measured, argv captured):
 `branch -v -a`, `checkout <settings branch>` (12 git subprocesses), plus a cross-host
 proper-lockfile acquire/release (mkdir, stat, rmdir, refresh timer) and ~10 more fs calls. Routes
 that build a content-access checker (`entries`, `content` GET/PUT) call it a second time, so 24
-spawns. Locally that is 96–99% of every warm request.
+spawns. Locally that is 97.5–99.7% of every warm request.
 
 On Lambda + EFS (reasoned, not measured): each git subprocess is a process spawn plus git
 reading `.git/config`, `HEAD`, refs and the index over NFS, so tens of NFS round trips. At 50–150
@@ -110,7 +111,7 @@ Each ensure took the **cross-host** provisioning lock, whose waiters poll every 
 and on Lambda each in-flight request runs in its own container, so those requests queued behind
 each other's ensure at 300–800 ms per poll. That would explain why the base-branch load was worse
 (`entries` 4.6 s, `comments` 3.5 s) than the single-request numbers. In one process the
-in-memory lock coalesced them (measured: 4 concurrent `entries` shared one ensure), so the
+in-memory lock coalesced them (measured: 4 concurrent `entries` finished together in about one request's time), so the
 harness cannot show the cross-container case. The memo removes the lock from the request path
 entirely.
 
@@ -119,12 +120,12 @@ entirely.
 After the memo, the remaining per-request I/O is mostly `readdir`. Path capture for one warm
 request each:
 
-- `entries`: the branch root ×9, `content/` ×9, `docs.*` ×5, `api.*` ×3: 32 `readdir`s, plus 21 `readFile` and 17 `stat`.
+- `entries`: the branch root ×9, `content/` ×9, `docs.*` ×5, `api.*` ×3: 32 `readdir`s, plus 23 `readFile` and 15 `stat`.
 - `content` GET: the branch root ×4, `content/` ×5, `posts.*` ×3, and every other collection directory once (the content-ID index walking the tree): 21 `readdir`s.
 - `content` PUT: `posts.*` ×6, `content/` ×6, the branch root ×5, plus the full tree walk: 24 `readdir`s.
 
 On EFS a `readdir` is a READDIR(PLUS) round trip that the attribute cache does not reliably
-serve, and it grows with directory size (`posts/` here holds 202 files). At 2–5 ms per op,
+serve, and it grows with directory size (`posts/` here holds 203 files). At 2–5 ms per op,
 `entries`' 70 fs calls are 140–350 ms. **Recommendation (not a PR):** a call-scoped directory-listing
 memo threaded through one request's ContentStore/listing (the docs/concurrency.md "call-scoped
 memo" recipe: per request, never module scope, memoize the promise). Find which callers repeat
@@ -145,14 +146,14 @@ review first.
 
 On top of #3/#4, a save takes the content-write lock (`mkdir`/`stat`/`rmdir` on
 `.canopy-meta/content-write.lock`, cross-host by design, SYNC-C1), writes temp+rename for the
-entry, and bumps the `content-index` marker (temp+rename). These are about 10 ops and each is
+entry, and bumps the `content-index` marker (temp+rename). These are about 12 ops and each is
 load-bearing; NFS close-to-open `COMMIT`s on the two renames are likely the most expensive part
 on EFS (reasoned). No change recommended until the deployed breakdown shows `route` on PUT
 dominating.
 
 ### 6. Duplicate settings reads per request (measured, minor)
 
-After the memo, each request still `stat`s `settings/.git` and reads the settings files twice:
+After the memo, each request still reads `settings/.git/HEAD` and the settings files twice:
 once for the user's groups, once for the access checker. Deduping those per request saves 2–3
 NFS ops; do it only if the deployed lines show `settingsRoot`/`permissions` above a few ms.
 
