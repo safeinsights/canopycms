@@ -17,8 +17,8 @@ span files.
 - `error.ts` (`sanitizeErrorMessage`): owns the `[REDACT]` tag; grep it for every site that
   serves raw error text to a browser.
 - `git.ts` (each predicate's comment): `isNonFastForwardRejection` serves api/branch-status.ts
-  and worker/task-runner.ts and needs git-manager.ts's `LC_ALL=C`; `workflowPushRefusalFile`
-  serves worker/task-runner.ts; `isRebaseInProgress` serves worker/rebase.ts and branch-health.ts.
+  and worker/task-runner.ts and needs git-manager.ts's `LC_ALL=C`; `isRebaseInProgress` serves
+  worker/rebase.ts and branch-health.ts.
 - `logger.ts` (module header): `canopyLog*` for code that runs in both the worker and Lambda;
   worker/log.ts owns the timestamp invariant.
 - `occ-json-write.ts` (module header): OCC JSON writes for comment-store.ts and
