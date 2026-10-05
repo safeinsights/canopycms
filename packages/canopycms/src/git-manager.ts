@@ -1556,29 +1556,37 @@ export class GitManager {
   /**
    * Refuse to adopt a remote settings branch whose roots include the base branch's: a
    * settings branch is an orphan, so a shared root means content history under its name.
-   * A workspace without its base branch fails closed too, since it cannot tell.
+   * The base comes from the remote when the clone lacks it (it was cloned at an earlier base);
+   * a base that cannot be read anywhere fails closed, since nothing can be verified.
    */
   private async assertNotContentHistory(branchName: string, tipRoots: string[]): Promise<void> {
-    const baseRef = await this.firstResolvableRef([
-      `refs/heads/${this.baseBranch}`,
-      `refs/remotes/${this.remote}/${this.baseBranch}`,
-    ])
-    const baseRoots = baseRef ? await this.rootCommits(baseRef) : []
-    if (!baseRef || tipRoots.some((root) => baseRoots.includes(root))) {
+    const baseRoots = await this.rootCommits(await this.baseBranchRev(branchName))
+    if (tipRoots.some((root) => baseRoots.includes(root))) {
       throw new SettingsBranchHasContentHistoryError(branchName, this.baseBranch, this.remote)
     }
   }
 
-  private async firstResolvableRef(refs: string[]): Promise<string | undefined> {
-    for (const ref of refs) {
-      try {
-        await this.git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
-        return ref
-      } catch {
-        // Not present; try the next.
-      }
+  private async baseBranchRev(settingsBranch: string): Promise<string> {
+    for (const ref of [
+      `refs/heads/${this.baseBranch}`,
+      `refs/remotes/${this.remote}/${this.baseBranch}`,
+    ]) {
+      // `--quiet` makes a missing ref a silent non-zero exit, which simple-git resolves
+      // with empty output rather than rejecting.
+      const sha = await this.git
+        .raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+        .catch(() => '')
+      if (sha.trim()) return sha.trim()
     }
-    return undefined
+    try {
+      return await this.fetchBranchTip(this.baseBranch)
+    } catch (err) {
+      throw new Error(
+        `CanopyCMS: could not read base branch '${this.baseBranch}' from remote ` +
+          `'${this.remote}', so settings branch '${settingsBranch}' was not checked out: ` +
+          `${getErrorMessage(err)}`,
+      )
+    }
   }
 
   private async rootCommits(rev: string): Promise<string[]> {

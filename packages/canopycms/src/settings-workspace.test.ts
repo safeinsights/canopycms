@@ -682,6 +682,35 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
   }, 60_000)
 
+  it('reads the base from the remote when the clone was made at an earlier base, and still repairs', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await GitManager.initializeWorkspace({
+      ...options,
+      workspacePath: stuckRoot,
+      baseBranch: 'main',
+      branchType: 'orphan',
+      gitBotAuthorName: 'Other Bot',
+      gitBotAuthorEmail: 'other@canopycms.test',
+    })
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    // The deployment's base changes after the stuck clone was made at `main`.
+    await simpleGit({ baseDir: path.join(tmpRoot, 'seed') }).push(
+      remoteUrl,
+      'main:refs/heads/trunk',
+    )
+
+    vi.resetModules()
+    const mod = await import('./settings-workspace')
+    await new mod.SettingsWorkspaceManager({
+      ...baseConfig,
+      defaultBaseBranch: 'trunk',
+    } as CanopyConfig).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
   it('leaves a branch related to the remote one for the next settings pull', async () => {
     const { remoteUrl, settingsRoot, options, coldStart } = await setup()
     await (await coldStart()).ensureGitWorkspace(options)
