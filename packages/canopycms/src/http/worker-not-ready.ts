@@ -10,8 +10,8 @@ export const WORKER_NOT_READY_MESSAGE =
 
 /**
  * The 503 for a request that hit {@link RemoteNotReadyError}, or `undefined`
- * for any other error. The single mapping point for the core handler and every
- * framework adapter's backstop, so the body and `Retry-After` cannot diverge.
+ * for any other error. The single mapping point for the core handler, the AI route and
+ * every framework adapter's backstop, so the message and `Retry-After` cannot diverge.
  */
 export function workerNotReadyResponse(err: unknown): CanopyResponse<ApiResponse> | undefined {
   if (!(err instanceof RemoteNotReadyError)) return undefined

@@ -233,7 +233,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
       )
 
-      // No remote means no settings workspace and nothing /admin could repair:
+      // No remote means no settings workspace, so /admin cannot load either:
       // the worker has not created the remote yet, so every caller gets the
       // not-ready 503, bootstrap admins included.
       const notReady = workerNotReadyResponse(err)

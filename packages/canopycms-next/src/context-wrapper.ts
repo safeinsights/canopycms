@@ -348,7 +348,7 @@ export async function createNextCanopyContext(
   //
   // Failures propagate to the page's error boundary and never degrade to a user: a
   // RemoteNotReadyError (the worker has not created the remote yet) names the cause in the
-  // server log, and only the HTTP handler can answer it with a 503.
+  // server log, and only an HTTP route can answer it with a 503.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await authPlugin.authenticate(headersList)
