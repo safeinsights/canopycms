@@ -30,7 +30,7 @@ describe('content write OCC: version-less writes', () => {
     const res = await client.get(POST_URL)
     expect(res.status).toBe(200)
     const json = res.body as ContentReadResponse
-    if (!json.ok) throw new Error(`read failed: ${json.error}`)
+    if (!json.ok || !json.data) throw new Error(`read failed: ${json.ok ? 'no data' : json.error}`)
     return json.data
   }
 
