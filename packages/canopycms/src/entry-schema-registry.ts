@@ -15,6 +15,7 @@ import { flattenGroupFields } from './utils/flatten-group-fields'
 import {
   ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
+  ensureItemTitleFieldsExist,
   ensureNoFlattenedFieldNameCollisions,
   ensureNoGroupsInsideComplexFields,
 } from './config/validation'
@@ -122,6 +123,7 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     }
     ensureSelectFieldsHaveOptions(schema)
     ensureReferenceFieldsHaveScope(schema)
+    ensureItemTitleFieldsExist(schema)
     ensureNoGroupsInsideComplexFields(schema)
     ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }

@@ -87,6 +87,35 @@ export const forEachReferenceField = (
 }
 
 /**
+ * Check that every object field's `itemTitleField` names one of its direct child fields.
+ * Throws an error when it does not.
+ */
+export const ensureItemTitleFieldsExist = (fields: unknown): void => {
+  if (!Array.isArray(fields)) return
+  for (const field of fields) {
+    const f = field as Record<string, unknown>
+    if (f?.type === 'object') {
+      const children = Array.isArray(f.fields) ? (f.fields as Array<Record<string, unknown>>) : []
+      if (f.itemTitleField !== undefined) {
+        const names = children.map((child) => child?.name)
+        if (typeof f.itemTitleField !== 'string' || !names.includes(f.itemTitleField)) {
+          throw new Error(
+            `Object field "${(f.name as string) ?? 'unknown'}" has itemTitleField "${String(f.itemTitleField)}", which is not one of its child fields`,
+          )
+        }
+      }
+      ensureItemTitleFieldsExist(children)
+    } else if (f?.type === 'group') {
+      ensureItemTitleFieldsExist(f.fields)
+    } else if (f?.type === 'block' && Array.isArray(f.templates)) {
+      for (const template of f.templates as Array<{ fields?: unknown }>) {
+        ensureItemTitleFieldsExist(template.fields)
+      }
+    }
+  }
+}
+
+/**
  * Validate that inline groups don't cause field name collisions within the same scope.
  * Because inline groups flatten their children into the parent scope, a field name used
  * in a group that also appears as a sibling field (or in another group) will silently
