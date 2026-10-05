@@ -140,7 +140,7 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 A static export cannot render the branch being edited, so the editor previews through a CMS-only route: set `editor.previewPrefix: '/preview'` and add `app/preview/[[...path]]/page.server.tsx` as [README Live Preview](../README.md#live-preview) describes.
 
-If the public site and the CMS share a hostname, route `/preview/*` and `/edit*` to the CMS origin with a response-headers policy of `Content-Security-Policy: frame-ancestors 'self'` and no `X-Frame-Options`. The static site keeps `X-Frame-Options: DENY`.
+If the public site and the CMS share a hostname, route `/preview/*` and `/edit*` to the CMS origin, giving `/preview/*` a response-headers policy of `Content-Security-Policy: frame-ancestors 'self'` with no `X-Frame-Options`. The static site keeps `X-Frame-Options: DENY`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 

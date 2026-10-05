@@ -1537,7 +1537,7 @@ export default createPreviewPage({ views: { post: PostView, doc: DocView } })
 
 The page reads the entry at its path from the editor's `?branch=` through the request-scoped context, so the read is ACL-checked and never creates a branch. A missing or unreadable branch or entry is a 404, as is an entry type with no view and every request on a `deployedAs: 'static'` deployment, whose reads skip access checks. Each view is a `'use client'` component taking `CanopyPreviewViewProps<T>` from `canopycms-next/client`, whose `data` is the live draft, alongside `fieldProps`, `reportError`, `isLoading` and `highlightEnabled`. Render the same view on your public pages as `<CanopyPreviewView view={PostView} initialData={data} />`, which passes `initialData` through outside the editor.
 
-Serve the preview route and `/edit` with `Content-Security-Policy: frame-ancestors 'self'` instead of `X-Frame-Options: DENY`, or the browser refuses to frame them. Keep `DENY` on the static site.
+Serve the preview route with `Content-Security-Policy: frame-ancestors 'self'`, not `X-Frame-Options: DENY`, or the editor cannot frame it. `DENY` still suits `/edit` and the static site.
 
 ## AI-Ready Content
 

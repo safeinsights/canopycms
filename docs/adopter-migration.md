@@ -55,7 +55,7 @@ will not let a shipped version go unlisted.
 
 **What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the entry from the editor's `?branch=` through `views[entryType]` with the live draft. `canopycms-next/client` adds `CanopyPreviewView` and `CanopyPreviewViewProps`.
 
-**To adopt.** Add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and frame that route and `/edit` with `frame-ancestors 'self'` (README "Live Preview").
+**To adopt.** Add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
 
 **Now deletable.** A hand-built branch-preview route.
 
