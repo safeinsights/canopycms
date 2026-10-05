@@ -37,7 +37,6 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
   persistence under the real `remote.git` name. Closing the window entirely needs a
   credential helper instead of a token-bearing clone URL
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
-- **Preview works** — The CMS Lambda renders the same React components as the public site, so the editor's preview iframe shows accurate previews
 
 ## Prerequisites
 
@@ -139,23 +138,9 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 ### Preview Support
 
-Add `useCanopyPreview` to your page components so the editor can show live previews:
+A static export cannot render the branch being edited, so the editor previews through a CMS-only route: set `editor.previewPrefix: '/preview'` and add `app/preview/[[...path]]/page.server.tsx` as [README Live Preview](../README.md#live-preview) describes.
 
-```tsx
-'use client'
-import { useCanopyPreview } from 'canopycms/client'
-
-export function PageView({ data }: { data: PageContent }) {
-  const { data: liveData } = useCanopyPreview<PageContent>({
-    initialData: data,
-  })
-  return (
-    <article>
-      <h1>{liveData.title}</h1>
-    </article>
-  )
-}
-```
+If the public site and the CMS share a hostname, route `/preview/*` and `/edit*` to the CMS origin with a response-headers policy of `Content-Security-Policy: frame-ancestors 'self'` and no `X-Frame-Options`. The static site keeps `X-Frame-Options: DENY`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 
@@ -1127,7 +1112,7 @@ works.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
-**Preview not rendering**: Make sure your page components use `useCanopyPreview` and the CMS Lambda has the same React components as the public site (same app, two builds).
+**Preview not rendering**: `editor.previewPrefix` must name the preview route's folder, and an entry type missing from `views` is a 404. A pane the browser will not frame lacks `frame-ancestors`.
 
 **Stranded edits on the base branch** (editor saves made directly on `main` before
 base-branch protection existed, or via any future bypass): the base clone on EFS has

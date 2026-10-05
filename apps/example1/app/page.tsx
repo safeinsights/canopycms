@@ -1,5 +1,6 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
+import { CanopyPreviewView } from 'canopycms-next/client'
 import type { HomeContent } from './schemas'
 import HomeView from './components/HomeView'
 import { readByUrlPath } from './lib/canopy'
@@ -22,7 +23,7 @@ const Page = async () => {
 
   if (!result) return notFound()
 
-  return <HomeView data={result.data} />
+  return <CanopyPreviewView view={HomeView} initialData={result.data} />
 }
 
 export default Page

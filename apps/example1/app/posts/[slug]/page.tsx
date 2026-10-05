@@ -1,6 +1,7 @@
 import React from 'react'
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { CanopyPreviewView } from 'canopycms-next/client'
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
 import { SITE_URL, contentStaticParams, entryToMetadata, readByUrlPath } from '../../lib/canopy'
@@ -47,7 +48,7 @@ const PostPage = async ({ params }: { params: Promise<Params> }) => {
 
   if (!result) return notFound()
 
-  return <PostView data={result.data} />
+  return <CanopyPreviewView view={PostView} initialData={result.data} />
 }
 
 export default PostPage

@@ -1523,6 +1523,22 @@ useEffect(() => {
 
 Pair it with the [`validateEntry` hook](#save-time-validation-validateentry) to reject such saves server-side too.
 
+**Previewing a static export.** Prerendered pages cannot render a content branch, so preview through a route only your CMS build serves. Set `editor.previewPrefix: '/preview'` (see [Editor Customization](#editor-customization)), re-export the context's `createPreviewPage` from `lib/canopy.ts`, and mount it:
+
+```tsx
+// lib/canopy.ts
+export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
+  (options) => async (props) =>
+    (await canopyContextPromise).createPreviewPage(options)(props)
+
+// app/preview/[[...path]]/page.server.tsx: `.server.tsx`, so only the CMS build has it
+export default createPreviewPage({ views: { post: PostView, doc: DocView } })
+```
+
+The page reads the entry at its path from the editor's `?branch=` through the request-scoped context, so the read is ACL-checked and never creates a branch. A missing or unreadable branch or entry is a 404, as is an entry type with no view. Each view is a `'use client'` component taking `CanopyPreviewViewProps<T>` from `canopycms-next/client`, whose `data` is the live draft, alongside `fieldProps`, `reportError`, `isLoading` and `highlightEnabled`. Render the same view on your public pages as `<CanopyPreviewView view={PostView} initialData={data} />`, which passes `initialData` through outside the editor.
+
+Serve the preview route and `/edit` with `Content-Security-Policy: frame-ancestors 'self'` instead of `X-Frame-Options: DENY`, or the browser refuses to frame them. Keep `DENY` on the static site.
+
 ## AI-Ready Content
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.

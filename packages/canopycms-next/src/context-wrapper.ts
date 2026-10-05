@@ -24,7 +24,13 @@ import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycm
 import { assertAuthPluginAllowedForMode } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import type { Metadata, MetadataRoute } from 'next'
+import type { ReactElement } from 'react'
 import { createCanopyCatchAllHandler } from './adapter'
+import {
+  createPreviewPageFor,
+  type CreatePreviewPageOptions,
+  type PreviewPageProps,
+} from './preview-page'
 import {
   collectStaticParams,
   entryToMetadata as entryToMetadataCore,
@@ -253,6 +259,21 @@ export interface NextCanopyContextResult {
    * (see that function's doc); pass `fields`/`group` on a given call to override just that call.
    */
   entryToMetadata: (entryData: unknown, options?: EntryToMetadataOptions) => Metadata
+  /**
+   * The page for the preview route the editor's `previewPrefix` names, for a site whose public
+   * pages are a static export. Mount it as `app/<prefix>/[[...path]]/page.server.tsx`, so only the
+   * CMS build has it:
+   *
+   * ```tsx
+   * export default createPreviewPage({ views: { post: PostView, doc: DocView } })
+   * ```
+   *
+   * It renders each entry from the `?branch=` the editor names, through `views[entryType]` with
+   * the live draft. Reads are request-scoped and ACL-checked, and anything not readable is a 404.
+   */
+  createPreviewPage: (
+    options: CreatePreviewPageOptions,
+  ) => (props: PreviewPageProps) => Promise<ReactElement>
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -468,6 +489,7 @@ export async function createNextCanopyContext(
     generateContentStaticParams,
     generateContentSitemap: boundGenerateContentSitemap,
     entryToMetadata: boundEntryToMetadata,
+    createPreviewPage: (previewOptions) => createPreviewPageFor(getCanopy, previewOptions),
     handler,
     services,
   }

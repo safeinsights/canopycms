@@ -1,8 +1,8 @@
 'use client'
 
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { CanopyEditorPage } from 'canopycms/client'
+import { CanopyEditorPage, useCanopyPreview } from 'canopycms/client'
 import type { CanopyClientConfig, CustomFieldRenderers } from 'canopycms/client'
 
 /**
@@ -54,4 +54,33 @@ export const NextCanopyEditorPage = (
       </Suspense>
     )
   }
+}
+
+/** What a preview view renders from: the editor's live draft, plus `useCanopyPreview`'s helpers. */
+export type CanopyPreviewViewProps<T> = ReturnType<typeof useCanopyPreview<T>>
+
+/**
+ * A component that renders one entry type from `CanopyPreviewViewProps`. A call signature rather
+ * than `ComponentType`, whose `propTypes` would make a view for one content type unassignable to a
+ * map of views for many.
+ */
+export type CanopyPreviewViewComponent<T> = (props: CanopyPreviewViewProps<T>) => ReactNode
+
+/**
+ * Renders `view` with the editor's live draft of `initialData`, through `useCanopyPreview`.
+ * Outside an editor frame the view gets `initialData` unchanged. `createPreviewPage` renders one
+ * for every entry the preview route serves.
+ */
+export function CanopyPreviewView<T>({
+  view: View,
+  initialData,
+  editorOrigin,
+}: {
+  view: CanopyPreviewViewComponent<T>
+  initialData: T
+  /** Editor origin to trust, for an editor on another origin. Defaults to this page's own. */
+  editorOrigin?: string
+}) {
+  const preview = useCanopyPreview<T>({ initialData, editorOrigin })
+  return <View {...preview} />
 }

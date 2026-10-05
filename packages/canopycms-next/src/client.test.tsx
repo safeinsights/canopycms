@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 const canopyEditorPage = vi.fn(() => () => null)
 vi.mock('canopycms/client', () => ({
   CanopyEditorPage: (...args: unknown[]) => canopyEditorPage(...(args as [])),
+  useCanopyPreview: vi.fn(),
 }))
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }))
 
@@ -33,5 +34,28 @@ describe('NextCanopyEditorPage', () => {
     NextCanopyEditorPage(config)
 
     expect(canopyEditorPage).toHaveBeenCalledWith(config, undefined)
+  })
+})
+
+describe('CanopyPreviewView', () => {
+  it("renders the view with useCanopyPreview's live state for the initial data", async () => {
+    const { useCanopyPreview } = await import('canopycms/client')
+    const { CanopyPreviewView } = await import('./client')
+    const state = { data: { title: 'Draft' }, isLoading: {}, highlightEnabled: false }
+    vi.mocked(useCanopyPreview).mockReturnValue(state as never)
+    const View = () => null
+
+    const element = CanopyPreviewView({
+      view: View,
+      initialData: { title: 'Saved' },
+      editorOrigin: 'https://cms.example.com',
+    })
+
+    expect(useCanopyPreview).toHaveBeenCalledWith({
+      initialData: { title: 'Saved' },
+      editorOrigin: 'https://cms.example.com',
+    })
+    expect(element.type).toBe(View)
+    expect(element.props).toEqual(state)
   })
 })

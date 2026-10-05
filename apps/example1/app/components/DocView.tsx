@@ -2,20 +2,16 @@
 
 import React from 'react'
 
-import { useCanopyPreview } from 'canopycms/client'
+import type { CanopyPreviewViewProps } from 'canopycms-next/client'
 
 import type { DocContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'
 
-export const DocView: React.FC<{ data: DocContent }> = ({ data }) => {
-  const {
-    data: liveData,
-    highlightEnabled,
-    fieldProps,
-  } = useCanopyPreview<DocContent>({
-    initialData: data,
-  })
-
+export const DocView: React.FC<CanopyPreviewViewProps<DocContent>> = ({
+  data: liveData,
+  highlightEnabled,
+  fieldProps,
+}) => {
   return (
     <article
       className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm"
