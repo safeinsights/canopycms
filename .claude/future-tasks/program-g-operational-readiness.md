@@ -1,7 +1,7 @@
 # Program G — Operational readiness
 
 **Part of:** [production-readiness-program.md](production-readiness-program.md)
-**Size:** M · **Status:** not started · **Blocked by:** F
+**Size:** M · **Priority:** P2 [BOTH] · **Status:** open · **Blocked by:** nothing (workstreams D, E and F were retired 2026-10-05)
 
 Everything needed for people other than the original authors to run these
 deployments confidently.
@@ -27,8 +27,9 @@ adopter guide in `docs/`), each covering:
 
 ## Standing smoke test
 
-Workstream D's deployed-stack verification suite becomes the standing smoke test:
-runnable against any deployment URL, by anyone, after any deploy.
+A deployed-stack verification suite (seeded by
+[infra-review-2026-08-deploy-verification.md](infra-review-2026-08-deploy-verification.md))
+becomes the standing smoke test: runnable against any deployment URL, by anyone, after any deploy.
 
 ## Ownership boundaries
 

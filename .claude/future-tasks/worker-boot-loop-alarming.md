@@ -1,5 +1,13 @@
 # [P2] Nothing pages a human when the worker is down, including a boot loop
 
+**Priority: P2 [BOTH], due now:** the worker is live on a deployed site. Part of the worker-down
+observability cluster; see [worker-not-ready-permanent-failure.md](worker-not-ready-permanent-failure.md).
+
+**Decided:** ship an optional alarm-topic prop in `canopycms-cdk` (`alarmTopic?: ITopic` on the
+service construct). Every adopter on this shape needs it and the spot worker makes boot failures
+routine. With no topic passed, no alarm or subscription is created, so the default stays
+dependency-free.
+
 Found by the independent Fable security review of `epic/infra-review-2026-08`
 (2026-08-21), rated MEDIUM. Filed rather than fixed because the fix needs a
 notification endpoint, which is JP's to choose.
@@ -50,19 +58,15 @@ Alarm on worker absence rather than on the loop:
 1. A CloudWatch alarm on the worker log group's log-event rate falling to zero
    for N minutes, or on the ASG's instance-launch rate exceeding a threshold
    (churn), or both.
-2. An SNS topic plus a subscription — **this is the part that needs JP**: it
-   requires a real email/Slack/PagerDuty endpoint, and putting a placeholder in
-   the construct would be worse than nothing.
-3. Expose it as an optional construct prop (`alarmTopic?: ITopic`) so adopters
-   without a notification channel are unaffected and the default stays
-   dependency-free.
+2. The alarm action targets an SNS topic the adopter supplies (a real email/Slack/PagerDuty
+   subscription is theirs to create; a placeholder in the construct would be worse than nothing).
+3. Expose it as the optional construct prop (`alarmTopic?: ITopic`) so adopters without a notification
+   channel are unaffected and the default stays dependency-free.
 
 Worth pairing with the existing admin-panel signal so the two agree on what
 "worker down" means.
 
 ## Trigger
 
-Before the knowledge-base site depends on the worker for anything time-critical
-(scheduled publishes, or an editorial team that would notice PRs stopping before
-an operator would). Until then the admin panel's absent-worker state is the
-working signal.
+Met: a deployed site's editors depend on the worker (publishes, the auth cache). The admin panel's
+absent-worker state is the only signal until the alarm lands.

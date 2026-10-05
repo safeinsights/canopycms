@@ -1,5 +1,7 @@
 # [P3] CODEBASE_GUIDE.md's with-canopy.ts row still cites bare `assignDefaults`
 
+**RESOLVED 2026-10-05:** the premise is gone; `assignDefaults` occurs 0 times in CODEBASE_GUIDE.md.
+
 **Priority:** P3. Documentation-only staleness, no behavior at stake.
 
 **Found:** 2026-09-13, by the phase-3 mechanical claim-check of commit `c32410eb` ("docs: claims

@@ -1,28 +1,20 @@
 # Worker git push: add `--end-of-options` before the branch name
 
-Flagged by PR #141 review (LOW). Pre-existing — out of PR #141's own diff.
+**Priority: P3 [BOTH].** Low exposure, cheap hardening.
 
-## Problem
+Three plain `git.push(<url>, branch)` sites pass a branch name straight through to `git push` with
+no separator: `worker/task-runner.ts:606` (unleased push) and `:629` (the stale-lease retry), both in
+`pushBranchToGitHub`, and `worker/git-sync.ts:201` (`pushSettingsBranches`). The leased force push in
+the same function (`task-runner.ts:600`) already passes `--end-of-options` and is the pattern to
+copy. A branch name crafted to look like a flag (starting with `--mirror` or `--delete`) would be
+argument-injected into the invocation.
 
-Three plain `git.push(<url>, branch)` sites pass a branch name straight
-through to git's `push` with no `--end-of-options` separator:
-`task-runner.ts:580` and `:605` (the unleased push and the stale-lease retry inside
-`pushBranchToGitHub`) and `git-sync.ts:209` (`pushSettingsBranches`). The leased force
-push at `task-runner.ts:574` already passes `--end-of-options` and is the pattern to
-back-apply. A branch name crafted to
-look like a flag (e.g. something starting with `--mirror` or `--delete`) would be
-argument-injected into the `git push` invocation instead of being treated as a plain
-branch name.
+Branch names come from the CMS's own branch-creation workflow, not arbitrary external input, so
+exposure is low; the task payload is still one hop removed from the git invocation.
 
-## Exposure
+## Fix
 
-Branch names originate from the CMS's own branch-creation workflow (editors pick names
-through the UI, not arbitrary external input), so exposure is low today. Still worth
-hardening since the task payload is one hop removed from the actual git invocation.
-
-## Fix direction
-
-Insert `--end-of-options` (or `--`) between the remote and the branch argument in the
-`git.push(...)` call so git stops parsing options at that point, consistent with the
-argument-safety pattern already used elsewhere for branch names (see
-`GitManager branch name argument safety (SEC-H2)` tests in `git-manager.test.ts`).
+Route the three sites through `git.raw(['push', '--end-of-options', githubUrl, 'branch:branch'])`
+as the leased push does (with the real branch interpolated), consistent with the argument-safety pattern
+used elsewhere for branch names (see the `GitManager branch name argument safety (SEC-H2)` tests in
+`git-manager.test.ts`).
