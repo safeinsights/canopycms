@@ -146,6 +146,94 @@ describe('FormRenderer', () => {
     expect(state.features).toHaveLength(0)
   })
 
+  describe('object list item headings', () => {
+    const listFields = (itemTitleField?: string): FieldConfig[] => [
+      {
+        name: 'features',
+        type: 'object',
+        label: 'Features',
+        list: true,
+        ...(itemTitleField ? { itemTitleField } : {}),
+        fields: [
+          { name: 'title', type: 'string', label: 'Heading' },
+          { name: 'rank', type: 'number', label: 'Rank' },
+        ],
+      },
+    ]
+
+    it('shows the list label once, with numbered card headings and no nested legend', () => {
+      render(<StatefulForm fields={listFields()} initialValue={{ features: [{}, {}] }} />)
+
+      expect(screen.getAllByText('Features')).toHaveLength(1)
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Features #2')).toBeTruthy()
+    })
+
+    it('titles each card with its itemTitleField value, coercing numbers', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: 'Fast builds' }, { title: 7 }] }}
+        />,
+      )
+
+      expect(screen.getByText('Fast builds')).toBeTruthy()
+      expect(screen.getByText('7')).toBeTruthy()
+      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.getAllByText('Features')).toHaveLength(1)
+    })
+
+    it('falls back to the numbered heading when the title value is empty or not a primitive', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: '' }, { title: '   ' }, { title: { a: 1 } }, {}] }}
+        />,
+      )
+
+      for (const n of [1, 2, 3, 4]) {
+        expect(screen.getByText(`Features #${n}`)).toBeTruthy()
+      }
+    })
+
+    // YAML's `.nan` and `.inf` parse to non-finite numbers, which must not title a card.
+    it('falls back to the numbered heading for a non-finite number', () => {
+      render(
+        <StatefulForm
+          fields={listFields('rank')}
+          initialValue={{ features: [{ rank: Number.NaN }, { rank: Infinity }, { rank: 3 }] }}
+        />,
+      )
+
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Features #2')).toBeTruthy()
+      expect(screen.getByText('3')).toBeTruthy()
+    })
+
+    it('updates the card heading as the title field is edited', async () => {
+      const user = userEvent.setup()
+      render(<StatefulForm fields={listFields('title')} initialValue={{ features: [{}] }} />)
+
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      await user.type(screen.getByLabelText('Heading'), 'Typed')
+
+      expect(screen.getByText('Typed')).toBeTruthy()
+      expect(screen.queryByText('Features #1')).toBeNull()
+    })
+
+    it('gives each card an accessible name matching its heading', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: 'Fast builds' }, {}] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Features #2' })).toBeTruthy()
+    })
+  })
+
   it('propagates block field changes with path-aware custom renderers', async () => {
     const user = userEvent.setup()
     const fields: FieldConfig[] = [

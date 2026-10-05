@@ -51,6 +51,16 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### A list of objects can title each card after one of its fields
+
+**What changed.** An `object` field with `list: true` takes `itemTitleField`, naming a direct
+`string` or `number` child whose value titles each card (else `<label> #N`). Cards no longer repeat
+the label as an inner legend.
+
+**To adopt.** `{ type: 'object', list: true, itemTitleField: 'label', fields: [...] }`.
+
+**Now deletable.** Nothing.
+
 ### `.canopy-meta/` must not be committed, and System health now says so
 
 **What changed.** The schema cache moved into each branch clone's `.git/canopycms/`. Sync, editor
