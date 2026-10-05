@@ -381,7 +381,9 @@ export async function executeTask(
         base,
         title: optionalString(payload, 'title', `Submit ${branch}`),
         body: optionalString(payload, 'body', ''),
+        // Content submits (api/github-sync.ts) set both.
         markReadyIfDraft: payload.markReadyIfDraft === true,
+        mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
         signal,
       })
       workerLog(

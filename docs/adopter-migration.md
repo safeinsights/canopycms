@@ -51,11 +51,10 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
-### Saving groups or permissions no longer queues a doomed PR task — **breaking (config): `autoCreateSettingsPR` is removed**
+### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
 
-**What changed.** The settings branch is an orphan, so GitHub rejected every PR for it and each
-settings save left a failed task in System health. A save now only pushes the branch, and the
-worker never opens a PR for a `canopycms-settings-` branch.
+**What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
+left a failed task in System health. Saves now only push the branch.
 
 **To adopt.** Delete `autoCreateSettingsPR` from `canopycms.config.ts`.
 
@@ -63,16 +62,26 @@ worker never opens a PR for a `canopycms-settings-` branch.
 
 ### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
 
-**What changed.** Rules match an entry's logical path (`content/blog/my-post`), as the Permission
-Manager writes them. Enforcement checked the id-suffixed on-disk path, so collection and entry rules
-matched nothing; only a glob that also matched on-disk names, such as `content/**`, worked. Renaming now also requires edit access at the new path.
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`). Enforcement checked
+the id-suffixed on-disk path, so collection and entry rules matched nothing; only a glob that also
+matched on-disk names, such as `content/**`, worked. Renaming also requires edit access at the new
+path.
 
 **To adopt.** Review your rules (Settings → Manage Permissions) before upgrading: collection rules
 that never took effect will start to. Rewrite any rule naming an id-suffixed directory or a file
-extension (`content/blog.<id>/**`, `content/about.json`) in logical form (`content/blog/**`,
-`content/about`).
+extension in logical form (`content/blog/**`, `content/about`).
 
-**Now deletable.** A content-root grant that worked around inert collection grants.
+**Now deletable.** A content-root grant working around inert collection grants.
+
+### Submit commits and pull requests name the submitting user
+
+**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
+that re-submits replace, keeping human text.
+
+**To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
+([reference](../README.md#definecanopyconfig-options)).
+
+**Now deletable.** Nothing.
 
 ---
 

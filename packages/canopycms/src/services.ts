@@ -38,6 +38,13 @@ import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { detectHeadBranch } from './utils/git'
 import { readsFromCheckout } from './build-mode'
+import { BRANCH_META_DIR } from './branch-metadata-file'
+import {
+  appendTrailers,
+  buildEditorTrailers,
+  type SubmissionEditor,
+} from './submission-attribution'
+import { getErrorMessage, redactCredentials } from './utils/error'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -83,6 +90,11 @@ export const getBootstrapAdminIds = (): Set<string> => {
   )
 }
 
+export interface SubmitBranchResult {
+  /** Repo-relative paths the branch changes, excluding canopycms runtime metadata. */
+  changedPaths: string[]
+}
+
 export interface CanopyServices {
   config: CanopyConfig
   /**
@@ -124,8 +136,15 @@ export interface CanopyServices {
     files: string | string[]
     message: string
   }) => Promise<void>
-  /** Submit branch: commit all changes and push to remote */
-  submitBranch: (options: { context: BranchContext; message?: string }) => Promise<void>
+  /**
+   * Submit branch: commit all changes (with the submitter's trailers) and push
+   * to remote. Resolves with every path the branch changes against its base.
+   */
+  submitBranch: (options: {
+    context: BranchContext
+    submitter?: SubmissionEditor
+    message?: string
+  }) => Promise<SubmitBranchResult>
   /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
   commitToSettingsBranch: (options: {
     branchRoot: string
@@ -281,8 +300,9 @@ async function _createCanopyServicesInternal(
 
   const submitBranch = async (options: {
     context: BranchContext
+    submitter?: SubmissionEditor
     message?: string
-  }): Promise<void> => {
+  }): Promise<SubmitBranchResult> => {
     // Defense-in-depth: refuse to push the base branch to itself even if the
     // 'submittableBranch' guard was somehow bypassed. Prefer the recorded fork
     // point (context.branch.baseBranch) over config.defaultBaseBranch — the
@@ -312,11 +332,35 @@ async function _createCanopyServicesInternal(
     let committed = false
     if (status.files.length > 0) {
       await git.add('.')
-      await git.commit(options.message ?? `Submit ${options.context.branch.name}`)
+      const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
+        editedBy: config.gitEditedByTrailers ?? true,
+        coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+      })
+      await git.commit(
+        appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
+      )
       committed = true
     }
     if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
       await git.push(options.context.branch.name)
+    }
+
+    // The list only feeds the PR body, so a failure to compute it falls back to
+    // this submit's own working-tree changes rather than failing a submit that
+    // has already been pushed.
+    let changedPaths: string[]
+    try {
+      changedPaths = await git.listChangedPathsSinceBase()
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
+          "the PR body lists only this submit's changes:",
+        redactCredentials(getErrorMessage(err)),
+      )
+      changedPaths = status.files.map((f) => f.path)
+    }
+    return {
+      changedPaths: changedPaths.filter((p) => !p.startsWith(`${BRANCH_META_DIR}/`)),
     }
   }
 

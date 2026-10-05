@@ -16,6 +16,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
+import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -538,6 +539,63 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     const meta = await readBranchMeta('feature-x')
     expect(meta.branch.pullRequestNumber).toBe(77)
     expect(meta.branch.syncStatus).toBe('synced')
+  })
+
+  it('keeps the human text of an existing PR body when the task carries mergeSectionIntoBody', async () => {
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-x')
+    const oldSection = `${PR_SECTION_START}\nold\n${PR_SECTION_END}`
+    const newSection = `${PR_SECTION_START}\nnew\n${PR_SECTION_END}`
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 77,
+          html_url: 'https://github.com/test-owner/test-repo/pull/77',
+          updated_at: '2026-01-01T00:00:00Z',
+          body: `Reviewer notes\n\n${oldSection}`,
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'feature-x',
+        title: 'Submit feature-x',
+        body: newSection,
+        mergeSectionIntoBody: true,
+      },
+    })
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 77, body: `Reviewer notes\n\n${newSection}` }),
+    )
+  })
+
+  it('replaces an existing PR body when the task does not carry mergeSectionIntoBody', async () => {
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-x')
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 77,
+          html_url: 'https://github.com/test-owner/test-repo/pull/77',
+          updated_at: '2026-01-01T00:00:00Z',
+          body: 'Reviewer notes',
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'feature-x', title: 'Submit feature-x', body: 'settings sync' },
+    })
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 77, body: 'settings sync' }),
+    )
   })
 
   it('creates a new PR on first submit and records its number', async () => {
