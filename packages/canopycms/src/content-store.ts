@@ -53,6 +53,7 @@ import { isNodeError } from './utils/error'
 import { filePathExists, readFileIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
+  entryLogicalPath,
   normalizeFilesystemPath,
   parseSlug,
   type LogicalPath,
@@ -687,6 +688,8 @@ export class ContentStore {
   ): Promise<{
     absolutePath: string
     relativePath: PhysicalPath
+    /** The entry's logical path, the form path-permission rules match (`entryLogicalPath`). */
+    logicalPath: LogicalPath
     id?: string
     /**
      * Always populated for a valid schema item: the collection branch below resolves a name
@@ -824,6 +827,7 @@ export class ContentStore {
       return {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved) as PhysicalPath,
+        logicalPath: entryLogicalPath(schemaItem.logicalPath, safeSlug),
         id,
         entryTypeName: finalEntryTypeName,
         existed,

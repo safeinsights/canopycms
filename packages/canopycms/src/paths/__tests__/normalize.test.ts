@@ -5,6 +5,7 @@ import {
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
+  entryLogicalPath,
   joinPath,
 } from '../normalize'
 import { validateAndNormalizePath } from '../normalize-server'
@@ -113,6 +114,20 @@ describe('createLogicalPath', () => {
     expect(() => createLogicalPath('content', '..', 'evil')).toThrow(
       'Invalid path: contains traversal sequence',
     )
+  })
+})
+
+describe('entryLogicalPath', () => {
+  it('appends the slug to a nested collection path', () => {
+    expect(entryLogicalPath('content/docs/api', 'endpoints')).toBe('content/docs/api/endpoints')
+  })
+
+  it('puts a root-collection entry directly under the content root', () => {
+    expect(entryLogicalPath('content', 'about')).toBe('content/about')
+  })
+
+  it('does not throw on a dotted slug read off disk', () => {
+    expect(entryLogicalPath('content/blog', 'v1..2')).toBe('content/blog/v1..2')
   })
 })
 

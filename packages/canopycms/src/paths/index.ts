@@ -20,6 +20,7 @@ export {
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
+  entryLogicalPath,
   joinPath,
   trimSlashes,
 } from './normalize'
