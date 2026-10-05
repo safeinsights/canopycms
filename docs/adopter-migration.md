@@ -51,7 +51,33 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
-### Clerk sign-in no longer hangs behind CloudFront OAC
+---
+
+<!--
+Template for each entry — copy, don't improvise:
+
+### <short title>
+
+**What changed.** One or two sentences.
+
+**To adopt.** Concrete steps, with the import path and the call shape.
+
+**Now deletable.** Describe the PATTERN of local code this supersedes ("a hand-rolled
+filename parser") so any adopter can recognise it in their own tree. Never name files,
+paths, branches, hosts or identifiers from a specific adopter's repo: this package is
+public and its adopters' repos generally are not. If nothing becomes deletable, say so
+explicitly — that is a real and useful answer.
+-->
+
+---
+
+## Released
+
+### 0.0.67
+
+Every entry below shipped in `0.0.67`.
+
+#### Clerk sign-in no longer hangs behind CloudFront OAC
 
 **What changed.** `@clerk/nextjs`'s provider makes every `setActive` (sign-in, account or org
 switch) wait on a Server Action. Behind `CanopyCmsDistribution`'s OAC that action's POST 403s, so
@@ -67,7 +93,7 @@ Your own Server Actions in the CMS build still 403 behind OAC.
 **Now deletable.** Any local patch of `window.__internal_onBeforeSetActive` (or 6.x's
 `__unstable__onBeforeSetActive`), and any edge function added only to make Clerk sign-in finish.
 
-### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
+#### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
 
 **What changed.** `init --auth clerk` now writes the same passthrough `middleware.ts` as dev auth,
 with `clerkMiddleware` and its costs as a commented opt-in, instead of an active `clerkMiddleware`.
@@ -80,7 +106,7 @@ the commented snippet if you want to keep the edge check.
 **Now deletable.** A `clerkMiddleware` an earlier `init` wrote, if you never chose the edge check.
 The entry below says what it costs.
 
-### The editor handles signed-out users itself, so `clerkMiddleware` is optional
+#### The editor handles signed-out users itself, so `clerkMiddleware` is optional
 
 **What changed.** The editor treats a 401 from the CMS API as signed out. It shows the auth
 provider's sign-in screen instead of loading, or over the open editor when a session ends mid-edit,
@@ -98,7 +124,7 @@ custom auth provider adds `editor.SignInComponent`, which receives `EditorSignIn
   `CLERK_SECRET_KEY` in the deployed CMS runtime.
 - Reload-on-401 or "session expired" handling in your edit page.
 
-### A worker credential can be one field of a JSON secret
+#### A worker credential can be one field of a JSON secret
 
 **What changed.** The EC2 worker's Secrets Manager reads can pull a single field out of a secret
 whose value is a JSON document. Two env vars, read by the worker entrypoint:
@@ -150,7 +176,7 @@ into the worker's environment before starting it — a `jq` step in user-data, o
 around `canopy-worker`. If it also validated the field exists, the package now does that with a
 better message.
 
-### The worker can authenticate to GitHub as an App (the token still works, unchanged)
+#### The worker can authenticate to GitHub as an App (the token still works, unchanged)
 
 **What changed.** `CmsWorkerConfig` gained an optional `githubAppAuth`. Supply it _instead of_
 `githubToken` to have the worker act as a GitHub App installation. Exactly one of the two: both is
@@ -206,7 +232,7 @@ publish's whole retry budget instead of failing fast.
 
 **`GitHubService` is unaffected** and remains static-token-only.
 
-### The CDK worker can authenticate as a GitHub App (#45)
+#### The CDK worker can authenticate as a GitHub App (#45)
 
 **What changed.** `CanopyCmsServiceProps` gained `githubAppId`, `githubAppInstallationId`,
 `githubAppPrivateKeySecretArn` and `githubAppPrivateKeySecretJsonField`. Set the first three and the
@@ -240,7 +266,7 @@ worker's environment — a path that could not have worked for a multi-line key 
 
 See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the walkthrough.
 
-### `canopycms init-github-app` registers that App for you
+#### `canopycms init-github-app` registers that App for you
 
 **What changed.** A new CLI command, `canopycms init-github-app <create|verify>`. `create` registers
 the App from a manifest — so GitHub shows you the exact permission set before you click Create —
@@ -281,7 +307,7 @@ waits twice for a human and hanging in CI would leave a live App whose only key 
 upload it to the secret store" — the hop where a private key most often ends up in a downloads
 folder or a clipboard.
 
-### A rotated secret reaches the running worker, without an instance replacement
+#### A rotated secret reaches the running worker, without an instance replacement
 
 **What changed.** The worker read both of its Secrets Manager secrets once, at boot, and never
 again, so rotating the GitHub token or the Clerk secret key had no effect until the instance was
@@ -312,7 +338,7 @@ that costs one publish when a call lands in the minute before a rotation. A call
 after `taskTimeoutMs` is abandoned. `packages/canopycms-cdk/worker/credential-refresh.ts` is the
 worked example.
 
-### `assetUploadBehavior()` builds the upload route from a bucket alone
+#### `assetUploadBehavior()` builds the upload route from a bucket alone
 
 **What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:
 
@@ -343,7 +369,7 @@ are attached to first: CDK puts them on that function's own execution role when 
 share an account, so removing the construct usually removes the whole footprint and leaves no
 bucket-policy statement behind.
 
-### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
+#### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
 
 **What changed.** Six changes to how the CMS editor image is built and deployed. They matter most if
 you ran `canopycms init-deploy aws` before them, or copied `Dockerfile.cms.template` by hand.
@@ -416,28 +442,6 @@ built](deploying-to-aws.md#where-the-image-is-built)).
   (`withCanopy()` adds its own and keeps yours), and a `turbopack: {}` added only to get past Next
   16's error about `withCanopy()`'s `webpack` function — as long as `withCanopy()` can read your
   Next version, which it cannot under Yarn PnP.
-
----
-
-<!--
-Template for each entry — copy, don't improvise:
-
-### <short title>
-
-**What changed.** One or two sentences.
-
-**To adopt.** Concrete steps, with the import path and the call shape.
-
-**Now deletable.** Describe the PATTERN of local code this supersedes ("a hand-rolled
-filename parser") so any adopter can recognise it in their own tree. Never name files,
-paths, branches, hosts or identifiers from a specific adopter's repo: this package is
-public and its adopters' repos generally are not. If nothing becomes deletable, say so
-explicitly — that is a real and useful answer.
--->
-
----
-
-## Released
 
 ### 0.0.66
 
