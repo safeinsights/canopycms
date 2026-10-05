@@ -147,6 +147,7 @@ with the in-flight ACL chips.
 
 | File | Summary |
 | ---- | ------- |
+| [occ-json-write-mid-settle-test-flake.md](occ-json-write-mid-settle-test-flake.md) | New 2026-10-05. The "another write lands mid-settle" OCC test failed once in a full run that overlapped another vitest process, and passed 3 of 3 alone. Suspected: the competing write is placed in the settle window by wall-clock timing [BOTH] |
 | [dev-content-watcher-retraction-test-flake.md](dev-content-watcher-retraction-test-flake.md) | New 2026-10-05. The watcher's "announces the retraction" test failed once in a loaded full run (retraction announced twice) and passed 3 of 3 alone. Suspected: the test's two non-atomic resolving writes let the watcher see an intermediate state [BOTH] |
 | [branch-name-collides-with-registry-file.md](branch-name-collides-with-registry-file.md) | New 2026-10-05, reasoned from code, pre-existing. Branch creation does not reserve the branch registry's file names, so an editor can create a branch named `branches.json`, whose workspace path is the registry file. Provisioning or a later registry write then fails with an unhelpful error [BOTH] |
 | [active-branch-read-resolves-schema-before-access.md](active-branch-read-resolves-schema-before-access.md) | New 2026-10-05, measured by review, pre-existing. `read` loads the active branch's schema before checking access, so a user denied on that branch can tell existing collections (`FORBIDDEN`) from missing ones (`NO_SCHEMA_ITEM`). Other branches are already checked first [BOTH] |
