@@ -10,7 +10,7 @@ import {
   findInvalidBodyFields,
   findReservedBodyFieldName,
 } from './utils/body-field'
-import { RESOLVED_REFERENCE_KEYS } from './entry-schema'
+import { RESOLVED_REFERENCE_KEYS, RESTRICTED_REFERENCE_MARKER } from './entry-schema'
 import { flattenGroupFields } from './utils/flatten-group-fields'
 import {
   ensureSelectFieldsHaveOptions,
@@ -50,10 +50,10 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * interface to maintain. Keyed any other way, the derived map is keyed by that
  * string instead and will not plug into `TEntryTypes`.
  *
- * Rejected at call time: an empty registry; a schema that is not a non-empty
- * `EntrySchema` array; more than one `isTitle` per schema, or one on a non-string
- * field or inside a list; more than one `isBody`, or one on a field that is not
- * markdown/mdx or is named one of `RESOLVED_REFERENCE_KEYS`. This is also the one
+ * Rejected at call time: an empty registry; a schema that is not a non-empty `EntrySchema`
+ * array; more than one `isTitle` per schema, or one on a non-string field or inside a list;
+ * more than one `isBody`, or one on a field that is not markdown/mdx or is named one of
+ * `RESOLVED_REFERENCE_KEYS`; a top-level field named `unavailable`. This is also the one
  * place the shared field-shape checks run: select fields must have options,
  * reference fields must have `collections` or `entryTypes`, no inline groups
  * inside object/block fields, no field-name collisions after group flattening.
@@ -119,6 +119,11 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     if (reservedBodyField) {
       throw new Error(
         `Entry schema registry entry "${key}": field "${reservedBodyField}" has isBody: true but "${reservedBodyField}" is reserved — reference resolution sets ${RESOLVED_REFERENCE_KEYS.map((k) => `"${k}"`).join(', ')} on a resolved reference, and a body field with one of those names would overwrite it. Rename the field (the body's field name is yours to choose; only these four are reserved).`,
+      )
+    }
+    if (flattenGroupFields(schema).some((f) => f.name === RESTRICTED_REFERENCE_MARKER)) {
+      throw new Error(
+        `Entry schema registry entry "${key}": field "${RESTRICTED_REFERENCE_MARKER}" is reserved — a resolved reference carries "${RESTRICTED_REFERENCE_MARKER}: true" only when the reader may not read its target, so a field with that name would make every reference to this entry type look restricted. Rename the field.`,
       )
     }
     ensureSelectFieldsHaveOptions(schema)

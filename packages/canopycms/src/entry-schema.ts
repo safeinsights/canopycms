@@ -103,11 +103,17 @@ export function buildResolvedReference(
   resolved.slug = meta.slug
   resolved.collection = meta.collection
   resolved.urlPath = meta.urlPath
-  // `unavailable` is the marker of a `RestrictedReference`, so a full reference never carries
-  // it: a target modelling it as content would otherwise read as one the reader may not see.
-  delete resolved.unavailable
+  // Backstop for the registry's rejection of a field with this name (entry-schema-registry.ts):
+  // a full reference carrying the marker would read as one the reader may not see.
+  delete resolved[RESTRICTED_REFERENCE_MARKER]
   return resolved
 }
+
+/**
+ * The key that marks a `RestrictedReference`. Reserved as an entry field name, at the top level
+ * of any schema, because any schema can be a reference target.
+ */
+export const RESTRICTED_REFERENCE_MARKER = 'unavailable'
 
 /**
  * What a reference resolves to when the reader may not read its target: enough to render a
