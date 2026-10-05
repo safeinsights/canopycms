@@ -364,9 +364,10 @@ export async function executeTask(
         base,
         title: optionalString(payload, 'title', `Submit ${branch}`),
         body: optionalString(payload, 'body', ''),
-        // Content submits (api/github-sync.ts) set this; settings-branch
-        // syncs (services.ts) deliberately don't.
+        // Content submits (api/github-sync.ts) set both; settings-branch
+        // syncs (services.ts) deliberately set neither.
         markReadyIfDraft: payload.markReadyIfDraft === true,
+        mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
         signal,
       })
       workerLog(
