@@ -29,7 +29,12 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { isMissingRemoteRefFailure, isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
+import {
+  isMissingRemoteRefFailure,
+  isNetworkRemoteUrl,
+  resolveBaseBranch,
+  stageAllExceptCanopyState,
+} from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -1122,6 +1127,11 @@ export class GitManager {
   async add(files: string | string[]): Promise<void> {
     const fileArray = Array.isArray(files) ? files : [files]
     await this.git.add(fileArray)
+  }
+
+  /** Stage every working-tree change except canopycms's own state. See {@link stageAllExceptCanopyState}. */
+  async addAllExceptCanopyState(): Promise<void> {
+    await stageAllExceptCanopyState(this.git)
   }
 
   async commit(message: string): Promise<void> {

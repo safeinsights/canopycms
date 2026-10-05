@@ -387,6 +387,89 @@ describe('CmsWorker rebaseActiveBranches', () => {
   })
 
   // -------------------------------------------------------------------------
+  // canopycms's own state (.canopy-meta/)
+  // -------------------------------------------------------------------------
+
+  describe("canopycms's own state", () => {
+    const behindCount = async (setup: BranchSetup) => {
+      await setup.branchGit.fetch('origin', 'main')
+      return (await setup.branchGit.status()).behind
+    }
+
+    it('rebases when the only dirt is untracked canopycms state (a clone without the exclude)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const dirt = (await setup.branchGit.status()).files.map((f) => f.path)
+      expect(dirt).toEqual(['.canopy-meta/branch.json'])
+
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      await expect(
+        fs.readFile(path.join(setup.branchPath, 'main-update.txt'), 'utf8'),
+      ).resolves.toBe('new from main')
+    })
+
+    it('restores the retired in-tree schema cache a repo tracks, then rebases', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/schema-cache.json': '{"v":"committed"}' },
+      })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const cachePath = path.join(setup.branchPath, '.canopy-meta', 'schema-cache.json')
+      await fs.writeFile(cachePath, '{"v":"written by an older canopycms"}')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      await expect(behindCount(setup)).resolves.toBe(0)
+      expect(consoleSpy).toHaveLogged(/my-feature: restored the retired in-tree schema cache/)
+      consoleSpy.restore()
+      await expect(fs.readFile(cachePath, 'utf8')).resolves.toBe('{"v":"committed"}')
+    })
+
+    it('skips, naming the fix, when other tracked canopycms state is modified', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
+      })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      const commentsPath = path.join(setup.branchPath, '.canopy-meta', 'comments.json')
+      await fs.writeFile(commentsPath, '{"threads":["a reviewer comment"]}')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      expect(consoleSpy).toHaveWarned(
+        /Skipping my-feature: git cannot rebase over .*\.canopy-meta\/comments\.json.*git rm -r --cached \.canopy-meta/,
+      )
+      consoleSpy.restore()
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+      // canopycms never discards state it still uses.
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
+        '{"threads":["a reviewer comment"]}',
+      )
+    })
+
+    it('still skips real editor dirt when canopycms state is dirty too', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await fs.writeFile(path.join(setup.branchPath, 'unsaved-edit.txt'), 'editor draft')
+
+      const consoleSpy = mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      expect(consoleSpy).toHaveLogged(/Skipping my-feature: has uncommitted changes/)
+      consoleSpy.restore()
+      await expect(behindCount(setup)).resolves.toBeGreaterThan(0)
+    })
+  })
+
+  // -------------------------------------------------------------------------
   // Conflict handling
   // -------------------------------------------------------------------------
 

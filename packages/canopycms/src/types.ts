@@ -109,6 +109,25 @@ export interface BranchContextWithSchema extends BranchContext {
 }
 
 /**
+ * Outcome of the worker's per-cycle fast-forward of the base branch's own clone
+ * (worker/git-sync.ts's `refreshBaseBranchWorkspace`); the rebase loop skips
+ * that clone.
+ */
+export interface BaseRefreshReport {
+  outcome: 'refreshed' | 'up-to-date' | 'skipped-dirty' | 'skipped-not-provisioned' | 'failed'
+  /** Tracked files blocking the refresh, at most 10; set when `skipped-dirty`. */
+  dirtyFiles?: string[]
+  /** What went wrong, credential-redacted; set when `failed` or `skipped-dirty`. */
+  message?: string
+  /**
+   * Files under `.canopy-meta/` the adopter's repo tracks, at most 10. canopycms
+   * rewrites that state per branch, so tracking it is an adopter misconfiguration
+   * the panel surfaces with its fix, whatever the outcome.
+   */
+  trackedCanopyMeta?: string[]
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -133,6 +152,8 @@ export interface WorkerStatusReport {
      */
     skippedLocked?: string[]
     failed: { branch: string; error: string }[]
+    /** Optional for the same reason as `tracked` below. */
+    baseRefresh?: BaseRefreshReport
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's fetched
      * tips, non-destructively (worker/git-sync.ts's `reconcileTrackedBranches`).

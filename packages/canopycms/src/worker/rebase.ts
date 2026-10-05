@@ -14,7 +14,8 @@ import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { isRebaseInProgress } from '../utils/git'
+import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
+import { TRACKED_CANOPY_STATE_FIX, isUntracked, restoreRetiredSchemaCache } from './canopy-state'
 import {
   enqueueGitHubPush,
   forcePublishToLocalRemote,
@@ -763,10 +764,25 @@ async function rebaseOneBranch(
 
       // Skip dirty branches — the editor has changes that cannot be rebased.
       // Inside the lock, so no write can land between this check and the rebase
-      // below.
-      const dirtyCheck = await branchGit.status()
-      if (dirtyCheck.files.length > 0) {
+      // below. canopycms's own untracked state is not dirt, but `git rebase`
+      // refuses to start over ANY modified tracked file, so tracked state the
+      // adopter committed still blocks, and says how to fix it.
+      let dirtyCheck = await branchGit.status()
+      if (await restoreRetiredSchemaCache(branchGit, dirtyCheck)) {
+        workerLog(`  ${branchDir}: restored the retired in-tree schema cache`)
+        dirtyCheck = await branchGit.status()
+      }
+      const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
+      if (editorDirt.length > 0) {
         workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
+        return { kind: 'skippedDirty' }
+      }
+      const trackedStateDirt = dirtyCheck.files.filter((f) => !isUntracked(f))
+      if (trackedStateDirt.length > 0) {
+        workerLogWarn(
+          `  Skipping ${branchDir}: git cannot rebase over modified canopycms state the repo tracks ` +
+            `(${trackedStateDirt.map((f) => f.path).join(', ')}). To fix, ${TRACKED_CANOPY_STATE_FIX}.`,
+        )
         return { kind: 'skippedDirty' }
       }
 

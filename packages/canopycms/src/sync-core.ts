@@ -9,6 +9,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import { filePathExists } from './utils/fs'
+import { isCanopyInternalPath, stageAllExceptCanopyState } from './utils/git'
 
 /** Git tag marking the last known sync point, used as the merge base for `sync both` 3-way merges. */
 export const SYNC_BASE_TAG = 'canopycms-sync-base'
@@ -189,16 +190,14 @@ export async function pushContentToWorkspace(
   // The content dir was replaced wholesale, so ContentStore ID indexes rooted
   // at this workspace must be marked stale — in this process and (via the
   // on-disk generation marker) in every other process sharing the filesystem.
-  // Done in the finally AFTER the git add/commit below: the marker lives under
-  // .canopy-meta/ inside the clone, and writing it first would stage it into
-  // the sync commit via `add -A` (production workspaces git-exclude
-  // .canopy-meta/, but this function shouldn't depend on that).
+  // Done in the finally AFTER the git add/commit below, and staging skips
+  // .canopy-meta/, where the marker lives.
   try {
     const wsGit = simpleGit({ baseDir: branchPath })
-    await wsGit.add('-A')
-    const postStatus = await wsGit.status()
+    await stageAllExceptCanopyState(wsGit)
+    const staged = (await wsGit.status()).files.filter((f) => !isCanopyInternalPath(f.path))
 
-    if (postStatus.files.length === 0) {
+    if (staged.length === 0) {
       if (baseTag) await wsGit.tag(['-f', baseTag])
       return { fileCount: 0 }
     }
@@ -206,7 +205,7 @@ export async function pushContentToWorkspace(
     await wsGit.commit(commitMessage ?? 'sync: update content from working tree')
     if (baseTag) await wsGit.tag(['-f', baseTag])
 
-    return { fileCount: postStatus.files.length }
+    return { fileCount: staged.length }
   } finally {
     await invalidateBranchContentCaches(branchPath)
   }
