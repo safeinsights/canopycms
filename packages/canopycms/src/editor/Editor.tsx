@@ -1056,13 +1056,7 @@ export const Editor: React.FC<EditorProps> = ({
                             : 'Select an item to start editing.'}
                       </CenteredMessage>
                     ) : currentEntry.canEdit === false ? (
-                      <NoEditPermissionNotice
-                        branchName={branchNameState}
-                        branchReadOnly={currentBranch?.readOnly}
-                        branchWriteBlocked={branchContentLocked}
-                        branchStatus={currentBranch?.status}
-                        entryPath={currentEntry.path}
-                      />
+                      <NoEditPermissionNotice entryPath={currentEntry.path} />
                     ) : schema.length > 0 && effectiveValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <FormRenderer

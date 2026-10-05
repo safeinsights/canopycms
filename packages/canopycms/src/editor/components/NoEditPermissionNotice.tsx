@@ -1,49 +1,16 @@
 import { Text } from '@mantine/core'
 
 export interface NoEditPermissionNoticeProps {
-  /** Branch being edited. */
-  branchName?: string
-  /** True when the branch is the read-only protected base branch. */
-  branchReadOnly?: boolean
-  /** True when the server blocks writes to the branch (read-only base branch or locked status). */
-  branchWriteBlocked?: boolean
-  /** Workflow status of the branch, when known. */
-  branchStatus?: string
   /** Logical path of the entry the user cannot edit. */
   entryPath: string
 }
 
 /**
- * Explains why an entry cannot be edited. The branch reason wins over the
- * permission reason: when writes to the branch are blocked, a permission grant
- * would not help.
+ * Explains why an entry cannot be edited and whom to ask. An entry's `canEdit` is false only
+ * when a path rule (or `defaultPathAccess`) denies edit, so that is the reason it gives; a
+ * locked or protected branch shows its own banner in the header and a read-only form instead.
  */
-export function NoEditPermissionNotice({
-  branchName,
-  branchReadOnly = false,
-  branchWriteBlocked = false,
-  branchStatus,
-  entryPath,
-}: NoEditPermissionNoticeProps) {
-  const branchLabel = branchName ? `"${branchName}"` : 'This branch'
-  const statusLocked =
-    branchWriteBlocked &&
-    !branchReadOnly &&
-    branchStatus !== undefined &&
-    branchStatus !== 'editing'
-
-  let message: string
-  if (branchReadOnly) {
-    message = `${branchLabel} is the protected base branch, so its content is read-only. Create or switch to another branch to edit.`
-  } else if (statusLocked) {
-    message =
-      branchStatus === 'submitted'
-        ? `${branchLabel} is submitted for review and locked for edits. Withdraw it to resume editing.`
-        : `${branchLabel} is ${branchStatus}, so its content is read-only.`
-  } else {
-    message = `You don't have edit access to "${entryPath}". Ask a CanopyCMS admin to grant it in Manage Permissions.`
-  }
-
+export function NoEditPermissionNotice({ entryPath }: NoEditPermissionNoticeProps) {
   return (
     <div
       role="status"
@@ -58,7 +25,8 @@ export function NoEditPermissionNotice({
       }}
     >
       <Text size="sm" c="dimmed">
-        {message}
+        You don&apos;t have edit access to &quot;{entryPath}&quot;. Ask a CanopyCMS admin to grant
+        it in Manage Permissions.
       </Text>
     </div>
   )
