@@ -37,8 +37,8 @@ which comment owns it.
   the `WorkerContext` doc comment (INVARIANT).
 - Extracted modules call `ctx.executeTask` / `ctx.pushBranchToGitHub`, never the module-level
   function: the same comment, and the `TaskRunnerContext` pick list in `task-runner.ts`.
-- Non-fast-forward push rejection fails fast as `PermanentTaskError`, not retries:
-  `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
+- Non-fast-forward and workflow-content push refusals fail fast as `PermanentTaskError`, not
+  retries: `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
 - Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
   function (it is part of provisioning, so it stays there).

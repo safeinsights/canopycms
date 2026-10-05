@@ -66,9 +66,9 @@ describe('the App manifest', () => {
     }
     // The ones a PR bot most plausibly acquires by accident: labels and
     // assignees go through the Issues API, and `workflows` is needed to push
-    // anything under .github/workflows. This package edits neither, though a
-    // rebased push can still carry a base-branch workflow change (an open P1:
-    // worker-push-refused-when-base-changes-workflows.md).
+    // workflow content GitHub does not already hold. This package writes
+    // neither; carrying the base branch's existing workflow content through a
+    // rebase needs no `workflows`.
     expect(permissions.issues).toBeUndefined()
     expect(permissions.workflows).toBeUndefined()
     expect(permissions.administration).toBeUndefined()
