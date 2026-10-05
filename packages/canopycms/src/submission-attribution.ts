@@ -24,8 +24,10 @@ const MAX_LISTED_ENTRIES = 100
 /**
  * The PR body region canopycms owns. On update only the text between these
  * markers is replaced, so anything a human wrote around it survives.
+ * @internal Exported for tests.
  */
 export const PR_SECTION_START = '<!-- canopycms:submission:start -->'
+/** @internal Exported for tests. */
 export const PR_SECTION_END = '<!-- canopycms:submission:end -->'
 
 // Cc (C0/C1 controls incl. newlines), Cf (zero-width and bidi overrides), Zl/Zp
@@ -53,7 +55,10 @@ function cleanText(raw: string | undefined, max: number): string | undefined {
   return cleaned ? truncate(cleaned, max) : undefined
 }
 
-/** A display name safe for a single line of git trailer or Markdown, or undefined. */
+/**
+ *A display name safe for a single line of git trailer or Markdown, or undefined.
+ * @internal Exported for tests.
+ */
 export function sanitizeDisplayName(raw: string | undefined): string | undefined {
   return cleanText(raw, MAX_NAME_LENGTH)
 }
@@ -62,7 +67,10 @@ export function sanitizeDisplayName(raw: string | undefined): string | undefined
 // all: rewriting one could merge two users or attribute an edit to someone else.
 const UNSAFE_VERBATIM_CHAR = /[\s\p{Cc}\p{Cf}<>()`\\]/u
 
-/** The auth user id unchanged, or undefined if it holds characters unsafe to record. */
+/**
+ *The auth user id unchanged, or undefined if it holds characters unsafe to record.
+ * @internal Exported for tests.
+ */
 export function sanitizeUserId(raw: string | undefined): string | undefined {
   if (!raw || Array.from(raw).length > MAX_ID_LENGTH || UNSAFE_VERBATIM_CHAR.test(raw))
     return undefined
@@ -71,7 +79,10 @@ export function sanitizeUserId(raw: string | undefined): string | undefined {
 
 const EMAIL_SHAPE = /^[^\s@<>()"',;:\\[\]]+@[^\s@<>()"',;:\\[\]]+\.[^\s@<>()"',;:\\[\]]+$/
 
-/** The email as given if it is a plain single-address email, otherwise undefined. */
+/**
+ *The email as given if it is a plain single-address email, otherwise undefined.
+ * @internal Exported for tests.
+ */
 export function sanitizeEmail(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined
   const trimmed = raw.trim()
