@@ -28,10 +28,12 @@ GitHub Actions' `GITHUB_TOKEN` (an App installation token with `contents: write`
 | New single-parent commit changing the workflow to content the repo already holds | accepted | accepted |
 | **Control: new commit with workflow content GitHub does not hold** | **refused** | **refused** |
 
-So GitHub refuses only workflow **content it does not already hold**. The worker rebases onto
-a base fetched from GitHub, so it never carries such content unless a workflow edit was made
-outside the editor (a direct push to a content branch, auto-merged by the rebase with a base
-change to the same file). The public reports fit: a fork does not hold its upstream's blobs.
+So GitHub refuses only workflow **content it does not already hold**. The worker fetches the
+base from GitHub (`worker/git-sync.ts:406-411`, then `worker/rebase.ts:796`), so it carries
+such content only when the branch holds a workflow edit of its own, normally from outside the
+editor. Measured too, with the OAuth token only: a published branch carrying a direct-pushed
+workflow edit, rebased onto a base that changed another line of the same file, auto-merged to
+new content and was **refused**. Why the two public reports were refused was not established.
 
 Not measured: a fine-grained PAT, a classic PAT proper, and a GitHub App other than Actions'
 own. The live-App run in
@@ -41,7 +43,7 @@ can confirm the last.
 ## What shipped
 
 - `workflowPushRefusalFile` (`utils/git.ts`) recognises GitHub's refusal, tested against both
-  captured refusals verbatim.
+  captured refusals (verbatim apart from the repository URL).
 - `pushBranchToGitHub` raises `PermanentTaskError` naming the branch and the workflow file, on
   the plain, leased and stale-lease-retry pushes, so the task fails at once and the reason
   reaches System health and the branch list. Tested against a fixture whose proc-receive hook

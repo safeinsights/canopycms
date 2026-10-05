@@ -524,8 +524,8 @@ function throwIfWorkflowRefusal(branch: string, message: string): void {
   throw new PermanentTaskError(
     `Push refused for branch "${branch}": it would put a version of ${file} on GitHub that ` +
       `GitHub does not already have, and this deployment's GitHub credential is deliberately not ` +
-      `allowed to change workflow files. The editor never writes workflow files, so the change ` +
-      `came from outside it, such as a direct push to this branch. Nothing was pushed, and ` +
+      `allowed to change workflow files. Such a change usually comes from outside the editor, ` +
+      `such as a direct push to this branch. Nothing was pushed, and ` +
       `retrying will not help until a developer with permission to change workflow files ` +
       `resolves it on GitHub.`,
   )

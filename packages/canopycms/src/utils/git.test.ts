@@ -195,8 +195,8 @@ describe('isNonFastForwardRejection', () => {
 
 describe('workflowPushRefusalFile', () => {
   // Refusals captured from real GitHub (LC_ALL=C), verbatim apart from the repository
-  // URL. Each is a direct edit to a
-  // workflow file pushed by a credential without the workflows permission, in the
+  // URL. Each is a direct edit to a workflow file pushed by a credential without the
+  // workflows permission, in the
   // `--verbose --porcelain` shape simple-git's `.push()` produces. The App token was
   // GitHub Actions' GITHUB_TOKEN; the OAuth token was a `gh` login holding `repo` but
   // not `workflow`.

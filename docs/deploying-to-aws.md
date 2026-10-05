@@ -639,10 +639,10 @@ fails if a call is added that the set does not cover.
 Neither the App nor a token needs the workflows permission (the `workflow` scope,
 for a classic PAT). GitHub refuses a push only when it adds workflow content the
 repository does not already hold, so a content branch rebased onto a base branch
-that changed a workflow still publishes. The refusal is reachable only through a
-workflow edit made outside the editor, such as a direct push to a content branch.
-That publish then fails at once, and System health and the branch list name the
-workflow file.
+that changed a workflow still publishes. In practice the refusal needs a workflow
+edit made outside the editor, such as a direct push to a content branch that the
+worker's rebase then merges with a base change to the same file. That publish fails
+at once, and System health and the branch list name the workflow file.
 
 **Register one App per site.** Anyone holding an App's key can mint a token for
 any of its installations, so one App shared across sites lets a compromise of
