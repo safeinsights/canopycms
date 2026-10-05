@@ -487,7 +487,10 @@ describe('SystemHealthPanel', () => {
 
         expect(screen.queryByTestId('base-refresh-warning-feature-a')).toBeNull()
         await userEvent.hover(icon)
-        expect(await screen.findByText(/Uncommitted: content\/home\.md/)).toBeTruthy()
+        // Scoped to the tooltip: the Overview panel stays mounted and repeats the text.
+        expect((await screen.findByRole('tooltip')).textContent).toMatch(
+          /Uncommitted: content\/home\.md/,
+        )
       })
 
       it('carries no warning when the worker reports no baseRefresh', async () => {
