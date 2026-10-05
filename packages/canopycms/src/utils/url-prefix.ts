@@ -189,6 +189,10 @@ export function withTrailingSlash(path: string): string {
   return `${withLeading}/${suffix}`
 }
 
+// Linear: `[^/?#]*` cannot overlap the literal `//` before it, so there is one way to match.
+// eslint-disable-next-line security/detect-unsafe-regex
+const URL_ORIGIN = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*/i
+
 /**
  * Give a URL's path the trailing-slash form a Next host serves, so loading it draws no 308:
  * `withTrailingSlash`'s rule when `trailingSlash` is true, else no trailing slash on any path
@@ -196,9 +200,7 @@ export function withTrailingSlash(path: string): string {
  * absolute URL's origin, and any query or fragment, are kept as they are.
  */
 export function matchTrailingSlash(url: string, trailingSlash: boolean): string {
-  const origin = isAbsoluteUrl(url)
-    ? (/^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*/i.exec(url)?.[0] ?? '')
-    : ''
+  const origin = isAbsoluteUrl(url) ? (URL_ORIGIN.exec(url)?.[0] ?? '') : ''
   const rest = url.slice(origin.length)
   if (trailingSlash) return origin + withTrailingSlash(rest)
   const splitIndex = rest.search(/[?#]/)

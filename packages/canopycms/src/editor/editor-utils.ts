@@ -8,6 +8,7 @@ import { normalizeCollectionPath } from '../paths/normalize'
 import { isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 import {
+  isAbsoluteUrl,
   joinUrlPrefix,
   matchTrailingSlash,
   readTrailingSlashEnv,
@@ -104,8 +105,9 @@ const buildPreviewRoute = (
 /**
  * Builds the preview iframe `src` for an entry: its route under `previewPrefix`, under the
  * deployment `basePath` (`CanopyClientConfig.basePath`, e.g. `/preview-123`), in the host's
- * trailing-slash form, with `?branch=`. An absolute route or prefix skips the prefixes before it.
- * An entry's own `previewSrc` gets only the `basePath`.
+ * trailing-slash form, with `?branch=`. An absolute prefix skips the `basePath`; an absolute route
+ * (from `previewBaseByCollection`) is used as written. An entry's own `previewSrc` gets only the
+ * `basePath`.
  *
  * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
  * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
@@ -117,6 +119,9 @@ export const buildPreviewSrc = (
 ): string => {
   if (entry.previewSrc) return joinUrlPrefix(context.basePath, entry.previewSrc)
   const route = buildPreviewRoute(entry, context)
+  // An absolute route is another site's URL, so the host's trailing-slash form says nothing
+  // about it.
+  if (isAbsoluteUrl(route)) return appendBranch(route, context.branchName)
   const mounted = joinUrlPrefix(context.basePath, joinUrlPrefix(context.previewPrefix, route))
   const shaped = matchTrailingSlash(mounted, context.trailingSlash ?? readTrailingSlashEnv())
   return appendBranch(shaped, context.branchName)

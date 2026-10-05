@@ -9,6 +9,7 @@ import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
+import { previewPrefixSchema } from './url'
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
 const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
@@ -59,15 +60,7 @@ const editorConfigSchema = z.object({
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
   previewBase: z.record(z.string()).optional(),
-  // A same-origin path or an http(s) URL. No query or fragment, since routes are appended after
-  // it, and no backslash, which browsers read as `/` (so `/\host` would leave the origin).
-  previewPrefix: z
-    .string()
-    .regex(/^(?:\/(?![/\\])|https?:\/\/[^/?#\\]+(?:\/|$))[^?#\\]*$/, {
-      message:
-        "editor.previewPrefix must be a path starting with '/' or an http(s) URL, with no query, fragment or backslash",
-    })
-    .optional(),
+  previewPrefix: previewPrefixSchema.optional(),
   // UI handler functions (runtime only, don't serialize)
   onAccountClick: z.function().returns(z.void()).optional(),
   onLogoutClick: z.function().returns(z.void()).optional(),

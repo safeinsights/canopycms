@@ -274,16 +274,25 @@ describe('buildPreviewSrc', () => {
       ).toBe('/preview/articles/hello?branch=main')
     })
 
-    it('leaves an absolute previewBase alone, prefix and basePath included', () => {
-      expect(
+    it('leaves an absolute previewBase alone, prefix, basePath and trailing slash included', () => {
+      const absolute = (trailingSlash: boolean, base: string, collectionPath = 'content/posts') =>
         prefixed(
-          { collectionPath: 'content/posts', slug: 'hello' },
+          { collectionPath, slug: 'hello' },
           {
-            previewBaseByCollection: { 'content/posts': 'https://other.example.com/blog' },
+            previewBaseByCollection: { [collectionPath]: base, 'content/hello': base },
             basePath: '/base',
+            trailingSlash,
           },
-        ),
-      ).toBe('https://other.example.com/blog/hello?branch=main')
+        )
+      expect(absolute(false, 'https://other.example.com/blog')).toBe(
+        'https://other.example.com/blog/hello?branch=main',
+      )
+      expect(absolute(true, 'https://other.example.com/blog')).toBe(
+        'https://other.example.com/blog/hello?branch=main',
+      )
+      expect(absolute(false, 'https://other.example.com/about/', 'content')).toBe(
+        'https://other.example.com/about/?branch=main',
+      )
     })
 
     it('puts the basePath in front of the prefix', () => {

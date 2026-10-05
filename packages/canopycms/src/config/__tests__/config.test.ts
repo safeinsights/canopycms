@@ -1220,6 +1220,9 @@ describe('editor.previewPrefix validation', () => {
     'https://cms.example.com?x=1',
     'javascript:alert(1)',
     'ftp://cms.example.com',
+    '/preview/../x',
+    '/pre\tview',
+    'https:cms.example.com',
   ])('rejects %s', (value) => {
     expect(() => withPrefix(value)).toThrow(/previewPrefix/)
   })
