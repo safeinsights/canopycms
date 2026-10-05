@@ -17,6 +17,7 @@
 import useSWR, { type SWRResponse } from 'swr'
 import type { ApiClient } from '../context'
 import type { BranchListItem } from '../../api/branch'
+import { isNonApiResponse } from '../../api/client'
 
 /** Cache key for the branches list. */
 export const BRANCHES_KEY = 'canopy:branches'
@@ -32,9 +33,10 @@ export interface BranchesData {
  */
 export async function fetchBranches(apiClient: Pick<ApiClient, 'branches'>): Promise<BranchesData> {
   const result = await apiClient.branches.list()
-  if (result.status === 404) {
+  if (result.status === 404 && !isNonApiResponse(result)) {
     // No branch endpoint available; stay branchless rather than erroring --
     // the branch dropdown stays clickable so the user can retry from there.
+    // A proxy's 404 page means the API was not reached, so it is an error.
     return { branches: [] }
   }
   if (!result.ok) {

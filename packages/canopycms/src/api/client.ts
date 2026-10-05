@@ -447,12 +447,24 @@ export class CanopyApiClient {
       return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
     }
     if (isApiResponseBody(parsed)) return parsed as T
-    return {
+    const converted = {
       ok: false,
       status: response.status,
       error: errorFromBody(parsed) ?? `Unexpected response from server (HTTP ${response.status})`,
-    } as T
+    }
+    convertedResponses.add(converted)
+    return converted as T
   }
+}
+
+const convertedResponses = new WeakSet<object>()
+
+/**
+ * Whether `result` was converted from a body no CanopyCMS handler wrote (a proxy or CDN
+ * error page), so its status says nothing about the API itself.
+ */
+export function isNonApiResponse(result: object): boolean {
+  return convertedResponses.has(result)
 }
 
 /** The `error` string of a JSON body, when it has one. */

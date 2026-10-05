@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { CanopyApiClient, createApiClient } from './client'
+import { CanopyApiClient, createApiClient, isNonApiResponse } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
 
 describe('CanopyApiClient', () => {
@@ -190,6 +190,36 @@ describe('CanopyApiClient', () => {
           error: `Unexpected response from server (HTTP ${status})`,
         })
       }
+    })
+
+    it('does not pass through a body whose ok is not a boolean', async () => {
+      const client = new CanopyApiClient({
+        fetch: vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: 'yes', data: { branches: [] } }),
+        }),
+      })
+      expect(await client.branches.list()).toEqual({
+        ok: false,
+        status: 200,
+        error: 'Unexpected response from server (HTTP 200)',
+      })
+    })
+
+    it('marks converted responses, and only those, as not from the API', async () => {
+      const respond = (status: number, json: () => Promise<unknown>) =>
+        new CanopyApiClient({ fetch: vi.fn().mockResolvedValue({ ok: false, status, json }) })
+      const proxy = await respond(404, () =>
+        Promise.reject(new SyntaxError('<html>')),
+      ).branches.list()
+      const api = await respond(404, async () => ({
+        ok: false,
+        status: 404,
+        error: 'Not found',
+      })).branches.list()
+      expect(isNonApiResponse(proxy)).toBe(true)
+      expect(isNonApiResponse(api)).toBe(false)
     })
 
     it('returns an ok:false ApiResponse for an empty body', async () => {
