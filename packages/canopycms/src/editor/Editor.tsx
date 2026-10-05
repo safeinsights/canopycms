@@ -482,9 +482,8 @@ export const Editor: React.FC<EditorProps> = ({
         // branch's content. Writing it would (a) show it as the new branch's
         // content and (b) satisfy the skip gate above, permanently suppressing
         // the new branch's own load -- which also leaves the new branch's OCC
-        // token unset, turning the next save into a blind overwrite that can
-        // never 409. Drop it instead; the new branch has its own load running
-        // under its own key.
+        // token unset, so saveEntry refuses every save of the entry. Drop it
+        // instead; the new branch has its own load running under its own key.
         if (currentBranchRef.current !== requestBranch) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
         // No draft is seeded here. `effectiveValue` is

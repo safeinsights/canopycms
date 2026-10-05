@@ -296,6 +296,14 @@ the bytes OCC validated, and no rebase can be replaying against the branch while
 It adds no lock and no cached state; the only requirement is that it never be hoisted out of
 the critical section.
 
+**Editor saves are OCC-checked against the file's mtime, and the API has no blind update.**
+A read returns `version` (the mtime), and an update must send it back as `expectedVersion`.
+An omitted token means create-only (`null`), so a write that lost its token gets a 409, never
+an unchecked overwrite. The check is the in-lock stat above. `ContentStore.write`'s
+`undefined` (skip the check) is for direct store callers only. The editor keys tokens by
+branch + contentId, the same key as its drafts, and `saveEntry` refuses a save it holds no
+token for (api/content.ts, editor/hooks/useEntryManager.ts).
+
 Acquisition order is always content lock → `withLock`, never the reverse. The lock
 keeps its marker under `{branchRoot}/.canopy-meta` (git-excluded, so the marker can never
 dirty the tree or land in a publish commit) and anchors on that marker path, like every
