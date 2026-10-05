@@ -7,6 +7,7 @@
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
+import type { ApiResponse } from './types'
 
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
@@ -428,22 +429,32 @@ export class CanopyApiClient {
     }
 
     const response = await this.fetchFn(url, init)
+    // A body from in front of the API (a proxy or CDN error page) may be empty, not JSON, or
+    // not an ApiResponse; every such body becomes an `ok: false` ApiResponse, never a throw.
+    const parsed: unknown = await response.json().catch(() => undefined)
     if (response.status === 401) {
       this.onUnauthorized?.()
-      // A 401 is an auth answer whatever its body: one from in front of the API (a proxy) may
-      // not be an ApiResponse, or not JSON. Always return it as one rather than throwing.
-      const body: unknown = await response.json().catch(() => undefined)
-      const error =
-        typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
-          ? body.error
-          : 'Unauthorized'
-      return { ok: false, status: 401, error } as T
+      return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
     }
-    const payload = await response.json()
-
-    // All responses use ApiResponse format: { ok, status, data?, error? }
-    return payload as T
+    if (isApiResponseBody(parsed)) return parsed as T
+    return {
+      ok: false,
+      status: response.status,
+      error: errorFromBody(parsed) ?? `Unexpected response from server (HTTP ${response.status})`,
+    } as T
   }
+}
+
+/** The `error` string of a JSON body, when it has one. */
+function errorFromBody(body: unknown): string | undefined {
+  return typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+    ? body.error
+    : undefined
+}
+
+/** Whether a parsed body has the `{ ok, status, ... }` shape every handler returns. */
+function isApiResponseBody(body: unknown): body is ApiResponse {
+  return typeof body === 'object' && body !== null && 'ok' in body && typeof body.ok === 'boolean'
 }
 
 /** Create a {@link CanopyApiClient}; pass a custom fetch for tests. */
