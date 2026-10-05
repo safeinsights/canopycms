@@ -473,13 +473,14 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     }
   }
 
-  const makePrWorker = () => {
+  const makePrWorker = (extra: { settingsBranch?: string } = {}) => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       taskTimeoutMs: 2000,
+      ...extra,
     })
     const internals = worker as unknown as PrWorkerInternals
     // Real git push is out of scope here (covered by pushBranchToGitHub's
@@ -662,8 +663,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   })
 
   it('leaves an existing draft PR alone when the payload has no markReadyIfDraft flag', async () => {
-    // Settings-branch syncs (services.ts) enqueue the same action without
-    // the flag, so an existing draft PR must not be converted.
+    // Only a payload that sets the flag converts a draft; the default leaves it.
     const { worker, internals } = makePrWorker()
     await setupBranchDir('settings-sync')
 
@@ -720,6 +720,65 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     // PermanentTaskError -> fails immediately, landing in failed/ rather than
     // being retried (retrying can't make the branch not be the base branch).
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(true)
+  })
+
+  // The settings branch is an orphan, so GitHub 422s a PR for it. A task queued
+  // for one pushes and completes without touching the PR API.
+  it.each([
+    ['the settings branch this worker resolves', 'canopycms-settings-prod'],
+    ['a reserved-prefix name this worker does not resolve', 'canopycms-settings-staging'],
+  ])('pushes and completes without a PR for %s', async (_label, branch) => {
+    const { worker, internals } = makePrWorker()
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch, title: 'Update permissions and groups', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.pushBranchToGitHub).toHaveBeenCalledWith(branch)
+    expect(internals.octokit.pulls.list).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
+    expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
+    expect(await fileExists(path.join(taskDir, 'completed', `${id}.json`))).toBe(true)
+  })
+
+  // A configured settings name without the prefix may be a content branch's name when
+  // the worker and API configs drift, and that branch's submit must still open its PR.
+  it('creates a PR for a branch matching an unprefixed configured settings name', async () => {
+    const { worker, internals } = makePrWorker({ settingsBranch: 'site-settings' })
+    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
+    internals.octokit.pulls.create.mockResolvedValue({
+      data: { number: 6, html_url: 'https://github.com/test-owner/test-repo/pull/6' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'site-settings', title: 'Site settings copy', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.create).toHaveBeenCalled()
+  })
+
+  it('still creates a PR for a branch that merely resembles a settings branch name', async () => {
+    const { worker, internals } = makePrWorker({ settingsBranch: 'adopter-settings' })
+    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
+    internals.octokit.pulls.create.mockResolvedValue({
+      data: { number: 5, html_url: 'https://github.com/test-owner/test-repo/pull/5' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'adopter-settings-notes', title: 'Notes', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.create).toHaveBeenCalled()
   })
 })
 

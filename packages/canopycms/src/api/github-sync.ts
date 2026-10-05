@@ -149,10 +149,8 @@ export async function syncSubmitPr(
       mergeSectionIntoBody: true,
       baseBranch,
       pullRequestNumber: context.branch.pullRequestNumber,
-      // Content submits are an explicit "ready for review" action — convert
-      // a pre-existing draft PR to ready, unlike the settings-branch sync
-      // path (services.ts commitToSettingsBranch), which enqueues the same
-      // action without this flag.
+      // A content submit is an explicit "ready for review" action: convert a
+      // pre-existing draft PR to ready.
       markReadyIfDraft: true,
     },
   })

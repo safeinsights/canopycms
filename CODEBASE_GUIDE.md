@@ -681,7 +681,7 @@ immediately; without one they enqueue a task for the EC2 worker and the branch g
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
 - `submitBranch()` — the full submit workflow: checkout, status, commit all (with the submitter's trailers), push; returns `changedPaths`
-- `commitToSettingsBranch()` — commit to the settings branch, with an optional PR
+- `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
 Both git-operating methods call `git.ensureAuthor()` from the configured bot name and email, and

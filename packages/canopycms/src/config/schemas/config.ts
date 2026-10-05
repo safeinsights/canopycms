@@ -101,7 +101,6 @@ export const CanopyConfigSchema = z
     // Default false/unset — the standard AWS Lambda+worker topology must leave this unset.
     allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
-    autoCreateSettingsPR: z.boolean().optional(),
     // `.optional()`, NOT bare `deploymentNameSchema`: its own `.default('prod')` would make
     // `parse(undefined)` resolve to 'prod' instead of staying `undefined`, collapsing the
     // env > config > modeDefault precedence chain `resolveDeploymentName`

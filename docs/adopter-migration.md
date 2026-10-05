@@ -51,6 +51,15 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
+
+**What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
+left a failed task in System health. Saves now only push the branch.
+
+**To adopt.** Delete `autoCreateSettingsPR` from `canopycms.config.ts`.
+
+**Now deletable.** Filters that hid the failed settings-PR tasks.
+
 ### A list of objects can title each card after one of its fields
 
 **What changed.** An `object` field with `list: true` takes `itemTitleField`, naming a direct
@@ -75,22 +84,18 @@ repaired or re-created.
 **Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit
 or a format check.
 
-### Path-permission rules now take effect below the content root — **security fix; breaking for a rule written with on-disk names**
+### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
 
-**What changed.** Rules match an entry's logical path (`content/blog/my-post`), the form the
-Permission Manager writes. Enforcement used to check the on-disk path, whose directories and files
-carry content ids, so a rule naming a collection or entry never matched: a grant on a collection
-granted nothing, and a restriction on one restricted nothing. Only a glob that also matched on-disk
-names, such as `content/**`, took effect.
-Renaming an entry now also requires edit access at the new path.
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`). Enforcement checked
+the id-suffixed on-disk path, so collection and entry rules matched nothing; only a glob that also
+matched on-disk names, such as `content/**`, worked. Renaming also requires edit access at the new
+path.
 
-**To adopt.** Review your permission rules (Settings → Manage Permissions, or the settings branch's
-permissions file) before upgrading: a collection rule that never took effect will start to. Rewrite
-any rule that names an id-suffixed directory or a file extension (`content/blog.<id>/**`,
-`content/about.json`) in logical form (`content/blog/**`, `content/about`); it no longer matches.
+**To adopt.** Review your rules (Settings → Manage Permissions) before upgrading: collection rules
+that never took effect will start to. Rewrite any rule naming an id-suffixed directory or a file
+extension in logical form (`content/blog/**`, `content/about`).
 
-**Now deletable.** A workaround that granted access on the content root because collection grants
-had no effect.
+**Now deletable.** A content-root grant working around inert collection grants.
 
 ### Submit commits and pull requests name the submitting user
 

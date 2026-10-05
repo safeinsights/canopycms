@@ -115,6 +115,4 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   usesSeparateSettingsBranch(): boolean
 
   validateConfig(config: Partial<CanopyConfig>): void
-
-  shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean
 }
