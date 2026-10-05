@@ -8,6 +8,7 @@ import {
   Token,
   aws_ec2 as ec2,
   aws_efs as efs,
+  aws_cloudfront as cloudfront,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
@@ -16,6 +17,8 @@ import {
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
+import { attachEditorBehaviors } from './editor-routing'
+import type { CanopyCmsAttachOptions } from './editor-routing'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
 // is real ESM and `__dirname` is not a global there - the worker asset path
@@ -517,9 +520,6 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
  * than deploying a configuration that would 504.
  */
 export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
-
-/** CloudFront's maximum origin read timeout without a service-quota increase. */
-export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
 
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
@@ -1668,5 +1668,27 @@ export class CanopyCmsService extends Construct {
     // `mount -t efs` failure kills the whole bootstrap and the
     // EC2-health-checked ASG never notices.
     this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
+  }
+
+  /**
+   * Serve the editor from a CloudFront distribution you already own, such as
+   * the site's: adds `/edit`, `/edit/*` and `/api/canopycms/*` behaviors
+   * to this service's Function URL, behind OAC, with
+   * an origin read timeout equal to {@link timeout}, no caching, the whole
+   * viewer request forwarded, an `x-forwarded-host` viewer-request function and
+   * the editor's response headers policy (framing protection, `noindex`).
+   *
+   * The behaviors are appended. Synth fails if a behavior listed before them
+   * matches an editor route, since CloudFront would never reach the editor's.
+   * It warns when the distribution has custom error responses, which also
+   * rewrite the API's errors.
+   *
+   * Pass `editorAssetPrefix` with the CMS build's Next `assetPrefix`, so the
+   * editor's chunks stay out of the site's `/_next/static/*`.
+   * `AssetSupport.attachTo` adds `/assets/*`. Use `CanopyCmsDistribution`
+   * instead when the CMS gets a domain of its own.
+   */
+  public attachTo(distribution: cloudfront.Distribution, options?: CanopyCmsAttachOptions): void {
+    attachEditorBehaviors(distribution, this.functionUrl, this.timeout, options)
   }
 }
