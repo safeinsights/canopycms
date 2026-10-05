@@ -1565,6 +1565,43 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     expect(status.lastFatalError?.at).toBeTruthy()
   })
 
+  it('replaces a previous worker status file as soon as it holds the lock, before any git work', async () => {
+    const statusPath = path.join(workspacePath, '.tasks', WORKER_STATUS_FILE)
+    await fs.mkdir(path.dirname(statusPath), { recursive: true })
+    const stale: WorkerStatusReport = {
+      version: 1,
+      workerVersion: '0.0.1-previous',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      updatedAt: '2020-01-01T00:00:00.000Z',
+      lastFatalError: {
+        message: 'previous crash',
+        at: '2020-01-01T00:00:00.000Z',
+        phase: 'startup',
+      },
+    }
+    await fs.writeFile(statusPath, JSON.stringify(stale), 'utf-8')
+
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals & {
+      ensureStatusReport(): WorkerStatusReport
+    }
+    let seenDuringStartup: WorkerStatusReport | undefined
+    let inMemoryFatalError: WorkerStatusReport['lastFatalError']
+    internals.ensureRemoteGit = async () => {
+      seenDuringStartup = JSON.parse(await fs.readFile(statusPath, 'utf-8')) as WorkerStatusReport
+      inMemoryFatalError = internals.ensureStatusReport().lastFatalError
+      throw new Error('stop after observing')
+    }
+    await expect(worker.start()).rejects.toThrow(/stop after observing/)
+
+    expect(seenDuringStartup?.workerVersion).toBe(CANOPYCMS_VERSION)
+    expect(seenDuringStartup?.startedAt).not.toBe(stale.startedAt)
+    // A crash loop keeps its crash alert between restarts, but the carried error
+    // stays out of the in-memory report, so the first successful sync clears it.
+    expect(seenDuringStartup?.lastFatalError).toEqual(stale.lastFatalError)
+    expect(inMemoryFatalError).toBeUndefined()
+  })
+
   it('clones successfully when the fixture already has a base branch commit (happy path unaffected)', async () => {
     await pushInitialCommitToFixture('seed-happy')
 
