@@ -4,7 +4,7 @@ import type { ComponentType } from 'react'
 import React from 'react'
 
 import type { BlockComponentRegistry } from 'canopycms'
-import type { CanopyPreviewViewProps } from 'canopycms-next/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
 
 import type { PostContent } from '../schemas'
 import { AuthorCard } from './AuthorCard'
@@ -165,5 +165,8 @@ export const PostView: React.FC<CanopyPreviewViewProps<PostContent>> = ({
     </article>
   )
 }
+
+// The live-preview form, rendered by app/preview and the public pages alike.
+export const PostPreview = withCanopyPreview(PostView)
 
 export default PostView

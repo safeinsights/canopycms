@@ -3,7 +3,7 @@
 import React from 'react'
 
 import { sanitizeHref } from 'canopycms'
-import type { CanopyPreviewViewProps } from 'canopycms-next/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
 
 import type { HomeContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'
@@ -60,5 +60,8 @@ export const HomeView: React.FC<CanopyPreviewViewProps<HomeContent>> = ({
     </div>
   )
 }
+
+// The live-preview form, rendered by app/preview and the public pages alike.
+export const HomePreview = withCanopyPreview(HomeView)
 
 export default HomeView

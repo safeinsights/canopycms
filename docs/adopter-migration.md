@@ -53,9 +53,9 @@ will not let a shipped version go unlisted.
 
 ### Static-export sites can preview a branch through `createPreviewPage`
 
-**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the entry from the editor's `?branch=` through `views[entryType]` with the live draft. `canopycms-next/client` adds `CanopyPreviewView` and `CanopyPreviewViewProps`.
+**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the editor's `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`.
 
-**To adopt.** Add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
+**To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
 
 **Now deletable.** A hand-built branch-preview route.
 

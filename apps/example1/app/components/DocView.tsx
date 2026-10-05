@@ -2,7 +2,7 @@
 
 import React from 'react'
 
-import type { CanopyPreviewViewProps } from 'canopycms-next/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
 
 import type { DocContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'
@@ -36,5 +36,8 @@ export const DocView: React.FC<CanopyPreviewViewProps<DocContent>> = ({
     </article>
   )
 }
+
+// The live-preview form, rendered by app/preview and the public pages alike.
+export const DocPreview = withCanopyPreview(DocView)
 
 export default DocView

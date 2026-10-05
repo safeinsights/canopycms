@@ -13,7 +13,7 @@ exports the editor, and `canopycms` declares no `sideEffects`. So the bundler ke
 modules in the page's client graph.
 
 This works against the goal of a public build with zero editor code (AGENTS.md, deploy shape (b)).
-`canopycms-next/client`'s `CanopyPreviewView` imports `useCanopyPreview` the same way.
+`canopycms-next/client`'s `withCanopyPreview` imports `useCanopyPreview` the same way.
 
 ## Proposed solution
 

@@ -12,7 +12,6 @@ vi.mock('next/navigation', () => ({
 vi.mock('canopycms/client', () => ({ CanopyEditorPage: vi.fn(), useCanopyPreview: vi.fn() }))
 
 const { createPreviewPageFor } = await import('./preview-page')
-const { CanopyPreviewView } = await import('./client')
 
 const PostView = () => null
 const DocView = () => null
@@ -47,12 +46,8 @@ describe('createPreviewPageFor', () => {
     >
 
     expect(readByUrlPath).toHaveBeenCalledWith('/posts/hello', { branch: 'feature/x' })
-    expect(element.type).toBe(CanopyPreviewView)
-    expect(element.props).toEqual({
-      view: PostView,
-      initialData: { title: 'Hello' },
-      editorOrigin: undefined,
-    })
+    expect(element.type).toBe(PostView)
+    expect(element.props).toEqual({ initialData: { title: 'Hello' }, editorOrigin: undefined })
   })
 
   it('hands the client only the entry data, never the server-only meta', async () => {
@@ -69,7 +64,7 @@ describe('createPreviewPageFor', () => {
     const element = (await render(undefined)) as ReactElement<Record<string, unknown>>
 
     expect(readByUrlPath).toHaveBeenCalledWith('/', { branch: undefined })
-    expect(element.props.view).toBe(DocView)
+    expect(element.type).toBe(DocView)
   })
 
   it('passes a configured editorOrigin to the view wrapper', async () => {

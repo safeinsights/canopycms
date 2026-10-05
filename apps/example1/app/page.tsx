@@ -1,8 +1,7 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
-import { CanopyPreviewView } from 'canopycms-next/client'
 import type { HomeContent } from './schemas'
-import HomeView from './components/HomeView'
+import { HomePreview } from './components/HomeView'
 import { readByUrlPath } from './lib/canopy'
 
 // The home entry is a ROOT INDEX ENTRY: it lives at `content/home.index.<id>.json`, so its slug is
@@ -23,7 +22,7 @@ const Page = async () => {
 
   if (!result) return notFound()
 
-  return <CanopyPreviewView view={HomeView} initialData={result.data} />
+  return <HomePreview initialData={result.data} />
 }
 
 export default Page

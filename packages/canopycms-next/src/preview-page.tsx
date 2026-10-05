@@ -1,16 +1,16 @@
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { notFound } from 'next/navigation'
 import type { CanopyConfig } from 'canopycms'
 import type { CanopyContext } from 'canopycms/server'
-import { CanopyPreviewView, type CanopyPreviewViewComponent } from './client'
+import type { CanopyPreviewProps } from './client'
 
 export interface CreatePreviewPageOptions {
   /**
-   * The view for each entry type the preview route serves, keyed by entry type name. Each is a
-   * `'use client'` component; it receives the live draft as `data`. An entry whose type has no
-   * view is a 404.
+   * The view for each entry type the preview route serves, keyed by entry type name, each made by
+   * `withCanopyPreview` (`canopycms-next/client`) in a `'use client'` module. An entry whose type
+   * has no view is a 404.
    */
-  views: Record<string, CanopyPreviewViewComponent<never>>
+  views: Record<string, (props: CanopyPreviewProps<never>) => ReactNode>
   /** Editor origin to trust, for an editor on another origin. Defaults to the page's own. */
   editorOrigin?: string
 }
@@ -52,12 +52,6 @@ export function createPreviewPageFor(
       ? options.views[entryType]
       : undefined
     if (!View) notFound()
-    return (
-      <CanopyPreviewView
-        view={View}
-        initialData={result.data}
-        editorOrigin={options.editorOrigin}
-      />
-    )
+    return <View initialData={result.data} editorOrigin={options.editorOrigin} />
   }
 }

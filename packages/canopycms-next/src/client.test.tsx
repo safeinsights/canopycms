@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 // Mocked so this stays a node-environment test: the factory under test calls
@@ -37,19 +38,19 @@ describe('NextCanopyEditorPage', () => {
   })
 })
 
-describe('CanopyPreviewView', () => {
+describe('withCanopyPreview', () => {
   it("renders the view with useCanopyPreview's live state for the initial data", async () => {
     const { useCanopyPreview } = await import('canopycms/client')
-    const { CanopyPreviewView } = await import('./client')
+    const { withCanopyPreview } = await import('./client')
     const state = { data: { title: 'Draft' }, isLoading: {}, highlightEnabled: false }
     vi.mocked(useCanopyPreview).mockReturnValue(state as never)
     const View = () => null
+    const Preview = withCanopyPreview(View)
 
-    const element = CanopyPreviewView({
-      view: View,
+    const element = Preview({
       initialData: { title: 'Saved' },
       editorOrigin: 'https://cms.example.com',
-    })
+    }) as ReactElement<Record<string, unknown>>
 
     expect(useCanopyPreview).toHaveBeenCalledWith({
       initialData: { title: 'Saved' },

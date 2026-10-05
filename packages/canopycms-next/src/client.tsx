@@ -59,28 +59,31 @@ export const NextCanopyEditorPage = (
 /** What a preview view renders from: the editor's live draft, plus `useCanopyPreview`'s helpers. */
 export type CanopyPreviewViewProps<T> = ReturnType<typeof useCanopyPreview<T>>
 
-/**
- * A component that renders one entry type from `CanopyPreviewViewProps`. A call signature rather
- * than `ComponentType`, whose `propTypes` would make a view for one content type unassignable to a
- * map of views for many.
- */
-export type CanopyPreviewViewComponent<T> = (props: CanopyPreviewViewProps<T>) => ReactNode
-
-/**
- * Renders `view` with the editor's live draft of `initialData`, through `useCanopyPreview`.
- * Outside an editor frame the view gets `initialData` unchanged. `createPreviewPage` renders one
- * for every entry the preview route serves.
- */
-export function CanopyPreviewView<T>({
-  view: View,
-  initialData,
-  editorOrigin,
-}: {
-  view: CanopyPreviewViewComponent<T>
+/** The props of a view wrapped by `withCanopyPreview`. */
+export interface CanopyPreviewProps<T> {
+  /** The saved entry data, rendered until the editor sends a draft. */
   initialData: T
   /** Editor origin to trust, for an editor on another origin. Defaults to this page's own. */
   editorOrigin?: string
-}) {
-  const preview = useCanopyPreview<T>({ initialData, editorOrigin })
-  return <View {...preview} />
+}
+
+/**
+ * Wraps a view so it renders the editor's live draft of `initialData`, through `useCanopyPreview`;
+ * outside an editor frame it renders `initialData` unchanged.
+ *
+ * Call it in your own `'use client'` module and pass the result to `createPreviewPage`'s `views`,
+ * or render it on a public page. The wrapping lives in your module, not in `createPreviewPage`,
+ * because Next ships every client module a page's server code imports: one imported by the
+ * context would put the editor in every page that reads content.
+ *
+ * The returned type is a call signature rather than `ComponentType`, whose `propTypes` would make
+ * a view for one content type unassignable to a map of views for many.
+ */
+export function withCanopyPreview<T>(
+  View: (props: CanopyPreviewViewProps<T>) => ReactNode,
+): (props: CanopyPreviewProps<T>) => ReactNode {
+  return function CanopyPreview({ initialData, editorOrigin }: CanopyPreviewProps<T>) {
+    const preview = useCanopyPreview<T>({ initialData, editorOrigin })
+    return <View {...preview} />
+  }
 }
