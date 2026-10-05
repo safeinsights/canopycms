@@ -17,6 +17,11 @@ import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../uti
 // stay out of the worker's runtime import closure, so new log lines here go
 // through the indirection (utils/logger.ts).
 import { canopyLogError } from '../utils/logger'
+import {
+  runWithRequestTiming,
+  setRequestTimingRoute,
+  timeRequestPhase,
+} from '../utils/request-timing'
 
 /** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
@@ -94,7 +99,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   return {
     services,
     assetStore: options.assetStore,
-    getBranchContext,
+    getBranchContext: (branch, opts) =>
+      timeRequestPhase('branchContext', () => getBranchContext(branch, opts)),
     authPlugin: options.authPlugin,
   }
 }
@@ -157,13 +163,14 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     if (!match) {
       return jsonResponse({ ok: false, status: 404, error: 'Not found' }, 404)
     }
+    setRequestTimingRoute(match.pattern.join('/') || '(malformed path)')
 
-    const apiCtx = await getContext()
+    const apiCtx = await timeRequestPhase('context', getContext)
 
     // In dev mode, re-check if the developer switched git branches
-    await apiCtx.services.refreshActiveBranch()
+    await timeRequestPhase('refreshBranch', apiCtx.services.refreshActiveBranch)
 
-    const authResult = await options.authPlugin.authenticate(req)
+    const authResult = await timeRequestPhase('auth', () => options.authPlugin.authenticate(req))
 
     // API routes require authentication. Anonymous callers are rejected BEFORE
     // any workspace provisioning below, so they can neither trigger expensive
@@ -219,11 +226,13 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // a silent authorization change.
     let user
     try {
-      user = await resolveCanopyUser(authResult, {
-        getSettingsBranchRoot: apiCtx.services.getSettingsBranchRoot,
-        mode: apiCtx.services.config.mode,
-        bootstrapAdminIds: apiCtx.services.bootstrapAdminIds,
-      })
+      user = await timeRequestPhase('user', () =>
+        resolveCanopyUser(authResult, {
+          getSettingsBranchRoot: apiCtx.services.getSettingsBranchRoot,
+          mode: apiCtx.services.config.mode,
+          bootstrapAdminIds: apiCtx.services.bootstrapAdminIds,
+        }),
+      )
     } catch (err) {
       const message = getErrorMessage(err)
       canopyLogError(
@@ -311,7 +320,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         handlerArgs.push(validationResult.body)
       }
 
-      const result = await match.handler(...handlerArgs)
+      const result = await timeRequestPhase('route', () => match.handler(...handlerArgs))
       // Binary routes carry their own status and headers and MUST reach the
       // adapter untouched: jsonResponse would serialize raw bytes and drop
       // contentType/contentDisposition.
@@ -320,10 +329,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     } else {
       // Every route should use defineEndpoint; this is the safety net for one
       // that carries no validate function.
-      const result = await match.handler(
-        apiCtx as unknown,
-        apiReq as unknown,
-        mergedParams as unknown,
+      const result = await timeRequestPhase('route', () =>
+        match.handler(apiCtx as unknown, apiReq as unknown, mergedParams as unknown),
       )
       if (isCanopyBinaryResponse(result)) return result
       return jsonResponse(result, result.status)
@@ -335,7 +342,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     pathSegments: string[],
   ): Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse> => {
     try {
-      return await handleRequest(req, pathSegments)
+      return await runWithRequestTiming(
+        req.method,
+        () => handleRequest(req, pathSegments),
+        (response) => response.status,
+      )
     } catch (err) {
       // Last-resort boundary (API-C1): see handleRequest's doc comment above.
       const message = getErrorMessage(err)

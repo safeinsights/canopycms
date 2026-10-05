@@ -497,6 +497,37 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(200)
   })
 
+  it('logs one timing summary per request under CANOPYCMS_DEBUG, naming the route pattern', async () => {
+    const original = process.env.CANOPYCMS_DEBUG
+    process.env.CANOPYCMS_DEBUG = 'true'
+    const consoleSpy = mockConsole()
+    try {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async () => null,
+      })
+      await handler(
+        createMockRequest({
+          method: 'GET',
+          url: 'http://localhost:3000/api/canopycms/feature-secret/comments',
+        }),
+        ['feature-secret', 'comments'],
+      )
+
+      const lines = consoleSpy.all().log.filter((l) => l.includes('[CanopyCMS:timing]'))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatch(
+        / GET :branch\/comments \d+ \d+ms \| context=\d+ refreshBranch=\d+ auth=\d+ branchContext=\d+ user=\d+ user>groups=\d+ route=\d+ route>branchContext=\d+ untimed=\d+/,
+      )
+      expect(lines[0]).not.toContain('feature-secret')
+    } finally {
+      consoleSpy.restore()
+      if (original === undefined) delete process.env.CANOPYCMS_DEBUG
+      else process.env.CANOPYCMS_DEBUG = original
+    }
+  })
+
   it('returns a sanitized 500 envelope when no config or services provided (API-C1)', async () => {
     const authPlugin = createMockAuthPlugin()
 

@@ -15,6 +15,7 @@ import type { CanopyUser } from './user'
 import { authResultToCanopyUser } from './user'
 import { loadInternalGroups, RESERVED_GROUPS, type InternalGroup } from './authorization'
 import type { OperatingMode } from './operating-mode'
+import { timeRequestPhase } from './utils/request-timing'
 
 /** Module-level: warn at most once per process. */
 let warnedNoAdmins = false
@@ -67,7 +68,9 @@ export async function resolveCanopyUser(
   deps: ResolveCanopyUserDeps,
 ): Promise<CanopyUser> {
   const settingsRoot = await deps.getSettingsBranchRoot()
-  const internalGroups = await loadInternalGroups(settingsRoot, deps.mode, deps.bootstrapAdminIds)
+  const internalGroups = await timeRequestPhase('groups', () =>
+    loadInternalGroups(settingsRoot, deps.mode, deps.bootstrapAdminIds),
+  )
 
   warnIfNoAdmins(internalGroups, deps.bootstrapAdminIds)
 
