@@ -20,10 +20,11 @@ import {
 } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
-import type { WorkerStatusReport } from '../types'
+import type { BuildIdentity, WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { getBuildIdentity } from '../build-identity'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
@@ -146,6 +147,10 @@ export interface AdminStatusData {
   worker: WorkerLiveness
   workerStatus: WorkerStatusReport | null
   statusReadError?: string
+  /** Build of the API process answering this request. */
+  build: BuildIdentity
+  /** Whether `media` is configured; without it every upload returns 501. */
+  assetStore: { configured: boolean }
 }
 
 /** Response type for GET /admin/status */
@@ -233,6 +238,8 @@ const getAdminStatusHandler = async (
         worker,
         workerStatus,
         ...(statusReadError ? { statusReadError } : {}),
+        build: getBuildIdentity(),
+        assetStore: { configured: !!ctx.assetStore },
       },
     }
   } catch (err) {
@@ -363,6 +370,8 @@ const getAdminStatus = defineEndpoint({
     queue: { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 },
     worker: { state: 'absent' },
     workerStatus: null,
+    build: { canopycmsVersion: '0.0.0' },
+    assetStore: { configured: false },
   },
   guards: ['admin'] as const,
   handler: getAdminStatusHandler,

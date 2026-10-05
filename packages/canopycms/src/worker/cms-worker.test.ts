@@ -16,6 +16,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
+import { CANOPYCMS_VERSION } from '../version'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const makeWorker = () =>
@@ -1793,6 +1794,13 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSyncError?.message).toBeTruthy()
     expect(status.lastGitSyncError?.at).toBeTruthy()
     expect(status.lastGitSyncAt).toBeUndefined()
+  })
+
+  it('stamps the status file with the canopycms version the worker runs', async () => {
+    const worker = makeSyncWorker()
+    await worker.syncGit()
+
+    expect((await readStatus()).workerVersion).toBe(CANOPYCMS_VERSION)
   })
 
   it('redacts a token-bearing error message before persisting it to worker-status.json (HIGH-1)', async () => {

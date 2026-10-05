@@ -19,6 +19,7 @@ import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { writeWorkerStatus } from '../task-queue/worker-status'
+import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
@@ -200,7 +201,12 @@ export class CmsWorker {
   private ensureStatusReport(): WorkerStatusReport {
     if (!this.statusReport) {
       const now = new Date().toISOString()
-      this.statusReport = { version: 1, startedAt: now, updatedAt: now }
+      this.statusReport = {
+        version: 1,
+        workerVersion: CANOPYCMS_VERSION,
+        startedAt: now,
+        updatedAt: now,
+      }
     }
     return this.statusReport
   }
