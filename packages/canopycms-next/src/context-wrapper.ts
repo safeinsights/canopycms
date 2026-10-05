@@ -489,7 +489,8 @@ export async function createNextCanopyContext(
     generateContentStaticParams,
     generateContentSitemap: boundGenerateContentSitemap,
     entryToMetadata: boundEntryToMetadata,
-    createPreviewPage: (previewOptions) => createPreviewPageFor(getCanopy, previewOptions),
+    createPreviewPage: (previewOptions) =>
+      createPreviewPageFor(getCanopy, previewOptions, options.config.deployedAs),
     handler,
     services,
   }

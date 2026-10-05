@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import { notFound } from 'next/navigation'
+import type { CanopyConfig } from 'canopycms'
 import type { CanopyContext } from 'canopycms/server'
 import { CanopyPreviewView, type CanopyPreviewViewComponent } from './client'
 
@@ -28,13 +29,18 @@ export interface PreviewPageProps {
  * authenticated and ACL-checked, and a branch other than the active one is only loaded, never
  * created. A missing, unreadable or malformed branch, and a path no entry publishes, are all a
  * 404, so a hidden branch looks the same as a missing one.
+ *
+ * On a `deployedAs: 'static'` deployment every request is a 404: reads there skip access checks,
+ * so the route would show any branch to anyone.
  * @internal Exported for tests.
  */
 export function createPreviewPageFor(
   getCanopy: () => Promise<CanopyContext>,
   options: CreatePreviewPageOptions,
+  deployedAs: CanopyConfig['deployedAs'] = 'server',
 ): (props: PreviewPageProps) => Promise<ReactElement> {
   return async function CanopyPreviewPage({ params, searchParams }) {
+    if (deployedAs === 'static') notFound()
     const [{ path = [] }, query] = await Promise.all([params, searchParams])
     const branch = query.branch
     if (Array.isArray(branch)) notFound()

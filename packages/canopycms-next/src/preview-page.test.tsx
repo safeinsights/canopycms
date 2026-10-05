@@ -98,6 +98,19 @@ describe('createPreviewPageFor', () => {
     expect(readByUrlPath).not.toHaveBeenCalled()
   })
 
+  it("is a 404 on a deployedAs: 'static' deployment, without reading", async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+    const page = createPreviewPageFor(getCanopy, { views }, 'static')
+
+    await expect(
+      page({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve({}),
+      }),
+    ).rejects.toThrow(NOT_FOUND)
+    expect(getCanopy).not.toHaveBeenCalled()
+  })
+
   it.each(['author', 'constructor', 'toString', '__proto__'])(
     'is a 404 for an entry type with no view of its own: %s',
     async (entryType) => {
