@@ -124,10 +124,10 @@ that re-submits replace, keeping human text.
 ### System health shows which build is running
 
 **What changed.** System health gains a Build section (canopycms version, source revision, worker
-version, media-storage state) and warns when the API and worker versions differ.
+version, media-storage state) and warns when API and worker versions differ.
 
-**To adopt.** Optional; without it the revision reads "not set". Re-run `init-deploy aws` or copy
-the template changes: `Dockerfile.cms` (runner-stage `ARG`/`ENV`/`LABEL` for `CANOPY_SOURCE_SHA`),
+**To adopt.** Optional; without it the revision reads "not set". Copy the template changes
+(`init-deploy aws` overwrites whole files): `Dockerfile.cms` (runner-stage `ARG`/`ENV`/`LABEL` for `CANOPY_SOURCE_SHA`),
 `infrastructure/lib/cms-stack.ts` (`sourceRevision` prop, passed in `buildArgs`),
 `infrastructure/bin/app.ts`, and `.github/workflows/deploy-cms.yml`
 (`CANOPY_SOURCE_SHA: ${{ github.sha }}`).

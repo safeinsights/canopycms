@@ -75,8 +75,9 @@ COPY --from=builder /app/public ./public
 RUN rm -rf .next/cache && ln -s /tmp .next/cache
 # The CMS reports this in System health. A build arg, not a Lambda environment
 # variable: a Lambda variable names the infrastructure's commit and would hide
-# exactly the image/infrastructure skew this exists to reveal. Declared last so
-# a new revision does not invalidate the layers above.
+# exactly the image/infrastructure skew this exists to reveal. Declared after
+# every build layer, so with a warm layer cache a new revision re-runs only the
+# metadata steps from here down.
 ARG CANOPY_SOURCE_SHA=
 ENV CANOPY_SOURCE_SHA=$CANOPY_SOURCE_SHA
 LABEL org.opencontainers.image.revision=$CANOPY_SOURCE_SHA

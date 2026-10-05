@@ -130,9 +130,9 @@ export class CmsStack extends Stack {
           // auth. The image's own `next build` stays in dev mode either way --
           // see Dockerfile.cms.
           NEXT_PUBLIC_CANOPY_MODE: 'prod',
-          // CDK hashes build args into the asset, so a new revision rebuilds
-          // the image on every deploy -- that is what keeps the revision the
-          // CMS reports honest.
+          // CDK hashes build args into the asset, so every new commit rebuilds
+          // the image, even one changing only the dockerignored infrastructure/
+          // -- that is what keeps the revision the CMS reports honest.
           ...(props.sourceRevision ? { CANOPY_SOURCE_SHA: props.sourceRevision } : {}),
         },
       }),
