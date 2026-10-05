@@ -7,7 +7,7 @@ import { CANOPY_META_DIR, isCanopyInternalPath } from '../utils/git'
  * How the sync loop treats canopycms's own state (`.canopy-meta/`) in a branch clone. It is
  * never content, so it never makes a clone "dirty" for sync, but git still refuses some
  * operations over it while the adopter's repo tracks it. Only the adopter can stop that; once
- * they have, {@link splitByUpstreamTracking} and {@link untrackInIndex} bring each clone along.
+ * they have, the base clone follows ({@link untrackInIndex}); branch clones need an operator.
  */
 
 /** The fix an operator applies when an adopter repo tracks `.canopy-meta/`. */
@@ -82,8 +82,9 @@ export async function splitByUpstreamTracking(
 
 /**
  * Remove `paths` from this clone's index, leaving them on disk as untracked, excluded state.
- * Index-only on purpose: the files' bytes never move, so a concurrent write to them (branch
- * metadata, comments) cannot be lost. Paths already out of the index are ignored.
+ * Index-only, so a concurrent write to them (branch metadata, comments) is not lost. Only for a
+ * clone with no commits of its own: a rebase that replays a commit touching these paths writes
+ * that commit's bytes over them. Paths already out of the index are ignored.
  */
 export async function untrackInIndex(git: SimpleGit, paths: string[]): Promise<void> {
   if (paths.length === 0) return

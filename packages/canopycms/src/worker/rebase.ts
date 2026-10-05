@@ -20,7 +20,6 @@ import {
   restoreRetiredSchemaCache,
   splitByUpstreamTracking,
   trackedCanopyStateChanges,
-  untrackInIndex,
 } from './canopy-state'
 import {
   enqueueGitHubPush,
@@ -783,28 +782,25 @@ async function rebaseOneBranch(
       }
 
       // `git rebase` refuses to start over ANY modified tracked file, so
-      // tracked canopycms state blocks until the adopter untracks it upstream.
-      // Once they have, untrack it here too, in a commit the rebase then drops
-      // as already upstream. All or nothing, so a skip never leaves the index
-      // half-changed.
+      // tracked canopycms state blocks. The worker never untracks it here:
+      // replaying a branch commit that touched it writes historical bytes over
+      // the live file, and the abort that follows deletes it. So the index and
+      // the bytes stay untouched, and the wedge is recorded for an operator.
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
         await branchGit.fetch('origin', ctx.baseBranch)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
-        if (stillTracked.length > 0) {
-          const reason =
-            `git cannot rebase over modified canopycms state the repo tracks ` +
-            `(${stillTracked.join(', ')}). To fix, ${TRACKED_CANOPY_STATE_FIX}.`
-          workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
-          await recordRebaseFailure(ctx, branchPath, branchDir, reason)
-          return { kind: 'failed', error: reason }
-        }
-        await untrackInIndex(branchGit, trackedState)
-        await branchGit.commit('Stop tracking canopycms state, as the base branch has')
-        workerLog(
-          `  ${branchDir}: stopped tracking ${trackedState.join(', ')}, as the base branch has`,
-        )
+        const reason =
+          stillTracked.length > 0
+            ? `git cannot rebase over modified canopycms state the repo tracks ` +
+              `(${trackedState.join(', ')}). To fix, ${TRACKED_CANOPY_STATE_FIX}.`
+            : `git cannot rebase over modified canopycms state this clone still tracks ` +
+              `(${trackedState.join(', ')}), though the base branch no longer does; ` +
+              `the clone needs manual repair`
+        workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+        await recordRebaseFailure(ctx, branchPath, branchDir, reason)
+        return { kind: 'failed', error: reason }
       }
 
       // The clone's own ref name: branchDir is the sanitized DIRECTORY name and

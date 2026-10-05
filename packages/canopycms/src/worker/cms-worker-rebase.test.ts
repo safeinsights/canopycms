@@ -463,32 +463,31 @@ describe('CmsWorker rebaseActiveBranches', () => {
       )
     })
 
-    it('stops tracking state the base branch untracked, keeps its bytes, and rebases', async () => {
+    it('leaves the index and the bytes alone even after the base branch untracks the state', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
-      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      // A pre-fix submit committed the state on the branch; replaying this
+      // commit over an untracked live file is what makes auto-untracking unsafe.
+      await setup.commitToBranch({ '.canopy-meta/comments.json': '{"threads":["submitted"]}' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
       const commentsPath = path.join(setup.branchPath, '.canopy-meta', 'comments.json')
-      await fs.writeFile(commentsPath, '{"threads":["a reviewer comment"]}')
-      // The adopter applies the fix upstream.
+      await fs.writeFile(commentsPath, '{"threads":["live"]}')
       await setup.remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
       await setup.remoteGit.commit('untrack canopycms state')
+      const headBefore = (await setup.branchGit.revparse(['HEAD'])).trim()
 
       const consoleSpy = mockConsole()
       await runRebase(makeWorker(tmpDir))
-      expect(consoleSpy).toHaveLogged(/my-feature: stopped tracking \.canopy-meta\/comments\.json/)
-      consoleSpy.restore()
 
-      await expect(behindCount(setup)).resolves.toBe(0)
-      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
-        '{"threads":["a reviewer comment"]}',
+      await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe('{"threads":["live"]}')
+      expect(consoleSpy).toHaveWarned(/base branch no longer does; the clone needs manual repair/)
+      consoleSpy.restore()
+      expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(headBefore)
+      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe(
+        '.canopy-meta/comments.json\n',
       )
-      expect(await setup.branchGit.raw(['ls-files', '--', '.canopy-meta'])).toBe('')
-      // The untracking commit is dropped as already upstream; only the branch's own work remains.
-      const subjects = await setup.branchGit.raw(['log', '--format=%s', 'FETCH_HEAD..HEAD'])
-      expect(subjects.trim()).toBe('branch commit')
-      expect((await setup.branchGit.status()).files).toEqual([])
+      expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toMatch(/manual repair/)
     })
 
     it('still skips real editor dirt when canopycms state is dirty too', async () => {

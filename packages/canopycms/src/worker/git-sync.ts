@@ -19,7 +19,6 @@ import {
   listTrackedCanopyState,
   restoreRetiredSchemaCache,
   splitByUpstreamTracking,
-  trackedCanopyStateChanges,
   untrackInIndex,
 } from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
@@ -661,14 +660,13 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     )
 
     if (behindCount > 0) {
-      // A merge refuses to overwrite modified tracked state, including with
-      // the adopter's own commit untracking it. State still tracked upstream
-      // is left for the merge, which fails loudly only if upstream changed it.
-      const { droppedUpstream } = await splitByUpstreamTracking(
-        baseGit,
-        trackedCanopyStateChanges(status),
-        fetchedTip,
-      )
+      // Untrack, in the index only, any state the tip has stopped tracking:
+      // the merge would otherwise refuse to overwrite a modified copy, or
+      // delete a clean one from disk. Safe here and not in the rebase loop,
+      // because this clone has no commits of its own to replay. State still
+      // tracked upstream is left for the merge, which fails loudly only if
+      // upstream changed it.
+      const { droppedUpstream } = await splitByUpstreamTracking(baseGit, trackedState, fetchedTip)
       if (droppedUpstream.length > 0) {
         await untrackInIndex(baseGit, droppedUpstream)
         workerLog(
