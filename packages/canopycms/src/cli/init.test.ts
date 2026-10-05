@@ -481,6 +481,19 @@ describe('canopycms init-deploy aws', () => {
     )
   })
 
+  it('Dockerfile.cms stamps CANOPY_SOURCE_SHA in the runner stage only, so it does not bust the build cache', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    const runnerStart = dockerfile.indexOf('AS runner')
+    const arg = dockerfile.indexOf('ARG CANOPY_SOURCE_SHA')
+    expect(runnerStart).toBeGreaterThan(-1)
+    expect(arg).toBeGreaterThan(runnerStart)
+    expect(dockerfile.lastIndexOf('ARG CANOPY_SOURCE_SHA')).toBe(arg)
+    expect(dockerfile).toContain('ENV CANOPY_SOURCE_SHA=$CANOPY_SOURCE_SHA')
+    expect(dockerfile).toContain('LABEL org.opencontainers.image.revision=$CANOPY_SOURCE_SHA')
+  })
+
   it('Dockerfile.cms symlinks .next/cache to /tmp for the read-only Lambda filesystem', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 

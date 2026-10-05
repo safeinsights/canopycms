@@ -73,5 +73,12 @@ COPY --from=builder /app/public ./public
 # Lambda's filesystem is read-only outside /tmp. Next may write to .next/cache
 # at runtime; symlink it to /tmp so those writes succeed instead of failing (EROFS).
 RUN rm -rf .next/cache && ln -s /tmp .next/cache
+# The CMS reports this in System health. A build arg, not a Lambda environment
+# variable: a Lambda variable names the infrastructure's commit and would hide
+# exactly the image/infrastructure skew this exists to reveal. Declared last so
+# a new revision does not invalidate the layers above.
+ARG CANOPY_SOURCE_SHA=
+ENV CANOPY_SOURCE_SHA=$CANOPY_SOURCE_SHA
+LABEL org.opencontainers.image.revision=$CANOPY_SOURCE_SHA
 ENV PORT=8080 AWS_LWA_PORT=8080 HOSTNAME=0.0.0.0 NODE_ENV=production
 CMD ["node", "server.js"]

@@ -77,6 +77,8 @@ export interface CmsStackProps extends StackProps {
   domainName?: string
   /** Optional Route53 hosted zone domain, e.g. 'example.org'. */
   hostedZoneDomain?: string
+  /** Optional. Commit the CMS image is built from; shown in System health. */
+  sourceRevision?: string
 }
 
 export class CmsStack extends Stack {
@@ -128,6 +130,10 @@ export class CmsStack extends Stack {
           // auth. The image's own `next build` stays in dev mode either way --
           // see Dockerfile.cms.
           NEXT_PUBLIC_CANOPY_MODE: 'prod',
+          // CDK hashes build args into the asset, so a new revision rebuilds
+          // the image on every deploy -- that is what keeps the revision the
+          // CMS reports honest.
+          ...(props.sourceRevision ? { CANOPY_SOURCE_SHA: props.sourceRevision } : {}),
         },
       }),
       // The one place the CMS image's CPU architecture is decided. CDK derives
