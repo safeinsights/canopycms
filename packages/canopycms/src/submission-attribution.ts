@@ -58,10 +58,15 @@ export function sanitizeDisplayName(raw: string | undefined): string | undefined
   return cleanText(raw, MAX_NAME_LENGTH)
 }
 
-/** An auth user id with no whitespace or structural characters, or undefined. */
+// Ids and emails are recorded exactly as the provider issued them or not at
+// all: rewriting one could merge two users or attribute an edit to someone else.
+const UNSAFE_VERBATIM_CHAR = /[\s\p{Cc}\p{Cf}<>()`\\]/u
+
+/** The auth user id unchanged, or undefined if it holds characters unsafe to record. */
 export function sanitizeUserId(raw: string | undefined): string | undefined {
-  const cleaned = cleanText(raw, MAX_ID_LENGTH)
-  return cleaned?.replace(/\s/g, '') || undefined
+  if (!raw || Array.from(raw).length > MAX_ID_LENGTH || UNSAFE_VERBATIM_CHAR.test(raw))
+    return undefined
+  return raw
 }
 
 const EMAIL_SHAPE = /^[^\s@<>()"',;:\\[\]]+@[^\s@<>()"',;:\\[\]]+\.[^\s@<>()"',;:\\[\]]+$/
@@ -70,8 +75,9 @@ const EMAIL_SHAPE = /^[^\s@<>()"',;:\\[\]]+@[^\s@<>()"',;:\\[\]]+\.[^\s@<>()"',;
 export function sanitizeEmail(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined
   const trimmed = raw.trim()
-  if (trimmed.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(trimmed)) return undefined
-  return trimmed
+  // `\s` misses most C0/C1 controls, and a NUL makes git's spawn throw.
+  if (trimmed.length > MAX_EMAIL_LENGTH || UNSAFE_VERBATIM_CHAR.test(trimmed)) return undefined
+  return EMAIL_SHAPE.test(trimmed) ? trimmed : undefined
 }
 
 /** The submitter as a SubmissionEditor, or undefined for an anonymous user. */
@@ -103,12 +109,18 @@ function cleanEditors(editors: readonly SubmissionEditor[]): CleanEditor[] {
 }
 
 /**
- * Commit messages render on GitHub with @mentions and bare URLs autolinked, so a
- * trailer name gets its `@` swapped for a look-alike and its scheme separator
- * broken. The name is otherwise already single-line and structure-free.
+ * GitHub autolinks commit messages: `@user` mentions, bare URLs, and `#12` /
+ * `GH-12` issue references, which a closing keyword ("Closes #12") turns into an
+ * issue close once the commit reaches the default branch. A trailer value gets
+ * `@` and `#` swapped for look-alikes and the other two patterns broken. Its
+ * input is already single-line and structure-free.
  */
-function trailerName(name: string): string {
-  return name.replace(/@/g, '＠').replace(/:\/\//g, ': //')
+function trailerText(value: string): string {
+  return value
+    .replace(/@/g, '＠')
+    .replace(/#/g, '＃')
+    .replace(/:\/\//g, ': //')
+    .replace(/\bGH-(?=\d)/gi, (m) => `${m.slice(0, 2)}‐`)
 }
 
 export interface CommitTrailerOptions {
@@ -129,8 +141,8 @@ export function buildEditorTrailers(
     for (const editor of clean) {
       trailers.push(
         editor.name
-          ? `Edited-by: ${trailerName(editor.name)} (${editor.userId})`
-          : `Edited-by: ${editor.userId}`,
+          ? `Edited-by: ${trailerText(editor.name)} (${trailerText(editor.userId)})`
+          : `Edited-by: ${trailerText(editor.userId)}`,
       )
     }
   }
@@ -138,7 +150,7 @@ export function buildEditorTrailers(
     for (const editor of clean) {
       if (!editor.email) continue
       trailers.push(
-        `Co-authored-by: ${trailerName(editor.name ?? editor.userId)} <${editor.email}>`,
+        `Co-authored-by: ${trailerText(editor.name ?? editor.userId)} <${editor.email}>`,
       )
     }
   }
@@ -191,9 +203,6 @@ function editorLabel(editor: CleanEditor): string {
 export function buildPrSection(input: PrSectionInput): string {
   const parts: string[] = []
 
-  const description = input.description?.trim()
-  if (description) parts.push(neutralizeComments(truncate(description, MAX_DESCRIPTION_LENGTH)))
-
   const [submitter] = input.submitter ? cleanEditors([input.submitter]) : []
   parts.push(
     submitter
@@ -217,20 +226,29 @@ export function buildPrSection(input: PrSectionInput): string {
     parts.push(`**Changed entries (${paths.length})**\n\n${listed.join('\n')}`)
   }
 
+  // Last, so an unclosed fence or `<details>` in free Markdown cannot swallow
+  // the attribution above it.
+  const description = input.description?.trim()
+  if (description) parts.push(neutralizeComments(truncate(description, MAX_DESCRIPTION_LENGTH)))
+
   return `${PR_SECTION_START}\n${parts.join('\n\n')}\n${PR_SECTION_END}`
 }
 
 /**
  * `existing` with its canopycms section replaced by `section`, keeping every
- * character outside the markers. With no well-formed section in `existing`,
- * stray markers are removed and `section` is appended after the human text.
+ * character outside the markers. The section is the first end marker together
+ * with the nearest start marker before it, so a marker a human quoted earlier in
+ * the body is never taken as the start. With no such pair, stray markers are
+ * removed and `section` is appended after the human text.
  */
 export function mergePrSection(existing: string | null | undefined, section: string): string {
   const body = existing ?? ''
-  const start = body.indexOf(PR_SECTION_START)
-  const end = start >= 0 ? body.indexOf(PR_SECTION_END, start + PR_SECTION_START.length) : -1
-  if (start >= 0 && end >= 0) {
-    return body.slice(0, start) + section + body.slice(end + PR_SECTION_END.length)
+  for (let end = body.indexOf(PR_SECTION_END); end >= 0; ) {
+    const start = body.lastIndexOf(PR_SECTION_START, end - PR_SECTION_START.length)
+    if (start >= 0) {
+      return body.slice(0, start) + section + body.slice(end + PR_SECTION_END.length)
+    }
+    end = body.indexOf(PR_SECTION_END, end + PR_SECTION_END.length)
   }
   const human = body.split(PR_SECTION_START).join('').split(PR_SECTION_END).join('').trimEnd()
   return human ? `${human}\n\n${section}` : section

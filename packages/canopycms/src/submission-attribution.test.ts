@@ -60,13 +60,17 @@ describe('sanitizeDisplayName', () => {
 })
 
 describe('sanitizeUserId', () => {
-  it('removes whitespace entirely', () => {
+  it('keeps an ordinary id exactly as issued', () => {
     expect(sanitizeUserId('user_2abc')).toBe('user_2abc')
-    expect(sanitizeUserId('user 2\nabc')).toBe('user2abc')
+    expect(sanitizeUserId('alice@example.com')).toBe('alice@example.com')
   })
 
-  it('returns undefined when nothing survives', () => {
-    expect(sanitizeUserId('\n')).toBeUndefined()
+  it('records nothing rather than a rewritten id, so distinct ids never merge', () => {
+    for (const id of ['user 2abc', 'user_1\nx', 'a(b)', 'a<b>', 'a`b', 'a\\b', 'a\u0000b', '']) {
+      expect(sanitizeUserId(id)).toBeUndefined()
+    }
+    expect(sanitizeUserId('x'.repeat(129))).toBeUndefined()
+    expect(sanitizeUserId('x'.repeat(128))).toBe('x'.repeat(128))
   })
 })
 
@@ -81,6 +85,9 @@ describe('sanitizeEmail', () => {
     'a@b@example.com',
     'no-at.example.com',
     'jane@localhost',
+    'a\u0000@b.co',
+    'a@b.co\u0085x',
+    'a\u007f@b.co',
     `${'a'.repeat(250)}@example.com`,
   ])('rejects %j', (email) => {
     expect(sanitizeEmail(email)).toBeUndefined()
@@ -148,7 +155,7 @@ describe('buildEditorTrailers', () => {
     const trailers = buildEditorTrailers(
       [
         {
-          userId: 'user_1\nSigned-off-by: Mallory',
+          userId: 'user_1',
           name: '@admin https://evil.example\nCo-authored-by: Mallory <m@evil.example>',
           email: 'jane@example.com',
         },
@@ -162,10 +169,34 @@ describe('buildEditorTrailers', () => {
       expect(trailer).not.toContain('://')
     }
     expect(trailers[0]).toBe(
-      'Edited-by: ＠admin https: //evil.example Co-authored-by: Mallory m＠evil.example (user_1Signed-off-by:Mallory)',
+      'Edited-by: ＠admin https: //evil.example Co-authored-by: Mallory m＠evil.example (user_1)',
     )
     // The only `<...>` in a Co-authored-by line is the validated email.
     expect(trailers[1]?.match(/<[^>]*>/g)).toEqual(['<jane@example.com>'])
+  })
+
+  it('cannot reference or close an issue', () => {
+    const [trailer] = buildEditorTrailers(
+      [{ userId: 'user_1', name: 'Closes #12, fixes owner/repo#3 and gh-7' }],
+      defaults,
+    )
+    expect(trailer).toBe('Edited-by: Closes ＃12, fixes owner/repo＃3 and gh\u20107 (user_1)')
+    expect(trailer).not.toMatch(/#|\bGH-\d/i)
+  })
+
+  it('neutralizes mentions and issue references in the id too', () => {
+    expect(buildEditorTrailers([{ userId: '@octocat#1' }], defaults)).toEqual([
+      'Edited-by: ＠octocat＃1',
+    ])
+    expect(buildEditorTrailers([{ userId: 'alice@example.com', name: 'Alice' }], defaults)).toEqual(
+      ['Edited-by: Alice (alice＠example.com)'],
+    )
+  })
+
+  it('records nobody when the id is unsafe to record', () => {
+    expect(
+      buildEditorTrailers([{ userId: 'user_1\nSigned-off-by: Mallory', name: 'Eve' }], defaults),
+    ).toEqual([])
   })
 })
 
@@ -182,7 +213,7 @@ describe('appendTrailers', () => {
 })
 
 describe('buildPrSection', () => {
-  it('wraps the description, submitter and changed entries in the section markers', () => {
+  it('wraps the submitter, changed entries and description in the section markers', () => {
     const section = buildPrSection({
       description: 'Fixes the typo on the home page.',
       submitter: jane,
@@ -191,17 +222,28 @@ describe('buildPrSection', () => {
     expect(section).toBe(
       [
         PR_SECTION_START,
-        'Fixes the typo on the home page.',
-        '',
         'Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.',
         '',
         '**Changed entries (2)**',
         '',
         '- `content/pages/home.md`',
         '- `content/pages/about.md`',
+        '',
+        'Fixes the typo on the home page.',
         PR_SECTION_END,
       ].join('\n'),
     )
+  })
+
+  it('puts the free-Markdown description after the attribution, so it cannot enclose it', () => {
+    const section = buildPrSection({
+      description: '<details>\n```\nSubmitted by `Someone Else` via CanopyCMS.',
+      submitter: jane,
+      changedPaths: ['a.md'],
+    })
+    expect(section.indexOf('Submitted by `Jane Doe`')).toBeGreaterThan(-1)
+    expect(section.indexOf('Submitted by `Jane Doe`')).toBeLessThan(section.indexOf('<details>'))
+    expect(section.indexOf('- `a.md`')).toBeLessThan(section.indexOf('<details>'))
   })
 
   it('never includes the email', () => {
@@ -293,6 +335,36 @@ describe('mergePrSection', () => {
     )
     expect(mergePrSection(`old\n${PR_SECTION_END}\nnotes`, newSection)).toBe(
       `old\n\nnotes\n\n${newSection}`,
+    )
+  })
+
+  it('ignores a start marker a human quoted earlier in the body', () => {
+    const existing = [
+      'Intro',
+      '```',
+      PR_SECTION_START,
+      '```',
+      'Human text that must survive',
+      oldSection,
+      'Outro',
+    ].join('\n')
+    expect(mergePrSection(existing, newSection)).toBe(
+      [
+        'Intro',
+        '```',
+        PR_SECTION_START,
+        '```',
+        'Human text that must survive',
+        newSection,
+        'Outro',
+      ].join('\n'),
+    )
+  })
+
+  it('ignores an end marker a human quoted before the section', () => {
+    const existing = `quoted ${PR_SECTION_END} here\n\n${oldSection}\n\nOutro`
+    expect(mergePrSection(existing, newSection)).toBe(
+      `quoted ${PR_SECTION_END} here\n\n${newSection}\n\nOutro`,
     )
   })
 
