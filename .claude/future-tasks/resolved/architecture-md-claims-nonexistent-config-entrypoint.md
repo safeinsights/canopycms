@@ -1,7 +1,9 @@
 # ARCHITECTURE.md lists a `canopycms/config` entrypoint that does not exist
 
+**RESOLVED 2026-10-05:** ARCHITECTURE.md and README no longer mention `canopycms/config` (grep returns 0).
+
 Found 2026-08-20 while resolving
-[canopycms-test-utils-export-unbuilt.md](resolved/canopycms-test-utils-export-unbuilt.md)
+[canopycms-test-utils-export-unbuilt.md](canopycms-test-utils-export-unbuilt.md)
 — it is the paragraph directly above the one that fix rewrote, so it was read closely by
 accident rather than by design.
 

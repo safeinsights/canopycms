@@ -1,6 +1,13 @@
 # A permanently missing worker reads as "still starting"
 
-## Priority: P3 [BOTH]
+## Priority: P2 [BOTH]
+
+**Cluster, worker-down observability:** this file,
+[worker-secret-errors-before-start-are-invisible.md](worker-secret-errors-before-start-are-invisible.md),
+[worker-boot-loop-alarming.md](worker-boot-loop-alarming.md) and
+[worker-app-env-var-check-untested.md](worker-app-env-var-check-untested.md) are four views of "the
+worker failed and nobody can tell why". Fix them together: the 503 is constant, secret reads happen in
+`main()` before `start()` so `lastFatalError` is never written for them, and no CDK alarm exists.
 
 ## The gap
 

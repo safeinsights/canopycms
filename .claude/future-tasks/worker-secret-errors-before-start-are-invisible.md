@@ -1,4 +1,7 @@
-# [P3] A secret the worker cannot read or parse at boot crash-loops with nothing in worker-status.json
+# [P2] A secret the worker cannot read or parse at boot crash-loops with nothing in worker-status.json
+
+Part of the worker-down observability cluster; see
+[worker-not-ready-permanent-failure.md](worker-not-ready-permanent-failure.md).
 
 Found 2026-09-13 by review round 1 of the worker-credential epic (the CDK/secrets reviewer).
 

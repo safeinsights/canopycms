@@ -1,7 +1,9 @@
 # Program F — Production, and the second site
 
-**Part of:** [production-readiness-program.md](production-readiness-program.md)
-**Size:** L · **Status:** not started · **Blocked by:** E stable with real editors
+**Closed 2026-10-05, resolved by events:** its ordering premise (the docs site first, then the second site) no longer holds; multi-account `official` mode and a shared static-site CDK are unscheduled and would be filed as new tasks if needed.
+
+**Part of:** [production-readiness-program.md](../production-readiness-program.md)
+**Size:** L · **Status:** retired · **Blocked by:** E stable with real editors
 **Repos:** `safeinsights/canopycms`, `safeinsights/docs-site-proto`, `safeinsights/website`
 
 ## Part 1 — Shared deployment code
@@ -68,7 +70,7 @@ Domain `safeinsights.org`, docs at the `docs` subdomain.
 
 ## Part 3 — Content lifecycle design (do this first)
 
-[content-lifecycle-scenarios.md](content-lifecycle-scenarios.md) is currently
+[content-lifecycle-scenarios.md](../content-lifecycle-scenarios.md) is currently
 scoped with nothing implemented. **It belongs before the production deploy, not
 after** — it decides whether content edited in one environment can reach
 production at all:

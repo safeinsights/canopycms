@@ -1,5 +1,7 @@
 # [P2] Under GitHub App auth, a rotated private key or an early-revoked installation token is never recovered without a restart
 
+**Priority: P2 [BOTH]; P3 while a site authenticates with a PAT** (the App-auth parts do not apply).
+
 Found 2026-09-13 by review round 1 of the worker-credential epic (the worker-runtime
 reviewer), from the code and the installed `@octokit/auth-app@6.1.4` source. Not fixed in the
 review: closing it needs a new injection seam, which is design work.
@@ -55,3 +57,42 @@ token early is not confirmed.
 
 Verify live as part of
 [github-app-auth-unexercised-against-real-github.md](github-app-auth-unexercised-against-real-github.md).
+
+## Same function, other credential-refresh defects
+
+All three concern `refreshCredential` in `packages/canopycms/src/worker/github-auth.ts`. The two
+below apply to the PAT and provider path, so they matter even while a site uses a PAT.
+
+### Core's 60 s floor stacks on the provider's 5-minute floor (P3)
+
+Core's floor (`refreshGitHubTokenMinIntervalMs`, default 60 s) is stamped BEFORE the provider is
+called, and stays stamped when the provider returns `undefined` because its own 5-minute floor
+(`createReactiveSecret`, `packages/canopycms-cdk/worker/credential-refresh.ts`) throttled the call.
+On AWS the two floors are independent clocks, and a call one floor throttles can push the other out.
+Measured with the real `createReactiveSecret` and core floor wired as `worker/index.ts` wires them: a
+sync fails at 0 s, an unrelated task fails at 270 s (throttled by the provider, stamps core's floor),
+the new token is stored at 280 s, the sync at 300 s is throttled by core's floor, and the rotated
+token arrives only at 600 s. Worst-case pickup is about 10 minutes, not 5;
+`docs/deploying-to-aws.md#rotating-a-secret` states it.
+
+**Fix (one line plus a test):** pass `refreshGitHubTokenMinIntervalMs: 0` to `CmsWorker` in
+`packages/canopycms-cdk/worker/index.ts`; the AWS provider already enforces its own floor, and core's
+floor stays on for adopter-supplied providers. Pin it with a composition test in canopycms-cdk that
+reproduces the timeline and expects pickup at the 300 s sync.
+
+### A re-read adopts whatever the secret store holds and never goes back (P3)
+
+`refreshCredential` swaps in any non-empty value the provider returns without checking that it works,
+after every failed task as well as every failed sync, and neither call site is gated on the failure
+being about the credential. If an operator stores a mistyped or under-scoped new token before revoking
+the old one (which still works), any unrelated failure (a diverged branch's `PermanentTaskError`, a
+422) triggers a re-read, the changed value is swapped in, every push then fails, and later re-reads
+return `undefined` because the value is unchanged, so the working token is never restored. Recovery is
+fixing the stored value, but a working deployment is broken by a typo it was not yet using.
+
+Options: validate before swapping (one authenticated call with the new token, keeping the old on
+failure; the extra traffic only happens when a changed value is found); keep the previous token as a
+fallback and revert when the first operation on the new one fails with a credential-shaped error
+(there is no reliable credential-shaped signal for git, see the status-less push error in
+`isPermanentTaskFailure`); at minimum, tell operators in the rotation docs to check the new token
+before storing it.

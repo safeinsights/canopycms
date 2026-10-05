@@ -1,6 +1,6 @@
 # `examples/aws-deployment/` has drifted from the scaffold templates it mirrors, and nothing compares the two
 
-**Status: open. Priority: P1.** Filed three times, independently, on 2026-09-12, and merged into
+**Status: open. Priority: P2 [BOTH].** Filed three times, independently, on 2026-09-12, and merged into
 this file during the base merge of `int-202609-a` into `int-202609-cms-image` (#341). The other
 two filings are kept as history:
 [example-deploy-workflow-drifted.md](resolved/example-deploy-workflow-drifted.md) and
@@ -68,7 +68,7 @@ of:
 
 None of them covers the drift listed above.
 
-### The instance that makes this P1
+### The instance that made this P1 (closed)
 
 One live difference was **fixed in PR #322**, with a test pinning both copies (`cms-deploy.test.ts`,
 "both copies build the image with NEXT_PUBLIC_CANOPY_MODE: 'prod'"): `cms-stack.ts.template` set

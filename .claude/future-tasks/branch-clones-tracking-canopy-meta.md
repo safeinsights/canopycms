@@ -1,6 +1,27 @@
 # Branch clones still tracking `.canopy-meta/` after the adopter untracks it
 
-Found 2026-10-04 in review of the `.canopy-meta` sync fix. **Needs a design decision before code.**
+**Priority: P2 [BOTH].** Found 2026-10-04 in review of the `.canopy-meta` sync fix.
+
+**Decided:** an operator runbook, no code, unless a second adopter tracks `.canopy-meta`. The
+auto-repair is risky (see the next section) and the affected population is small once submit stops
+committing the state.
+
+## Runbook
+
+For each branch recorded as `rebaseFailure` after the adopter untracks `.canopy-meta/` upstream:
+
+1. **Save the branch's work.** In the branch clone under the workspace's `content-branches/`, copy out
+   the content edits (the diff against the branch's base, plus untracked files) and
+   `.canopy-meta/comments.json` and `branch.json`. Anything already pushed also survives on
+   `remote.git` and the PR; unpushed edits exist only in this clone.
+2. **Purge the branch's workspace** from System Health. Purge trash-renames the clone directory and
+   touches nothing on `remote.git` or GitHub.
+3. **Re-provision.** Open the branch again; the clone is rebuilt from `remote.git`'s pushed tip with
+   `.canopy-meta/` untracked.
+4. **Re-apply the saved content edits and restore `.canopy-meta/comments.json`**, then save.
+
+Branches with no commit touching `.canopy-meta/` in `merge-base..HEAD` are the only ones an
+auto-repair could safely handle; for the rest the runbook is the fix.
 
 ## Problem
 
