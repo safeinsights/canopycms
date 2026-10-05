@@ -343,7 +343,7 @@ export async function createNextCanopyContext(
   //
   // No base-branch context resolution needed here: request-time content reads
   // (buildContentTree/listEntries/read) already provision the base/active branch via
-  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext); build-time reads never
+  // loadOrCreateBranchContext (see context.ts's resolveListingSource); build-time reads never
   // provision, they read the checkout.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
