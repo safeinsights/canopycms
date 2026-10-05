@@ -39,3 +39,10 @@ the rebase drop the commit as already upstream. Review reproduced two defects in
   lockfiles if bytes must move.
 - An operator runbook (purge and re-provision, after saving the branch's work) may be the better
   answer than code, given how rare this population is once submit stops committing the state.
+
+## Related, pre-existing
+
+A base-branch commit that ADDS a tracked file under `.canopy-meta/` silently overwrites the live,
+excluded copy when a clone fast-forwards or rebases onto it, because git treats ignored files as
+expendable. Reproduced with git 2.55 in review. The tracked-state warning reports the path on the
+next cycle, but by then the live bytes are gone.

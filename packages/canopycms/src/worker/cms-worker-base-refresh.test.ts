@@ -359,7 +359,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
         initialFiles: {
           'content/a.md': 'a',
           '.canopy-meta/comments.json': '{"threads":[]}',
-          '.canopy-meta/clean-state.json': '{"clean":true}',
+          '.canopy-meta/clean-état.json': '{"clean":true}',
         },
       })
       const commentsPath = path.join(basePath, '.canopy-meta', 'comments.json')
@@ -370,7 +370,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       const consoleSpy = mockConsole()
       const report = await refreshBase(makeWorker(tmpDir))
       expect(consoleSpy).toHaveLogged(
-        /stopped tracking \.canopy-meta\/clean-state\.json, \.canopy-meta\/comments\.json, as upstream has/,
+        /stopped tracking \.canopy-meta\/clean-état\.json, \.canopy-meta\/comments\.json, as upstream has/,
       )
       consoleSpy.restore()
 
@@ -378,7 +378,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe('{"threads":["live"]}')
       // A clean tracked copy would otherwise be deleted by the fast-forward.
       await expect(
-        fs.readFile(path.join(basePath, '.canopy-meta', 'clean-state.json'), 'utf8'),
+        fs.readFile(path.join(basePath, '.canopy-meta', 'clean-état.json'), 'utf8'),
       ).resolves.toBe('{"clean":true}')
       expect(await simpleGit({ baseDir: basePath }).raw(['ls-files', '--', '.canopy-meta'])).toBe(
         '',

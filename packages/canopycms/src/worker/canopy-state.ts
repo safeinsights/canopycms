@@ -24,10 +24,14 @@ export function isUntracked(file: FileStatusResult): boolean {
   return file.index === '?' && file.working_dir === '?'
 }
 
+/** NUL-separated git output, which is never quoted, unlike `core.quotePath` line output. */
+function splitNul(out: string): string[] {
+  return out.split('\0').filter((entry) => entry.length > 0)
+}
+
 /** Files under `.canopy-meta/` that the clone's index tracks. */
 export async function listTrackedCanopyState(git: SimpleGit): Promise<string[]> {
-  const out = await git.raw(['ls-files', '--', CANOPY_META_DIR])
-  return out.split('\n').filter((line) => line.length > 0)
+  return splitNul(await git.raw(['ls-files', '-z', '--', CANOPY_META_DIR]))
 }
 
 /**
@@ -70,9 +74,7 @@ export async function splitByUpstreamTracking(
 ): Promise<{ droppedUpstream: string[]; stillTracked: string[] }> {
   if (paths.length === 0) return { droppedUpstream: [], stillTracked: [] }
   const tracked = new Set(
-    (await git.raw(['ls-tree', '-r', '--name-only', tip, '--', CANOPY_META_DIR]))
-      .split('\n')
-      .filter((line) => line.length > 0),
+    splitNul(await git.raw(['ls-tree', '-r', '-z', '--name-only', tip, '--', CANOPY_META_DIR])),
   )
   return {
     droppedUpstream: paths.filter((p) => !tracked.has(p)),
