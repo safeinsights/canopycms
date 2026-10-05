@@ -127,6 +127,27 @@ describe('Next.js adapter', () => {
       expect(response.status).toBe(200)
     })
 
+    it('routes a trailing-slash request even when its params end in an empty segment', async () => {
+      const handler = createCanopyCatchAllHandler({
+        services: {} as any,
+        authPlugin: mockAuthPlugin,
+      })
+
+      const mockNextRequest = {
+        method: 'POST',
+        url: 'http://localhost:3000/api/canopycms/branches/',
+        headers: { get: () => null },
+        json: async () => ({ branch: 'b' }),
+      } as any
+
+      const response: any = await handler(mockNextRequest, {
+        params: { canopycms: ['branches', ''] },
+      })
+
+      // The mocked core handler answers with branch data only for exactly ['branches'].
+      expect(response.body).toEqual({ ok: true, status: 200, data: { branches: [] } })
+    })
+
     it('handles missing params gracefully', async () => {
       const handler = createCanopyCatchAllHandler({
         services: {} as any,

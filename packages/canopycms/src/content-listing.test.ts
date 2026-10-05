@@ -1234,7 +1234,7 @@ describe('listEntries', () => {
           flattenSchema(schema, 'content'),
           'content',
           { resolveReferences: true },
-          { shouldInclude: (physicalPath) => !physicalPath.includes('post.denied.') },
+          { shouldInclude: (logicalPath) => logicalPath !== 'content/posts/denied' },
         )
 
         expect(filtered.some((e) => e.slug === 'denied')).toBe(false)

@@ -1176,12 +1176,15 @@ export class GitManager {
     // `--end-of-options` before every caller-influenced ref name, as in push()
     // above: names are sanitized upstream, but this file's rule is that a
     // positional is guarded where it is passed, not where it was validated.
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', '--end-of-options', 'HEAD']))
-    const localSha = (await this.git.revparse(['--end-of-options', target])).trim()
+    // Each rev-parse needs `--verify`: without it, rev-parse echoes
+    // `--end-of-options` as its own output line ahead of the result.
+    const target =
+      branch ?? (await this.git.revparse(['--verify', '--abbrev-ref', '--end-of-options', 'HEAD']))
+    const localSha = (await this.git.revparse(['--verify', '--end-of-options', target])).trim()
     let fetchedTip: string
     try {
       await this.git.raw(['fetch', '--end-of-options', this.remote, target])
-      fetchedTip = (await this.git.revparse(['--end-of-options', 'FETCH_HEAD'])).trim()
+      fetchedTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
     } catch {
       // No ref on the remote yet -- the branch has never been pushed.
       return true

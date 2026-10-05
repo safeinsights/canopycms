@@ -53,21 +53,34 @@ will not let a shipped version go unlisted.
 
 ### `.canopy-meta/` must not be committed, and System health now says so
 
-**What changed.** The schema cache moved from `.canopy-meta/schema-cache.json` into each branch
-clone's `.git/canopycms/`. The worker's sync, editor submits and `canopycms sync` all ignore
-`.canopy-meta/`, and System health shows the base branch's refresh outcome. It warns when your
-repo tracks `.canopy-meta/`. A committed copy of that directory used to block the base branch's
-refresh and every branch's rebase, and it put the cache into every editor PR.
+**What changed.** The schema cache moved into each branch clone's `.git/canopycms/`. Sync, editor
+submits and `canopycms sync` ignore `.canopy-meta/`, and System health shows the base branch's
+refresh outcome and warns when your repo tracks `.canopy-meta/`.
 
-**To adopt.** If `git ls-files .canopy-meta` lists anything in your repo, run
-`git rm -r --cached .canopy-meta`, add `.canopy-meta/` to `.gitignore`, and commit. The base
-branch's workspace follows on its next refresh. An existing editing branch whose copy of that
-state has changed keeps failing to rebase, shown in System health, until an operator repairs or
-re-creates its workspace.
+**To adopt.** If `git ls-files .canopy-meta` lists anything, run `git rm -r --cached .canopy-meta`,
+add `.canopy-meta/` to `.gitignore`, and commit. The base branch's workspace follows by itself; an
+editing branch whose copy of that state changed shows a rebase failure until its workspace is
+repaired or re-created.
 
-**Now deletable.** Any local step that resets, deletes or reformats `.canopy-meta/` files before a
-commit or a format check, and any ignore rule that only kept the schema cache away from a
-formatter.
+**Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit
+or a format check.
+
+### Path-permission rules now take effect below the content root — **security fix; breaking for a rule written with on-disk names**
+
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`), the form the
+Permission Manager writes. Enforcement used to check the on-disk path, whose directories and files
+carry content ids, so a rule naming a collection or entry never matched: a grant on a collection
+granted nothing, and a restriction on one restricted nothing. Only a glob that also matched on-disk
+names, such as `content/**`, took effect.
+Renaming an entry now also requires edit access at the new path.
+
+**To adopt.** Review your permission rules (Settings → Manage Permissions, or the settings branch's
+permissions file) before upgrading: a collection rule that never took effect will start to. Rewrite
+any rule that names an id-suffixed directory or a file extension (`content/blog.<id>/**`,
+`content/about.json`) in logical form (`content/blog/**`, `content/about`); it no longer matches.
+
+**Now deletable.** A workaround that granted access on the content root because collection grants
+had no effect.
 
 ---
 

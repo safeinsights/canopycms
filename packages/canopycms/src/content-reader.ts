@@ -252,10 +252,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
 
     // Get the path WITHOUT reading the file
-    let relativePath: PhysicalPath
+    let logicalPath: LogicalPath
     // Absolute filesystem path to the entry file. Surfaced on read() / readByUrlPath()
     // for server-side colocated-artifact reads (e.g. a sibling profile.json). Already
-    // computed here for permission checks; just carried through.
+    // computed here by path resolution; just carried through.
     let physicalPath: PhysicalPath
     // Entry type + content ID come out of path resolution (buildPaths() derives both from the
     // schema item / filename), surfaced on read() / readByUrlPath() so callers can route or
@@ -264,7 +264,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     let entryId: ContentId | undefined
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
-      relativePath = resolved.relativePath
+      logicalPath = resolved.logicalPath
       physicalPath = resolved.absolutePath as PhysicalPath
       // resolveDocumentPath() always sets entryTypeName for a valid schema item, so no
       // further fallback is needed here; `id` is the one field that can be legitimately
@@ -295,7 +295,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const access = await services.checkContentAccess(
         context,
         branchRoot,
-        relativePath,
+        logicalPath,
         user,
         'read',
       )
