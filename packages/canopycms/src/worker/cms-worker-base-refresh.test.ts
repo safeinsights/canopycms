@@ -22,6 +22,7 @@ import { readContentIndexGeneration } from '../content-index-generation'
 import type { ContentId } from '../paths/types'
 import { initTestRepo, mockConsole } from '../test-utils'
 import type { BaseRefreshReport } from '../types'
+import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { CmsWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
@@ -100,6 +101,11 @@ async function createBaseWorkspaceSetup(
     await fs.mkdir(path.dirname(excludeFile), { recursive: true })
     await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
   }
+
+  // A provisioned workspace has branch metadata; the worker skips one without it.
+  await getBranchMetadataFileManager(basePath, contentBranchesPath).save({
+    branch: { name: baseBranch },
+  })
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
@@ -292,6 +298,52 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     expect(saveSpy).not.toHaveBeenCalled()
     saveSpy.mockRestore()
   })
+  describe('provisioning lock', () => {
+    it('skips and reports skipped-locked while another holder has the lock', async () => {
+      const { basePath, contentBranchesPath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+      await pushToRemote({ 'remote-update.txt': 'from origin' })
+      const release = await tryAcquireProvisioningLock(
+        contentBranchesPath,
+        branchProvisioningLockName('main'),
+      )
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir)).finally(release)
+      expect(consoleSpy).toHaveLogged(/provisioning lock held elsewhere/)
+      consoleSpy.restore()
+
+      expect(report).toEqual({ outcome: 'skipped-locked' })
+      await expect(fs.stat(path.join(basePath, 'remote-update.txt'))).rejects.toThrow()
+    })
+
+    it('treats a clone without branch.json as not provisioned', async () => {
+      const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+      await pushToRemote({ 'remote-update.txt': 'from origin' })
+      await fs.rm(path.join(basePath, '.canopy-meta', 'branch.json'))
+
+      const consoleSpy = mockConsole()
+      const report = await refreshBase(makeWorker(tmpDir))
+      expect(consoleSpy).toHaveLogged(/not yet provisioned/)
+      consoleSpy.restore()
+
+      expect(report).toEqual({ outcome: 'skipped-not-provisioned' })
+      await expect(fs.stat(path.join(basePath, 'remote-update.txt'))).rejects.toThrow()
+    })
+
+    it('releases the lock once the refresh is done', async () => {
+      const { contentBranchesPath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+      await pushToRemote({ 'remote-update.txt': 'from origin' })
+
+      expect((await refreshBase(makeWorker(tmpDir))).outcome).toBe('refreshed')
+
+      const release = await tryAcquireProvisioningLock(
+        contentBranchesPath,
+        branchProvisioningLockName('main'),
+      )
+      await release()
+    })
+  })
+
   describe("canopycms's own state", () => {
     it('fast-forwards despite a modified tracked .canopy-meta file, and reports the tracking', async () => {
       const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir, {

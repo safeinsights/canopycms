@@ -13,6 +13,11 @@ import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import {
+  holdProvisionedWorkspace,
+  releaseProvisionedWorkspace,
+  type ProvisionedWorkspaceHold,
+} from './provisioned-workspace'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
 import {
@@ -249,7 +254,7 @@ interface RebaseRoundsResult {
  * - the **unexpected-error** exit aborts HERE, before breaking, so the caller's
  *   `!completed` abort is a caught no-op for that path;
  * - the **lock-compromised** exit leaves the rebase in progress and is aborted
- *   by `rebaseOneBranch`'s own `contentLockCompromised && !completed` branch,
+ *   by `rebaseOneBranch`'s own `lockCompromised() && !completed` branch,
  *   which returns `skippedLocked` before the `!completed` block below it is
  *   reached -- a distinct site that cannot be folded into that one;
  * - the **conflict-resolution-failure** and **MAX_REBASE_ROUNDS** exits are the
@@ -587,7 +592,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
       workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
       continue
     }
-    const outcome = await rebaseOneBranch(ctx, branchDir, branchPath)
+    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath)
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -600,6 +605,42 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
   }
 
   return { rebased, skippedDirty, skippedLocked, failed }
+}
+
+/**
+ * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
+ * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
+ * one with no `branch.json` yet is skipped as not provisioned. Lock order: provisioning, then the
+ * content-write lock inside it; see `provisioned-workspace.ts` for why that order cannot deadlock.
+ * Never throws, like rebaseOneBranch.
+ */
+async function holdAndRebaseOneBranch(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+): Promise<BranchRebaseOutcome> {
+  let hold: ProvisionedWorkspaceHold
+  try {
+    hold = await holdProvisionedWorkspace(ctx.contentBranchesPath, branchDir)
+  } catch (err: unknown) {
+    // [REDACT] failed[] is served to the browser via worker-status.json.
+    const error = redactCredentials(`could not take the provisioning lock: ${getErrorMessage(err)}`)
+    workerLogWarn(`  Skipping ${branchDir}: ${error}`)
+    return { kind: 'failed', error }
+  }
+  if (hold.kind === 'locked') {
+    workerLog(`  Skipping ${branchDir}: provisioning lock held elsewhere (retrying next cycle)`)
+    return { kind: 'skippedLocked' }
+  }
+  if (hold.kind === 'not-provisioned') {
+    workerLog(`  Skipping ${branchDir}: not yet provisioned (no branch.json)`)
+    return { kind: 'none' }
+  }
+  try {
+    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
+  } finally {
+    await releaseProvisionedWorkspace(hold.release, branchDir)
+  }
 }
 
 /**
@@ -618,6 +659,7 @@ async function rebaseOneBranch(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  isProvisioningLockCompromised: () => boolean,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -676,6 +718,9 @@ async function rebaseOneBranch(
     // record it and bail before the next one rather than replaying over
     // an editor's concurrent save.
     let contentLockCompromised = false
+    // Either lock lost means another writer may be live against this tree;
+    // both get the same bail-before-the-next-destructive-step treatment.
+    const lockCompromised = () => contentLockCompromised || isProvisioningLockCompromised()
     try {
       releaseContentLock = await tryAcquireContentWriteLock(branchPath, (lockErr) => {
         contentLockCompromised = true
@@ -890,7 +935,7 @@ async function rebaseOneBranch(
         branchGit,
         branchDir,
         fetchedBaseTip,
-        () => contentLockCompromised,
+        lockCompromised,
       )
 
       // Outside the round loop's try/catch, so a throwing test hook can
@@ -917,17 +962,17 @@ async function rebaseOneBranch(
       // history while a concurrent save is uncommitted working-tree state, and
       // that writer is already told to retry via ContentWriteLockBusyError. So
       // when the rebase completed, log the lost exclusivity loudly and finish.
-      if (contentLockCompromised && !completed) {
+      if (lockCompromised() && !completed) {
         workerLogWarn(
-          `  Skipping ${branchDir}: content-write lock was compromised mid-rebase (retrying next cycle)`,
+          `  Skipping ${branchDir}: a lock it held was compromised mid-rebase (retrying next cycle)`,
         )
         // No-op when no rebase is in progress; failure is expected there.
         await branchGit.rebase(['--abort']).catch(() => {})
         return { kind: 'skippedLocked' }
       }
-      if (contentLockCompromised) {
+      if (lockCompromised()) {
         workerLogWarn(
-          `  Content-write lock for ${branchDir} was compromised, but its rebase had already completed -- finishing the sync (history is rewritten; skipping now would strand the history-rewrite marker and wedge the branch)`,
+          `  A lock held for ${branchDir} was compromised, but its rebase had already completed -- finishing the sync (history is rewritten; skipping now would strand the history-rewrite marker and wedge the branch)`,
         )
       }
 
