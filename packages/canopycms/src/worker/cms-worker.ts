@@ -16,7 +16,7 @@ import type { BranchMetadataFile } from '../branch-metadata'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
-import type { WorkerStatusReport } from '../types'
+import type { BaseRefreshReport, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogWarn, workerLogError } from './log'
@@ -953,7 +953,7 @@ export class CmsWorker {
     return pushSettingsBranches(this.ctx(), git, trackedNames)
   }
 
-  private async refreshBaseBranchWorkspace(): Promise<void> {
+  private async refreshBaseBranchWorkspace(): Promise<BaseRefreshReport> {
     return refreshBaseBranchWorkspace(this.ctx())
   }
 
