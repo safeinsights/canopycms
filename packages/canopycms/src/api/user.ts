@@ -1,9 +1,14 @@
 import { defineEndpoint } from './route-builder'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BuildIdentity } from '../types'
+import { isAdmin } from '../authorization/helpers'
+import { getBuildIdentity } from '../build-identity'
 
 export type UserInfoResponse = ApiResponse<{
   userId: string
   groups: string[]
+  /** Admins only: the deployed version is reconnaissance for anyone else. */
+  build?: BuildIdentity
 }>
 
 /**
@@ -17,6 +22,7 @@ const getUserInfoHandler = async (ctx: ApiContext, req: ApiRequest): Promise<Use
     data: {
       userId: req.user.userId,
       groups: req.user.groups as string[],
+      ...(isAdmin(req.user.groups) ? { build: getBuildIdentity() } : {}),
     },
   }
 }

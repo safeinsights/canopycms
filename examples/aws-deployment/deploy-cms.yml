@@ -224,4 +224,6 @@ jobs:
           CANOPYCMS_DEPLOYMENT_NAME: ${{ vars.CANOPYCMS_DEPLOYMENT_NAME }}
           CMS_DOMAIN_NAME: ${{ vars.CMS_DOMAIN_NAME }}
           CMS_HOSTED_ZONE_DOMAIN: ${{ vars.CMS_HOSTED_ZONE_DOMAIN }}
+          # The commit the CMS image is built from, reported in System health.
+          CANOPY_SOURCE_SHA: ${{ github.sha }}
         run: npx cdk deploy CanopyCms --require-approval never
