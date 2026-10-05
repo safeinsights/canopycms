@@ -162,7 +162,7 @@ export interface CanopyBuildContext {
    * iframe's `?branch=` as `branch`, as for `read`, so an index page previewed
    * on a content branch lists that branch. Any other branch must already exist
    * and, on the request-scoped context, be readable by the user; otherwise, or
-   * for a non-string value, the result is empty. It selects nothing at build
+   * for an array, the result is empty. It selects nothing at build
    * time or on static deployments.
    */
   listEntries: <T = Record<string, unknown>>(
@@ -181,8 +181,8 @@ export interface CanopyBuildContext {
    *
    * Branch: with no `branch` it reads the active branch, provisioning its workspace if missing.
    * Any other branch must already exist and, on the request-scoped context, be readable by the
-   * user; otherwise, or for a non-string value, it throws NOT_FOUND, so a hidden branch reads as
-   * a missing one. It selects nothing at build time or on static deployments.
+   * user; otherwise, or for an array, it throws NOT_FOUND, so a hidden branch reads as a missing
+   * one. It selects nothing at build time or on static deployments.
    */
   read: <T = unknown>(input: {
     entryPath: string
@@ -308,7 +308,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
      * null when it yields nothing this user may see.
      *
      * The active branch is provisioned if missing. Any other name is load-only,
-     * never provisioned — a missing or traversal name is null — and its branch
+     * never provisioned — a name with no workspace is null (`loadExistingBranch`) — and its branch
      * access, held in its own metadata, is checked here, before its schema or
      * content files are read, so a denied branch is indistinguishable from a
      * missing one. The active branch's access is left to the caller: a listing

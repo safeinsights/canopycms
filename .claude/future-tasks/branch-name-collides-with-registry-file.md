@@ -10,7 +10,8 @@ Reasoned from the code; pre-existing.
 
 A branch workspace is the directory `content-branches/<sanitized name>`, and
 the branch registry keeps its files beside them in the same directory
-(`branches.json`, plus its temp and stale copies; `branch-registry.ts`).
+(`branches.json`, and `branches.tmp.json` while it is rewritten;
+`branch-registry.ts:23-27`).
 `createBranchHandler` (`api/branch.ts`) rejects the settings-branch prefix and
 `RESERVED_ROUTE_BRANCH_NAMES`, but not those file names. So an editor allowed
 to create branches can ask for `branches.json`, whose workspace path is the

@@ -323,7 +323,7 @@ name) works, but leaves the entry's real `urlPath` as
 URL-derived surface then has to be told about one at a time. The example app in this repo used to
 do that and no longer does.
 
-Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Any other branch must already exist and be readable by the current user, or it reads as not found. Both enforce the same branch/path access rules as the API handlers.
+Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to the active branch: `defaultActiveBranch`, or when that is unset, git HEAD in `dev` and your base branch in `prod`. Any other branch must already exist and be readable by the current user, or it reads as not found. Both enforce the same branch/path access rules as the API handlers.
 
 **Index entries and URL resolution**
 
