@@ -98,10 +98,17 @@ const runtimeSpecifiers = (file: string): string[] => {
 }
 
 /** A `'use client'` directive anywhere in the prologue, after comments or other directives. */
-const isUseClient = (file: string): boolean =>
-  /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/|(['"])use [a-z]+\1;?)*(['"])use client\2/.test(
-    readFileSync(file, 'utf8'),
-  )
+const isUseClient = (file: string): boolean => {
+  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest)
+  for (const statement of source.statements) {
+    // The directive prologue is the leading run of string-literal expression statements.
+    if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) {
+      return false
+    }
+    if (statement.expression.text === 'use client') return true
+  }
+  return false
+}
 
 const walk = () => {
   const problems: string[] = []
