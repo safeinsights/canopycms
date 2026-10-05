@@ -223,6 +223,49 @@ export class RemoteNotReadyError extends Error {
   }
 }
 
+/**
+ * Settings provisioning could not read the remote's settings branch, so it cannot tell a remote
+ * that has none from one it failed to reach. It stops instead of starting an empty settings
+ * branch: settings that silently vanish drop restrictive path rules, so content they hid
+ * becomes readable under `defaultPathAccess: { read: 'allow' }`.
+ */
+class SettingsRemoteUnreadableError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly remote: string,
+    /** The underlying git failure; see {@link GitRemoteRefMissingError.gitError}. */
+    public readonly gitError: unknown,
+  ) {
+    super(
+      `CanopyCMS: could not read settings branch '${branch}' from remote '${remote}', so ` +
+        `the settings workspace was not provisioned: ${getErrorMessage(gitError)}`,
+    )
+    this.name = 'SettingsRemoteUnreadableError'
+  }
+}
+
+/**
+ * The workspace's settings branch shares no history with the remote's and holds work of its
+ * own, so neither copy can be chosen automatically, and a settings save could never pull.
+ */
+class SettingsBranchDivergedError extends Error {
+  constructor(
+    public readonly branch: string,
+    public readonly workspacePath: string,
+    /** What the workspace holds beyond an empty initial commit. */
+    public readonly localWork: string,
+  ) {
+    super(
+      `CanopyCMS: settings branch '${branch}' in ${workspacePath} shares no history with the ` +
+        `remote's '${branch}', and holds ${localWork}. Settings saves cannot pull until one copy ` +
+        `is chosen. To keep the remote's settings: copy anything you need out of ` +
+        `${workspacePath}, move it aside, and restart; the next start checks out the remote's ` +
+        `'${branch}', and copied changes can then be re-applied in the editor.`,
+    )
+    this.name = 'SettingsBranchDivergedError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -545,7 +588,7 @@ export class GitManager {
    * deleteBranchHandler: a head left in `remote.git` forever makes the
    * create -> publish -> squash-merge -> delete -> reuse-the-name cycle reject
    * the reused branch's first publish non-fast-forward against the stale head
-   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip is
+   * (`GitManager.push()` pushes the branch to the same name, and a squash-merged old tip is
    * not an ancestor of the new branch), and a retried submit then skips the
    * local push on a clean tree and enqueues the worker push of the STALE head,
    * resurrecting the deleted branch's content on GitHub as an apparent success.
@@ -714,6 +757,15 @@ export class GitManager {
     )
   }
 
+  /** The not-ready error for a mode whose remote is auto-detected, or `undefined` for other modes. */
+  private static async remoteNotReadyError(
+    mode: OperatingMode,
+  ): Promise<RemoteNotReadyError | undefined> {
+    const { operatingStrategy } = await import('./operating-mode')
+    const { autoDetectRemotePath } = operatingStrategy(mode).getRemoteUrlConfig()
+    return autoDetectRemotePath ? new RemoteNotReadyError(autoDetectRemotePath) : undefined
+  }
+
   /**
    * Resolves the remote URL for git operations following the priority:
    * 1. Explicit remoteUrl parameter
@@ -859,6 +911,7 @@ export class GitManager {
     }
 
     let justCloned = false
+    let resolvedRemoteUrl: string | undefined
     if (!repoExists) {
       const remoteUrl = await GitManager.resolveRemoteUrl({
         mode: options.mode,
@@ -870,9 +923,8 @@ export class GitManager {
       })
 
       if (!remoteUrl) {
-        const { operatingStrategy } = await import('./operating-mode')
-        const { autoDetectRemotePath } = operatingStrategy(options.mode).getRemoteUrlConfig()
-        if (autoDetectRemotePath) throw new RemoteNotReadyError(autoDetectRemotePath)
+        const notReady = await GitManager.remoteNotReadyError(options.mode)
+        if (notReady) throw notReady
         throw new Error(
           'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
         )
@@ -889,6 +941,7 @@ export class GitManager {
         )
       }
       justCloned = true
+      resolvedRemoteUrl = remoteUrl
 
       // Mark as managed immediately after clone so ensureRemote's guard works,
       // and set a fallback author identity: GIT_CEILING_DIRECTORIES blocks
@@ -933,10 +986,20 @@ export class GitManager {
       if (remoteUrl) {
         await git.ensureRemote(remoteUrl)
       }
+      resolvedRemoteUrl = remoteUrl
     }
 
     if (options.branchType === 'orphan') {
-      await git.createOrphanSettingsBranch(options.branchName, {})
+      try {
+        await git.createOrphanSettingsBranch(options.branchName, {})
+      } catch (err) {
+        // A remote that is unreadable because the worker has not (re)created
+        // it yet is the transient not-ready case, not a broken workspace.
+        if (err instanceof SettingsRemoteUnreadableError && !resolvedRemoteUrl) {
+          throw (await GitManager.remoteNotReadyError(options.mode)) ?? err
+        }
+        throw err
+      }
       // Settings mutations hold an OCC lockfile (<file>.lock, see
       // authorization/settings-file-store.ts) inside this git-committed
       // workspace. Commits here stage explicit paths, but a crash-orphaned lock
@@ -1079,7 +1142,8 @@ export class GitManager {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     try {
-      await this.git.fetch(this.remote, currentBranch)
+      // The full ref: a bare name resolves to a same-named tag first.
+      await this.git.fetch(this.remote, `refs/heads/${currentBranch}`)
     } catch (err) {
       // The only benign failure here: the branch has never been pushed, so the
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
@@ -1159,9 +1223,11 @@ export class GitManager {
   }
 
   async push(branch?: string): Promise<void> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // Explicit refspec (local:remote) so push works for branches not yet in the
-    // remote (e.g. orphan settings branches). Built via raw() rather than the
+    const target = branch ?? (await this.currentBranchName())
+    // Explicit full-ref refspec (local:remote) so push works for branches not
+    // yet in the remote (e.g. orphan settings branches), and a same-named tag
+    // cannot redirect it: a short name for a new remote branch would create
+    // `refs/heads/heads/<name>`. Built via raw() rather than the
     // push() wrapper so `--end-of-options` sits immediately before the
     // positional remote/refspec, guarding against a refspec starting with '-'
     // being parsed as a git option (e.g. --receive-pack=...). Real flags must
@@ -1171,8 +1237,20 @@ export class GitManager {
       '--set-upstream',
       '--end-of-options',
       this.remote,
-      `${target}:${target}`,
+      `refs/heads/${target}:refs/heads/${target}`,
     ])
+  }
+
+  /**
+   * The checked-out branch's plain name. `rev-parse --abbrev-ref HEAD` prints
+   * `heads/<name>` when a same-named tag exists, which is not a branch name.
+   */
+  private async currentBranchName(): Promise<string> {
+    const branches = await this.git.branch()
+    if (branches.detached || !branches.current) {
+      throw new Error(`CanopyCMS: no branch is checked out (detached HEAD) in ${this.repoPath}`)
+    }
+    return branches.current
   }
 
   /**
@@ -1314,10 +1392,22 @@ export class GitManager {
   }
 
   /**
-   * Create an orphan branch (no shared history) for settings, so
-   * deployment-specific settings never pollute content history. It holds only
-   * settings files committed by explicit path (permissions.json, groups.json at
-   * the workspace root).
+   * Put the workspace on the settings branch: an orphan (no shared history),
+   * so deployment-specific settings never pollute content history. It holds
+   * only settings files committed by explicit path (permissions.json,
+   * groups.json at the workspace root).
+   *
+   * The remote is the settings branch's durable copy, and the workspace clone
+   * is `--single-branch` at the base branch, so the remote is asked first:
+   * - no local branch: check out the remote's, or create an empty orphan only
+   *   when the remote has none. An unreadable remote throws
+   *   {@link SettingsRemoteUnreadableError} rather than guess "none".
+   * - local branch present: a history unrelated to the remote's is repaired
+   *   onto the remote's when the local branch is still its empty initial
+   *   commit with a clean working tree, and otherwise throws
+   *   {@link SettingsBranchDivergedError}; local commits are never discarded.
+   *   An unreadable remote throws only for that empty branch, since one that
+   *   holds settings can serve them and the next save surfaces the remote error.
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1335,15 +1425,38 @@ export class GitManager {
     branchName: string,
     initialFiles: Record<string, string>,
   ): Promise<void> {
-    log.debug('git', 'Creating orphan settings branch', { branchName })
+    log.debug('git', 'Ensuring settings branch', { branchName })
 
     const branches = await this.git.branch()
-    if (branches.all.includes(branchName)) {
-      log.debug('git', 'Orphan branch already exists', { branchName })
+    const localExists = branches.all.includes(branchName)
+    if (localExists) {
       // No separator here — see checkoutBranch() above for why plain
       // `git checkout <branch>` can't safely take one. branchName is always an
       // internal/config-derived settings-branch name, never user input.
       await this.git.checkout(branchName)
+    }
+
+    let remoteTip: string | undefined
+    try {
+      remoteTip = await this.remoteBranchTip(branchName)
+    } catch (err) {
+      if (localExists && !(await this.isEmptyInitialBranch(branchName))) {
+        log.debug('git', 'Remote unreadable; serving the local settings branch', { branchName })
+        return
+      }
+      throw new SettingsRemoteUnreadableError(branchName, this.remote, err)
+    }
+
+    if (localExists) {
+      await this.reconcileLocalSettingsBranch(branchName, remoteTip)
+      return
+    }
+
+    if (remoteTip) {
+      const fetchedTip = await this.fetchBranchTip(branchName)
+      // `-b` consumes branchName as its literal value; see checkoutBranchInner.
+      await this.git.raw(['checkout', '-b', branchName, fetchedTip])
+      log.debug('git', 'Checked out the remote settings branch', { branchName })
       return
     }
 
@@ -1369,5 +1482,86 @@ export class GitManager {
     await this.git.commit('Initialize settings branch', ['--allow-empty'])
 
     log.debug('git', 'Orphan settings branch created', { branchName })
+  }
+
+  /**
+   * Compares the checked-out local settings branch with the remote's tip.
+   * Related histories are left for the next settings pull to reconcile; only
+   * an unrelated one is acted on here.
+   */
+  private async reconcileLocalSettingsBranch(
+    branchName: string,
+    remoteTip: string | undefined,
+  ): Promise<void> {
+    if (!remoteTip) return
+    const localTip = (await this.git.revparse([`refs/heads/${branchName}`])).trim()
+    if (localTip === remoteTip) return
+
+    const fetchedTip = await this.fetchBranchTip(branchName)
+    const [localRoots, remoteRoots] = await Promise.all([
+      this.rootCommits(localTip),
+      this.rootCommits(fetchedTip),
+    ])
+    if (localRoots.some((root) => remoteRoots.includes(root))) return
+
+    const localWork: string[] = []
+    if (!(await this.isEmptyInitialBranch(branchName))) {
+      localWork.push('commits beyond its empty initial commit')
+    }
+    const uncommitted = await this.getUncommittedFiles()
+    if (uncommitted.length > 0) {
+      localWork.push(`uncommitted changes to ${uncommitted.join(', ')}`)
+    }
+    if (localWork.length > 0) {
+      throw new SettingsBranchDivergedError(branchName, this.repoPath, localWork.join(' and '))
+    }
+
+    // `checkout -B` resets the current branch onto the fetched tip, and
+    // refuses rather than overwrite a file written since the check above.
+    await this.git.raw(['checkout', '-B', branchName, fetchedTip])
+    log.debug('git', 'Replaced an empty settings branch with the remote one', { branchName })
+  }
+
+  /**
+   * The remote's tip for `branch`, or `undefined` when the remote has no such
+   * branch. A remote that cannot be read throws: `ls-remote` exits 0 with no
+   * output only for a reachable remote without the ref.
+   */
+  private async remoteBranchTip(branch: string): Promise<string | undefined> {
+    const ref = `refs/heads/${branch}`
+    const output = await this.git.raw(['ls-remote', '--heads', this.remote, ref])
+    for (const line of output.split('\n')) {
+      const [sha, name] = line.trim().split('\t')
+      if (sha && name === ref) return sha
+    }
+    return undefined
+  }
+
+  /**
+   * Fetch `branch` from the remote and return the fetched commit, pinned as
+   * pullBaseInner explains. The full ref: a bare name resolves to a
+   * same-named tag first.
+   */
+  private async fetchBranchTip(branch: string): Promise<string> {
+    await this.git.fetch(this.remote, `refs/heads/${branch}`)
+    return (await this.git.revparse(['FETCH_HEAD'])).trim()
+  }
+
+  private async rootCommits(rev: string): Promise<string[]> {
+    const output = await this.git.raw(['rev-list', '--max-parents=0', rev])
+    return output.split('\n').filter(Boolean)
+  }
+
+  /**
+   * Whether `branch` is a single parentless commit with an empty tree, as
+   * orphan creation leaves it. Full refs throughout: a bare name resolves to a
+   * same-named tag first, and clones fetch tags.
+   */
+  private async isEmptyInitialBranch(branch: string): Promise<boolean> {
+    const ref = `refs/heads/${branch}`
+    const commits = await this.git.raw(['rev-list', '--max-count=2', ref])
+    if (commits.split('\n').filter(Boolean).length !== 1) return false
+    const tree = await this.git.raw(['ls-tree', ref])
+    return tree.trim() === ''
   }
 }

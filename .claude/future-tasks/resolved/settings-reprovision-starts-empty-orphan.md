@@ -1,6 +1,7 @@
 # A re-provisioned settings workspace starts as an empty orphan, and the next settings save fails
 
-**Status:** Open. **Priority: P1 [BOTH].** Filed 2026-10-05. Found by the round-1 review of the
+**Status:** RESOLVED 2026-10-05 on branch `fix/settings-reprovision-uses-remote-branch` (see
+"Resolution" at the end). **Priority: P1 [BOTH].** Filed 2026-10-05. Found by the round-1 review of the
 settings-ensure memo (its reviewer called it pre-existing and unrelated to the memo) and then
 reproduced. Not caused by the memo: the full provisioning path behaves the same on every call.
 
@@ -70,3 +71,29 @@ next save pull and push. A brand-new deployment must still get an empty orphan.
 finishes (`settings-workspace.ts:188`). Production resolves a single pair per process, so this
 reaches only tests. The per-process memo records only the holder's pair, so a wrongly satisfied
 waiter is never remembered and its next call runs the full path.
+
+## Resolution
+
+`GitManager.createOrphanSettingsBranch` asks the workspace remote (`ls-remote`) before anything
+else, and its doc comment holds the rules. Answers to the design questions:
+
+- **Where truth lives.** The workspace remote: `remote.git` in prod, which the worker clones
+  from GitHub with every branch, fast-forwards from GitHub, and pushes back. The Lambda cannot
+  provision before the worker creates it, so a re-provisioned workspace sees what `remote.git`
+  holds: GitHub's settings branch as of the worker's clone, plus every save pushed into
+  `remote.git` since. A save the worker had not yet mirrored is lost only if `remote.git` is
+  lost too.
+- **"None" versus "unreadable".** `ls-remote` exits 0 with no output only for a reachable remote
+  without the ref, so no error string is parsed. Unreadable throws
+  `SettingsRemoteUnreadableError`, mapped to `RemoteNotReadyError` (the 503) when prod's
+  `remote.git` is missing. A local branch that already holds settings is served while the remote
+  is unreadable; the next save surfaces the error.
+- **Rename-guard advice.** The message now says the next start checks the branch out from the
+  remote, or starts it empty when the remote has none.
+- **Already-stuck workspaces.** An unrelated local branch still on its empty initial commit with
+  a clean tree is reset onto the remote's under the init lock. Local commits or uncommitted files
+  throw `SettingsBranchDivergedError` with the repair steps; local commits are never discarded.
+  `GET /admin/status` carries the message as `settingsWorkspaceError`, shown in System Health.
+
+The unrelated `settingsInitLock` waiter note above stays as written: it reaches only tests.
+
