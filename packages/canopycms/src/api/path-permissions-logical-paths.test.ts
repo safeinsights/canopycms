@@ -136,13 +136,21 @@ const readEntry = (ctx: ApiContext, entryPath: string, groups: string[] = []) =>
     { branch: BRANCH, path: unsafeAsLogicalPath(entryPath) },
   )
 
-const writeEntry = (ctx: ApiContext, entryPath: string, groups: string[] = []) =>
-  CONTENT_ROUTES.write.handler(
+/**
+ * An update must carry the version it read, or a permitted write is refused as a conflict.
+ * The version is read through an allow-all context, so the status the write returns is the
+ * verdict of `ctx`'s rules alone.
+ */
+const writeEntry = async (ctx: ApiContext, entryPath: string, groups: string[] = []) => {
+  const read = await readEntry(createCtx([]), entryPath, groups)
+  expect(read.data?.version).toEqual(expect.any(Number))
+  return CONTENT_ROUTES.write.handler(
     ctx,
     { user: user(groups) },
     { branch: BRANCH, path: unsafeAsLogicalPath(entryPath) },
-    { format: 'json', data: { title: 'Updated' } },
+    { format: 'json', data: { title: 'Updated' }, expectedVersion: read.data?.version },
   )
+}
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-logical-acl-'))
