@@ -51,6 +51,21 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Submit commits and pull requests name the submitting user
+
+**What changed.** A submit commit is still authored by the bot, but its message now ends with an
+`Edited-by: Name (user id)` trailer for the user who submitted. The pull request body gains a
+section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`
+recording the submitter, the branch description and the changed paths. A re-submit replaces only
+that section and keeps the rest of the body.
+
+**To adopt.** Nothing. Set `gitEditedByTrailers: false` to drop the trailer. Set
+`gitCoAuthoredByTrailers: true` to also add `Co-authored-by: Name <email>`. That one is off by
+default because it writes emails into commit history. See the
+[configuration reference](../README.md#definecanopyconfig-options).
+
+**Now deletable.** Nothing.
+
 ---
 
 <!--
