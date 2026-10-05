@@ -6,7 +6,8 @@ the divergence is resolved", failed once in a full `CI=1 pnpm test` run (2026-10
 `expected [ …(2) ] to have a length of 1 but got 2`. The test asserts that rewriting an
 already-agreeing file twice does not announce the retraction again, so the retraction was
 announced twice. It passed 5 of 5 runs in isolation; no change on that branch touches the
-watcher.
+watcher. The failing run was **unsandboxed**, so this is not the known sandbox-only failure
+of the repeat-suppression tests on the dev machine.
 
 Find out whether this is the test or the product. A slow host can deliver the earlier
 branch-side write's file event late, but suppression is meant to hold whatever order checks
