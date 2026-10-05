@@ -6,8 +6,8 @@ import { canopyLogWarn } from './utils/logger'
  * and the pull request body. The bot stays the commit author; these records are
  * the only place the editing user appears.
  *
- * Display names and ids come from the auth provider and end up in git history
- * and in GitHub-rendered Markdown, so every value passes through the sanitizers
+ * Display names, ids and emails come from the auth provider and end up in git
+ * history and in GitHub-rendered Markdown, so each passes through a sanitizer
  * below before it is written anywhere.
  */
 export interface SubmissionEditor {
@@ -33,11 +33,11 @@ export const PR_SECTION_END = '<!-- canopycms:submission:end -->'
 
 // Cc (C0/C1 controls incl. newlines), Cf (zero-width and bidi overrides), Zl/Zp
 // (Unicode line/paragraph separators) can forge a trailer line or hide text; Cs
-// (a lone surrogate) is stored by git as U+FFFD.
+// (a lone surrogate) reaches git as U+FFFD, since Node encodes it so.
 const INVISIBLE_OR_CONTROL = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu
 // `<>` would end a Co-authored-by email or open HTML / a section marker, `()`
 // would let a name forge the id that follows it, a backtick would close the
-// code span names render in, and a backslash would escape the next character.
+// code span names render in, and a backslash is Markdown's escape character.
 const STRUCTURAL = /[<>()`\\]/g
 
 function truncate(value: string, max: number): string {
@@ -74,8 +74,9 @@ export function sanitizeDisplayName(raw: string | undefined): string | undefined
   return cleanText(raw, MAX_NAME_LENGTH)
 }
 
-// Ids and emails are recorded exactly as the provider issued them or not at
-// all: rewriting one could merge two users or attribute an edit to someone else.
+// Ids and emails are accepted as the provider issued them or rejected, never
+// cleaned: cleaning could merge two users or attribute an edit to someone else.
+// A trailer still swaps in look-alikes for display (trailerText).
 const UNSAFE_VERBATIM_CHAR = /[\s\p{Cc}\p{Cf}\p{Cs}<>()`\\]/u
 
 /**
@@ -144,7 +145,7 @@ function cleanEditors(editors: readonly SubmissionEditor[]): CleanEditor[] {
 }
 
 /**
- * GitHub autolinks commit messages: `@user` mentions, bare URLs, and `#12` /
+ * GitHub autolinks commit messages: `@user` mentions, `scheme://` URLs, and `#12` /
  * `GH-12` issue references, which a closing keyword ("Closes #12") turns into an
  * issue close once the commit reaches the default branch. A trailer value gets
  * `@` and `#` swapped for look-alikes and the other two patterns broken. Its
@@ -272,8 +273,8 @@ export function buildPrSection(input: PrSectionInput): string {
 /**
  * `existing` with its canopycms section replaced by `section`, keeping every
  * character outside the markers. The section is the first end marker together
- * with the nearest start marker before it, so a marker a human quoted earlier in
- * the body is never taken as the start. With no such pair, stray markers are
+ * with the nearest start marker before it, so a lone start marker a human quoted
+ * earlier in the body is skipped. With no such pair, stray markers are
  * removed and `section` is appended after the human text.
  */
 export function mergePrSection(existing: string | null | undefined, section: string): string {
