@@ -1,17 +1,43 @@
 # Editor API latency: ~2 s per call on Lambda + EFS, reads included
 
-**Status:** Open. **Priority: P1 [BOTH].** Filed 2026-10-04 from item #11 of the editor-debug
-batch (int-202610-a). The largest suspect has a fix in flight (see "Suspect 1"); this file holds
-the evidence, the remaining ranked suspects, and how to get the deployed breakdown.
+**Status:** Open. **Priority: P1 [BOTH]** until the deployed breakdown below is read, then P2.
+The two largest suspects are fixed; this file holds the instrumentation, the deployed-breakdown
+steps, and the remaining ranked suspects (3 to 6).
 
 ## Problem
 
-On the first deployed editor (canopycms `0.0.67-int.91`, Lambda + EFS + EC2 worker), warm
-requests took about 2 s each, reads included: save 2.75 s, `schema` 2.07 s,
-`entries?limit=200` 2.27 s; earlier, on the base branch, `entries` 4.6 s, `comments` 3.5 s and
-`content/site` 2.45 s. Nothing on the read path was timed, so there was no way to say where it went.
+On the first deployed editor (Lambda + EFS + EC2 worker), warm requests took about 2 s each,
+reads included: save 2.75 s, `schema` 2.07 s, `entries?limit=200` 2.27 s.
 
-## Instrumentation (shipped with this file)
+## Fixed
+
+- **Settings workspace re-provisioned on every request** (97.5 to 99.7% of every warm request in
+  the local harness; 12 git subprocesses per call, 24 on `entries` and `content`).
+  `SettingsWorkspaceManager` now remembers each (settings root, branch) a process has fully
+  ensured; a hit costs one read of `.git/HEAD`. Only a process's first request takes the
+  cross-host init lock. See docs/concurrency.md ("Settings workspace init").
+- **Cross-container queueing on that lock** (reasoned): the same fix removes the lock from the
+  request path.
+
+Local-disk state after the memo (in-process harness below; median of 6 to 12 samples; counts are
+deterministic, wall times vary with load; content is the example app's plus 200 generated posts):
+
+| Endpoint (warm)          | Wall (ms) | git spawns | fs calls |
+| ------------------------ | --------: | ---------: | -------: |
+| `whoami`                 |         1 |          0 |        3 |
+| `:branch/schema` (hit)   |         5 |          0 |        6 |
+| `:branch/entries`        |        13 |          0 |       70 |
+| `:branch/content` GET    |        15 |          0 |       36 |
+| `:branch/content` PUT    |        27 |          0 |       49 |
+| `:branch/comments`       |         2 |          0 |        5 |
+| `branches`               |         2 |          0 |        5 |
+| `:branch/status`         |         1 |          0 |        4 |
+| `branches` POST (create) |       898 |         13 |       58 |
+| first request (cold)     |      1348 |         21 |       58 |
+
+Cold and branch-create rows clone workspaces; both are one-offs.
+
+## Instrumentation
 
 `CANOPYCMS_DEBUG=true` makes the API handler log **one line per request**
 (`utils/request-timing.ts`):
@@ -46,78 +72,16 @@ requests took about 2 s each, reads included: save 2.75 s, `schema` 2.07 s,
    starts). `filter @message like /ensureGitWorkspace completed/` adds the provisioning spans.
 4. Turn `CANOPYCMS_DEBUG` back off afterwards.
 
-Compare the warm lines against the local tables below: the same phase names, just EFS latencies.
+Compare the warm lines against the local table above: the same phase names, just EFS latencies.
 
-## Measured: local disk, before and after the settings-ensure memo
+## Open work
 
-In-process harness (appendix): the real prod-mode handler, real `createCanopyServices`, the
-default `getBranchContext`, real git, against a temp workspace on local APFS. The content is the
-example app's plus 200 generated posts (224 entries). fs calls and git spawns are counted by
-wrapping `fs`, `fs/promises` and `child_process.spawn` before anything loads. Each row is the median of
-6–12 samples: 3 runs × 2 users (bootstrap admin, plain editor), × 2 repeats for the
-editing-branch endpoints. Wall times vary with machine load; the
-counts are deterministic.
-
-| Endpoint (warm)          | Before: wall | of which `settingsRoot` | git spawns | fs calls | After: wall | git | fs |
-| ------------------------ | -----------: | ----------------------: | ---------: | -------: | ----------: | --: | -: |
-| `whoami`                 |       366 ms |                  365 ms |         12 |       19 |        1 ms |   0 |  3 |
-| `:branch/schema` (hit)   |       364 ms |                  361 ms |         12 |       22 |        5 ms |   0 |  6 |
-| `:branch/entries`        |       713 ms |                  698 ms |         24 |      102 |       13 ms |   0 | 70 |
-| `:branch/content` GET    |       690 ms |                  673 ms |         24 |       68 |       15 ms |   0 | 36 |
-| `:branch/content` PUT    |       710 ms |                  698 ms |         24 |       81 |       27 ms |   0 | 49 |
-| `:branch/comments`       |       351 ms |                  350 ms |         12 |       21 |        2 ms |   0 |  5 |
-| `branches`               |       364 ms |                  363 ms |         12 |       21 |        2 ms |   0 |  5 |
-| `:branch/status`         |       353 ms |                  350 ms |         12 |       20 |        1 ms |   0 |  4 |
-| `branches` POST (create) |      1279 ms |                  398 ms |         25 |       74 |      898 ms |  13 | 58 |
-| first request (cold)     |      1196 ms |                  613 ms |         21 |       58 |     1348 ms |  21 | 58 |
-
-Both columns come from back-to-back runs on a quiet machine. An earlier pair, taken under load,
-had the same shape, with before-times 1.3–1.7× higher.
-
-"Before" is int-202610-a plus the instrumentation; "after" adds the memo. The cold row clones
-both the base-branch and settings workspaces, and branch create clones its workspace; both are
-one-offs and are not changed by the memo.
-
-## Ranked suspects
-
-### 1. Settings workspace re-ensured on every request (measured; fix in flight)
-
-`resolveCanopyUser` → `services.getSettingsBranchRoot()` → `SettingsWorkspaceManager.ensureGitWorkspace`
-ran the whole provisioning path on **every** call: its in-memory lock is cleared once init
-finishes, so nothing remembered success. Per call (measured, argv captured):
-`rev-parse --git-dir` ×3, `status` ×2, `config --local` ×3, `config --list`, `remote -v`,
-`branch -v -a`, `checkout <settings branch>` (12 git subprocesses), plus a cross-host
-proper-lockfile acquire/release (mkdir, stat, rmdir, refresh timer) and ~10 more fs calls. Routes
-that build a content-access checker (`entries`, `content` GET/PUT) call it a second time, so 24
-spawns. Locally that is 97.5–99.7% of every warm request.
-
-On Lambda + EFS (reasoned, not measured): each git subprocess is a process spawn plus git
-reading `.git/config`, `HEAD`, refs and the index over NFS, so tens of NFS round trips. At 50–150
-ms each, 12 spawns come to 0.6–1.8 s per call, which is consistent with the deployed 2.07 s for
-`schema` (one call). It is not linear in the call count, though: `entries`, with two calls, was
-2.27 s, not about 4 s. The deployed breakdown will settle that.
-
-**Fix:** `fix/settings-workspace-ensure-once` remembers each (settings root, branch name) a
-process has fully ensured, and a hit costs one read of `.git/HEAD` (checked against the settings
-branch). Only a process's first request still takes the cross-host init lock (measured: 4 lock
-ops on the first request, 0 after). The groups and permissions
-files are still read every request; a different branch name still runs the rename guard; a
-workspace removed, re-cloned onto another branch, or caught mid-clone re-provisions. Documented in docs/concurrency.md ("Settings workspace init").
-
-### 2. Cross-container queueing on the settings init lock (reasoned; same fix)
-
-Each ensure took the **cross-host** provisioning lock, whose waiters poll every 300–800 ms
-(jittered; `utils/provisioning-lock.ts`). The editor fires several requests in parallel on load,
-and on Lambda each in-flight request runs in its own container, so those requests queued behind
-each other's ensure at 300–800 ms per poll. That would explain why the base-branch load was worse
-(`entries` 4.6 s, `comments` 3.5 s) than the single-request numbers. In one process the
-in-memory lock coalesced them (measured: 4 concurrent `entries` finished together in about one request's time), so the
-harness cannot show the cross-container case. The memo removes the lock from the request path
-entirely.
+(a) Read the deployed `CANOPYCMS_DEBUG` breakdown (steps above); it decides which suspect below
+matters on EFS. (b) Suspects 3 to 6, ranked.
 
 ### 3. Same directories re-read many times within one request (measured counts; EFS cost reasoned)
 
-After the memo, the remaining per-request I/O is mostly `readdir`. Path capture for one warm
+The remaining per-request I/O is mostly `readdir`. Path capture for one warm
 request each:
 
 - `entries`: the branch root ×9, `content/` ×9, `docs.*` ×5, `api.*` ×3: 32 `readdir`s, plus 23 `readFile` and 15 `stat`.
@@ -153,7 +117,7 @@ dominating.
 
 ### 6. Duplicate settings reads per request (measured, minor)
 
-After the memo, each request still reads `settings/.git/HEAD` and the settings files twice:
+Each request still reads `settings/.git/HEAD` and the settings files twice:
 once for the user's groups, once for the access checker. Deduping those per request saves 2–3
 NFS ops; do it only if the deployed lines show `settingsRoot`/`permissions` above a few ms.
 
