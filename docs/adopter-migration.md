@@ -55,8 +55,9 @@ will not let a shipped version go unlisted.
 
 **What changed.** Rules match an entry's logical path (`content/blog/my-post`), the form the
 Permission Manager writes. Enforcement used to check the on-disk path, whose directories and files
-carry content ids, so no rule below the content root matched: a grant on a collection granted
-nothing, and a restriction on one restricted nothing. Only a rule on the root (`content/**`) worked.
+carry content ids, so a rule naming a collection or entry never matched: a grant on a collection
+granted nothing, and a restriction on one restricted nothing. Only a glob that also matched on-disk
+names, such as `content/**`, took effect.
 Renaming an entry now also requires edit access at the new path.
 
 **To adopt.** Review your permission rules (Settings → Manage Permissions, or the settings branch's

@@ -221,6 +221,19 @@ describe('path permissions match logical paths against an id-suffixed layout', (
       expect((await readEntry(ctx, 'content/blog/other-post')).status).toBe(200)
     })
 
+    it('forbids validating references on a private entry and allows it on a public one', async () => {
+      const ctx = createCtx(rules)
+      const validate = (entryPath: string) =>
+        CONTENT_ROUTES.validateReferences.handler(
+          ctx,
+          { user: user() },
+          { branch: BRANCH, path: unsafeAsLogicalPath(entryPath) },
+          { data: {} },
+        )
+      expect((await validate('content/private/secret-plan')).status).toBe(403)
+      expect((await validate('content/blog/other-post')).status).toBe(200)
+    })
+
     it('excludes private entries from reference options', async () => {
       const ctx = createCtx(rules)
       const res = await REFERENCE_OPTIONS_ROUTES.get.handler(
