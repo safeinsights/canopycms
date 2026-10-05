@@ -347,7 +347,7 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
     expect(status.current).toBe('canopycms-settings-memo')
   }, 60_000)
 
-  it('re-provisions when the workspace is found on another branch (re-cloned, or mid-provisioning)', async () => {
+  it('re-provisions when the workspace is found on another branch (re-cloned, or mid-clone)', async () => {
     const { manager, options, settingsRoot } = await ensuredWorkspace()
     await simpleGit({ baseDir: settingsRoot }).checkout('main')
     const init = vi.spyOn(GitManager, 'initializeWorkspace')
