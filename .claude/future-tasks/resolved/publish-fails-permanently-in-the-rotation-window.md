@@ -104,7 +104,7 @@ The provider's 5-minute floor is shared by both triggers, and so is core's own 6
 (`refreshGitHubTokenMinIntervalMs`, added later). A rotation is picked up at the first failure
 after it that the floors permit: immediately, unless some failure in the last five minutes has
 already used the read. The two floors can also stack and push pickup further out — see
-[core-floor-shifts-provider-floor-phase.md](../core-floor-shifts-provider-floor-phase.md).
+[core-floor-shifts-provider-floor-phase.md](core-floor-shifts-provider-floor-phase.md).
 
 - **Store, then revoke** (a planned rotation): normally closed. The first failure after
   revocation reads the new value, and the task's own retry uses it — unless an unrelated failure
