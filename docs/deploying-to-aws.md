@@ -1107,6 +1107,11 @@ If you are not ready to wire the narrow version, scoping the bucket policy to th
 
 **Lambda cold start is slow**: Consider adding provisioned concurrency (1 instance, ~$15/month).
 
+**Editor API calls are slow**: Set `CANOPYCMS_DEBUG=true` on the CMS Lambda. Each API
+request then logs one `[CanopyCMS:timing]` line with its route, status, total and per-phase
+milliseconds (`filter @message like /CanopyCMS:timing/` in Logs Insights). Unset it afterwards,
+because it also enables every other debug line.
+
 **Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
 CloudWatch log group (`/canopycms/<stackName>/worker` — see
 [Worker observability](#worker-observability)); no shell access needed. If you can
