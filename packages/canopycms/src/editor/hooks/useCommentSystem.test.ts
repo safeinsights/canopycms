@@ -578,6 +578,52 @@ describe('useCommentSystem', () => {
     document.body.removeChild(mockElement)
   })
 
+  describe('preview focus across URL spellings of the same page', () => {
+    const focusFrom = async (previewSrc: string, entryPath: string) => {
+      const options = { ...defaultOptions, currentEntry: { ...mockEntry, previewSrc } }
+      const { result } = renderHook(() => useCommentSystem(options), { wrapper })
+      const element = document.createElement('div')
+      element.setAttribute('data-canopy-field', 'title')
+      element.scrollIntoView = vi.fn()
+      document.body.appendChild(element)
+      try {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'canopycms:preview:focus', entryPath, fieldPath: 'title' },
+              origin: window.location.origin,
+            }),
+          )
+        })
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return result.current.focusedFieldPath
+      } finally {
+        document.body.removeChild(element)
+      }
+    }
+
+    it('focuses when the framed page reports its redirected, slashed URL', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/x/?branch=b')).toBe('title')
+    })
+
+    it('focuses when the editor built an absolute src', async () => {
+      expect(
+        await focusFrom(
+          `${window.location.origin}/preview/blog/x/?branch=b`,
+          '/preview/blog/x/?branch=b',
+        ),
+      ).toBe('title')
+    })
+
+    it('ignores a different page from the preview origin', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/y?branch=b')).toBeUndefined()
+    })
+
+    it('ignores the same page on a different branch', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/x?branch=other')).toBeUndefined()
+    })
+  })
+
   it('updates state setters correctly', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
       wrapper,

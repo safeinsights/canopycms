@@ -4,6 +4,7 @@ import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
+import { isSamePreviewPath } from './preview-path'
 
 export const __CANOPY_PREVIEW_CLIENT__ = true
 
@@ -163,7 +164,8 @@ export const usePreviewData = <T,>(
     const handler = (event: MessageEvent) => {
       if (!isTrustedEditorMessage(event, editorOrigin)) return
       const msg = event.data as DraftUpdateMessage
-      if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE || msg.path !== path) return
+      if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE) return
+      if (typeof msg.path !== 'string' || !isSamePreviewPath(msg.path, path)) return
       setData(msg.data as T)
       if (msg.isLoading !== undefined) {
         setIsLoading(msg.isLoading as Record<string, boolean>)

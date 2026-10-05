@@ -37,7 +37,6 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
   persistence under the real `remote.git` name. Closing the window entirely needs a
   credential helper instead of a token-bearing clone URL
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
-- **Preview works** — The CMS Lambda renders the same React components as the public site, so the editor's preview iframe shows accurate previews
 
 ## Prerequisites
 
@@ -139,23 +138,9 @@ This is a supported shape that nobody has yet run against a real Clerk instance:
 
 ### Preview Support
 
-Add `useCanopyPreview` to your page components so the editor can show live previews:
+A static export cannot render the branch being edited, so preview through the CMS-only route in [README Live Preview](../README.md#live-preview).
 
-```tsx
-'use client'
-import { useCanopyPreview } from 'canopycms/client'
-
-export function PageView({ data }: { data: PageContent }) {
-  const { data: liveData } = useCanopyPreview<PageContent>({
-    initialData: data,
-  })
-  return (
-    <article>
-      <h1>{liveData.title}</h1>
-    </article>
-  )
-}
-```
+On a hostname shared with the public site, `CanopyCmsService.attachTo` routes the editor to the CMS ([below](#serving-the-editor-from-a-distribution-you-already-own)); it does not route `/preview/*` yet, so add that behavior yourself, and serve it with `Content-Security-Policy: frame-ancestors 'self'`, not `X-Frame-Options: DENY`.
 
 ## Step 2: Generate AWS Deployment Artifacts
 
@@ -342,32 +327,55 @@ CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
 
 ### CloudFront in front of the Function URL
 
-The CMS Lambda's Function URL is fronted by a CloudFront distribution for a stable
-custom domain and TLS. Two things are worth knowing before you hand-roll your own
-or override a timeout:
+The CMS Lambda's Function URL is fronted by CloudFront for a stable custom domain and
+TLS. Two things to know:
 
-- **The origin-read timeout and the Lambda's own timeout must agree.**
-  CloudFront's default origin-read timeout is 30 seconds, well under a Lambda
-  that can legitimately run longer — a first-touch branch provision doing a full
-  `git clone` onto EFS inside the request is a real case — so leaving it unset
-  caps every such request at half the Lambda's budget: CloudFront answers 504 at
-  30 seconds while the Lambda runs to completion behind it, with nothing to
-  correlate that server-side success to the viewer-facing failure. Both values
-  resolve from one constant in the constructs, and the service construct exposes
-  its resolved timeout so a caller overriding the Lambda's can pass the same
-  value to the distribution. CloudFront rejects an origin-read timeout above 60
-  seconds without a quota increase, so an override past that ceiling fails at
-  synth rather than deploying a distribution that can never work.
-- **Extra behaviors keep your ordering.** The distribution merges behaviors you
-  pass with its own defaults and preserves the order you listed them in, because
-  CloudFront matches path patterns in order — pinning an overridden key back at
-  the defaults' position could hide a specific pattern behind a general one. This
-  is how `AssetSupport`'s two behaviors attach to the generated distribution
-  instead of needing a second one.
+- **The origin-read timeout must match the Lambda's.** CloudFront's default is 30
+  seconds, so a longer request (a first-touch branch provision clones onto EFS inside
+  it) gets a 504 at the edge while the Lambda finishes behind it. Both default to one
+  constant; pass `CanopyCmsService.timeout` as `originReadTimeout` when you override
+  it. Above 60 seconds CloudFront needs a quota increase, so synth refuses it.
+- **Extra behaviors keep your ordering.** CloudFront matches path patterns in order,
+  so `additionalBehaviors` keeps the order you listed, overrides included. That is how
+  `AssetSupport`'s behaviors join the generated distribution.
 
-A distribution you build yourself in front of a Function URL needs the managed
-`CACHING_DISABLED` cache policy and a CloudFront Function forwarding only
-`x-forwarded-host`; `CanopyCmsDistribution` does both.
+Both `CanopyCmsDistribution` and `attachTo` (below) give the Lambda's behaviors a
+response headers policy: `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`
+(no other site can frame the editor; its preview iframe is same-origin),
+`X-Content-Type-Options: nosniff`, HSTS and `X-Robots-Tag: noindex`. The framing
+headers and HSTS yield to your app's own. No `Cross-Origin-Opener-Policy`, which can
+break popup OAuth sign-in.
+
+### Serving the editor from a distribution you already own
+
+Attach the editor rather than wiring the Function URL by hand:
+
+```ts
+cmsService.attachTo(siteDistribution, { editorAssetPrefix: '/edit-assets' })
+assetSupport.attachTo(siteDistribution) // if you use AssetSupport
+```
+
+It appends `/edit`, `/edit/*` and `/api/canopycms/*` (not `/edit*`, which matches
+`/editorial`), configured like `CanopyCmsDistribution`'s default behavior.
+`behaviorOverrides` applies to all three; a `viewerRequestFunction` replaces the
+`x-forwarded-host` function and must set that header itself. Synth fails if an
+earlier behavior matches an editor route.
+
+Set Next's `assetPrefix` to the same value in the CMS build's `next.config` only
+(e.g. under `CANOPY_BUILD === 'cms'`). Without it the editor loads its chunks from
+`/_next/static/*`, which the site serves, and they 404; with it, `attachTo` routes
+`/edit-assets/*` to the Lambda with a year-long cache.
+
+**Custom error responses** are distribution-wide, so a site's "404 → `/404.html`" also
+replaces the API's JSON errors and the editor reports "Unexpected response from
+server". `attachTo` warns about them at synth; a site that needs them should give the
+editor its own `CanopyCmsDistribution`.
+
+**No HTTP Basic auth on editor routes.** Keep `/edit`, `/edit/*`, `/api/canopycms/*`
+and the asset prefix out of any Basic-auth gate. The API's 401s carry no
+`WWW-Authenticate`, and a browser that gets a 401 drops its cached Basic credential,
+so editors are prompted again mid-session. Clerk already authenticates them; the cost
+is that the tier's published assets are readable without the site's password.
 
 ### Deploy
 
@@ -836,7 +844,7 @@ The env var deliberately wins over config, and if both are set and disagree the 
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 
@@ -1131,7 +1139,7 @@ works.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
-**Preview not rendering**: Make sure your page components use `useCanopyPreview` and the CMS Lambda has the same React components as the public site (same app, two builds).
+**Preview not rendering**: `editor.previewPrefix` must name the preview route's folder, and an entry type missing from `views` is a 404. A pane the browser will not frame lacks `frame-ancestors`.
 
 **Stranded edits on the base branch** (editor saves made directly on `main` before
 base-branch protection existed, or via any future bypass): the base clone on EFS has

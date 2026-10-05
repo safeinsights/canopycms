@@ -457,14 +457,17 @@ const deleteEntryHandler = async (
           // C6: order cleanup is best-effort hygiene after the entry is already deleted, so no
           // failure here may turn an otherwise-successful delete into an error (a retry would
           // just 404). Surface it as a warning instead (mirrors content.ts's `validationWarnings`).
-          const reason =
-            err instanceof SchemaStoreBusyError ? 'schema is busy' : getErrorMessage(err)
-          log.warn('delete-entry', 'Skipped order cleanup', {
-            collectionPath,
-            contentId,
-            error: getErrorMessage(err),
-          })
-          orderCleanupWarning = `Entry deleted, but the collection order list could not be updated (${sanitizeErrorMessage(reason)}); it will still list this entry until the next schema change.`
+          // An `'unknown'` outcome means the update ran to completion: nothing to warn of.
+          if (!(err instanceof SchemaStoreBusyError && err.outcome === 'unknown')) {
+            const reason =
+              err instanceof SchemaStoreBusyError ? 'schema is busy' : getErrorMessage(err)
+            log.warn('delete-entry', 'Skipped order cleanup', {
+              collectionPath,
+              contentId,
+              error: getErrorMessage(err),
+            })
+            orderCleanupWarning = `Entry deleted, but the collection order list could not be updated (${sanitizeErrorMessage(reason)}); it will still list this entry until the next schema change.`
+          }
         }
       }
     }

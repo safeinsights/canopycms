@@ -10,7 +10,14 @@ import {
   aws_route53_targets as targets,
   aws_lambda as lambda,
 } from 'aws-cdk-lib'
-import { DEFAULT_CMS_LAMBDA_TIMEOUT, MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from './cms-service'
+import { DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
+import {
+  assertOriginReadTimeout,
+  createEditorResponseHeadersPolicy,
+  createForwardedHostFunction,
+  createStaticCachePolicy,
+  lambdaBehaviorOptions,
+} from './editor-routing'
 import type { AssetSupport } from './asset-support'
 import {
   ASSETS_PATH_PATTERN,
@@ -276,17 +283,18 @@ export interface CanopyCmsDistributionProps {
 /**
  * Optional CDK construct for CanopyCMS CloudFront distribution.
  *
- * Use this if you don't have existing CloudFront infrastructure.
- * If you do, use the functionUrl output from CanopyCmsService
- * and wire it into your own CloudFront setup.
+ * Use this when the CMS gets a domain of its own. To serve the editor from a
+ * distribution you already own, use `CanopyCmsService.attachTo` instead.
  *
  * Creates:
  * - ACM certificate (DNS validated) — unless provided
  * - CloudFront distribution with Function URL origin
  * - Route53 A/AAAA alias records
- * - Cache policies: no-cache for /api/* and /edit*, cache /_next/static/*
+ * - Cache policies: no-cache default behavior, cache /_next/static/*
  * - Viewer-request CloudFront Function setting x-forwarded-host (redirect-URL
  *   derivation behind the Host-stripping OAC origin)
+ * - The editor's response headers policy (framing protection, `noindex`) on
+ *   both of its own behaviors
  * - `AssetSupport`'s `/assets/*` and `/assets/t/*` behaviors, in the required
  *   order, when the `assetSupport` prop is passed
  */
@@ -355,77 +363,25 @@ export class CanopyCmsDistribution extends Construct {
     // entirely when unset, so CloudFront's 30s service default applies and
     // silently halves the CMS Lambda's 60s budget. See the prop's doc comment.
     const readTimeout = props.originReadTimeout ?? DEFAULT_CMS_LAMBDA_TIMEOUT
-    if (readTimeout.toSeconds() > MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()) {
-      throw new Error(
-        `CanopyCmsDistribution: originReadTimeout is ${readTimeout.toSeconds()}s, but CloudFront ` +
-          `allows at most ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s without a service-quota ` +
-          `increase. Either lower the CMS Lambda's timeout to match, or request a quota increase for ` +
-          `"Origin response timeout" and pass the higher value explicitly. Deploying with a shorter ` +
-          `origin timeout than the Lambda's would 504 at the edge on requests that actually succeed.`,
-      )
-    }
+    assertOriginReadTimeout(readTimeout, 'CanopyCmsDistribution')
     const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl, {
       readTimeout,
     })
 
-    // API/editor routes take AWS's managed CACHING_DISABLED policy as it is:
-    // CloudFront rejects ANY non-none cache-key setting on a caching-disabled
-    // policy - `Authorization` in a header allowlist, and equally
-    // cookieBehavior/queryStringBehavior `all()` ("The parameter CookieBehavior
-    // is invalid for policy with caching disabled"). With TTL 0 the cache key is
-    // meaningless anyway, and the origin still receives the full viewer request
-    // (headers/cookies/query string, minus Host - forwarding Host would break
-    // the OAC-signed Function URL) via the ALL_VIEWER_EXCEPT_HOST_HEADER origin
-    // request policy on the behavior.
-    const noCachePolicy = cloudfront.CachePolicy.CACHING_DISABLED
+    const staticCachePolicy = createStaticCachePolicy(this, 'StaticCachePolicy')
 
-    const staticCachePolicy = new cloudfront.CachePolicy(this, 'StaticCachePolicy', {
-      defaultTtl: Duration.days(365),
-      maxTtl: Duration.days(365),
-      minTtl: Duration.days(365),
-      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
-      queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
-      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
-    })
-
-    // CloudFront gives the origin the Function URL's own Host (forwarding the
-    // viewer Host would break the OAC SigV4 signature), and Lambda Web Adapter
-    // forwards no `x-forwarded-*` headers of its own - so without this function,
-    // Clerk/Next derive sign-in redirect URLs from the IAM-authed Function URL
-    // host instead of the public domain, and the redirect 403s (direct Function
-    // URL hits are rejected).
-    //
-    // ONLY x-forwarded-host: x-forwarded-proto is on CloudFront Functions'
-    // DISALLOWED header list and setting it fails every request with 502
-    // FunctionValidationError. Proto is unambiguous anyway - viewer-facing
-    // CloudFront is HTTPS-only via REDIRECT_TO_HTTPS.
-    const forwardedHostFunction = new cloudfront.Function(this, 'ForwardedHostFunction', {
-      code: cloudfront.FunctionCode.fromInline(
-        [
-          'function handler(event) {',
-          '  var request = event.request;',
-          "  request.headers['x-forwarded-host'] = { value: request.headers.host.value };",
-          '  return request;',
-          '}',
-        ].join('\n'),
-      ),
-    })
+    const forwardedHostFunction = createForwardedHostFunction(this, 'ForwardedHostFunction')
+    const responseHeadersPolicy = createEditorResponseHeadersPolicy(
+      this,
+      'EditorResponseHeadersPolicy',
+    )
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       domainNames: [props.domainName],
       certificate,
       defaultBehavior: {
         origin,
-        cachePolicy: noCachePolicy,
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        functionAssociations: [
-          {
-            function: forwardedHostFunction,
-            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
-          },
-        ],
+        ...lambdaBehaviorOptions(forwardedHostFunction, responseHeadersPolicy),
       },
       additionalBehaviors: mergeBehaviors(
         {
@@ -433,6 +389,7 @@ export class CanopyCmsDistribution extends Construct {
             origin,
             cachePolicy: staticCachePolicy,
             viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            responseHeadersPolicy,
           },
         },
         props.additionalBehaviors,

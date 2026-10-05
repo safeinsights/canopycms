@@ -123,6 +123,8 @@ export interface EditorProps {
   onCreateEntry?: (collectionPath: LogicalPath) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
   previewBaseByCollection?: Record<string, string>
+  /** `editor.previewPrefix` from config: put in front of every preview iframe `src` (see `buildPreviewSrc`). */
+  previewPrefix?: string
   currentUser?: string
   canResolveComments?: boolean
   /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
@@ -168,6 +170,7 @@ export const Editor: React.FC<EditorProps> = ({
   themeOptions,
   operatingMode,
   previewBaseByCollection,
+  previewPrefix,
   currentUser = 'current-user',
   canResolveComments = true,
   assetBaseUrl,
@@ -295,6 +298,7 @@ export const Editor: React.FC<EditorProps> = ({
       buildPreviewSrc(entry, {
         branchName: branchNameState,
         previewBaseByCollection,
+        previewPrefix,
         contentRoot,
         basePath,
       }),

@@ -3,16 +3,15 @@
 import React from 'react'
 
 import { sanitizeHref } from 'canopycms'
-import { useCanopyPreview } from 'canopycms/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
 
 import type { HomeContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'
 
-export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
-  const { data: liveData, fieldProps } = useCanopyPreview<HomeContent>({
-    initialData: data,
-  })
-
+export const HomeView: React.FC<CanopyPreviewViewProps<HomeContent>> = ({
+  data: liveData,
+  fieldProps,
+}) => {
   const hero = liveData?.hero ?? { title: '', body: '' }
   const features = liveData?.features ?? []
   const cta = liveData?.cta ?? { text: '', link: '#' }
@@ -61,5 +60,8 @@ export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
     </div>
   )
 }
+
+// The live-preview form, rendered by app/preview and the public pages alike.
+export const HomePreview = withCanopyPreview(HomeView)
 
 export default HomeView

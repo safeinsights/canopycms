@@ -17,9 +17,10 @@ let settingsInitLock: Promise<void> | null = null
 /**
  * Settings workspaces this process has fully ensured, keyed by {@link ensuredKey}. A hit
  * skips the guard, the init lock and initializeWorkspace's dozen git subprocesses, which
- * otherwise ran on every API request. It is sound because that pass never fetched, pulled or
- * reset the settings branch, so settings freshness never came from it: every process reads the
- * one shared workspace. Everything it verified is fixed for the process: the settings-branch name resolves once
+ * otherwise ran on every API request. It is sound because settings freshness never comes from
+ * that pass: it reads the remote only to provision the settings branch or repair an empty one
+ * (GitManager.createOrphanSettingsBranch), saves pull, and every process reads the one shared
+ * workspace. Everything it verified is fixed for the process: the settings-branch name resolves once
  * from config, the remote URL comes from config, and nothing in CanopyCMS checks the settings
  * workspace out onto another branch. groups.json and permissions.json are still read from
  * disk on every request; only the provisioning is memoized. Failures are never recorded. In
@@ -99,8 +100,8 @@ async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
  * branch name.
  *
  * Without it, GitManager.initializeWorkspace sees an existing .git, skips the
- * clone, and calls createOrphanSettingsBranch(branchName); for an unknown name
- * git then runs `checkout --orphan <name>` + `rm -rf .` + an empty commit.
+ * clone, and calls createOrphanSettingsBranch(branchName); for a name neither the
+ * workspace nor its remote has, git then runs `checkout --orphan <name>` + `rm -rf .` + an empty commit.
  * Orphan branches share no history, so that is not a migration — it
  * PERMANENTLY WIPES permissions.json/groups.json with nothing to recover from.
  * The trigger is almost always deploymentName / settingsBranch /
@@ -153,8 +154,9 @@ async function assertSettingsWorkspaceIdentity(
         `deploymentName, settingsBranch, or CANOPYCMS_DEPLOYMENT_NAME changed on a ` +
         `deployment that already has a populated settings workspace. To resolve: restore ` +
         `the previous value so this resolves back to ` +
-        `'${currentBranch ?? options.branchName}', or, if starting fresh is genuinely ` +
-        `intended, move ${options.settingsRoot} aside manually first.`,
+        `'${currentBranch ?? options.branchName}', or, if switching is genuinely intended, ` +
+        `move ${options.settingsRoot} aside manually first: the next start checks out ` +
+        `'${options.branchName}' from the remote, or starts it empty if the remote has none.`,
     )
   }
 }

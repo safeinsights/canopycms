@@ -9,6 +9,7 @@ import {
   gitNetworkChildEnv,
 } from '../git-manager'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
 import type { BaseRefreshReport } from '../types'
@@ -566,6 +567,10 @@ const warnedTrackedCanopyState = new Set<string>()
  * ff-only on purpose: this clone must stay a linear mirror of
  * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged local
  * history) is left untouched rather than force-resolved.
+ *
+ * Holds the provisioning lock and then, like the rebase loop, the [SYNC-C1]
+ * content-write lock, both try-only: the base branch is writable in dev, and
+ * a save racing the merge's working-tree update can be overwritten by it.
  */
 export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<BaseRefreshReport> {
   // Sanitized name for the workspace directory (a base branch containing
@@ -573,6 +578,7 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
   const basePath = path.join(ctx.contentBranchesPath, ctx.sanitizedBaseBranch)
   let trackedCanopyMeta: string[] | undefined
   let releaseProvisioning: (() => Promise<void>) | undefined
+  let releaseContentLock: (() => Promise<void>) | undefined
 
   try {
     // Held to the end, so no git step below races a clone of this directory.
@@ -588,12 +594,33 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       return { outcome: 'skipped-not-provisioned' }
     }
     releaseProvisioning = hold.release
-    // Checked before each destructive step: a lost lock means another process
-    // may be cloning into this directory.
+
+    let contentLockCompromised = false
+    try {
+      releaseContentLock = await tryAcquireContentWriteLock(basePath, (lockErr) => {
+        contentLockCompromised = true
+        workerLogWarn(
+          `Base branch workspace (${ctx.baseBranch}): content-write lock compromised mid-refresh: ${getErrorMessage(lockErr)}`,
+        )
+      })
+    } catch (lockErr: unknown) {
+      if (isNodeError(lockErr) && lockErr.code === 'ELOCKED') {
+        workerLog(
+          `Base branch workspace (${ctx.baseBranch}): content write in progress, skipping refresh`,
+        )
+        return { outcome: 'skipped-locked' }
+      }
+      throw lockErr
+    }
+
+    // Checked before each destructive step: a lost provisioning lock means
+    // another process may be cloning into this directory, a lost content lock
+    // that an editor save may be landing in it.
     const lockLost = (): BaseRefreshReport | null => {
-      if (!hold.isCompromised()) return null
+      if (!hold.isCompromised() && !contentLockCompromised) return null
+      const lost = hold.isCompromised() ? 'provisioning' : 'content-write'
       workerLogWarn(
-        `Base branch workspace (${ctx.baseBranch}): provisioning lock lost mid-refresh, stopping`,
+        `Base branch workspace (${ctx.baseBranch}): ${lost} lock lost mid-refresh, stopping`,
       )
       return { outcome: 'skipped-locked', trackedCanopyMeta }
     }
@@ -751,6 +778,13 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       trackedCanopyMeta,
     }
   } finally {
+    if (releaseContentLock) {
+      await releaseContentLock().catch((err: unknown) => {
+        workerLogWarn(
+          `Base branch workspace (${ctx.baseBranch}): failed to release content-write lock: ${getErrorMessage(err)}`,
+        )
+      })
+    }
     if (releaseProvisioning) {
       await releaseProvisionedWorkspace(releaseProvisioning, ctx.sanitizedBaseBranch)
     }

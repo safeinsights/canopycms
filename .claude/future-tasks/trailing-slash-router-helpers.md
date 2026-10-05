@@ -3,7 +3,7 @@
 ## Priority: P3 [BOTH]
 
 **Cluster note:** this file and [seo-trailing-slash-default-from-withcanopy.md](seo-trailing-slash-default-from-withcanopy.md),
-[preview-src-trailing-slash.md](preview-src-trailing-slash.md) and
+[preview-src-trailing-slash.md](resolved/preview-src-trailing-slash.md) and
 [trailing-slash-build-smoke.md](trailing-slash-build-smoke.md) are the follow-ups of PR #366, all
 applying the same `withTrailingSlash` rule to different surfaces.
 
@@ -12,8 +12,8 @@ applying the same `withTrailingSlash` rule to different surfaces.
 `withTrailingSlash(path)` (`utils/url-prefix.ts`, exported from `canopycms/server`) is the
 isomorphic primitive. It leaves a dotted last segment unslashed, because Next's own `trailingSlash`
 redirects treat that as a file; a site-link helper must follow the same rule. The editor's own API
-calls are covered: `withCanopy` sets `env.CANOPY_API_TRAILING_SLASH`, which the API client reads
-(`api/request-url.ts`).
+calls and preview URLs are covered: `withCanopy` sets `env.CANOPY_TRAILING_SLASH`, which both read
+through `readTrailingSlashEnv()` (`utils/url-prefix.ts`).
 
 ## What is left
 

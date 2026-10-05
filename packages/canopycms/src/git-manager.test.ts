@@ -2001,7 +2001,25 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
-  // The counterpart to the test above, and the one that carries the weight:
+  it('refuses to push from a detached HEAD', async () => {
+    const { manager, settingsRoot } = await setupSettingsWorkspace()
+    await simpleGit({ baseDir: settingsRoot }).raw(['checkout', '--detach'])
+
+    await expect(manager.push()).rejects.toThrow(/detached HEAD/)
+  })
+
+  it('pulls the settings branch, not a tag of the same name', async () => {
+    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
+    await advanceRemoteSettingsBranch(remotePath)
+    await openBareRepo(remotePath).raw(['tag', SETTINGS_BRANCH, 'main'])
+
+    await manager.pullCurrentBranch()
+
+    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
+    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
+  })
+
+  // The counterpart to the never-pushed test above, and the one that carries the weight:
   // an UNREACHABLE remote is not "nothing to pull". Classifying it as
   // GitRemoteRefMissingError made commitToSettingsBranch log it as normal for
   // a first commit and proceed, which is the failure shape the type's own

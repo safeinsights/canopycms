@@ -16,6 +16,9 @@ a deployment `basePath` (e.g. `/preview-123`) the request paths gain that prefix
   works, but it is slow and it bills per request for content that is immutable by construction.
 - `packages/canopycms-cdk/src/constructs/asset-support.ts` — the `/assets/t/*` and `/assets/*`
   behaviors have the same non-match.
+- `packages/canopycms-cdk/src/constructs/editor-routing.ts` — `CanopyCmsService.attachTo`'s
+  `/edit`, `/edit/*` and `/api/canopycms/*`. These do not degrade: on a site distribution a
+  non-matching editor request falls through to the site's default origin and fails.
 
 ## Why it is not urgent
 

@@ -51,6 +51,42 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS on purpose**
+
+**What changed.** `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
+adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distribution you already
+own: OAC, the Lambda's timeout as the origin-read timeout, no caching, `x-forwarded-host`, and a
+response headers policy. `CanopyCmsDistribution` now sends the same headers:
+`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`.
+Unless your app sends its own framing headers, no other origin can frame the editor or any page the
+CMS domain serves, and those pages are marked `noindex`. The editor's default preview is same-origin
+and unaffected. See
+[Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
+
+**To adopt.** If you wired the Function URL into your own distribution by hand, delete those
+behaviors and call `attachTo`, passing your CMS build's `assetPrefix` as `editorAssetPrefix`; synth
+fails while a hand-wired `/edit*`, `/api/*` or asset-prefix behavior still sits ahead of it. Take the editor routes out of any HTTP Basic-auth gate, and read the synth warning if your
+distribution has custom error responses.
+
+**Now deletable.** Hand-wired `/edit*`, API and asset-prefix behaviors, the origin, OAC and `x-forwarded-host`
+function made for them, and any response-headers policy added only to stop framing.
+
+### Static-export sites can preview a branch through `createPreviewPage`
+
+**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the editor's `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`.
+
+**To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
+
+**Now deletable.** A hand-built branch-preview route.
+
+### Preview URLs take one prefix and follow `trailingSlash` — **breaking (env): `CANOPY_API_TRAILING_SLASH` is renamed `CANOPY_TRAILING_SLASH`**
+
+**What changed.** `editor.previewPrefix` (a path or `https://` URL) goes in front of every preview URL, site-relative `previewBase` routes included, so a static-export site can preview through routes its CMS build renders. Preview URLs follow `trailingSlash`, so they draw no 308, and the preview bridge matches a page with or without a trailing slash.
+
+**To adopt.** Set `editor: { previewPrefix: '/preview' }` once that route exists, and drop the prefix from any `previewBase` value that spells it. Rename a `CANOPY_API_TRAILING_SLASH` you set yourself.
+
+**Now deletable.** `previewBase` keys that only added a shared prefix.
+
 ### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**
 
 **What changed.** Resolution applied no path rule to the referenced entry, so a reader of A saw
@@ -120,6 +156,17 @@ that re-submits replace, keeping human text.
 ([reference](../README.md#definecanopyconfig-options)).
 
 **Now deletable.** Nothing.
+
+### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+
+**What changed.** `read()`/`readByUrlPath()` created a workspace for any `branch`, one per
+`?branch=` value. Now a branch other than the active one must exist and be readable by the user,
+or it reads as not found. `createContentReader` defaults `allowCreateBranch` to `false`.
+
+**To adopt.** Nothing via `getCanopy()`. A script creating a branch through `createContentReader`
+passes `allowCreateBranch: true`, never with a request's branch.
+
+**Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
 
 ### System health shows which build is running
 

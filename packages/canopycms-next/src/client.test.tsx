@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 // Mocked so this stays a node-environment test: the factory under test calls
@@ -6,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 const canopyEditorPage = vi.fn(() => () => null)
 vi.mock('canopycms/client', () => ({
   CanopyEditorPage: (...args: unknown[]) => canopyEditorPage(...(args as [])),
+  useCanopyPreview: vi.fn(),
 }))
 vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }))
 
@@ -33,5 +35,28 @@ describe('NextCanopyEditorPage', () => {
     NextCanopyEditorPage(config)
 
     expect(canopyEditorPage).toHaveBeenCalledWith(config, undefined)
+  })
+})
+
+describe('withCanopyPreview', () => {
+  it("renders the view with useCanopyPreview's live state for the initial data", async () => {
+    const { useCanopyPreview } = await import('canopycms/client')
+    const { withCanopyPreview } = await import('./client')
+    const state = { data: { title: 'Draft' }, isLoading: {}, highlightEnabled: false }
+    vi.mocked(useCanopyPreview).mockReturnValue(state as never)
+    const View = () => null
+    const Preview = withCanopyPreview(View)
+
+    const element = Preview({
+      initialData: { title: 'Saved' },
+      editorOrigin: 'https://cms.example.com',
+    }) as ReactElement<Record<string, unknown>>
+
+    expect(useCanopyPreview).toHaveBeenCalledWith({
+      initialData: { title: 'Saved' },
+      editorOrigin: 'https://cms.example.com',
+    })
+    expect(element.type).toBe(View)
+    expect(element.props).toEqual(state)
   })
 })
