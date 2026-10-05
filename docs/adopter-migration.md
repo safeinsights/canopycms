@@ -51,18 +51,30 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### Path-permission rules now take effect below the content root — **security fix; breaking for a rule written with on-disk names**
+
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`), the form the
+Permission Manager writes. Enforcement used to check the on-disk path, whose directories and files
+carry content ids, so a rule naming a collection or entry never matched: a grant on a collection
+granted nothing, and a restriction on one restricted nothing. Only a glob that also matched on-disk
+names, such as `content/**`, took effect.
+Renaming an entry now also requires edit access at the new path.
+
+**To adopt.** Review your permission rules (Settings → Manage Permissions, or the settings branch's
+permissions file) before upgrading: a collection rule that never took effect will start to. Rewrite
+any rule that names an id-suffixed directory or a file extension (`content/blog.<id>/**`,
+`content/about.json`) in logical form (`content/blog/**`, `content/about`); it no longer matches.
+
+**Now deletable.** A workaround that granted access on the content root because collection grants
+had no effect.
+
 ### Submit commits and pull requests name the submitting user
 
-**What changed.** A submit commit is still authored by the bot, but its message now ends with an
-`Edited-by: Name (user id)` trailer for the user who submitted. The pull request body gains a
-section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`
-recording the submitter, the branch description and the changed paths. A re-submit replaces only
-that section and keeps the rest of the body.
+**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
+that re-submits replace, keeping human text.
 
-**To adopt.** Nothing. Set `gitEditedByTrailers: false` to drop the trailer. Set
-`gitCoAuthoredByTrailers: true` to also add `Co-authored-by: Name <email>`. That one is off by
-default because it writes emails into commit history. See the
-[configuration reference](../README.md#definecanopyconfig-options).
+**To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
+([reference](../README.md#definecanopyconfig-options)).
 
 **Now deletable.** Nothing.
 
