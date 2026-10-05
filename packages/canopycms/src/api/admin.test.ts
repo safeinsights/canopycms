@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -99,6 +99,32 @@ describe('admin api', () => {
 
       expect(result.data?.workerStatus).toEqual(report)
       expect(result.data?.statusReadError).toBeUndefined()
+    })
+
+    it('reports why the settings workspace cannot be provisioned, without failing the status call', async () => {
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod' } as CanopyConfig,
+          getSettingsBranchRoot: vi
+            .fn()
+            .mockRejectedValue(
+              new Error("settings branch 'b' at https://x-access-token:secret@example.test/r.git"),
+            ),
+        },
+      })
+
+      const result = await statusHandler(ctx, req)
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.settingsWorkspaceError).toBe(
+        "settings branch 'b' at https://***@example.test/r.git",
+      )
+    })
+
+    it('omits settingsWorkspaceError while the settings workspace provisions', async () => {
+      const result = await statusHandler(ctx, req)
+
+      expect(result.data).not.toHaveProperty('settingsWorkspaceError')
     })
 
     it('returns null status + statusReadError for a garbage worker-status.json', async () => {

@@ -832,7 +832,7 @@ The env var deliberately wins over config, and if both are set and disagree the 
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 

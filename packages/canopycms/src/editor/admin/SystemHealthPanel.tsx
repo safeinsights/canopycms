@@ -278,6 +278,16 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
+      {status.settingsWorkspaceError && (
+        <Alert
+          color="red"
+          icon={<IconAlertCircle size={16} />}
+          title="Settings workspace unavailable: groups and path rules are not loading"
+        >
+          <Text size="sm">{status.settingsWorkspaceError}</Text>
+        </Alert>
+      )}
+
       {status.statusReadError && (
         <Text size="xs" c="orange">
           Warning: could not read worker status ({status.statusReadError})

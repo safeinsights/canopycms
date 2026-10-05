@@ -507,9 +507,9 @@ looked — and acting on that stale sample is exactly the destructive path.
 
 **Once ensured, a process does not ensure again.** `ensureGitWorkspace` remembers each
 (settings root, branch name) it fully ensured, on success only, and on a hit reads only
-`.git/HEAD`. Settings data is not cached: the files are read every request, and the full pass
-never fetched, pulled or reset the settings branch. A new branch name, or a HEAD off the
-settings branch (removed, re-cloned, mid-clone), runs the full path, guard and lock included.
+`.git/HEAD`. Settings data is not cached: the files are read every request. A new branch
+name, or a HEAD off the settings branch (removed, re-cloned, mid-clone), runs the full path,
+guard and lock included.
 
 **The settings-workspace init lock is layer 3, `acquireProvisioningLock`**, exactly as
 `branch-workspace.ts` uses for content clones: server-enforced acquisition,
@@ -526,6 +526,8 @@ window such as 30s).
 
 Its anchor is its own dot-directory, `{workspaceRoot}/.settings-init`;
 `settingsInitLockTarget()` (settings-workspace.ts) says why.
+Replacing an empty settings branch with the remote's runs under this lock
+(`GitManager.reconcileLocalSettingsBranch`).
 
 **Background analysis.** The ContentId index marker and the EFS cross-process
 primitives (shared primitives, branch-registry GIT-M1, branch-schema-cache GIT-M2,

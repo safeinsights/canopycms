@@ -23,7 +23,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
-import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
@@ -112,6 +112,15 @@ async function readWorkerStatus(
   }
 }
 
+async function readSettingsWorkspaceError(ctx: ApiContext): Promise<string | undefined> {
+  try {
+    await ctx.services.getSettingsBranchRoot()
+    return undefined
+  } catch (err) {
+    return redactCredentials(getErrorMessage(err))
+  }
+}
+
 /** Age (ms) of the oldest file in pending/, or undefined if empty/missing. */
 async function getOldestPendingAgeMs(taskDir: string): Promise<number | undefined> {
   const pendingDir = path.join(taskDir, 'pending')
@@ -146,6 +155,11 @@ export interface AdminStatusData {
   worker: WorkerLiveness
   workerStatus: WorkerStatusReport | null
   statusReadError?: string
+  /**
+   * Why the settings workspace (groups and path rules) cannot be provisioned, when it cannot.
+   * Every other request answers 503 meanwhile; bootstrap admins still reach /admin.
+   */
+  settingsWorkspaceError?: string
 }
 
 /** Response type for GET /admin/status */
@@ -212,13 +226,19 @@ const getAdminStatusHandler = async (
   const taskDir = getTaskQueueDir(ctx.services.config)
 
   try {
-    const [queueStats, oldestPendingAgeMs, worker, { workerStatus, statusReadError }] =
-      await Promise.all([
-        getQueueStats(taskDir),
-        getOldestPendingAgeMs(taskDir),
-        classifyWorkerLiveness(taskDir),
-        readWorkerStatus(taskDir),
-      ])
+    const [
+      queueStats,
+      oldestPendingAgeMs,
+      worker,
+      { workerStatus, statusReadError },
+      settingsWorkspaceError,
+    ] = await Promise.all([
+      getQueueStats(taskDir),
+      getOldestPendingAgeMs(taskDir),
+      classifyWorkerLiveness(taskDir),
+      readWorkerStatus(taskDir),
+      readSettingsWorkspaceError(ctx),
+    ])
 
     return {
       ok: true,
@@ -233,6 +253,7 @@ const getAdminStatusHandler = async (
         worker,
         workerStatus,
         ...(statusReadError ? { statusReadError } : {}),
+        ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
       },
     }
   } catch (err) {
