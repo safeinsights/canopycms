@@ -68,6 +68,16 @@ any rule that names an id-suffixed directory or a file extension (`content/blog.
 **Now deletable.** A workaround that granted access on the content root because collection grants
 had no effect.
 
+### Submit commits and pull requests name the submitting user
+
+**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
+that re-submits replace, keeping human text.
+
+**To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
+([reference](../README.md#definecanopyconfig-options)).
+
+**Now deletable.** Nothing.
+
 ---
 
 <!--
