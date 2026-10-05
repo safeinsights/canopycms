@@ -588,7 +588,7 @@ export class GitManager {
    * deleteBranchHandler: a head left in `remote.git` forever makes the
    * create -> publish -> squash-merge -> delete -> reuse-the-name cycle reject
    * the reused branch's first publish non-fast-forward against the stale head
-   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip is
+   * (`GitManager.push()` pushes the branch to the same name, and a squash-merged old tip is
    * not an ancestor of the new branch), and a retried submit then skips the
    * local push on a clean tree and enqueues the worker push of the STALE head,
    * resurrecting the deleted branch's content on GitHub as an apparent success.
@@ -1248,7 +1248,7 @@ export class GitManager {
   private async currentBranchName(): Promise<string> {
     const branches = await this.git.branch()
     if (branches.detached || !branches.current) {
-      throw new Error(`CanopyCMS: cannot push from a detached HEAD in ${this.repoPath}`)
+      throw new Error(`CanopyCMS: no branch is checked out (detached HEAD) in ${this.repoPath}`)
     }
     return branches.current
   }

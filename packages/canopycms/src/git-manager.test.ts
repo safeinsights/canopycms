@@ -2019,7 +2019,7 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
   })
 
-  // The counterpart to the test above, and the one that carries the weight:
+  // The counterpart to the never-pushed test above, and the one that carries the weight:
   // an UNREACHABLE remote is not "nothing to pull". Classifying it as
   // GitRemoteRefMissingError made commitToSettingsBranch log it as normal for
   // a first commit and proceed, which is the failure shape the type's own
