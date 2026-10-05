@@ -20,5 +20,13 @@ and refuse it there too, with a test using a custom `settingsBranch` name.
 title is not rendered as Markdown, so this is display spoofing only. Fix: run the title through the same
 sanitizer, with a test.
 
+## 3. Branch deletion can fail `ENOTEMPTY` while a schema operation contends (reasoned)
+
+On int, a `schema-store` test flaked: removing a branch root while a queued `addEntryType` was retrying
+failed `ENOTEMPTY`, because each retry recreates lock directories under `.canopy-meta` (#385 added the
+content-write lock there). The test now retries the removal. The production analogue is a branch delete or
+purge racing a schema edit. Check whether `deleteBranch`/purge removes the workspace with retries, or
+fails and leaves a half-deleted tree.
+
 The third finding of that review, `hasUnpushedCommits` still resolving bare ref names, is part of
 [settings-branch-name-tag-collision.md](settings-branch-name-tag-collision.md).
