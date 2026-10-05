@@ -64,13 +64,16 @@ const blockRegistry: BlockComponentRegistry<Blocks, BlockExtraProps> = {
   ),
   // A shared/referenced block (see README's "Shared / Referenced Blocks"): `snippet` is
   // the resolved entry data, not an id — CanopyCMS resolves the reference before this
-  // component ever sees it. Null-safe because the referenced entry can be deleted.
+  // component ever sees it. Null-safe because the referenced entry can be deleted, and
+  // `unavailable` when the reader may not read it, which leaves only its title and URL.
   sharedCta: ({ data, index, fieldProps }) => (
     <div
       {...fieldProps(['blocks', index])}
       className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3"
     >
-      {data.snippet ? (
+      {data.snippet?.unavailable ? (
+        <p className="text-xs text-amber-700">{data.snippet.title} (sign in to see this)</p>
+      ) : data.snippet ? (
         <>
           <div
             className="text-sm font-semibold text-amber-900"

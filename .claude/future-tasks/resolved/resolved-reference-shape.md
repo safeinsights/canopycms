@@ -73,7 +73,7 @@ to derive the body field name from the schema tuple. Tracked in
 
 ## Related
 
-- [reference-resolution-bypasses-path-acls.md](../reference-resolution-bypasses-path-acls.md) —
+- [reference-resolution-bypasses-path-acls.md](reference-resolution-bypasses-path-acls.md) —
   P1, and the other open question about resolution: targets are resolved without a path-ACL
   check. Untouched here.
 - [graymatter-cache-shared-frontmatter.md](../graymatter-cache-shared-frontmatter.md) — the
