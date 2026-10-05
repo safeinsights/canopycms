@@ -42,6 +42,8 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     queue: { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 },
     worker: { state: 'alive' },
     workerStatus: null,
+    build: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
+    assetStore: { configured: true },
     ...overrides,
   }
 }
@@ -127,6 +129,115 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByText('Tasks')).toBeTruthy()
       expect(screen.getByText('Branches')).toBeTruthy()
       await waitFor(() => expect(screen.getByText('Worker: stale (possible crash)')).toBeTruthy())
+    })
+
+    describe('Build section', () => {
+      /** A status whose worker reports `workerVersion` (omitted when undefined). */
+      const statusWithWorkerVersion = (
+        workerVersion: string | undefined,
+        overrides: Partial<AdminStatusData> = {},
+      ): AdminStatusData =>
+        makeStatus({
+          workerStatus: {
+            version: 1,
+            ...(workerVersion !== undefined ? { workerVersion } : {}),
+            startedAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          ...overrides,
+        })
+
+      it('renders the API version, truncated source revision and worker version', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-api-version')).toBeTruthy())
+        expect(screen.getByTestId('build-api-version').textContent).toContain('1.2.3')
+        const revision = screen.getByTestId('build-source-revision').textContent
+        expect(revision).toContain('abcdef012345')
+        expect(revision).not.toContain('abcdef0123456')
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('1.2.3')
+      })
+
+      it('shows "not set" with the env var name when the source revision is absent', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(makeStatus({ build: { canopycmsVersion: '1.2.3' } })),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-source-revision')).toBeTruthy())
+        const text = screen.getByTestId('build-source-revision').textContent ?? ''
+        expect(text).toContain('not set')
+        expect(text).toContain('CANOPY_SOURCE_SHA')
+      })
+
+      it('shows the worker version as unknown when the worker did not report one', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(statusWithWorkerVersion(undefined)),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('unknown')
+      })
+
+      it('warns when the API and worker versions differ', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.2')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('version-skew-warning')).toBeTruthy())
+        const text = screen.getByTestId('version-skew-warning').textContent ?? ''
+        expect(text).toContain('API and worker versions differ')
+        expect(text).toContain('1.2.3')
+        expect(text).toContain('1.2.2')
+      })
+
+      it('does not warn when the API and worker versions match', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
+      it('does not warn when the worker version is absent', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(statusWithWorkerVersion(undefined)),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
+      it('shows media storage as configured', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-media')).toBeTruthy())
+        expect(screen.getByTestId('build-media').textContent).toContain('configured')
+        expect(screen.getByTestId('build-media').textContent).not.toContain('not configured')
+      })
+
+      it('says uploads are disabled when media storage is not configured', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(makeStatus({ assetStore: { configured: false } })),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-media')).toBeTruthy())
+        expect(screen.getByTestId('build-media').textContent).toContain(
+          'not configured — uploads are disabled',
+        )
+      })
     })
 
     it('shows a muted dev-mode note instead of alarming colors', async () => {
