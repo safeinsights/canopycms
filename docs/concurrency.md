@@ -491,12 +491,14 @@ looked — and acting on that stale sample is exactly the destructive path.
 > explains why both readings fail.
 
 **Once ensured, a process does not ensure again.** `ensureGitWorkspace` keeps a per-process
-set of (settings root, branch name) pairs it has fully ensured, and on a hit only `stat`s
-`.git`. That is not a cache of settings data: `groups.json` and `permissions.json` are still
-read from disk on every request. It memoizes only the provisioning, whose inputs are fixed
-for the process lifetime. A hit never stands in for the rename guard. The key includes the
-branch name, a different name is a miss that runs the guard, and a workspace moved aside
-fails the `stat` and re-provisions in full.
+set of (settings root, branch name) pairs it has fully ensured, recorded only on success, and
+on a hit reads only `.git/HEAD`. That is not a cache of settings data: `groups.json` and
+`permissions.json` are still read from disk on every request, and the full pass never fetched
+or reset anything, because freshness comes from every process reading one shared workspace.
+A hit never stands in for the rename guard: the key includes the branch name, and a workspace
+removed, re-cloned onto another branch, or caught mid-provisioning fails the HEAD check and
+runs the full path, guard and lock included. Only a process's first request takes the init
+lock.
 
 **The settings-workspace init lock is layer 3, `acquireProvisioningLock`**, exactly as
 `branch-workspace.ts` uses for content clones: server-enforced acquisition,

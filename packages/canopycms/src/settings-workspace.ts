@@ -17,12 +17,16 @@ let settingsInitLock: Promise<void> | null = null
 /**
  * Settings workspaces this process has fully ensured, keyed by {@link ensuredKey}. A hit
  * skips the guard, the init lock and initializeWorkspace's dozen git subprocesses, which
- * otherwise ran on every API request. It is sound because everything that pass verified is
- * fixed for the process: the settings-branch name resolves once from config, the remote URL
- * comes from config, and nothing in CanopyCMS checks the settings workspace out onto another
- * branch. groups.json and permissions.json are still read from disk on every request; only
- * the provisioning is memoized. A hit still stats `.git`, so a workspace moved aside
- * re-provisions, rename guard included, on the next request.
+ * otherwise ran on every API request. It is sound because that pass never fetched or reset
+ * anything (settings freshness comes from every process reading the one shared workspace),
+ * and everything it verified is fixed for the process: the settings-branch name resolves once
+ * from config, the remote URL comes from config, and nothing in CanopyCMS checks the settings
+ * workspace out onto another branch. groups.json and permissions.json are still read from
+ * disk on every request; only the provisioning is memoized. Failures are never recorded.
+ *
+ * A hit still reads `.git/HEAD`, so a workspace removed, re-cloned onto another branch, or
+ * caught mid-provisioning by another process misses and runs the full path, guard and lock
+ * included.
  */
 const ensuredSettingsWorkspaces = new Set<string>()
 
@@ -30,10 +34,10 @@ function ensuredKey(options: EnsureSettingsWorkspaceOptions): string {
   return `${path.resolve(options.settingsRoot)}\0${options.branchName}`
 }
 
-async function gitDirPresent(settingsRoot: string): Promise<boolean> {
+async function checkedOutOn(settingsRoot: string, branchName: string): Promise<boolean> {
   try {
-    await fs.stat(path.join(settingsRoot, '.git'))
-    return true
+    const head = await fs.readFile(path.join(settingsRoot, '.git', 'HEAD'), 'utf-8')
+    return head.trim() === `ref: refs/heads/${branchName}`
   } catch {
     return false
   }
@@ -173,7 +177,7 @@ export class SettingsWorkspaceManager {
   async ensureGitWorkspace(options: EnsureSettingsWorkspaceOptions): Promise<void> {
     const key = ensuredKey(options)
     if (ensuredSettingsWorkspaces.has(key)) {
-      if (await gitDirPresent(options.settingsRoot)) return
+      if (await checkedOutOn(options.settingsRoot, options.branchName)) return
       ensuredSettingsWorkspaces.delete(key)
     }
 
