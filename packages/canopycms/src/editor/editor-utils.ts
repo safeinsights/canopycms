@@ -7,13 +7,21 @@ import type { TreeNodeData } from '@mantine/core'
 import { normalizeCollectionPath } from '../paths/normalize'
 import { isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
-import { joinUrlPrefix } from '../utils/url-prefix'
+import {
+  isAbsoluteUrl,
+  joinUrlPrefix,
+  matchTrailingSlash,
+  readTrailingSlashEnv,
+  stripTrailingSlashes,
+} from '../utils/url-prefix'
 /** @internal Exported for tests. */
 export { normalizeCollectionPath }
 
 export interface PreviewContext {
   branchName?: string
   previewBaseByCollection?: Record<string, string>
+  /** `editor.previewPrefix`: where the host mounts the pages the preview pane loads. */
+  previewPrefix?: string
 }
 
 /**
@@ -36,42 +44,49 @@ const encodeSlug = (value?: string): string =>
     .map((segment) => encodeURIComponent(segment))
     .join('/')
 
-/**
- * Builds the (unprefixed) preview URL -- see `buildPreviewSrc` below, which wraps this with the
- * deployment `basePath`. Split out so that prefixing happens exactly once, at the end, uniformly
- * across every branch (including the `entry.previewSrc` escape hatch).
- */
-const buildRawPreviewSrc = (
-  entry: {
-    collectionPath?: string
-    collectionName?: string
-    slug?: string
-    itemType?: string
-    previewSrc?: string
-  },
-  { branchName, previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string },
-): string => {
-  if (entry.previewSrc) return entry.previewSrc
-  const appendBranch = (url: string) => {
-    if (!branchName) return url
-    const separator = url.includes('?') ? '&' : '?'
-    return `${url}${separator}branch=${encodeURIComponent(branchName)}`
-  }
+type PreviewEntry = {
+  collectionPath?: string
+  collectionName?: string
+  slug?: string
+  itemType?: string
+  previewSrc?: string
+}
 
+/** Splits `url` before its query or fragment, so a path can be extended without entering either. */
+const splitPathSuffix = (url: string): [string, string] => {
+  const index = url.search(/[?#]/)
+  return index === -1 ? [url, ''] : [url.slice(0, index), url.slice(index)]
+}
+
+/** Adds `?branch=` to the query, ahead of any fragment. */
+const appendBranch = (url: string, branchName?: string): string => {
+  if (!branchName) return url
+  const hashIndex = url.indexOf('#')
+  const beforeHash = hashIndex === -1 ? url : url.slice(0, hashIndex)
+  const hash = hashIndex === -1 ? '' : url.slice(hashIndex)
+  const separator = beforeHash.includes('?') ? '&' : '?'
+  return `${beforeHash}${separator}branch=${encodeURIComponent(branchName)}${hash}`
+}
+
+/**
+ * The entry's route on the host site: its `previewBaseByCollection` value when one matches,
+ * otherwise its collection path plus slug. Site-relative unless a matching value is absolute.
+ */
+const buildPreviewRoute = (
+  entry: PreviewEntry,
+  { previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string },
+): string => {
   // Root-level entries have collectionPath === contentRoot (e.g., 'content')
   const isRootEntry = contentRoot && entry.collectionPath === contentRoot
 
   if (isRootEntry) {
-    const customPreview = previewBaseByCollection?.[`${contentRoot}/${entry.slug}`]
-    if (customPreview) {
-      return appendBranch(customPreview)
-    }
-    return appendBranch('/')
+    return previewBaseByCollection?.[`${contentRoot}/${entry.slug}`] || '/'
   }
 
   const base =
     (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
+  const encoded = encodePreviewSlug(entry.slug)
   if (!base) {
     // Pass contentRoot through so a non-default (or multi-segment, e.g.
     // "cms/content") configured root is stripped too; normalizeCollectionPath
@@ -79,41 +94,37 @@ const buildRawPreviewSrc = (
     const collectionPath = entry.collectionPath
       ? normalizeCollectionPath(entry.collectionPath, contentRoot)
       : ''
-    const encoded = encodePreviewSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
-    const url = segments.length > 0 ? `/${segments.join('/')}` : '/'
-    return appendBranch(url)
+    return segments.length > 0 ? `/${segments.join('/')}` : '/'
   }
-  const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  const encoded = encodePreviewSlug(entry.slug)
-  const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
-  return appendBranch(url)
+  const [basePathPart, suffix] = splitPathSuffix(base)
+  const trimmed = stripTrailingSlashes(basePathPart)
+  return `${encoded ? `${trimmed}/${encoded}` : basePathPart || '/'}${suffix}`
 }
 
 /**
- * Builds the preview iframe `src` for an entry, prefixed with the deployment `basePath`
- * (`CanopyClientConfig.basePath`, e.g. `/preview-123`) when configured.
+ * Builds the preview iframe `src` for an entry: its route under `previewPrefix`, under the
+ * deployment `basePath` (`CanopyClientConfig.basePath`, e.g. `/preview-123`), in the host's
+ * trailing-slash form, with `?branch=`. An absolute prefix skips the `basePath`. An absolute route
+ * (from `previewBaseByCollection`) skips all three and gets only `?branch=`. An entry's own
+ * `previewSrc` gets only the `basePath`.
  *
- * This matters twice: the raw `<iframe src>` (`PreviewFrame` in preview-bridge.tsx) 404s
- * without the prefix under a basePath, and `resolvePreviewPath` there compares the same
- * string against `window.location.pathname` -- which browsers report WITH the basePath --
- * so an unprefixed `previewSrc` also breaks draft sync / click-to-focus even when the
- * iframe itself resolves.
- *
- * Applied via `joinUrlPrefix`: a no-op when `basePath` is unset, and passes an
- * already-absolute `previewSrc` (a cross-origin override) through untouched.
+ * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
+ * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
+ * on every load. `trailingSlash` defaults to the value `withCanopy` inlines at build time.
  */
 export const buildPreviewSrc = (
-  entry: {
-    collectionPath?: string
-    collectionName?: string
-    slug?: string
-    itemType?: string
-    previewSrc?: string
-  },
-  context: PreviewContext & { contentRoot?: string; basePath?: string },
+  entry: PreviewEntry,
+  context: PreviewContext & { contentRoot?: string; basePath?: string; trailingSlash?: boolean },
 ): string => {
-  return joinUrlPrefix(context.basePath, buildRawPreviewSrc(entry, context))
+  if (entry.previewSrc) return joinUrlPrefix(context.basePath, entry.previewSrc)
+  const route = buildPreviewRoute(entry, context)
+  // An absolute route is another site's URL, so the host's trailing-slash form says nothing
+  // about it.
+  if (isAbsoluteUrl(route)) return appendBranch(route, context.branchName)
+  const mounted = joinUrlPrefix(context.basePath, joinUrlPrefix(context.previewPrefix, route))
+  const shaped = matchTrailingSlash(mounted, context.trailingSlash ?? readTrailingSlashEnv())
+  return appendBranch(shaped, context.branchName)
 }
 
 export const normalizeContentPayload = (raw: unknown): FormValue => {

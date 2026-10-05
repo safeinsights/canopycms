@@ -221,6 +221,66 @@ describe('useCanopyPreview', () => {
     expect(getByTestId('value').textContent).toBe('initial')
   })
 
+  describe('the same page spelled two ways', () => {
+    const draftArrives = async (pageUrl: string, editorPath: unknown) => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', pageUrl)
+      const { getByTestId } = render(<PreviewValue initialData={{ value: 'initial' }} />)
+      window.dispatchEvent(
+        trustedEvent(
+          { type: CANOPY_PREVIEW_MESSAGE, path: editorPath, data: { value: 'updated' } },
+          parentWin,
+        ),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return getByTestId('value').textContent === 'updated'
+    }
+
+    it('applies a draft after the host redirected the src to its slashed form', async () => {
+      const editorPath = buildPreviewSrc(
+        { collectionPath: 'content/blog', slug: 'x' },
+        { branchName: 'b', trailingSlash: false },
+      )
+      expect(editorPath).toBe('/blog/x?branch=b')
+      expect(await draftArrives('/blog/x/?branch=b', editorPath)).toBe(true)
+    })
+
+    it('applies a draft after the host redirected the src to its unslashed form', async () => {
+      expect(await draftArrives('/blog/x?branch=b', '/blog/x/?branch=b')).toBe(true)
+    })
+
+    it('builds exactly the URL a slashed host serves under a prefix, so nothing redirects', () => {
+      const src = buildPreviewSrc(
+        { collectionPath: 'content/blog', slug: 'x' },
+        { branchName: 'b', previewPrefix: '/preview', basePath: '/base', trailingSlash: true },
+      )
+      expect(src).toBe('/base/preview/blog/x/?branch=b')
+    })
+
+    it('applies a draft addressed by an absolute src on the page origin', async () => {
+      expect(
+        await draftArrives(
+          '/preview/blog/x/?branch=b',
+          `${window.location.origin}/preview/blog/x?branch=b`,
+        ),
+      ).toBe(true)
+    })
+
+    it('drops a draft for the same path on another branch', async () => {
+      expect(await draftArrives('/blog/x/?branch=b', '/blog/x?branch=other')).toBe(false)
+    })
+
+    it('drops a draft for another page', async () => {
+      expect(await draftArrives('/blog/x/?branch=b', '/blog/y?branch=b')).toBe(false)
+    })
+
+    it('drops a draft whose path is not a string', async () => {
+      expect(await draftArrives('/blog/x/?branch=b', { toString: () => '/blog/x/?branch=b' })).toBe(
+        false,
+      )
+    })
+  })
+
   it('ignores draft messages when not framed', async () => {
     window.history.pushState({}, '', '/posts/standalone')
     const { getByTestId } = render(<PreviewValue initialData={{ value: 'initial' }} />)

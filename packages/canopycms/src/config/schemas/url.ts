@@ -52,3 +52,12 @@ export const assetMountUrlSchema = z
     message:
       'must be an absolute http(s) URL, a protocol-relative "//host" URL, or a site-relative path beginning with a single "/", with no query or fragment',
   })
+
+/** `editor.previewPrefix`, by `uploadTargetUrlSchema`'s rule: `//host` leaves the scheme open. */
+export const previewPrefixSchema = z
+  .string()
+  .trim()
+  .refine((value) => isHttpUrlOrSameOriginPath(value), {
+    message:
+      'editor.previewPrefix must be an absolute http(s) URL or a site-relative path beginning with a single "/", with no query or fragment',
+  })

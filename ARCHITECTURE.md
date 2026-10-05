@@ -807,9 +807,9 @@ It is also deliberately **not** an argument to the static-params helper, even th
 
 ### Preview Path Identity
 
-The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the string compared against the browser-reported location path to decide which entry a framed page is showing, which drives draft sync and click-to-focus. Browsers report that path _with_ the deployment prefix included. So an unprefixed value 404s the iframe, and a value prefixed on some code paths but not others breaks draft sync even when the iframe itself resolves.
+The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the identity matched against the framed page's own location, which drives draft sync and click-to-focus. Browsers report that location _with_ the deployment prefix, so an unprefixed value 404s the iframe, and one prefixed on only some code paths breaks draft sync.
 
-The builder is therefore split into an unprefixed core plus a thin wrapper applying the prefix **exactly once**, at the end, uniformly across every branch of the builder — including the fully-custom per-entry preview override, whose absolute form passes through untouched by the join's own rule. One prefix, applied in one place, is what keeps the two uses of that string in agreement.
+The builder therefore emits the URL the host serves: the route under `previewPrefix` under `basePath`, each applied **exactly once**, in the host's trailing-slash form. An absolute route names another site and gets none of these; the per-entry override gets only `basePath`. Both bridge ends then compare path plus query, with no origin or trailing slash, so an absolute `src` or a host redirect still matches.
 
 ## Extensibility Points
 
