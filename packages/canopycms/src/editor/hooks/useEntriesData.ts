@@ -62,7 +62,7 @@ export async function listAllEntries(
       ...(cursor !== undefined ? { cursor } : {}),
     })
     if (!result.ok || !result.data)
-      throw new Error(result.error ?? `Refresh failed: ${result.status}`)
+      throw new Error(`Refresh failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
     const data = result.data as ListEntriesResponse
     for (const entry of data.entries) byPath.set(entry.logicalPath, entry)
     if (!data.pagination?.hasMore || !data.pagination.cursor) {
@@ -86,7 +86,9 @@ export async function fetchEntriesAndSchema(
   // Fetch schema from schema API
   const schemaResult = await apiClient.schema.get({ branch })
   if (!schemaResult.ok || !schemaResult.data) {
-    throw new Error(schemaResult.error ?? `Schema fetch failed: ${schemaResult.status}`)
+    throw new Error(
+      `Schema fetch failed: ${schemaResult.status}${schemaResult.error ? ` — ${schemaResult.error}` : ''}`,
+    )
   }
 
   // Hydrate wire flatSchema: resolve schemaRef -> schema from entrySchemas dict
