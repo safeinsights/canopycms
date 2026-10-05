@@ -266,22 +266,24 @@ class SettingsBranchDivergedError extends Error {
   }
 }
 
+/** The only files a settings branch ever commits (explicit paths at its root). */
+const SETTINGS_BRANCH_FILES = new Set(['permissions.json', 'groups.json'])
+
 /**
- * The remote's settings branch shares a root commit with the base branch, so it is content
- * history under the settings name rather than settings. Adopting it would load no groups or
- * path rules, and settings saves would then commit onto content history.
+ * The remote's settings branch holds content rather than settings. Adopting it would load no
+ * groups or path rules, and settings saves would then commit onto content history.
  */
 class SettingsBranchHasContentHistoryError extends Error {
   constructor(
     public readonly branch: string,
-    public readonly baseBranch: string,
     public readonly remote: string,
+    /** What shows it is content. */
+    public readonly evidence: string,
   ) {
     super(
-      `CanopyCMS: the settings branch '${branch}' on remote '${remote}' shares history with ` +
-        `the base branch '${baseBranch}', so it holds content, not settings, and was not ` +
-        `checked out. Restore '${branch}' on the remote from a copy of the settings, or delete ` +
-        `it there to start with empty settings, then restart.`,
+      `CanopyCMS: the settings branch '${branch}' on remote '${remote}' holds content, not ` +
+        `settings (${evidence}), so it was not checked out. Restore '${branch}' on the remote ` +
+        `from a copy of the settings, or delete it there to start with empty settings, then restart.`,
     )
     this.name = 'SettingsBranchHasContentHistoryError'
   }
@@ -1414,8 +1416,8 @@ export class GitManager {
    *   {@link SettingsBranchDivergedError}; local commits are never discarded.
    *   An unreadable remote throws only for that empty branch, since one that
    *   holds settings can serve them and the next save surfaces the remote error.
-   * Either way a remote branch sharing a root with the base branch is never
-   * adopted: {@link SettingsBranchHasContentHistoryError}.
+   * Either way a remote branch holding content is never adopted:
+   * {@link SettingsBranchHasContentHistoryError}.
    */
   async createOrphanSettingsBranch(
     branchName: string,
@@ -1462,7 +1464,7 @@ export class GitManager {
 
     if (remoteTip) {
       const fetchedTip = await this.fetchBranchTip(branchName)
-      await this.assertNotContentHistory(branchName, await this.rootCommits(fetchedTip))
+      await this.assertNotContentHistory(branchName, fetchedTip)
       // `-b` consumes branchName as its literal value; see checkoutBranchInner.
       await this.git.raw(['checkout', '-b', branchName, fetchedTip])
       log.debug('git', 'Checked out the remote settings branch', { branchName })
@@ -1524,7 +1526,7 @@ export class GitManager {
     if (localWork.length > 0) {
       throw new SettingsBranchDivergedError(branchName, this.repoPath, localWork.join(' and '))
     }
-    await this.assertNotContentHistory(branchName, remoteRoots)
+    await this.assertNotContentHistory(branchName, fetchedTip)
 
     // `checkout -B` resets the current branch onto the fetched tip, and
     // refuses rather than overwrite a file written since the check above.
@@ -1554,15 +1556,28 @@ export class GitManager {
   }
 
   /**
-   * Refuse to adopt a remote settings branch whose roots include the base branch's: a
-   * settings branch is an orphan, so a shared root means content history under its name.
-   * The base comes from the remote when the clone lacks it (it was cloned at an earlier base);
-   * a base that cannot be read anywhere fails closed, since nothing can be verified.
+   * Refuse to adopt a remote settings branch that holds content: its tip has a file other than
+   * the settings files, or its roots include the base branch's (a settings branch is an orphan).
+   * Neither alone suffices: a base can have a root of its own, and a content tree can be pruned.
+   * The base comes from the remote when the clone lacks it (it was cloned at an earlier base).
    */
-  private async assertNotContentHistory(branchName: string, tipRoots: string[]): Promise<void> {
-    const baseRoots = await this.rootCommits(await this.baseBranchRev(branchName))
+  private async assertNotContentHistory(branchName: string, tip: string): Promise<void> {
+    const tree = await this.git.raw(['ls-tree', '-r', '--name-only', tip])
+    const strays = tree.split('\n').filter((file) => file && !SETTINGS_BRANCH_FILES.has(file))
+    if (strays.length > 0) {
+      const shown = strays.slice(0, 3).join(', ') + (strays.length > 3 ? ', …' : '')
+      throw new SettingsBranchHasContentHistoryError(branchName, this.remote, `it holds ${shown}`)
+    }
+    const [tipRoots, baseRoots] = await Promise.all([
+      this.rootCommits(tip),
+      this.baseBranchRev(branchName).then((rev) => this.rootCommits(rev)),
+    ])
     if (tipRoots.some((root) => baseRoots.includes(root))) {
-      throw new SettingsBranchHasContentHistoryError(branchName, this.baseBranch, this.remote)
+      throw new SettingsBranchHasContentHistoryError(
+        branchName,
+        this.remote,
+        `it shares history with the base branch '${this.baseBranch}'`,
+      )
     }
   }
 
