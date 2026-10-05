@@ -319,7 +319,13 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
       if (err instanceof OccWriteConflictError) {
         throw new MigrateError('Another process is modifying the schema, try again.')
       }
-      if (err instanceof ContentWriteLockBusyError) throw new MigrateError(err.message)
+      if (err instanceof ContentWriteLockBusyError) {
+        throw new MigrateError(
+          err.outcome === 'unknown'
+            ? 'The branch was being synced while migrate ran, so it may be partly applied. Check its state before running migrate again.'
+            : err.message,
+        )
+      }
       throw err
     }
   } else {

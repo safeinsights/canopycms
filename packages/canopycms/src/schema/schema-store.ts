@@ -324,7 +324,12 @@ export class SchemaOps {
             })
           })
         }
-        throw new SchemaStoreBusyError(err.message, err.outcome)
+        throw new SchemaStoreBusyError(
+          err.outcome === 'unknown'
+            ? 'This branch was being synced while the schema change was written, so it may or may not have been recorded. Reload before changing the schema again.'
+            : err.message,
+          err.outcome,
+        )
       }
       throw err
     }

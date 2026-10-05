@@ -335,11 +335,11 @@ async function _createCanopyServicesInternal(
       email: config.gitBotAuthorEmail,
     })
     // [SYNC-C1] Commits the whole working tree, so it holds the branch's
-    // content-write lock from checkout through push. Unlocked, it can run while
-    // the worker's rebase is mid-replay: the checkout moves HEAD off the
-    // rebase's detached head, and a commit landing there is discarded by the
-    // rebase's `--abort` after this reported success. The push stays inside so
-    // no rebase rewrites the commit between commit and push.
+    // content-write lock from checkout through push. Unlocked, its checkout
+    // succeeds while the worker's rebase is stopped on a conflict, the commit
+    // lands on the branch, and the rebase's `--abort` resets the branch past it
+    // after this reported success. The push stays inside so no rebase rewrites
+    // the commit between commit and push.
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()

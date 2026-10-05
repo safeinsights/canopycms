@@ -95,12 +95,13 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+/** Below provisioning's, so a crashed worker blocks saves for at most 30s (docs/concurrency.md). */
+const CONTENT_WRITE_LOCK_STALE_MS = 30_000
+
 /**
  * Acquire the branch's content-write lock WITHOUT waiting, for the worker's rebase loop, which
  * skips the branch and retries next cycle. Throws with `code === 'ELOCKED'` on a live holder.
  */
-/** Below provisioning's, so a crashed worker blocks saves for at most 30s (docs/concurrency.md). */
-const CONTENT_WRITE_LOCK_STALE_MS = 30_000
 
 export function tryAcquireContentWriteLock(
   branchRoot: string,

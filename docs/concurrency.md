@@ -307,20 +307,20 @@ token for (api/content.ts, editor/hooks/useEntryManager.ts).
 **Who takes it:** everything that mutates a branch working tree a rebase could revert —
 `ContentStore` `write`/`delete`/`renameEntry`; the admin repair-content-duplicates action;
 schema mutations (`SchemaOps`, and CLI migrate in a branch clone, via `withBranchSchemaLock`);
-`submitBranch` and `commitFiles` from checkout through push, since a commit made mid-replay
-lands on the rebase's detached head and its `--abort` discards it; CLI sync's content
+`submitBranch` from checkout through push, since a commit made while the rebase is stopped
+on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`;
+CLI sync's content
 replace, merge and merge abort; and, try-only, the worker's rebase and base-branch refresh.
-Outside it by design: the asset store, which is branch-agnostic and outside every clone
-(assets/factory.ts); provisioning, already exclusive with the rebase; and the settings
+Outside it by design: the asset store, which lives outside every clone (assets/factory.ts); provisioning, already exclusive with the rebase; and the settings
 workspace, which no rebase touches.
 
 The marker lives under `{branchRoot}/.canopy-meta` (git-excluded, so it can never dirty
-the tree or land in a publish commit) and anchors on its own path, so per layer 3 it
-cannot alias the branch's provisioning lock.
+the tree or land in a publish commit) and anchors on its own path, so it cannot alias the
+provisioning lock (layer 3).
 
-**Residual (accepted):** the stale-takeover caveat in layer 3 applies here too — a
-waiter reading a cached mtime can take the lock from a live rebase, which is exactly the
-pre-lock behavior for that window: a strict improvement, not a guarantee.
+**Residual (accepted):** layer 3's stale-takeover caveat applies — a waiter reading a
+cached mtime can take the lock from a live rebase, which is exactly the pre-lock behavior
+for that window: a strict improvement, not a guarantee.
 
 ### Lock acquisition order
 
@@ -331,8 +331,8 @@ One global order. Acquire left to right; nothing holding a lock takes one to its
 
 The worker takes the first two try-only, so it never waits on a writer; writers take the
 content-write lock with a bounded wait and never take provisioning inside it. None is
-re-entrant: a nested acquisition in one process fails busy, so nothing holding the
-content-write lock may call `ContentStore.write`.
+re-entrant: a nested content-write acquisition fails busy and a nested `withLock` hangs, so
+nothing holding the content-write lock may call `ContentStore.write`.
 
 ## Residual staleness windows (accepted, bounded)
 

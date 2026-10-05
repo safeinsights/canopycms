@@ -19,9 +19,9 @@ plus a positive control, all verified red first and mutation-checked.
    the worker's base-branch refresh takes it try-only (`skipped-locked`). GitManager's
    `checkoutBranch` runs either under provisioning (already exclusive with the rebase) or
    from `submitBranch`; `pullCurrentBranch` is settings-workspace only.
-4. **`submitBranch` takes it**, checkout through push: unlocked, a commit made while the
-   rebase is mid-replay lands on its detached head and the `--abort` discards it after the
-   submit reported success. `commitFiles` takes it too. api/branch-status.ts maps contention
+4. **`submitBranch` takes it**, checkout through push: unlocked, its checkout succeeds while
+   the rebase is stopped on a conflict, the commit lands on the branch, and the rebase's
+   `--abort` resets the branch past it after the submit reported success (measured). `commitFiles` takes it too. api/branch-status.ts maps contention
    to a 409 worded by `ContentWriteLockBusyError.outcome`.
 
 Follow-ups: [content-write-lock-followups.md](../content-write-lock-followups.md).
@@ -41,7 +41,7 @@ was told succeeded, reverted by a rebase that then reports success.
 `createCollection`, `updateOrder`, `deleteCollection` and friends write `.collection.json`
 files — and `deleteCollection` removes whole directory trees — in the same branch working
 tree the worker rebases. They take the coarse per-branch `.canopy-meta/schema` surrogate
-lock (layers 1+3), which serializes schema mutations against *each other* but not against
+lock (layers 1+3), which serializes schema mutations against _each other_ but not against
 the rebase, because the rebase takes a different lock.
 
 **Fix direction:** have `withSchemaLock` also take the content-write lock (outermost, to keep
@@ -75,5 +75,5 @@ commit + push), and it takes no content-write lock, so it can race the worker's 
 in the same way the mutators above can. It is not an acute risk today -- the publish
 side is keyed to the pre-rebase sha via `--force-with-lease`, so a colliding push is
 refused rather than silently clobbering -- but it belongs on this list, because it is
-the one place where a racing editor save could actually be *committed* rather than left
+the one place where a racing editor save could actually be _committed_ rather than left
 as dirty working-tree state.
