@@ -1,5 +1,7 @@
 # Future Task: Wire the assets system into docs-site-proto (deferred)
 
+**Adopter-side work, tracked here for visibility. No priority level: the adopter schedules it.**
+
 Status: **deferred by JP 2026-07-22** — the docs-site-proto sandbox deploy is currently
 serving as the real deployment (production deploy not done yet), so its stacks, bucket,
 and distributions must not be touched until production lands and the team is using it.

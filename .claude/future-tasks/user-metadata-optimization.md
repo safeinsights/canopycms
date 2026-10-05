@@ -1,5 +1,10 @@
 # User Metadata Optimization - Bulk Fetching & API Reorganization
 
+**Priority: P2 [BOTH].** Every badge in the Permissions or Groups panels costs one Lambda call plus one
+uncached Clerk `users.getUser` (`canopycms-auth-clerk/src/clerk-plugin.ts`, `getUserMetadata`). Admins use
+those panels on the deployed site, with Clerk rate-limit risk. Absorbs the former
+`user-metadata-caching` task; see "Caching" under Notes.
+
 ## Context
 
 The UserBadge component has been successfully implemented across all 5 components (PermissionManager, GroupManager, BranchManager, CommentsPanel, InlineCommentThread) with 9 total integration points. The current implementation fetches user metadata one-at-a-time via individual API calls to `GET /users/:userId`.
@@ -741,7 +746,15 @@ return { ok: true, status: 200, data: { comments: commentsWithUsers } }
 
 ## Notes
 
-- Caching is intentionally excluded from this document and deferred to a separate task (see `user-metadata-caching.md`)
-- Bulk fetching and caching are complementary - implement bulk fetching first, then add caching layer on top
+- **Caching** (absorbed from the former `user-metadata-caching` task): do bulk fetching first, then add
+  a cache on top.
+  - Client: `editor/hooks/useUserMetadata.ts` is plain `useState`/`useEffect` (one fetch per mount, no
+    TTL, no shared cache, no dedup). The library question is settled: SWR is the editor's data-fetching
+    pattern, so follow the branches/entries/comments hooks (see `editor/hooks/README.md`) rather than
+    adding React Query or a custom cache. That gives request dedup and stale-while-revalidate.
+  - Server: user metadata changes rarely, so a short TTL (suggested 15 minutes) cache in front of the
+    auth plugin's `getUserMetadata` cuts auth-provider load. Keep it per-process and say so in
+    docs/concurrency.md; do not persist it.
+  - Invalidate by TTL expiry; add an explicit `invalidate(userId?)` only if a profile-update path needs it.
 - API reorganization is independent and can be done before or after bulk fetching
 - Embedded metadata is the lowest priority and may not be needed if bulk fetching + caching work well

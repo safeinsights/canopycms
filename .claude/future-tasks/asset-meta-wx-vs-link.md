@@ -2,7 +2,7 @@
 
 Found 2026-08-12 while auditing exclusive-create primitives for the Workstream D
 force-with-lease verification
-([program-d-stack-rebuild.md](program-d-stack-rebuild.md), item 11). Not a bug
+([program-d-stack-rebuild.md](resolved/program-d-stack-rebuild.md), item 11). Not a bug
 report — a deliberate choice that appears to have missed a strictly better
 option.
 
@@ -51,7 +51,7 @@ never considers `link()`, which has neither drawback.
 - An adopter *can* configure the local adapter in prod. On EFS that also puts it
   on NFS, where `wx` (`O_CREAT|O_EXCL`) is the primitive concurrency.md's
   preamble pointedly does **not** list as server-enforced — see item 11 of
-  [program-d-stack-rebuild.md](program-d-stack-rebuild.md) for why that
+  [program-d-stack-rebuild.md](resolved/program-d-stack-rebuild.md) for why that
   distinction matters and is not merely pedantic.
 - It is a documented invariant contradicted in the letter by production code.
   Anyone grepping `wx` after reading concurrency.md will find this and have to
