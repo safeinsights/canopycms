@@ -443,6 +443,8 @@ describe('CanopyCmsService.attachTo: editorAssetPrefix', () => {
     ['/edit-assets/', /trailing '\/'/],
     ['/', /start with '\/'/],
     ['/edit*', /\* or \?/],
+    ['//edit-assets', /'\/\/'/],
+    ['/edit assets', /CloudFront allows/],
     ['/edit', /overlaps/],
     ['/edit/assets', /overlaps/],
     ['/api/canopycms/static', /overlaps/],
@@ -469,6 +471,93 @@ describe('CanopyCmsService.attachTo: editorAssetPrefix', () => {
     )
     expect(() => Template.fromStack(stack)).toThrow(/'\/edit-assets\/\*' behavior is listed before/)
   })
+})
+
+describe('CanopyCmsService.attachTo: previewPrefix', () => {
+  it('routes <prefix> and <prefix>/* to the Lambda with the editor-route options', () => {
+    const { stack, service } = buildStack('PreviewStack')
+    service.attachTo(siteDistribution(stack), {
+      previewPrefix: '/preview',
+      behaviorOverrides: { compress: false },
+    })
+    const template = Template.fromStack(stack)
+    const behaviors = distributionConfig(template).CacheBehaviors!
+
+    expect(behaviors.map((b) => b.PathPattern)).toEqual([
+      ...EDITOR_PATTERNS,
+      '/preview',
+      '/preview/*',
+    ])
+    const [edit] = behaviors
+    for (const preview of behaviors.slice(3)) {
+      expect(preview.TargetOriginId).toBe(edit.TargetOriginId)
+      expect(preview.CachePolicyId).toBe('4135ea2d-6df8-44a3-9df3-4b5a84be39ad')
+      expect(preview.OriginRequestPolicyId).toBe('b689b0a8-53d0-40ab-baf2-68738e2966ac')
+      expect(preview.FunctionAssociations).toEqual(edit.FunctionAssociations)
+      expect(preview.Compress).toBe(false)
+      expectEditorHeaders(template, preview)
+    }
+  })
+
+  it('places the preview routes before the asset prefix when both are set', () => {
+    const { stack, service } = buildStack('PreviewAndAssetsStack')
+    service.attachTo(siteDistribution(stack), {
+      previewPrefix: '/preview',
+      editorAssetPrefix: '/edit-assets',
+    })
+    const patterns = distributionConfig(Template.fromStack(stack)).CacheBehaviors!.map(
+      (b) => b.PathPattern,
+    )
+    expect(patterns).toEqual([...EDITOR_PATTERNS, '/preview', '/preview/*', '/edit-assets/*'])
+  })
+
+  it.each([
+    ['preview', undefined, /start with '\/'/],
+    ['https://site.example.org/preview', undefined, /start with '\/'/],
+    ['/preview/', undefined, /trailing '\/'/],
+    ['/pre*', undefined, /\* or \?/],
+    ['//site.example.org/preview', undefined, /'\/\/'/],
+    ['/pre//view', undefined, /'\/\/'/],
+    ['/pre view', undefined, /CloudFront allows/],
+    ['/pre%20view', undefined, /CloudFront allows/],
+    ['/edit', undefined, /overlaps/],
+    ['/edit/preview', undefined, /overlaps/],
+    ['/api', undefined, /overlaps/],
+    ['/_next', undefined, /overlaps/],
+    ['/assets', undefined, /overlaps/],
+    ['/edit-assets', '/edit-assets', /overlaps '\/edit-assets\/\*'/],
+    ['/edit-assets/preview', '/edit-assets', /overlaps/],
+    ['/p', '/p/assets', /overlaps/],
+  ])('refuses previewPrefix %s (asset prefix %s)', (previewPrefix, editorAssetPrefix, message) => {
+    const { stack, service } = buildStack(
+      `PreviewBad${previewPrefix.replace(/[^A-Za-z0-9]/g, '')}${String(editorAssetPrefix).replace(/[^A-Za-z0-9]/g, '')}Stack`,
+    )
+    expect(() =>
+      service.attachTo(siteDistribution(stack), { previewPrefix, editorAssetPrefix }),
+    ).toThrow(message)
+  })
+
+  it('names the option in its error', () => {
+    const { stack, service } = buildStack('PreviewNameStack')
+    expect(() => service.attachTo(siteDistribution(stack), { previewPrefix: 'preview' })).toThrow(
+      /previewPrefix 'preview'/,
+    )
+  })
+
+  it.each(['/preview*', '/preview'])(
+    'fails synth when an earlier %s behavior shadows the preview route',
+    (pattern) => {
+      const { stack, service } = buildStack(`PreviewShadow${pattern.replace(/\W/g, '')}Stack`)
+      const fnUrlOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(service.functionUrl)
+      service.attachTo(
+        siteDistribution(stack, { additionalBehaviors: { [pattern]: { origin: fnUrlOrigin } } }),
+        { previewPrefix: '/preview' },
+      )
+      expect(() => Template.fromStack(stack)).toThrow(
+        /behavior is listed before the editor's '\/preview/,
+      )
+    },
+  )
 })
 
 describe('CanopyCmsDistribution: editor response headers', () => {

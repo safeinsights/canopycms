@@ -2,6 +2,9 @@
 
 ## Priority: P2 [BOTH]
 
+**RESOLVED 2026-10-05**, branch `feat/cdk-attach-preview-prefix`: `attachTo`'s `previewPrefix`
+option, with the suggested shape below.
+
 ## The gap
 
 `CanopyCmsService.attachTo` (`packages/canopycms-cdk/src/constructs/editor-routing.ts`) routes
