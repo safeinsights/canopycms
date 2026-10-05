@@ -92,6 +92,6 @@ resolves the settings branch through `getBranchContext`.
   branch that someone hand-adds another file to fails closed until that file is removed.
 
 Out-of-scope findings from the review rounds:
-[content-read-settings-branch-500.md](../content-read-settings-branch-500.md) and
+[content-read-settings-branch-500.md](content-read-settings-branch-500.md) and
 [worker-republishes-leaked-settings-branch.md](../worker-republishes-leaked-settings-branch.md).
 

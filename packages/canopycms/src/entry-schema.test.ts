@@ -12,6 +12,7 @@ import {
   RESOLVED_REFERENCE_KEYS,
   type EntryTypesFromRegistry,
   type ResolvedReferenceMeta,
+  type RestrictedReference,
   type TypeFromEntrySchema,
 } from './entry-schema'
 import { validateEntryData } from './validation/entry-validator'
@@ -210,7 +211,8 @@ describe('TypeFromEntrySchema', () => {
         | ({
             name: string
             bio: string
-          } & ResolvedReferenceMeta)
+          } & ResolvedReferenceMeta & { unavailable?: undefined })
+        | RestrictedReference
         | null
       >()
       expectTypeOf<NonNullable<PostContent['author']>['urlPath']>().toEqualTypeOf<string>()
@@ -261,7 +263,8 @@ describe('TypeFromEntrySchema', () => {
         | ({
             name: string
             bio: string
-          } & ResolvedReferenceMeta)
+          } & ResolvedReferenceMeta & { unavailable?: undefined })
+        | RestrictedReference
         | null
       >()
 
@@ -286,7 +289,11 @@ describe('TypeFromEntrySchema', () => {
       type Content = TypeFromEntrySchema<typeof schema>
 
       expectTypeOf<Content['tags']>().toEqualTypeOf<
-        (({ label: string } & ResolvedReferenceMeta) | null)[]
+        (
+          | ({ label: string } & ResolvedReferenceMeta & { unavailable?: undefined })
+          | RestrictedReference
+          | null
+        )[]
       >()
 
       void schema

@@ -8,6 +8,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { invalidateBranchContentCaches } from './content-index-generation'
+import { withContentWriteLock } from './utils/content-write-lock'
 import { filePathExists } from './utils/fs'
 import { isCanopyInternalPath, stageAllExceptCanopyState } from './utils/git'
 
@@ -157,25 +158,55 @@ export interface PushContentToWorkspaceOptions {
   commitMessage?: string
   /** When set, (re)tag the resulting commit as the sync base (used by `sync both` 3-way merges). */
   baseTag?: string
+  /**
+   * When set, uncommitted workspace changes (editor saves) are first committed with this
+   * message, so the content replacement leaves them in history rather than discarding them.
+   */
+  saveEditorStateMessage?: string
 }
 
 /**
  * Copy working-tree content into a branch workspace and commit it. Prompt-free — the interactive CLI
  * (`canopycms sync push`) calls this for the actual copy + commit + tag step.
  *
- * Returns the number of changed files committed (0 when content was already up to date).
+ * [SYNC-C1] Replaces the workspace's content directory wholesale, so it runs under the branch's
+ * content-write lock: an editor save landing mid-swap would go into the directory being discarded.
+ * Rejects with `ContentWriteLockBusyError` when the branch is busy.
+ *
+ * Returns the number of changed files committed (0 when content was already up to date), and
+ * whether uncommitted editor changes were committed first.
  */
 export async function pushContentToWorkspace(
   options: PushContentToWorkspaceOptions,
-): Promise<{ fileCount: number }> {
-  const { srcContentDir, branchPath, contentRoot, commitMessage, baseTag } = options
+): Promise<{ fileCount: number; savedEditorState: boolean }> {
+  const { srcContentDir, branchPath, contentRoot } = options
 
   if (!(await filePathExists(srcContentDir))) {
-    return { fileCount: 0 }
+    return { fileCount: 0, savedEditorState: false }
   }
 
   const wsContentDir = path.join(branchPath, contentRoot)
   assertWithinDir(wsContentDir, branchPath, 'content-root')
+
+  return withContentWriteLock(branchPath, () => replaceWorkspaceContent(options, wsContentDir))
+}
+
+async function replaceWorkspaceContent(
+  options: PushContentToWorkspaceOptions,
+  wsContentDir: string,
+): Promise<{ fileCount: number; savedEditorState: boolean }> {
+  const { srcContentDir, branchPath, commitMessage, baseTag, saveEditorStateMessage } = options
+  const wsGit = simpleGit({ baseDir: branchPath })
+
+  let savedEditorState = false
+  if (saveEditorStateMessage) {
+    const editorChanges = (await wsGit.status()).files.filter((f) => !isCanopyInternalPath(f.path))
+    if (editorChanges.length > 0) {
+      await stageAllExceptCanopyState(wsGit)
+      await wsGit.commit(saveEditorStateMessage)
+      savedEditorState = true
+    }
+  }
 
   // Copy into a temp dir, then atomically swap it into place.
   const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
@@ -193,19 +224,18 @@ export async function pushContentToWorkspace(
   // Done in the finally AFTER the git add/commit below, and staging skips
   // .canopy-meta/, where the marker lives.
   try {
-    const wsGit = simpleGit({ baseDir: branchPath })
     await stageAllExceptCanopyState(wsGit)
     const staged = (await wsGit.status()).files.filter((f) => !isCanopyInternalPath(f.path))
 
     if (staged.length === 0) {
       if (baseTag) await wsGit.tag(['-f', baseTag])
-      return { fileCount: 0 }
+      return { fileCount: 0, savedEditorState }
     }
 
     await wsGit.commit(commitMessage ?? 'sync: update content from working tree')
     if (baseTag) await wsGit.tag(['-f', baseTag])
 
-    return { fileCount: staged.length }
+    return { fileCount: staged.length, savedEditorState }
   } finally {
     await invalidateBranchContentCaches(branchPath)
   }

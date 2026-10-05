@@ -1,6 +1,5 @@
 /**
- * Schema Store - handles reading and writing .collection.json files.
- * All mutations are branch-specific (like content edits).
+ * Schema Store - reads and writes .collection.json files, per branch.
  *
  * ## Concurrency
  *
@@ -16,11 +15,11 @@
  *
  * Protection is instead layer 1 ({@link withLock}) + layer 3
  * ({@link withOccFileLock}) on one COARSE per-branch SURROGATE lock path
- * OUTSIDE the content tree (`{branchRoot}/.canopy-meta/schema`, see
- * `withSchemaLock`), covering every schema mutation on the branch including
- * multi-file ones. Layer 2 (OCC read-back) is skipped, since there's no
- * version field to check; layer 4 (generation marker) guards the schema
- * CACHE separately, not this write path.
+ * OUTSIDE the content tree (`{branchRoot}/.canopy-meta/schema`), covering
+ * every schema mutation including multi-file ones, inside the [SYNC-C1]
+ * content-write lock the worker's rebase also takes (`withBranchSchemaLock`).
+ * Layer 2 (OCC read-back) is skipped, since there's no version field to
+ * check; layer 4 (generation marker) guards the schema CACHE separately.
  *
  * Accepted residual: `deleteBranch` does not take this lock before its
  * recursive `rm`, so an in-flight write can race a concurrent branch
@@ -35,6 +34,11 @@ import { z } from 'zod'
 import { atomicWriteFile } from '../utils/atomic-write'
 import { withLock } from '../utils/async-mutex'
 import { createDebugLogger } from '../utils/debug'
+import {
+  ContentWriteLockBusyError,
+  DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
+  withContentWriteLock,
+} from '../utils/content-write-lock'
 import { getErrorMessage, isNotFoundError } from '../utils/error'
 import { withOccFileLock, OccWriteConflictError } from '../utils/occ-json-write'
 
@@ -175,10 +179,46 @@ const log = createDebugLogger({ prefix: 'SchemaOps' })
  * into a 409 so the editor can retry rather than surfacing a raw 400.
  */
 export class SchemaStoreBusyError extends Error {
-  constructor(message = 'Schema is being modified by another operation, try again') {
+  constructor(
+    message = 'Schema is being modified by another operation, try again',
+    /** As on `ContentWriteLockBusyError`: `'unknown'` means the mutation ran and may have landed. */
+    readonly outcome: 'not-run' | 'unknown' = 'not-run',
+  ) {
     super(message)
     this.name = 'SchemaStoreBusyError'
   }
+}
+
+/**
+ * Run `fn` holding every lock a schema mutation needs on `branchRoot`, in the
+ * global order (docs/concurrency.md, "Lock acquisition order"): the branch's
+ * content-write lock, then the `.canopy-meta/schema` surrogate's in-process
+ * mutex, then its lockfile. Shared with `cli/migrate.ts` so the two cannot
+ * drift.
+ *
+ * NOT re-entrant, and nothing inside `fn` may take the content-write lock
+ * (no `ContentStore` writes): proper-lockfile refuses a second acquisition in
+ * the same process, so a nested one burns its wait and fails busy.
+ *
+ * Errors propagate untranslated: `ContentWriteLockBusyError` (contention, or
+ * a compromise reported after `fn` completed) and `OccWriteConflictError`.
+ */
+export async function withBranchSchemaLock<T>(
+  branchRoot: string,
+  fn: () => Promise<T>,
+  contentWriteLockWaitMs: number = DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
+): Promise<T> {
+  const schemaLockPath = path.join(path.resolve(branchRoot), '.canopy-meta', 'schema')
+  return withContentWriteLock(
+    branchRoot,
+    () => withLock(schemaLockPath, () => withOccFileLock(schemaLockPath, fn)),
+    contentWriteLockWaitMs,
+  )
+}
+
+export interface SchemaOpsOptions {
+  /** Bounded wait for the branch's content-write lock; defaults to `DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS`. */
+  contentWriteLockWaitMs?: number
 }
 
 export class SchemaOps {
@@ -193,14 +233,15 @@ export class SchemaOps {
    * and never match the root collection's logical path).
    */
   private readonly contentRootName: string
-  /** Coarse per-branch surrogate lock path — see the module doc comment. */
-  private readonly schemaLockPath: string
+  /** See SchemaOpsOptions.contentWriteLockWaitMs. */
+  private readonly contentWriteLockWaitMs: number
 
   constructor(
     private readonly contentRoot: string,
     private readonly entrySchemaRegistry: EntrySchemaRegistry,
     private readonly services?: CanopyServices,
     branchRoot?: string,
+    options: SchemaOpsOptions = {},
   ) {
     // Prefer an explicitly supplied branchRoot. Deriving it as dirname(contentRoot)
     // is only correct when config.contentRoot is a single segment, and
@@ -215,21 +256,20 @@ export class SchemaOps {
       .relative(this.branchRoot, resolvedContentRoot)
       .split(path.sep)
       .join('/')
-    this.schemaLockPath = path.join(this.branchRoot, '.canopy-meta', 'schema')
+    this.contentWriteLockWaitMs =
+      options.contentWriteLockWaitMs ?? DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS
   }
 
   /**
-   * Serialize an entire read-modify-write schema mutation behind the coarse
-   * per-branch surrogate lock described in the module doc comment: layer 1
-   * ({@link withLock}, in-process FIFO mutex) wraps layer 3
-   * ({@link withOccFileLock}, cross-process/cross-host mkdir-based mutual
-   * exclusion, immune to NFS attribute caching), same structure as
-   * `BranchMetadataFileManager.save()` in branch-metadata.ts.
+   * Serialize an entire read-modify-write schema mutation behind
+   * {@link withBranchSchemaLock}: the content-write lock, then the surrogate
+   * ({@link withLock} wrapping {@link withOccFileLock}, as in
+   * `BranchMetadataFileManager.save()`).
    *
    * NOT re-entrant — callers must never invoke this from inside a callback
-   * already running under it, or `withLock` deadlocks waiting on itself;
-   * that's why `updateOrderInner` calls `updateCollectionInner` directly
-   * instead of the public `updateCollection`.
+   * already running under it, or the nested acquisition fails busy; that's
+   * why `updateOrderInner` calls `updateCollectionInner` directly instead of
+   * the public `updateCollection`.
    *
    * Phantom-resurrection guard: `branchRoot` can be removed by a concurrent
    * `deleteBranch` between the caller resolving its BranchContext and this
@@ -242,7 +282,13 @@ export class SchemaOps {
    * since `deleteBranch` never takes this lock (see the module doc comment).
    *
    * Translation happens ONLY at this boundary: inner code always sees the
-   * raw {@link OccWriteConflictError} bubble up here untranslated.
+   * raw {@link OccWriteConflictError} bubble up here untranslated, and a
+   * {@link ContentWriteLockBusyError} becomes a `SchemaStoreBusyError` with
+   * its message, so every caller's 409 mapping covers both.
+   *
+   * A content-lock compromise is reported after `fn` completed, so the
+   * mutation is on disk while the caller's post-lock `invalidateSchemaCache()`
+   * never runs; this runs it before throwing.
    */
   private async withSchemaLock<T>(fn: () => Promise<T>): Promise<T> {
     try {
@@ -254,11 +300,36 @@ export class SchemaOps {
       throw err
     }
 
+    let landed = false
     try {
-      return await withLock(this.schemaLockPath, () => withOccFileLock(this.schemaLockPath, fn))
+      return await withBranchSchemaLock(
+        this.branchRoot,
+        async () => {
+          const result = await fn()
+          landed = true
+          return result
+        },
+        this.contentWriteLockWaitMs,
+      )
     } catch (err) {
       if (err instanceof OccWriteConflictError) {
         throw new SchemaStoreBusyError()
+      }
+      if (err instanceof ContentWriteLockBusyError) {
+        if (landed) {
+          await this.invalidateSchemaCache().catch((invalidateErr: unknown) => {
+            log.warn('schema-cache', 'Invalidation after a lost content-write lock failed', {
+              branchRoot: this.branchRoot,
+              error: getErrorMessage(invalidateErr),
+            })
+          })
+        }
+        throw new SchemaStoreBusyError(
+          err.outcome === 'unknown'
+            ? 'This branch was being synced while the schema change was written, so it may or may not have been recorded. Reload before changing the schema again.'
+            : err.message,
+          err.outcome,
+        )
       }
       throw err
     }
@@ -587,7 +658,7 @@ export class SchemaOps {
    * Body of updateCollection, holding the schema lock for its full
    * read-modify-write. Called directly (not via the public `updateCollection`)
    * by `updateOrderInner` for non-root collections — `withSchemaLock` is NOT
-   * re-entrant, so going through the public method there would deadlock.
+   * re-entrant, so going through the public method there would fail busy.
    *
    * `collectionPath` here is always already normalized (content-root prefix
    * stripped, if it had one) by whichever public method reached this — either

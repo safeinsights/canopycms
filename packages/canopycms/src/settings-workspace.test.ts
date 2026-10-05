@@ -18,10 +18,10 @@ import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { initTestRepo } from './test-utils'
+import { initTestRepo, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { GitManager } from './git-manager'
+import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import type { CanopyConfig } from './config'
 
 const baseConfig: Partial<CanopyConfig> = {
@@ -516,8 +516,39 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await git.push('origin', BRANCH)
   }
 
+  /**
+   * A second settings workspace provisioned before the remote had a settings branch. Its empty
+   * initial commit is made distinct: two hosts with one bot identity provisioning in the same
+   * second hash identical commits, which share history and so are not stuck at all.
+   */
+  async function provisionStuckWorkspace(
+    stuckRoot: string,
+    options: { mode: 'dev'; remoteUrl: string; branchName: string },
+  ): Promise<void> {
+    await GitManager.initializeWorkspace({
+      ...options,
+      workspacePath: stuckRoot,
+      baseBranch: 'main',
+      branchType: 'orphan',
+      gitBotAuthorName: 'Other Bot',
+      gitBotAuthorEmail: 'other@canopycms.test',
+    })
+    await simpleGit({ baseDir: stuckRoot }).raw([
+      'commit',
+      '--amend',
+      '--allow-empty',
+      '--no-edit',
+      '--author=Stuck Host <stuck@canopycms.test>',
+      '--date=2001-01-01T00:00:00Z',
+    ])
+  }
+
   async function log(settingsRoot: string): Promise<string[]> {
-    const out = await simpleGit({ baseDir: settingsRoot }).raw(['log', '--format=%s', BRANCH])
+    const out = await simpleGit({ baseDir: settingsRoot }).raw([
+      'log',
+      '--format=%s',
+      `refs/heads/${BRANCH}`,
+    ])
     return out.trim().split('\n')
   }
 
@@ -540,6 +571,54 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await manager.commit('save permissions')
     await manager.push()
     expect(await log(settingsRoot)).toHaveLength(3)
+  }, 60_000)
+
+  it('checks out the remote settings branch, not a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await openBareRepo(remoteUrl).raw(['tag', BRANCH, 'main'])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await log(settingsRoot)).toEqual(['save groups', 'Initialize settings branch'])
+  }, 60_000)
+
+  it('starts a healthy workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+    await simpleGit({ baseDir: settingsRoot }).raw(['tag', BRANCH, 'main'])
+
+    await (await coldStart()).ensureGitWorkspace(options)
+
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
+  it('saves onto the settings branch when the workspace holds a tag of the same name', async () => {
+    const { remoteUrl, settingsRoot, options, coldStart } = await setup()
+    const remote = openBareRepo(remoteUrl)
+    // The clone imports the remote's tag; the remote then drops it.
+    await remote.raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await remote.raw(['tag', '-d', BRANCH])
+
+    const manager = new GitManager({ repoPath: settingsRoot, skipIndexMarker: true })
+    await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), GROUPS)
+    await manager.add('groups.json')
+    await manager.commit('save groups')
+    await manager.push()
+
+    const heads = await remote.raw(['for-each-ref', '--format=%(refname)', 'refs/heads'])
+    expect(heads.split('\n').filter(Boolean).sort()).toEqual([
+      `refs/heads/${BRANCH}`,
+      'refs/heads/main',
+    ])
+    await fs.rename(settingsRoot, `${settingsRoot}.aside`)
+    await (await coldStart()).ensureGitWorkspace(options)
+    expect(await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
   }, 60_000)
 
   it('creates an empty orphan when the remote has no settings branch', async () => {
@@ -572,14 +651,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     const stuckRoot = path.join(tmpRoot, 'stuck')
     // Both provision before either saves; the first save then leaves the other
     // holding only an unrelated "Initialize settings branch" commit.
-    await GitManager.initializeWorkspace({
-      ...options,
-      workspacePath: stuckRoot,
-      baseBranch: 'main',
-      branchType: 'orphan',
-      gitBotAuthorName: 'Other Bot',
-      gitBotAuthorEmail: 'other@canopycms.test',
-    })
+    await provisionStuckWorkspace(stuckRoot, options)
     await (await coldStart()).ensureGitWorkspace(options)
     await saveGroups(settingsRoot)
 
@@ -590,17 +662,23 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await new GitManager({ repoPath: stuckRoot, skipIndexMarker: true }).pullCurrentBranch()
   }, 60_000)
 
+  it('repairs a stuck workspace that also holds a tag named after the settings branch', async () => {
+    const { settingsRoot, options, coldStart } = await setup()
+    const stuckRoot = path.join(tmpRoot, 'stuck')
+    await provisionStuckWorkspace(stuckRoot, options)
+    await simpleGit({ baseDir: stuckRoot }).raw(['tag', BRANCH, 'main'])
+    await (await coldStart()).ensureGitWorkspace(options)
+    await saveGroups(settingsRoot)
+
+    await (await coldStart()).ensureGitWorkspace({ ...options, settingsRoot: stuckRoot })
+
+    expect(await fs.readFile(path.join(stuckRoot, 'groups.json'), 'utf-8')).toBe(GROUPS)
+  }, 60_000)
+
   it('refuses to repair a stuck workspace holding uncommitted settings, and leaves it untouched', async () => {
     const { settingsRoot, options, coldStart } = await setup()
     const stuckRoot = path.join(tmpRoot, 'stuck')
-    await GitManager.initializeWorkspace({
-      ...options,
-      workspacePath: stuckRoot,
-      baseBranch: 'main',
-      branchType: 'orphan',
-      gitBotAuthorName: 'Other Bot',
-      gitBotAuthorEmail: 'other@canopycms.test',
-    })
+    await provisionStuckWorkspace(stuckRoot, options)
     await (await coldStart()).ensureGitWorkspace(options)
     await saveGroups(settingsRoot)
     await fs.writeFile(path.join(stuckRoot, 'permissions.json'), '{"unsaved":true}')
@@ -618,14 +696,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
   it('refuses to repair a stuck workspace holding a commit of its own, and keeps that commit', async () => {
     const { settingsRoot, options, coldStart } = await setup()
     const stuckRoot = path.join(tmpRoot, 'stuck')
-    await GitManager.initializeWorkspace({
-      ...options,
-      workspacePath: stuckRoot,
-      baseBranch: 'main',
-      branchType: 'orphan',
-      gitBotAuthorName: 'Other Bot',
-      gitBotAuthorEmail: 'other@canopycms.test',
-    })
+    await provisionStuckWorkspace(stuckRoot, options)
     await (await coldStart()).ensureGitWorkspace(options)
     await saveGroups(settingsRoot)
     const stuck = simpleGit({ baseDir: stuckRoot })
@@ -744,14 +815,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
   it('reads the base from the remote when the clone was made at an earlier base, and still repairs', async () => {
     const { remoteUrl, settingsRoot, options, coldStart } = await setup()
     const stuckRoot = path.join(tmpRoot, 'stuck')
-    await GitManager.initializeWorkspace({
-      ...options,
-      workspacePath: stuckRoot,
-      baseBranch: 'main',
-      branchType: 'orphan',
-      gitBotAuthorName: 'Other Bot',
-      gitBotAuthorEmail: 'other@canopycms.test',
-    })
+    await provisionStuckWorkspace(stuckRoot, options)
     await (await coldStart()).ensureGitWorkspace(options)
     await saveGroups(settingsRoot)
     // The deployment's base changes after the stuck clone was made at `main`.

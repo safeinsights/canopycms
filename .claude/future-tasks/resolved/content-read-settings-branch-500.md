@@ -1,6 +1,8 @@
 # A content read naming the settings branch answers 500, not 404
 
-## Priority: P3 [BOTH]
+**Status:** RESOLVED 2026-10-05, superseded by the context-read fix
+([context-read-provisions-requested-branch.md](context-read-provisions-requested-branch.md)), by
+reading. **Priority: P3 [BOTH].**
 
 Found 2026-10-05 by review round 1 of the settings-branch-not-content fix; by reading, not run.
 
@@ -13,7 +15,9 @@ same error to null through `loadExistingBranch`.
 
 Nothing is provisioned or read, so this is a status-code inconsistency, not a leak.
 
-**Fix:** in `resolveBranchContext`, rethrow `BranchPathError` as
-`ContentStoreError(…, 'NOT_FOUND')`. Check first whether the context-read fix
-([context-read-provisions-requested-branch.md](context-read-provisions-requested-branch.md))
-already changed this path.
+## Resolution
+
+The context-read fix made `createContentReader` load-only by default and maps any error for which
+`namesNoWorkspace` (`paths/branch.ts`) holds, `BranchPathError` included, to NOT_FOUND;
+`context.ts`'s read resolver goes through `loadExistingBranch`, which does the same. A settings
+name therefore reads as not found on both paths.

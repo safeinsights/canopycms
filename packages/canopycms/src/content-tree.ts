@@ -149,7 +149,7 @@ export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntry
    *
    * Same flag, same default (`false`) and same reasoning as
    * `ListEntriesOptions.resolveReferences` in content-listing.ts — see it for why the default
-   * is opt-in, what it costs, and why path ACLs are not applied to the resolved targets.
+   * is opt-in, what it costs, and how path ACLs apply to the resolved targets.
    */
   resolveReferences?: boolean
 }
@@ -231,7 +231,7 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
   // read once for the entire tree rather than once per collection. Null unless opted in —
   // see the `resolveReferences` option above.
   const resolver = options?.resolveReferences
-    ? createReferenceResolver(branchRoot, flatSchema, contentRootName)
+    ? createReferenceResolver(branchRoot, flatSchema, contentRootName, visibility)
     : null
   const listVisibleEntries = async (
     collection: CollectionSchemaItem,

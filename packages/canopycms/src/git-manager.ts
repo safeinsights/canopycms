@@ -612,7 +612,7 @@ export class GitManager {
    * deleteBranchHandler: a head left in `remote.git` forever makes the
    * create -> publish -> squash-merge -> delete -> reuse-the-name cycle reject
    * the reused branch's first publish non-fast-forward against the stale head
-   * (`GitManager.push()` pushes `branch:branch`, and a squash-merged old tip is
+   * (`GitManager.push()` pushes the branch to the same name, and a squash-merged old tip is
    * not an ancestor of the new branch), and a retried submit then skips the
    * local push on a clean tree and enqueues the worker push of the STALE head,
    * resurrecting the deleted branch's content on GitHub as an apparent success.
@@ -1166,7 +1166,8 @@ export class GitManager {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     try {
-      await this.git.fetch(this.remote, currentBranch)
+      // The full ref: a bare name resolves to a same-named tag first.
+      await this.git.fetch(this.remote, `refs/heads/${currentBranch}`)
     } catch (err) {
       // The only benign failure here: the branch has never been pushed, so the
       // remote has no ref to fetch ("couldn't find remote ref"). Typed so
@@ -1246,9 +1247,11 @@ export class GitManager {
   }
 
   async push(branch?: string): Promise<void> {
-    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    // Explicit refspec (local:remote) so push works for branches not yet in the
-    // remote (e.g. orphan settings branches). Built via raw() rather than the
+    const target = branch ?? (await this.currentBranchName())
+    // Explicit full-ref refspec (local:remote) so push works for branches not
+    // yet in the remote (e.g. orphan settings branches), and a same-named tag
+    // cannot redirect it: a short name for a new remote branch would create
+    // `refs/heads/heads/<name>`. Built via raw() rather than the
     // push() wrapper so `--end-of-options` sits immediately before the
     // positional remote/refspec, guarding against a refspec starting with '-'
     // being parsed as a git option (e.g. --receive-pack=...). Real flags must
@@ -1258,8 +1261,20 @@ export class GitManager {
       '--set-upstream',
       '--end-of-options',
       this.remote,
-      `${target}:${target}`,
+      `refs/heads/${target}:refs/heads/${target}`,
     ])
+  }
+
+  /**
+   * The checked-out branch's plain name. `rev-parse --abbrev-ref HEAD` prints
+   * `heads/<name>` when a same-named tag exists, which is not a branch name.
+   */
+  private async currentBranchName(): Promise<string> {
+    const branches = await this.git.branch()
+    if (branches.detached || !branches.current) {
+      throw new Error(`CanopyCMS: no branch is checked out (detached HEAD) in ${this.repoPath}`)
+    }
+    return branches.current
   }
 
   /**
@@ -1497,16 +1512,16 @@ export class GitManager {
   }
 
   /**
-   * The checked-out local settings branch against the remote's tip. Related
-   * histories are left for the next settings pull to reconcile; only an
-   * unrelated one is acted on here.
+   * Compares the checked-out local settings branch with the remote's tip.
+   * Related histories are left for the next settings pull to reconcile; only
+   * an unrelated one is acted on here.
    */
   private async reconcileLocalSettingsBranch(
     branchName: string,
     remoteTip: string | undefined,
   ): Promise<void> {
     if (!remoteTip) return
-    const localTip = (await this.git.revparse([branchName])).trim()
+    const localTip = (await this.git.revparse([`refs/heads/${branchName}`])).trim()
     if (localTip === remoteTip) return
 
     const fetchedTip = await this.fetchBranchTip(branchName)
@@ -1550,9 +1565,13 @@ export class GitManager {
     return undefined
   }
 
-  /** Fetch `branch` from the remote and return the fetched commit, pinned as pullBaseInner explains. */
+  /**
+   * Fetch `branch` from the remote and return the fetched commit, pinned as
+   * pullBaseInner explains. The full ref: a bare name resolves to a
+   * same-named tag first.
+   */
   private async fetchBranchTip(branch: string): Promise<string> {
-    await this.git.fetch(this.remote, branch)
+    await this.git.fetch(this.remote, `refs/heads/${branch}`)
     return (await this.git.revparse(['FETCH_HEAD'])).trim()
   }
 
@@ -1610,11 +1629,16 @@ export class GitManager {
     return output.split('\n').filter(Boolean)
   }
 
-  /** Whether `branch` is a single parentless commit with an empty tree, as orphan creation leaves it. */
+  /**
+   * Whether `branch` is a single parentless commit with an empty tree, as
+   * orphan creation leaves it. Full refs throughout: a bare name resolves to a
+   * same-named tag first, and clones fetch tags.
+   */
   private async isEmptyInitialBranch(branch: string): Promise<boolean> {
-    const commits = await this.git.raw(['rev-list', '--max-count=2', branch])
+    const ref = `refs/heads/${branch}`
+    const commits = await this.git.raw(['rev-list', '--max-count=2', ref])
     if (commits.split('\n').filter(Boolean).length !== 1) return false
-    const tree = await this.git.raw(['ls-tree', branch])
+    const tree = await this.git.raw(['ls-tree', ref])
     return tree.trim() === ''
   }
 }

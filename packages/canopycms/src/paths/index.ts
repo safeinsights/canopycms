@@ -51,6 +51,7 @@ export {
   getDefaultBranchBase,
   resolveBranchPaths,
   BranchPathError,
+  namesNoWorkspace,
   type BranchPathOptions,
   type BranchPathResult,
 } from './branch'

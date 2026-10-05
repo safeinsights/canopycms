@@ -3,6 +3,11 @@
  *
  * This is the one place that turns the (currently-unconsumed) `media` config
  * into a real store — see .claude/future-tasks/resolved/assets-media-system.md.
+ *
+ * The store is branch-agnostic: a local one is rooted at the dev workspace's
+ * `assets/` or at `media.directory` resolved against the process's working
+ * directory, never inside a branch clone. So asset writes take no [SYNC-C1]
+ * content-write lock — the worker's rebase never touches them.
  */
 
 import type { MediaConfig } from '../config/types'
