@@ -8,6 +8,7 @@ import { getErrorMessage } from './utils/error'
 // or CloudWatch folds it into the previous event. Under Lambda/dev the helper
 // is plain console. See utils/logger.ts.
 import { canopyLogWarn } from './utils/logger'
+import { mergePrSection } from './submission-attribution'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
 
@@ -123,6 +124,7 @@ export interface PullRequestDetails {
   state: 'open' | 'closed'
   merged: boolean
   draft: boolean
+  body: string
 }
 
 export interface CreateOrUpdatePullRequestParams {
@@ -135,6 +137,11 @@ export interface CreateOrUpdatePullRequestParams {
   body: string
   /** Convert a pre-existing draft PR to ready-for-review after updating it. */
   markReadyIfDraft?: boolean
+  /**
+   * `body` is the canopycms PR section: an existing PR keeps the text outside
+   * its section (see mergePrSection) instead of having its body replaced.
+   */
+  mergeSectionIntoBody?: boolean
   /** Forwarded to all GitHub requests (worker task-timeout abort). */
   signal?: AbortSignal
 }
@@ -154,6 +161,7 @@ export async function createOrUpdatePullRequest(
   params: CreateOrUpdatePullRequestParams,
 ): Promise<{ number: number; url: string; created: boolean }> {
   const { octokit, owner, repo, head, base, title, body, markReadyIfDraft, signal } = params
+  const mergeSection = params.mergeSectionIntoBody === true
   // CONDITIONAL spread: with no signal, the request objects below carry no
   // `request` key at all (github-service.test.ts asserts on their exact shape).
   const requestOption = signal ? { request: { signal } } : {}
@@ -185,7 +193,7 @@ export async function createOrUpdatePullRequest(
       repo,
       pull_number: existing.number,
       title,
-      body,
+      body: mergeSection ? mergePrSection(existing.body, body) : body,
       ...requestOption,
     })
 
@@ -297,6 +305,8 @@ export class GitHubService {
     body: string
     /** Convert a pre-existing draft PR to ready-for-review after updating it. */
     markReadyIfDraft?: boolean
+    /** See {@link CreateOrUpdatePullRequestParams.mergeSectionIntoBody}. */
+    mergeSectionIntoBody?: boolean
   }): Promise<{ number: number; url: string }> {
     const result = await createOrUpdatePullRequest({
       octokit: this.octokit,
@@ -307,6 +317,7 @@ export class GitHubService {
       title: options.title,
       body: options.body,
       markReadyIfDraft: options.markReadyIfDraft,
+      mergeSectionIntoBody: options.mergeSectionIntoBody,
     })
     return { number: result.number, url: result.url }
   }
@@ -324,6 +335,7 @@ export class GitHubService {
       state: response.data.state as 'open' | 'closed',
       merged: response.data.merged ?? false,
       draft: response.data.draft ?? false,
+      body: response.data.body ?? '',
     }
   }
 
