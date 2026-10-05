@@ -16,6 +16,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
+import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -539,6 +540,63 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(meta.branch.syncStatus).toBe('synced')
   })
 
+  it('keeps the human text of an existing PR body when the task carries mergeSectionIntoBody', async () => {
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-x')
+    const oldSection = `${PR_SECTION_START}\nold\n${PR_SECTION_END}`
+    const newSection = `${PR_SECTION_START}\nnew\n${PR_SECTION_END}`
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 77,
+          html_url: 'https://github.com/test-owner/test-repo/pull/77',
+          updated_at: '2026-01-01T00:00:00Z',
+          body: `Reviewer notes\n\n${oldSection}`,
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'feature-x',
+        title: 'Submit feature-x',
+        body: newSection,
+        mergeSectionIntoBody: true,
+      },
+    })
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 77, body: `Reviewer notes\n\n${newSection}` }),
+    )
+  })
+
+  it('replaces an existing PR body when the task does not carry mergeSectionIntoBody', async () => {
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-x')
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 77,
+          html_url: 'https://github.com/test-owner/test-repo/pull/77',
+          updated_at: '2026-01-01T00:00:00Z',
+          body: 'Reviewer notes',
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'feature-x', title: 'Submit feature-x', body: 'settings sync' },
+    })
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 77, body: 'settings sync' }),
+    )
+  })
+
   it('creates a new PR on first submit and records its number', async () => {
     const { worker, internals } = makePrWorker()
     await setupBranchDir('feature-new')
@@ -1017,6 +1075,155 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(meta.branch.syncStatus).toBe('sync-failed')
     expect(meta.branch.syncFailureReason).toContain('feature-collision')
     expect(meta.branch.syncFailureReason).toContain('has diverged and needs reconciling')
+  })
+
+  // -------------------------------------------------------------------------
+  // GitHub's refusal of a push that adds workflow content.
+  //
+  // The fixture refuses every ref update from a proc-receive hook that answers
+  // `ng <ref> <reason>` with GitHub's own reason text, so git prints the same
+  // `[remote rejected] (<reason>)` status line it prints against GitHub.
+  // -------------------------------------------------------------------------
+
+  const WORKFLOW_FILE = '.github/workflows/deploy.yml'
+  const WORKFLOW_REFUSAL =
+    'refusing to allow a GitHub App to create or update workflow ' +
+    `\`${WORKFLOW_FILE}\` without \`workflows\` permission`
+
+  /** Make `repo` refuse every pushed ref update the way GitHub refuses new workflow content. */
+  const refuseLikeGitHubWorkflowCheck = async (repo: string) => {
+    const script = `import('node:fs').then(({ readSync, writeSync }) => {
+  let buf = Buffer.alloc(0)
+  const readMore = () => {
+    const chunk = Buffer.alloc(65536)
+    const n = readSync(0, chunk, 0, chunk.length, null)
+    if (n === 0) throw new Error('proc-receive: unexpected EOF')
+    buf = Buffer.concat([buf, chunk.subarray(0, n)])
+  }
+  const readPkt = () => {
+    while (buf.length < 4) readMore()
+    const len = parseInt(buf.subarray(0, 4).toString(), 16)
+    if (len === 0) {
+      buf = buf.subarray(4)
+      return null
+    }
+    while (buf.length < len) readMore()
+    const line = buf.subarray(4, len).toString().replace(/\\n$/, '')
+    buf = buf.subarray(len)
+    return line
+  }
+  const writePkt = (line) => {
+    const data = line + '\\n'
+    writeSync(1, (Buffer.byteLength(data) + 4).toString(16).padStart(4, '0') + data)
+  }
+  while (readPkt() !== null) {}
+  writePkt('version=1')
+  writeSync(1, '0000')
+  const refs = []
+  for (let line; (line = readPkt()) !== null; ) refs.push(line.split(' ')[2])
+  for (const ref of refs) writePkt('ng ' + ref + ' ' + ${JSON.stringify(WORKFLOW_REFUSAL)})
+  writeSync(1, '0000')
+})
+`
+    const scriptPath = path.join(repo, 'hooks', 'proc-receive.cjs')
+    await fs.writeFile(scriptPath, script)
+    // A sh wrapper rather than a node shebang, which the kernel splits at a space in the path.
+    const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+    const hookPath = path.join(repo, 'hooks', 'proc-receive')
+    await fs.writeFile(
+      hookPath,
+      `#!/bin/sh\nexec ${shQuote(process.execPath)} ${shQuote(scriptPath)} "$@"\n`,
+    )
+    await fs.chmod(hookPath, 0o755)
+    await simpleGit({ baseDir: repo, config: ['safe.bareRepository=all'] }).raw([
+      'config',
+      'receive.procReceiveRefs',
+      'refs/heads/',
+    ])
+  }
+
+  it("fails a push-branch task immediately on GitHub's workflow refusal, naming the file on branch metadata", async () => {
+    await seedBranchInRemoteGit('feature-workflow', 'hello')
+    await fs.mkdir(path.join(contentBranchesPath, 'feature-workflow'), { recursive: true })
+    await refuseLikeGitHubWorkflowCheck(githubFixture)
+
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'feature-workflow' },
+    })
+
+    await worker.processTaskQueue()
+
+    const failed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
+    )
+    expect(failed.retryCount).toBe(0)
+    expect(failed.error).toContain(WORKFLOW_FILE)
+    const meta = JSON.parse(
+      await fs.readFile(
+        path.join(contentBranchesPath, 'feature-workflow', '.canopy-meta', 'branch.json'),
+        'utf-8',
+      ),
+    )
+    expect(meta.branch.syncStatus).toBe('sync-failed')
+    expect(meta.branch.syncFailureReason).toContain('"feature-workflow"')
+    expect(meta.branch.syncFailureReason).toContain(WORKFLOW_FILE)
+    expect(meta.branch.syncFailureReason).toContain('not allowed to change workflow files')
+    expect(await fixtureHasBranch('feature-workflow')).toBe(false)
+    expect(consoleSpy).toHaveErrored('Permanently failed (non-retryable error)')
+  })
+
+  it('reports a refused leased push as the workflow refusal, and keeps the marker', async () => {
+    await seedBranchInGitHubFixture('feature-wf-rebased', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/feature-wf-rebased')
+    await seedBranchInRemoteGit('feature-wf-rebased', 'rewritten by the rebase loop')
+    await writeRewriteMarker('feature-wf-rebased', published)
+    await refuseLikeGitHubWorkflowCheck(githubFixture)
+
+    const worker = makePushWorker()
+    const push = (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-wf-rebased')
+
+    await expect(push).rejects.toBeInstanceOf(PermanentTaskError)
+    await expect(push).rejects.toThrow(WORKFLOW_FILE)
+    expect(await shaOf(githubFixture, 'refs/heads/feature-wf-rebased')).toBe(published)
+    expect(await readMarker('feature-wf-rebased')).toBe(published)
+  })
+
+  it('reports a workflow refusal of the plain retry that follows a stale lease', async () => {
+    // GitHub already holds an earlier push, so the zero-sha lease is stale and
+    // the plain fast-forward retry is the push GitHub refuses.
+    await seedBranchInRemoteGit('feature-wf-moved-on', 'rewritten')
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-wf-moved-on:feature-wf-moved-on',
+    ])
+    const landed = await shaOf(githubFixture, 'refs/heads/feature-wf-moved-on')
+    const morePath = path.join(tmpDir, 'more-wf-work')
+    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'feature-wf-moved-on'])
+    const moreGit = simpleGit({ baseDir: morePath })
+    await moreGit.addConfig('user.name', 'Editor')
+    await moreGit.addConfig('user.email', 'editor@canopycms.test')
+    await fs.writeFile(path.join(morePath, 'file.txt'), 'more editor work')
+    await moreGit.add(['file.txt'])
+    await moreGit.commit('more editor work')
+    await moreGit.raw(['push', 'origin', 'feature-wf-moved-on:feature-wf-moved-on'])
+    await writeRewriteMarker('feature-wf-moved-on', '0'.repeat(40))
+    await refuseLikeGitHubWorkflowCheck(githubFixture)
+
+    const worker = makePushWorker()
+    const push = (worker as unknown as PushBranchInternals).pushBranchToGitHub(
+      'feature-wf-moved-on',
+    )
+
+    await expect(push).rejects.toBeInstanceOf(PermanentTaskError)
+    await expect(push).rejects.toThrow(WORKFLOW_FILE)
+    expect(await shaOf(githubFixture, 'refs/heads/feature-wf-moved-on')).toBe(landed)
+    expect(await readMarker('feature-wf-moved-on')).toBe('0'.repeat(40))
   })
 
   // -------------------------------------------------------------------------

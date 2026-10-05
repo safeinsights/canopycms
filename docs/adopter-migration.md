@@ -51,6 +51,20 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### `.canopy-meta/` must not be committed, and System health now says so
+
+**What changed.** The schema cache moved into each branch clone's `.git/canopycms/`. Sync, editor
+submits and `canopycms sync` ignore `.canopy-meta/`, and System health shows the base branch's
+refresh outcome and warns when your repo tracks `.canopy-meta/`.
+
+**To adopt.** If `git ls-files .canopy-meta` lists anything, run `git rm -r --cached .canopy-meta`,
+add `.canopy-meta/` to `.gitignore`, and commit. The base branch's workspace follows by itself; an
+editing branch whose copy of that state changed shows a rebase failure until its workspace is
+repaired or re-created.
+
+**Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit
+or a format check.
+
 ### Path-permission rules now take effect below the content root — **security fix; breaking for a rule written with on-disk names**
 
 **What changed.** Rules match an entry's logical path (`content/blog/my-post`), the form the
@@ -67,6 +81,16 @@ any rule that names an id-suffixed directory or a file extension (`content/blog.
 
 **Now deletable.** A workaround that granted access on the content root because collection grants
 had no effect.
+
+### Submit commits and pull requests name the submitting user
+
+**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
+that re-submits replace, keeping human text.
+
+**To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
+([reference](../README.md#definecanopyconfig-options)).
+
+**Now deletable.** Nothing.
 
 ---
 

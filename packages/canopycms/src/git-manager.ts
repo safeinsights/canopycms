@@ -29,7 +29,12 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { isMissingRemoteRefFailure, isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
+import {
+  isMissingRemoteRefFailure,
+  isNetworkRemoteUrl,
+  resolveBaseBranch,
+  stageAllExceptCanopyState,
+} from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -1124,6 +1129,11 @@ export class GitManager {
     await this.git.add(fileArray)
   }
 
+  /** Stage every working-tree change except canopycms's own state. See {@link stageAllExceptCanopyState}. */
+  async addAllExceptCanopyState(): Promise<void> {
+    await stageAllExceptCanopyState(this.git)
+  }
+
   async commit(message: string): Promise<void> {
     await this.git.commit(message)
   }
@@ -1186,6 +1196,28 @@ export class GitManager {
       await this.git.raw(['rev-list', '--count', `${fetchedTip}..${localSha}`])
     ).trim()
     return aheadCount !== '0'
+  }
+
+  /**
+   * Repo-relative paths that differ between HEAD and its merge base with the
+   * base branch: everything the branch changes, across all of its commits.
+   * Diffs against the just-fetched base tip pinned to a SHA — the pullBaseInner
+   * constraint.
+   */
+  async listChangedPathsSinceBase(): Promise<string[]> {
+    await this.git.raw(['fetch', '--end-of-options', this.remote, this.baseBranch])
+    // `--verify`: without it rev-parse echoes `--end-of-options` back as output.
+    const baseTip = (await this.git.revparse(['--verify', '--end-of-options', 'FETCH_HEAD'])).trim()
+    // -z: NUL-separated and unquoted, so no path needs unescaping.
+    const output = await this.git.raw([
+      'diff',
+      '--name-only',
+      '-z',
+      '--no-renames',
+      `${baseTip}...HEAD`,
+      '--',
+    ])
+    return output.split('\0').filter((p) => p.length > 0)
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {

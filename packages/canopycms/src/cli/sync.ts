@@ -18,6 +18,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
 import { filePathExists } from '../utils/fs'
+import { isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
 import {
   assertWithinDir,
   copyDir,
@@ -183,15 +184,16 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     return { fileCount: 0 }
   }
 
-  if (status.files.length > 0 && !options.force) {
+  const editorChanges = status.files.filter((f) => !isCanopyInternalPath(f.path))
+  if (editorChanges.length > 0 && !options.force) {
     p.log.warn(
-      `Branch workspace has ${status.files.length} uncommitted change(s) that will be committed to history then overwritten:`,
+      `Branch workspace has ${editorChanges.length} uncommitted change(s) that will be committed to history then overwritten:`,
     )
-    for (const file of status.files.slice(0, 10)) {
+    for (const file of editorChanges.slice(0, 10)) {
       p.log.warn(`  ${file.path}`)
     }
-    if (status.files.length > 10) {
-      p.log.warn(`  ... and ${status.files.length - 10} more`)
+    if (editorChanges.length > 10) {
+      p.log.warn(`  ... and ${editorChanges.length - 10} more`)
     }
     const confirm = await p.confirm({
       message: 'Continue? Editor changes will be preserved in git history.',
@@ -204,8 +206,8 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   }
 
   // Auto-commit uncommitted workspace changes to preserve in history
-  if (status.files.length > 0) {
-    await wsGit.add('-A')
+  if (editorChanges.length > 0) {
+    await stageAllExceptCanopyState(wsGit)
     await wsGit.commit('sync: save editor state before push')
     p.log.info('Committed editor changes to history before push')
   }
@@ -392,8 +394,8 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   }
 
   // Auto-commit uncommitted workspace changes (preserves editor work for the merge)
-  if (status.files.length > 0) {
-    await wsGit.add('-A')
+  if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
+    await stageAllExceptCanopyState(wsGit)
     await wsGit.commit('sync: save editor state before merge')
     p.log.info('Committed editor changes before merge')
   }
@@ -431,10 +433,10 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
       throw err
     }
 
-    await wsGit.add('-A')
-    const incomingStatus = await wsGit.status()
+    await stageAllExceptCanopyState(wsGit)
+    const incomingFiles = (await wsGit.status()).files.filter((f) => !isCanopyInternalPath(f.path))
 
-    if (incomingStatus.files.length === 0) {
+    if (incomingFiles.length === 0) {
       await wsGit.checkout(currentBranch)
       await wsGit.raw(['branch', '-D', incomingBranch])
       p.log.info('No working-tree changes to merge — pulling editor changes only')
@@ -481,7 +483,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     p.log.success('Merged working-tree changes with editor changes')
 
     const pullResult = await syncPull({ ...options, branch: branchName, force: true })
-    return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
+    return { pushed: incomingFiles.length, pulled: pullResult.fileCount }
   } finally {
     await invalidateBranchContentCaches(branchPath)
   }

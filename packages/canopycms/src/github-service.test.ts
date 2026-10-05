@@ -8,6 +8,7 @@ import {
 } from './github-service'
 import type { CanopyConfig } from './config'
 import { mockConsole } from './test-utils/console-spy'
+import { PR_SECTION_END, PR_SECTION_START } from './submission-attribution'
 
 describe('GitHubService', () => {
   describe('parseRemoteUrl', () => {
@@ -205,6 +206,96 @@ describe('GitHubService', () => {
           expect.objectContaining({
             draft: true,
           }),
+        )
+      })
+    })
+
+    describe('createOrUpdatePR with mergeSectionIntoBody', () => {
+      const section = `${PR_SECTION_START}\nSubmitted by \`Jane\` via CanopyCMS.\n${PR_SECTION_END}`
+
+      it('creates a PR whose body is the section', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({ data: [] })
+        mockOctokit.pulls.create.mockResolvedValue({
+          data: { number: 42, html_url: 'https://github.com/test-owner/test-repo/pull/42' },
+        })
+
+        await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'T',
+          body: section,
+          mergeSectionIntoBody: true,
+        })
+
+        expect(mockOctokit.pulls.create).toHaveBeenCalledWith(
+          expect.objectContaining({ body: section }),
+        )
+      })
+
+      it('replaces only the section of an existing PR body', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+              body: `Human intro\n\n${PR_SECTION_START}\nold\n${PR_SECTION_END}\n\nHuman outro`,
+            },
+          ],
+        })
+
+        await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'T',
+          body: section,
+          mergeSectionIntoBody: true,
+        })
+
+        expect(mockOctokit.pulls.update).toHaveBeenCalledWith(
+          expect.objectContaining({ body: `Human intro\n\n${section}\n\nHuman outro` }),
+        )
+      })
+
+      it('appends the section to an existing body that has none, and to a null body', async () => {
+        mockOctokit.pulls.list.mockResolvedValueOnce({
+          data: [{ number: 7, html_url: 'u', updated_at: '2026-01-01T00:00:00Z', body: 'Notes' }],
+        })
+        await service.createOrUpdatePR({
+          head: 'b',
+          base: 'main',
+          title: 'T',
+          body: section,
+          mergeSectionIntoBody: true,
+        })
+        expect(mockOctokit.pulls.update).toHaveBeenLastCalledWith(
+          expect.objectContaining({ body: `Notes\n\n${section}` }),
+        )
+
+        mockOctokit.pulls.list.mockResolvedValueOnce({
+          data: [{ number: 7, html_url: 'u', updated_at: '2026-01-01T00:00:00Z', body: null }],
+        })
+        await service.createOrUpdatePR({
+          head: 'b',
+          base: 'main',
+          title: 'T',
+          body: section,
+          mergeSectionIntoBody: true,
+        })
+        expect(mockOctokit.pulls.update).toHaveBeenLastCalledWith(
+          expect.objectContaining({ body: section }),
+        )
+      })
+
+      it('replaces the whole body when the flag is not set', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [{ number: 7, html_url: 'u', updated_at: '2026-01-01T00:00:00Z', body: 'Notes' }],
+        })
+
+        await service.createOrUpdatePR({ head: 'b', base: 'main', title: 'T', body: section })
+
+        expect(mockOctokit.pulls.update).toHaveBeenCalledWith(
+          expect.objectContaining({ body: section }),
         )
       })
     })
@@ -467,7 +558,23 @@ describe('GitHubService', () => {
           state: 'open',
           merged: false,
           draft: false,
+          body: '',
         })
+      })
+
+      it('returns the PR body', async () => {
+        mockOctokit.pulls.get.mockResolvedValue({
+          data: {
+            number: 123,
+            html_url: 'https://github.com/test-owner/test-repo/pull/123',
+            state: 'open',
+            merged: false,
+            draft: false,
+            body: 'Human text',
+          },
+        })
+
+        expect((await service.getPullRequest(123)).body).toBe('Human text')
       })
     })
 
