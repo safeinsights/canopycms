@@ -11,6 +11,7 @@ import {
   GitManager,
   GitConflictError,
   GitRemoteRefMissingError,
+  RemoteNotReadyError,
   gitChildEnv,
   gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
@@ -758,6 +759,43 @@ describe('GitManager.resolveRemoteUrl', () => {
       })
 
       expect(result).toBeUndefined()
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
+  it('initializeWorkspace throws RemoteNotReadyError in prod mode until the worker creates remote.git', async () => {
+    const workspaceRoot = path.join(tmpDir, 'booting-workspace')
+    await fs.mkdir(workspaceRoot, { recursive: true })
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const err = await GitManager.initializeWorkspace({
+        workspacePath: path.join(tmpDir, 'clone-target'),
+        branchName: 'main',
+        mode: 'prod',
+        baseBranch: 'main',
+        branchType: 'content',
+        gitBotAuthorName: 'Bot',
+        gitBotAuthorEmail: 'bot@example.com',
+      }).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(RemoteNotReadyError)
+      expect((err as RemoteNotReadyError).expectedRemotePath).toBe(
+        path.join(workspaceRoot, 'remote.git'),
+      )
+      expect((err as RemoteNotReadyError).message).toContain('CANOPYCMS_REMOTE_URL')
     } finally {
       if (origWorkspace !== undefined) {
         process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
