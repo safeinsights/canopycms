@@ -23,7 +23,7 @@ import {
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import { parseSlug, type Slug, type PhysicalPath } from '../paths'
+import { entryLogicalPath, parseSlug, type Slug } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
@@ -181,13 +181,12 @@ const readContentHandler = async (
 
   let schemaItem: FlatSchemaItem
   let slug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -196,7 +195,7 @@ const readContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
     'read',
   )
@@ -233,13 +232,12 @@ const writeContentHandler = async (
 
   let schemaItem: FlatSchemaItem
   let slug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -248,7 +246,7 @@ const writeContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
     'edit',
   )
@@ -599,13 +597,13 @@ const validateReferencesHandler = async (
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   let schemaItem: FlatSchemaItem
-  let relativePath: PhysicalPath
+  let slug: Slug
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
-    const slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    slug = resolved.slug
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -614,7 +612,7 @@ const validateReferencesHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
     'read',
   )
@@ -686,13 +684,12 @@ const renameEntryHandler = async (
 
   let schemaItem: FlatSchemaItem
   let currentSlug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     currentSlug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, currentSlug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, currentSlug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -701,11 +698,22 @@ const renameEntryHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, currentSlug),
     req.user,
     'edit',
   )
   if (!access.allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
+  // A rename creates the entry at its new path, so that path needs edit access too.
+  const destinationAccess = await ctx.services.checkContentAccess(
+    branchContext,
+    branchContext.branchRoot,
+    entryLogicalPath(schemaItem.logicalPath, body.newSlug),
+    req.user,
+    'edit',
+  )
+  if (!destinationAccess.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 

@@ -3,7 +3,7 @@ import nodePath from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex, IdLocation } from './content-id-index'
 import { extractSlugFromFilename, extractEntryTypeFromFilename } from './content-id-index'
-import type { LogicalPath, PhysicalPath, Slug } from './paths'
+import { entryLogicalPath, type LogicalPath, type PhysicalPath, type Slug } from './paths'
 
 export interface ResolvedReference {
   id: string
@@ -71,7 +71,7 @@ export class ReferenceResolver {
    * At least one of `collections` or `entryTypes` should be provided.
    *
    * @param canAccess - Optional permission predicate, called with each candidate's
-   *   relative path before it is read. Returning false skips the entry entirely --
+   *   logical path (`entryLogicalPath`) before it is read. Returning false skips the entry entirely --
    *   no file I/O, no label, no option -- so a caller who can't read a path never
    *   triggers a read for content they won't be allowed to see anyway.
    */
@@ -80,7 +80,7 @@ export class ReferenceResolver {
     displayField = 'title',
     search?: string,
     entryTypes?: string[],
-    canAccess?: (relativePath: PhysicalPath) => boolean,
+    canAccess?: (logicalPath: LogicalPath) => boolean,
   ): Promise<ReferenceOption[]> {
     const options: ReferenceOption[] = []
 
@@ -113,7 +113,7 @@ export class ReferenceResolver {
     for (const location of candidates) {
       if (!location.collection || !location.slug) continue
       // Skip denied paths before any file I/O.
-      if (canAccess && !canAccess(location.relativePath)) continue
+      if (canAccess && !canAccess(entryLogicalPath(location.collection, location.slug))) continue
 
       const id = this.idIndex.findByPath(location.relativePath)
       if (!id) continue

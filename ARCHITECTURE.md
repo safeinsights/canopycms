@@ -385,7 +385,7 @@ Neither grant widens anything separately gated: `canPerformWorkflowAction` disab
 
 ### Layer 2: Path Permissions
 
-Glob patterns (e.g. `content/posts/**`) restrict who can edit which content paths. First matching rule wins, and only admins bypass path rules.
+Glob patterns over logical paths (e.g. `content/posts/**`, never the id-suffixed on-disk names) restrict who can edit which content paths. First matching rule wins, and only admins bypass path rules.
 
 **Level-scoped defaults**: `defaultPathAccess` — the verdict when no rule matches — takes either a single value for every permission level or an object scoped per level, e.g. `{ read: 'allow' }`. That lets a `deployedAs: 'server'` site declare public read while edit and review stay deny-by-default, which is the primary case: a CMS-served site that is also publicly readable without auth. **Any level left unspecified in the object form resolves to `deny`**, so scoping read access can never loosen edit or review by omission.
 
