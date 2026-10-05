@@ -26,12 +26,12 @@ describe('sanitizeDisplayName', () => {
   it('folds newlines, carriage returns and Unicode line separators into one line', () => {
     expect(sanitizeDisplayName('Jane\nSigned-off-by: Mallory')).toBe('Jane Signed-off-by: Mallory')
     expect(sanitizeDisplayName('Jane\r\n\r\nEdited-by: x')).toBe('Jane Edited-by: x')
-    expect(sanitizeDisplayName('Jane Edited-by: x y')).toBe('Jane Edited-by: x y')
+    expect(sanitizeDisplayName('Jane\u2028Edited-by: x\u2029y')).toBe('Jane Edited-by: x y')
   })
 
   it('strips control, zero-width and bidi-override characters', () => {
     expect(sanitizeDisplayName('Ja\u0000ne\u0007 \u001bDoe')).toBe('Ja ne Doe')
-    expect(sanitizeDisplayName('Jane​‮eoD')).toBe('Jane eoD')
+    expect(sanitizeDisplayName('Jane\u200b\u202eeoD')).toBe('Jane eoD')
   })
 
   it('removes characters that carry structure in trailers, HTML and code spans', () => {
@@ -54,7 +54,7 @@ describe('sanitizeDisplayName', () => {
 
   it('returns undefined for a missing or all-whitespace name', () => {
     expect(sanitizeDisplayName(undefined)).toBeUndefined()
-    expect(sanitizeDisplayName(' \n\t​ ')).toBeUndefined()
+    expect(sanitizeDisplayName(' \n\t\u200b ')).toBeUndefined()
     expect(sanitizeDisplayName('<>()')).toBeUndefined()
   })
 })
