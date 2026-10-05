@@ -54,21 +54,24 @@ In-process harness (appendix): the real prod-mode handler, real `createCanopySer
 default `getBranchContext`, real git, against a temp workspace on local APFS. The content is the
 example app's plus 200 generated posts (224 entries). fs calls and git spawns are counted by
 wrapping `fs`, `fs/promises` and `child_process.spawn` before anything loads. Medians of 3 runs
-× 2 users (bootstrap admin, plain editor) × 2 repeats. The machine was shared with other sessions,
-so single samples are noisy (±50 ms); the counts are deterministic.
+× 2 users (bootstrap admin, plain editor) × 2 repeats. Wall times vary with machine load; the
+counts are deterministic.
 
 | Endpoint (warm)          | Before: wall | of which `settingsRoot` | git spawns | fs calls | After: wall | git | fs |
 | ------------------------ | -----------: | ----------------------: | ---------: | -------: | ----------: | --: | -: |
-| `whoami`                 |       479 ms |                  478 ms |         12 |       19 |        4 ms |   0 |  3 |
-| `:branch/schema` (hit)   |       584 ms |                  563 ms |         12 |       22 |       22 ms |   0 |  6 |
-| `:branch/entries`        |      1232 ms |                 1172 ms |         24 |      102 |       84 ms |   0 | 70 |
-| `:branch/content` GET    |      1096 ms |                 1066 ms |         24 |       68 |       86 ms |   0 | 36 |
-| `:branch/content` PUT    |      1157 ms |                 1073 ms |         24 |       81 |      156 ms |   0 | 49 |
-| `:branch/comments`       |       571 ms |                  554 ms |         12 |       21 |        7 ms |   0 |  5 |
-| `branches`               |       576 ms |                  561 ms |         12 |       21 |        9 ms |   0 |  5 |
-| `:branch/status`         |       630 ms |                  610 ms |         12 |       20 |       17 ms |   0 |  4 |
-| `branches` POST (create) |      1674 ms |                  569 ms |         25 |       74 |     1360 ms |  13 | 58 |
-| first request (cold)     |      1442 ms |                  771 ms |         21 |       58 |     1623 ms |  21 | 58 |
+| `whoami`                 |       366 ms |                  365 ms |         12 |       19 |        1 ms |   0 |  3 |
+| `:branch/schema` (hit)   |       364 ms |                  361 ms |         12 |       22 |        5 ms |   0 |  6 |
+| `:branch/entries`        |       713 ms |                  698 ms |         24 |      102 |       13 ms |   0 | 70 |
+| `:branch/content` GET    |       690 ms |                  673 ms |         24 |       68 |       15 ms |   0 | 36 |
+| `:branch/content` PUT    |       710 ms |                  698 ms |         24 |       81 |       27 ms |   0 | 49 |
+| `:branch/comments`       |       351 ms |                  350 ms |         12 |       21 |        2 ms |   0 |  5 |
+| `branches`               |       364 ms |                  363 ms |         12 |       21 |        2 ms |   0 |  5 |
+| `:branch/status`         |       353 ms |                  350 ms |         12 |       20 |        1 ms |   0 |  4 |
+| `branches` POST (create) |      1279 ms |                  398 ms |         25 |       74 |      898 ms |  13 | 58 |
+| first request (cold)     |      1196 ms |                  613 ms |         21 |       58 |     1348 ms |  21 | 58 |
+
+Both columns come from back-to-back runs on a quiet machine. An earlier pair, taken under load,
+had the same shape at roughly 1.5× the wall times.
 
 "Before" is int-202610-a plus the instrumentation; "after" adds the memo. The cold row clones
 both the base-branch and settings workspaces, and branch create clones its workspace; both are
@@ -85,7 +88,7 @@ finishes, so nothing remembered success. Per call (measured, argv captured):
 `branch -v -a`, `checkout <settings branch>` (12 git subprocesses), plus a cross-host
 proper-lockfile acquire/release (mkdir, stat, rmdir, refresh timer) and ~10 more fs calls. Routes
 that build a content-access checker (`entries`, `content` GET/PUT) call it a second time, so 24
-spawns. Locally that is 95–99% of every warm request.
+spawns. Locally that is 96–99% of every warm request.
 
 On Lambda + EFS (reasoned, not measured): each git subprocess is a process spawn plus git
 reading `.git/config`, `HEAD`, refs and the index over NFS, so tens of NFS round trips. At 50–150
@@ -94,9 +97,11 @@ ms each, 12 spawns come to 0.6–1.8 s per call, which is consistent with the de
 2.27 s, not about 4 s. The deployed breakdown will settle that.
 
 **Fix:** `fix/settings-workspace-ensure-once` remembers each (settings root, branch name) a
-process has fully ensured, and a hit costs one `stat` of `.git`. The groups and permissions
+process has fully ensured, and a hit costs one read of `.git/HEAD` (checked against the settings
+branch). Only a process's first request still takes the cross-host init lock (measured: 4 lock
+ops on the first request, 0 after). The groups and permissions
 files are still read every request; a different branch name still runs the rename guard; a
-workspace moved aside re-provisions. Documented in docs/concurrency.md ("Settings workspace init").
+workspace removed, re-cloned onto another branch, or caught mid-provisioning re-provisions. Documented in docs/concurrency.md ("Settings workspace init").
 
 ### 2. Cross-container queueing on the settings init lock (reasoned; same fix)
 
