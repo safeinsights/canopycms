@@ -258,7 +258,9 @@ function generateClientCode(namespaces: NamespaceRoutes[]): string {
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
+import { readApiTrailingSlashEnv } from './request-url'
 import type { ApiResponse } from './types'
+import { withTrailingSlash } from '../utils/url-prefix'
 
 ${responseTypeImports}
 
@@ -268,6 +270,12 @@ export interface ApiClientOptions {
   baseUrl?: string
   /** Custom fetch implementation, e.g. a mock in tests. */
   fetch?: typeof fetch
+  /**
+   * End request paths with \`/\` (by \`withTrailingSlash\`'s rule), matching a Next host built with
+   * \`trailingSlash: true\`. Defaults to the value \`withCanopy\` inlines at build time (see
+   * \`request-url.ts\`), else false.
+   */
+  trailingSlash?: boolean
 
   /**
    * Called whenever a response comes back 401: the credential is no longer accepted. A
@@ -289,6 +297,7 @@ export interface ApiClientOptions {
 export class CanopyApiClient {
   private baseUrl: string
   private fetchFn: typeof fetch
+  private trailingSlash: boolean
   private onUnauthorized: (() => void) | undefined
 
 ${namespacesCode}
@@ -297,6 +306,7 @@ ${namespacesCode}
     this.baseUrl = options.baseUrl ?? '/api/canopycms'
     // An unbound fetch throws "Illegal invocation" in browsers; Node has no window.
     this.fetchFn = options.fetch ?? (typeof window !== 'undefined' ? fetch.bind(window) : fetch)
+    this.trailingSlash = options.trailingSlash ?? readApiTrailingSlashEnv()
     this.onUnauthorized = options.onUnauthorized
   }
 
@@ -338,7 +348,7 @@ ${namespacesCode}
     body?: unknown,
     headers: Record<string, string> = {}
   ): Promise<T> {
-    const url = \`\${this.baseUrl}\${path}\`
+    const url = \`\${this.baseUrl}\${this.trailingSlash ? withTrailingSlash(path) : path}\`
 
     const requestHeaders: Record<string, string> = {
       ...headers,

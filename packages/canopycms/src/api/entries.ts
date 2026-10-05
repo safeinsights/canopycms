@@ -12,7 +12,7 @@ import {
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
-import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
+import { entryLogicalPath, normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { createDebugLogger } from '../utils/debug'
 import { resolveEntryTitle } from '../utils/title-field'
@@ -181,14 +181,14 @@ const filterWithAccessControl = (
 ): CollectionItem[] => {
   const results: CollectionItem[] = []
   for (const item of items) {
-    const readAccess = checkAccess(item.physicalPath, 'read')
+    const readAccess = checkAccess(item.logicalPath, 'read')
     if (!readAccess.allowed) continue
     if (search) {
       const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
       if (!haystack.includes(search)) continue
     }
     // Compute edit access only for items that survive the read + search filters.
-    const editAccess = checkAccess(item.physicalPath, 'edit')
+    const editAccess = checkAccess(item.logicalPath, 'edit')
     results.push({ ...item, canEdit: editAccess.allowed })
   }
   return results
@@ -399,11 +399,9 @@ const deleteEntryHandler = async (
   }
   const entrySlug = slugResult.slug
 
-  // Resolve the real physical path before checking permissions
-  let physicalPath: PhysicalPath
+  // Resolution runs the store's slug and traversal checks before the permission check.
   try {
-    const resolved = await contentStore.resolveDocumentPath(collectionLogicalPath, entrySlug)
-    physicalPath = resolved.relativePath
+    await contentStore.resolveDocumentPath(collectionLogicalPath, entrySlug)
   } catch (err) {
     if (isNotFoundError(err)) {
       return { ok: false, status: 404, error: 'Entry not found' }
@@ -419,7 +417,7 @@ const deleteEntryHandler = async (
   const editAccess = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    physicalPath,
+    entryLogicalPath(collection.logicalPath, entrySlug),
     req.user,
     'edit',
   )

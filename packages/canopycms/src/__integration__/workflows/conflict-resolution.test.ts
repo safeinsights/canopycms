@@ -148,11 +148,14 @@ describe('Conflict Resolution Integration', () => {
     )
 
     expect(write1.status).toBe(200)
+    const write1Version = (write1.body as ApiResponse<{ version?: number }>).data?.version
+    expect(typeof write1Version).toBe('number')
 
-    // Write again to same file (should succeed with overwrite)
+    // Write again to the same file, carrying the version the first write returned
     const write2 = await editor1Client.put(
       '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
       {
+        expectedVersion: write1Version,
         format: 'mdx',
         data: {
           title: 'Test Post Updated',
