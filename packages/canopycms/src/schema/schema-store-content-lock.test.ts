@@ -186,6 +186,7 @@ describe('SchemaOps under the content-write lock [SYNC-C1]', () => {
 
     expect(err).toBeInstanceOf(SchemaStoreBusyError)
     expect((err as Error).message).toMatch(/may or may not/)
+    expect((err as SchemaStoreBusyError).outcome).toBe('unknown')
     // The mutation is on disk, so readers must be told the schema changed.
     const meta = await ops.readCollectionMeta(POSTS)
     expect(meta?.label).toBe('Landed')

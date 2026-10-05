@@ -179,7 +179,11 @@ const log = createDebugLogger({ prefix: 'SchemaOps' })
  * into a 409 so the editor can retry rather than surfacing a raw 400.
  */
 export class SchemaStoreBusyError extends Error {
-  constructor(message = 'Schema is being modified by another operation, try again') {
+  constructor(
+    message = 'Schema is being modified by another operation, try again',
+    /** As on `ContentWriteLockBusyError`: `'unknown'` means the mutation ran and may have landed. */
+    readonly outcome: 'not-run' | 'unknown' = 'not-run',
+  ) {
     super(message)
     this.name = 'SchemaStoreBusyError'
   }
@@ -320,7 +324,7 @@ export class SchemaOps {
             })
           })
         }
-        throw new SchemaStoreBusyError(err.message)
+        throw new SchemaStoreBusyError(err.message, err.outcome)
       }
       throw err
     }
