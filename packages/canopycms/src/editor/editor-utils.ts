@@ -99,7 +99,7 @@ const buildPreviewRoute = (
   }
   const [basePathPart, suffix] = splitPathSuffix(base)
   const trimmed = stripTrailingSlashes(basePathPart)
-  return `${encoded ? `${trimmed}/${encoded}` : trimmed || '/'}${suffix}`
+  return `${encoded ? `${trimmed}/${encoded}` : basePathPart || '/'}${suffix}`
 }
 
 /**

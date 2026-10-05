@@ -293,6 +293,24 @@ describe('buildPreviewSrc', () => {
       expect(absolute(false, 'https://other.example.com/about/', 'content')).toBe(
         'https://other.example.com/about/?branch=main',
       )
+      expect(
+        prefixed(
+          { collectionPath: 'content/docs', slug: 'index' },
+          {
+            previewBaseByCollection: { 'content/docs': 'https://other.example.com/docs/' },
+            trailingSlash: true,
+          },
+        ),
+      ).toBe('https://other.example.com/docs/?branch=main')
+    })
+
+    it('neutralizes a previewBase that only reads as same-origin, then prefixes it', () => {
+      expect(
+        prefixed(
+          { collectionPath: 'content/posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '/\\evil.example.com/x' } },
+        ),
+      ).toBe('/preview/x/hello?branch=main')
     })
 
     it('puts the basePath in front of the prefix', () => {
