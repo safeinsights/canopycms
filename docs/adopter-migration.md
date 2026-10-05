@@ -63,11 +63,11 @@ be deliberate anywhere; the editor's own preview is same-origin and unaffected. 
 [Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
 
 **To adopt.** If you wired the Function URL into your own distribution by hand, delete those
-behaviors and call `attachTo`; synth fails while a hand-wired `/edit*` or `/api/*` still sits ahead
-of it. Take the editor routes out of any HTTP Basic-auth gate, and read the synth warning if your
+behaviors and call `attachTo`, passing your CMS build's `assetPrefix` as `editorAssetPrefix`; synth
+fails while a hand-wired `/edit*`, `/api/*` or asset-prefix behavior still sits ahead of it. Take the editor routes out of any HTTP Basic-auth gate, and read the synth warning if your
 distribution has custom error responses.
 
-**Now deletable.** Hand-wired `/edit*` and API behaviors, the origin, OAC and `x-forwarded-host`
+**Now deletable.** Hand-wired `/edit*`, API and asset-prefix behaviors, the origin, OAC and `x-forwarded-host`
 function made for them, and any response-headers policy added only to stop framing.
 
 ### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**

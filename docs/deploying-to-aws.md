@@ -366,7 +366,7 @@ Clerk's OAuth popups.
 Attach the editor rather than wiring the Function URL by hand:
 
 ```ts
-cmsService.attachTo(siteDistribution)
+cmsService.attachTo(siteDistribution, { editorAssetPrefix: '/edit-assets' })
 assetSupport.attachTo(siteDistribution) // if you use AssetSupport
 ```
 
@@ -374,8 +374,12 @@ It appends `/edit`, `/edit/*` and `/api/canopycms/*` (not `/edit*`, which matche
 `/editorial`), configured like `CanopyCmsDistribution`'s default behavior.
 `behaviorOverrides` applies to all three; a `viewerRequestFunction` replaces the
 `x-forwarded-host` function and must set that header itself. Synth fails if an
-earlier behavior matches an editor route. The site's `/_next/static/*` must also
-serve the CMS build's chunks, which the editor page loads.
+earlier behavior matches an editor route.
+
+Set Next's `assetPrefix` to the same value in the CMS build's `next.config` only
+(e.g. under `CANOPY_BUILD === 'cms'`). Without it the editor loads its chunks from
+`/_next/static/*`, which the site serves, and they 404; with it, `attachTo` routes
+`/edit-assets/*` to the Lambda with a year-long cache.
 
 **Custom error responses** are distribution-wide, so a site's "404 → `/404.html`" also
 replaces the API's JSON errors and the editor reports "Unexpected response from
