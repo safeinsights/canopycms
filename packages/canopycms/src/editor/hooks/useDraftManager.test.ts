@@ -1496,9 +1496,18 @@ describe('useDraftManager', () => {
       expect(result.current.isAnyDirty()).toBe(true)
       expect(readPersistedDrafts('main')).toHaveProperty(otherEntry.contentId)
       // A failed read must not hold callers waiting for the full cap.
-      await act(async () => {
-        await result.current.whenDraftsVerified()
-      })
+      vi.useFakeTimers()
+      try {
+        let settled = false
+        const pending = result.current.whenDraftsVerified().then(() => {
+          settled = true
+        })
+        await vi.advanceTimersByTimeAsync(100)
+        expect(settled).toBe(true)
+        await pending
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('reads each unverified draft once, at most four at a time', async () => {
@@ -1547,10 +1556,16 @@ describe('useDraftManager', () => {
       expect(result.current.isAnyDirty()).toBe(true)
     })
 
-    it('drops a read that settles after the branch changed', async () => {
-      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
-      let release: (value: unknown) => void = () => {}
-      mockReadEntryValue.mockReturnValue(new Promise((resolve) => (release = resolve)))
+    it('ignores a read that settles after the branch changed, even for the same contentId', async () => {
+      // The same contentId exists on every branch. The late `main` read equals the
+      // draft the `feature` branch restored, so an unguarded settle would delete it.
+      const featureDraft = { title: 'Feature edit' }
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Main draft' } })
+      storeDrafts('feature', { [otherEntry.contentId]: featureDraft })
+      let releaseMain: (value: unknown) => void = () => {}
+      mockReadEntryValue
+        .mockReturnValueOnce(new Promise((resolve) => (releaseMain = resolve)))
+        .mockResolvedValue({ title: 'Feature server' })
 
       const { result, rerender } = renderHook((props) => useDraftManager(props), {
         initialProps: verifyOptions,
@@ -1558,15 +1573,19 @@ describe('useDraftManager', () => {
       await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(1))
 
       rerender({ ...verifyOptions, branchName: 'feature' })
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(2))
+      await flush()
       await act(async () => {
-        release({ title: 'Server title' })
+        releaseMain({ title: 'Feature edit' })
       })
       await flush()
 
-      expect(result.current.drafts).toEqual({})
+      expect(result.current.drafts).toEqual({ [otherEntry.contentId]: featureDraft })
+      expect(result.current.isAnyDirty()).toBe(true)
+      expect(readPersistedDrafts('feature')).toEqual({ [otherEntry.contentId]: featureDraft })
       // The old branch's drafts are untouched in its own storage.
       expect(readPersistedDrafts('main')).toEqual({
-        [otherEntry.contentId]: { title: 'Server title' },
+        [otherEntry.contentId]: { title: 'Main draft' },
       })
     })
 
