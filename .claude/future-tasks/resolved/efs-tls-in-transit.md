@@ -4,7 +4,7 @@
 `WorkspaceAP` access point at `/mnt/efs`, as the Lambda does, so that git paths one
 process writes on EFS resolve for the other; efs-utils requires `tls` for an access-point
 mount, so both the boot mount and the fstab line now carry it. Verified by the next
-testing-dev deploy.
+deploy of that change.
 
 Flagged by PR #141 review (LOW).
 
