@@ -131,7 +131,7 @@ const showDeleteConfirmation = (
  */
 export const CREATED_BRANCH_GRACE_MS = 120_000
 
-/** A branch this session created, with the latest copy any listing has shown. */
+/** A branch this session created: the create response's copy until a listing shows a newer one. */
 interface PendingBranch {
   branch: BranchListItem
   addedAt: number
@@ -282,8 +282,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     })
   }
 
-  // Runs once per listing received (see `BranchesData.receivedAt`), measuring
-  // the grace window to that listing's arrival.
+  // Each received listing is a new `branchesData` (see `BranchesData.receivedAt`);
+  // the grace window is measured to its arrival.
   useEffect(() => {
     if (!branchesData) return
     setPendingBranches((prev) =>

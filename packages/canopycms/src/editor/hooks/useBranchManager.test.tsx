@@ -578,7 +578,7 @@ describe('useBranchManager', () => {
 
       const copies = result.current.branches.filter((b) => b.name === 'new-branch')
       expect(copies).toEqual([serverCopy])
-      // Not even transiently, between the listing landing and the pending entry being dropped.
+      // Not even transiently, between the listing landing and the pending copy being replaced.
       const listedRenders = renders.filter((list) =>
         list.some((b) => b.name === 'new-branch' && b.status === 'submitted'),
       )

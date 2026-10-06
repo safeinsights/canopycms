@@ -26,9 +26,9 @@ export interface BranchesData {
   branches: BranchListItem[]
   defaultBranch?: string
   /**
-   * Client clock when this listing arrived. Distinct per fetch, so every
-   * listing is a new `data` value even when its branches are unchanged, while
-   * a failed fetch (SWR keeps the previous `data`) changes nothing.
+   * Client clock when this listing arrived. It makes listings fetched at
+   * different moments distinct `data` values even when their branches match,
+   * while a failed fetch (SWR keeps the previous `data`) changes nothing.
    */
   receivedAt: number
 }
