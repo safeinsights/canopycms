@@ -619,7 +619,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
 /**
  * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
  * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
- * one with no `branch.json` yet is skipped as not provisioned. Lock order: provisioning, then the
+ * one with no `branch.json` is skipped. Lock order: provisioning, then the
  * content-write lock inside it; see `provisioned-workspace.ts` for why that order cannot deadlock.
  * Never throws, like rebaseOneBranch.
  */
@@ -641,10 +641,9 @@ async function holdAndRebaseOneBranch(
     workerLog(`  Skipping ${branchDir}: provisioning lock held elsewhere (retrying next cycle)`)
     return { kind: 'skippedLocked' }
   }
-  if (hold.kind === 'not-provisioned') {
-    workerLog(`  Skipping ${branchDir}: not yet provisioned (no branch.json)`)
-    return { kind: 'none' }
-  }
+  // Silent: a directory without branch.json is a staging-era leftover, which
+  // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
+  if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
     return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
   } finally {

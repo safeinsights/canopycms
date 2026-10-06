@@ -1,7 +1,16 @@
+import type { Dirent } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
+import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
+import { ORPHAN_YOUTH_THRESHOLD_MS } from '../branch-health'
+import {
+  classifyFinalDir,
+  parseDirStamp,
+  quarantineResidueAt,
+  sweepProvisioningLeftovers,
+} from '../branch-provisioning'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import {
   GITHUB_TRACKING_REF_PREFIX,
@@ -10,6 +19,7 @@ import {
 } from '../git-manager'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
 import type { BaseRefreshReport } from '../types'
@@ -36,7 +46,8 @@ import type { WorkerContext } from './worker-context'
  * slower of the worker's two poll loops (default 5 minutes, against the task
  * queue's 5 seconds).
  *
- * One cycle, in order: repack `remote.git` when it needs it
+ * One cycle, in order: repair what killed provisioning and deletes left under
+ * the branches root (`repairBranchDirResidue`), repack `remote.git` when it needs it
  * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
  * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`),
  * push this deployment's own settings branch, fast-forward the base branch's
@@ -80,24 +91,6 @@ export type GitSyncContext = Pick<
  * cleanupOldTasks's default task retention for consistency.
  */
 const TRASH_RETENTION_MS = 30 * 24 * 60 * 60_000
-
-/** Matches `.trash-{dirName}-{STAMP}` names, capturing the trailing stamp. */
-const TRASH_DIR_STAMP_RE = /-(\d{8}T\d{6}Z)$/
-
-/**
- * Parse a purge-generated `YYYYMMDDTHHMMSSZ` stamp into a Date, or null if
- * malformed. Age comes ONLY from this name-embedded stamp, never the dir's
- * own mtime -- `fs.rename` preserves the original directory's mtime, so an
- * mtime-based retention check would delete a months-stale orphan's trash on
- * the very first cleanup pass after purge.
- */
-function parseTrashStamp(stamp: string): Date | null {
-  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
-  if (!match) return null
-  const [, year, month, day, hour, minute, second] = match
-  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`)
-  return Number.isNaN(date.getTime()) ? null : date
-}
 
 /**
  * Per-cycle outcome of `reconcileTrackedBranches()`, folded by `syncGit()` into
@@ -418,8 +411,14 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   // mask the real error on a failed one. Failures rethrow, so scheduleLoop's
   // per-cycle catch stays the loud path.
   try {
-    // Best-effort and ahead of the GitHub fetch, so a GitHub outage
-    // never stalls upkeep and a failed repack never costs the cycle.
+    // Best-effort and ahead of the GitHub fetch, so a GitHub outage never
+    // stalls upkeep and a failure here never costs the cycle. start() runs a
+    // cycle at once, so residue repair also runs on boot.
+    try {
+      await repairBranchDirResidue(ctx)
+    } catch (err) {
+      workerLogWarn(`Branch directory residue repair failed: ${getErrorMessage(err)}`)
+    }
     try {
       await maintainRemoteGit(ctx.remoteGitPath)
     } catch (err) {
@@ -499,13 +498,101 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   }
 }
 
+/** Foreign repositories already reported by this process, so each is logged once. */
+const reportedForeignDirs = new Set<string>()
+
+/**
+ * Repair what killed provisioning and deletes left under the branches root: quarantine residue
+ * at a branch's name (branch-provisioning.ts's `classifyFinalDir`) once it has been quiet for
+ * {@link ORPHAN_YOUTH_THRESHOLD_MS}, then sweep stale `.prov-*`, `.deleting-*` and `.repair-*`
+ * siblings and settings leftovers. Each directory is best-effort, like [SYNC-M2]. The provisioning
+ * lock is taken zero-retry, so a live provisioner or admin action wins and the directory is
+ * revisited next cycle.
+ * @internal Exported for tests; `syncGit` runs it.
+ */
+export async function repairBranchDirResidue(
+  ctx: Pick<GitSyncContext, 'contentBranchesPath' | 'remoteGitPath'>,
+  now = Date.now(),
+): Promise<void> {
+  let entries: Dirent[]
+  try {
+    entries = await fs.readdir(ctx.contentBranchesPath, { withFileTypes: true })
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return
+    throw err
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    try {
+      await repairOneBranchDir(ctx, entry.name, now)
+    } catch (err: unknown) {
+      workerLogWarn(`  Residue check of ${entry.name} failed: ${getErrorMessage(err)}`)
+    }
+  }
+
+  const leftovers = await sweepProvisioningLeftovers(
+    ctx.contentBranchesPath,
+    path.dirname(ctx.contentBranchesPath),
+    now,
+  )
+  for (const { name, action, detail } of leftovers) {
+    const line = `  Leftover ${name}: ${action}${detail ? ` (${detail})` : ''}`
+    if (action === 'removed') workerLog(line)
+    else if (action === 'failed') workerLogWarn(line)
+    else workerLogError(line)
+  }
+}
+
+async function repairOneBranchDir(
+  ctx: Pick<GitSyncContext, 'contentBranchesPath' | 'remoteGitPath'>,
+  dirName: string,
+  now: number,
+): Promise<void> {
+  const dirPath = path.join(ctx.contentBranchesPath, dirName)
+  // One stat for the common case: a live (or corrupt) branch is never residue.
+  const hasMeta = await fs.access(path.join(dirPath, BRANCH_META_DIR, BRANCH_META_FILE)).then(
+    () => true,
+    () => false,
+  )
+  if (hasMeta) return
+
+  const state = await classifyFinalDir(dirPath, ctx.remoteGitPath)
+  if (state.kind === 'foreign' && !reportedForeignDirs.has(dirPath)) {
+    reportedForeignDirs.add(dirPath)
+    workerLogWarn(
+      `  ${dirName} holds a git repository this deployment did not create; left for an admin`,
+    )
+  }
+  if (state.kind !== 'residue') return
+
+  let release: () => Promise<void>
+  try {
+    release = await tryAcquireProvisioningLock(
+      ctx.contentBranchesPath,
+      branchProvisioningLockName(dirName),
+    )
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ELOCKED') return
+    throw err
+  }
+  try {
+    await quarantineResidueAt(ctx.contentBranchesPath, dirName, {
+      minQuietMs: ORPHAN_YOUTH_THRESHOLD_MS,
+      expectedRemoteUrl: ctx.remoteGitPath,
+      now,
+    })
+  } finally {
+    await releaseProvisionedWorkspace(release, dirName)
+  }
+}
+
 /**
  * [C1] Remove `.trash-*` branch directories (created by the admin purge action,
- * api/admin-branch-health.ts) whose name-embedded stamp is older than
- * {@link TRASH_RETENTION_MS}. A name that doesn't match `.trash-{dirName}-
- * {STAMP}`, or whose stamp fails to parse, is left alone and logged once per
- * cycle: purge is the only writer of this naming scheme, so an unparseable name
- * is unexpected and worth a human looking rather than a silent skip.
+ * api/admin-branch-health.ts, and by residue quarantine, branch-provisioning.ts)
+ * whose name-embedded stamp is older than {@link TRASH_RETENTION_MS}. A name
+ * whose trailing stamp fails to parse is left alone and logged once per cycle:
+ * both writers end every name with one, so it is worth a human looking.
  */
 export async function cleanupTrashedBranchDirs(
   ctx: Pick<GitSyncContext, 'contentBranchesPath'>,
@@ -525,8 +612,7 @@ export async function cleanupTrashedBranchDirs(
   for (const name of entries) {
     if (!name.startsWith('.trash-')) continue
 
-    const stampMatch = TRASH_DIR_STAMP_RE.exec(name)
-    const stampDate = stampMatch ? parseTrashStamp(stampMatch[1]) : null
+    const stampDate = parseDirStamp(name)
     if (!stampDate) {
       if (!loggedUnparseable) {
         workerLog(`CanopyCMS: Skipping trash dir with unparseable stamp: ${name}`)

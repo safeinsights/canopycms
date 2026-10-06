@@ -457,7 +457,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const consoleSpy = mockConsole()
       await runRebase(makeWorker(tmpDir))
-      expect(consoleSpy).toHaveLogged(/Skipping my-feature: not yet provisioned/)
+      expect(consoleSpy).not.toHaveLogged(/my-feature/)
       consoleSpy.restore()
 
       await expect(behindCount(setup)).resolves.toBeGreaterThan(0)

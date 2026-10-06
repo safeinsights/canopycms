@@ -24,17 +24,17 @@ export type ProvisionedWorkspaceHold =
 
 /**
  * Take a branch workspace's provisioning lock for the sync loop, the same cross-host lock the
- * Lambda holds while it clones the workspace (`branch-workspace.ts`), so the worker never runs git
- * against a half-made clone. The caller holds it across its dirty check and every git step, and
+ * Lambda holds while it publishes the workspace (branch-provisioning.ts) and admin actions hold
+ * while they repair or purge it. The caller holds it across its dirty check and every git step, and
  * releases it in a `finally`.
  *
  * Zero retries: the worker skips and retries next cycle rather than wait, so it never blocks on
  * the Lambda and cannot deadlock with it. The rebase nests the content-write lock inside this one;
  * the worker takes that one try-only as well, so the nesting cannot deadlock either.
  *
- * Provisioned means a `.git` directory AND `branch.json`. The Lambda clones directly into the
- * target path, so `.git` appears early, and writes `branch.json` only after the clone and its
- * lock are done.
+ * Provisioned means a `.git` directory AND `branch.json`. A workspace is published complete with
+ * both ([PROV-1], branch-provisioning.ts), so anything else at a branch name is a leftover for
+ * `repairBranchDirResidue` (git-sync.ts).
  */
 export async function holdProvisionedWorkspace(
   contentBranchesPath: string,

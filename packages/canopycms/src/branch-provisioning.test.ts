@@ -21,7 +21,13 @@ import { BranchWorkspaceManager, setProvisioningTestHooks } from './branch-works
 import { BranchRegistry } from './branch-registry'
 import { defineCanopyTestConfig } from './config-test'
 import { initTestRepo, mockConsole, type MockConsole } from './test-utils'
-import { acquireProvisioningLock } from './utils/provisioning-lock'
+import {
+  acquireProvisioningLock,
+  branchProvisioningLockName,
+  tryAcquireProvisioningLock,
+} from './utils/provisioning-lock'
+import { CmsWorker } from './worker/cms-worker'
+import { repairBranchDirResidue } from './worker/git-sync'
 
 let tmpDir: string
 let workspaceRoot: string
@@ -406,6 +412,67 @@ describe('quarantine verifies what it moved', () => {
     await expect(classifyFinalDir(killed, path.join(tmpDir, 'other.git'))).resolves.toMatchObject({
       kind: 'residue',
     })
+  })
+})
+
+describe('W5: the worker repairs residue', () => {
+  function syncWorker(): CmsWorker {
+    const worker = new CmsWorker({
+      workspacePath: workspaceRoot,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: 'main',
+    })
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
+      path.join(tmpDir, 'no-such-github.git')
+    ;(worker as unknown as { running: boolean }).running = true
+    return worker
+  }
+
+  it('quarantines quiet residue first in the sync cycle, even when the GitHub fetch then fails', async () => {
+    const finalPath = await makeIncidentResidue('feat', 20 * 60_000)
+
+    await expect(syncWorker().syncGit()).rejects.toThrow()
+
+    await expect(fs.lstat(finalPath)).rejects.toThrow(/ENOENT/)
+    expect(await trashDirs(baseRoot)).toHaveLength(1)
+    expect(consoleSpy).toHaveWarned(/Quarantined unfinished branch directory 'feat'/)
+    expect((await create('feat')).branch.name).toBe('feat')
+  })
+
+  it('leaves residue quiet for under 15 minutes, and residue whose provisioning lock is held', async () => {
+    const young = await makeIncidentResidue('young', 10 * 60_000)
+    const locked = await makeIncidentResidue('locked', 20 * 60_000)
+    const release = await tryAcquireProvisioningLock(baseRoot, branchProvisioningLockName('locked'))
+    try {
+      await repairBranchDirResidue({ contentBranchesPath: baseRoot, remoteGitPath: remoteUrl })
+    } finally {
+      await release()
+    }
+
+    await expect(fs.stat(path.join(young, '.git', 'config.lock'))).resolves.toBeTruthy()
+    await expect(fs.stat(path.join(locked, '.git', 'config.lock'))).resolves.toBeTruthy()
+    expect(await trashDirs(baseRoot)).toEqual([])
+  })
+
+  it('never touches a live branch or a repository this deployment did not create', async () => {
+    await create('live')
+    const foreign = path.join(baseRoot, 'foreign')
+    await fs.mkdir(foreign)
+    const git = await initTestRepo(foreign)
+    await fs.writeFile(path.join(foreign, 'notes.md'), 'kept\n')
+    await git.add('.')
+    await git.commit('not ours')
+    await backdate(path.join(foreign, '.git'), 20 * 60_000)
+    await backdate(foreign, 20 * 60_000)
+
+    await repairBranchDirResidue({ contentBranchesPath: baseRoot, remoteGitPath: remoteUrl })
+
+    expect((await readBranchJson(path.join(baseRoot, 'live'))).version).toBe(1)
+    await expect(fs.readFile(path.join(foreign, 'notes.md'), 'utf8')).resolves.toBe('kept\n')
+    expect(await trashDirs(baseRoot)).toEqual([])
+    expect(consoleSpy).toHaveWarned(/foreign holds a git repository this deployment did not create/)
   })
 })
 
