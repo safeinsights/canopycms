@@ -1,7 +1,7 @@
 /**
  * Tests for CmsWorker.refreshBaseBranchWorkspace() (Gap 2: the base-branch
  * working-tree clone at content-branches/<base> is never explicitly kept in
- * sync with origin/<base> -- it's provisioned once on demand and then just
+ * sync with remote.git's <base> -- it's provisioned once on demand and then just
  * sits there while later content PRs merge on GitHub).
  *
  * Uses real git operations against temp directories, mirroring
@@ -231,7 +231,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     await baseGit.commit('local: unexpected local commit')
     const localHeadBefore = (await baseGit.revparse(['HEAD'])).trim()
 
-    // Remote advances independently, so origin/main is not an ancestor of HEAD.
+    // Remote advances independently, so its main is not an ancestor of HEAD.
     await pushToRemote({ 'remote-update.txt': 'remote work' })
 
     const consoleSpy = mockConsole()

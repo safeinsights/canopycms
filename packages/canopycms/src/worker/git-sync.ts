@@ -43,7 +43,7 @@ import type { WorkerContext } from './worker-context'
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
- * `remote.git` (`origin`), and `reconcileTrackedBranches` is what advances
+ * `remote.git`, and `reconcileTrackedBranches` is what advances
  * `remote.git`'s `refs/heads/*` toward what the fetch above put in the tracking
  * namespace; reorder them and every branch rebases onto the PREVIOUS cycle's
  * base tip -- not corrupting, but silently a cycle behind.

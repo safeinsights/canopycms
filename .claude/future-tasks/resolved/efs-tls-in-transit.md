@@ -3,8 +3,8 @@
 **RESOLVED 2026-10-06** (branch `fix/worker-efs-mount-parity`). The worker mounts the
 `WorkspaceAP` access point at `/mnt/efs`, as the Lambda does, so that git paths one
 process writes on EFS resolve for the other; efs-utils requires `tls` for an access-point
-mount, so both the boot mount and the fstab line now carry it. Verified by the next
-deploy of that change.
+mount, so both the boot mount and the fstab line now carry it. To be verified on the
+next deploy of that change.
 
 Flagged by PR #141 review (LOW).
 

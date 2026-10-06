@@ -140,8 +140,8 @@ interface ConflictSetup {
 /**
  * A branch clone whose entry file conflicts with the base branch, so the
  * rebase must enter its conflict round. Mirrors cms-worker-rebase.test.ts's
- * `createBranchSetup` (fixture remote is a non-bare repo the worker never
- * reads directly; the clone's `origin` is what the loop fetches).
+ * `createBranchSetup` (fixture remote is a non-bare repo at
+ * `<workspace>/remote.git`, the path the loop fetches from).
  */
 async function createConflictSetup(tmpDir: string, branchName: string): Promise<ConflictSetup> {
   const remotePath = path.join(tmpDir, 'remote.git')
