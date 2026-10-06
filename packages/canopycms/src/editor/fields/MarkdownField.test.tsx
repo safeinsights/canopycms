@@ -210,8 +210,18 @@ describe('MarkdownField', () => {
     })
   })
 
-  it('keeps HTML elements with string attributes in the rich editor', async () => {
-    renderField('A <span className="b">x</span> and <img src="a.png" alt="A" /> B')
+  it.each([
+    ['string attributes', 'A <span className="b"><span className="c">x</span></span> B'],
+    [
+      'an expression attribute',
+      'A <a href={url}>x</a> and <span style={{ color: "red" }}>y</span>',
+    ],
+    [
+      'an image it writes back unchanged',
+      'A <img src="a.png" alt="A" width="40" loading="lazy" /> x',
+    ],
+  ])('keeps HTML elements with %s in the rich editor', async (_case, body) => {
+    renderField(body)
     const root = await richEditor()
     expect(root.textContent).toContain('x')
     expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
@@ -256,8 +266,12 @@ describe('MarkdownField', () => {
       ['a fragment inside an element', '<Callout>\nA <>b</> c.\n</Callout>'],
       ['a fragment inside a table cell', '| a | b |\n| --- | --- |\n| x <>y</> z | w |'],
       [
-        'an HTML element with an expression attribute',
+        'an element wrapping a span, with an expression class',
         'A <span className={cls}><span className="b">x</span></span> B',
+      ],
+      [
+        'an element wrapping a span with an expression style',
+        'A <span style="color: red"><span style={s}>x</span></span> B',
       ],
       [
         'such an element inside a JSX element',
@@ -265,6 +279,12 @@ describe('MarkdownField', () => {
       ],
       ['an image with an expression src', 'Pic <img src={hero} alt="Hero" /> end'],
       ['an image without a src', 'Pic <img alt="No src" /> end'],
+      [
+        'an image with a camelCase attribute',
+        'Pic <img src="a.png" alt="A" className="hero" /> end',
+      ],
+      ['an image with a boolean attribute', 'Pic <img src="a.png" alt="A" hidden /> end'],
+      ['an image with a percentage width', 'Pic <img src="a.png" alt="A" width="50%" /> end'],
     ])('opens a body with %s as editable source', async (_case, body) => {
       const onChange = vi.fn()
       renderField(body, onChange)

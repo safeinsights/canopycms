@@ -79,35 +79,65 @@ const catchAllJsxDescriptor: JsxComponentDescriptor = {
   Editor: CatchAllJsxEditor,
 }
 
+type JsxAttribute = MdastJsx['attributes'][number]
+
+const isStringAttribute = (attribute: JsxAttribute, name: string) =>
+  attribute.type === 'mdxJsxAttribute' &&
+  attribute.name === name &&
+  typeof attribute.value === 'string'
+
+/**
+ * Whether MDXEditor's export throws on this element: it merges an HTML
+ * element's only child, when that is a `span`, into the element, splitting
+ * `className` and `style` values it assumes are strings on both.
+ */
+function breaksSpanCollapse(node: MdastJsx): boolean {
+  const [onlyChild, ...rest] = node.children
+  if (rest.length > 0 || onlyChild === undefined) return false
+  if (onlyChild.type !== 'mdxJsxTextElement' || onlyChild.name !== 'span') return false
+  return ['className', 'style'].some((name) => {
+    const own = node.attributes.find((a) => a.type === 'mdxJsxAttribute' && a.name === name)
+    const child = onlyChild.attributes.find((a) => a.type === 'mdxJsxAttribute' && a.name === name)
+    return (
+      own !== undefined &&
+      child !== undefined &&
+      !(isStringAttribute(own, name) && isStringAttribute(child, name))
+    )
+  })
+}
+
+/**
+ * Whether MDXEditor's image plugin writes this `<img>` back unchanged. It drops
+ * an `<img>` with no `src`, keeps only string attribute values, sets the
+ * attributes it does not model through the DOM (which lowercases their names),
+ * and parses `width` and `height` as integers.
+ */
+function roundTripsImage(node: MdastJsx): boolean {
+  return (
+    node.attributes.some((a) => isStringAttribute(a, 'src') && a.value !== '') &&
+    node.attributes.every((attribute) => {
+      if (attribute.type !== 'mdxJsxAttribute' || typeof attribute.value !== 'string') return false
+      if (attribute.name === 'width' || attribute.name === 'height') {
+        return /^\d+$/.test(attribute.value)
+      }
+      return attribute.name === attribute.name.toLowerCase()
+    })
+  )
+}
+
 /**
  * Why MDXEditor cannot round-trip this JSX element itself, or null if it can.
- * MDXEditor's handling of HTML-named elements assumes string attributes (an
- * expression `className` or `style` throws on export, an expression `src`
- * saves as `[object Object]`), drops an `<img>` with no `src`, and throws a
- * `TypeError` on a fragment, which has no name.
+ * A fragment has no name, and MDXEditor's HTML handling throws a `TypeError` on
+ * a nameless element.
  */
 function unsupportedJsx(node: MdastNode): string | null {
   if (!isMdastJsxNode(node)) return null
   if (node.name === null) return 'fragments (<>…</>)'
   // `img` is the image plugin's, not in MDXEditor's HTML tag list.
-  const isImage = node.name === 'img'
-  if (!isImage && !isMdastHTMLNode(node)) return null
-  const hasNonStringAttribute = node.attributes.some(
-    (attribute) =>
-      attribute.type === 'mdxJsxExpressionAttribute' ||
-      (attribute.value !== null &&
-        attribute.value !== undefined &&
-        typeof attribute.value !== 'string'),
-  )
-  if (hasNonStringAttribute) return `<${node.name}> with an {expression} attribute`
-  const hasSrc = node.attributes.some(
-    (attribute) =>
-      attribute.type === 'mdxJsxAttribute' &&
-      attribute.name === 'src' &&
-      typeof attribute.value === 'string' &&
-      attribute.value !== '',
-  )
-  if (isImage && !hasSrc) return '<img> without a src'
+  if (node.name === 'img') return roundTripsImage(node) ? null : 'this <img>'
+  if (isMdastHTMLNode(node) && breaksSpanCollapse(node)) {
+    return `<${node.name}> wrapping a <span>, with an {expression} class or style`
+  }
   return null
 }
 
