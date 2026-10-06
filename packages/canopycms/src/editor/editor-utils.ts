@@ -16,7 +16,7 @@ import {
 } from '../utils/url-prefix'
 export interface PreviewContext {
   branchName?: string
-  /** `editor.previewBase`: routes by entry path, collection path or collection name; `false` is no page. */
+  /** `editor.previewBase`: routes by root entry path, collection path or name; `false` is no page. */
   previewBaseByCollection?: Record<string, string | false>
   /** `editor.previewPrefix`: where the host mounts the pages the preview pane loads. */
   previewPrefix?: string
@@ -76,8 +76,9 @@ const previewBaseFor = (
  * The entry's route on the host site, or `undefined` when it has no page. The first
  * `previewBaseByCollection` key present decides: for a root entry its own path
  * (`<contentRoot>/<slug>`, used as-is), then its collection path, then its collection name (both
- * with the slug appended). Only a root entry has an entry key: below the root that spelling is
- * also the path of a same-named sibling collection, as for a landing entry beside its folder.
+ * with the slug appended). The spelling `<parent>/<name>` names both an entry and a same-named
+ * sibling collection (a landing entry beside its folder), so below the root it is read only as a
+ * collection key, and at the root one key routes both.
  * A `false` value means no page. With no key, the route is the entry's `urlPath`, by the rule
  * `listEntries` publishes it, so a root entry previews at `/<slug>` and only a root index at `/`.
  * Site-relative unless a matching value is absolute.

@@ -166,8 +166,7 @@ describe('buildPreviewSrc', () => {
       ).toBe('/edit/preview/site/team/?branch=main')
     })
 
-    // Below the root, `<collectionPath>/<slug>` is also the path of a sibling collection with the
-    // same name (a landing entry beside its folder), so only a root entry has an entry key.
+    // `<parent>/<name>` names both a landing entry and its same-named sibling collection.
     it('reads a key below the root as a collection key only', () => {
       const bases = { 'content/docs/guides': '/tutorials' }
       expect(
@@ -188,6 +187,16 @@ describe('buildPreviewSrc', () => {
           { previewBaseByCollection: { 'content/docs/guides': false } },
         ),
       ).toBe('/edit/preview/docs/guides/?branch=main')
+    })
+
+    it('routes a root landing entry and its same-named collection by one key', () => {
+      const bases = { 'content/posts': '/blog' }
+      expect(
+        route({ collectionPath: 'content', slug: 'posts' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/blog/?branch=main')
+      expect(
+        route({ collectionPath: 'content/posts', slug: 'a' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/blog/a/?branch=main')
     })
 
     it('treats an empty value as no key, so it never frames the site root', () => {
@@ -283,7 +292,7 @@ describe('buildPreviewSrc', () => {
           contentRoot: 'cms/content',
         },
       )
-      // Stripping only the default "content/" would keep the "cms/" prefix (/cms/posts/hello).
+      // Without the configured root nothing is stripped: /cms/content/posts/hello.
       expect(result).toBe('/posts/hello?branch=main')
     })
 

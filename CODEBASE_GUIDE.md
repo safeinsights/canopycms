@@ -592,7 +592,7 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 **Location**: `packages/canopycms/src/editor/editor-utils.ts`
 
-`buildPreviewSrc` uses `buildPreviewRoute` (`previewBase` by entry path, collection path or name, else `computeEntryUrl`; `false`: no preview), then adds `previewPrefix`, `basePath`, `matchTrailingSlash` and `?branch=`. An absolute route gets only `?branch=`, a `previewSrc` override only `basePath`. The bridge compares through `editor/preview-path.ts`'s `isSamePreviewPath`; why is in
+`buildPreviewSrc` uses `buildPreviewRoute` (`previewBase` by root entry path, collection path or name, else `computeEntryUrl`; `false`: no preview), then adds `previewPrefix`, `basePath`, `matchTrailingSlash` and `?branch=`. An absolute route gets only `?branch=`, a `previewSrc` override only `basePath`. The bridge compares through `editor/preview-path.ts`'s `isSamePreviewPath`; why is in
 [ARCHITECTURE.md](ARCHITECTURE.md#preview-path-identity).
 
 ### Preview Bridge

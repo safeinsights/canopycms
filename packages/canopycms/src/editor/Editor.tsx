@@ -122,7 +122,7 @@ export interface EditorProps {
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
   onCreateEntry?: (collectionPath: LogicalPath) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
-  /** `editor.previewBase` from config (see `buildPreviewSrc`); `false` marks an entry with no page. */
+  /** `editor.previewBase` from config (see `buildPreviewSrc`); `false` marks entries with no page. */
   previewBaseByCollection?: Record<string, string | false>
   /** `editor.previewPrefix` from config: put in front of every preview iframe `src` (see `buildPreviewSrc`). */
   previewPrefix?: string

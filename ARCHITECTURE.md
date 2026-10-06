@@ -809,7 +809,7 @@ It is also deliberately **not** an argument to the static-params helper, even th
 
 The preview URL the editor builds for an entry is used **twice**: as the iframe's `src`, and as the identity matched against the framed page's own location, which drives draft sync and click-to-focus. Browsers report that location _with_ the deployment prefix, so an unprefixed value 404s the iframe, and one prefixed on only some code paths breaks draft sync.
 
-The builder therefore emits the URL the host serves: the entry's `urlPath` (or `previewBase` route) under `previewPrefix` under `basePath`, each applied **exactly once**, in the host's trailing-slash form. An entry with no page gets no URL, so nothing is framed in its place. An absolute route names another site and gets none of these; the per-entry override gets only `basePath`. Both bridge ends then compare path plus query, with no origin or trailing slash, so an absolute `src` or a host redirect still matches.
+The builder therefore emits the URL the host serves: the entry's `urlPath` (or `previewBase` route) under `previewPrefix` under `basePath`, each applied **exactly once**, in the host's trailing-slash form. An entry marked as having no page gets no URL, so nothing is framed in its place. An absolute route names another site and gets none of these; the per-entry override gets only `basePath`. Both bridge ends then compare path plus query, with no origin or trailing slash, so an absolute `src` or a host redirect still matches.
 
 ## Extensibility Points
 

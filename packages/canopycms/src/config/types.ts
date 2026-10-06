@@ -305,12 +305,12 @@ export interface CanopyEditorConfig {
   theme?: unknown
   /**
    * Preview-pane routes for sites whose routes don't mirror their content tree; otherwise an entry
-   * previews its own `urlPath`. Keyed by entry path (the whole route), else collection path or
-   * name (plus the slug). `false` means no page, and the pane says so instead of framing one.
+   * previews its own `urlPath`. Keyed by a root entry's path (the whole route), else collection
+   * path or name (plus the slug). `false` means no page, and the pane says so instead of framing one.
    *
    * Values are **site-relative**, without the deployment `basePath` (applied on top, so including
-   * it prefixes it twice), and get `previewPrefix` too. An absolute value (`https://…`) gets only
-   * the slug and `?branch=`: the escape hatch for previewing another origin.
+   * it prefixes it twice), and get `previewPrefix` too. An absolute value (`https://…`) gets no
+   * prefix, only the slug (for a collection key) and `?branch=`: for previewing another origin.
    */
   previewBase?: Record<string, string | false>
   /**
