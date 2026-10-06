@@ -1816,7 +1816,10 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSync).toBeDefined()
     expect(status.lastGitSync?.durationMs).toBeGreaterThanOrEqual(0)
     expect(status.lastGitSync?.rebased).toContain('behind-branch')
-    expect(status.lastGitSync?.failed.map((f) => f.branch)).toContain('broken-branch')
+    expect(status.lastGitSync?.failed).toContainEqual({
+      branch: 'broken-branch',
+      error: expect.stringMatching(/transport 'file' not allowed/),
+    })
   })
 
   it('records lastGitSyncError and still rethrows on a hard sync-cycle failure', async () => {
