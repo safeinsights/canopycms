@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+
+const requestHeaders = vi.hoisted(() => ({ read: vi.fn<() => Promise<Headers>>() }))
 import type { CanopyConfig } from 'canopycms'
 
 vi.mock('react', async (importOriginal) => {
@@ -13,6 +15,7 @@ vi.mock('canopycms/server', async (importOriginal) => {
       config,
       bootstrapAdminIds: new Set<string>(),
       refreshActiveBranch: vi.fn(),
+      getSettingsBranchRoot: vi.fn(async () => '/nonexistent/canopy-settings'),
     })),
     startDevContentWatcher: vi.fn(),
   }
@@ -26,11 +29,8 @@ vi.mock('next/navigation', () => ({
 }))
 // A request-scoped read starts by reading the request's headers; failing there marks that the
 // page went on to read through getCanopy().
-vi.mock('next/headers', () => ({
-  headers: async () => {
-    throw new Error('REQUEST_SCOPED_READ')
-  },
-}))
+vi.mock('next/headers', () => ({ headers: () => requestHeaders.read() }))
+requestHeaders.read.mockRejectedValue(new Error('REQUEST_SCOPED_READ'))
 
 const { createNextCanopyContext } = await import('./context-wrapper')
 
@@ -68,5 +68,27 @@ describe('createNextCanopyContext().createPreviewPage', () => {
     await expect(context.createPreviewPage({ views: {} })(previewRequest)).rejects.toThrow(
       'REQUEST_SCOPED_READ',
     )
+  })
+
+  it('resolves a request with no session to the anonymous user the preview page 404s', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    requestHeaders.read.mockResolvedValueOnce(new Headers())
+    const authenticate = vi.fn(async () => ({ success: false as const, error: 'no session' }))
+    const context = await createNextCanopyContext({
+      config: { mode: 'dev', deployedAs: 'server' } as CanopyConfig,
+      authPlugin: {
+        authenticate,
+        searchUsers: async () => [],
+        getUserMetadata: async () => null,
+        getGroupMetadata: async () => null,
+        listGroups: async () => [],
+      },
+      entrySchemaRegistry: {},
+    })
+
+    const { user } = await context.getCanopy()
+
+    expect(authenticate).toHaveBeenCalledOnce()
+    expect(user.type).toBe('anonymous')
   })
 })
