@@ -444,12 +444,10 @@ export class CanopyApiClient {
     // A 429 no handler wrote is a throttle in front of the API, such as Lambda's concurrency
     // cap, which answers before the function runs. The request was never handled, so
     // resending it is safe for writes too.
-    for (
-      let attempt = 0;
-      attempt < THROTTLE_RETRY_DELAYS_MS.length && response.status === 429 && !isApiResponseBody(parsed);
-      attempt++
-    ) {
-      await sleep(throttleRetryDelayMs(response, attempt))
+    for (let attempt = 0; response.status === 429 && !isApiResponseBody(parsed); attempt++) {
+      const delay = throttleRetryDelayMs(response, attempt)
+      if (delay === undefined) break
+      await sleep(delay)
       response = await this.fetchFn(url, init)
       parsed = await response.json().catch(() => undefined)
     }
@@ -474,21 +472,26 @@ export class CanopyApiClient {
  */
 const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
 
-/** The longest `Retry-After` honoured; a longer one is waited this long instead. */
+/** The longest `Retry-After` waited; a throttle asking for longer is reported, not resent. */
 const MAX_RETRY_AFTER_MS = 5000
 
 /**
- * The wait before resend `attempt`: the response's `Retry-After` seconds when it sends one,
- * else the base delay plus up to half again, so throttled requests do not resend in lockstep.
+ * The wait before resend `attempt`, or undefined when there is to be no resend: the attempts
+ * are used up, or `Retry-After` asks for longer than {@link MAX_RETRY_AFTER_MS}. Without a
+ * `Retry-After`, the base delay plus up to half again, so throttled requests do not resend in
+ * lockstep.
  */
-function throttleRetryDelayMs(response: Response, attempt: number): number {
-  // Delta-seconds only; an HTTP-date or a blank value falls back to the base delay.
-  const header = response.headers.get('retry-after')?.trim()
+function throttleRetryDelayMs(response: Response, attempt: number): number | undefined {
+  const base = THROTTLE_RETRY_DELAYS_MS[attempt]
+  if (base === undefined) return undefined
+  // Delta-seconds only; an HTTP-date or a blank value falls back to the base delay. A custom
+  // `fetch` option may return a Response-like without headers.
+  const header = (response.headers as Headers | undefined)?.get('retry-after')?.trim()
   const retryAfter = header ? Number(header) : Number.NaN
   if (Number.isFinite(retryAfter) && retryAfter >= 0) {
-    return Math.min(retryAfter * 1000, MAX_RETRY_AFTER_MS)
+    const ms = retryAfter * 1000
+    return ms > MAX_RETRY_AFTER_MS ? undefined : ms
   }
-  const base = THROTTLE_RETRY_DELAYS_MS[attempt] ?? 0
   return base + Math.random() * base * 0.5
 }
 
