@@ -2,6 +2,7 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
+  Annotations,
   Duration,
   RemovalPolicy,
   Stack,
@@ -531,6 +532,17 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
  */
 export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
 
+/**
+ * The cap below which synth warns. With nothing cached, a cold editor load on
+ * the example app sends the Lambda about 25 requests, 14 of them chunks
+ * requested together, and each invocation holds an execution environment
+ * through its cold start.
+ */
+export const MIN_CMS_RESERVED_CONCURRENCY = 20
+
+/** Default `reservedConcurrency`; see that prop for what it caps and costs. */
+export const DEFAULT_CMS_RESERVED_CONCURRENCY = 50
+
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
   cmsDockerImage: lambda.DockerImageCode
@@ -544,7 +556,24 @@ export interface CanopyCmsServiceProps {
   /** Lambda timeout (default: 60 seconds) */
   timeout?: Duration
 
-  /** Lambda reserved concurrency cap (default: 10) */
+  /**
+   * Cap on the CMS Lambda's concurrent invocations (default: 50).
+   *
+   * Everything the Lambda serves counts against it, including the editor's
+   * static chunks (`editorAssetPrefix` on `attachTo`, `/_next/static/*` on
+   * `CanopyCmsDistribution`) whenever CloudFront misses them. CloudFront caches
+   * per regional edge cache, so after a deploy the first editor load behind
+   * each one requests every chunk together, and an invocation over the cap is
+   * answered 429: the
+   * browser refuses that as a script and the editor fails with
+   * `ChunkLoadError`. Synth warns below {@link MIN_CMS_RESERVED_CONCURRENCY}.
+   *
+   * A reservation costs nothing while idle; it is a ceiling, and a share of
+   * the account's concurrency set aside so other functions cannot use it.
+   * Lambda keeps 100 of the account's limit unreserved, so this plus every
+   * other reservation (AssetSupport's transform Lambda reserves 10) must fit
+   * within the account limit minus 100.
+   */
   reservedConcurrency?: number
 
   /**
@@ -1148,6 +1177,20 @@ export class CanopyCmsService extends Construct {
     // the mismatch only shows at invoke. See `architecture`'s doc comment.
     const architecture = props.architecture ?? lambda.Architecture.ARM_64
 
+    const reservedConcurrency = props.reservedConcurrency ?? DEFAULT_CMS_RESERVED_CONCURRENCY
+    if (
+      !Token.isUnresolved(reservedConcurrency) &&
+      reservedConcurrency < MIN_CMS_RESERVED_CONCURRENCY
+    ) {
+      Annotations.of(this).addWarningV2(
+        'canopycms:cms-reserved-concurrency-low',
+        `reservedConcurrency is ${reservedConcurrency}, below ${MIN_CMS_RESERVED_CONCURRENCY}. ` +
+          `The editor's static chunks are served by this Lambda until CloudFront caches them, ` +
+          `and a cold editor load requests them together, so a throttled chunk fails the ` +
+          `editor with ChunkLoadError. See the reservedConcurrency prop.`,
+      )
+    }
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       // Default (unset) leaves CDK to create the execution role, with its own
@@ -1155,7 +1198,7 @@ export class CanopyCmsService extends Construct {
       role: props.lambdaRole,
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
-      reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
+      reservedConcurrentExecutions: reservedConcurrency,
       architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
