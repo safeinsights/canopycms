@@ -164,17 +164,60 @@ describe('buildPreviewSrc', () => {
       expect(
         route({ collectionPath: 'content', slug: 'team' }, { previewBaseByCollection: bases }),
       ).toBe('/edit/preview/site/team/?branch=main')
+    })
+
+    // Below the root, `<collectionPath>/<slug>` is also the path of a sibling collection with the
+    // same name (a landing entry beside its folder), so only a root entry has an entry key.
+    it('reads a key below the root as a collection key only', () => {
+      const bases = { 'content/docs/guides': '/tutorials' }
       expect(
         route(
-          { collectionPath: 'content/posts', slug: 'hello' },
-          {
-            previewBaseByCollection: {
-              'content/posts/hello': '/featured',
-              'content/posts': '/blog',
-            },
-          },
+          { collectionPath: 'content/docs', slug: 'guides' },
+          { previewBaseByCollection: bases },
         ),
-      ).toBe('/edit/preview/featured/?branch=main')
+      ).toBe('/edit/preview/docs/guides/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/docs/guides', slug: 'install' },
+          { previewBaseByCollection: bases },
+        ),
+      ).toBe('/edit/preview/tutorials/install/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/docs', slug: 'guides' },
+          { previewBaseByCollection: { 'content/docs/guides': false } },
+        ),
+      ).toBe('/edit/preview/docs/guides/?branch=main')
+    })
+
+    it('treats an empty value as no key, so it never frames the site root', () => {
+      expect(
+        route(
+          { collectionPath: 'content', collectionName: 'site', slug: 'about' },
+          { previewBaseByCollection: { 'content/about': '', site: '/pages' } },
+        ),
+      ).toBe('/edit/preview/pages/about/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '', posts: '/blog' } },
+        ),
+      ).toBe('/edit/preview/blog/hello/?branch=main')
+    })
+
+    it('lets a collection-path false win over a collection-name route', () => {
+      expect(
+        route(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': false, posts: '/blog' } },
+        ),
+      ).toBeUndefined()
+    })
+
+    it('percent-encodes default-route segments under a basePath', () => {
+      expect(
+        route({ collectionPath: 'content/docs/api', slug: 'café notes' }, { basePath: '/base' }),
+      ).toBe('/base/edit/preview/docs/api/caf%C3%A9%20notes/?branch=main')
     })
 
     it('lets a collection-name key apply when no path key matches', () => {

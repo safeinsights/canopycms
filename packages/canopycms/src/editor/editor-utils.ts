@@ -60,37 +60,45 @@ const appendBranch = (url: string, branchName?: string): string => {
   return `${beforeHash}${separator}branch=${encodeURIComponent(branchName)}${hash}`
 }
 
-/** The `previewBase` value under `key`, ignoring anything `Object.prototype` supplies. */
+/**
+ * The `previewBase` value under `key`, or `undefined` for none. An empty value counts as none, and
+ * so does anything `Object.prototype` supplies.
+ */
 const previewBaseFor = (
   bases: Record<string, string | false> | undefined,
   key: string | undefined,
 ): string | false | undefined =>
-  bases && key && Object.prototype.hasOwnProperty.call(bases, key) ? bases[key] : undefined
+  bases && key && Object.prototype.hasOwnProperty.call(bases, key) && bases[key] !== ''
+    ? bases[key]
+    : undefined
 
 /**
  * The entry's route on the host site, or `undefined` when it has no page. The first
- * `previewBaseByCollection` key present decides: the entry's own path (`<collectionPath>/<slug>`,
- * used as-is), then its collection path, then its collection name (both with the slug appended).
+ * `previewBaseByCollection` key present decides: for a root entry its own path
+ * (`<contentRoot>/<slug>`, used as-is), then its collection path, then its collection name (both
+ * with the slug appended). Only a root entry has an entry key: below the root that spelling is
+ * also the path of a same-named sibling collection, as for a landing entry beside its folder.
  * A `false` value means no page. With no key, the route is the entry's `urlPath`, by the rule
  * `listEntries` publishes it, so a root entry previews at `/<slug>` and only a root index at `/`.
  * Site-relative unless a matching value is absolute.
  */
 const buildPreviewRoute = (
   entry: PreviewEntry,
-  { previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string },
+  { previewBaseByCollection, contentRoot = 'content' }: PreviewContext & { contentRoot?: string },
 ): string | undefined => {
   const collectionPath = normalizeFilesystemPath(entry.collectionPath ?? '')
+  const isRootEntry = collectionPath === normalizeFilesystemPath(contentRoot)
   const entryRoute = previewBaseFor(
     previewBaseByCollection,
-    collectionPath && entry.slug ? `${collectionPath}/${entry.slug}` : undefined,
+    isRootEntry && entry.slug ? `${collectionPath}/${entry.slug}` : undefined,
   )
   if (entryRoute !== undefined) return entryRoute === false ? undefined : entryRoute
 
   const pathBase = previewBaseFor(previewBaseByCollection, collectionPath)
   const base = pathBase ?? previewBaseFor(previewBaseByCollection, entry.collectionName)
   if (base === false) return undefined
-  if (!base) {
-    const urlPath = computeEntryUrl(collectionPath, entry.slug ?? '', contentRoot ?? 'content')
+  if (base === undefined) {
+    const urlPath = computeEntryUrl(collectionPath, entry.slug ?? '', contentRoot)
     return `/${encodeSegments(urlPath)}`
   }
   const encoded = encodePreviewSlug(entry.slug)
