@@ -1555,7 +1555,7 @@ export const PostPreview = withCanopyPreview(PostView) // from canopycms-next/cl
 export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview } })
 ```
 
-It reads the entry from the editor's `?branch=` under the request's ACLs and never creates a branch. Anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
+It reads from the editor's `?branch=` under the request's ACLs, never creating a branch. Anonymous requests, anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
 
 A view that needs more than its entry pairs with a server `load` in that page file; `previewView` checks its result against the view's `extras` type:
 

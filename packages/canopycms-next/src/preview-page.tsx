@@ -84,7 +84,10 @@ export interface CreatePreviewPageOptions {
    * type has no view is a 404.
    */
   views: Record<string, PreviewView | ErasedPreviewViewWithLoader>
-  /** Editor origin to trust, for an editor on another origin. Defaults to the page's own. */
+  /**
+   * Editor origin to trust, for an editor on another origin. Defaults to the page's own. The
+   * viewer must still be signed in on this page's origin: an anonymous request is a 404.
+   */
   editorOrigin?: string
 }
 
@@ -100,8 +103,8 @@ export interface PreviewPageProps {
  *
  * The read goes through the request-scoped `getCanopy()`, never the build context: it is
  * authenticated and ACL-checked, and a branch other than the active one is only loaded, never
- * created. A missing, unreadable or malformed branch, and a path no entry publishes, are all a
- * 404, so a hidden branch looks the same as a missing one.
+ * created. An anonymous request, a missing, unreadable or malformed branch, and a path no entry
+ * publishes, are all a 404, so a hidden branch looks the same as a missing one.
  *
  * On a `deployedAs: 'static'` deployment every request is a 404: reads there skip access checks,
  * so the route would show any branch to anyone.
@@ -118,6 +121,9 @@ export function createPreviewPageFor(
     const branch = query.branch
     if (Array.isArray(branch)) notFound()
     const canopy = await getCanopy()
+    // ACLs alone would let an anonymous user read the base branch, and this route sits under the
+    // editor's paths, which a site-wide gate exempts because the editor's sign-in guards them.
+    if (canopy.user.type === 'anonymous') notFound()
     const result = await canopy.readByUrlPath<never>(`/${path.join('/')}`, { branch })
     if (!result) notFound()
     const { entryType } = result.meta

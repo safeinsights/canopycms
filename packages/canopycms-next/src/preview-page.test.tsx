@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanopyContext } from 'canopycms/server'
 import { notFound } from 'next/navigation'
+import { ANONYMOUS_USER } from 'canopycms'
 import type { PreviewLoadContext } from './preview-page'
 
 const NOT_FOUND = 'NEXT_NOT_FOUND'
@@ -18,7 +19,8 @@ const DocView = () => null
 const views = { post: PostView, doc: DocView }
 
 const readByUrlPath = vi.fn()
-const canopy = { readByUrlPath } as unknown as CanopyContext
+const signedIn = { type: 'authenticated', userId: 'editor-1', groups: [] }
+const canopy = { readByUrlPath, user: signedIn } as unknown as CanopyContext
 const getCanopy = vi.fn(async () => canopy)
 
 const entry = (entryType: string, data: unknown = { title: 'Hello' }) => ({
@@ -33,9 +35,17 @@ const render = (path: string[] | undefined, query: Record<string, string | strin
     searchParams: Promise.resolve(query),
   })
 
+const anonymously = () => {
+  getCanopy.mockResolvedValueOnce({
+    readByUrlPath,
+    user: ANONYMOUS_USER,
+  } as unknown as CanopyContext)
+}
+
 beforeEach(() => {
   readByUrlPath.mockReset()
-  getCanopy.mockClear()
+  getCanopy.mockReset()
+  getCanopy.mockResolvedValue(canopy)
 })
 
 describe('createPreviewPageFor', () => {
@@ -86,6 +96,14 @@ describe('createPreviewPageFor', () => {
     readByUrlPath.mockResolvedValue(null)
 
     await expect(render(['posts', 'nope'], { branch: 'hidden' })).rejects.toThrow(NOT_FOUND)
+  })
+
+  it('is a 404 for an anonymous request, without reading, though ACLs would grant the read', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+    anonymously()
+
+    await expect(render(['posts', 'hello'])).rejects.toThrow(NOT_FOUND)
+    expect(readByUrlPath).not.toHaveBeenCalled()
   })
 
   it('is a 404 for a repeated ?branch=, without reading', async () => {
@@ -205,6 +223,15 @@ describe('createPreviewPageFor with a loader', () => {
       const load = vi.fn(() => ({ related: [] }))
 
       await expect(pageWith(load)(props(['posts', 'nope']))).rejects.toThrow(NOT_FOUND)
+      expect(load).not.toHaveBeenCalled()
+    })
+
+    it('for an anonymous request', async () => {
+      readByUrlPath.mockResolvedValue(entry('post'))
+      const load = vi.fn(() => ({ related: [] }))
+      anonymously()
+
+      await expect(pageWith(load)(props(['posts', 'hello']))).rejects.toThrow(NOT_FOUND)
       expect(load).not.toHaveBeenCalled()
     })
 
