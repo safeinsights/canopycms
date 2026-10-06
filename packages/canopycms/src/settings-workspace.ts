@@ -3,8 +3,15 @@ import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
+import {
+  removeLeftoverDir,
+  settingsStagingDirName,
+  settingsTrashDirName,
+} from './branch-provisioning'
 import { createDebugLogger } from './utils/debug'
-import { getErrorMessage } from './utils/error'
+import { getErrorMessage, isNodeError } from './utils/error'
+import { canopyLogWarn } from './utils/logger'
+import { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from './paths'
 
@@ -37,12 +44,27 @@ function ensuredKey(options: EnsureSettingsWorkspaceOptions): string {
   return `${path.resolve(options.settingsRoot)}\0${options.branchName}`
 }
 
-async function checkedOutOn(settingsRoot: string, branchName: string): Promise<boolean> {
+async function headBranch(settingsRoot: string): Promise<string | undefined> {
   try {
-    const head = await fs.readFile(path.join(settingsRoot, '.git', 'HEAD'), 'utf-8')
-    return head.trim() === `ref: refs/heads/${branchName}`
+    const head = (await fs.readFile(path.join(settingsRoot, '.git', 'HEAD'), 'utf-8')).trim()
+    return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : undefined
   } catch {
-    return false
+    return undefined
+  }
+}
+
+async function checkedOutOn(settingsRoot: string, branchName: string): Promise<boolean> {
+  return (await headBranch(settingsRoot)) === branchName
+}
+
+async function hasLocalBranch(settingsRoot: string, branchName: string): Promise<boolean> {
+  const gitDir = path.join(settingsRoot, '.git')
+  try {
+    await fs.access(path.join(gitDir, 'refs', 'heads', branchName))
+    return true
+  } catch {
+    const packed = await fs.readFile(path.join(gitDir, 'packed-refs'), 'utf-8').catch(() => '')
+    return packed.split('\n').some((line) => line.endsWith(` refs/heads/${branchName}`))
   }
 }
 
@@ -92,6 +114,37 @@ async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
     }
   }
   return false
+}
+
+/**
+ * What occupies the settings root.
+ *
+ * `interrupted` is a first init that died before its settings branch existed: not on this
+ * deployment's settings branch or any `canopycms-settings-*` one, no local ref for it, and no
+ * settings files -- what the rename guard lets through, minus a local settings branch that could
+ * hold unpushed commits. A clone killed in place leaves this behind, often with a stale
+ * `config.lock` that fails every later git config write.
+ */
+async function settingsRootState(
+  options: EnsureSettingsWorkspaceOptions,
+): Promise<'vacant' | 'in-use' | 'interrupted'> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(options.settingsRoot)
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return 'vacant'
+    if (isNodeError(err) && err.code === 'ENOTDIR') return 'interrupted'
+    throw err
+  }
+  if (entries.length === 0) return 'vacant'
+  if (await settingsFilesPresent(options.settingsRoot)) return 'in-use'
+  if (!(await GitManager.repoExistsAt(options.settingsRoot))) return 'interrupted'
+  const head = await headBranch(options.settingsRoot)
+  if (head === options.branchName || head?.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+    return 'in-use'
+  }
+  if (await hasLocalBranch(options.settingsRoot, options.branchName)) return 'in-use'
+  return 'interrupted'
 }
 
 /**
@@ -167,9 +220,14 @@ async function assertSettingsWorkspaceIdentity(
  * BranchWorkspaceManager this writes no metadata files and never touches the
  * branch registry.
  *
+ * A first clone follows [PROV-1] (branch-provisioning.ts): it is built in a
+ * staging sibling and renamed into place, so a process killed mid-clone never
+ * leaves a half-made workspace at the settings root. Never sparse: the orphan
+ * init's `git rm -rf .` would leave out-of-cone base files in the tree.
+ *
  * Two locking layers, mirroring BranchWorkspaceManager: an in-memory promise
  * lock within the process, and `acquireProvisioningLock` (proper-lockfile)
- * across processes and hosts.
+ * across processes and hosts around the publish and every in-place init.
  */
 export class SettingsWorkspaceManager {
   private readonly config: CanopyConfig
@@ -207,48 +265,13 @@ export class SettingsWorkspaceManager {
           // without the guard having run in THIS process.
           await assertSettingsWorkspaceIdentity(options)
 
-          // Layer 2: cross-process/cross-host lock around the init itself
-          // (proper-lockfile: heartbeat-refreshed while the holder lives, so a
-          // slow EFS clone is not mistaken for a crash, and patient retries so a
-          // loser WAITS instead of racing into a concurrent clone).
-          const releaseLock = await acquireProvisioningLock(
-            settingsInitLockTarget(options.settingsRoot),
-            SETTINGS_INIT_LOCK_NAME,
-          )
-
-          try {
-            // Re-run the guard on the now-stable state: a previous holder may
-            // have created the workspace, or moved it onto its own settings
-            // branch, after we sampled it above, and acting on that stale
-            // sample is the destructive path the guard exists to stop. Not
-            // gated on any "did I win the race" flag — by design there is none;
-            // every process here either holds the lock or has already thrown.
-            await assertSettingsWorkspaceIdentity(options)
-
-            // initializeWorkspace is idempotent (it checks for .git), so this
-            // is safe even if another process just finished init.
-            await GitManager.initializeWorkspace({
-              workspacePath: options.settingsRoot,
-              branchName: options.branchName,
-              mode: options.mode,
-              baseBranch: this.config.defaultBaseBranch,
-              sourceRoot: this.config.sourceRoot,
-              defaultRemoteUrl: this.config.defaultRemoteUrl,
-              remoteUrl: options.remoteUrl,
-              remoteName: this.config.defaultRemoteName,
-              allowNetworkRemoteInProd: this.config.allowNetworkRemoteInProd,
-              branchType: 'orphan', // Key difference: orphan branch for settings
-              gitBotAuthorName: this.config.gitBotAuthorName,
-              gitBotAuthorEmail: this.config.gitBotAuthorEmail,
-            })
-            ensuredSettingsWorkspaces.add(key)
-          } finally {
-            try {
-              await releaseLock()
-            } catch (err: unknown) {
-              log.debug('workspace', 'Failed to release settings-init lock', { err })
-            }
+          if (
+            (await settingsRootState(options)) !== 'in-use' ||
+            !(await this.ensureInPlace(options))
+          ) {
+            await this.provisionStaged(options)
           }
+          ensuredSettingsWorkspaces.add(key)
         } finally {
           settingsInitLock = null
         }
@@ -256,5 +279,103 @@ export class SettingsWorkspaceManager {
 
       await settingsInitLock
     })
+  }
+
+  private initOptions(options: EnsureSettingsWorkspaceOptions, workspacePath: string) {
+    return {
+      workspacePath,
+      branchName: options.branchName,
+      mode: options.mode,
+      baseBranch: this.config.defaultBaseBranch,
+      sourceRoot: this.config.sourceRoot,
+      defaultRemoteUrl: this.config.defaultRemoteUrl,
+      remoteUrl: options.remoteUrl,
+      remoteName: this.config.defaultRemoteName,
+      allowNetworkRemoteInProd: this.config.allowNetworkRemoteInProd,
+      branchType: 'orphan' as const,
+      gitBotAuthorName: this.config.gitBotAuthorName,
+      gitBotAuthorEmail: this.config.gitBotAuthorEmail,
+    }
+  }
+
+  /**
+   * Layer 2 around the init itself (proper-lockfile: heartbeat-refreshed while the holder lives,
+   * so a slow EFS operation is not mistaken for a crash, and patient retries so a loser WAITS
+   * instead of racing into a concurrent init).
+   */
+  private async withInitLock<T>(
+    options: EnsureSettingsWorkspaceOptions,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const releaseLock = await acquireProvisioningLock(
+      settingsInitLockTarget(options.settingsRoot),
+      SETTINGS_INIT_LOCK_NAME,
+    )
+    try {
+      // Re-run the guard on the now-stable state: a previous holder may
+      // have created the workspace, or moved it onto its own settings
+      // branch, after we sampled it above, and acting on that stale
+      // sample is the destructive path the guard exists to stop. Not
+      // gated on any "did I win the race" flag — by design there is none;
+      // every process here either holds the lock or has already thrown.
+      await assertSettingsWorkspaceIdentity(options)
+      return await run()
+    } finally {
+      try {
+        await releaseLock()
+      } catch (err: unknown) {
+        log.debug('workspace', 'Failed to release settings-init lock', { err })
+      }
+    }
+  }
+
+  /** Re-init an existing workspace where it is; false when, under the lock, there is none. */
+  private async ensureInPlace(options: EnsureSettingsWorkspaceOptions): Promise<boolean> {
+    return this.withInitLock(options, async () => {
+      if ((await settingsRootState(options)) !== 'in-use') return false
+      await GitManager.initializeWorkspace(this.initOptions(options, options.settingsRoot))
+      return true
+    })
+  }
+
+  /**
+   * Clone and set up the settings branch in a staging sibling, then publish it under the init
+   * lock, moving an interrupted first init aside to `.trash-settings-*`. A workspace someone
+   * else published meanwhile wins and the staging copy is dropped.
+   */
+  private async provisionStaged(options: EnsureSettingsWorkspaceOptions): Promise<void> {
+    const settingsRoot = path.resolve(options.settingsRoot)
+    const workspaceRoot = path.dirname(settingsRoot)
+    await fs.mkdir(workspaceRoot, { recursive: true })
+    const stagingPath = path.join(workspaceRoot, settingsStagingDirName())
+    const provisionLog = new ProvisionLog('settings')
+    let published = false
+    try {
+      await GitManager.initializeWorkspace({
+        ...this.initOptions(options, stagingPath),
+        provisionLog,
+      })
+      published = await provisionLog.step('publish', () =>
+        this.withInitLock(options, async () => {
+          const state = await settingsRootState(options)
+          if (state === 'in-use') return false
+          if (state === 'interrupted') {
+            const trashName = settingsTrashDirName()
+            await fs.rename(settingsRoot, path.join(workspaceRoot, trashName))
+            canopyLogWarn(
+              `[canopy] Moved an unfinished settings workspace clone aside as ${trashName}`,
+            )
+          }
+          await fs.rename(stagingPath, settingsRoot)
+          return true
+        }),
+      )
+    } catch (err) {
+      provisionLog.finish('error')
+      throw err
+    } finally {
+      if (!published) await removeLeftoverDir(stagingPath)
+    }
+    provisionLog.finish(published ? 'ok' : 'exists')
   }
 }

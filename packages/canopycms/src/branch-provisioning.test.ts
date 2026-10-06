@@ -20,6 +20,7 @@ import {
 import { BranchWorkspaceManager, setProvisioningTestHooks } from './branch-workspace'
 import { BranchRegistry } from './branch-registry'
 import { defineCanopyTestConfig } from './config-test'
+import { SettingsWorkspaceManager } from './settings-workspace'
 import { initTestRepo, mockConsole, type MockConsole } from './test-utils'
 import {
   acquireProvisioningLock,
@@ -288,6 +289,35 @@ describe('W4: a delete killed partway through an in-place rm', () => {
   })
 })
 
+describe('W3: an interrupted first settings clone', () => {
+  it('is re-provisioned instead of failing every request on its stale config.lock', async () => {
+    const settingsRoot = path.join(workspaceRoot, 'settings')
+    await fs.mkdir(workspaceRoot, { recursive: true })
+    await simpleGit().raw(['clone', '-q', '-b', 'main', remoteUrl, settingsRoot])
+    await fs.writeFile(path.join(settingsRoot, '.git', 'config.lock'), '')
+    await backdate(path.join(settingsRoot, '.git'), 10 * 60_000)
+
+    await new SettingsWorkspaceManager(config()).ensureGitWorkspace({
+      settingsRoot,
+      branchName: 'canopycms-settings-test',
+      mode: 'prod',
+      remoteUrl,
+    })
+
+    const head = await fs.readFile(path.join(settingsRoot, '.git', 'HEAD'), 'utf8')
+    expect(head.trim()).toBe('ref: refs/heads/canopycms-settings-test')
+    expect(consoleSpy).toHaveWarned(/Moved an unfinished settings workspace clone aside/)
+    expect(await listLocks(path.join(settingsRoot, '.git'))).toEqual([])
+    const trash = (await fs.readdir(workspaceRoot)).filter((name) =>
+      name.startsWith('.trash-settings-'),
+    )
+    expect(trash).toHaveLength(1)
+    await expect(
+      fs.stat(path.join(workspaceRoot, trash[0], '.git', 'config.lock')),
+    ).resolves.toBeTruthy()
+  })
+})
+
 describe('the rename arbiter, racing', () => {
   it('a competitor publishing during this build wins; its metadata is untouched and nothing is left behind', async () => {
     const finalPath = path.join(baseRoot, 'feat')
@@ -538,5 +568,34 @@ describe('leftover sweep', () => {
     await expect(fs.stat(oldStaging)).rejects.toThrow(/ENOENT/)
     await expect(fs.stat(oldTrash)).rejects.toThrow(/ENOENT/)
     await expect(fs.stat(keptTrash)).resolves.toBeTruthy()
+  })
+})
+
+describe('settings: what is not an interrupted first clone', () => {
+  it('keeps a workspace on another branch whose settings branch exists locally', async () => {
+    const settingsRoot = path.join(workspaceRoot, 'settings')
+    const options = {
+      settingsRoot,
+      branchName: 'canopycms-settings-test',
+      mode: 'prod' as const,
+      remoteUrl,
+    }
+    await new SettingsWorkspaceManager(config()).ensureGitWorkspace(options)
+    await simpleGit({ baseDir: settingsRoot }).raw(['commit', '--allow-empty', '-m', 'unpushed'])
+    await simpleGit({ baseDir: settingsRoot }).checkout('main')
+
+    vi.resetModules()
+    const fresh = await import('./settings-workspace')
+    ;(await import('./utils/provision-log')).setProvisionLogSink(() => {})
+    await new fresh.SettingsWorkspaceManager(config()).ensureGitWorkspace(options)
+
+    const log = await simpleGit({ baseDir: settingsRoot }).raw([
+      'log',
+      '--format=%s',
+      'refs/heads/canopycms-settings-test',
+    ])
+    expect(log.split('\n')[0]).toBe('unpushed')
+    const trash = (await fs.readdir(workspaceRoot)).filter((name) => name.startsWith('.trash-'))
+    expect(trash).toEqual([])
   })
 })
