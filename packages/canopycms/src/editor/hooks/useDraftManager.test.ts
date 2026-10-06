@@ -180,7 +180,15 @@ describe('useDraftManager', () => {
   })
 
   it('computes modifiedCount correctly', () => {
-    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    const entries = ['xyz789uvw123', 'mno456pqr789'].map((id, i) => ({
+      ...mockEntry,
+      path: unsafeAsLogicalPath(`other${i}`),
+      contentId: unsafeAsContentId(id),
+      label: `Other ${i}`,
+    }))
+    const { result } = renderHook(() =>
+      useDraftManager({ ...defaultOptions, entries: [mockEntry, ...entries] }),
+    )
 
     expect(result.current.modifiedCount).toBe(0)
 
@@ -681,7 +689,15 @@ describe('useDraftManager', () => {
 
     it('opens a confirm modal mentioning the number of files before discarding all drafts', async () => {
       const { modals } = await import('@mantine/modals')
-      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      const otherEntry: EditorEntry = {
+        ...mockEntry,
+        path: unsafeAsLogicalPath('entry2'),
+        contentId: unsafeAsContentId('xyz789uvw123'),
+        label: 'Other Entry',
+      }
+      const { result } = renderHook(() =>
+        useDraftManager({ ...defaultOptions, entries: [mockEntry, otherEntry] }),
+      )
 
       act(() => {
         result.current.setLoadedValues({ abc123def456: { title: 'Original' } })
@@ -1338,6 +1354,321 @@ describe('useDraftManager', () => {
     expect(result.current.drafts.abc123def456).toEqual({ title: 'Local draft' })
     expect(result.current.drafts.xyz789uvw123).toEqual({
       title: 'Other tab draft for different entry',
+    })
+  })
+
+  describe('verifying drafts restored from storage', () => {
+    const otherEntry: EditorEntry = {
+      ...mockEntry,
+      path: unsafeAsLogicalPath('entry2'),
+      contentId: unsafeAsContentId('xyz789uvw123'),
+      label: 'Other Entry',
+    }
+    const thirdEntry: EditorEntry = {
+      ...mockEntry,
+      path: unsafeAsLogicalPath('entry3'),
+      contentId: unsafeAsContentId('mno456pqr789'),
+      label: 'Third Entry',
+    }
+    const mockReadEntryValue = vi.fn()
+
+    const storeDrafts = (branch: string, drafts: Record<string, unknown>) => {
+      window.localStorage.setItem(
+        `canopycms:drafts:${branch}`,
+        JSON.stringify({
+          v: 2,
+          drafts,
+          baseVersions: Object.fromEntries(Object.keys(drafts).map((id) => [id, 3])),
+        }),
+      )
+    }
+
+    const verifyOptions = {
+      ...defaultOptions,
+      entries: [mockEntry, otherEntry, thirdEntry],
+      readEntryValue: mockReadEntryValue,
+    }
+
+    /** Lets already-resolved promises (and the state updates they trigger) land. */
+    const flush = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+    beforeEach(() => {
+      mockReadEntryValue.mockReset()
+    })
+
+    it('treats a restored draft that equals the server value as a pristine leftover and removes it everywhere', async () => {
+      const server = { title: 'Server title' }
+      storeDrafts('main', { [otherEntry.contentId]: server })
+      mockReadEntryValue.mockResolvedValue({ title: 'Server title' })
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+
+      await waitFor(() => expect(result.current.isAnyDirty()).toBe(false))
+      expect(mockReadEntryValue).toHaveBeenCalledWith(otherEntry)
+      expect(result.current.drafts).toEqual({})
+      expect(readPersistedDrafts('main')).toEqual({})
+    })
+
+    it('counts the restored draft as dirty until it has been checked against the server', async () => {
+      let release: (value: unknown) => void = () => {}
+      mockReadEntryValue.mockReturnValue(new Promise((resolve) => (release = resolve)))
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalled())
+
+      expect(result.current.isAnyDirty()).toBe(true)
+
+      await act(async () => {
+        release({ title: 'Server title' })
+      })
+      await waitFor(() => expect(result.current.isAnyDirty()).toBe(false))
+    })
+
+    it('does not count, and does not delete, a draft whose entry no longer exists', async () => {
+      storeDrafts('main', { deadbeef0000: { title: 'Orphan' } })
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+
+      await waitFor(() => expect(result.current.drafts).toHaveProperty('deadbeef0000'))
+      await flush()
+      expect(result.current.isAnyDirty()).toBe(false)
+      expect(result.current.modifiedCount).toBe(0)
+      expect(mockReadEntryValue).not.toHaveBeenCalled()
+      expect(readPersistedDrafts('main')).toEqual({ deadbeef0000: { title: 'Orphan' } })
+    })
+
+    it('does not treat any draft as an orphan while the entries list is still empty', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Mine' } })
+
+      const { result } = renderHook(() => useDraftManager({ ...verifyOptions, entries: [] }))
+
+      await waitFor(() => expect(result.current.drafts).toHaveProperty(otherEntry.contentId))
+      await flush()
+      expect(result.current.isAnyDirty()).toBe(true)
+      expect(mockReadEntryValue).not.toHaveBeenCalled()
+    })
+
+    it('keeps a restored draft that differs from the server as dirty, without touching loadedValues', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'My edit' } })
+      mockReadEntryValue.mockResolvedValue({ title: 'Server title' })
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(1))
+      await flush()
+      expect(result.current.isAnyDirty()).toBe(true)
+      expect(result.current.modifiedCount).toBe(1)
+      expect(result.current.drafts[otherEntry.contentId]).toEqual({ title: 'My edit' })
+      expect(readPersistedDrafts('main')).toEqual({ [otherEntry.contentId]: { title: 'My edit' } })
+      // The verification read is not an entry load: no OCC token path, no loaded value.
+      expect(result.current.loadedValues).toEqual({})
+      expect(mockLoadEntry).not.toHaveBeenCalled()
+    })
+
+    it('stops counting a verified-dirty draft once the user edits it back to the server value', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'My edit' } })
+      mockReadEntryValue.mockResolvedValue({ title: 'Server title' })
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(1))
+      await flush()
+      expect(result.current.isAnyDirty()).toBe(true)
+
+      act(() => {
+        result.current.setDrafts({ [otherEntry.contentId]: { title: 'Server title' } })
+      })
+
+      expect(result.current.isAnyDirty()).toBe(false)
+    })
+
+    it('leaves a draft unverified, and still dirty, when its read fails', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
+      mockReadEntryValue.mockRejectedValue(new Error('network down'))
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(1))
+      await flush()
+      expect(result.current.isAnyDirty()).toBe(true)
+      expect(readPersistedDrafts('main')).toHaveProperty(otherEntry.contentId)
+      // A failed read must not hold callers waiting for the full cap.
+      await act(async () => {
+        await result.current.whenDraftsVerified()
+      })
+    })
+
+    it('reads each unverified draft once, at most four at a time', async () => {
+      const ids = ['aaaaaaaaaaa1', 'aaaaaaaaaaa2', 'aaaaaaaaaaa3', 'aaaaaaaaaaa4', 'aaaaaaaaaaa5']
+      const entries = [
+        mockEntry,
+        ...ids.map((id, i) => ({
+          ...mockEntry,
+          path: unsafeAsLogicalPath(`e${i}`),
+          contentId: unsafeAsContentId(id),
+          label: `E${i}`,
+        })),
+      ]
+      storeDrafts('main', Object.fromEntries(ids.map((id) => [id, { title: id }])))
+      let inFlight = 0
+      let maxInFlight = 0
+      const releases: Array<() => void> = []
+      mockReadEntryValue.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            inFlight++
+            maxInFlight = Math.max(maxInFlight, inFlight)
+            releases.push(() => {
+              inFlight--
+              resolve({ title: 'server' })
+            })
+          }),
+      )
+
+      const { result } = renderHook(() => useDraftManager({ ...verifyOptions, entries }))
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(4))
+      await flush()
+      expect(mockReadEntryValue).toHaveBeenCalledTimes(4)
+
+      await act(async () => {
+        releases.shift()?.()
+      })
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(5))
+      await act(async () => {
+        while (releases.length > 0) releases.shift()?.()
+      })
+      await flush()
+
+      expect(maxInFlight).toBe(4)
+      expect(mockReadEntryValue).toHaveBeenCalledTimes(5)
+      expect(result.current.isAnyDirty()).toBe(true)
+    })
+
+    it('drops a read that settles after the branch changed', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
+      let release: (value: unknown) => void = () => {}
+      mockReadEntryValue.mockReturnValue(new Promise((resolve) => (release = resolve)))
+
+      const { result, rerender } = renderHook((props) => useDraftManager(props), {
+        initialProps: verifyOptions,
+      })
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalledTimes(1))
+
+      rerender({ ...verifyOptions, branchName: 'feature' })
+      await act(async () => {
+        release({ title: 'Server title' })
+      })
+      await flush()
+
+      expect(result.current.drafts).toEqual({})
+      // The old branch's drafts are untouched in its own storage.
+      expect(readPersistedDrafts('main')).toEqual({
+        [otherEntry.contentId]: { title: 'Server title' },
+      })
+    })
+
+    it('whenDraftsVerified resolves once the pending reads have settled', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
+      let release: (value: unknown) => void = () => {}
+      mockReadEntryValue.mockReturnValue(new Promise((resolve) => (release = resolve)))
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalled())
+
+      let settled = false
+      const pending = result.current.whenDraftsVerified().then(() => {
+        settled = true
+      })
+      await flush()
+      expect(settled).toBe(false)
+
+      await act(async () => {
+        release({ title: 'Server title' })
+      })
+      await act(async () => {
+        await pending
+      })
+      expect(settled).toBe(true)
+      expect(result.current.isAnyDirty()).toBe(false)
+    })
+
+    it('whenDraftsVerified gives up after its cap rather than waiting on a read that never settles', async () => {
+      storeDrafts('main', { [otherEntry.contentId]: { title: 'Server title' } })
+      mockReadEntryValue.mockReturnValue(new Promise(() => {}))
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+      await waitFor(() => expect(mockReadEntryValue).toHaveBeenCalled())
+
+      vi.useFakeTimers()
+      try {
+        let settled = false
+        const pending = result.current.whenDraftsVerified().then(() => {
+          settled = true
+        })
+        await vi.advanceTimersByTimeAsync(2900)
+        expect(settled).toBe(false)
+        await vi.advanceTimersByTimeAsync(200)
+        await pending
+        expect(settled).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+      expect(result.current.isAnyDirty()).toBe(true)
+    })
+
+    it('resolveUnsaved names only the entries still counted dirty, after verification', async () => {
+      storeDrafts('main', {
+        [otherEntry.contentId]: { title: 'Server title' }, // pristine leftover
+        [thirdEntry.contentId]: { title: 'My edit' }, // real edit
+        deadbeef0000: { title: 'Orphan' },
+      })
+      mockReadEntryValue.mockImplementation(async (entry: EditorEntry) =>
+        entry.contentId === otherEntry.contentId ? { title: 'Server title' } : { title: 'Other' },
+      )
+
+      const { result } = renderHook(() => useDraftManager(verifyOptions))
+      await waitFor(() => expect(result.current.drafts).toHaveProperty(thirdEntry.contentId))
+
+      let unsaved: Awaited<ReturnType<typeof result.current.resolveUnsaved>> | undefined
+      await act(async () => {
+        unsaved = await result.current.resolveUnsaved()
+      })
+
+      expect(unsaved).toEqual({ count: 1, labels: ['Third Entry'] })
+    })
+
+    it('drops a draft that equals the value its entry just loaded', async () => {
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Same' } })
+      })
+      expect(readPersistedDrafts('main')).toEqual({ abc123def456: { title: 'Same' } })
+
+      act(() => {
+        result.current.setLoadedValues({ abc123def456: { title: 'Same' } })
+      })
+
+      await waitFor(() => expect(result.current.drafts).toEqual({}))
+      expect(readPersistedDrafts('main')).toEqual({})
+      expect(result.current.effectiveValue).toEqual({ title: 'Same' })
+    })
+
+    it('keeps a draft that differs from the value its entry just loaded', async () => {
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Mine' } })
+      })
+
+      act(() => {
+        result.current.setLoadedValues({ abc123def456: { title: 'Server' } })
+      })
+      await flush()
+
+      expect(result.current.drafts).toEqual({ abc123def456: { title: 'Mine' } })
+      expect(result.current.isAnyDirty()).toBe(true)
     })
   })
 })

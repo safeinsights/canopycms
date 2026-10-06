@@ -147,6 +147,22 @@ describe('useEntryManager', () => {
     })
   })
 
+  it('readEntryValue returns the normalized value without recording a version token', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { title: 'Test Entry' }, version: 777 } as any,
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    const value = await result.current.readEntryValue(mockEntry)
+
+    expect(value).toEqual({ title: 'Test Entry' })
+    expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', path: 'posts/test' })
+    expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
+  })
+
   /** saveEntry refuses an entry it holds no token for, so a save test reads the entry first. */
   const LOADED_VERSION = 4242
   const loadForSave = async (

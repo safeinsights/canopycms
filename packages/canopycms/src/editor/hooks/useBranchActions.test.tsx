@@ -1,7 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { notifications } from '@mantine/notifications'
+import { isValidElement, type ReactNode } from 'react'
 import { useBranchActions } from './useBranchActions'
+import { useDraftManager, type UnsavedSummary } from './useDraftManager'
+import type { EditorEntry } from '../Editor'
+import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import {
   setupMockApiClient,
@@ -33,11 +37,21 @@ vi.mock('@mantine/modals', () => ({
   },
 }))
 
+/** The text a (mocked) confirm modal would show, from its React children. */
+const textOf = (node: ReactNode): string => {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children)
+  return ''
+}
+
 describe('useBranchActions', () => {
   let mockClient: MockApiClient
   let wrapper: ReturnType<typeof createApiClientWrapper>
   const mockSetBranchName = vi.fn()
-  const mockIsAnyDirty = vi.fn(() => false)
+  const CLEAN: UnsavedSummary = { count: 0, labels: [] }
+  const DIRTY: UnsavedSummary = { count: 1, labels: ['About'] }
+  const mockGetUnsaved = vi.fn<() => Promise<UnsavedSummary>>()
   const mockOnReloadBranches = vi.fn().mockResolvedValue(undefined)
   const mockOnBranchSwitch = vi.fn()
   const mockOnBranchCreated = vi.fn()
@@ -45,7 +59,7 @@ describe('useBranchActions', () => {
   const defaultOptions = {
     branchName: 'main',
     setBranchName: mockSetBranchName,
-    isAnyDirty: mockIsAnyDirty,
+    getUnsaved: mockGetUnsaved,
     onReloadBranches: mockOnReloadBranches,
     onBranchCreated: mockOnBranchCreated,
     onBranchSwitch: mockOnBranchSwitch,
@@ -58,7 +72,11 @@ describe('useBranchActions', () => {
     setupMockLocation()
     setupMockHistory()
     mockSetBranchName.mockClear()
-    mockIsAnyDirty.mockReturnValue(false)
+    mockGetUnsaved.mockResolvedValue(CLEAN)
+    // clearAllMocks (afterEach) keeps implementations, so a modal behavior set by one test would leak.
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockReset()
+    window.localStorage.clear()
     mockOnReloadBranches.mockClear()
     mockOnBranchSwitch.mockClear()
     mockOnBranchCreated.mockClear()
@@ -88,7 +106,7 @@ describe('useBranchActions', () => {
     // no confirmation was shown and entry A's work was silently destroyed.
     // The fix: use isAnyDirty() which checks all draft entries.
     const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true) // some entry (not necessarily selected) is dirty
+    mockGetUnsaved.mockResolvedValue(DIRTY) // some entry (not necessarily selected) is dirty
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
@@ -106,7 +124,7 @@ describe('useBranchActions', () => {
 
   it('shows confirmation modal when switching with unsaved changes', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
+    mockGetUnsaved.mockResolvedValue(DIRTY)
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), {
       wrapper,
@@ -136,7 +154,7 @@ describe('useBranchActions', () => {
 
   it('does not switch branch when user cancels', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
+    mockGetUnsaved.mockResolvedValue(DIRTY)
 
     // Mock the confirmation modal to call onCancel
     ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
@@ -250,54 +268,161 @@ describe('useBranchActions', () => {
     expect(mockOnBranchSwitch).not.toHaveBeenCalled()
   })
 
-  it('returns false without creating when the user declines the dirty check', async () => {
-    const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
-    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
-      config.onCancel()
+  describe('confirmCreate', () => {
+    it('resolves true without a dialog when nothing is unsaved', async () => {
+      const { modals } = await import('@mantine/modals')
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      let ok: boolean | undefined
+      await act(async () => {
+        ok = await result.current.confirmCreate()
+      })
+
+      expect(ok).toBe(true)
+      expect(modals.openConfirmModal).not.toHaveBeenCalled()
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    it('resolves false when the user declines', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue(DIRTY)
+      vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+        config.onCancel?.()
+        return 'modal-id'
+      })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
-    await act(async () => {
-      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+      let ok: boolean | undefined
+      await act(async () => {
+        ok = await result.current.confirmCreate()
+      })
+
+      expect(ok).toBe(false)
     })
 
-    expect(created).toBe(false)
-    expect(mockClient.branches.create).not.toHaveBeenCalled()
+    it('resolves false when the modal is dismissed by Escape or the overlay', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue(DIRTY)
+      // Mantine fires only onClose for these exits, never onCancel.
+      vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+        config.onClose?.()
+        return 'modal-id'
+      })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      let ok: boolean | undefined
+      await act(async () => {
+        ok = await result.current.confirmCreate()
+      })
+
+      expect(ok).toBe(false)
+    })
+
+    it('resolves true when confirmed, despite the close that follows the confirm', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue(DIRTY)
+      // Mantine closes the modal right after calling onConfirm.
+      vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+        config.onConfirm?.()
+        config.onClose?.()
+        return 'modal-id'
+      })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      let ok: boolean | undefined
+      await act(async () => {
+        ok = await result.current.confirmCreate()
+      })
+
+      expect(ok).toBe(true)
+    })
+
+    it('names the unsaved entries and the branch their drafts stay on', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue({ count: 2, labels: ['Site settings', 'About'] })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      act(() => {
+        void result.current.confirmCreate()
+      })
+      await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+
+      const text = textOf(vi.mocked(modals.openConfirmModal).mock.calls[0][0].children)
+      expect(text).toContain('Unsaved changes in: Site settings, About.')
+      expect(text).toContain('Your drafts stay on “main” and come back when you return.')
+      expect(vi.mocked(modals.openConfirmModal).mock.calls[0][0].labels).toEqual({
+        confirm: 'Continue Anyway',
+        cancel: 'Cancel',
+      })
+    })
+
+    it('abbreviates a long list of unsaved entries', async () => {
+      const { modals } = await import('@mantine/modals')
+      const labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+      mockGetUnsaved.mockResolvedValue({ count: 7, labels })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      act(() => {
+        void result.current.confirmCreate()
+      })
+      await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+
+      const text = textOf(vi.mocked(modals.openConfirmModal).mock.calls[0][0].children)
+      expect(text).toContain('Unsaved changes in: A, B, C, D, E and 2 more.')
+    })
+
+    it('falls back to a generic message when no entry label is known', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue({ count: 1, labels: [] })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      act(() => {
+        void result.current.confirmCreate()
+      })
+      await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+
+      expect(textOf(vi.mocked(modals.openConfirmModal).mock.calls[0][0].children)).toContain(
+        'You have unsaved changes.',
+      )
+    })
+
+    it('reports the confirm as open until it settles', async () => {
+      const { modals } = await import('@mantine/modals')
+      mockGetUnsaved.mockResolvedValue(DIRTY)
+      let settleConfirm: () => void = () => {}
+      vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+        settleConfirm = () => config.onCancel?.()
+        return 'modal-id'
+      })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+      expect(result.current.confirmOpen).toBe(false)
+
+      act(() => {
+        void result.current.confirmCreate()
+      })
+      await waitFor(() => expect(result.current.confirmOpen).toBe(true))
+
+      act(() => settleConfirm())
+      await waitFor(() => expect(result.current.confirmOpen).toBe(false))
+    })
   })
 
-  it('returns false when the dirty-check modal is dismissed by Escape or the overlay', async () => {
+  it('handleCreateBranch does not ask about unsaved changes itself', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
-    // Mantine fires only onClose for these exits, never onCancel.
-    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
-      config.onClose?.()
-      return 'modal-id'
+    mockGetUnsaved.mockResolvedValue(DIRTY)
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branch: {
+          name: 'new-branch',
+          status: 'editing',
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'user1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
     })
-
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
-
-    let created: boolean | undefined
-    await act(async () => {
-      created = await result.current.handleCreateBranch({ name: 'new-branch' })
-    })
-
-    expect(created).toBe(false)
-    expect(mockClient.branches.create).not.toHaveBeenCalled()
-  })
-
-  it('creates when the dirty check is confirmed, despite the close that follows the confirm', async () => {
-    const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
-    // Mantine closes the modal right after calling onConfirm.
-    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
-      config.onConfirm?.()
-      config.onClose?.()
-      return 'modal-id'
-    })
-
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     let created: boolean | undefined
@@ -306,7 +431,54 @@ describe('useBranchActions', () => {
     })
 
     expect(created).toBe(true)
+    expect(modals.openConfirmModal).not.toHaveBeenCalled()
     expect(mockClient.branches.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows no dialog when the only drafts are pristine leftovers, once they are verified', async () => {
+    const { modals } = await import('@mantine/modals')
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('about'),
+      contentId: unsafeAsContentId('abc123def456'),
+      label: 'About',
+      schema: [],
+    }
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({ v: 2, drafts: { abc123def456: { title: 'Server' } }, baseVersions: {} }),
+    )
+    const readEntryValue = vi.fn(async () => ({ title: 'Server' }))
+    const entries = [entry]
+    const { result } = renderHook(
+      () => {
+        // The real draft manager over a restored draft whose server value is identical.
+        const manager = useDraftManager({
+          branchName: 'main',
+          selectedPath: '',
+          currentEntry: undefined,
+          entries,
+          loadEntry: vi.fn(),
+          readEntryValue,
+          saveEntry: vi.fn(),
+          setBusy: vi.fn(),
+        })
+        const actions = useBranchActions({ ...defaultOptions, getUnsaved: manager.resolveUnsaved })
+        return { manager, actions }
+      },
+      { wrapper },
+    )
+
+    // Not inside act(): its queue holds the verification read's state update until the
+    // callback returns, which is the callback waiting on that very update.
+    let ok: boolean | undefined
+    void result.current.actions.confirmCreate().then((value) => {
+      ok = value
+    })
+    await waitFor(() => expect(ok).toBeDefined())
+
+    expect(readEntryValue).toHaveBeenCalledTimes(1)
+    expect(ok).toBe(true)
+    expect(modals.openConfirmModal).not.toHaveBeenCalled()
   })
 
   it('adopts the server-sanitized branch name after create', async () => {
@@ -369,43 +541,6 @@ describe('useBranchActions', () => {
     // Should not switch to the branch or reload if creation failed
     expect(mockSetBranchName).not.toHaveBeenCalled()
     expect(mockOnReloadBranches).not.toHaveBeenCalled()
-  })
-
-  it('prompts for confirmation when creating branch with unsaved changes', async () => {
-    const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
-
-    const { result } = renderHook(() => useBranchActions(defaultOptions), {
-      wrapper,
-    })
-
-    act(() => {
-      result.current.handleCreateBranch({ name: 'new-branch' })
-    })
-
-    await waitFor(() => {
-      expect(modals.openConfirmModal).toHaveBeenCalled()
-    })
-  })
-
-  it('does not create branch when user cancels dirty check', async () => {
-    const { modals } = await import('@mantine/modals')
-    mockIsAnyDirty.mockReturnValue(true)
-
-    // Mock the confirmation modal to call onCancel
-    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
-      config.onCancel()
-    })
-
-    const { result } = renderHook(() => useBranchActions(defaultOptions), {
-      wrapper,
-    })
-
-    await act(async () => {
-      await result.current.handleCreateBranch({ name: 'new-branch' })
-    })
-
-    expect(mockClient.branches.create).not.toHaveBeenCalled()
   })
 
   it('updates URL when switching branches', async () => {
