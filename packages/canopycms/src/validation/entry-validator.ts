@@ -24,7 +24,7 @@ import type {
   SelectFieldConfig,
 } from '../config'
 import { fieldTypes } from '../config'
-import { isValidCropRect } from '../assets/transform-directives'
+import { isValidCropRect, roundCropRect } from '../assets/transform-directives'
 import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
 import { resolveBlockItem, traverseFields } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
@@ -54,7 +54,10 @@ function isPositiveInt(value: unknown): boolean {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
-/** True when `value` is a well-formed `{ x, y, w, h }` normalized crop rect. */
+/**
+ * True when `value` is a well-formed `{ x, y, w, h }` normalized crop rect that is still valid
+ * after `roundCropRect`, the rounding its transform URL applies.
+ */
 function isValidImageCropValue(value: unknown): boolean {
   if (!isPlainRecord(value)) return false
   const { x, y, w, h } = value
@@ -66,7 +69,9 @@ function isValidImageCropValue(value: unknown): boolean {
   ) {
     return false
   }
-  return isValidCropRect(x, y, w, h)
+  if (!isValidCropRect(x, y, w, h)) return false
+  const rounded = roundCropRect({ x, y, w, h })
+  return isValidCropRect(rounded.x, rounded.y, rounded.w, rounded.h)
 }
 
 /**
