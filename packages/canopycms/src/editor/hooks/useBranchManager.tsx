@@ -131,7 +131,7 @@ const showDeleteConfirmation = (
  */
 export const CREATED_BRANCH_GRACE_MS = 120_000
 
-/** A branch this session created: the create response's copy until a listing shows a newer one. */
+/** A branch this session created: the create response's copy, then the last copy a listing showed. */
 interface PendingBranch {
   branch: BranchListItem
   addedAt: number
