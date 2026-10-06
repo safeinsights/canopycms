@@ -53,7 +53,7 @@ describe('fetchBranches', () => {
       status: 404,
       error: 'Not found',
     }))
-    expect(await fetchBranches(client)).toEqual({ branches: [] })
+    expect(await fetchBranches(client)).toEqual({ branches: [], receivedAt: expect.any(Number) })
   })
 
   // A proxy's 404 page means the API was never reached: a wrong base path, say.

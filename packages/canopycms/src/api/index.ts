@@ -1,6 +1,7 @@
 export type { ApiResponse, ApiRequest, ApiContext } from './types'
 export type {
   BranchResponse,
+  BranchCreateResponse,
   BranchListResponse,
   BranchDeleteResponse,
   CreateBranchBody,

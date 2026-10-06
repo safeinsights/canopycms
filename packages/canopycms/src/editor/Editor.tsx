@@ -239,6 +239,7 @@ export const Editor: React.FC<EditorProps> = ({
     setBranchName,
     branchSummaries,
     currentBranch,
+    addCreatedBranch,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,
@@ -371,6 +372,7 @@ export const Editor: React.FC<EditorProps> = ({
     setBranchName,
     isAnyDirty,
     onReloadBranches: () => loadBranches(),
+    onBranchCreated: addCreatedBranch,
   })
 
   // 5. Comment system (depends on branchNameState)
@@ -1252,9 +1254,7 @@ export const Editor: React.FC<EditorProps> = ({
                   // Don't close branch manager if there was an error or user cancelled
                 }
               }}
-              onCreate={(branch) => {
-                handleCreateBranch(branch).catch((err) => console.error(err))
-              }}
+              onCreate={handleCreateBranch}
               onSubmit={(name) => {
                 handleSubmit(name).catch((err) => console.error(err))
               }}
