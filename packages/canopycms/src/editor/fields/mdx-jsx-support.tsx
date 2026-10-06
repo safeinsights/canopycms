@@ -19,6 +19,7 @@ import {
   UnrecognizedMarkdownConstructError,
   addImportVisitor$,
   importVisitors$,
+  isMdastHTMLNode,
   isMdastJsxNode,
   jsxPlugin,
   realmPlugin,
@@ -79,10 +80,36 @@ const catchAllJsxDescriptor: JsxComponentDescriptor = {
 }
 
 /**
- * A JSX fragment (`<>…</>`) has no name, and MDXEditor's HTML handling throws a
- * `TypeError` on a nameless element, on import or export, which nothing catches.
+ * Why MDXEditor cannot round-trip this JSX element itself, or null if it can.
+ * MDXEditor's handling of HTML-named elements assumes string attributes (an
+ * expression `className` or `style` throws on export, an expression `src`
+ * saves as `[object Object]`), drops an `<img>` with no `src`, and throws a
+ * `TypeError` on a fragment, which has no name.
  */
-const isFragment = (node: MdastNode) => isMdastJsxNode(node) && node.name === null
+function unsupportedJsx(node: MdastNode): string | null {
+  if (!isMdastJsxNode(node)) return null
+  if (node.name === null) return 'fragments (<>…</>)'
+  // `img` is the image plugin's, not in MDXEditor's HTML tag list.
+  const isImage = node.name === 'img'
+  if (!isImage && !isMdastHTMLNode(node)) return null
+  const hasNonStringAttribute = node.attributes.some(
+    (attribute) =>
+      attribute.type === 'mdxJsxExpressionAttribute' ||
+      (attribute.value !== null &&
+        attribute.value !== undefined &&
+        typeof attribute.value !== 'string'),
+  )
+  if (hasNonStringAttribute) return `<${node.name}> with an {expression} attribute`
+  const hasSrc = node.attributes.some(
+    (attribute) =>
+      attribute.type === 'mdxJsxAttribute' &&
+      attribute.name === 'src' &&
+      typeof attribute.value === 'string' &&
+      attribute.value !== '',
+  )
+  if (isImage && !hasSrc) return '<img> without a src'
+  return null
+}
 
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
@@ -91,8 +118,8 @@ const ESM_NODE_TYPE: string = 'mdxjsEsm'
 const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
 
 /**
- * Raises, at document import, the two losses MDXEditor would otherwise commit
- * without reporting them:
+ * Raises, at document import, what MDXEditor would otherwise lose, corrupt or
+ * crash on without reporting it:
  *
  * - `import`/`export` lines: the JSX plugin's visitor for them is a no-op, so
  *   the next edit drops them.
@@ -100,8 +127,7 @@ const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
  *   children are imported later, by nested editors, whose failures go to
  *   `console.error` and leave the element partly imported; editing it then
  *   writes the partial children back.
- *
- * It also rejects fragments, anywhere it looks, since they crash MDXEditor.
+ * - JSX elements `unsupportedJsx` rejects, wherever it looks.
  *
  * It throws MDXEditor's own `UnrecognizedMarkdownConstructError`, one of the
  * two error classes its import catches and reports through `onError`; any other
@@ -119,11 +145,15 @@ const roundTripGuardPlugin = realmPlugin({
             'import/export statements cannot be edited in the rich-text editor',
           )
         }
-        if (isFragment(mdastNode)) {
-          throw new UnrecognizedMarkdownConstructError(
-            'fragments (<>…</>) cannot be edited in the rich-text editor',
-          )
+        const reject = (node: MdastNode) => {
+          const reason = unsupportedJsx(node)
+          if (reason !== null) {
+            throw new UnrecognizedMarkdownConstructError(
+              `${reason} cannot be edited in the rich-text editor`,
+            )
+          }
         }
+        reject(mdastNode)
         const visitors = realm.getValue(importVisitors$).filter((visitor) => visitor !== guard)
         const hasVisitor = (node: MdastNode) =>
           visitors.some((visitor) =>
@@ -133,10 +163,8 @@ const roundTripGuardPlugin = realmPlugin({
           )
         const check = (node: MdastNode) => {
           for (const child of childrenOf(node)) {
-            if (
-              isFragment(child) ||
-              (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child))
-            ) {
+            reject(child)
+            if (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child)) {
               const where = isMdastJsxNode(mdastNode) ? `<${mdastNode.name ?? ''}>` : 'A table'
               throw new UnrecognizedMarkdownConstructError(
                 `${where} contains ${child.type} content the rich-text editor cannot edit`,

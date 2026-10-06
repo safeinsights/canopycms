@@ -210,6 +210,13 @@ describe('MarkdownField', () => {
     })
   })
 
+  it('keeps HTML elements with string attributes in the rich editor', async () => {
+    renderField('A <span className="b">x</span> and <img src="a.png" alt="A" /> B')
+    const root = await richEditor()
+    expect(root.textContent).toContain('x')
+    expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
+  })
+
   // MDXEditor re-serializes both: `__x__` as `**x**`, and a block element's
   // children indented.
   it.each([
@@ -248,6 +255,16 @@ describe('MarkdownField', () => {
       ['an inline fragment', 'Text <>inside</> a fragment.'],
       ['a fragment inside an element', '<Callout>\nA <>b</> c.\n</Callout>'],
       ['a fragment inside a table cell', '| a | b |\n| --- | --- |\n| x <>y</> z | w |'],
+      [
+        'an HTML element with an expression attribute',
+        'A <span className={cls}><span className="b">x</span></span> B',
+      ],
+      [
+        'such an element inside a JSX element',
+        '<Callout>\nA <span className={cls}><span className="b">x</span></span> B\n</Callout>',
+      ],
+      ['an image with an expression src', 'Pic <img src={hero} alt="Hero" /> end'],
+      ['an image without a src', 'Pic <img alt="No src" /> end'],
     ])('opens a body with %s as editable source', async (_case, body) => {
       const onChange = vi.fn()
       renderField(body, onChange)
