@@ -2,7 +2,8 @@ import React from 'react'
 import { notFound } from 'next/navigation'
 import type { HomeContent } from './schemas'
 import { HomePreview } from './components/HomeView'
-import { readByUrlPath } from './lib/canopy'
+import { listEntries, readByUrlPath } from './lib/canopy'
+import { loadHomeExtras } from './lib/home-extras'
 
 // The home entry is a ROOT INDEX ENTRY: it lives at `content/home.index.<id>.json`, so its slug is
 // `index` and CanopyCMS collapses that onto the collection's own path — for the root collection,
@@ -22,7 +23,7 @@ const Page = async () => {
 
   if (!result) return notFound()
 
-  return <HomePreview initialData={result.data} />
+  return <HomePreview initialData={result.data} extras={await loadHomeExtras(listEntries)} />
 }
 
 export default Page

@@ -302,8 +302,8 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
 - `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `createPreviewPage`, `guardBuildContext`
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
-- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` wraps a view to render `useCanopyPreview`'s live draft
-- `preview-page.tsx` — `createPreviewPageFor`, the page behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]`, else `notFound()`; imports only types from `client.tsx`, which `server-entry-client-boundary.test.ts` holds
+- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
+- `preview-page.tsx` — `createPreviewPageFor`, behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` (or a `previewView({ view, load })` whose `load` feeds `extras`), else `notFound()`; types only from `client.tsx`, held by `server-entry-client-boundary.test.ts`
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports

@@ -1554,6 +1554,17 @@ export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview }
 
 It reads the entry from the editor's `?branch=` under the request's ACLs and never creates a branch. Anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
 
+A view that needs more than its entry pairs with a server `load` in that page file; `previewView` checks its result against the view's `extras` type:
+
+```tsx
+post: previewView({
+  view: PostPreview, // withCanopyPreview<PostContent, { related: Related[] }>(PostView)
+  load: async ({ entry, canopy, branch }) => ({ related: await findRelated(canopy, entry, branch) }),
+}),
+```
+
+`load` runs after the entry and view are found, with the same ACL-checked `canopy`. Its result is the view's `extras` prop: a request snapshot (only `data` is live) that must be RSC-serializable. Server-rendered elements are fine, so non-live sections can reuse server components. Have the public page pass the same `extras`, so previews show nothing the site lacks.
+
 ## AI-Ready Content
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
