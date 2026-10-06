@@ -467,8 +467,8 @@ export class CanopyApiClient {
 }
 
 /**
- * Base wait before each resend of a throttled request. A throttle clears as cold starts
- * finish, which take a few seconds, so the waits span about that.
+ * Base wait before each resend of a throttled request. A throttle from a burst of cold starts
+ * clears as they finish, so the waits span a few seconds.
  */
 const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
 

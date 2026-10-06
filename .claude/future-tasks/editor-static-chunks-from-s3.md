@@ -10,11 +10,11 @@ which covers the measured burst. This is the structural follow-up.
 
 The editor's content-hashed chunks (`/_next/static/*` on `CanopyCmsDistribution`, the
 `editorAssetPrefix` route on `attachTo`) come from the CMS Lambda on every CloudFront miss.
-CloudFront caches per region, so the first editor load in a region after a deploy cold-starts
-one Lambda environment per chunk: about 15 static requests on example1 (11 JS, 3 CSS, plus
-3 more from the preview iframe), each holding a 1-3 s cold start. That costs the user a slow
-first load, spends Lambda time on static files, and is what the concurrency cap has to be sized
-for.
+CloudFront caches per regional edge cache, so after a deploy the first editor load behind each
+cold-starts one Lambda environment per chunk: 14 static requests on example1 (11 JS, 3 CSS),
+plus 3 more from the preview iframe, each holding its environment through a cold start. That
+costs the user a slow first load, spends Lambda time on static files, and is what the
+concurrency cap has to be sized for.
 
 ## Why it is not just a `BucketDeployment`
 

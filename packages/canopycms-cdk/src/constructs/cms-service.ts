@@ -533,10 +533,10 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
 export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
 
 /**
- * The fewest concurrent invocations one cold editor load fits under. With
- * nothing cached, the editor page, its static chunks and its first API calls
- * all reach the Lambda at once, about 15-25 requests, each holding an
- * execution environment for its whole cold start.
+ * The cap below which synth warns. With nothing cached, a cold editor load on
+ * the example app sends the Lambda about 25 requests, 14 of them chunks
+ * requested together, and each invocation holds an execution environment
+ * through its cold start.
  */
 export const MIN_CMS_RESERVED_CONCURRENCY = 20
 
@@ -562,8 +562,9 @@ export interface CanopyCmsServiceProps {
    * Everything the Lambda serves counts against it, including the editor's
    * static chunks (`editorAssetPrefix` on `attachTo`, `/_next/static/*` on
    * `CanopyCmsDistribution`) whenever CloudFront misses them. CloudFront caches
-   * per region, so the first editor load in a region after a deploy requests
-   * every chunk at once, and an invocation over the cap is answered 429: the
+   * per regional edge cache, so after a deploy the first editor load behind
+   * each one requests every chunk together, and an invocation over the cap is
+   * answered 429: the
    * browser refuses that as a script and the editor fails with
    * `ChunkLoadError`. Synth warns below {@link MIN_CMS_RESERVED_CONCURRENCY}.
    *
@@ -1183,9 +1184,9 @@ export class CanopyCmsService extends Construct {
     ) {
       Annotations.of(this).addWarningV2(
         'canopycms:cms-reserved-concurrency-low',
-        `reservedConcurrency is ${reservedConcurrency}, below the ${MIN_CMS_RESERVED_CONCURRENCY} ` +
-          `concurrent requests one cold editor load can make. The editor's static chunks are ` +
-          `served by this Lambda until CloudFront caches them, so a throttled chunk fails the ` +
+        `reservedConcurrency is ${reservedConcurrency}, below ${MIN_CMS_RESERVED_CONCURRENCY}. ` +
+          `The editor's static chunks are served by this Lambda until CloudFront caches them, ` +
+          `and a cold editor load requests them together, so a throttled chunk fails the ` +
           `editor with ChunkLoadError. See the reservedConcurrency prop.`,
       )
     }

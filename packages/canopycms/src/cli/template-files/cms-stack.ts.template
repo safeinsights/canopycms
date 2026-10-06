@@ -193,8 +193,8 @@ export class CmsStack extends Stack {
 
       memorySize: 2048,
       // A ceiling, free while idle. The editor's static chunks count against it
-      // until CloudFront caches them, and one cold editor load makes 15-25
-      // requests at once, so synth warns below 20. See the prop's doc comment.
+      // until CloudFront caches them, and a cold editor load requests them
+      // together, so synth warns below 20. See the prop's doc comment.
       reservedConcurrency: 50,
     })
 
