@@ -23,6 +23,12 @@ server-side halves remain, both reasoned from code rather than measured on a dep
    client now covers the listing; it does not cover per-branch requests (entries, schema,
    comments) for the new branch that land on a lagging container. Check whether
    `getBranchContext` can miss a just-created branch there, and what the editor shows if so.
+3. **`loadBranches` responses can land out of order.** It fetches directly and writes the
+   cache with `mutate(..., { revalidate: false })`, so the last response to arrive wins
+   whenever its request started; SWR's own race handling covers only its revalidations. The
+   created-branch overlay hides this for a new branch inside the grace window, but any
+   branch's state (a submit's status, say) can be overwritten by an older listing. A
+   monotonic request sequence, as `useEntryManager.refreshEntries` uses, would close it.
 
 ## Related
 

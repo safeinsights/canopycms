@@ -122,17 +122,16 @@ const showDeleteConfirmation = (
 }
 
 /**
- * How long a branch this session created is kept after the server listing
- * lacks it. A listing served by another server container can miss a
- * just-created branch for the shared filesystem's attribute/dentry cache
- * window (~60s, see docs/concurrency.md window A); twice that absorbs request
- * latency on top, and past it a listing that still lacks the branch means it
- * really is gone.
+ * How long a branch this session created stays overlaid on listings. Each warm
+ * server container caches the shared filesystem separately, so for its
+ * attribute/dentry cache window (~60s, see docs/concurrency.md window A) a
+ * listing can lack the branch even after another container's listing showed
+ * it. Twice that absorbs request latency; past it, listings alone decide.
  * @internal Exported only for the test that pins it.
  */
 export const CREATED_BRANCH_GRACE_MS = 120_000
 
-/** A branch this session created that no server listing has shown yet. */
+/** A branch this session created, with the latest copy any listing has shown. */
 interface PendingBranch {
   branch: BranchListItem
   addedAt: number
@@ -148,17 +147,33 @@ function mergePendingBranches(
   return missing.length === 0 ? listed : [...listed, ...missing.map((p) => p.branch)]
 }
 
-/** Drops pending branches the listing now shows, or that a listing past the grace window still lacks. */
-function prunePendingBranches(
+/**
+ * Applies one received listing to the pending branches: drops those it arrived
+ * past the grace window for, and takes the listing's copy of the rest. Written
+ * so a listing with no arrival time (NaN) drops nothing.
+ */
+function reconcilePendingBranches(
   pending: PendingBranch[],
   listed: BranchListItem[],
-  now: number,
+  receivedAt: number,
 ): PendingBranch[] {
-  const listedNames = new Set(listed.map((b) => b.name))
-  const kept = pending.filter(
-    (p) => !listedNames.has(p.branch.name) && now - p.addedAt <= CREATED_BRANCH_GRACE_MS,
-  )
-  return kept.length === pending.length ? pending : kept
+  const listedByName = new Map(listed.map((b) => [b.name, b]))
+  let changed = false
+  const next: PendingBranch[] = []
+  for (const p of pending) {
+    if (receivedAt - p.addedAt > CREATED_BRANCH_GRACE_MS) {
+      changed = true
+      continue
+    }
+    const listedCopy = listedByName.get(p.branch.name)
+    if (listedCopy && listedCopy !== p.branch) {
+      changed = true
+      next.push({ branch: listedCopy, addedAt: p.addedAt })
+    } else {
+      next.push(p)
+    }
+  }
+  return changed ? next : pending
 }
 
 interface BranchSummary {
@@ -262,7 +277,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   useEffect(() => {
     if (!branchesData) return
     setPendingBranches((prev) =>
-      prunePendingBranches(prev, branchesData.branches, branchesData.receivedAt),
+      reconcilePendingBranches(prev, branchesData.branches, branchesData.receivedAt),
     )
   }, [branchesData])
 

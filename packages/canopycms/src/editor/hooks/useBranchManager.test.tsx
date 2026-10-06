@@ -540,7 +540,9 @@ describe('useBranchManager', () => {
       expect(result.current.currentBranch).toEqual(createdBranch)
     })
 
-    it('prefers the server copy once the listing includes the branch, and stops tracking it', async () => {
+    it('prefers the server copy once a listing includes the branch, and keeps it through a lagging listing after that', async () => {
+      const t0 = 1_700_000_000_000
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
       mockStaleListing()
       const renders: BranchListItem[][] = []
       const { result } = renderHook(
@@ -585,12 +587,18 @@ describe('useBranchManager', () => {
         expect(list.filter((b) => b.name === 'new-branch')).toEqual([serverCopy])
       }
 
-      // The listing has now shown it, so a later listing without it is the truth.
+      // Another container's listing can still lag it; the latest listed copy stays.
+      now.mockReturnValue(t0 + 1_000)
       mockStaleListing()
       await act(async () => {
         await result.current.loadBranches()
       })
+      expect(result.current.branches.filter((b) => b.name === 'new-branch')).toEqual([serverCopy])
 
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
+      await act(async () => {
+        await result.current.loadBranches()
+      })
       expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
     })
 
@@ -632,7 +640,7 @@ describe('useBranchManager', () => {
       expect(copies[0].title).toBe('Renamed')
     })
 
-    it('stops tracking an added branch once an automatic revalidation lists it', async () => {
+    it('takes the server copy of an added branch from an automatic revalidation', async () => {
       mockStaleListing()
       const { result } = renderHook(
         () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
@@ -647,10 +655,11 @@ describe('useBranchManager', () => {
       })
 
       // SWR's own revalidation, not the hook's loadBranches().
+      const serverCopy: BranchListItem = { ...createdBranch, status: 'submitted' }
       mockClient.branches.list.mockResolvedValue({
         ok: true,
         status: 200,
-        data: { branches: [...mockBranches, createdBranch] },
+        data: { branches: [...mockBranches, serverCopy] },
       })
       await act(async () => {
         await result.current.swr.mutate(BRANCHES_KEY)
@@ -659,8 +668,34 @@ describe('useBranchManager', () => {
         expect(result.current.manager.branches).toHaveLength(3)
       })
 
-      // Written straight to the cache, bypassing loadBranches(), so only a
-      // prune that already ran on the listing above can hide the branch now.
+      // Written straight to the cache, bypassing loadBranches(), so only an
+      // update that already ran on the listing above can show the server copy now.
+      await act(async () => {
+        await result.current.swr.mutate(
+          BRANCHES_KEY,
+          { branches: mockBranches, receivedAt: Date.now() },
+          { revalidate: false },
+        )
+      })
+
+      expect(result.current.manager.branches.filter((b) => b.name === 'new-branch')).toEqual([
+        serverCopy,
+      ])
+    })
+
+    it('keeps an added branch when a cache write carries no receivedAt', async () => {
+      mockStaleListing()
+      const { result } = renderHook(
+        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(2)
+      })
+      act(() => {
+        result.current.manager.addCreatedBranch(createdBranch)
+      })
+
       await act(async () => {
         await result.current.swr.mutate(
           BRANCHES_KEY,
@@ -669,7 +704,7 @@ describe('useBranchManager', () => {
         )
       })
 
-      expect(result.current.manager.branches.map((b) => b.name)).not.toContain('new-branch')
+      expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
     })
 
     it('does not prune against the previous listing while a revalidation is in flight', async () => {
