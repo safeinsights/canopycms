@@ -43,7 +43,7 @@ import type { WorkerContext } from './worker-context'
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
- * `remote.git` (`origin`), and `reconcileTrackedBranches` is what advances
+ * `remote.git`, and `reconcileTrackedBranches` is what advances
  * `remote.git`'s `refs/heads/*` toward what the fetch above put in the tracking
  * namespace; reorder them and every branch rebases onto the PREVIOUS cycle's
  * base tip -- not corrupting, but silently a cycle behind.
@@ -555,7 +555,7 @@ const warnedTrackedCanopyState = new Set<string>()
 
 /**
  * Fast-forward the base branch's own working-tree clone
- * (content-branches/<baseBranch>) to match origin/<baseBranch>, every sync
+ * (content-branches/<baseBranch>) to match remote.git's <baseBranch>, every sync
  * cycle, so the drift window is bounded by gitSyncInterval.
  *
  * A dedicated, explicit and LOUD step rather than a side effect of the rebase
@@ -564,8 +564,8 @@ const warnedTrackedCanopyState = new Set<string>()
  * new branch "from base" silently gets a stale snapshot. The returned outcome
  * goes to worker-status.json for the same reason.
  *
- * ff-only on purpose: this clone must stay a linear mirror of
- * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged local
+ * ff-only on purpose: this clone must stay a linear mirror of remote.git's
+ * <baseBranch>, so a merge that isn't a fast-forward (diverged local
  * history) is left untouched rather than force-resolved.
  *
  * Holds the provisioning lock and then, like the rebase loop, the [SYNC-C1]
@@ -689,16 +689,14 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     }
 
     // Raw (unsanitized) name from here on: these are git ref operations
-    // against origin/<baseBranch>, not filesystem paths, so they must use
+    // against remote.git's <baseBranch>, not filesystem paths, so they must use
     // the same name GitHub knows the branch by.
-    await baseGit.fetch('origin', ctx.baseBranch)
+    await baseGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
 
     // rev-list, not status.behind, which needs an upstream tracking branch that
-    // is not guaranteed here. Against the just-fetched tip rather than
-    // origin/<base>: workspaces are cloned --single-branch (git-manager.ts), so
-    // for any other base branch origin/<base> never exists and rev-list dies
-    // with "ambiguous argument". Pin FETCH_HEAD to a SHA immediately -- it is
-    // one shared mutable file per repo, silently repointed by any other fetch.
+    // is not guaranteed here. Against the just-fetched tip: a fetch by path
+    // updates no remote-tracking ref. Pin FETCH_HEAD to a SHA immediately -- it
+    // is one shared mutable file per repo, silently repointed by any other fetch.
     const fetchedTip = (await baseGit.revparse(['FETCH_HEAD'])).trim()
     const behindCount = parseInt(
       (await baseGit.raw(['rev-list', '--count', `HEAD..${fetchedTip}`])).trim(),

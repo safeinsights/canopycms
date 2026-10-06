@@ -1748,38 +1748,37 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
   })
 
   /**
-   * A branch-workspace clone with its own independent "origin" (unrelated
-   * to remote.git/fixtureRemote above) -- the same shape
-   * cms-worker-rebase.test.ts's createBranchSetup uses, trimmed to what
-   * these tests need.
+   * A branch-workspace clone checked out as `branchName`. Cloned from the
+   * GitHub fixture, whose history syncGit() mirrors into remote.git, so the
+   * clone shares remote.git's history as a provisioned one does.
    */
   const createSyncBranch = async (branchName: string) => {
-    const originPath = path.join(tmpDir, `${branchName}-origin`)
     const branchPath = path.join(workspacePath, 'content-branches', branchName)
-
-    await fs.mkdir(originPath, { recursive: true })
-    const originGit = await initTestRepo(originPath)
-    await originGit.raw(['branch', '-M', 'main'])
-    await fs.writeFile(path.join(originPath, '.gitkeep'), '')
-    await originGit.add(['.'])
-    await originGit.commit('initial commit')
-
     await fs.mkdir(path.join(workspacePath, 'content-branches'), { recursive: true })
-    await simpleGit().clone(originPath, branchPath)
+    await simpleGit().clone(fixtureRemote, branchPath, ['--branch', 'main', '--single-branch'])
 
     const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
     await branchGit.addConfig('user.name', 'Test Bot')
     await branchGit.addConfig('user.email', 'test@canopycms.test')
     await branchGit.addConfig('core.editor', 'true')
     await branchGit.checkoutBranch(branchName, 'origin/main')
-    await branchGit.raw(['branch', '--set-upstream-to=origin/main', branchName])
     // A provisioned workspace has branch metadata; the worker skips one without it.
     await getBranchMetadataFileManager(
       branchPath,
       path.join(workspacePath, 'content-branches'),
     ).save({ branch: { name: branchName } })
 
-    return { branchPath, branchGit, originGit, originPath }
+    return { branchPath, branchGit }
+  }
+
+  /** Land a commit on the GitHub fixture's main, which syncGit() mirrors into remote.git. */
+  const advanceGitHubMain = async () => {
+    const seedPath = path.join(tmpDir, 'fixture-seed')
+    const seedGit = simpleGit({ baseDir: seedPath })
+    await fs.writeFile(path.join(seedPath, 'remote-update.txt'), 'from GitHub')
+    await seedGit.add(['.'])
+    await seedGit.commit('advance main')
+    await seedGit.push('origin', 'main')
   }
 
   const makeSyncWorker = () => {
@@ -1797,14 +1796,16 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
 
   it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {
     // Behind, no conflicts -> should complete and land in lastGitSync.rebased.
-    const behind = await createSyncBranch('behind-branch')
-    await fs.writeFile(path.join(behind.originPath, 'remote-update.txt'), 'from origin')
-    await behind.originGit.add(['.'])
-    await behind.originGit.commit('advance origin')
+    await createSyncBranch('behind-branch')
 
-    // Origin fetch will throw -> should land in lastGitSync.failed.
+    // Its fetch from remote.git will throw -> should land in lastGitSync.failed.
     const broken = await createSyncBranch('broken-branch')
-    await broken.branchGit.raw(['remote', 'set-url', 'origin', '/nonexistent/path'])
+    await simpleGit({
+      baseDir: broken.branchPath,
+      unsafe: { allowUnsafeProtocolOverride: true },
+    }).addConfig('protocol.file.allow', 'never')
+
+    await advanceGitHubMain()
 
     const worker = makeSyncWorker()
     await worker.syncGit()
@@ -1815,7 +1816,10 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSync).toBeDefined()
     expect(status.lastGitSync?.durationMs).toBeGreaterThanOrEqual(0)
     expect(status.lastGitSync?.rebased).toContain('behind-branch')
-    expect(status.lastGitSync?.failed.map((f) => f.branch)).toContain('broken-branch')
+    expect(status.lastGitSync?.failed).toContainEqual({
+      branch: 'broken-branch',
+      error: expect.stringMatching(/transport 'file' not allowed/),
+    })
   })
 
   it('records lastGitSyncError and still rethrows on a hard sync-cycle failure', async () => {

@@ -73,11 +73,11 @@ export type AuthCacheRefresher = () => Promise<void>
  * interface for the two shapes and why an App is optional.
  */
 export interface CmsWorkerConfig extends GitHubAuthConfig {
-  /** Path to workspace root on EFS (e.g., /mnt/efs/workspace) */
+  /** Path to workspace root on EFS (e.g., /mnt/efs) */
   workspacePath: string
-  /** GitHub owner (e.g., 'safeinsights') */
+  /** GitHub owner (e.g., 'acme') */
   githubOwner: string
-  /** GitHub repo name (e.g., 'docs-site') */
+  /** GitHub repo name (e.g., 'site') */
   githubRepo: string
   /** Called periodically to update the auth metadata cache on EFS. */
   refreshAuthCache?: AuthCacheRefresher
@@ -147,7 +147,7 @@ export class CmsWorker {
   private contentBranchesPath: string
   private baseBranch: string
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
-  // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
+  // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
   private sanitizedBaseBranch: SanitizedBranchName

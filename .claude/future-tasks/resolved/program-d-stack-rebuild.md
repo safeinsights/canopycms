@@ -77,7 +77,7 @@ fixed or documented:
 - Transform URL format: `/assets/t/f=webp,w=160/<hash>/<slug>.<ext>` — directives
   first, width a multiple of 160.
 
-**Ride-along:** land [efs-tls-in-transit.md](../efs-tls-in-transit.md) as part of this
+**Ride-along:** land [efs-tls-in-transit.md](efs-tls-in-transit.md) as part of this
 rebuild. It adds the `tls` option (efs-utils stunnel) to the worker's EFS mount in
 both places — the `mount -t efs` bootstrap command and the `/etc/fstab` line in
 `canopycms-cdk/src/constructs/cms-service.ts`. It was deferred only because it

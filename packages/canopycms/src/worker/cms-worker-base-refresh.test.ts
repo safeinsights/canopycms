@@ -1,7 +1,7 @@
 /**
  * Tests for CmsWorker.refreshBaseBranchWorkspace() (Gap 2: the base-branch
  * working-tree clone at content-branches/<base> is never explicitly kept in
- * sync with origin/<base> -- it's provisioned once on demand and then just
+ * sync with remote.git's <base> -- it's provisioned once on demand and then just
  * sits there while later content PRs merge on GitHub).
  *
  * Uses real git operations against temp directories, mirroring
@@ -71,7 +71,7 @@ async function createBaseWorkspaceSetup(
 ): Promise<BaseWorkspaceSetup> {
   const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, skipExclude = false } = opts
 
-  const remotePath = path.join(tmpDir, 'remote')
+  const remotePath = path.join(tmpDir, 'remote.git')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const basePath = path.join(contentBranchesPath, baseBranch)
 
@@ -231,7 +231,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     await baseGit.commit('local: unexpected local commit')
     const localHeadBefore = (await baseGit.revparse(['HEAD'])).trim()
 
-    // Remote advances independently, so origin/main is not an ancestor of HEAD.
+    // Remote advances independently, so its main is not an ancestor of HEAD.
     await pushToRemote({ 'remote-update.txt': 'remote work' })
 
     const consoleSpy = mockConsole()
@@ -265,11 +265,22 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     expect(after?.branch.conflictFiles).toEqual([])
   })
 
+  it('fetches from its own remote.git path even when the clone records another origin', async () => {
+    const { basePath, baseGit, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+    // The path the cloning process saw, which this process cannot resolve.
+    await baseGit.raw(['remote', 'set-url', 'origin', '/nonexistent/other-mount/remote.git'])
+    await pushToRemote({ 'remote-update.txt': 'from origin' })
+
+    mockConsole()
+    await expect(refreshBase(makeWorker(tmpDir))).resolves.toMatchObject({ outcome: 'refreshed' })
+    await expect(fs.readFile(path.join(basePath, 'remote-update.txt'), 'utf-8')).resolves.toBe(
+      'from origin',
+    )
+  })
+
   it('is non-fatal when the fetch fails, leaving the working tree untouched', async () => {
-    const { basePath } = await createBaseWorkspaceSetup(tmpDir)
-    // Break the clone's origin so fetch() fails.
-    const basePathGit = simpleGit({ baseDir: basePath, unsafe: { allowUnsafeEditor: true } })
-    await basePathGit.raw(['remote', 'set-url', 'origin', '/nonexistent/path'])
+    const { basePath, remotePath } = await createBaseWorkspaceSetup(tmpDir)
+    await fs.rename(remotePath, `${remotePath}.moved`)
 
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)

@@ -21,10 +21,9 @@
  * lease keyed to "whatever remote.git holds" would be satisfied there and
  * would silently delete someone else's pushed work.
  *
- * Unlike cms-worker-rebase.test.ts (whose fixture remote is a non-bare repo
- * at a path the worker never reads), this harness puts a real bare repo at
- * `<workspace>/remote.git` -- the path CmsWorker actually treats as the
- * deployment's local origin -- so the publish paths are live.
+ * Unlike cms-worker-rebase.test.ts (whose fixture remote is a non-bare repo),
+ * this harness puts a real bare repo at `<workspace>/remote.git`, so the
+ * publish paths are live.
  */
 
 import fs from 'node:fs/promises'
@@ -274,6 +273,30 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     await setup.commitToBranch({ 'entry.md': 'editor v2\n' }, 'editor work 2')
     await setup.submit()
     expect(await setup.remoteLog('refs/heads/feature-resubmit')).toContain('editor work 2')
+  })
+
+  it('fetches and publishes against its own remote.git path when the clone records another origin', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-other-mount')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-other-mount')
+    // The path the cloning process saw, which this process cannot resolve.
+    await setup.branchGit.raw([
+      'remote',
+      'set-url',
+      'origin',
+      '/nonexistent/other-mount/remote.git',
+    ])
+
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    const rebasedTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+    expect(rebasedTip).not.toBe(published)
+    expect(await setup.remoteSha('refs/heads/feature-other-mount')).toBe(rebasedTip)
+    expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
   })
 
   it('keeps the marker at the originally published commit across a second rebase', async () => {

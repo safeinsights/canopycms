@@ -90,7 +90,7 @@ async function createBranchSetup(
 ): Promise<BranchSetup> {
   const { baseBranch = 'main', initialFiles = { '.gitkeep': '' } } = opts
 
-  const remotePath = path.join(tmpDir, 'remote')
+  const remotePath = path.join(tmpDir, 'remote.git')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 
@@ -548,6 +548,32 @@ describe('CmsWorker rebaseActiveBranches', () => {
       // canopycms never discards state it still uses.
       await expect(fs.readFile(commentsPath, 'utf8')).resolves.toBe(
         '{"threads":["a reviewer comment"]}',
+      )
+    })
+
+    it('names the fix from its own remote.git path when the clone records another origin', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
+      })
+      // The path the cloning process saw, which this process cannot resolve.
+      await setup.branchGit.raw([
+        'remote',
+        'set-url',
+        'origin',
+        '/nonexistent/other-mount/remote.git',
+      ])
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+      await fs.writeFile(
+        path.join(setup.branchPath, '.canopy-meta', 'comments.json'),
+        '{"threads":["a reviewer comment"]}',
+      )
+
+      mockConsole()
+      await runRebase(makeWorker(tmpDir))
+
+      expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toMatch(
+        /git rm -r --cached \.canopy-meta/,
       )
     })
 

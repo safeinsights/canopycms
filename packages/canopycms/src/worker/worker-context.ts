@@ -41,7 +41,12 @@ export interface WorkerContext {
   readonly sanitizedBaseBranch: SanitizedBranchName
   /** `{workspacePath}/.tasks` — the task queue and worker-status.json. */
   readonly taskDir: string
-  /** `{workspacePath}/remote.git` — the shared bare repo. */
+  /**
+   * `{workspacePath}/remote.git` — the shared bare repo. The worker fetches
+   * into and pushes from a workspace clone against this path, never the
+   * clone's `origin`: that holds the path the CLONING process saw (usually
+   * the Lambda), and the clone's config is Lambda-writable.
+   */
   readonly remoteGitPath: string
   /** `{workspacePath}/content-branches` — the branch workspace root. */
   readonly contentBranchesPath: string

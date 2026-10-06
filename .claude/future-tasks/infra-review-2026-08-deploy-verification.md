@@ -21,7 +21,7 @@ symlink with an ABSOLUTE target, meaningless across the worker's and Lambda's
 different EFS mount paths, so the Lambda served a permanently empty auth cache
 on every prod deploy with Clerk.
 
-- [ ] On the worker (SSM session): `ls -l /mnt/efs/workspace/.cache/current` —
+- [ ] On the worker (SSM session): `ls -l /mnt/efs/.cache/current` —
       the target must be a **bare `snapshot-<ts>`**, not an absolute path.
 - [ ] In the editor UI: an editor renders with their **name and avatar**, not a
       raw `user_...` Clerk id. This is the end-to-end proof.

@@ -134,7 +134,7 @@ export async function clearHistoryRewrittenMarker(
  * push moved the ref; logged and retried by the self-heal pass, never thrown.
  */
 export async function forcePublishToLocalRemote(
-  ctx: Pick<HistoryRewriteContext, 'taskTimeoutMs'>,
+  ctx: Pick<HistoryRewriteContext, 'remoteGitPath' | 'taskTimeoutMs'>,
   branchPath: string,
   branchRef: string,
   expectedSha: string,
@@ -153,7 +153,7 @@ export async function forcePublishToLocalRemote(
       // Real flags must precede --end-of-options; everything after it is
       // positional (see GitManager.push() for the same guard).
       '--end-of-options',
-      'origin',
+      ctx.remoteGitPath,
       `${branchRef}:${branchRef}`,
     ])
     workerLog(`  Published rebased ${branchRef} into remote.git`)

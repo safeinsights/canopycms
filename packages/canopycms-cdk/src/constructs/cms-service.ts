@@ -55,6 +55,16 @@ const isValidDeploymentName = (name: string): boolean =>
   !name.endsWith('.lock')
 
 /**
+ * Where the Lambda AND the worker mount the `WorkspaceAP` access point (rooted
+ * at EFS:/workspace), and so the workspace root of both.
+ *
+ * One path string, not merely one directory: git records absolute paths on
+ * EFS (a workspace clone's `origin` is `<root>/remote.git`), and a path written
+ * by one process must resolve for the other.
+ */
+const EFS_MOUNT_PATH = '/mnt/efs'
+
+/**
  * The heredoc delimiter user-data uses to write the worker's `.env` (see the
  * `cat > … << 'ENVEOF'` block below).
  */
@@ -569,11 +579,12 @@ export interface CanopyCmsServiceProps {
   /**
    * Environment variables for the Lambda function.
    *
-   * Two keys are not free-form here, because the construct configures the
+   * Three keys are not free-form here, because the construct configures the
    * worker from the same values and the two halves must agree:
    * `CANOPYCMS_DEPLOYMENT_NAME` is folded into `deploymentName` (validated,
-   * and mirrored into the worker's `.env`), and `CANOPY_MODE` accepts only
-   * `'prod'`. Everything else is passed through untouched.
+   * and mirrored into the worker's `.env`), `CANOPY_MODE` accepts only
+   * `'prod'`, and `CANOPYCMS_WORKSPACE_ROOT` accepts only the shared EFS mount
+   * path, `/mnt/efs`. Everything else is passed through untouched.
    */
   environment?: Record<string, string>
 
@@ -1003,6 +1014,17 @@ export class CanopyCmsService extends Construct {
       )
     }
 
+    const envWorkspaceRootOverride = props.environment?.['CANOPYCMS_WORKSPACE_ROOT']
+    if (envWorkspaceRootOverride !== undefined && envWorkspaceRootOverride !== EFS_MOUNT_PATH) {
+      throw new Error(
+        `CanopyCmsService: invalid environment.CANOPYCMS_WORKSPACE_ROOT ` +
+          `${JSON.stringify(envWorkspaceRootOverride)}. The Lambda and the worker both mount the ` +
+          `workspace at ${EFS_MOUNT_PATH}, and git paths one writes on EFS must resolve for the ` +
+          `other, so the only supported value is ${JSON.stringify(EFS_MOUNT_PATH)}. ` +
+          `Omit it to get the default.`,
+      )
+    }
+
     this.vpc =
       props.vpc ??
       new ec2.Vpc(this, 'Vpc', {
@@ -1138,21 +1160,16 @@ export class CanopyCmsService extends Construct {
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
-      filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, '/mnt/efs'),
+      filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, EFS_MOUNT_PATH),
       // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
       // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
       // both are set on the same function) - the removal policy lives on the
       // LogGroup construct above instead.
       logGroup: this.cmsLogGroup,
       environment: {
-        // INVARIANT: the Lambda mounts EFS through the WorkspaceAP access point
-        // above, which is already rooted at EFS:/workspace - so /mnt/efs here IS
-        // EFS:/workspace. The EC2 worker instead mounts the filesystem ROOT at
-        // /mnt/efs (see UserData below) and reaches the same directory via
-        // /mnt/efs/workspace. Both paths must resolve to EFS:/workspace, or the
-        // Lambda and worker silently operate on different directories.
-        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
-        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // The worker's `.env` gets the same root; see EFS_MOUNT_PATH.
+        CANOPYCMS_WORKSPACE_ROOT: EFS_MOUNT_PATH,
+        CANOPY_AUTH_CACHE_PATH: `${EFS_MOUNT_PATH}/.cache`,
         // git >= 2.35.2 refuses repos owned by another uid (the access point
         // forces uid 1000; Lambda containers run as a different user).
         // Env-based GIT_CONFIG_* CANNOT fix this - simple-git hard-blocks env
@@ -1298,7 +1315,7 @@ export class CanopyCmsService extends Construct {
     // through `assertEnvSafe` in the single `map` below, so a value added here
     // later is guarded whether or not whoever adds it remembers to.
     const envEntries: Array<[string, string]> = [
-      ['CANOPYCMS_WORKSPACE_ROOT', '/mnt/efs/workspace'],
+      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH],
       ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
       ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
       ['CANOPYCMS_BASE_BRANCH', baseBranch],
@@ -1364,6 +1381,7 @@ export class CanopyCmsService extends Construct {
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
 
+    const efsMountOptions = `tls,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
     userData.addCommands(
       '#!/bin/bash',
@@ -1423,15 +1441,17 @@ export class CanopyCmsService extends Construct {
       '# selection AWS documents as able to change at any time.',
       'retry dnf install -y nodejs22',
       '',
-      '# Mount EFS',
+      '# Mount EFS through the same access point, at the same path, as the',
+      '# Lambda (see EFS_MOUNT_PATH). amazon-efs-utils refuses an access-point',
+      '# mount without tls (efs_utils_common/mount_options.py).',
       'retry dnf install -y amazon-efs-utils',
-      'mkdir -p /mnt/efs',
-      `mount -t efs ${this.fileSystem.fileSystemId}:/ /mnt/efs`,
+      `mkdir -p ${EFS_MOUNT_PATH}`,
+      `mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
       '# Persist the mount across instance reboots: user-data runs once per',
       '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
       '# empty local dir and the worker would clone a divergent remote.git',
       '# onto the instance disk, invisible to the Lambda.',
-      `echo '${this.fileSystem.fileSystemId}:/ /mnt/efs efs _netdev 0 0' >> /etc/fstab`,
+      `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
       '',
       '# Download worker from CDK S3 Asset',
       `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
@@ -1457,7 +1477,7 @@ export class CanopyCmsService extends Construct {
       'Description=CanopyCMS Worker Daemon',
       'After=network.target',
       '# Never run against an unmounted /mnt/efs (see the fstab note above).',
-      'RequiresMountsFor=/mnt/efs',
+      `RequiresMountsFor=${EFS_MOUNT_PATH}`,
       '',
       '[Service]',
       'Type=simple',
@@ -1488,12 +1508,6 @@ export class CanopyCmsService extends Construct {
       '',
       '# Set ownership for ec2-user',
       'chown -R ec2-user:ec2-user /opt/canopy-worker',
-      '# Non-recursive: EFS access point enforces UID 1000 for Lambda.',
-      '# Only set ownership on mount point and workspace dir to avoid',
-      '# slow recursive chown on large filesystems during ASG replacements.',
-      'chown ec2-user:ec2-user /mnt/efs',
-      'mkdir -p /mnt/efs/workspace',
-      'chown ec2-user:ec2-user /mnt/efs/workspace',
       '',
       '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
       '# first systemctl start): systemd opens StandardOutput=append: files',
