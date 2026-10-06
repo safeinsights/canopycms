@@ -64,8 +64,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
     return new Promise<boolean>((resolve) => {
       const settle = (value: boolean) => {
-        // Mantine runs these callbacks while ModalsProvider renders, where a
-        // setState on this component is illegal; the promise needs no such deferral.
+        // Mantine calls onClose and onCancel from its modals reducer, which runs while
+        // ModalsProvider renders, so a setState here must be deferred; resolving needs no deferral.
         queueMicrotask(() => setConfirmOpen(false))
         resolve(value)
       }
