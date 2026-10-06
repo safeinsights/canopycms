@@ -33,6 +33,21 @@ vi.mock('../../api', async () => {
   }
 })
 
+// The entry-link button is MarkdownField's one caller of MDXEditor's
+// insertMarkdown; this stand-in inserts whatever a test puts in `insertion`.
+const insertion = { markdown: '' }
+vi.mock('./entry-link', () => ({
+  InsertEntryLink: ({ onInsert }: { onInsert: (markdown: string) => void }) => (
+    <button
+      type="button"
+      data-testid="insert-entry-link-button"
+      onClick={() => onInsert(insertion.markdown)}
+    >
+      link
+    </button>
+  ),
+}))
+
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
   modals: { openConfirmModal: vi.fn() },
@@ -232,6 +247,7 @@ describe('MarkdownField', () => {
       ['a block fragment', '<>\nFragment text.\n</>'],
       ['an inline fragment', 'Text <>inside</> a fragment.'],
       ['a fragment inside an element', '<Callout>\nA <>b</> c.\n</Callout>'],
+      ['a fragment inside a table cell', '| a | b |\n| --- | --- |\n| x <>y</> z | w |'],
     ])('opens a body with %s as editable source', async (_case, body) => {
       const onChange = vi.fn()
       renderField(body, onChange)
@@ -318,6 +334,62 @@ describe('MarkdownField', () => {
     expect(lastValue(onChange)).toBe('Line one<br>line two more')
     expect(screen.getByTestId('markdown-source-fallback')).toBeTruthy()
     expect(screen.getByTestId('markdown-source-editor')).toBe(source)
+  })
+
+  it('falls back when the next value is also one MDXEditor rejects', async () => {
+    const { setExternal } = renderControlled('Line one<br>line two')
+    expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+
+    await setExternal('import { Chart } from "./chart"\n\n<Chart />')
+
+    await waitFor(() => {
+      const source = screen.getByTestId('markdown-source-editor')
+      if (!(source instanceof HTMLTextAreaElement)) throw new Error('not a textarea')
+      expect(source.value).toBe('import { Chart } from "./chart"\n\n<Chart />')
+    })
+    expect(screen.getByTestId('markdown-source-fallback')).toBeTruthy()
+  })
+
+  it('falls back again when an edited fallback is reset to the rejected value', async () => {
+    const { setExternal } = renderControlled('Line one<br>line two')
+    const source = await screen.findByTestId('markdown-source-editor')
+    await userEvent.setup().type(source, ' more')
+
+    await setExternal('Line one<br>line two')
+
+    await waitFor(() => expect(screen.getByTestId('markdown-source-fallback')).toBeTruthy())
+    expect(screen.getByTestId<HTMLTextAreaElement>('markdown-source-editor').value).toBe(
+      'Line one<br>line two',
+    )
+  })
+
+  describe('inserted markdown', () => {
+    async function insertInto(body: string, markdown: string) {
+      insertion.markdown = markdown
+      const onChange = vi.fn()
+      renderField(body, onChange)
+      const root = await richEditor()
+      const user = userEvent.setup()
+      await user.click(root.querySelector('p') ?? root)
+      await user.click(screen.getByTestId('insert-entry-link-button'))
+      return onChange
+    }
+
+    it('is added to the document', async () => {
+      const onChange = await insertInto('Body text.', '[Home](entry:abc123)')
+      await waitFor(() => expect(lastValue(onChange)).toContain('[Home](entry:abc123)'))
+      expect(lastValue(onChange)).toContain('Body text.')
+    })
+
+    it('that MDXEditor rejects leaves the body intact and opens it as source', async () => {
+      const onChange = await insertInto('Body text.', '[Use <br> tags](entry:abc123)')
+
+      expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+      expect(screen.getByTestId<HTMLTextAreaElement>('markdown-source-editor').value).toBe(
+        'Body text.',
+      )
+      expect(onChange).not.toHaveBeenCalled()
+    })
   })
 
   it('tries rich text again when the value changes after a fallback', async () => {

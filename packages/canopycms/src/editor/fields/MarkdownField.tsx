@@ -234,6 +234,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const inputId = id ?? generatedId
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
+  const lastRejectedSource = useRef<string | null>(null)
   const apiClient = useApiClient()
   const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
 
@@ -269,20 +270,28 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   // MDXEditor reports its re-serialization of the document it was mounted
   // with as a change flagged `initialMarkdownNormalize`. Forwarding it would
   // mark an entry nobody edited as modified and save the reformatted text.
+  // When it rejects inserted markdown, it reports the inserted text alone as
+  // the document, after `onError`; forwarding that would replace the body.
   const handleEditorChange = useCallback(
     (newValue: string, initialMarkdownNormalize: boolean) => {
-      if (!initialMarkdownNormalize) emitChange(newValue)
+      if (initialMarkdownNormalize || newValue === lastRejectedSource.current) return
+      emitChange(newValue)
     },
     [emitChange],
   )
 
   // MDXEditor can report the error while it is still rendering (its import
   // runs as the editor is created), so the switch waits for a microtask
-  // rather than updating this component mid-render.
-  const handleEditorError = useCallback(({ error }: { error: string; source: string }) => {
-    const failedValue = lastExternalValue.current
-    queueMicrotask(() => setMode({ kind: 'source', reason: error, failedValue }))
-  }, [])
+  // rather than updating this component mid-render. The rejected document is
+  // `value` as this render saw it: MDXEditor is created from it, and receives
+  // this handler again before the sync effect hands it a later value.
+  const handleEditorError = useCallback(
+    ({ error, source }: { error: string; source: string }) => {
+      lastRejectedSource.current = source
+      queueMicrotask(() => setMode({ kind: 'source', reason: error, failedValue: value }))
+    },
+    [value],
+  )
 
   // Edits in the fallback stay in it: the edited text is no more likely to load.
   const handleSourceChange = useCallback(

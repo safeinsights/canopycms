@@ -79,8 +79,8 @@ const catchAllJsxDescriptor: JsxComponentDescriptor = {
 }
 
 /**
- * A JSX fragment (`<>…</>`) has no name, and MDXEditor's HTML visitor throws a
- * `TypeError` testing a nameless element, which no import catches.
+ * A JSX fragment (`<>…</>`) has no name, and MDXEditor's HTML handling throws a
+ * `TypeError` on a nameless element, on import or export, which nothing catches.
  */
 const isFragment = (node: MdastNode) => isMdastJsxNode(node) && node.name === null
 
@@ -96,10 +96,12 @@ const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
  *
  * - `import`/`export` lines: the JSX plugin's visitor for them is a no-op, so
  *   the next edit drops them.
- * - Content inside a JSX element with no import visitor: a JSX element's
- *   children are imported later, by its nested editor, whose failures go to
+ * - Content with no import visitor inside a JSX element or a table: their
+ *   children are imported later, by nested editors, whose failures go to
  *   `console.error` and leave the element partly imported; editing it then
  *   writes the partial children back.
+ *
+ * It also rejects fragments, anywhere it looks, since they crash MDXEditor.
  *
  * It throws MDXEditor's own `UnrecognizedMarkdownConstructError`, one of the
  * two error classes its import catches and reports through `onError`; any other
@@ -109,7 +111,8 @@ const roundTripGuardPlugin = realmPlugin({
   init(realm) {
     const guard: MdastImportVisitor<MdastNode> = {
       priority: 100,
-      testNode: (node) => node.type === ESM_NODE_TYPE || isMdastJsxNode(node),
+      testNode: (node) =>
+        node.type === ESM_NODE_TYPE || node.type === 'table' || isMdastJsxNode(node),
       visitNode({ mdastNode, descriptors, actions }) {
         if (mdastNode.type === ESM_NODE_TYPE) {
           throw new UnrecognizedMarkdownConstructError(
@@ -134,9 +137,9 @@ const roundTripGuardPlugin = realmPlugin({
               isFragment(child) ||
               (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child))
             ) {
-              const name = isMdastJsxNode(mdastNode) ? mdastNode.name : null
+              const where = isMdastJsxNode(mdastNode) ? `<${mdastNode.name ?? ''}>` : 'A table'
               throw new UnrecognizedMarkdownConstructError(
-                `<${name ?? ''}> contains ${child.type} content the rich-text editor cannot edit`,
+                `${where} contains ${child.type} content the rich-text editor cannot edit`,
               )
             }
             check(child)
