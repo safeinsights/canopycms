@@ -11,7 +11,6 @@ import {
   buildCollectionLabels,
   buildBreadcrumbSegments,
   calculatePathToEntry,
-  normalizeCollectionPath,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -110,6 +109,179 @@ describe('buildPreviewSrc', () => {
     })
   })
 
+  describe("routes from the entry's own urlPath", () => {
+    const route = (
+      entry: Parameters<typeof buildPreviewSrc>[0],
+      context: Partial<Parameters<typeof buildPreviewSrc>[1]> = {},
+    ) =>
+      buildPreviewSrc(entry, {
+        branchName: 'main',
+        contentRoot: 'content',
+        trailingSlash: true,
+        previewPrefix: '/edit/preview',
+        ...context,
+      })
+
+    it('previews a root entry at its own path, not the site root', () => {
+      expect(route({ collectionPath: 'content', collectionName: 'content', slug: 'about' })).toBe(
+        '/edit/preview/about/?branch=main',
+      )
+    })
+
+    it('previews a root index entry at the site root', () => {
+      expect(route({ collectionPath: 'content', slug: 'index' })).toBe('/edit/preview/?branch=main')
+    })
+
+    it('collapses a nested index entry onto its collection', () => {
+      expect(route({ collectionPath: 'content/docs/guides', slug: 'index' })).toBe(
+        '/edit/preview/docs/guides/?branch=main',
+      )
+    })
+
+    it('previews a root entry under a multi-segment contentRoot', () => {
+      expect(
+        route({ collectionPath: 'cms/content', slug: 'about' }, { contentRoot: 'cms/content' }),
+      ).toBe('/edit/preview/about/?branch=main')
+      expect(
+        route({ collectionPath: 'cms/content', slug: 'index' }, { contentRoot: '/cms/content/' }),
+      ).toBe('/edit/preview/?branch=main')
+      expect(
+        route({ collectionPath: 'cms/content/docs', slug: 'a' }, { contentRoot: '/cms/content/' }),
+      ).toBe('/edit/preview/docs/a/?branch=main')
+    })
+
+    it('lowercases the route the way listEntries publishes urlPath', () => {
+      expect(route({ collectionPath: 'content', slug: 'About' })).toBe(
+        '/edit/preview/about/?branch=main',
+      )
+    })
+
+    it('lets an entry key win over its collection key, used as-is', () => {
+      const bases = { 'content/about': '/about-us', content: '/site' }
+      expect(
+        route({ collectionPath: 'content', slug: 'about' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/about-us/?branch=main')
+      expect(
+        route({ collectionPath: 'content', slug: 'team' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/site/team/?branch=main')
+    })
+
+    // `<parent>/<name>` names both a landing entry and its same-named sibling collection.
+    it('reads a key below the root as a collection key only', () => {
+      const bases = { 'content/docs/guides': '/tutorials' }
+      expect(
+        route(
+          { collectionPath: 'content/docs', slug: 'guides' },
+          { previewBaseByCollection: bases },
+        ),
+      ).toBe('/edit/preview/docs/guides/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/docs/guides', slug: 'install' },
+          { previewBaseByCollection: bases },
+        ),
+      ).toBe('/edit/preview/tutorials/install/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/docs', slug: 'guides' },
+          { previewBaseByCollection: { 'content/docs/guides': false } },
+        ),
+      ).toBe('/edit/preview/docs/guides/?branch=main')
+    })
+
+    it('routes a root landing entry and its same-named collection by one key', () => {
+      const bases = { 'content/posts': '/blog' }
+      expect(
+        route({ collectionPath: 'content', slug: 'posts' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/blog/?branch=main')
+      expect(
+        route({ collectionPath: 'content/posts', slug: 'a' }, { previewBaseByCollection: bases }),
+      ).toBe('/edit/preview/blog/a/?branch=main')
+    })
+
+    it('treats an empty value as no key, so it never frames the site root', () => {
+      expect(
+        route(
+          { collectionPath: 'content', collectionName: 'site', slug: 'about' },
+          { previewBaseByCollection: { 'content/about': '', site: '/pages' } },
+        ),
+      ).toBe('/edit/preview/pages/about/?branch=main')
+      expect(
+        route(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': '', posts: '/blog' } },
+        ),
+      ).toBe('/edit/preview/blog/hello/?branch=main')
+    })
+
+    it('lets a collection-path false win over a collection-name route', () => {
+      expect(
+        route(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { 'content/posts': false, posts: '/blog' } },
+        ),
+      ).toBeUndefined()
+    })
+
+    it('percent-encodes default-route segments under a basePath', () => {
+      expect(
+        route({ collectionPath: 'content/docs/api', slug: 'café notes' }, { basePath: '/base' }),
+      ).toBe('/base/edit/preview/docs/api/caf%C3%A9%20notes/?branch=main')
+    })
+
+    it('lets a collection-name key apply when no path key matches', () => {
+      expect(
+        route(
+          { collectionPath: 'content/posts', collectionName: 'posts', slug: 'hello' },
+          { previewBaseByCollection: { posts: '/articles' } },
+        ),
+      ).toBe('/edit/preview/articles/hello/?branch=main')
+    })
+
+    it('ignores keys inherited from Object.prototype', () => {
+      expect(
+        route(
+          { collectionPath: 'content/constructor', collectionName: 'constructor', slug: 'a' },
+          { previewBaseByCollection: {} },
+        ),
+      ).toBe('/edit/preview/constructor/a/?branch=main')
+    })
+  })
+
+  describe('an entry with no page', () => {
+    it.each([
+      ['an entry key', { 'content/settings': false as const }],
+      ['a collection path key', { content: false as const }],
+      ['a collection name key', { site: false as const }],
+    ])('has no preview src when %s is false', (_label, previewBaseByCollection) => {
+      expect(
+        buildPreviewSrc(
+          { collectionPath: 'content', collectionName: 'site', slug: 'settings' },
+          {
+            branchName: 'main',
+            contentRoot: 'content',
+            previewPrefix: '/preview',
+            previewBaseByCollection,
+          },
+        ),
+      ).toBeUndefined()
+    })
+
+    it('still previews a sibling whose own key is a route', () => {
+      expect(
+        buildPreviewSrc(
+          { collectionPath: 'content', slug: 'about' },
+          {
+            branchName: 'main',
+            contentRoot: 'content',
+            previewBaseByCollection: { content: false, 'content/about': '/about' },
+            trailingSlash: false,
+          },
+        ),
+      ).toBe('/about?branch=main')
+    })
+  })
+
   describe('with a configured contentRoot', () => {
     it('strips the whole multi-segment prefix from a collection entry URL', () => {
       const result = buildPreviewSrc(
@@ -120,9 +292,7 @@ describe('buildPreviewSrc', () => {
           contentRoot: 'cms/content',
         },
       )
-      // Without threading contentRoot through, normalizeCollectionPath defaults to
-      // stripping only "content/" and the URL would keep the "cms/" prefix
-      // (/cms/posts/hello) instead of dropping the whole configured root.
+      // Without the configured root nothing is stripped: /cms/content/posts/hello.
       expect(result).toBe('/posts/hello?branch=main')
     })
 
@@ -134,9 +304,9 @@ describe('buildPreviewSrc', () => {
       expect(result).toBe('/docs/overview?branch=main')
     })
 
-    it('handles the root-entry branch for a multi-segment contentRoot', () => {
+    it('previews a root index entry at the site root for a multi-segment contentRoot', () => {
       const result = buildPreviewSrc(
-        { collectionPath: 'cms/content', slug: 'about', itemType: 'entry' },
+        { collectionPath: 'cms/content', slug: 'index', itemType: 'entry' },
         {
           branchName: 'main',
           previewBaseByCollection: undefined,
@@ -168,9 +338,9 @@ describe('buildPreviewSrc', () => {
       expect(result).toBe('/preview-123/docs/overview?branch=main')
     })
 
-    it('prefixes the root-entry default path', () => {
+    it('prefixes the root index path', () => {
       const result = buildPreviewSrc(
-        { collectionPath: 'content', slug: 'home', itemType: 'entry' },
+        { collectionPath: 'content', slug: 'index', itemType: 'entry' },
         {
           branchName: 'main',
           previewBaseByCollection: undefined,
@@ -246,8 +416,11 @@ describe('buildPreviewSrc', () => {
       },
     )
 
-    it('prefixes a root entry', () => {
-      expect(prefixed({ collectionPath: 'content', slug: 'home' })).toBe('/preview?branch=main')
+    it('prefixes a root entry and the root index', () => {
+      expect(prefixed({ collectionPath: 'content', slug: 'about' })).toBe(
+        '/preview/about?branch=main',
+      )
+      expect(prefixed({ collectionPath: 'content', slug: 'index' })).toBe('/preview?branch=main')
     })
 
     it("prefixes a root entry's previewBase route", () => {
@@ -363,13 +536,13 @@ describe('buildPreviewSrc', () => {
       )
     })
 
-    it('slashes a root entry, a basePath root and a prefix root', () => {
-      expect(slashed({ collectionPath: 'content', slug: 'home' })).toBe('/?branch=main')
-      expect(slashed({ collectionPath: 'content', slug: 'home' }, { basePath: '/base' })).toBe(
+    it('slashes the root index, a basePath root and a prefix root', () => {
+      expect(slashed({ collectionPath: 'content', slug: 'index' })).toBe('/?branch=main')
+      expect(slashed({ collectionPath: 'content', slug: 'index' }, { basePath: '/base' })).toBe(
         '/base/?branch=main',
       )
       expect(
-        slashed({ collectionPath: 'content', slug: 'home' }, { previewPrefix: '/preview' }),
+        slashed({ collectionPath: 'content', slug: 'index' }, { previewPrefix: '/preview' }),
       ).toBe('/preview/?branch=main')
     })
 
@@ -423,7 +596,7 @@ describe('buildPreviewSrc', () => {
     it('drops a trailing slash when off', () => {
       expect(
         buildPreviewSrc(
-          { collectionPath: 'content', slug: 'home' },
+          { collectionPath: 'content', slug: 'index' },
           {
             branchName: 'main',
             contentRoot: 'content',
@@ -1094,30 +1267,5 @@ describe('calculatePathToEntry', () => {
       'collection:blog/featured': true,
       'collection:blog/featured/archive': true,
     })
-  })
-})
-
-describe('normalizeCollectionPath', () => {
-  it('strips content/ prefix from collection ID', () => {
-    expect(normalizeCollectionPath('content/posts')).toBe('posts')
-    expect(normalizeCollectionPath('content/docs')).toBe('docs')
-  })
-
-  it('strips content/ prefix from nested collection paths', () => {
-    expect(normalizeCollectionPath('content/docs/api')).toBe('docs/api')
-    expect(normalizeCollectionPath('content/docs/api/v2')).toBe('docs/api/v2')
-  })
-
-  it('returns path unchanged if no content/ prefix', () => {
-    expect(normalizeCollectionPath('posts')).toBe('posts')
-    expect(normalizeCollectionPath('docs/api')).toBe('docs/api')
-  })
-
-  it('only strips the first occurrence of content/', () => {
-    expect(normalizeCollectionPath('content/content/posts')).toBe('content/posts')
-  })
-
-  it('handles empty string', () => {
-    expect(normalizeCollectionPath('')).toBe('')
   })
 })

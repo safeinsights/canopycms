@@ -6,7 +6,7 @@ one undocumented edge.
 ## What
 
 The "where does this entry live?" rule — strip the content root, collapse an `index` slug to
-its parent, lowercase — now has FOUR implementations. (Filed when it was two; the other two were
+its parent, lowercase — has had FOUR implementations, three still live (#4 now delegates). (Filed when it was two; the other two were
 found by the 2026-08-21 review rounds, each because it had drifted — which is this task's whole
 argument.) Only the `index` sub-decision is shared, via `utils/entry-url.ts`'s `isIndexSlug`;
 each still strips the content root and handles encoding/casing itself:
@@ -21,9 +21,10 @@ each still strips the content root and handles encoding/casing itself:
    `/content` for a root-level one — both URLs that resolve to nothing. Fixed in place; it keeps
    its own strip and its own `encodeSlug`, so it is still a copy.
 4. `buildPreviewSrc` (`editor/editor-utils.ts`), which builds the editor's preview-iframe URL.
-   Found the same day pointing the iframe at `/x/index`. Also fixed in place, and it has a real
-   reason not to delegate: it must percent-encode segments and must NOT lowercase, because a
-   `previewBaseByCollection` value is adopter-supplied and case-sensitive.
+   Found the same day pointing the iframe at `/x/index`. **No longer a copy (2026-10-06):** its
+   default route now delegates to `computeEntryUrl` and only percent-encodes the result, after the
+   copy was found previewing every root entry at `/`. What remains local is appending the slug to
+   an adopter-supplied `previewBase` route, which reuses `isIndexSlug` and is not this rule.
 
 They were verified to agree across nested collections, root index, a collection literally
 named `index`, an entry slugged `index` inside one, mixed case, dotted slugs, multi-segment

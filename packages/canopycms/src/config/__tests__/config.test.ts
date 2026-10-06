@@ -1227,3 +1227,18 @@ describe('editor.previewPrefix validation', () => {
     expect(() => withPrefix(value)).toThrow(/previewPrefix/)
   })
 })
+
+describe('editor.previewBase validation', () => {
+  it('accepts a route or false, which marks entries with no page', () => {
+    const previewBase = { 'content/posts': '/blog', 'content/settings': false as const }
+    expect(
+      validateCanopyConfig({ ...gitAuthor, editor: { previewBase } }).editor?.previewBase,
+    ).toEqual(previewBase)
+  })
+
+  it('rejects true, which names no route', () => {
+    expect(() =>
+      validateCanopyConfig({ ...gitAuthor, editor: { previewBase: { 'content/settings': true } } }),
+    ).toThrow(/previewBase/)
+  })
+})

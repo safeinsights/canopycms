@@ -304,18 +304,15 @@ export interface CanopyEditorConfig {
   subtitle?: string
   theme?: unknown
   /**
-   * Per-collection overrides for the preview pane's URL, keyed by collection path or name
-   * (e.g. `{ 'content/posts': '/blog' }`) for sites whose routes don't mirror their content tree.
+   * Preview-pane routes for sites whose routes don't mirror their content tree; otherwise an entry
+   * previews its own `urlPath`. Keyed by a root entry's path (the whole route), else collection
+   * path or name (plus the slug). `false` means no page, and the pane says so instead of framing one.
    *
-   * Values are **site-relative** and must NOT include the deployment `basePath` — that is applied
-   * on top of whatever this yields (see `CanopyConfig.basePath`), so including it here would
-   * prefix it twice. An absolute value (`https://…`) gets only the slug and `?branch=`, with no
-   * `basePath`, `previewPrefix` or trailing-slash change: the escape hatch for previewing against a
-   * different origin entirely.
-   *
-   * A site-relative value is a route on the host site, so `previewPrefix` is applied to it too.
+   * Values are **site-relative**, without the deployment `basePath` (applied on top, so including
+   * it prefixes it twice), and get `previewPrefix` too. An absolute value (`https://…`) gets no
+   * prefix, only the slug (for a collection key) and `?branch=`: for previewing another origin.
    */
-  previewBase?: Record<string, string>
+  previewBase?: Record<string, string | false>
   /**
    * Where the host mounts the pages the preview pane loads, put in front of every entry's preview
    * URL (`'/preview'` makes `/blog/hello` load `/preview/blog/hello`). Set it when the site's

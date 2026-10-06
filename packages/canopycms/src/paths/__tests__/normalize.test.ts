@@ -57,6 +57,14 @@ describe('normalizeCollectionPath', () => {
   it('handles custom content root', () => {
     expect(normalizeCollectionPath('src/posts', 'src')).toBe('posts')
   })
+
+  it('only strips the first occurrence of content/', () => {
+    expect(normalizeCollectionPath('content/content/posts')).toBe('content/posts')
+  })
+
+  it('handles empty string', () => {
+    expect(normalizeCollectionPath('')).toBe('')
+  })
 })
 
 describe('validateAndNormalizePath', () => {
