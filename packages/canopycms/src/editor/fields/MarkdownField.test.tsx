@@ -1,5 +1,6 @@
 import React from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MockApiClient } from '../../api/__test__/mock-client'
@@ -7,7 +8,7 @@ import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/te
 import { CanopyCMSProvider } from '../theme'
 import { MarkdownField } from './MarkdownField'
 
-// Preload the chunk MarkdownField's React.lazy() imports.
+// Preload the chunks MarkdownField's React.lazy() imports.
 //
 // The mount assertion below is about WHETHER the real editor mounts, not how
 // fast: without this it also silently measures how long vitest takes to
@@ -22,6 +23,7 @@ import { MarkdownField } from './MarkdownField'
 // the product. Same specifier as MarkdownField.tsx uses, deliberately -- a
 // different one would warm nothing.
 import '@mdxeditor/editor'
+import './mdx-jsx-support'
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual('../../api')
@@ -90,5 +92,195 @@ describe('MarkdownField', () => {
     // The custom InsertEntryLink toolbar button is on the same toolbar,
     // confirming the toolbar itself rendered (not just an editor shell).
     expect(screen.getByTestId('insert-entry-link-button')).toBeTruthy()
+  })
+
+  function renderField(value: string, onChange: (value: string) => void = () => {}) {
+    const Wrapper = wrapper
+    return render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <MarkdownField label="Body" value={value} onChange={onChange} />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+  }
+
+  /** The root editor, once MDXEditor has mounted and imported the document. */
+  async function richEditor(): Promise<HTMLElement> {
+    const root = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('.canopy-mdx-content[contenteditable="true"]')
+      if (!el) throw new Error('rich editor not mounted')
+      return el
+    })
+    // Let the import's update commit and any nested JSX editors mount.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    return root
+  }
+
+  const lastValue = (onChange: ReturnType<typeof vi.fn>): string => {
+    const calls = onChange.mock.calls
+    const value: unknown = calls[calls.length - 1]?.[0]
+    if (typeof value !== 'string') throw new Error('onChange was never called with a string')
+    return value
+  }
+
+  const JSX_BODY = [
+    'Intro paragraph.',
+    '',
+    '<Callout type="info" title="Note">',
+    'Callout text.',
+    '</Callout>',
+    '',
+    'Inline <Badge color="red">new</Badge> and <Icon name="star" />.',
+  ].join('\n')
+
+  describe('JSX elements no descriptor names', () => {
+    it('emits edits to the surrounding markdown and keeps the elements intact', async () => {
+      const onChange = vi.fn()
+      renderField(JSX_BODY, onChange)
+      const root = await richEditor()
+      const user = userEvent.setup()
+
+      await user.click(root.querySelector('p') ?? root)
+      await user.keyboard('typed')
+
+      await waitFor(() => expect(onChange).toHaveBeenCalled())
+      const value = lastValue(onChange)
+      expect(value).toContain('typed')
+      expect(value).toContain('<Callout type="info" title="Note">')
+      expect(value).toContain('Callout text.')
+      expect(value).toContain('<Badge color="red">new</Badge>')
+      expect(value).toContain('<Icon name="star" />')
+      expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
+    })
+
+    it('emits edits made inside a block element once focus leaves it', async () => {
+      // MDXEditor copies a nested editor's content into the document on blur.
+      const onChange = vi.fn()
+      renderField(JSX_BODY, onChange)
+      const root = await richEditor()
+      const user = userEvent.setup()
+      const nested = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>(
+          'div.canopy-mdx-jsx [contenteditable="true"]',
+        )
+        if (!el) throw new Error('nested editor not mounted')
+        return el
+      })
+
+      await user.click(nested.querySelector('p') ?? nested)
+      await user.keyboard('inside')
+      await user.click(root.querySelector('p') ?? root)
+
+      await waitFor(() => expect(lastValue(onChange)).toMatch(/<Callout[^>]*>[\s\S]*inside/))
+      expect(lastValue(onChange)).toContain('</Callout>')
+    })
+
+    it('shows each element tag and attributes, with its children editable', async () => {
+      renderField(JSX_BODY)
+      await richEditor()
+      const elements = Array.from(document.querySelectorAll('.canopy-mdx-jsx')).map((el) => ({
+        tag: el.querySelector('[data-testid="mdx-jsx-tag"]')?.textContent,
+        inline: el.classList.contains('canopy-mdx-jsx-inline'),
+        children: el.querySelector('[contenteditable="true"]')?.textContent ?? null,
+      }))
+      expect(elements).toEqual([
+        { tag: '<Callout type="info" title="Note">', inline: false, children: 'Callout text.' },
+        { tag: '<Badge color="red">', inline: true, children: 'new' },
+        { tag: '<Icon name="star">', inline: true, children: null },
+      ])
+    })
+  })
+
+  // MDXEditor re-serializes both: `__x__` as `**x**`, and a block element's
+  // children indented.
+  it.each([
+    ['markdown it rewrites', 'Some __bold__ text.'],
+    ['a JSX element', JSX_BODY],
+  ])('does not report the re-serialization of unedited %s as a change', async (_case, body) => {
+    const onChange = vi.fn()
+    renderField(body, onChange)
+    await richEditor()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('emits the first edit to a document the import did not reformat', async () => {
+    const onChange = vi.fn()
+    renderField('Plain text.', onChange)
+    const root = await richEditor()
+    const user = userEvent.setup()
+
+    await user.click(root.querySelector('p') ?? root)
+    await user.keyboard('X')
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1))
+    expect(lastValue(onChange)).toContain('X')
+  })
+
+  describe('source editor fallback', () => {
+    it.each([
+      ['an unclosed tag', 'Line one<br>line two'],
+      ['an unbalanced expression', 'Costs { 5 dollars.'],
+      [
+        'content inside an element that the rich editor cannot import',
+        '<Callout>\nSee [the docs][docs].\n\n[docs]: https://example.com\n</Callout>',
+      ],
+      ['an import statement', "import { Chart } from './chart'\n\n<Chart />"],
+    ])('opens a body with %s as editable source', async (_case, body) => {
+      const onChange = vi.fn()
+      renderField(body, onChange)
+
+      expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+      const source = screen.getByTestId('markdown-source-editor')
+      if (!(source instanceof HTMLTextAreaElement))
+        throw new Error('source editor is not a textarea')
+      expect(source.value).toBe(body)
+      expect(onChange).not.toHaveBeenCalled()
+
+      const user = userEvent.setup()
+      await user.click(source)
+      await user.keyboard('{Control>}{End}{/Control}!')
+      expect(lastValue(onChange)).toBe(`${body}!`)
+    })
+  })
+
+  it('switches between rich text and source on request', async () => {
+    const onChange = vi.fn()
+    const Stateful: React.FC = () => {
+      const [value, setValue] = React.useState('Hello')
+      return (
+        <MarkdownField
+          label="Body"
+          value={value}
+          onChange={(next) => {
+            onChange(next)
+            setValue(next)
+          }}
+        />
+      )
+    }
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <Stateful />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+    await richEditor()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('markdown-mode-toggle'))
+    const source = screen.getByTestId('markdown-source-editor')
+    expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
+    await user.type(source, ' <Callout>there</Callout>')
+    expect(lastValue(onChange)).toBe('Hello <Callout>there</Callout>')
+
+    await user.click(screen.getByTestId('markdown-mode-toggle'))
+    await richEditor()
+    expect(screen.queryByTestId('markdown-source-editor')).toBeNull()
+    expect(screen.getByTestId('mdx-jsx-tag').textContent).toBe('<Callout>')
   })
 })

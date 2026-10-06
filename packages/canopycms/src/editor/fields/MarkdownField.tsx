@@ -1,8 +1,8 @@
 'use client'
 
-import React, { Suspense, useId, useRef, useCallback, useEffect } from 'react'
+import React, { Suspense, useId, useRef, useCallback, useEffect, useState } from 'react'
 
-import { Text, Textarea } from '@mantine/core'
+import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 
 import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
@@ -22,8 +22,8 @@ export interface MarkdownFieldProps {
 
 const MDXEditorLazy = React.lazy(async () => {
   const [
-    { MDXEditor },
     {
+      MDXEditor,
       headingsPlugin,
       listsPlugin,
       quotePlugin,
@@ -54,7 +54,8 @@ const MDXEditorLazy = React.lazy(async () => {
       closeImageDialog$,
       imageDialogState$,
     },
-  ] = await Promise.all([import('@mdxeditor/editor'), import('@mdxeditor/editor')])
+    { mdxJsxPlugins },
+  ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
 
   const EntryLinkToolbarButton: React.FC = () => {
     const insertMarkdown = usePublisher(insertMarkdown$)
@@ -76,15 +77,17 @@ const MDXEditorLazy = React.lazy(async () => {
 
   const WrappedEditor: React.FC<{
     markdown: string
-    onChange: (value: string) => void
+    onChange: (value: string, initialMarkdownNormalize: boolean) => void
+    onError: (payload: { error: string; source: string }) => void
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
-  }> = ({ markdown, onChange, editorRef, imageUploadHandler }) => {
+  }> = ({ markdown, onChange, onError, editorRef, imageUploadHandler }) => {
     return (
       <MDXEditor
         ref={editorRef}
         markdown={markdown}
         onChange={onChange}
+        onError={onError}
         plugins={[
           headingsPlugin(),
           listsPlugin(),
@@ -95,6 +98,7 @@ const MDXEditorLazy = React.lazy(async () => {
           linkDialogPlugin(),
           imagePlugin({ imageUploadHandler, ImageDialog: MdxImageDialogBridge }),
           tablePlugin(),
+          ...mdxJsxPlugins(),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {
@@ -177,6 +181,18 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content p { margin: 0.75em 0; }
     .canopy-mdx-content a { color: var(--mantine-color-blue-6, #228be6); text-decoration: underline; }
     .canopy-mdx-content img { max-width: 100%; height: auto; }
+    .canopy-mdx-content .canopy-mdx-jsx {
+      border: 1px dashed var(--mantine-color-gray-4, #ced4da);
+      border-radius: 4px;
+      padding: 2px 8px;
+      margin: 0.5em 0;
+    }
+    .canopy-mdx-content .canopy-mdx-jsx-inline { display: inline-block; margin: 0 2px; }
+    .canopy-mdx-content .canopy-mdx-jsx-tag {
+      font-family: var(--mantine-font-family-monospace, monospace);
+      font-size: 0.8em;
+      color: var(--mantine-color-gray-6, #868e96);
+    }
   `}</style>
 )
 
@@ -195,6 +211,14 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
   />
 )
 
+/**
+ * `rich` is MDXEditor. `source` is a plain textarea over the stored text: the
+ * user chose it (`reason: null`), or MDXEditor reported through `onError` that
+ * it cannot represent the document. MDXEditor emits no `onChange` for a
+ * document it rejected, so staying in rich mode then would discard every edit.
+ */
+type EditorMode = { kind: 'rich' } | { kind: 'source'; reason: string | null }
+
 export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   id,
   label,
@@ -208,6 +232,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
   const apiClient = useApiClient()
+  const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
 
   // Drives both MDXEditor's drag/drop/paste upload and the custom image
   // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
@@ -229,13 +254,32 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     }
   }, [value])
 
-  const handleChange = useCallback(
+  const emitChange = useCallback(
     (newValue: string) => {
       lastExternalValue.current = newValue
       onChange(newValue)
     },
     [onChange],
   )
+
+  // MDXEditor reports its re-serialization of the document it was mounted
+  // with as a change flagged `initialMarkdownNormalize`. Forwarding it would
+  // mark an entry nobody edited as modified and save the reformatted text.
+  const handleEditorChange = useCallback(
+    (newValue: string, initialMarkdownNormalize: boolean) => {
+      if (!initialMarkdownNormalize) emitChange(newValue)
+    },
+    [emitChange],
+  )
+
+  // MDXEditor can report the error while it is still rendering (its import
+  // runs as the editor is created), so the switch waits for a microtask
+  // rather than updating this component mid-render.
+  const handleEditorError = useCallback(({ error }: { error: string; source: string }) => {
+    queueMicrotask(() => setMode({ kind: 'source', reason: error }))
+  }, [])
+
+  const showSource = mode.kind === 'source'
 
   return (
     <div
@@ -244,23 +288,62 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       className="canopy-markdown-field"
       {...groupDescriptionProps(inputId, description)}
     >
-      {label && (
-        <Text size="sm" fw={500} mb={4}>
-          {label}
-        </Text>
-      )}
+      <Group justify="space-between" align="flex-end" mb={4} wrap="nowrap">
+        {label ? (
+          <Text size="sm" fw={500}>
+            {label}
+          </Text>
+        ) : (
+          <span />
+        )}
+        <Button
+          variant="subtle"
+          size="compact-xs"
+          data-testid="markdown-mode-toggle"
+          onClick={() => setMode(showSource ? { kind: 'rich' } : { kind: 'source', reason: null })}
+        >
+          {showSource ? 'Rich text' : 'Edit source'}
+        </Button>
+      </Group>
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
-      <div style={editorWrapperStyle}>
-        <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
-          <MDXEditorLazy
-            markdown={value}
-            onChange={handleChange}
-            editorRef={editorRef}
-            imageUploadHandler={imageUploadHandler}
+      {showSource ? (
+        <>
+          {mode.reason !== null && (
+            <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
+              <Text size="sm">
+                The rich-text editor can&apos;t show this content, so it is open as source. Your
+                edits here are saved as usual.
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                {mode.reason}
+              </Text>
+            </Alert>
+          )}
+          <Textarea
+            value={value}
+            onChange={(e) => emitChange(e.currentTarget.value)}
+            aria-label={label ? `${label} (source)` : 'Markdown source'}
+            data-testid="markdown-source-editor"
+            autosize
+            minRows={10}
+            size="sm"
+            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
           />
-        </Suspense>
-      </div>
+        </>
+      ) : (
+        <div style={editorWrapperStyle}>
+          <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
+            <MDXEditorLazy
+              markdown={value}
+              onChange={handleEditorChange}
+              onError={handleEditorError}
+              editorRef={editorRef}
+              imageUploadHandler={imageUploadHandler}
+            />
+          </Suspense>
+        </div>
+      )}
     </div>
   )
 }
