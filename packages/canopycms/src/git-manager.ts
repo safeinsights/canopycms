@@ -28,13 +28,15 @@ import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
-import { getErrorMessage, isNotFoundError } from './utils/error'
+import { getErrorMessage, isNodeError, isNotFoundError, redactCredentials } from './utils/error'
 import {
   isMissingRemoteRefFailure,
   isNetworkRemoteUrl,
   resolveBaseBranch,
   stageAllExceptCanopyState,
 } from './utils/git'
+import { canopyLogWarn } from './utils/logger'
+import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -104,6 +106,41 @@ export function gitNetworkChildEnv(): Record<string, string> {
     if (GIT_ENV_PASSTHROUGH.test(key) || GIT_NETWORK_ENV_PASSTHROUGH.test(key)) env[key] = value
   }
   return { ...env, ...FORCE_C_LOCALE }
+}
+
+/**
+ * `-c` on every git process a GitManager starts, so gc and auto-maintenance
+ * never run inside a Lambda, which can be frozen mid-run with a half-written
+ * pack or a `gc.pid` left on EFS. A provisioning clone also persists them
+ * into the workspace's own config. `remote.git`'s `receive-pack` never sees
+ * them; worker/remote-git-maintenance.ts covers that side.
+ */
+export const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
+
+/** EFS cost is per-file latency, which parallel file creation overlaps. git >= 2.32. */
+const PARALLEL_CHECKOUT_ARGS = [
+  '-c',
+  'checkout.workers=8',
+  '-c',
+  'checkout.thresholdForParallelism=1',
+]
+
+async function dirState(dir: string): Promise<'absent' | 'empty' | 'occupied'> {
+  try {
+    return (await fs.readdir(dir)).length === 0 ? 'empty' : 'occupied'
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return 'absent'
+    throw err
+  }
+}
+
+export interface CloneRepoOptions {
+  /** The clone's remote name; git's default is `origin`. */
+  remoteName?: string
+  /** Leave the working tree unpopulated for the caller to check out. */
+  noCheckout?: boolean
+  /** Written into the new repo's own config by the clone (`git clone -c`). */
+  config?: Record<string, string>
 }
 
 // In-memory lock to prevent concurrent remote.git initialization
@@ -330,6 +367,8 @@ export interface InitializeWorkspaceOptions {
    * only; settings workspaces commit by explicit path and don't need it.
    */
   gitExcludePattern?: string
+  /** Times each provisioning step; no step lines are printed without one. */
+  provisionLog?: ProvisionLog
 }
 
 export class GitManager {
@@ -344,7 +383,11 @@ export class GitManager {
     this.baseBranch = options.baseBranch ?? 'main'
     this.remote = options.remote ?? 'origin'
     this.skipIndexMarker = options.skipIndexMarker ?? false
-    this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
+    this.git = simpleGit({
+      baseDir: this.repoPath,
+      ...gitOptions,
+      config: [...NO_AUTO_GC_CONFIG, ...(gitOptions?.config ?? [])],
+    })
     // `this.git` is for LOCAL working-tree ops: in the intended prod topology
     // `origin` resolves to a local path (an auto-detected/initialized
     // `remote.git`), so its env is gitChildEnv's allowlist, which drops
@@ -360,18 +403,49 @@ export class GitManager {
     this.git.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }))
   }
 
+  /**
+   * Single-branch clone of `baseBranch`, retried once: a clone can lose a race
+   * with the worker's repack of `remote.git` deleting a pack it had just
+   * listed. Before the retry it clears only what it created itself, so a
+   * target that held files beforehand is never touched.
+   */
   static async cloneRepo(
     remoteUrl: string,
     targetPath: string,
     baseBranch = 'main',
+    options: CloneRepoOptions = {},
   ): Promise<void> {
     log.debug('git', 'Cloning repository', {
       remoteUrl,
       targetPath,
       baseBranch,
     })
-    const git = simpleGit()
-    await git.clone(remoteUrl, targetPath, ['--branch', baseBranch, '--single-branch'])
+    const args = ['--single-branch', '--branch', baseBranch]
+    if (options.noCheckout) args.push('--no-checkout')
+    if (options.remoteName) args.push('--origin', options.remoteName)
+    for (const [key, value] of Object.entries(options.config ?? {})) {
+      args.push('-c', `${key}=${value}`)
+    }
+    for (const setting of NO_AUTO_GC_CONFIG) args.push('-c', setting)
+
+    const git = simpleGit({ config: [...NO_AUTO_GC_CONFIG] })
+    git.env({
+      ...(isNetworkRemoteUrl(remoteUrl) ? gitNetworkChildEnv() : gitChildEnv({})),
+      GIT_CEILING_DIRECTORIES: path.dirname(targetPath),
+    })
+    const before = await dirState(targetPath)
+    try {
+      await git.clone(remoteUrl, targetPath, args)
+    } catch (err) {
+      if (before === 'occupied') throw err
+      canopyLogWarn(
+        `[canopy] clone into ${targetPath} failed, retrying once: ` +
+          redactCredentials(getErrorMessage(err)),
+      )
+      await fs.rm(targetPath, { recursive: true, force: true })
+      if (before === 'empty') await fs.mkdir(targetPath)
+      await git.clone(remoteUrl, targetPath, args)
+    }
     log.debug('git', 'Clone complete')
   }
 
@@ -934,6 +1008,14 @@ export class GitManager {
       }
     }
 
+    const step = <T>(name: string, run: () => Promise<T>): Promise<T> =>
+      options.provisionLog ? options.provisionLog.step(name, run) : run()
+    const identity = {
+      'canopycms.managed': 'true',
+      'user.name': options.gitBotAuthorName,
+      'user.email': options.gitBotAuthorEmail,
+    }
+
     let justCloned = false
     let resolvedRemoteUrl: string | undefined
     if (!repoExists) {
@@ -955,7 +1037,18 @@ export class GitManager {
       }
 
       try {
-        await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
+        // The clone writes the managed marker, which ensureRemote's guard
+        // checks, and a fallback author for internal commits such as the
+        // orphan settings init; ensureAuthor() sets the real one before
+        // user-facing commits. A content clone skips its own checkout because
+        // checkoutFreshClone runs the one checkout this workspace needs.
+        await step('clone', () =>
+          GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch, {
+            remoteName,
+            noCheckout: options.branchType === 'content',
+            config: identity,
+          }),
+        )
       } catch (err) {
         // The raw git error ("Cloning into <workspace>… branch <base> not found")
         // mixes the workspace name and the base branch — spell both out.
@@ -966,16 +1059,6 @@ export class GitManager {
       }
       justCloned = true
       resolvedRemoteUrl = remoteUrl
-
-      // Mark as managed immediately after clone so ensureRemote's guard works,
-      // and set a fallback author identity: GIT_CEILING_DIRECTORIES blocks
-      // global gitconfig, and internal commits (e.g. orphan branch init) need
-      // one. ensureAuthor() sets the real bot author before user-facing commits.
-      const freshGit = simpleGit({ baseDir: options.workspacePath })
-      freshGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
-      await freshGit.addConfig('canopycms.managed', 'true')
-      await freshGit.addConfig('user.name', options.gitBotAuthorName)
-      await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
     // Settings (orphan) workspaces never host ContentStores, so they skip the
@@ -987,35 +1070,29 @@ export class GitManager {
       skipIndexMarker: options.branchType === 'orphan',
     })
 
-    // The managed marker and fallback identity must be set before ensureRemote
-    // (which checks the marker) and before createOrphanSettingsBranch (which
-    // commits and needs an author). Idempotent — the clone above may have set them.
-    await git.git.addConfig('canopycms.managed', 'true')
-    await git.git.addConfig('user.name', options.gitBotAuthorName)
-    await git.git.addConfig('user.email', options.gitBotAuthorEmail)
-    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
-      workspacePath: options.workspacePath,
-    })
-
-    // Configure the remote only if we didn't just clone (clone sets up 'origin')
+    // A reused workspace gets the same marker and identity the clone writes,
+    // set before ensureRemote checks the marker; a healthy one writes nothing.
     if (!justCloned) {
-      const remoteUrl = await GitManager.resolveRemoteUrl({
-        mode: options.mode,
-        remoteUrl: options.remoteUrl,
-        defaultRemoteUrl: options.defaultRemoteUrl,
-        baseBranch,
-        sourceRoot: options.sourceRoot,
-        allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
+      await step('config', async () => {
+        await git.ensureLocalConfig(identity)
+        const remoteUrl = await GitManager.resolveRemoteUrl({
+          mode: options.mode,
+          remoteUrl: options.remoteUrl,
+          defaultRemoteUrl: options.defaultRemoteUrl,
+          baseBranch,
+          sourceRoot: options.sourceRoot,
+          allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
+        })
+        if (remoteUrl) {
+          await git.ensureRemote(remoteUrl)
+        }
+        resolvedRemoteUrl = remoteUrl
       })
-      if (remoteUrl) {
-        await git.ensureRemote(remoteUrl)
-      }
-      resolvedRemoteUrl = remoteUrl
     }
 
     if (options.branchType === 'orphan') {
       try {
-        await git.createOrphanSettingsBranch(options.branchName, {})
+        await step('checkout', () => git.createOrphanSettingsBranch(options.branchName, {}))
       } catch (err) {
         // A remote that is unreadable because the worker has not (re)created
         // it yet is the transient not-ready case, not a broken workspace.
@@ -1029,15 +1106,20 @@ export class GitManager {
       // workspace. Commits here stage explicit paths, but a crash-orphaned lock
       // dir must never be committable by a future broad stage either. Runs on
       // every init, so existing clones pick it up.
-      await git.ensureGitExclude('*.lock')
+      await step('exclude', () => git.ensureGitExclude('*.lock'))
     } else {
-      await git.checkoutBranch(options.branchName)
+      await step('checkout', () =>
+        justCloned
+          ? git.checkoutFreshClone(options.branchName)
+          : git.checkoutBranch(options.branchName),
+      )
       // Excludes runtime metadata (.canopy-meta/) from git tracking on content
       // branches. Settings workspaces don't need it: they stage explicit file
       // paths at the workspace root and skip the index marker entirely
       // (skipIndexMarker), so nothing under .canopy-meta/ is ever staged.
-      if (options.gitExcludePattern) {
-        await git.ensureGitExclude(options.gitExcludePattern)
+      const pattern = options.gitExcludePattern
+      if (pattern) {
+        await step('exclude', () => git.ensureGitExclude(pattern))
       }
     }
 
@@ -1079,6 +1161,25 @@ export class GitManager {
   async checkoutBranch(branch: string): Promise<void> {
     try {
       await this.checkoutBranchInner(branch)
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  /**
+   * The one checkout of a `--no-checkout` clone, which has the base branch
+   * and its remote-tracking ref and nothing else, so neither the branch
+   * listing nor the fetch that {@link checkoutBranch} starts with is needed.
+   * The missing index makes git populate the whole tree, even for the base
+   * branch HEAD already names.
+   */
+  async checkoutFreshClone(branch: string): Promise<void> {
+    const target =
+      branch === this.baseBranch
+        ? ['checkout', branch]
+        : ['checkout', '-b', branch, `${this.remote}/${this.baseBranch}`]
+    try {
+      await this.git.raw([...PARALLEL_CHECKOUT_ARGS, ...target])
     } finally {
       await this.invalidateContentIndexes()
     }
@@ -1362,6 +1463,14 @@ export class GitManager {
     }
     if (currentEmail !== author.email) {
       await this.git.addConfig('user.email', author.email)
+    }
+  }
+
+  /** Writes each key into this repo's own config only where it differs. */
+  async ensureLocalConfig(values: Record<string, string>): Promise<void> {
+    const local = (await this.git.listConfig('local')) as ConfigListSummary
+    for (const [key, value] of Object.entries(values)) {
+      if (local.all[key] !== value) await this.git.addConfig(key, value)
     }
   }
 

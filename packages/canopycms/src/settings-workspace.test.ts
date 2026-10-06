@@ -18,7 +18,7 @@ import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { initTestRepo, openBareRepo } from './test-utils'
+import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 import { GitManager, GitRemoteRefMissingError } from './git-manager'
@@ -374,7 +374,10 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
       remoteUrl: path.join(tmpRoot, 'remote.git'),
     }
 
+    const consoleSpy = mockConsole()
     await expect(manager.ensureGitWorkspace(options)).rejects.toThrow(/Failed to clone/)
+    expect(consoleSpy).toHaveWarned(/retrying once/)
+    consoleSpy.restore()
 
     await seedBareRemote(tmpRoot)
     const init = vi.spyOn(GitManager, 'initializeWorkspace')
