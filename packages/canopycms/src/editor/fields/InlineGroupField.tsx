@@ -1,10 +1,11 @@
-import React from 'react'
+import React, { useId } from 'react'
 
 import { Paper, Stack, Text } from '@mantine/core'
 
 import type { FieldConfig, InlineGroupFieldConfig } from '../../config'
 import { formatCanopyPath } from '../canopy-path'
 import type { RenderField } from './ObjectField'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 export interface InlineGroupFieldProps {
   label?: string
@@ -27,8 +28,16 @@ export const InlineGroupField: React.FC<InlineGroupFieldProps> = ({
   renderField,
   path,
 }) => {
+  const descriptionBaseId = useId()
   return (
-    <Paper withBorder radius="md" p="md" bg="gray.0" shadow="xs">
+    <Paper
+      withBorder
+      radius="md"
+      p="md"
+      bg="gray.0"
+      shadow="xs"
+      {...groupDescriptionProps(descriptionBaseId, description)}
+    >
       <Stack gap="sm">
         {(label || description) && (
           <Stack gap={2}>
@@ -37,11 +46,7 @@ export const InlineGroupField: React.FC<InlineGroupFieldProps> = ({
                 {label}
               </Text>
             )}
-            {description && (
-              <Text size="xs" c="dimmed">
-                {description}
-              </Text>
-            )}
+            <FieldDescription baseId={descriptionBaseId} description={description} />
           </Stack>
         )}
         <Stack gap="sm">

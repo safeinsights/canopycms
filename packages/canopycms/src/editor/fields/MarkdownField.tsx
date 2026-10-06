@@ -9,10 +9,12 @@ import { InsertEntryLink } from './entry-link'
 import { MdxImageDialog } from './MdxImageDialog'
 import { useApiClient } from '../context'
 import { uploadAsset } from '../media/upload-asset'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 export interface MarkdownFieldProps {
   id?: string
   label?: string
+  description?: string
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
@@ -196,6 +198,7 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
 export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -235,12 +238,18 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   )
 
   return (
-    <div id={inputId} data-canopy-field={dataCanopyField} className="canopy-markdown-field">
+    <div
+      id={inputId}
+      data-canopy-field={dataCanopyField}
+      className="canopy-markdown-field"
+      {...groupDescriptionProps(inputId, description)}
+    >
       {label && (
         <Text size="sm" fw={500} mb={4}>
           {label}
         </Text>
       )}
+      <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
       <div style={editorWrapperStyle}>
         <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>

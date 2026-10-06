@@ -5,6 +5,7 @@ import { NumberInput } from '@mantine/core'
 export interface NumberFieldProps {
   id?: string
   label?: string
+  description?: string
   value: number | undefined
   onChange: (value: number | undefined) => void
   dataCanopyField?: string
@@ -38,6 +39,7 @@ const toNumericValue = (raw: string | number): number | undefined => {
 export const NumberField: React.FC<NumberFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -54,6 +56,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
     <NumberInput
       id={inputId}
       label={label}
+      description={description}
       value={displayValue}
       size="sm"
       onChange={(next) => {

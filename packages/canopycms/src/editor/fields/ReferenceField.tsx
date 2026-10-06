@@ -8,6 +8,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 /** @internal Exported for tests. */
 export interface ReferenceOption {
@@ -18,6 +19,7 @@ export interface ReferenceOption {
 export interface ReferenceFieldProps {
   id?: string
   label?: string
+  description?: string
   options?: ReferenceOption[] // Loaded from the API when not provided
   collections?: string[] // Collections to load options from (includes subcollections)
   entryTypes?: string[] // Entry types to filter by (e.g., ['partner'])
@@ -32,6 +34,7 @@ export interface ReferenceFieldProps {
 export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   id,
   label,
+  description,
   options: staticOptions,
   collections,
   entryTypes,
@@ -141,10 +144,12 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         gap={4}
         data-canopy-field={dataCanopyField}
         data-testid={`reference-field-${dataCanopyField}`}
+        {...groupDescriptionProps(inputId, description)}
       >
         <Text size="sm" fw={500}>
           {label}
         </Text>
+        <FieldDescription baseId={inputId} description={description} />
         <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
       </Stack>
     )
@@ -156,10 +161,12 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         gap={4}
         data-canopy-field={dataCanopyField}
         data-testid={`reference-field-${dataCanopyField}`}
+        {...groupDescriptionProps(inputId, description)}
       >
         <Text size="sm" fw={500}>
           {label}
         </Text>
+        <FieldDescription baseId={inputId} description={description} />
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="red"
@@ -192,6 +199,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         <MultiSelect
           id={inputId}
           label={label}
+          description={description}
           data={options}
           value={normalizedValue as string[]}
           onChange={(next) => onChange(next)}
@@ -203,6 +211,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         <Select
           id={inputId}
           label={label}
+          description={description}
           data={options}
           value={normalizedValue as string}
           onChange={(next) => onChange(next ?? '')}
