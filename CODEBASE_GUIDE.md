@@ -521,6 +521,7 @@ Field components, in `editor/fields/`:
 - `TextField.tsx`, `NumberField.tsx`, `ToggleField.tsx`, `DateTimeField.tsx`, `SelectField.tsx` — scalar inputs
 - `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one uses `TagsInput` with no comma splitting
 - `MarkdownField.tsx` — MDXEditor-backed markdown and MDX
+- `mdx-jsx-support.tsx` — JSX plugins
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object field, with a Clear control for an optional filled field
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
@@ -531,7 +532,6 @@ Field components, in `editor/fields/`:
 - `FieldDescription.tsx` — `description` without Mantine's native prop
 - `entry-link/EntryLinkContext.tsx` — React context supplying `EntryLinkOption[]` to toolbar components
 - `entry-link/InsertEntryLink.tsx` — toolbar button plus searchable entry picker, inserting `[Title](entry:ID)`
-- `entry-link/index.ts` — barrel exports
 
 Components, in `editor/components/`:
 
