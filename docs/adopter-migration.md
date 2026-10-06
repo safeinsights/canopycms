@@ -185,7 +185,8 @@ version, media-storage state) and warns when API and worker versions differ.
 ### Every field type shows its `description`
 
 **What changed.** A field's `description` renders under its label for every type, not only inline
-groups; on a list it shows once, on the list header.
+groups; a list field shows it once, never per item. A block template's `description` still does not
+render.
 
 **To adopt.** Nothing. Read your existing descriptions, which editors now see.
 

@@ -868,7 +868,7 @@ describe('FormRenderer', () => {
 
     it('boolean', () => {
       renderFields(described({ name: 'flag', type: 'boolean', label: 'Flag' }))
-      expect(expectDescribed('input')).toBe(screen.getByRole('switch'))
+      expect(expectDescribed('input')).toBe(screen.getByRole('switch', { name: 'Flag' }))
     })
 
     it('number', () => {
@@ -932,7 +932,7 @@ describe('FormRenderer', () => {
         described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
       )
       expect(screen.getByTestId('reference-loading-author')).toBeTruthy()
-      expect(screen.getByText(DESCRIPTION).id).toMatch(/-description$/)
+      expect(expectDescribed('group')).toBe(screen.getByTestId('reference-field-author'))
     })
 
     it('reference after options fail to load', async () => {
@@ -945,7 +945,7 @@ describe('FormRenderer', () => {
         described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
       )
       await screen.findByTestId('reference-error-author')
-      expect(screen.getByText(DESCRIPTION).id).toMatch(/-description$/)
+      expect(expectDescribed('group')).toBe(screen.getByTestId('reference-field-author'))
     })
 
     it('image', () => {
@@ -1013,6 +1013,51 @@ describe('FormRenderer', () => {
       expect(screen.getByRole('group', { name: 'First' }).hasAttribute('aria-describedby')).toBe(
         false,
       )
+    })
+
+    it('inline group', () => {
+      renderFields(
+        described({
+          name: 'seo',
+          type: 'group',
+          label: 'SEO',
+          fields: [{ name: 'metaTitle', type: 'string', label: 'Meta title' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    const captionChild: FieldConfig = {
+      name: 'caption',
+      type: 'string',
+      label: 'Caption',
+      description: DESCRIPTION,
+    }
+
+    it.each<[string, FieldConfig, FormValue]>([
+      [
+        'an object',
+        { name: 'meta', type: 'object', label: 'Meta', fields: [captionChild] },
+        { meta: {} },
+      ],
+      [
+        'an object-list card',
+        { name: 'items', type: 'object', label: 'Items', list: true, fields: [captionChild] },
+        { items: [{}] },
+      ],
+      [
+        'a block',
+        {
+          name: 'blocks',
+          type: 'block',
+          label: 'Blocks',
+          templates: [{ name: 'hero', label: 'Hero', fields: [captionChild] }],
+        },
+        { blocks: [{ template: 'hero', value: {} }] },
+      ],
+    ])('a child field inside %s renders its own description', (_, parent, initial) => {
+      renderFields([parent], initial)
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Caption'))
     })
 
     it('code', () => {

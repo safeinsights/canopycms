@@ -8,7 +8,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import { createApiClient } from '../../api/client'
 import { useOptionalApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
-import { FieldDescription } from './FieldDescription'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 /** @internal Exported for tests. */
 export interface ReferenceOption {
@@ -144,6 +144,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         gap={4}
         data-canopy-field={dataCanopyField}
         data-testid={`reference-field-${dataCanopyField}`}
+        {...groupDescriptionProps(inputId, description)}
       >
         <Text size="sm" fw={500}>
           {label}
@@ -160,6 +161,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         gap={4}
         data-canopy-field={dataCanopyField}
         data-testid={`reference-field-${dataCanopyField}`}
+        {...groupDescriptionProps(inputId, description)}
       >
         <Text size="sm" fw={500}>
           {label}

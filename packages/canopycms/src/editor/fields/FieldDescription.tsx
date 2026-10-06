@@ -6,8 +6,8 @@ import { Input } from '@mantine/core'
 export const fieldDescriptionId = (baseId: string): string => `${baseId}-description`
 
 /**
- * Guidance text for fields that draw their own chrome rather than use a Mantine
- * input's native `description` prop. Renders nothing for an absent or empty description.
+ * Guidance text for fields that don't use a Mantine input's native `description` prop.
+ * Renders nothing for an absent or empty description.
  */
 export const FieldDescription: React.FC<{ baseId: string; description?: string }> = ({
   baseId,

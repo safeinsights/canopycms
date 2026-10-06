@@ -517,7 +517,7 @@ Common options on any field:
 
 On a `string` field, `list: true` renders a tag input: type a value and press Enter to add it, and Backspace on an empty input removes the last.
 
-A cleared single-line `string` field is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched the field; use `|| 'default'` when blank should mean the default.
+A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
 #### Rendering `markdown` / `mdx` content on your site
 
