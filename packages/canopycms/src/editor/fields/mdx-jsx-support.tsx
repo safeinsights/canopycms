@@ -78,6 +78,12 @@ const catchAllJsxDescriptor: JsxComponentDescriptor = {
   Editor: CatchAllJsxEditor,
 }
 
+/**
+ * A JSX fragment (`<>…</>`) has no name, and MDXEditor's HTML visitor throws a
+ * `TypeError` testing a nameless element, which no import catches.
+ */
+const isFragment = (node: MdastNode) => isMdastJsxNode(node) && node.name === null
+
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
 
@@ -110,6 +116,11 @@ const roundTripGuardPlugin = realmPlugin({
             'import/export statements cannot be edited in the rich-text editor',
           )
         }
+        if (isFragment(mdastNode)) {
+          throw new UnrecognizedMarkdownConstructError(
+            'fragments (<>…</>) cannot be edited in the rich-text editor',
+          )
+        }
         const visitors = realm.getValue(importVisitors$).filter((visitor) => visitor !== guard)
         const hasVisitor = (node: MdastNode) =>
           visitors.some((visitor) =>
@@ -119,7 +130,10 @@ const roundTripGuardPlugin = realmPlugin({
           )
         const check = (node: MdastNode) => {
           for (const child of childrenOf(node)) {
-            if (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child)) {
+            if (
+              isFragment(child) ||
+              (!CONSUMED_BY_PARENT_VISITOR.has(child.type) && !hasVisitor(child))
+            ) {
               const name = isMdastJsxNode(mdastNode) ? mdastNode.name : null
               throw new UnrecognizedMarkdownConstructError(
                 `<${name ?? ''}> contains ${child.type} content the rich-text editor cannot edit`,

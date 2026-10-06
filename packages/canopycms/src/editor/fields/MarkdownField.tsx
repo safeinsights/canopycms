@@ -217,7 +217,10 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
  * it cannot represent the document. MDXEditor emits no `onChange` for a
  * document it rejected, so staying in rich mode then would discard every edit.
  */
-type EditorMode = { kind: 'rich' } | { kind: 'source'; reason: string | null }
+type EditorMode =
+  | { kind: 'rich' }
+  | { kind: 'source'; reason: null }
+  | { kind: 'source'; reason: string; failedValue: string }
 
 export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   id,
@@ -246,12 +249,13 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [apiClient],
   )
 
-  // Sync external value changes into the editor (e.g., undo, reset, load)
+  // Sync external value changes (undo, reset, another entry) into the editor.
+  // Recorded even while no editor is mounted, so a later return to an earlier
+  // value is still seen as a change.
   useEffect(() => {
-    if (value !== lastExternalValue.current && editorRef.current) {
-      editorRef.current.setMarkdown(value)
-      lastExternalValue.current = value
-    }
+    if (value === lastExternalValue.current) return
+    lastExternalValue.current = value
+    editorRef.current?.setMarkdown(value)
   }, [value])
 
   const emitChange = useCallback(
@@ -276,10 +280,26 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   // runs as the editor is created), so the switch waits for a microtask
   // rather than updating this component mid-render.
   const handleEditorError = useCallback(({ error }: { error: string; source: string }) => {
-    queueMicrotask(() => setMode({ kind: 'source', reason: error }))
+    const failedValue = lastExternalValue.current
+    queueMicrotask(() => setMode({ kind: 'source', reason: error, failedValue }))
   }, [])
 
-  const showSource = mode.kind === 'source'
+  // Edits in the fallback stay in it: the edited text is no more likely to load.
+  const handleSourceChange = useCallback(
+    (newValue: string) => {
+      setMode((current) =>
+        current.kind === 'source' && current.reason !== null
+          ? { ...current, failedValue: newValue }
+          : current,
+      )
+      emitChange(newValue)
+    },
+    [emitChange],
+  )
+
+  // A fallback holds only for the value MDXEditor rejected; any other value,
+  // such as another entry's body, gets the rich editor again.
+  const showSource = mode.kind === 'source' && (mode.reason === null || mode.failedValue === value)
 
   return (
     <div
@@ -309,7 +329,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       <EditorContentStyles />
       {showSource ? (
         <>
-          {mode.reason !== null && (
+          {mode.kind === 'source' && mode.reason !== null && (
             <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
               <Text size="sm">
                 The rich-text editor can&apos;t show this content, so it is open as source. Your
@@ -322,7 +342,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           )}
           <Textarea
             value={value}
-            onChange={(e) => emitChange(e.currentTarget.value)}
+            onChange={(e) => handleSourceChange(e.currentTarget.value)}
             aria-label={label ? `${label} (source)` : 'Markdown source'}
             data-testid="markdown-source-editor"
             autosize

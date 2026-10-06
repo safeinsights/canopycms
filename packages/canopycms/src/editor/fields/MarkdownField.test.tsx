@@ -174,8 +174,9 @@ describe('MarkdownField', () => {
       await user.keyboard('inside')
       await user.click(root.querySelector('p') ?? root)
 
-      await waitFor(() => expect(lastValue(onChange)).toMatch(/<Callout[^>]*>[\s\S]*inside/))
-      expect(lastValue(onChange)).toContain('</Callout>')
+      await waitFor(() =>
+        expect(lastValue(onChange)).toMatch(/<Callout[^>]*>[^<]*inside[^<]*<\/Callout>/),
+      )
     })
 
     it('shows each element tag and attributes, with its children editable', async () => {
@@ -228,6 +229,9 @@ describe('MarkdownField', () => {
         '<Callout>\nSee [the docs][docs].\n\n[docs]: https://example.com\n</Callout>',
       ],
       ['an import statement', "import { Chart } from './chart'\n\n<Chart />"],
+      ['a block fragment', '<>\nFragment text.\n</>'],
+      ['an inline fragment', 'Text <>inside</> a fragment.'],
+      ['a fragment inside an element', '<Callout>\nA <>b</> c.\n</Callout>'],
     ])('opens a body with %s as editable source', async (_case, body) => {
       const onChange = vi.fn()
       renderField(body, onChange)
@@ -244,6 +248,87 @@ describe('MarkdownField', () => {
       await user.keyboard('{Control>}{End}{/Control}!')
       expect(lastValue(onChange)).toBe(`${body}!`)
     })
+  })
+
+  /** Renders the field with its value held by the test, as the form holds it. */
+  function renderControlled(initial: string) {
+    const onChange = vi.fn()
+    const external: { set: (value: string) => void } = { set: () => {} }
+    const Controlled: React.FC = () => {
+      const [value, setValue] = React.useState(initial)
+      React.useEffect(() => {
+        external.set = setValue
+      }, [])
+      return (
+        <MarkdownField
+          label="Body"
+          value={value}
+          onChange={(next) => {
+            onChange(next)
+            setValue(next)
+          }}
+        />
+      )
+    }
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <Controlled />
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+    return {
+      onChange,
+      setExternal: (value: string) =>
+        act(async () => {
+          external.set(value)
+        }),
+    }
+  }
+
+  it('edits the current value after it changed while source was showing', async () => {
+    // The field is not remounted between entries: entry A, source, entry B,
+    // rich text, back to entry A.
+    const { onChange, setExternal } = renderControlled('Entry A.')
+    await richEditor()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByTestId('markdown-mode-toggle'))
+    await setExternal('Entry B.')
+    await user.click(screen.getByTestId('markdown-mode-toggle'))
+    await richEditor()
+    await setExternal('Entry A.')
+
+    const root = await richEditor()
+    await waitFor(() => expect(root.textContent).toBe('Entry A.'))
+    await user.click(root.querySelector('p') ?? root)
+    await user.keyboard('X')
+    await waitFor(() => expect(lastValue(onChange)).toContain('Entry A.'))
+    expect(lastValue(onChange)).not.toContain('Entry B.')
+  })
+
+  it('stays in the fallback while its source is edited', async () => {
+    const { onChange } = renderControlled('Line one<br>line two')
+    const source = await screen.findByTestId('markdown-source-editor')
+    const user = userEvent.setup()
+
+    await user.type(source, ' more')
+
+    expect(lastValue(onChange)).toBe('Line one<br>line two more')
+    expect(screen.getByTestId('markdown-source-fallback')).toBeTruthy()
+    expect(screen.getByTestId('markdown-source-editor')).toBe(source)
+  })
+
+  it('tries rich text again when the value changes after a fallback', async () => {
+    const { setExternal } = renderControlled('Line one<br>line two')
+    expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+
+    await setExternal('A parseable body.')
+
+    const root = await richEditor()
+    expect(root.textContent).toBe('A parseable body.')
+    expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
   })
 
   it('switches between rich text and source on request', async () => {
