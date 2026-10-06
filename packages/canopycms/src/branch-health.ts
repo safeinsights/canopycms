@@ -16,13 +16,20 @@ import { branchProvisioningLockName } from './utils/provisioning-lock'
  * Without it two stuck states have no in-product recovery, and prod admins have
  * no filesystem access to see them: a branch dir whose `.canopy-meta/branch.json`
  * is corrupt (the registry drops it silently) and an orphan dir with no
- * `branch.json` at all (a partial delete crash — see `api/branch.ts`).
+ * `branch.json` at all (a clone or delete killed in place, until the worker
+ * quarantines it — see branch-provisioning.ts).
  *
  * `scanBranchHealth` mirrors the registry's own directory-listing rules (skip
  * non-directories and dot-prefixed names) so the two never disagree about what
  * counts as missing.
  */
 type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
+
+/**
+ * An orphan younger than this may still be a clone in progress: admin purge refuses it and the
+ * worker does not quarantine it. Corrupt-metadata dirs are exempt.
+ */
+export const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
 
 export interface BranchHealthEntry {
   dirName: string

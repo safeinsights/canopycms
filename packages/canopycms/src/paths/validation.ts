@@ -243,7 +243,6 @@ export function parseSlug(slug: string): { ok: true; slug: Slug } | { ok: false;
     }
   }
 
-  // Check length (filesystem path safety)
   if (slug.length > 64) {
     return { ok: false, error: 'Slug too long (max 64 characters)' }
   }
@@ -262,7 +261,6 @@ export function parseSlug(slug: string): { ok: true; slug: Slug } | { ok: false;
     }
   }
 
-  // Normalize to lowercase for case-insensitive matching
   const normalized = slug.toLowerCase()
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(normalized)) {

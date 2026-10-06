@@ -82,8 +82,6 @@ describe('branch provisioning step log', () => {
       return `${match?.[3]} ${match?.[4].split(' ')[0]}`
     })
     expect(steps).toEqual([
-      'lock start',
-      'lock done',
       'clone start',
       'clone done',
       'checkout start',
@@ -92,12 +90,16 @@ describe('branch provisioning step log', () => {
       'exclude done',
       'metadata start',
       'metadata done',
+      'publish start',
+      'publish done',
+      'register start',
+      'register done',
     ])
     const ids = new Set(provision.map((line) => /id=(\w+)/.exec(line)?.[1]))
     expect(ids.size).toBe(1)
     expect(provision.every((line) => line.includes(' dir=feature-x '))).toBe(true)
     expect(provision.at(-1)).toMatch(
-      /outcome=ok total=\d+ lock=\d+ clone=\d+ checkout=\d+ exclude=\d+ metadata=\d+$/,
+      /outcome=ok total=\d+ clone=\d+ checkout=\d+ exclude=\d+ metadata=\d+ publish=\d+ register=\d+$/,
     )
   })
 
@@ -113,7 +115,7 @@ describe('branch provisioning step log', () => {
 
     const provision = lines.filter((line) => line.startsWith('[canopy] provision '))
     expect(provision).toContainEqual(expect.stringMatching(/step=clone failed ms=\d+$/))
-    expect(provision.at(-1)).toMatch(/outcome=error total=\d+ lock=\d+ clone=\d+$/)
+    expect(provision.at(-1)).toMatch(/outcome=error total=\d+ clone=\d+$/)
     expect(warnings).toContainEqual(expect.stringMatching(/retrying once/))
   })
 })

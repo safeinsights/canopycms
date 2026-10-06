@@ -1,6 +1,5 @@
 /** Branch path resolution utilities. */
 
-import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchContext } from '../types'
@@ -31,8 +30,7 @@ export function namesNoWorkspace(err: unknown): boolean {
   return isNodeError(err) && (err.code === 'ENAMETOOLONG' || err.code === 'ENOTDIR')
 }
 
-// Lives in ./branch-name (dependency-free); re-exported here for server-side
-// importers, who may safely reach this module's node:fs imports.
+// Lives in ./branch-name (dependency-free); re-exported for server-side importers.
 import { sanitizeBranchName, isSettingsBranchName } from './branch-name'
 /** @internal Exported for tests. */
 export { sanitizeBranchName }
@@ -68,12 +66,6 @@ export function resolveBranchPath(options: BranchPathOptions): BranchPathResult 
   }
 
   return { branchRoot, baseRoot: normalizedBase, branchName: safeBranch }
-}
-
-export async function ensureBranchRoot(options: BranchPathOptions): Promise<BranchPathResult> {
-  const result = resolveBranchPath(options)
-  await fs.mkdir(result.branchRoot, { recursive: true })
-  return result
 }
 
 export function getDefaultBranchBase(mode: OperatingMode, override?: string): string {
