@@ -8,10 +8,14 @@ import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/c
 import type { HomeContent } from '../schemas'
 import { MarkdownBody } from './MarkdownBody'
 
-export const HomeView: React.FC<CanopyPreviewViewProps<HomeContent>> = ({
-  data: liveData,
-  fieldProps,
-}) => {
+/** What `loadHomeExtras` adds: a snapshot of the request, not the live draft. */
+export interface HomeExtras {
+  posts: Array<{ title: string; href: string }>
+}
+
+export const HomeView: React.FC<
+  CanopyPreviewViewProps<HomeContent> & { extras: HomeExtras | undefined }
+> = ({ data: liveData, fieldProps, extras }) => {
   const hero = liveData?.hero ?? { title: '', body: '' }
   const features = liveData?.features ?? []
   const cta = liveData?.cta ?? { text: '', link: '#' }
@@ -57,11 +61,26 @@ export const HomeView: React.FC<CanopyPreviewViewProps<HomeContent>> = ({
           )}
         </div>
       </div>
+
+      {extras && extras.posts.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-900">Posts</h3>
+          <ul className="mt-4 space-y-2 text-sm">
+            {extras.posts.map((post) => (
+              <li key={post.href}>
+                <a href={sanitizeHref(post.href)} className="text-indigo-600 hover:underline">
+                  {post.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
 
 // The live-preview form, rendered by app/preview and the public pages alike.
-export const HomePreview = withCanopyPreview(HomeView)
+export const HomePreview = withCanopyPreview<HomeContent, HomeExtras>(HomeView)
 
 export default HomeView

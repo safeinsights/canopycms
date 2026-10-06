@@ -6,7 +6,14 @@ export {
   type NextCanopyContextResult,
 } from './context-wrapper'
 
-export type { CreatePreviewPageOptions, PreviewPageProps } from './preview-page'
+export {
+  previewView,
+  type CreatePreviewPageOptions,
+  type PreviewEntry,
+  type PreviewLoadContext,
+  type PreviewPageProps,
+  type PreviewViewWithLoader,
+} from './preview-page'
 
 export {
   collectStaticParams,

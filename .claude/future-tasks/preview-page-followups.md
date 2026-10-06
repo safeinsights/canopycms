@@ -16,6 +16,9 @@ Filed 2026-10-05, out of scope for the `createPreviewPage` PR (`feat/preview-pag
    `ReactNode` includes a `Promise`. So an `async` view, or one
    from a file without `'use client'`, is accepted, then fails at render with Next's "Functions
    cannot be passed directly to Client Components", a 500 for every entry of that type.
+4. **A `load` can reach `canopy.services`, which skips ACLs.** `PreviewLoadContext.canopy` is the
+   request-scoped context, whose read helpers are ACL-checked, but its `services` field is the raw
+   escape hatch. A loader is a new, inviting place to reach for it.
 
 ## Proposed solution
 
@@ -27,7 +30,10 @@ Filed 2026-10-05, out of scope for the `createPreviewPage` PR (`feat/preview-pag
 3. Name the offending `views` key before rendering. A client reference reaches the server as a
    proxy carrying `$$typeof === Symbol.for('react.client.reference')`. Measure how that proxy
    answers `in` and `typeof` under webpack and Turbopack before relying on it.
+4. Hand `load` a `CanopyContext` without `services` (an `Omit`), unless a real loader needs it.
 
 ## Related
 
+- [mdx-preview-executes-editor-code.md](mdx-preview-executes-editor-code.md): rendering a draft MDX
+  body in a preview view runs the editor's code.
 - [preview-src-trailing-slash.md](resolved/preview-src-trailing-slash.md): the preview prefix itself.

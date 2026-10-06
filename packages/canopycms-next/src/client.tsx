@@ -60,11 +60,16 @@ export const NextCanopyEditorPage = (
 export type CanopyPreviewViewProps<T> = ReturnType<typeof useCanopyPreview<T>>
 
 /** The props of a view wrapped by `withCanopyPreview`. */
-export interface CanopyPreviewProps<T> {
+export interface CanopyPreviewProps<T, X = undefined> {
   /** The saved entry data, rendered until the editor sends a draft. */
   initialData: T
   /** Editor origin to trust, for an editor on another origin. Defaults to this page's own. */
   editorOrigin?: string
+  /**
+   * What the route's `load` returned (see `previewView`), handed to the view untouched as its
+   * `extras` prop. Absent on a public page and for a view with no loader.
+   */
+  extras?: X
 }
 
 /**
@@ -80,11 +85,13 @@ export interface CanopyPreviewProps<T> {
  * a view for one content type unassignable to a map of views for many. It returns `ReactElement`,
  * which JSX accepts on every supported TypeScript, where `ReactNode` needs `JSX.ElementType`.
  */
-export function withCanopyPreview<T>(
-  View: (props: CanopyPreviewViewProps<T>) => ReactNode,
-): (props: CanopyPreviewProps<T>) => ReactElement {
-  return function CanopyPreview({ initialData, editorOrigin }: CanopyPreviewProps<T>) {
+export function withCanopyPreview<T, X = undefined>(
+  View: (props: CanopyPreviewViewProps<T> & { extras: X | undefined }) => ReactNode,
+): (props: CanopyPreviewProps<T, X>) => ReactElement {
+  return function CanopyPreview({ initialData, editorOrigin, extras }: CanopyPreviewProps<T, X>) {
     const preview = useCanopyPreview<T>({ initialData, editorOrigin })
-    return <View {...preview} />
+    // `extras` is a prop of its own, never spread into the hook's result, so it cannot shadow
+    // `data` or `fieldProps`.
+    return <View {...preview} extras={extras} />
   }
 }

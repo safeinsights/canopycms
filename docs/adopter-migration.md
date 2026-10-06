@@ -74,7 +74,7 @@ function made for them, and any response-headers policy added only to stop frami
 
 ### Static-export sites can preview a branch through `createPreviewPage`
 
-**What changed.** `createNextCanopyContext()` returns `createPreviewPage({ views })`, the page for a `[[...path]]` route at `editor.previewPrefix`. It renders the editor's `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`.
+**What changed.** The context's `createPreviewPage({ views })` serves a `[[...path]]` route at `editor.previewPrefix`, rendering `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`. `previewView({ view, load })` feeds a view server-read `extras`.
 
 **To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
 

@@ -1,6 +1,8 @@
 import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanopyContext } from 'canopycms/server'
+import { notFound } from 'next/navigation'
+import type { PreviewLoadContext } from './preview-page'
 
 const NOT_FOUND = 'NEXT_NOT_FOUND'
 vi.mock('next/navigation', () => ({
@@ -9,14 +11,15 @@ vi.mock('next/navigation', () => ({
   },
 }))
 
-const { createPreviewPageFor } = await import('./preview-page')
+const { createPreviewPageFor, previewView } = await import('./preview-page')
 
 const PostView = () => null
 const DocView = () => null
 const views = { post: PostView, doc: DocView }
 
 const readByUrlPath = vi.fn()
-const getCanopy = vi.fn(async () => ({ readByUrlPath }) as unknown as CanopyContext)
+const canopy = { readByUrlPath } as unknown as CanopyContext
+const getCanopy = vi.fn(async () => canopy)
 
 const entry = (entryType: string, data: unknown = { title: 'Hello' }) => ({
   data,
@@ -112,4 +115,139 @@ describe('createPreviewPageFor', () => {
       await expect(render(['authors', 'alice'])).rejects.toThrow(NOT_FOUND)
     },
   )
+})
+
+describe('createPreviewPageFor with a loader', () => {
+  type Extras = { related: string[] }
+  const ExtrasView = (props: { extras?: Extras }) => <>{props.extras?.related}</>
+  const pageWith = (
+    load: (ctx: PreviewLoadContext) => Extras | Promise<Extras>,
+    deployedAs?: 'static',
+  ) =>
+    createPreviewPageFor(
+      getCanopy,
+      { views: { post: previewView({ view: ExtrasView, load }), doc: DocView } },
+      deployedAs,
+    )
+  const props = (path: string[], query: Record<string, string | string[]> = {}) => ({
+    params: Promise.resolve({ path }),
+    searchParams: Promise.resolve(query),
+  })
+
+  it("hands the loader the entry, the request's canopy and the branch, and its result to the view as extras", async () => {
+    const found = entry('post')
+    readByUrlPath.mockResolvedValue(found)
+    const load = vi.fn(() => ({ related: ['a', 'b'] }))
+
+    const element = (await pageWith(load)(
+      props(['posts', 'hello'], { branch: 'feature/x' }),
+    )) as ReactElement<Record<string, unknown>>
+
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(load).toHaveBeenCalledWith({
+      entry: { data: found.data, path: found.path, entryType: 'post', entryId: 'abc' },
+      canopy,
+      branch: 'feature/x',
+    })
+    expect(element.type).toBe(ExtrasView)
+    expect(element.props).toEqual({
+      initialData: { title: 'Hello' },
+      editorOrigin: undefined,
+      extras: { related: ['a', 'b'] },
+    })
+  })
+
+  it('gives the loader no server-only meta, so returning the whole entry cannot leak it', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const element = (await pageWith(({ entry: e }) => ({ related: [], e }))(
+      props(['posts', 'hello']),
+    )) as ReactElement<Record<string, unknown>>
+
+    expect(JSON.stringify(element.props.extras)).toContain('"entryType":"post"')
+    expect(JSON.stringify(element.props.extras)).not.toContain('/srv/workspace')
+  })
+
+  it('awaits an async loader', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const element = (await pageWith(async () => ({ related: ['later'] }))(
+      props(['posts', 'hello']),
+    )) as ReactElement<Record<string, unknown>>
+
+    expect(element.props.extras).toEqual({ related: ['later'] })
+  })
+
+  it('still gives a bare view in the same record no extras prop', async () => {
+    readByUrlPath.mockResolvedValue(entry('doc'))
+    const load = vi.fn(() => ({ related: [] }))
+
+    const element = (await pageWith(load)(props(['docs', 'x']))) as ReactElement<
+      Record<string, unknown>
+    >
+
+    expect(element.type).toBe(DocView)
+    expect('extras' in element.props).toBe(false)
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  describe('never runs the loader', () => {
+    it('for an entry type with no view', async () => {
+      readByUrlPath.mockResolvedValue(entry('author'))
+      const load = vi.fn(() => ({ related: [] }))
+
+      await expect(pageWith(load)(props(['authors', 'alice']))).rejects.toThrow(NOT_FOUND)
+      expect(load).not.toHaveBeenCalled()
+    })
+
+    it('when the read finds nothing', async () => {
+      readByUrlPath.mockResolvedValue(null)
+      const load = vi.fn(() => ({ related: [] }))
+
+      await expect(pageWith(load)(props(['posts', 'nope']))).rejects.toThrow(NOT_FOUND)
+      expect(load).not.toHaveBeenCalled()
+    })
+
+    it('for a repeated ?branch=', async () => {
+      readByUrlPath.mockResolvedValue(entry('post'))
+      const load = vi.fn(() => ({ related: [] }))
+
+      await expect(
+        pageWith(load)(props(['posts', 'hello'], { branch: ['a', 'b'] })),
+      ).rejects.toThrow(NOT_FOUND)
+      expect(load).not.toHaveBeenCalled()
+    })
+
+    it("on a deployedAs: 'static' deployment", async () => {
+      readByUrlPath.mockResolvedValue(entry('post'))
+      const load = vi.fn(() => ({ related: [] }))
+
+      await expect(pageWith(load, 'static')(props(['posts', 'hello']))).rejects.toThrow(NOT_FOUND)
+      expect(load).not.toHaveBeenCalled()
+    })
+  })
+
+  it('rejects the page with what the loader throws, rather than rendering', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    await expect(
+      pageWith(async () => {
+        throw new Error('listing failed')
+      })(props(['posts', 'hello'])),
+    ).rejects.toThrow('listing failed')
+  })
+
+  it("checks a loader's result against the view's extras at compile time", () => {
+    // @ts-expect-error `related` must be string[], the type the view's extras prop declares
+    previewView({ view: ExtrasView, load: () => ({ related: 1 }) })
+    expect(previewView({ view: ExtrasView, load: () => ({ related: [] }) }).load).toBeTypeOf(
+      'function',
+    )
+  })
+
+  it('is a 404 when the loader calls notFound()', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    await expect(pageWith(() => notFound())(props(['posts', 'hello']))).rejects.toThrow(NOT_FOUND)
+  })
 })
