@@ -44,6 +44,7 @@ const FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '
 const EXCLUDED_DIR_SEGMENTS = new Set([
   'node_modules',
   'dist',
+  'cdk.out',
   '__test__',
   '__tests__',
   '__integration__',
