@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useId, useMemo, useState } from 'react'
 
 let blockKeyCounter = 0
 
@@ -24,6 +24,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 import type { BlockConfig, FieldConfig } from '../../config'
 import { formatCanopyPath } from '../canopy-path'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 export interface BlockInstance {
   template: string
@@ -39,6 +40,7 @@ type RenderField = (
 
 export interface BlockFieldProps {
   label?: string
+  description?: string
   templates: BlockConfig[]
   value: BlockInstance[]
   onChange: (blocks: BlockInstance[]) => void
@@ -87,6 +89,7 @@ const SortableBlock: React.FC<{
 
 export const BlockField: React.FC<BlockFieldProps> = ({
   label,
+  description,
   templates,
   value,
   onChange,
@@ -94,6 +97,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   path,
   dataCanopyField,
 }) => {
+  const descriptionBaseId = useId()
   const [itemKeys, setItemKeys] = useState<string[]>(() =>
     value.map(() => `block-${blockKeyCounter++}`),
   )
@@ -167,6 +171,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       shadow="xs"
+      {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
         <Group justify="space-between">
@@ -189,6 +194,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
             w={180}
           />
         </Group>
+        <FieldDescription baseId={descriptionBaseId} description={description} />
 
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <SortableContext items={itemKeys} strategy={verticalListSortingStrategy}>

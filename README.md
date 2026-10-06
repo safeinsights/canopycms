@@ -508,6 +508,7 @@ Common options on any field:
   name: 'fieldName',      // Required: unique field identifier
   type: 'string',         // Required: field type
   label: 'Field Label',   // Optional: display label (defaults to name)
+  description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
   isTitle: true,          // Optional: use as the display title in the editor sidebar
@@ -515,6 +516,8 @@ Common options on any field:
 ```
 
 On a `string` field, `list: true` renders a tag input: type a value and press Enter to add it, and Backspace on an empty input removes the last.
+
+A cleared single-line `string` field is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched the field; use `|| 'default'` when blank should mean the default.
 
 #### Rendering `markdown` / `mdx` content on your site
 

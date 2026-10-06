@@ -5,6 +5,7 @@ import { Textarea } from '@mantine/core'
 export interface CodeFieldProps {
   id?: string
   label?: string
+  description?: string
   value: string
   onChange: (value: string) => void
   language?: string
@@ -15,6 +16,7 @@ export interface CodeFieldProps {
 export const CodeField: React.FC<CodeFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   language,
@@ -26,6 +28,7 @@ export const CodeField: React.FC<CodeFieldProps> = ({
     <Textarea
       id={inputId}
       label={label}
+      description={description}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
       placeholder={language ? `Code (${language})` : 'Code'}

@@ -10,6 +10,7 @@ interface SelectOption {
 export interface SelectFieldProps {
   id?: string
   label?: string
+  description?: string
   options: SelectOption[]
   value: string | string[]
   onChange: (value: string | string[]) => void
@@ -21,6 +22,7 @@ export interface SelectFieldProps {
 export const SelectField: React.FC<SelectFieldProps> = ({
   id,
   label,
+  description,
   options,
   value,
   onChange,
@@ -44,6 +46,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
         <MultiSelect
           id={inputId}
           label={label}
+          description={description}
           data={options}
           value={normalizedValue as string[]}
           onChange={(next) => onChange(next)}
@@ -55,6 +58,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
         <Select
           id={inputId}
           label={label}
+          description={description}
           data={options}
           value={normalizedValue as string}
           onChange={(next) => onChange(next ?? '')}

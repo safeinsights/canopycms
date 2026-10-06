@@ -182,6 +182,15 @@ version, media-storage state) and warns when API and worker versions differ.
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
 
+### Every field type shows its `description`
+
+**What changed.** A field's `description` renders under its label for every type, not only inline
+groups; on a list it shows once, on the list header.
+
+**To adopt.** Nothing. Read your existing descriptions, which editors now see.
+
+**Now deletable.** Editor hints worked into a field's `label` because `description` never showed.
+
 ---
 
 <!--

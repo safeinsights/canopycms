@@ -5,6 +5,7 @@ import { TextInput } from '@mantine/core'
 export interface TextFieldProps {
   id?: string
   label?: string
+  description?: string
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
@@ -13,6 +14,7 @@ export interface TextFieldProps {
 export const TextField: React.FC<TextFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -24,6 +26,7 @@ export const TextField: React.FC<TextFieldProps> = ({
     <TextInput
       id={inputId}
       label={label}
+      description={description}
       value={value}
       size="sm"
       onChange={(e) => onChange(e.currentTarget.value)}

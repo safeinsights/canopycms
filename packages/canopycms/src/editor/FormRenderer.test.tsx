@@ -808,4 +808,246 @@ describe('FormRenderer', () => {
       expect(screen.queryByText(/Unsupported field/)).toBeNull()
     })
   })
+
+  describe('field descriptions', () => {
+    const DESCRIPTION = 'Guidance for the editor'
+    let mockClient: MockApiClient
+    let wrapper: ReturnType<typeof createApiClientWrapper>
+
+    beforeEach(async () => {
+      mockClient = await setupMockApiClient()
+      wrapper = createApiClientWrapper(mockClient)
+    })
+
+    const renderFields = (fields: FieldConfig[], initialValue: FormValue = {}) => {
+      const Wrapper = wrapper
+      return render(
+        <Wrapper>
+          <StatefulForm fields={fields} initialValue={initialValue} />
+        </Wrapper>,
+      )
+    }
+
+    const describedBy = (id: string): HTMLElement[] =>
+      Array.from(document.querySelectorAll('[aria-describedby]')).filter((el) =>
+        (el.getAttribute('aria-describedby') ?? '').split(/\s+/).includes(id),
+      ) as HTMLElement[]
+
+    /**
+     * The description text is rendered once, has an id, and exactly one element points
+     * at that id through `aria-describedby`: the input itself for Mantine-native fields,
+     * the field's group container for custom ones.
+     */
+    const expectDescribed = (kind: 'input' | 'group', text: string = DESCRIPTION): HTMLElement => {
+      const node = screen.getByText(text)
+      expect(node.id).toMatch(/-description$/)
+      const owners = describedBy(node.id)
+      expect(owners).toHaveLength(1)
+      const owner = owners[0]
+      if (kind === 'input') {
+        expect(['INPUT', 'TEXTAREA']).toContain(owner.tagName)
+      } else {
+        expect(owner.getAttribute('role')).toBe('group')
+      }
+      return owner
+    }
+
+    const described = (field: FieldConfig): FieldConfig[] => [
+      { ...field, description: DESCRIPTION },
+    ]
+
+    it('string', () => {
+      renderFields(described({ name: 'title', type: 'string', label: 'Title' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Title'))
+    })
+
+    it('string list', () => {
+      renderFields(described({ name: 'tags', type: 'string', label: 'Tags', list: true }))
+      expectDescribed('input')
+    })
+
+    it('boolean', () => {
+      renderFields(described({ name: 'flag', type: 'boolean', label: 'Flag' }))
+      expect(expectDescribed('input')).toBe(screen.getByRole('switch'))
+    })
+
+    it('number', () => {
+      renderFields(described({ name: 'price', type: 'number', label: 'Price' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Price'))
+    })
+
+    it('number list', () => {
+      renderFields(described({ name: 'scores', type: 'number', label: 'Scores', list: true }))
+      expectDescribed('input')
+    })
+
+    it('datetime', () => {
+      renderFields(described({ name: 'publishedAt', type: 'datetime', label: 'Published At' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Published At'))
+    })
+
+    it('markdown', () => {
+      renderFields(described({ name: 'body', type: 'markdown', label: 'Body' }))
+      expectDescribed('group')
+    })
+
+    it('mdx', () => {
+      renderFields(described({ name: 'body', type: 'mdx', label: 'Body' }))
+      expectDescribed('group')
+    })
+
+    it('select', () => {
+      renderFields(described({ name: 'kind', type: 'select', label: 'Kind', options: ['a', 'b'] }))
+      expectDescribed('input')
+    })
+
+    it('select multi', () => {
+      renderFields(
+        described({
+          name: 'kinds',
+          type: 'select',
+          label: 'Kinds',
+          list: true,
+          options: ['a', 'b'],
+        }),
+      )
+      expectDescribed('input')
+    })
+
+    it('reference', () => {
+      renderFields(
+        described({
+          name: 'author',
+          type: 'reference',
+          label: 'Author',
+          options: [{ value: 'id1', label: 'Alice' }],
+        }),
+      )
+      expectDescribed('input')
+    })
+
+    it('reference while options load', () => {
+      mockClient.content.getReferenceOptions.mockReturnValue(new Promise(() => {}))
+      renderFields(
+        described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
+      )
+      expect(screen.getByTestId('reference-loading-author')).toBeTruthy()
+      expect(screen.getByText(DESCRIPTION).id).toMatch(/-description$/)
+    })
+
+    it('reference after options fail to load', async () => {
+      mockClient.content.getReferenceOptions.mockResolvedValue({
+        ok: false,
+        status: 500,
+        error: 'boom',
+      })
+      renderFields(
+        described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
+      )
+      await screen.findByTestId('reference-error-author')
+      expect(screen.getByText(DESCRIPTION).id).toMatch(/-description$/)
+    })
+
+    it('image', () => {
+      renderFields(described({ name: 'hero', type: 'image', label: 'Hero image' }))
+      expect(expectDescribed('group')).toBe(screen.getByTestId('image-field-hero'))
+    })
+
+    it('block', () => {
+      renderFields(described({ name: 'blocks', type: 'block', label: 'Blocks', templates: [] }))
+      expectDescribed('group')
+    })
+
+    it('object', () => {
+      renderFields(
+        described({
+          name: 'meta',
+          type: 'object',
+          label: 'Meta',
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    it('object without a label still renders its description', () => {
+      renderFields(
+        described({
+          name: 'meta',
+          type: 'object',
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    it('object list', () => {
+      renderFields(
+        described({
+          name: 'features',
+          type: 'object',
+          label: 'Features',
+          list: true,
+          fields: [{ name: 'title', type: 'string', label: 'Heading' }],
+        }),
+        { features: [] },
+      )
+      expectDescribed('group')
+    })
+
+    it('object list renders its description once, not per item', () => {
+      renderFields(
+        described({
+          name: 'features',
+          type: 'object',
+          label: 'Features',
+          list: true,
+          itemTitleField: 'title',
+          fields: [{ name: 'title', type: 'string', label: 'Heading' }],
+        }),
+        { features: [{ title: 'First' }, { title: 'Second' }] },
+      )
+      expect(screen.getAllByText(DESCRIPTION)).toHaveLength(1)
+      const list = expectDescribed('group')
+      expect(list.contains(screen.getByRole('group', { name: 'First' }))).toBe(true)
+      expect(screen.getByRole('group', { name: 'First' }).hasAttribute('aria-describedby')).toBe(
+        false,
+      )
+    })
+
+    it('code', () => {
+      renderFields(described({ name: 'snippet', type: 'code', label: 'Snippet' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Snippet'))
+    })
+
+    it.each([undefined, ''])('a string field with description %j renders no description', (d) => {
+      renderFields([{ name: 'title', type: 'string', label: 'Title', description: d }])
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(screen.getByLabelText('Title').hasAttribute('aria-describedby')).toBe(false)
+    })
+
+    it.each([undefined, ''])('an object field with description %j renders no description', (d) => {
+      renderFields(
+        [
+          {
+            name: 'meta',
+            type: 'object',
+            label: 'Meta',
+            description: d,
+            fields: [{ name: 'label', type: 'string', label: 'Label' }],
+          },
+        ],
+        { meta: {} },
+      )
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(document.querySelector('[aria-describedby]')).toBeNull()
+      expect(document.querySelector('[role="group"]')).toBeNull()
+    })
+
+    it('a markdown field without a description renders no description', () => {
+      renderFields([{ name: 'body', type: 'markdown', label: 'Body' }])
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(document.querySelector('[aria-describedby]')).toBeNull()
+    })
+  })
 })
