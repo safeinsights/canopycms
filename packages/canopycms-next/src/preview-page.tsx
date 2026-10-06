@@ -84,7 +84,10 @@ export interface CreatePreviewPageOptions {
    * type has no view is a 404.
    */
   views: Record<string, PreviewView | ErasedPreviewViewWithLoader>
-  /** Editor origin to trust, for an editor on another origin. Defaults to the page's own. */
+  /**
+   * Editor origin to trust, for an editor on another origin. Defaults to the page's own. The
+   * viewer must still be signed in on this page's origin: an anonymous request is a 404.
+   */
   editorOrigin?: string
 }
 

@@ -44,7 +44,8 @@ const anonymously = () => {
 
 beforeEach(() => {
   readByUrlPath.mockReset()
-  getCanopy.mockClear()
+  getCanopy.mockReset()
+  getCanopy.mockResolvedValue(canopy)
 })
 
 describe('createPreviewPageFor', () => {
