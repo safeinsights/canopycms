@@ -109,10 +109,9 @@ const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
  *
  * A reservation is a CAP carved from the account's concurrency pool, not
  * pre-warmed capacity, so it costs nothing when idle (that is
- * `provisionedConcurrentExecutions`, which this is not). 10 mirrors the CMS
- * Lambda's own reservation: genuine demand is first-render misses only, since
- * every already-generated derivative is served by the S3 primary origin without
- * invoking this function at all.
+ * `provisionedConcurrentExecutions`, which this is not). Genuine demand is
+ * first-render misses only, since every already-generated derivative is served
+ * by the S3 primary origin without invoking this function at all.
  */
 const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
 

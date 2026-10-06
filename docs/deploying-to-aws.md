@@ -346,6 +346,14 @@ response headers policy: `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIG
 headers and HSTS yield to your app's own. No `Cross-Origin-Opener-Policy`, which can
 break popup OAuth sign-in.
 
+### The CMS Lambda's concurrency cap
+
+`reservedConcurrency` (default 50) caps everything the CMS Lambda serves, including the
+editor's chunks until CloudFront caches them. CloudFront caches per regional edge cache, so
+after a deploy the first editor load behind each requests every chunk together; one over the
+cap gets a `429` and the editor fails with `ChunkLoadError`. Synth warns below 20. Free while
+idle, the cap plus every other reservation must fit within the account limit minus 100.
+
 ### Serving the editor from a distribution you already own
 
 Attach the editor rather than wiring the Function URL by hand:

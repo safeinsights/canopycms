@@ -1,18 +1,5 @@
-import type { CanopyConfig, FlatSchemaItem } from '../config'
+import type { FlatSchemaItem } from '../config'
 import type { EditorCollection, EditorEntryType } from './Editor'
-import { trimSlashes } from '../paths/normalize'
-
-const normalizeContentRoot = (value?: string): string => {
-  return trimSlashes(value ?? 'content')
-}
-
-const stripContentRoot = (logicalPath: string, contentRoot: string): string => {
-  const prefix = contentRoot ? `${contentRoot}/` : ''
-  if (prefix && logicalPath.startsWith(prefix)) {
-    return logicalPath.slice(prefix.length)
-  }
-  return logicalPath
-}
 
 /**
  * Build hierarchical editor collections from the flattened schema.
@@ -73,22 +60,4 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
   // Start with root-level collections (parentPath: undefined)
   // This now includes the content root collection itself
   return buildTree(undefined)
-}
-
-export const buildPreviewBaseByCollection = (
-  config: Pick<CanopyConfig, 'contentRoot'>,
-  flatSchema: FlatSchemaItem[],
-): Record<string, string> => {
-  const contentRoot = normalizeContentRoot(config.contentRoot)
-  const flat = flatSchema
-  const map: Record<string, string> = {}
-
-  for (const item of flat) {
-    // Strip content root from all items and normalize to preview URL
-    const base = stripContentRoot(item.logicalPath, contentRoot)
-    const normalizedBase = base ? `/${base}` : '/'
-    map[item.logicalPath] = normalizedBase
-  }
-
-  return map
 }

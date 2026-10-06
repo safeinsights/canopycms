@@ -2094,3 +2094,144 @@ describe('branches-fetch failure recovery', () => {
     consoleSpy.restore()
   })
 })
+
+describe('preview pane', () => {
+  // The editor mirrors its selection into `?entry=`, which would otherwise outlive a test.
+  afterEach(() => window.history.replaceState({}, '', '/'))
+
+  const rootEntry = (slug: string, contentId: string): EditorEntry => ({
+    path: unsafeAsLogicalPath(`content/${slug}`),
+    contentId: unsafeAsContentId(contentId),
+    label: slug,
+    status: 'entry',
+    schema: [{ name: 'title', type: 'string' }],
+    collectionPath: unsafeAsLogicalPath('content'),
+    collectionName: 'content',
+    slug,
+    format: 'json',
+    type: 'entry',
+  })
+  const about = rootEntry('about', 'abtAAAAAAAAA')
+  const settings = rootEntry('settings', 'setAAAAAAAAA')
+
+  const stubApi = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        if (url.endsWith('/api/canopycms/branches')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                branches: [
+                  {
+                    name: 'main',
+                    status: 'editing',
+                    access: {},
+                    createdBy: 'user-1',
+                    createdAt: '2024-01-01',
+                    updatedAt: '2024-01-01',
+                    isProtected: false,
+                    readOnly: false,
+                    writeBlocked: false,
+                    submitBlocked: false,
+                  },
+                ],
+                defaultBranch: 'main',
+              },
+            }),
+          )
+        }
+        if (url.includes('/schema') && !url.includes('/schema/')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                schema: {},
+                flatSchema: [
+                  {
+                    type: 'entry-type',
+                    logicalPath: 'content/page',
+                    name: 'page',
+                    parentPath: 'content',
+                    format: 'json',
+                    schemaRef: 'pageSchema',
+                  },
+                ],
+                entrySchemas: { pageSchema: [{ name: 'title', type: 'string' }] },
+              },
+            }),
+          )
+        }
+        if (url.includes('/entries')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                collections: [],
+                entries: [about, settings].map((e) => ({
+                  logicalPath: e.path,
+                  contentId: e.contentId,
+                  collectionPath: e.collectionPath,
+                  collectionName: e.collectionName,
+                  slug: e.slug,
+                  format: e.format,
+                  entryType: 'page',
+                  physicalPath: `/content/page.${e.slug}.${e.contentId}.json`,
+                  exists: true,
+                })),
+                pagination: { hasMore: false, limit: 50 },
+              },
+            }),
+          )
+        }
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded', version: 1 } }),
+        )
+      }),
+    )
+
+  const renderSelected = (entry: EditorEntry) =>
+    renderWithProviders(
+      <Editor
+        entries={[about, settings]}
+        initialSelectedId={entry.path}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+        contentRoot="content"
+        previewPrefix="/edit/preview"
+        previewBaseByCollection={{ 'content/settings': false }}
+      />,
+    )
+
+  it("frames a root entry's own page, not the site root", async () => {
+    stubApi()
+    const { container } = renderSelected(about)
+
+    await waitFor(() =>
+      expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/edit/preview/about?branch=main',
+      ),
+    )
+  })
+
+  it('says an entry with no page has no preview, and frames nothing', async () => {
+    stubApi()
+    const { container } = renderSelected(settings)
+
+    await waitFor(() =>
+      expect(
+        (screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null)?.value,
+      ).toBe('Loaded'),
+    )
+    expect(screen.getByText('No preview for this entry.')).toBeTruthy()
+    expect(container.querySelector('iframe')).toBeNull()
+  })
+})

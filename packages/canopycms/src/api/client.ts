@@ -437,10 +437,20 @@ export class CanopyApiClient {
       init.body = requestBody
     }
 
-    const response = await this.fetchFn(url, init)
+    let response = await this.fetchFn(url, init)
     // A body from in front of the API (a proxy or CDN error page) may be empty, not JSON, or
     // not an ApiResponse; every such body becomes an `ok: false` ApiResponse, never a throw.
-    const parsed: unknown = await response.json().catch(() => undefined)
+    let parsed: unknown = await response.json().catch(() => undefined)
+    // A 429 no handler wrote is a throttle in front of the API, such as Lambda's concurrency
+    // cap, which answers before the function runs. The request was never handled, so
+    // resending it is safe for writes too.
+    for (let attempt = 0; response.status === 429 && !isApiResponseBody(parsed); attempt++) {
+      const delay = throttleRetryDelayMs(response, attempt)
+      if (delay === undefined) break
+      await sleep(delay)
+      response = await this.fetchFn(url, init)
+      parsed = await response.json().catch(() => undefined)
+    }
     if (response.status === 401) {
       this.onUnauthorized?.()
       return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
@@ -454,6 +464,39 @@ export class CanopyApiClient {
     convertedResponses.add(converted)
     return converted as T
   }
+}
+
+/**
+ * Base wait before each resend of a throttled request. A throttle from a burst of cold starts
+ * clears as they finish, so the waits span a few seconds.
+ */
+const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
+
+/** The longest `Retry-After` waited; a throttle asking for longer is reported, not resent. */
+const MAX_RETRY_AFTER_MS = 5000
+
+/**
+ * The wait before resend `attempt`, or undefined when there is to be no resend: the attempts
+ * are used up, or `Retry-After` asks for longer than {@link MAX_RETRY_AFTER_MS}. Without a
+ * `Retry-After`, the base delay plus up to half again, so throttled requests do not resend in
+ * lockstep.
+ */
+function throttleRetryDelayMs(response: Response, attempt: number): number | undefined {
+  const base = THROTTLE_RETRY_DELAYS_MS[attempt]
+  if (base === undefined) return undefined
+  // Delta-seconds only; an HTTP-date or a blank value falls back to the base delay. A custom
+  // `fetch` option may return a Response-like without headers.
+  const header = (response.headers as Headers | undefined)?.get('retry-after')?.trim()
+  const retryAfter = header ? Number(header) : Number.NaN
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+    const ms = retryAfter * 1000
+    return ms > MAX_RETRY_AFTER_MS ? undefined : ms
+  }
+  return base + Math.random() * base * 0.5
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 const convertedResponses = new WeakSet<object>()
