@@ -162,15 +162,59 @@ describe('asset-transform handler', () => {
     expect(bodyBytes.equals(Buffer.from(written!.body))).toBe(true)
   })
 
-  it('caches a non-canonically-ordered directive request under its canonical key', async () => {
-    // formatDirectives' fixed order is c, f, q, w - a request with `w` before
-    // `f` is valid (the parser doesn't care about order) but non-canonical.
+  it('301s a non-canonically-ordered directive request to the canonical path without touching S3', async () => {
+    // formatDirectives' fixed order is c, f, q, w - `w` before `f` parses but is not canonical.
     const res = await handler(makeEvent(`/assets/t/w=160,f=webp/${HASH32}/photo.webp`))
 
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(`/assets/t/f=webp,w=160/${HASH32}/photo.webp`)
+    expect(res.headers?.['cache-control']).toBe('public, max-age=31536000, immutable')
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('301s a crop with more than CROP_PRECISION decimals to the rounded canonical path', async () => {
+    const res = await handler(makeEvent(`/assets/t/c=0.123456:0:0.5:0.25/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(
+      `/assets/t/c=0.1235:0.0000:0.5000:0.2500/${HASH32}/photo.png`,
+    )
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('301s a crop whose rounded extent would overflow the frame to one shrunk to fit', async () => {
+    // 0.66665 and 0.33335 round to 0.6667 and 0.3334, whose sum 1.0001 the parser would refuse.
+    const res = await handler(makeEvent(`/assets/t/c=0.66665:0:0.33335:1/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(
+      `/assets/t/c=0.6667:0.0000:0.3333:1.0000/${HASH32}/photo.png`,
+    )
+  })
+
+  it('400s a crop that rounds to zero extent, without touching S3', async () => {
+    const res = await handler(makeEvent(`/assets/t/c=0:0:0.00001:1/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(400)
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('serves a canonical crop path, transforming with exactly the directives in its key', async () => {
+    const spy = vi.spyOn(canopyServer, 'applyTransform')
+    const canonical = `c=0.1235:0.0000:0.5000:0.2500`
+    const res = await handler(makeEvent(`/assets/t/${canonical}/${HASH32}/photo.png`))
+
     expect(res.statusCode).toBe(200)
-    const canonicalKey = `assets/t/f=webp,w=160/${HASH32}/photo.webp`
-    expect(objects.has(canonicalKey)).toBe(true)
-    expect(objects.has(`assets/t/w=160,f=webp/${HASH32}/photo.webp`)).toBe(false)
+    expect(spy).toHaveBeenCalledWith(expect.anything(), {
+      identity: false,
+      crop: { x: 0.1235, y: 0, w: 0.5, h: 0.25 },
+      format: undefined,
+      quality: undefined,
+      width: undefined,
+    })
+    expect(objects.has(`assets/t/${canonical}/${HASH32}/photo.png`)).toBe(true)
+
+    spy.mockRestore()
   })
 
   it('returns 400 JSON on a parse failure', async () => {
@@ -284,29 +328,6 @@ describe('asset-transform handler', () => {
     expect(res.headers?.location).toBe(rawPath)
     expect(res.headers?.['cache-control']).toBe('no-store')
     expect(objects.has(`assets/t/orig/${HASH32}/photo.png`)).toBe(true)
-
-    spy.mockRestore()
-  })
-
-  it('redirects an oversized-output, non-canonically-ordered request to the CANONICAL path, not rawPath - a mismatch would make CloudFront miss forever and re-invoke this Lambda on every hit', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
-      ok: true,
-      data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
-      contentType: 'image/webp',
-      ext: 'webp',
-    })
-
-    // formatDirectives' fixed order is c, f, q, w - `w` before `f` is valid
-    // but non-canonical, so rawPath and the canonical key differ.
-    const rawPath = `/assets/t/w=160,f=webp/${HASH32}/photo.webp`
-    const canonicalPath = `/assets/t/f=webp,w=160/${HASH32}/photo.webp`
-    const res = await handler(makeEvent(rawPath))
-
-    expect(res.statusCode).toBe(302)
-    expect(res.headers?.location).toBe(canonicalPath)
-    expect(res.headers?.['cache-control']).toBe('no-store')
-    // The canonical key (what the redirect points at) was actually written.
-    expect(objects.has(canonicalPath.slice(1))).toBe(true)
 
     spy.mockRestore()
   })

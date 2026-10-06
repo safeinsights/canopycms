@@ -22,9 +22,13 @@ import {
   type TransformDirectives,
 } from './transform-directives'
 
-/** The minimal shape `assetUrl`/`assetSrcSet` need from a stored asset reference. */
+/**
+ * The minimal shape `assetUrl`/`assetSrcSet` need from a stored asset reference. An
+ * `ImageFieldValue` is one, so passing a field value renders the crop the editor stored.
+ */
 export interface AssetRef {
   src: string
+  crop?: CropRect
 }
 
 export interface AssetUrlOptions {
@@ -61,18 +65,21 @@ export interface AssetUrlOptions {
 const TRANSFORM_URL_PREFIX = `/${ASSET_PREFIXES.transform}/`
 
 /**
- * Merge `opts` over an already-parsed directive set - opts win when given,
- * otherwise the existing value (if any) carries over. Returns `undefined`
- * fields as "unset" (there is no way to explicitly clear a directive via
- * opts - only to override it).
+ * Merge `opts` and the ref's crop over the directives already in its src. Precedence per
+ * directive: `opts`, then `ref.crop` (crop only), then the src. There is no way to clear a
+ * directive, only to override it.
  */
-function mergeDirectives(current: TransformDirectives, opts: AssetUrlOptions): TransformDirectives {
+function mergeDirectives(
+  current: TransformDirectives,
+  refCrop: CropRect | undefined,
+  opts: AssetUrlOptions,
+): TransformDirectives {
   const existing = current.identity ? undefined : current
 
   const width = opts.width ?? existing?.width
   const format = opts.format ?? existing?.format
   const quality = opts.quality ?? existing?.quality
-  const crop = opts.crop ?? existing?.crop
+  const crop = opts.crop ?? refCrop ?? existing?.crop
 
   if (width === undefined && format === undefined && quality === undefined && crop === undefined) {
     return { identity: true }
@@ -81,8 +88,8 @@ function mergeDirectives(current: TransformDirectives, opts: AssetUrlOptions): T
 }
 
 /**
- * Build a transform URL, merging `opts` over the directives already present
- * in `ref.src` (opts win). For static srcs (svg/pdf under `/assets/{hash}/...`,
+ * Build a transform URL, merging `opts` and `ref.crop` over the directives already present
+ * in `ref.src` (see `mergeDirectives` for precedence). For static srcs (svg/pdf under `/assets/{hash}/...`,
  * or any src that isn't one of our own transform URLs) the src is returned
  * unchanged and `opts` are ignored - there is nothing to transform.
  */
@@ -112,7 +119,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
     return joinUrlPrefix(opts.baseUrl, src)
   }
 
-  const merged = mergeDirectives(parsed.directives, opts)
+  const merged = mergeDirectives(parsed.directives, ref.crop, opts)
   // Ext follows the format: an explicit format (new or carried over) always
   // wins; with no format at all, the ext must keep preserving the source's
   // real extension, which is exactly what `parsed.ext` already is here.
