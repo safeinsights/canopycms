@@ -2,13 +2,18 @@ import path from 'node:path'
 
 import type { CanopyConfig } from './config'
 import { BranchPathError, ensureBranchRoot, isSettingsBranchName } from './paths'
-import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
+import {
+  getBranchMetadataFileManager,
+  loadBranchContext,
+  type BranchMetadataFile,
+} from './branch-metadata'
 import { readsFromCheckout } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
+import { ProvisionLog } from './utils/provision-log'
 import { resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock, branchProvisioningLockName } from './utils/provisioning-lock'
 
@@ -45,6 +50,7 @@ export class BranchWorkspaceManager {
     mode: OperatingMode
     baseBranch: string
     remoteUrl?: string
+    provisionLog: ProvisionLog
   }) {
     return log.timed('workspace', 'ensureGitWorkspace', async () => {
       // One initialization per branch workspace per process.
@@ -70,9 +76,11 @@ export class BranchWorkspaceManager {
             mode: options.mode,
           })
 
-          releaseLock = await acquireProvisioningLock(
-            path.dirname(options.branchRoot),
-            branchProvisioningLockName(path.basename(options.branchRoot)),
+          releaseLock = await options.provisionLog.step('lock', () =>
+            acquireProvisioningLock(
+              path.dirname(options.branchRoot),
+              branchProvisioningLockName(path.basename(options.branchRoot)),
+            ),
           )
 
           await GitManager.initializeWorkspace({
@@ -89,6 +97,7 @@ export class BranchWorkspaceManager {
             gitBotAuthorName: this.config.gitBotAuthorName,
             gitBotAuthorEmail: this.config.gitBotAuthorEmail,
             gitExcludePattern: operatingStrategy(options.mode).getGitExcludePattern(),
+            provisionLog: options.provisionLog,
           })
         } finally {
           // Release the cross-process lock first, then clear the in-memory lock.
@@ -139,27 +148,38 @@ export class BranchWorkspaceManager {
         : undefined,
     })
 
-    await this.ensureGitWorkspace({
-      branchRoot,
-      branchName: safeName,
-      mode,
-      baseBranch,
-      remoteUrl,
-    })
-
-    // save() covers creation and update, keeping existing values and
-    // invalidating the registry.
-    const metadata = getBranchMetadataFileManager(branchRoot, baseRoot)
-    const meta = await metadata.save({
-      branch: {
-        name: safeName,
-        title,
-        description,
-        access,
-        createdBy,
+    const provisionLog = new ProvisionLog(path.basename(branchRoot))
+    let meta: BranchMetadataFile
+    try {
+      await this.ensureGitWorkspace({
+        branchRoot,
+        branchName: safeName,
+        mode,
         baseBranch,
-      },
-    })
+        remoteUrl,
+        provisionLog,
+      })
+
+      // save() covers creation and update, keeping existing values and
+      // invalidating the registry.
+      const metadata = getBranchMetadataFileManager(branchRoot, baseRoot)
+      meta = await provisionLog.step('metadata', () =>
+        metadata.save({
+          branch: {
+            name: safeName,
+            title,
+            description,
+            access,
+            createdBy,
+            baseBranch,
+          },
+        }),
+      )
+    } catch (err) {
+      provisionLog.finish('error')
+      throw err
+    }
+    provisionLog.finish('ok')
 
     return {
       branch: meta.branch,
