@@ -6,7 +6,11 @@ import path from 'node:path'
 import lockfile from 'proper-lockfile'
 
 import { tryAcquireContentWriteLock } from './content-write-lock'
-import { acquireProvisioningLock, tryAcquireProvisioningLock } from './provisioning-lock'
+import {
+  acquireProvisioningLock,
+  acquireProvisioningLockWithin,
+  tryAcquireProvisioningLock,
+} from './provisioning-lock'
 import { isNodeError } from './error'
 import { mockConsole } from '../test-utils/console-spy'
 
@@ -41,6 +45,28 @@ describe('provisioning lock', () => {
   // timer, failed its release with ERELEASED, and leaked its lock directory --
   // whose orphaned timer then stat()ed a deleted path and crashed the process
   // with ECOMPROMISED. See docs/concurrency.md ("Anchor path matters").
+  it('a bounded acquire gives up with ELOCKED once its budget is spent on a live holder', async () => {
+    const release = await acquireProvisioningLock(branchesRoot, '.branch-a.init.lock')
+    try {
+      const startedAt = Date.now()
+      await expect(
+        acquireProvisioningLockWithin(branchesRoot, '.branch-a.init.lock', 400),
+      ).rejects.toMatchObject({ code: 'ELOCKED' })
+      const elapsed = Date.now() - startedAt
+      expect(elapsed).toBeGreaterThanOrEqual(350)
+      expect(elapsed).toBeLessThan(2_000)
+    } finally {
+      await release()
+    }
+  })
+
+  it('a bounded acquire takes the lock once the holder releases within its budget', async () => {
+    const release = await acquireProvisioningLock(branchesRoot, '.branch-a.init.lock')
+    setTimeout(() => void release(), 150)
+    const second = await acquireProvisioningLockWithin(branchesRoot, '.branch-a.init.lock', 5_000)
+    await second()
+  })
+
   it('gives two branches under one root independent locks', async () => {
     const releaseA = await acquireProvisioningLock(branchesRoot, '.branch-a.init.lock')
     const releaseB = await acquireProvisioningLock(branchesRoot, '.branch-b.init.lock')
