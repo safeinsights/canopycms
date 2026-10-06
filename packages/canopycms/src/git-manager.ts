@@ -115,7 +115,23 @@ export function gitNetworkChildEnv(): Record<string, string> {
  * into the workspace's own config. `remote.git`'s `receive-pack` never sees
  * them; worker/remote-git-maintenance.ts covers that side.
  */
-export const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
+const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
+
+/**
+ * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
+ * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to
+ * every simple-git instance GitManager creates.
+ */
+function failOnSignalExit(
+  error: Buffer | Error | undefined,
+  result: { exitCode: number },
+): Buffer | Error | undefined {
+  if (error) return error
+  if ((result.exitCode as number | null) === null) {
+    return new Error('git was killed by a signal before it finished')
+  }
+  return undefined
+}
 
 /** EFS cost is per-file latency, which parallel file creation overlaps. git >= 2.32. */
 const PARALLEL_CHECKOUT_ARGS = [
@@ -131,6 +147,23 @@ async function dirState(dir: string): Promise<'absent' | 'empty' | 'occupied'> {
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ENOENT') return 'absent'
     throw err
+  }
+}
+
+/**
+ * Config every workspace clone writes into its own `.git/config`: the managed
+ * marker that ensureRemote's guard checks, and a fallback author for internal
+ * commits such as the orphan settings init (ensureAuthor() sets the real one
+ * before user-facing commits).
+ */
+export function managedWorkspaceConfig(
+  gitBotAuthorName: string,
+  gitBotAuthorEmail: string,
+): Record<string, string> {
+  return {
+    'canopycms.managed': 'true',
+    'user.name': gitBotAuthorName,
+    'user.email': gitBotAuthorEmail,
   }
 }
 
@@ -385,6 +418,7 @@ export class GitManager {
     this.skipIndexMarker = options.skipIndexMarker ?? false
     this.git = simpleGit({
       baseDir: this.repoPath,
+      errors: failOnSignalExit,
       ...gitOptions,
       config: [...NO_AUTO_GC_CONFIG, ...(gitOptions?.config ?? [])],
     })
@@ -428,7 +462,7 @@ export class GitManager {
     }
     for (const setting of NO_AUTO_GC_CONFIG) args.push('-c', setting)
 
-    const git = simpleGit({ config: [...NO_AUTO_GC_CONFIG] })
+    const git = simpleGit({ config: [...NO_AUTO_GC_CONFIG], errors: failOnSignalExit })
     git.env({
       ...(isNetworkRemoteUrl(remoteUrl) ? gitNetworkChildEnv() : gitChildEnv({})),
       GIT_CEILING_DIRECTORIES: path.dirname(targetPath),
@@ -951,6 +985,41 @@ export class GitManager {
   }
 
   /**
+   * {@link resolveRemoteUrl} for a workspace about to be cloned, which needs a
+   * remote: none resolving is the worker-not-ready error in a mode whose
+   * remote the worker creates, and a configuration error otherwise.
+   */
+  static async resolveCloneRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string> {
+    const remoteUrl = await GitManager.resolveRemoteUrl(options)
+    if (remoteUrl) return remoteUrl
+    const notReady = await GitManager.remoteNotReadyError(options.mode)
+    if (notReady) throw notReady
+    throw new Error(
+      'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
+    )
+  }
+
+  /**
+   * {@link cloneRepo} for a workspace, failing with one message that names the
+   * workspace, the remote and the base branch, which git's own error mixes.
+   */
+  static async cloneWorkspace(
+    remoteUrl: string,
+    workspacePath: string,
+    baseBranch: string,
+    options: CloneRepoOptions,
+  ): Promise<void> {
+    try {
+      await GitManager.cloneRepo(remoteUrl, workspacePath, baseBranch, options)
+    } catch (err) {
+      throw new Error(
+        `Failed to clone branch workspace at ${workspacePath} ` +
+          `from ${remoteUrl} (base branch '${baseBranch}'): ${getErrorMessage(err)}`,
+      )
+    }
+  }
+
+  /**
    * Check whether a git repository is already initialized at `workspacePath`.
    *
    * Uses `rev-parse --git-dir` with `GIT_CEILING_DIRECTORIES` pinned to the
@@ -1010,16 +1079,12 @@ export class GitManager {
 
     const step = <T>(name: string, run: () => Promise<T>): Promise<T> =>
       options.provisionLog ? options.provisionLog.step(name, run) : run()
-    const identity = {
-      'canopycms.managed': 'true',
-      'user.name': options.gitBotAuthorName,
-      'user.email': options.gitBotAuthorEmail,
-    }
+    const identity = managedWorkspaceConfig(options.gitBotAuthorName, options.gitBotAuthorEmail)
 
     let justCloned = false
     let resolvedRemoteUrl: string | undefined
     if (!repoExists) {
-      const remoteUrl = await GitManager.resolveRemoteUrl({
+      const remoteUrl = await GitManager.resolveCloneRemoteUrl({
         mode: options.mode,
         remoteUrl: options.remoteUrl,
         defaultRemoteUrl: options.defaultRemoteUrl,
@@ -1028,35 +1093,15 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      if (!remoteUrl) {
-        const notReady = await GitManager.remoteNotReadyError(options.mode)
-        if (notReady) throw notReady
-        throw new Error(
-          'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
-        )
-      }
-
-      try {
-        // The clone writes the managed marker, which ensureRemote's guard
-        // checks, and a fallback author for internal commits such as the
-        // orphan settings init; ensureAuthor() sets the real one before
-        // user-facing commits. A content clone skips its own checkout because
-        // checkoutFreshClone runs the one checkout this workspace needs.
-        await step('clone', () =>
-          GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch, {
-            remoteName,
-            noCheckout: options.branchType === 'content',
-            config: identity,
-          }),
-        )
-      } catch (err) {
-        // The raw git error ("Cloning into <workspace>… branch <base> not found")
-        // mixes the workspace name and the base branch — spell both out.
-        throw new Error(
-          `Failed to clone branch workspace at ${options.workspacePath} ` +
-            `from ${remoteUrl} (base branch '${baseBranch}'): ${getErrorMessage(err)}`,
-        )
-      }
+      // A content clone skips its own checkout because checkoutFreshClone runs
+      // the one checkout this workspace needs.
+      await step('clone', () =>
+        GitManager.cloneWorkspace(remoteUrl, options.workspacePath, baseBranch, {
+          remoteName,
+          noCheckout: options.branchType === 'content',
+          config: identity,
+        }),
+      )
       justCloned = true
       resolvedRemoteUrl = remoteUrl
     }
