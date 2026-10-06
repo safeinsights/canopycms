@@ -169,6 +169,131 @@ describe('CanopyApiClient', () => {
     })
   })
 
+  describe('Throttled requests', () => {
+    // The body a Lambda Function URL sends when its concurrency cap throttles a request.
+    const throttled = (headers: Record<string, string> = {}) => ({
+      ok: false,
+      status: 429,
+      headers: new Headers(headers),
+      json: async () => ({ Message: 'Rate Exceeded.' }),
+    })
+    const success = { ok: true, status: 200, data: { branches: [] } }
+    const succeeded = () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => success,
+    })
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    it('resends a throttled request after backing off, and returns the eventual response', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled())
+        .mockResolvedValueOnce(throttled())
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+      await vi.advanceTimersByTimeAsync(249)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      // The second wait is longer than the first.
+      await vi.advanceTimersByTimeAsync(999)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(3)
+
+      expect(await pending).toEqual(success)
+    })
+
+    it('resends a throttled write with the same body and headers', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled())
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.create({ branch: 'b' })
+      await vi.runAllTimersAsync()
+      await pending
+
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      const [firstUrl, firstInit] = mockFetch.mock.calls[0]
+      const [secondUrl, secondInit] = mockFetch.mock.calls[1]
+      expect(firstInit.method).toBe('POST')
+      expect(secondUrl).toBe(firstUrl)
+      expect(secondInit).toEqual(firstInit)
+    })
+
+    it('gives up after three resends, returning the 429 as a non-API response', async () => {
+      const mockFetch = vi.fn().mockResolvedValue(throttled())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+      await vi.runAllTimersAsync()
+      const result = await pending
+
+      expect(mockFetch).toHaveBeenCalledTimes(4)
+      expect(result).toEqual({
+        ok: false,
+        status: 429,
+        error: 'Unexpected response from server (HTTP 429)',
+      })
+      expect(isNonApiResponse(result)).toBe(true)
+    })
+
+    it('waits the Retry-After seconds when the response sends them', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled({ 'Retry-After': '2' }))
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      await pending
+    })
+
+    it('falls back to its own delay for a blank or date-valued Retry-After', async () => {
+      for (const retryAfter of ['', 'Wed, 21 Oct 2026 07:28:00 GMT']) {
+        const mockFetch = vi
+          .fn()
+          .mockResolvedValueOnce(throttled({ 'Retry-After': retryAfter }))
+          .mockResolvedValueOnce(succeeded())
+        const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+        await vi.advanceTimersByTimeAsync(249)
+        expect(mockFetch, `Retry-After: '${retryAfter}'`).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(mockFetch, `Retry-After: '${retryAfter}'`).toHaveBeenCalledTimes(2)
+        await pending
+      }
+    })
+
+    it('does not resend a 429 a handler wrote, or any other status', async () => {
+      const handlerBody = { ok: false, status: 429, error: 'Slow down' }
+      for (const [status, body] of [
+        [429, handlerBody],
+        [503, { Message: 'Service Unavailable' }],
+      ] as const) {
+        const mockFetch = vi
+          .fn()
+          .mockResolvedValue({ ok: false, status, headers: new Headers(), json: async () => body })
+        const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+        await vi.runAllTimersAsync()
+        await pending
+        expect(mockFetch, `HTTP ${status}`).toHaveBeenCalledTimes(1)
+      }
+    })
+  })
+
   describe('Error handling', () => {
     it('should handle network errors', async () => {
       const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
