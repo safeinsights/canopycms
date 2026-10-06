@@ -272,6 +272,16 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     ])
   }, [])
 
+  // After a server-side change to a pending branch, its overlaid copy is stale,
+  // and a lagging listing would show it (a submitted branch as still writable).
+  // Forgetting it leaves the listings alone to decide, failing closed if they lag.
+  const forgetCreatedBranch = (name: string) => {
+    setPendingBranches((prev) => {
+      const kept = prev.filter((p) => p.branch.name !== name)
+      return kept.length === prev.length ? prev : kept
+    })
+  }
+
   // Runs once per listing received (see `BranchesData.receivedAt`), measuring
   // the grace window to that listing's arrival.
   useEffect(() => {
@@ -412,6 +422,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               message: 'Branch submitted for review',
               color: 'green',
             })
+            forgetCreatedBranch(branchNameToSubmit)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -446,6 +457,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to withdraw branch')
             }
             notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+            forgetCreatedBranch(branchNameToWithdraw)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -469,6 +481,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         throw new Error(result.error || 'Failed to request changes')
       }
       notifications.show({ message: 'Changes requested', color: 'orange' })
+      forgetCreatedBranch(branchNameForChanges)
       await loadBranches()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to request changes'
@@ -492,8 +505,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to delete branch')
             }
             notifications.show({ message: 'Branch deleted', color: 'green' })
-            // Otherwise a listing that lags the delete would re-add it from pending.
-            setPendingBranches((prev) => prev.filter((p) => p.branch.name !== branchNameToDelete))
+            forgetCreatedBranch(branchNameToDelete)
             await loadBranches()
           } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to delete branch'

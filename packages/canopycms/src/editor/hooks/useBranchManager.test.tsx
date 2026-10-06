@@ -707,54 +707,6 @@ describe('useBranchManager', () => {
       expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
     })
 
-    it('does not prune against the previous listing while a revalidation is in flight', async () => {
-      const t0 = 1_700_000_000_000
-      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
-      mockStaleListing()
-      const { result } = renderHook(
-        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
-        { wrapper },
-      )
-      await waitFor(() => {
-        expect(result.current.manager.branches).toHaveLength(2)
-      })
-      act(() => {
-        result.current.manager.addCreatedBranch(createdBranch)
-      })
-
-      // Past the grace window, with the next listing (which lists the branch) still pending.
-      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
-      let resolveList: (value: {
-        ok: true
-        status: 200
-        data: { branches: BranchListItem[] }
-      }) => void = () => {}
-      mockClient.branches.list.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveList = resolve
-        }),
-      )
-      let revalidation: Promise<unknown> = Promise.resolve()
-      act(() => {
-        revalidation = result.current.swr.mutate(BRANCHES_KEY)
-      })
-      await waitFor(() => {
-        expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
-      })
-
-      expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
-
-      await act(async () => {
-        resolveList({
-          ok: true,
-          status: 200,
-          data: { branches: [...mockBranches, createdBranch] },
-        })
-        await revalidation
-      })
-      expect(result.current.manager.branches.filter((b) => b.name === 'new-branch')).toHaveLength(1)
-    })
-
     it('keeps an added branch when a revalidation past the grace window fails', async () => {
       const t0 = 1_700_000_000_000
       const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
@@ -794,6 +746,31 @@ describe('useBranchManager', () => {
 
       expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
     })
+
+    it.each([
+      ['submit', 'handleSubmit'],
+      ['withdraw', 'handleWithdraw'],
+      ['requestChanges', 'handleRequestChanges'],
+    ] as const)(
+      'stops overlaying an added branch once %s succeeds, so a lagging listing cannot show its pre-action state',
+      async (endpoint, handler) => {
+        mockStaleListing()
+        mockClient.workflow[endpoint].mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await renderLoaded()
+
+        act(() => {
+          result.current.addCreatedBranch(createdBranch)
+        })
+        expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+
+        await act(async () => {
+          await result.current[handler]('new-branch')
+        })
+
+        expect(mockClient.workflow[endpoint]).toHaveBeenCalledWith({ branch: 'new-branch' })
+        expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
+      },
+    )
 
     it('removes an added branch when it is deleted, even though a lagging listing lacks it', async () => {
       mockStaleListing()

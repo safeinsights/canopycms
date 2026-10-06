@@ -29,6 +29,10 @@ server-side halves remain, both reasoned from code rather than measured on a dep
    created-branch overlay hides this for a new branch inside the grace window, but any
    branch's state (a submit's status, say) can be overwritten by an older listing. A
    monotonic request sequence, as `useEntryManager.refreshEntries` uses, would close it.
+4. **Workflow actions on a just-created branch fail closed.** A successful submit, withdraw
+   or request-changes drops the branch's overlay, so a lagging listing hides the branch (editor
+   locked) until listings catch up. If the workflow endpoints returned the list-item shape, as
+   create now does, the editor could overlay the post-action copy instead.
 
 ## Related
 
