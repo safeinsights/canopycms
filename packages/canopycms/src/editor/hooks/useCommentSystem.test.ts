@@ -550,6 +550,41 @@ describe('useCommentSystem', () => {
     document.body.removeChild(mockElement)
   })
 
+  it('runs its pending focus undo steps on unmount instead of leaving timers behind', () => {
+    vi.useFakeTimers()
+    const mockElement = document.createElement('div')
+    mockElement.setAttribute('data-canopy-field', 'title')
+    mockElement.scrollIntoView = vi.fn()
+    mockElement.style.boxShadow = 'none'
+    document.body.appendChild(mockElement)
+    try {
+      const { result, unmount } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'canopycms:preview:focus',
+              entryPath: 'preview-entry1',
+              fieldPath: 'title',
+            },
+            origin: window.location.origin,
+          }),
+        )
+      })
+      expect(result.current.focusedFieldPath).toBe('title')
+      expect(mockElement.style.boxShadow).not.toBe('none')
+      const timersBeforeUnmount = vi.getTimerCount()
+
+      unmount()
+
+      expect(mockElement.style.boxShadow).toBe('none')
+      expect(vi.getTimerCount()).toBe(timersBeforeUnmount - 2)
+    } finally {
+      vi.useRealTimers()
+      document.body.removeChild(mockElement)
+    }
+  })
+
   it('ignores preview frame message for wrong entry', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
       wrapper,
