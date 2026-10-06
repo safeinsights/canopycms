@@ -720,6 +720,46 @@ describe('useBranchManager', () => {
       expect(result.current.manager.branches.filter((b) => b.name === 'new-branch')).toHaveLength(1)
     })
 
+    it('keeps an added branch when a revalidation past the grace window fails', async () => {
+      const t0 = 1_700_000_000_000
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+      mockStaleListing()
+      const { result } = renderHook(
+        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(2)
+      })
+      act(() => {
+        result.current.manager.addCreatedBranch(createdBranch)
+      })
+
+      // SWR keeps the previous (lagging) listing as `data` when a revalidation fails.
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
+      // Rejected only once the fetch is in flight, so the in-flight render is observed.
+      let rejectList: (err: Error) => void = () => {}
+      mockClient.branches.list.mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectList = reject
+        }),
+      )
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      let revalidation: Promise<unknown> = Promise.resolve()
+      act(() => {
+        revalidation = result.current.swr.mutate(BRANCHES_KEY).catch(() => {})
+      })
+      await waitFor(() => {
+        expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+      })
+      await act(async () => {
+        rejectList(new Error('network down'))
+        await revalidation
+      })
+
+      expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
+    })
+
     it('removes an added branch when it is deleted, even though a lagging listing lacks it', async () => {
       mockStaleListing()
       mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })

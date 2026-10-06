@@ -257,14 +257,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     ])
   }, [])
 
-  // Keyed on the validation settling as well as the data: SWR keeps the same
-  // `branchesData` reference for a deep-equal listing, so an unchanged stale
-  // listing would otherwise never reach this prune.
+  // Runs once per listing received (see `BranchesData.receivedAt`), measuring
+  // the grace window to that listing's arrival.
   useEffect(() => {
-    if (!branchesData || branchesIsValidating) return
-    const now = Date.now()
-    setPendingBranches((prev) => prunePendingBranches(prev, branchesData.branches, now))
-  }, [branchesData, branchesIsValidating])
+    if (!branchesData) return
+    setPendingBranches((prev) =>
+      prunePendingBranches(prev, branchesData.branches, branchesData.receivedAt),
+    )
+  }, [branchesData])
 
   // Adopt the server's default branch once data arrives, if nothing pinned one.
   useEffect(() => {
@@ -365,12 +365,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     options.setBusy(true)
     try {
       const fresh = await fetchBranches(apiClient)
-      const now = Date.now()
       await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
-      // Prune here too, after the cache write so a listed branch is never
-      // absent in between: a deep-equal `fresh` leaves `branchesData`
-      // unchanged, so the effect above would not see this listing.
-      setPendingBranches((prev) => prunePendingBranches(prev, fresh.branches, now))
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
