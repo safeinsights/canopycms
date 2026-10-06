@@ -85,8 +85,9 @@ export interface CreatePreviewPageOptions {
    */
   views: Record<string, PreviewView | ErasedPreviewViewWithLoader>
   /**
-   * Editor origin to trust, for an editor on another origin. Defaults to the page's own. The
-   * viewer must still be signed in on this page's origin: an anonymous request is a 404.
+   * Editor origin to trust, for an editor on another origin. Defaults to the page's own. A
+   * request without the viewer's session is a 404, and a `SameSite=Lax` session cookie reaches a
+   * framed page only from an editor on the same site, so a cross-site editor previews nothing.
    */
   editorOrigin?: string
 }
@@ -121,8 +122,8 @@ export function createPreviewPageFor(
     const branch = query.branch
     if (Array.isArray(branch)) notFound()
     const canopy = await getCanopy()
-    // ACLs alone would let an anonymous user read the base branch, and this route sits under the
-    // editor's paths, which a site-wide gate exempts because the editor's sign-in guards them.
+    // Branch ACLs can grant an anonymous user the base branch, and this route is deployed like the
+    // editor's routes (canopycms-cdk's `attachTo` `previewPrefix`), outside any site-wide gate.
     if (canopy.user.type === 'anonymous') notFound()
     const result = await canopy.readByUrlPath<never>(`/${path.join('/')}`, { branch })
     if (!result) notFound()
