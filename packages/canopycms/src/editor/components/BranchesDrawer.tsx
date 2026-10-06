@@ -6,7 +6,7 @@ import { Drawer, Text, Title } from '@mantine/core'
 export interface BranchesDrawerProps {
   opened: boolean
   onClose: () => void
-  /** A confirm opened from inside is on screen: the drawer yields Escape, outside clicks and focus to it. */
+  /** A confirm opened from inside is on screen: the drawer yields Escape to it (Mantine listens for Escape on window, capture phase). */
   confirmOpen: boolean
   children: React.ReactNode
 }
@@ -21,8 +21,6 @@ export const BranchesDrawer: React.FC<BranchesDrawerProps> = ({
     opened={opened}
     onClose={onClose}
     closeOnEscape={!confirmOpen}
-    closeOnClickOutside={!confirmOpen}
-    trapFocus={!confirmOpen}
     position="right"
     title={
       <div>

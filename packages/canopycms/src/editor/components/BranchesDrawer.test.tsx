@@ -46,8 +46,11 @@ afterEach(() => {
   cleanup()
 })
 
-const Harness: React.FC<{ onDecision: (ok: boolean) => void }> = ({ onDecision }) => {
-  const [open, setOpen] = useState(true)
+const Harness: React.FC<{ onDecision: (ok: boolean) => void; startClosed?: boolean }> = ({
+  onDecision,
+  startClosed = false,
+}) => {
+  const [open, setOpen] = useState(!startClosed)
   const { confirmCreate, confirmOpen } = useBranchActions({
     branchName: 'main',
     setBranchName: () => {},
@@ -59,6 +62,9 @@ const Harness: React.FC<{ onDecision: (ok: boolean) => void }> = ({ onDecision }
     <>
       {/* The drawer's own `opened` state: the DOM lingers through the close transition. */}
       <output data-testid="drawer-opened">{String(open)}</output>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open branches
+      </button>
       <BranchesDrawer opened={open} onClose={() => setOpen(false)} confirmOpen={confirmOpen}>
         <p>Drawer body</p>
         <button type="button" onClick={() => void confirmCreate().then(onDecision)}>
@@ -71,12 +77,12 @@ const Harness: React.FC<{ onDecision: (ok: boolean) => void }> = ({ onDecision }
 
 const drawerOpened = (): string | null => screen.getByTestId('drawer-opened').textContent
 
-const renderHarness = (onDecision: (ok: boolean) => void) => {
+const renderHarness = (onDecision: (ok: boolean) => void, startClosed = false) => {
   const Wrapper = createApiClientWrapper(createMockApiClient())
   return render(
     <Wrapper>
       <CanopyCMSProvider withNotifications={false}>
-        <Harness onDecision={onDecision} />
+        <Harness onDecision={onDecision} startClosed={startClosed} />
       </CanopyCMSProvider>
     </Wrapper>,
   )
@@ -136,6 +142,21 @@ describe('BranchesDrawer with a confirm opened from inside it', () => {
     await userEvent.keyboard('{Escape}')
 
     await waitFor(() => expect(drawerOpened()).toBe('false'))
+  })
+
+  it('returns focus to the control that opened the drawer after a cancelled confirm', async () => {
+    renderHarness(vi.fn(), true)
+    const trigger = screen.getByRole('button', { name: 'Open branches' })
+
+    await userEvent.click(trigger)
+    await userEvent.click(await screen.findByRole('button', { name: 'Create' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByText(/Unsaved changes in: About/)).toBeNull())
+
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(drawerOpened()).toBe('false'))
+
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
   it('still closes on Escape when no confirm is open', async () => {
