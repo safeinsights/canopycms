@@ -1,5 +1,7 @@
 # [P2] Crop is still an unbounded cache-key dimension on the anonymous transform path
 
+> **Superseded by [image-materialization-epic.md](image-materialization-epic.md)** (2026-10-06). Kept for its analysis; it closes when that epic's PR merges.
+
 Split out of [resolved/infra-review-2026-08-transform-lambda-abuse.md](resolved/infra-review-2026-08-transform-lambda-abuse.md)
 (2026-08-21). That task closed the cheap and unambiguous halves; this is the
 half that needs a real design decision, and **JP asked for it as its own

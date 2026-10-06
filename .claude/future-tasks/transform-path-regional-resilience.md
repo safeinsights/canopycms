@@ -1,5 +1,7 @@
 # [P2] The `/assets/t/*` origin group has no room for a cross-region fallback
 
+> **Superseded by [image-materialization-epic.md](image-materialization-epic.md)** (2026-10-06). Kept for its analysis; it closes when that epic's PR merges.
+
 Raised 2026-08-24 while designing shared artifact buckets for the docs and
 marketing sites. This is the Canopy-side half of that discussion — the
 bucket/account decisions live in the infrastructure repo's own planning docs,
