@@ -13,6 +13,7 @@ import { workerLog } from './log'
  *
  * Never an `extensions.*` key: git 2.39 refuses to open a repo carrying one it
  * does not know.
+ * @internal Exported for tests.
  */
 export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: string]> = [
   ['gc.auto', '0'],
@@ -22,8 +23,8 @@ export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: stri
 ]
 
 /** Above either count, `maintainRemoteGit` repacks. */
-export const REMOTE_GIT_MAX_LOOSE_OBJECTS = 50
-export const REMOTE_GIT_MAX_PACKS = 6
+const REMOTE_GIT_MAX_LOOSE_OBJECTS = 50
+const REMOTE_GIT_MAX_PACKS = 6
 
 function bareGit(): SimpleGit {
   return simpleGit().env(gitChildEnv({}))
@@ -44,7 +45,7 @@ export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
   }
 }
 
-export interface ObjectCounts {
+interface ObjectCounts {
   loose: number
   packs: number
 }
