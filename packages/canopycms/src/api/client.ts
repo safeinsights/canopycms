@@ -10,7 +10,7 @@ import { computeContentSha256Hex } from './request-body-hash'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 
-import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchCreateResponse, BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -68,7 +68,7 @@ export class CanopyApiClient {
     },
 
     /** POST /branches */
-    create: (body: CreateBranchBody): Promise<BranchResponse> => {
+    create: (body: CreateBranchBody): Promise<BranchCreateResponse> => {
       return this.request('POST', '/branches', body)
     },
 

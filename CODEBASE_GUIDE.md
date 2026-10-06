@@ -502,7 +502,7 @@ silently bypasses the provider's prefixed base.
 Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
 
-- `useBranchManager.tsx` — branch switching and creation; adopts the server's `defaultBranch` when nothing is pinned
+- `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — create, submit, withdraw, merge; adopts the server-sanitized branch name after create
 - `useEntryManager.ts` — entry loading and saving, and `listAllEntries` cursor following
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors

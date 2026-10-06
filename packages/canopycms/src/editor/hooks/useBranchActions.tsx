@@ -1,6 +1,7 @@
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
+import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 
 export interface UseBranchActionsOptions {
@@ -8,6 +9,8 @@ export interface UseBranchActionsOptions {
   setBranchName: (name: string) => void
   isAnyDirty: () => boolean // From useDraftManager
   onReloadBranches: () => Promise<void>
+  /** Receives the branch the server just created, so it can be shown before any listing includes it. */
+  onBranchCreated: (branch: BranchListItem) => void
   onBranchSwitch?: (branch: string) => void
 }
 
@@ -17,7 +20,7 @@ export interface UseBranchActionsReturn {
     name: string
     title?: string
     description?: string
-  }) => Promise<void>
+  }) => Promise<boolean>
 }
 
 /**
@@ -48,6 +51,9 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         confirmProps: { color: 'red' },
         onCancel: () => resolve(false),
         onConfirm: () => resolve(true),
+        // Escape and overlay dismissals fire only onClose. Mantine also calls it
+        // right after onConfirm, which is harmless: a promise settles once.
+        onClose: () => resolve(false),
       })
     })
   }
@@ -61,13 +67,14 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     performBranchSwitch(next)
   }
 
+  /** Resolves true when the branch was created and switched to, false when it was not. */
   const handleCreateBranch = async (branch: {
     name: string
     title?: string
     description?: string
-  }) => {
+  }): Promise<boolean> => {
     const confirmed = await confirmIfDirty('Create new branch without saving changes?')
-    if (!confirmed) return
+    if (!confirmed) return false
 
     try {
       const result = await apiClient.branches.create({
@@ -79,10 +86,13 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         throw new Error(result.error || 'Failed to create branch')
       }
 
+      const created = result.data?.branch
+      if (created) options.onBranchCreated(created)
+
       // The server sanitizes the branch name (e.g. "feature/x" -> "feature-x")
       // before persisting it. Adopt the canonical name from the response so
       // the client doesn't end up stuck on a name the server never saved.
-      const createdName = result.data?.branch?.name ?? branch.name
+      const createdName = created?.name ?? branch.name
       notifications.show({
         message:
           createdName === branch.name
@@ -90,13 +100,18 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
             : `Branch "${createdName}" created (renamed from "${branch.name}")`,
         color: 'green',
       })
-      await options.onReloadBranches()
 
       // Switch to new branch (already confirmed dirty check)
       performBranchSwitch(createdName)
+
+      // Not awaited: a listing can lag the create, and the switch must not wait
+      // on it. loadBranches reports its own failures and never rejects.
+      void options.onReloadBranches()
+      return true
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create branch'
       notifications.show({ message, color: 'red' })
+      return false
     }
   }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -121,6 +121,46 @@ const showDeleteConfirmation = (
   })
 }
 
+/**
+ * How long a branch this session created is kept after the server listing
+ * lacks it. A listing served by another server container can miss a
+ * just-created branch for the shared filesystem's attribute/dentry cache
+ * window (~60s, see docs/concurrency.md window A); twice that absorbs request
+ * latency on top, and past it a listing that still lacks the branch means it
+ * really is gone.
+ * @internal Exported only for the test that pins it.
+ */
+export const CREATED_BRANCH_GRACE_MS = 120_000
+
+/** A branch this session created that no server listing has shown yet. */
+interface PendingBranch {
+  branch: BranchListItem
+  addedAt: number
+}
+
+/** The server listing plus any pending branches it lacks; the server's copy always wins. */
+function mergePendingBranches(
+  listed: BranchListItem[],
+  pending: PendingBranch[],
+): BranchListItem[] {
+  const listedNames = new Set(listed.map((b) => b.name))
+  const missing = pending.filter((p) => !listedNames.has(p.branch.name))
+  return missing.length === 0 ? listed : [...listed, ...missing.map((p) => p.branch)]
+}
+
+/** Drops pending branches the listing now shows, or that a listing past the grace window still lacks. */
+function prunePendingBranches(
+  pending: PendingBranch[],
+  listed: BranchListItem[],
+  now: number,
+): PendingBranch[] {
+  const listedNames = new Set(listed.map((b) => b.name))
+  const kept = pending.filter(
+    (p) => !listedNames.has(p.branch.name) && now - p.addedAt <= CREATED_BRANCH_GRACE_MS,
+  )
+  return kept.length === pending.length ? pending : kept
+}
+
 interface BranchSummary {
   name: string
   status: string
@@ -182,6 +222,8 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** Shows a branch the server just created before any listing includes it. */
+  addCreatedBranch: (branch: BranchListItem) => void
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
@@ -202,7 +244,27 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     error: branchesError,
     isValidating: branchesIsValidating,
   } = useBranchesData(apiClient)
-  const branches = useMemo(() => branchesData?.branches ?? [], [branchesData])
+  const [pendingBranches, setPendingBranches] = useState<PendingBranch[]>([])
+  const branches = useMemo(
+    () => mergePendingBranches(branchesData?.branches ?? [], pendingBranches),
+    [branchesData, pendingBranches],
+  )
+
+  const addCreatedBranch = useCallback((branch: BranchListItem) => {
+    setPendingBranches((prev) => [
+      ...prev.filter((p) => p.branch.name !== branch.name),
+      { branch, addedAt: Date.now() },
+    ])
+  }, [])
+
+  // Keyed on the validation settling as well as the data: SWR keeps the same
+  // `branchesData` reference for a deep-equal listing, so an unchanged stale
+  // listing would otherwise never reach this prune.
+  useEffect(() => {
+    if (!branchesData || branchesIsValidating) return
+    const now = Date.now()
+    setPendingBranches((prev) => prunePendingBranches(prev, branchesData.branches, now))
+  }, [branchesData, branchesIsValidating])
 
   // Adopt the server's default branch once data arrives, if nothing pinned one.
   useEffect(() => {
@@ -303,7 +365,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     options.setBusy(true)
     try {
       const fresh = await fetchBranches(apiClient)
+      const now = Date.now()
       await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
+      // Prune here too, after the cache write so a listed branch is never
+      // absent in between: a deep-equal `fresh` leaves `branchesData`
+      // unchanged, so the effect above would not see this listing.
+      setPendingBranches((prev) => prunePendingBranches(prev, fresh.branches, now))
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
@@ -415,6 +482,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to delete branch')
             }
             notifications.show({ message: 'Branch deleted', color: 'green' })
+            // Otherwise a listing that lags the delete would re-add it from pending.
+            setPendingBranches((prev) => prev.filter((p) => p.branch.name !== branchNameToDelete))
             await loadBranches()
           } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to delete branch'
@@ -453,6 +522,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    addCreatedBranch,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,

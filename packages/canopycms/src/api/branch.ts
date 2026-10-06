@@ -67,6 +67,13 @@ export interface BranchListItem extends BranchMetadata {
   submitBlocked?: boolean
 }
 
+/**
+ * Response type for branch creation. Carries the list-item shape (server-computed
+ * flags included) so the editor can insert the branch without waiting for a
+ * listing that may lag behind the create.
+ */
+export type BranchCreateResponse = ApiResponse<{ branch: BranchListItem }>
+
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
   branches: BranchListItem[]
@@ -196,12 +203,35 @@ const resolveReadOnlyMirrorPath = (
   )
 }
 
+/**
+ * Attach server-computed protected-base-branch flags to a branch. Reads config
+ * per call so dev-mode refreshActiveBranch() updates are reflected.
+ */
+const toBranchListItem = (
+  config: ApiContext['services']['config'],
+  context: BranchContext,
+): BranchListItem => {
+  const protection = getBranchWriteProtection(
+    config,
+    context.branch.name,
+    context.branch.baseBranch,
+    context.branch.status,
+  )
+  return {
+    ...context.branch,
+    isProtected: protection.isProtected,
+    readOnly: protection.readOnly,
+    writeBlocked: protection.writeBlocked,
+    submitBlocked: protection.submitBlockedIncludingStatus,
+  }
+}
+
 /** @internal Exported for tests. */
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof createBranchBodySchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchCreateResponse> => {
   return log.timed('api', 'createBranch', async () => {
     const branchName = body.branch
     log.debug('api', 'Create branch request', {
@@ -454,7 +484,11 @@ export const createBranchHandler = async (
     })
 
     log.debug('api', 'Branch created', { branchName: context.branch.name })
-    return { ok: true, status: 200, data: { branch: context.branch } }
+    return {
+      ok: true,
+      status: 200,
+      data: { branch: toBranchListItem(ctx.services.config, context) },
+    }
   })
 }
 
@@ -490,30 +524,15 @@ export const listBranchesHandler = async (
     ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
   )
 
-  // Attach server-computed protected-base-branch flags; read config per-request
-  // so dev-mode refreshActiveBranch() updates are reflected here too.
-  const toListItem = (context: BranchContext): BranchListItem => {
-    const protection = getBranchWriteProtection(
-      ctx.services.config,
-      context.branch.name,
-      context.branch.baseBranch,
-      context.branch.status,
-    )
-    return {
-      ...context.branch,
-      isProtected: protection.isProtected,
-      readOnly: protection.readOnly,
-      writeBlocked: protection.writeBlocked,
-      submitBlocked: protection.submitBlockedIncludingStatus,
-    }
-  }
-
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
     return {
       ok: true,
       status: 200,
-      data: { branches: allBranches.map(toListItem), defaultBranch },
+      data: {
+        branches: allBranches.map((context) => toBranchListItem(ctx.services.config, context)),
+        defaultBranch,
+      },
     }
   }
 
@@ -547,7 +566,10 @@ export const listBranchesHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branches: visibleBranches.map(toListItem), defaultBranch },
+    data: {
+      branches: visibleBranches.map((context) => toBranchListItem(ctx.services.config, context)),
+      defaultBranch,
+    },
   }
 }
 
@@ -866,8 +888,8 @@ const createBranch = defineEndpoint({
   path: '/branches',
   body: createBranchBodySchema,
   bodyType: 'CreateBranchBody',
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchCreateResponse',
+  response: {} as BranchCreateResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',
