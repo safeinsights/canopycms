@@ -212,10 +212,8 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
 )
 
 /**
- * `rich` is MDXEditor. `source` is a plain textarea over the stored text: the
- * user chose it (`reason: null`), or MDXEditor reported through `onError` that
- * it cannot represent the document. MDXEditor emits no `onChange` for a
- * document it rejected, so staying in rich mode then would discard every edit.
+ * `source` is a textarea over the value, chosen by the user (`reason: null`) or
+ * forced because MDXEditor rejected the value and would emit no edits to it.
  */
 type EditorMode =
   | { kind: 'rich' }
@@ -250,9 +248,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [apiClient],
   )
 
-  // Sync external value changes (undo, reset, another entry) into the editor.
-  // Recorded even while no editor is mounted, so a later return to an earlier
-  // value is still seen as a change.
+  // Sync external value changes into the editor, recording them even while none
+  // is mounted, so a later return to an earlier value is still a change.
   useEffect(() => {
     if (value === lastExternalValue.current) return
     lastExternalValue.current = value
@@ -267,11 +264,10 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [onChange],
   )
 
-  // MDXEditor reports its re-serialization of the document it was mounted
-  // with as a change flagged `initialMarkdownNormalize`. Forwarding it would
-  // mark an entry nobody edited as modified and save the reformatted text.
-  // When it rejects inserted markdown, it reports the inserted text alone as
-  // the document, after `onError`; forwarding that would replace the body.
+  // Dropped: MDXEditor's re-serialization of the document it was mounted with
+  // (flagged `initialMarkdownNormalize`; it would mark an unedited entry
+  // modified), and inserted markdown it rejected, which it reports as the
+  // whole document.
   const handleEditorChange = useCallback(
     (newValue: string, initialMarkdownNormalize: boolean) => {
       if (initialMarkdownNormalize || newValue === lastRejectedSource.current) return
@@ -280,11 +276,10 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [emitChange],
   )
 
-  // MDXEditor can report the error while it is still rendering (its import
-  // runs as the editor is created), so the switch waits for a microtask
-  // rather than updating this component mid-render. The rejected document is
-  // `value` as this render saw it: MDXEditor is created from it, and receives
-  // this handler again before the sync effect hands it a later value.
+  // MDXEditor can report the error while rendering (it imports as it is
+  // created), hence the microtask. The rejected document is this render's
+  // `value`: MDXEditor is created from it, and gets this handler again before
+  // the sync effect hands it a later value.
   const handleEditorError = useCallback(
     ({ error, source }: { error: string; source: string }) => {
       lastRejectedSource.current = source
@@ -306,8 +301,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [emitChange],
   )
 
-  // A fallback holds only for the value MDXEditor rejected; any other value,
-  // such as another entry's body, gets the rich editor again.
+  // A fallback holds only for the value MDXEditor rejected.
   const showSource = mode.kind === 'source' && (mode.reason === null || mode.failedValue === value)
 
   return (

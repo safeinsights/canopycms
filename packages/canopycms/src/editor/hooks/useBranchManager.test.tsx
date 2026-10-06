@@ -1,6 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
+import {
+  CREATED_BRANCH_GRACE_MS,
+  useBranchManager,
+  UseBranchManagerOptions,
+} from './useBranchManager'
+import type { BranchListItem } from '../../api/branch'
+import { BRANCHES_KEY } from './useBranchesData'
 import type { BranchMetadata } from '../../types'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { unsafeAsContentId } from '../../paths/test-utils'
@@ -454,6 +461,350 @@ describe('useBranchManager', () => {
 
     expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
+  })
+
+  describe('branches created this session', () => {
+    const createdBranch: BranchListItem = {
+      name: 'new-branch',
+      status: 'editing',
+      title: 'New Branch',
+      access: { allowedUsers: [], allowedGroups: [] },
+      createdBy: 'user1',
+      createdAt: '2024-02-01',
+      updatedAt: '2024-02-01',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    }
+
+    // A listing served by a container that has not yet seen the new branch.
+    const mockStaleListing = () =>
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: mockBranches },
+      })
+
+    const renderLoaded = async () => {
+      const hook = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => {
+        expect(hook.result.current.branches).toHaveLength(2)
+      })
+      return hook
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('shows an added branch in branches and branchSummaries and resolves it as currentBranch', async () => {
+      mockStaleListing()
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+      })
+
+      expect(result.current.branches.map((b) => b.name)).toEqual(['main', 'feature', 'new-branch'])
+      expect(result.current.branchSummaries.map((b) => b.name)).toContain('new-branch')
+
+      act(() => {
+        result.current.setBranchName('new-branch')
+      })
+
+      expect(result.current.currentBranch).toEqual(createdBranch)
+      expect(result.current.branchSummaries.find((b) => b.name === 'new-branch')).toMatchObject({
+        isProtected: false,
+        writeBlocked: false,
+        submitBlocked: false,
+      })
+    })
+
+    it('keeps an added branch, and the selected branch name, across a listing that lags the create', async () => {
+      mockStaleListing()
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+        result.current.setBranchName('new-branch')
+      })
+
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+
+      expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+      expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+      expect(result.current.branchName).toBe('new-branch')
+      expect(result.current.currentBranch).toEqual(createdBranch)
+    })
+
+    it('prefers the server copy once a listing includes the branch, and keeps it through a lagging listing after that', async () => {
+      const t0 = 1_700_000_000_000
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+      mockStaleListing()
+      const renders: BranchListItem[][] = []
+      const { result } = renderHook(
+        () => {
+          const manager = useBranchManager(defaultOptions)
+          renders.push(manager.branches)
+          return manager
+        },
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.branches).toHaveLength(2)
+      })
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+      })
+
+      const serverCopy: BranchListItem = {
+        ...createdBranch,
+        status: 'submitted',
+        updatedAt: '2024-02-02',
+        writeBlocked: true,
+      }
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [...mockBranches, serverCopy] },
+      })
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+
+      const copies = result.current.branches.filter((b) => b.name === 'new-branch')
+      expect(copies).toEqual([serverCopy])
+      // Not even transiently, between the listing landing and the pending copy being replaced.
+      const listedRenders = renders.filter((list) =>
+        list.some((b) => b.name === 'new-branch' && b.status === 'submitted'),
+      )
+      expect(listedRenders.length).toBeGreaterThan(0)
+      for (const list of listedRenders) {
+        expect(list.filter((b) => b.name === 'new-branch')).toEqual([serverCopy])
+      }
+
+      // Another container's listing can still lag it; the latest listed copy stays.
+      now.mockReturnValue(t0 + 1_000)
+      mockStaleListing()
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+      expect(result.current.branches.filter((b) => b.name === 'new-branch')).toEqual([serverCopy])
+
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+      expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
+    })
+
+    it('drops an added branch once a listing past the grace window still lacks it', async () => {
+      const t0 = 1_700_000_000_000
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+      mockStaleListing()
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+      })
+
+      // Exactly at the bound the branch is still within the grace window.
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS)
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+      expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
+      await act(async () => {
+        await result.current.loadBranches()
+      })
+      expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
+    })
+
+    it('lists an added branch once when it is added again', async () => {
+      mockStaleListing()
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+        result.current.addCreatedBranch({ ...createdBranch, title: 'Renamed' })
+      })
+
+      const copies = result.current.branches.filter((b) => b.name === 'new-branch')
+      expect(copies).toHaveLength(1)
+      expect(copies[0].title).toBe('Renamed')
+    })
+
+    it('takes the server copy of an added branch from an automatic revalidation', async () => {
+      mockStaleListing()
+      const { result } = renderHook(
+        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(2)
+      })
+
+      act(() => {
+        result.current.manager.addCreatedBranch(createdBranch)
+      })
+
+      // SWR's own revalidation, not the hook's loadBranches().
+      const serverCopy: BranchListItem = { ...createdBranch, status: 'submitted' }
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [...mockBranches, serverCopy] },
+      })
+      await act(async () => {
+        await result.current.swr.mutate(BRANCHES_KEY)
+      })
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(3)
+      })
+
+      // Written straight to the cache, bypassing loadBranches(), so only an
+      // update that already ran on the listing above can show the server copy now.
+      await act(async () => {
+        await result.current.swr.mutate(
+          BRANCHES_KEY,
+          { branches: mockBranches, receivedAt: Date.now() },
+          { revalidate: false },
+        )
+      })
+
+      expect(result.current.manager.branches.filter((b) => b.name === 'new-branch')).toEqual([
+        serverCopy,
+      ])
+    })
+
+    it('keeps an added branch when a cache write carries no receivedAt', async () => {
+      mockStaleListing()
+      const { result } = renderHook(
+        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(2)
+      })
+      act(() => {
+        result.current.manager.addCreatedBranch(createdBranch)
+      })
+
+      await act(async () => {
+        await result.current.swr.mutate(
+          BRANCHES_KEY,
+          { branches: mockBranches },
+          { revalidate: false },
+        )
+      })
+
+      expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
+    })
+
+    it('keeps an added branch when a revalidation past the grace window fails', async () => {
+      const t0 = 1_700_000_000_000
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t0)
+      mockStaleListing()
+      const { result } = renderHook(
+        () => ({ manager: useBranchManager(defaultOptions), swr: useSWRConfig() }),
+        { wrapper },
+      )
+      await waitFor(() => {
+        expect(result.current.manager.branches).toHaveLength(2)
+      })
+      act(() => {
+        result.current.manager.addCreatedBranch(createdBranch)
+      })
+
+      // SWR keeps the previous (lagging) listing as `data` when a revalidation fails.
+      now.mockReturnValue(t0 + CREATED_BRANCH_GRACE_MS + 1)
+      // Rejected only once the fetch is in flight, so the in-flight render is observed.
+      let rejectList: (err: Error) => void = () => {}
+      mockClient.branches.list.mockReturnValueOnce(
+        new Promise((_, reject) => {
+          rejectList = reject
+        }),
+      )
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      let revalidation: Promise<unknown> = Promise.resolve()
+      act(() => {
+        revalidation = result.current.swr.mutate(BRANCHES_KEY).catch(() => {})
+      })
+      await waitFor(() => {
+        expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+      })
+      await act(async () => {
+        rejectList(new Error('network down'))
+        await revalidation
+      })
+
+      expect(result.current.manager.branches.map((b) => b.name)).toContain('new-branch')
+    })
+
+    it.each([
+      ['submit', 'handleSubmit'],
+      ['withdraw', 'handleWithdraw'],
+      ['requestChanges', 'handleRequestChanges'],
+    ] as const)(
+      'stops overlaying an added branch once %s succeeds, so a lagging listing cannot show its pre-action state',
+      async (endpoint, handler) => {
+        mockStaleListing()
+        mockClient.workflow[endpoint].mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await renderLoaded()
+
+        act(() => {
+          result.current.addCreatedBranch(createdBranch)
+        })
+        expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+
+        await act(async () => {
+          await result.current[handler]('new-branch')
+        })
+
+        expect(mockClient.workflow[endpoint]).toHaveBeenCalledWith({ branch: 'new-branch' })
+        expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
+      },
+    )
+
+    it('removes an added branch when it is deleted, even though a lagging listing lacks it', async () => {
+      mockStaleListing()
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+      })
+      expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+
+      await act(async () => {
+        await result.current.handleDelete('new-branch')
+      })
+
+      expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'new-branch' })
+      expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
+    })
+
+    it('keeps an added branch when deleting it fails', async () => {
+      mockStaleListing()
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: false, status: 500, error: 'nope' })
+      const { result } = await renderLoaded()
+
+      act(() => {
+        result.current.addCreatedBranch(createdBranch)
+      })
+
+      await act(async () => {
+        await result.current.handleDelete('new-branch')
+      })
+
+      expect(result.current.branches.map((b) => b.name)).toContain('new-branch')
+    })
   })
 
   it('submits branch successfully', async () => {

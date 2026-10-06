@@ -1,5 +1,5 @@
 import React from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
@@ -674,6 +674,134 @@ describe('BranchManager', () => {
       name: 'feature/new-feature',
       title: 'New Feature',
       description: 'A great new feature',
+    })
+  })
+
+  describe('create form while the create is in flight', () => {
+    const openAndFill = async (name: string) => {
+      await userEvent.click(screen.getByRole('button', { name: /create new branch/i }))
+      await userEvent.type(await screen.findByLabelText(/branch name/i), name)
+      await userEvent.type(await screen.findByLabelText(/title/i), 'A title')
+      await userEvent.type(await screen.findByLabelText(/description/i), 'A description')
+    }
+
+    const deferred = () => {
+      let resolve: (created: boolean) => void = () => {}
+      const promise = new Promise<boolean>((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    }
+
+    it('shows the submit button as loading and disables the inputs and toggle until the create settles', async () => {
+      const pending = deferred()
+      const onCreate = vi.fn(() => pending.promise)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await openAndFill('feature/slow')
+
+      const submitButton = screen.getByTestId('create-branch-submit')
+      expect(submitButton.getAttribute('data-loading')).toBeNull()
+
+      await userEvent.click(submitButton)
+
+      expect(submitButton.getAttribute('data-loading')).toBe('true')
+      expect(submitButton.hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('branch-name-input').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('branch-title-input').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('branch-description-textarea').hasAttribute('disabled')).toBe(true)
+      expect(screen.getByTestId('create-branch-button').hasAttribute('disabled')).toBe(true)
+
+      await act(async () => {
+        pending.resolve(true)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('branch-name-input').hasAttribute('disabled')).toBe(false)
+      })
+      expect(screen.getByTestId('create-branch-button').hasAttribute('disabled')).toBe(false)
+    })
+
+    it('calls onCreate once when submit is clicked twice in the same tick', async () => {
+      const pending = deferred()
+      const onCreate = vi.fn(() => pending.promise)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await openAndFill('feature/slow')
+
+      const submitButton = screen.getByTestId('create-branch-submit')
+      act(() => {
+        fireEvent.click(submitButton)
+        fireEvent.click(submitButton)
+      })
+      await userEvent.click(submitButton)
+
+      expect(onCreate).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        pending.resolve(true)
+      })
+    })
+
+    it('resets and closes the form when the create resolves true', async () => {
+      const pending = deferred()
+      const onCreate = vi.fn(() => pending.promise)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await openAndFill('feature/ok')
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+      // Still open while in flight.
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+
+      await act(async () => {
+        pending.resolve(true)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('create-branch-button').textContent).toBe('Create New Branch')
+      })
+      expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe('')
+      expect((screen.getByTestId('branch-title-input') as HTMLInputElement).value).toBe('')
+      expect((screen.getByTestId('branch-description-textarea') as HTMLTextAreaElement).value).toBe(
+        '',
+      )
+    })
+
+    it('keeps the form open with the entered values when the create resolves false', async () => {
+      const pending = deferred()
+      const onCreate = vi.fn(() => pending.promise)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await openAndFill('feature/nope')
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+      await act(async () => {
+        pending.resolve(false)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId('branch-name-input').hasAttribute('disabled')).toBe(false)
+      })
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+      expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe(
+        'feature/nope',
+      )
+      expect((screen.getByTestId('branch-title-input') as HTMLInputElement).value).toBe('A title')
+      expect((screen.getByTestId('branch-description-textarea') as HTMLTextAreaElement).value).toBe(
+        'A description',
+      )
+      expect(screen.getByTestId('create-branch-submit').getAttribute('data-loading')).toBeNull()
+    })
+
+    it('treats a synchronous onCreate (no promise) as success', async () => {
+      const onCreate = vi.fn()
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await openAndFill('feature/sync')
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('create-branch-button').textContent).toBe('Create New Branch')
+      })
+      expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe('')
     })
   })
 

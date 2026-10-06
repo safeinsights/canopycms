@@ -80,7 +80,7 @@ describe('CanopyEditor', () => {
     // First collection is now the content root, posts is a child
     expect(props?.collections?.[0]?.path).toBe('content')
     expect(props?.collections?.[0]?.children?.[0]?.path).toBe('content/posts')
-    expect(props?.previewBaseByCollection?.['content/posts']).toBe('/blog')
+    expect(props?.previewBaseByCollection).toEqual({ 'content/posts': '/blog' })
     expect(props?.previewPrefix).toBe('/preview')
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })

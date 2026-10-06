@@ -494,7 +494,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — rich-text editor, JSX elements included; unparseable bodies open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; unparseable bodies open as source
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
@@ -1225,7 +1225,7 @@ editor: {
 }
 ```
 
-**Preview URLs.** The pane loads each entry's route (collection path plus slug) with `?branch=`. `previewBase` remaps a collection, or a root entry keyed `'<contentRoot>/<slug>'`. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` gets only the slug and branch; an absolute prefix skips `basePath`.
+**Preview URLs.** The pane loads each entry's `urlPath` with `?branch=`. `previewBase` overrides it by a root entry's path (the whole route), else collection path or name (plus the slug); `false` means no page, and the pane says so. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` skips the prefix, `basePath` and `trailingSlash`; an absolute prefix skips `basePath`.
 
 ### Custom Field Renderers
 

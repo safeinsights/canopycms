@@ -1,15 +1,9 @@
 'use client'
 
 /**
- * JSX support for MarkdownField's MDXEditor. Imported only from inside
- * MarkdownField's `React.lazy` loader, so `@mdxeditor/editor` stays out of the
- * initial editor chunk.
- *
- * MDXEditor parses JSX tags in every document, but without a visitor for a
- * tag it rejects the whole document and from then on suppresses `onChange`.
- * The catch-all descriptor here gives every tag a visitor; the guard plugin
- * turns the cases MDXEditor would otherwise lose without an error into the
- * `onError` that MarkdownField answers with its source editor.
+ * MarkdownField's MDXEditor plugins: a catch-all JSX editor, and a guard that
+ * turns what MDXEditor would lose without an error into `onError`. Imported only
+ * from MarkdownField's lazy loader, keeping MDXEditor out of the first chunk.
  */
 
 import React from 'react'
@@ -35,7 +29,6 @@ function childrenOf(node: MdastNode): MdastNode[] {
   return 'children' in node && Array.isArray(node.children) ? node.children : []
 }
 
-/** Renders one JSX attribute as source text, e.g. `type="info"` or `count={…}`. */
 function describeAttribute(attribute: MdastJsx['attributes'][number]): string {
   if (attribute.type === 'mdxJsxExpressionAttribute') return '{…}'
   if (attribute.value === null || attribute.value === undefined) return attribute.name
@@ -44,10 +37,9 @@ function describeAttribute(attribute: MdastJsx['attributes'][number]): string {
 }
 
 /**
- * Edits the children of any JSX element, and shows its tag and attributes
- * read-only; attributes are edited in source mode.
- * Whether the nested editor is block or inline follows the parsed node, because
- * one `*` descriptor serves both, and a block editor rejects inline children.
+ * Shows an element's tag and attributes read-only (they are edited as source)
+ * and edits its children, inline or block per the parsed node: one `*`
+ * descriptor serves both, and a block editor rejects inline children.
  */
 const CatchAllJsxEditor: React.FC<JsxEditorProps> = ({ mdastNode }) => {
   const inline = mdastNode.type === 'mdxJsxTextElement'
@@ -86,11 +78,8 @@ const isStringAttribute = (attribute: JsxAttribute, name: string) =>
   attribute.name === name &&
   typeof attribute.value === 'string'
 
-/**
- * Whether MDXEditor's export throws on this element: it merges an HTML
- * element's only child, when that is a `span`, into the element, splitting
- * `className` and `style` values it assumes are strings on both.
- */
+// MDXEditor's export merges an HTML element's lone `span` child into it, and
+// throws if either one's `className` or `style` is not a string.
 function breaksSpanCollapse(node: MdastJsx): boolean {
   const [onlyChild, ...rest] = node.children
   if (rest.length > 0 || onlyChild === undefined) return false
@@ -107,10 +96,9 @@ function breaksSpanCollapse(node: MdastJsx): boolean {
 }
 
 /**
- * Whether MDXEditor's image plugin writes this `<img>` back unchanged. It drops
- * an `<img>` with no `src`, keeps only string attribute values, sets the
- * attributes it does not model through the DOM (which lowercases their names),
- * and parses `width` and `height` as integers.
+ * MDXEditor's image plugin drops an `<img>` with no `src`, keeps only string
+ * values, lowercases the attribute names it does not model, and parses width
+ * and height as integers.
  */
 function roundTripsImage(node: MdastJsx): boolean {
   return (
@@ -125,11 +113,8 @@ function roundTripsImage(node: MdastJsx): boolean {
   )
 }
 
-/**
- * Why MDXEditor cannot round-trip this JSX element itself, or null if it can.
- * A fragment has no name, and MDXEditor's HTML handling throws a `TypeError` on
- * a nameless element.
- */
+// Why MDXEditor cannot round-trip this JSX element, or null if it can. A
+// fragment has no name, which MDXEditor's HTML handling throws on.
 function unsupportedJsx(node: MdastNode): string | null {
   if (!isMdastJsxNode(node)) return null
   if (node.name === null) return 'fragments (<>…</>)'
@@ -148,20 +133,12 @@ const ESM_NODE_TYPE: string = 'mdxjsEsm'
 const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
 
 /**
- * Raises, at document import, what MDXEditor would otherwise lose, corrupt or
- * crash on without reporting it:
- *
- * - `import`/`export` lines: the JSX plugin's visitor for them is a no-op, so
- *   the next edit drops them.
- * - Content with no import visitor inside a JSX element or a table: their
- *   children are imported later, by nested editors, whose failures go to
- *   `console.error` and leave the element partly imported; editing it then
- *   writes the partial children back.
- * - JSX elements `unsupportedJsx` rejects, wherever it looks.
- *
- * It throws MDXEditor's own `UnrecognizedMarkdownConstructError`, one of the
- * two error classes its import catches and reports through `onError`; any other
- * error escapes the import and crashes the editor.
+ * Reports through `onError`, at import, what MDXEditor would otherwise lose
+ * silently: `import`/`export` lines (its visitor for them is a no-op), elements
+ * `unsupportedJsx` rejects, and content with no visitor inside a JSX element or
+ * table, whose children nested editors import later, only logging a failure and
+ * writing partial children back on edit. It throws an error class MDXEditor's
+ * import reports; any other error would crash the editor.
  */
 const roundTripGuardPlugin = realmPlugin({
   init(realm) {
@@ -211,7 +188,6 @@ const roundTripGuardPlugin = realmPlugin({
   },
 })
 
-/** The plugins that let MarkdownField's MDXEditor load and edit any JSX element. */
 export function mdxJsxPlugins() {
   return [jsxPlugin({ jsxComponentDescriptors: [catchAllJsxDescriptor] }), roundTripGuardPlugin()]
 }

@@ -251,6 +251,22 @@ describe('branch api', () => {
     expect(res.data?.branch.name).toBe('feature/test')
   })
 
+  it('returns the created branch as a list item carrying the server-computed flags', async () => {
+    const res = await createBranch(
+      baseCtx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/test') },
+    )
+    expect(res.ok).toBe(true)
+    expect(res.data?.branch).toMatchObject({
+      name: 'feature/test',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    })
+  })
+
   it('rejects branch creation when user has no path access', async () => {
     // Mock permissions loaded from JSON file
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([

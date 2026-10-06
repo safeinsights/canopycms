@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { notifications } from '@mantine/notifications'
 import { useBranchActions } from './useBranchActions'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import {
@@ -39,12 +40,14 @@ describe('useBranchActions', () => {
   const mockIsAnyDirty = vi.fn(() => false)
   const mockOnReloadBranches = vi.fn().mockResolvedValue(undefined)
   const mockOnBranchSwitch = vi.fn()
+  const mockOnBranchCreated = vi.fn()
 
   const defaultOptions = {
     branchName: 'main',
     setBranchName: mockSetBranchName,
     isAnyDirty: mockIsAnyDirty,
     onReloadBranches: mockOnReloadBranches,
+    onBranchCreated: mockOnBranchCreated,
     onBranchSwitch: mockOnBranchSwitch,
   }
 
@@ -58,6 +61,7 @@ describe('useBranchActions', () => {
     mockIsAnyDirty.mockReturnValue(false)
     mockOnReloadBranches.mockClear()
     mockOnBranchSwitch.mockClear()
+    mockOnBranchCreated.mockClear()
   })
 
   afterEach(() => {
@@ -185,6 +189,124 @@ describe('useBranchActions', () => {
     })
     expect(mockOnReloadBranches).toHaveBeenCalled()
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
+  })
+
+  it('switches to the created branch without waiting for the branch reload', async () => {
+    // The reload may take a long time (a listing served by another container can lag);
+    // the switch must not depend on it settling.
+    mockOnReloadBranches.mockReturnValueOnce(new Promise<void>(() => {}))
+    const createdBranch = {
+      name: 'new-branch',
+      status: 'editing' as const,
+      access: { allowedUsers: [], allowedGroups: [] },
+      createdBy: 'user1',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    }
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branch: createdBranch },
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: boolean | undefined
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toBe(true)
+    expect(mockOnReloadBranches).toHaveBeenCalledTimes(1)
+    expect(mockOnBranchCreated).toHaveBeenCalledWith(createdBranch)
+    expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
+    expect(mockOnBranchSwitch).toHaveBeenCalledWith('new-branch')
+    const calls = (window.history.replaceState as any).mock.calls
+    expect(calls.some((call: any) => call[2].includes('branch=new-branch'))).toBe(true)
+  })
+
+  it('reports a failed create without switching or registering a branch', async () => {
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      error: 'boom',
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: boolean | undefined
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toBe(false)
+    expect(notifications.show).toHaveBeenCalledWith({ message: 'boom', color: 'red' })
+    expect(mockOnBranchCreated).not.toHaveBeenCalled()
+    expect(mockSetBranchName).not.toHaveBeenCalled()
+    expect(mockOnBranchSwitch).not.toHaveBeenCalled()
+  })
+
+  it('returns false without creating when the user declines the dirty check', async () => {
+    const { modals } = await import('@mantine/modals')
+    mockIsAnyDirty.mockReturnValue(true)
+    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
+      config.onCancel()
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: boolean | undefined
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toBe(false)
+    expect(mockClient.branches.create).not.toHaveBeenCalled()
+  })
+
+  it('returns false when the dirty-check modal is dismissed by Escape or the overlay', async () => {
+    const { modals } = await import('@mantine/modals')
+    mockIsAnyDirty.mockReturnValue(true)
+    // Mantine fires only onClose for these exits, never onCancel.
+    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+      config.onClose?.()
+      return 'modal-id'
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: boolean | undefined
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toBe(false)
+    expect(mockClient.branches.create).not.toHaveBeenCalled()
+  })
+
+  it('creates when the dirty check is confirmed, despite the close that follows the confirm', async () => {
+    const { modals } = await import('@mantine/modals')
+    mockIsAnyDirty.mockReturnValue(true)
+    // Mantine closes the modal right after calling onConfirm.
+    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+      config.onConfirm?.()
+      config.onClose?.()
+      return 'modal-id'
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: boolean | undefined
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toBe(true)
+    expect(mockClient.branches.create).toHaveBeenCalledTimes(1)
   })
 
   it('adopts the server-sanitized branch name after create', async () => {

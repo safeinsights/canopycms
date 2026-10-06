@@ -121,7 +121,7 @@ export async function fetchEntriesAndSchema(
       entries: allEntries,
       pagination: { hasMore: false, limit: ENTRIES_PAGE_LIMIT },
     },
-    resolvePreviewSrc: (entry) => params.resolvePreviewSrc(entry) ?? '',
+    resolvePreviewSrc: params.resolvePreviewSrc,
     flatSchema: hydratedFlatSchema,
   })
 

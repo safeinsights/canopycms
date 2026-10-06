@@ -40,7 +40,6 @@ export interface UseEntryManagerOptions {
   initialSelectedId?: string
   branchName: string
   collections?: EditorCollection[]
-  previewBaseByCollection?: Record<string, string>
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
   setBusy: (busy: boolean) => void
 }

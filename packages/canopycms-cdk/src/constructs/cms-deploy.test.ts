@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { CfnElement, Duration, Fn, Stack, Token } from 'aws-cdk-lib'
-import { Template, Match } from 'aws-cdk-lib/assertions'
+import { Annotations, Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { Manifest } from 'aws-cdk-lib/cloud-assembly-schema'
 import { AssetManifestArtifact } from 'aws-cdk-lib/cx-api'
@@ -16,7 +16,12 @@ import {
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
-import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
+import {
+  CanopyCmsService,
+  DEFAULT_CMS_LAMBDA_TIMEOUT,
+  DEFAULT_CMS_RESERVED_CONCURRENCY,
+  MIN_CMS_RESERVED_CONCURRENCY,
+} from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
@@ -164,6 +169,77 @@ describe('CanopyCmsService deploy blockers', () => {
     const urls = template.findResources('AWS::Lambda::Url')
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).not.toBe('NONE')
+    }
+  })
+})
+
+describe('CanopyCmsService reserved concurrency', () => {
+  function synthStack(overrides: Partial<CanopyCmsServiceProps> = {}): Stack {
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      ...overrides,
+    })
+    return stack
+  }
+  const LOW_CONCURRENCY_WARNING = Match.stringLikeRegexp('reservedConcurrency is \\d+')
+
+  it('defaults to a cap one cold editor load fits under, with room to spare', () => {
+    expect(DEFAULT_CMS_RESERVED_CONCURRENCY).toBeGreaterThanOrEqual(
+      2 * MIN_CMS_RESERVED_CONCURRENCY,
+    )
+    const stack = synthStack()
+    Template.fromStack(stack).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        PackageType: 'Image',
+        ReservedConcurrentExecutions: DEFAULT_CMS_RESERVED_CONCURRENCY,
+      }),
+    )
+    Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
+  })
+
+  it('passes an explicit value through', () => {
+    Template.fromStack(synthStack({ reservedConcurrency: 75 })).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ PackageType: 'Image', ReservedConcurrentExecutions: 75 }),
+    )
+  })
+
+  it('warns at synth when the cap is below what one cold editor load fans out to', () => {
+    const stack = synthStack({ reservedConcurrency: MIN_CMS_RESERVED_CONCURRENCY - 1 })
+    Annotations.fromStack(stack).hasWarning(
+      '*',
+      Match.stringLikeRegexp(`reservedConcurrency is ${MIN_CMS_RESERVED_CONCURRENCY - 1}\\b`),
+    )
+  })
+
+  it('does not warn at the minimum', () => {
+    const stack = synthStack({ reservedConcurrency: MIN_CMS_RESERVED_CONCURRENCY })
+    Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
+  })
+
+  it('neither the scaffold template nor the example pins a cap below the minimum', () => {
+    const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+    const PINNED = /reservedConcurrency:\s*(\d+)/g
+    // Positive control: an absence of low values proves nothing if the pattern
+    // cannot see a pinned one at all.
+    expect([...'reservedConcurrency: 10,'.matchAll(PINNED)].map((m) => Number(m[1]))).toEqual([10])
+    for (const relative of [
+      'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
+      'examples/aws-deployment/infrastructure/lib/cms-stack.ts',
+    ]) {
+      const source = readFileSync(path.join(repoRoot, relative), 'utf-8')
+      for (const match of source.matchAll(PINNED)) {
+        expect(Number(match[1]), relative).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
+      }
     }
   })
 })
