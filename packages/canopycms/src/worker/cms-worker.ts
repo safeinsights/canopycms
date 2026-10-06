@@ -21,6 +21,7 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
+import { ensureRemoteGitConfig } from './remote-git-maintenance'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
@@ -601,6 +602,18 @@ export class CmsWorker {
   }
 
   /**
+   * Best-effort: without these settings remote.git still works, and a boot that
+   * cannot write its own config has a louder problem to report elsewhere.
+   */
+  private async applyRemoteGitConfig(gitDir: string): Promise<void> {
+    try {
+      await ensureRemoteGitConfig(gitDir)
+    } catch (err) {
+      workerLogWarn(`Could not apply remote.git config in ${gitDir}: ${getErrorMessage(err)}`)
+    }
+  }
+
+  /**
    * Ensure the remote.git bare repo exists, cloning it from GitHub on first
    * run.
    *
@@ -641,6 +654,7 @@ export class CmsWorker {
           `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
         )
       }
+      await this.applyRemoteGitConfig(this.remoteGitPath)
       return // Already exists and has the base branch
     }
 
@@ -664,6 +678,7 @@ export class CmsWorker {
       await this.scrubPersistedRemote(stagingPath)
 
       await this.verifyBaseBranchExists(stagingPath)
+      await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
       workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
       // Deleting before throwing is what makes this recoverable: the next

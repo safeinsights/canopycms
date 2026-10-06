@@ -28,6 +28,7 @@ import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
+import { maintainRemoteGit } from './remote-git-maintenance'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -35,7 +36,8 @@ import type { WorkerContext } from './worker-context'
  * slower of the worker's two poll loops (default 5 minutes, against the task
  * queue's 5 seconds).
  *
- * One cycle, in order: fetch every GitHub branch into the tracking namespace,
+ * One cycle, in order: repack `remote.git` when it needs it
+ * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
  * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`),
  * push this deployment's own settings branch, fast-forward the base branch's
  * workspace, rebase every branch that is behind it (rebase.ts), then sweep old
@@ -416,6 +418,14 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   // mask the real error on a failed one. Failures rethrow, so scheduleLoop's
   // per-cycle catch stays the loud path.
   try {
+    // Best-effort and ahead of the GitHub fetch, so a GitHub outage
+    // never stalls upkeep and a failed repack never costs the cycle.
+    try {
+      await maintainRemoteGit(ctx.remoteGitPath)
+    } catch (err) {
+      workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
+    }
+
     // Direct URL (no named remote), into the GITHUB_TRACKING_REF_PREFIX
     // remote-tracking namespace rather than refs/heads/* -- see that constant's
     // doc comment for the destructive-fetch bug this avoids. Raw git, because
