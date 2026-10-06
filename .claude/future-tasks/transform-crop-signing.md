@@ -48,9 +48,8 @@ objects nobody will ever request twice.
    10^12, one constant, invisible to callers (0.1% of a dimension ≈ 4px on a
    4096px image). 2 decimals would give 10^8 but at 1% granularity, which a
    careful editor crop would notice. Cheap, partial, and composes with (1).
-   Safe for already-published URLs: the parser still *accepts* 4 decimals and
-   quantizes, and the handler already redirects a non-canonical path to the
-   canonical key.
+   Safe for already-published URLs: the parser accepts any number of crop
+   decimals, and the transform Lambda 301s each to its rounded canonical path.
 3. **Accept it**, on the grounds that the cost is now capped. Record the
    decision so a later review does not re-report it as live.
 

@@ -190,6 +190,14 @@ version, media-storage state) and warns when API and worker versions differ.
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
 
+### `assetUrl` applies an image value's crop — **behaviour change for cropped images**
+
+**What changed.** `assetUrl`/`assetSrcSet` apply an `image` value's `crop`; `opts.crop` overrides.
+
+**To adopt.** Scale `<img>` `width`/`height` by `crop.w`/`crop.h`.
+
+**Now deletable.** Copying `value.crop` into `opts.crop`.
+
 ### Every field type shows its `description`
 
 **What changed.** A field's `description` renders under its label for every type, not only inline

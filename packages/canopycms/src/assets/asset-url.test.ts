@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import type { ImageFieldValue } from '../config/types'
 import { assetSrcSet, assetUrl } from './asset-url'
 
 const HASH32 = 'a'.repeat(32)
@@ -98,6 +99,49 @@ describe('assetUrl - transform srcs', () => {
   it('returns a malformed transform-looking src unchanged rather than throwing', () => {
     const malformed = `/assets/t/nonsense/${HASH32}/photo.png`
     expect(assetUrl({ src: malformed }, { width: 320 })).toBe(malformed)
+  })
+})
+
+describe('assetUrl - the ref carries a crop', () => {
+  const crop = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 }
+  const cropDirective = 'c=0.1000:0.2000:0.5000:0.2500'
+
+  it('applies ref.crop by default, so an image field value renders its crop', () => {
+    const value: ImageFieldValue = { src: identitySrc, alt: '', crop }
+    expect(assetUrl(value, { width: 320 })).toBe(
+      `/assets/t/${cropDirective},w=320/${HASH32}/photo.png`,
+    )
+  })
+
+  it('opts.crop overrides ref.crop', () => {
+    const url = assetUrl({ src: identitySrc, crop }, { crop: { x: 0, y: 0, w: 1, h: 0.5 } })
+    expect(url).toBe(`/assets/t/c=0.0000:0.0000:1.0000:0.5000/${HASH32}/photo.png`)
+  })
+
+  it('ref.crop overrides a crop already in src, and other src directives still merge', () => {
+    const src = `/assets/t/c=0.0000:0.0000:1.0000:1.0000,q=80/${HASH32}/photo.png`
+    expect(assetUrl({ src, crop }, { width: 640 })).toBe(
+      `/assets/t/${cropDirective},q=80,w=640/${HASH32}/photo.png`,
+    )
+  })
+
+  it('keeps the crop already in src when the ref carries none', () => {
+    const src = `/assets/t/${cropDirective}/${HASH32}/photo.png`
+    expect(assetUrl({ src }, { width: 640 })).toBe(
+      `/assets/t/${cropDirective},w=640/${HASH32}/photo.png`,
+    )
+  })
+
+  it('applies ref.crop to every srcset entry', () => {
+    expect(assetSrcSet({ src: identitySrc, crop }, [320, 640])).toBe(
+      `/assets/t/${cropDirective},w=320/${HASH32}/photo.png 320w, ` +
+        `/assets/t/${cropDirective},w=640/${HASH32}/photo.png 640w`,
+    )
+  })
+
+  it('emits a crop the parser accepts even when rounding would overflow the frame', () => {
+    const url = assetUrl({ src: identitySrc, crop: { x: 0.66665, y: 0, w: 0.33335, h: 1 } })
+    expect(url).toBe(`/assets/t/c=0.6667:0.0000:0.3333:1.0000/${HASH32}/photo.png`)
   })
 })
 

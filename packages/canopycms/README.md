@@ -633,7 +633,9 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   />
   ```
 
-  SVGs and PDFs are served statically, with no transform.
+  Passing an `image` field value applies its stored crop (`opts.crop` overrides it). Its `width`
+  and `height` are the uncropped original's, so scale them by `crop.w` and `crop.h` for a cropped
+  value. SVGs and PDFs are served statically, with no transform.
 
 - **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets
   stored in content and content moves between branches and environments. If your renderer sees

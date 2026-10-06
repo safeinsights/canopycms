@@ -1153,7 +1153,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 />
 ```
 
-**`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a directive rather than a derived file. Declare an `aspect` on the field (`'16:9'`, `'1:1'`) to enable the interactive crop step, and `altOptional: true` for decorative images.
+**`image` fields** hold `{ src, alt, width, height, crop? }`: alt text is enforced, and a crop is a directive, not a derived file. Passing the value to `assetUrl`/`assetSrcSet` applies its crop (`opts.crop` overrides). `width`/`height` are the uncropped original's; scale them by `crop.w`/`crop.h`. Declare an `aspect` (`'16:9'`, `'1:1'`) to enable the crop step, and `altOptional: true` for decorative images.
 
 **Permissions** — any authenticated editor can upload and list assets. Deleting one from the library requires being an admin **or** the uploader, and removes only the library record; existing content references keep resolving.
 

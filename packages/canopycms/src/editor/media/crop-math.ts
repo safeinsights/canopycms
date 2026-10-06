@@ -7,7 +7,7 @@
  * without pulling in the cropper UI library.
  */
 
-import { isValidCropRect, type CropRect } from '../../assets/transform-directives'
+import { isValidCropRect, roundCropRect, type CropRect } from '../../assets/transform-directives'
 
 /** react-easy-crop's `Area` shape, expressed in percentages (0..100). */
 export interface CropAreaPercent {
@@ -17,14 +17,6 @@ export interface CropAreaPercent {
   height: number
 }
 
-/** Matches transform-directives.ts's CROP_PRECISION so a crop rect round-trips through the URL directive unchanged. */
-const CROP_PRECISION = 4
-
-function roundTo(value: number, decimals: number): number {
-  const factor = 10 ** decimals
-  return Math.round(value * factor) / factor
-}
-
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
   return Math.min(1, Math.max(0, value))
@@ -32,25 +24,21 @@ function clamp01(value: number): number {
 
 /**
  * Convert react-easy-crop's `onCropComplete(croppedArea, croppedAreaPixels)`
- * percentage area into a normalized `CropRect`, rounded to 4 decimals and
- * clamped to fit within bounds. Rounding can push `x+w`/`y+h` a hair over 1
- * (e.g. x=0.6667, w=0.3334 -> 1.0001) - shrink the extent to the remaining
- * space rather than reject a rect that was valid before rounding.
+ * percentage area into a normalized `CropRect`, clamped to [0,1] and then
+ * rounded by `roundCropRect` — the same rounding the transform URL's canonical
+ * form applies, so the stored crop is already canonical.
  *
  * Returns `null` if the input can't be coerced into a valid rect (e.g. a
  * zero-area selection).
  */
 export function cropAreaPercentToRect(area: CropAreaPercent): CropRect | null {
-  const x = roundTo(clamp01(area.x / 100), CROP_PRECISION)
-  const y = roundTo(clamp01(area.y / 100), CROP_PRECISION)
-  let w = roundTo(clamp01(area.width / 100), CROP_PRECISION)
-  let h = roundTo(clamp01(area.height / 100), CROP_PRECISION)
-
-  if (x + w > 1) w = roundTo(1 - x, CROP_PRECISION)
-  if (y + h > 1) h = roundTo(1 - y, CROP_PRECISION)
-
-  if (!isValidCropRect(x, y, w, h)) return null
-  return { x, y, w, h }
+  const rect = roundCropRect({
+    x: clamp01(area.x / 100),
+    y: clamp01(area.y / 100),
+    w: clamp01(area.width / 100),
+    h: clamp01(area.height / 100),
+  })
+  return isValidCropRect(rect.x, rect.y, rect.w, rect.h) ? rect : null
 }
 
 /**

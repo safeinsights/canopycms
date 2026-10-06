@@ -210,6 +210,23 @@ describe('validateEntryData - image fields', () => {
     expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
   })
 
+  it('rejects a crop rect that rounds to zero extent, which its transform URL could not carry', () => {
+    for (const crop of [
+      { x: 0, y: 0, w: 0.00004, h: 1 },
+      { x: 0.99996, y: 0, w: 0.00004, h: 1 },
+    ]) {
+      const errors = validateEntryData(imageSchema, { hero: { src: '/x.jpg', alt: 'x', crop } })
+      expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
+    }
+  })
+
+  it('accepts an over-precision crop rect that survives rounding', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: { src: '/x.jpg', alt: 'x', crop: { x: 0.123456, y: 0, w: 0.5, h: 0.25 } },
+    })
+    expect(errors).toEqual([])
+  })
+
   it('rejects a crop rect with a non-positive w/h', () => {
     const errors = validateEntryData(imageSchema, {
       hero: { src: '/x.jpg', alt: 'x', crop: { x: 0, y: 0, w: 0, h: 0.5 } },

@@ -6,13 +6,16 @@
  *
  * Reuses the SAME transform engine as the dev-mode `/assets/t/*` emulation
  * (`packages/canopycms/src/api/assets.ts`'s `serveLazyTransform`) via
- * `canopycms/server`'s `parseTransformPath`/`formatDirectives`/`applyTransform`
- * re-exports - this file must NEVER reimplement directive parsing or the sharp
- * pipeline, only the S3/Lambda-specific plumbing around them. See
+ * `canopycms/server`'s `canonicalizeTransformPath`/`applyTransform` re-exports
+ * - this file must NEVER reimplement directive parsing or the sharp pipeline,
+ * only the S3/Lambda-specific plumbing around them. See
  * `serveLazyTransform` for the shared flow's rationale.
  *
- * Two orderings here are prod-specific and load-bearing:
+ * Three orderings here are prod-specific and load-bearing:
  *
+ * - A non-canonical spelling is answered with a cacheable 301 to the canonical
+ *   path before any S3 read, so a distinct spelling costs a redirect that
+ *   CloudFront caches, never a transform.
  * - The transformed bytes are written to S3 under the CANONICAL key BEFORE the
  *   response is built, so the object exists for CloudFront's next request even
  *   if this response never reaches the viewer.
@@ -36,8 +39,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from '
 import {
   applyTransform,
   ASSET_PREFIXES,
-  formatDirectives,
-  parseTransformPath,
+  canonicalizeTransformPath,
   type AssetMeta,
 } from 'canopycms/server'
 import { getErrorMessage } from 'canopycms/utils/error'
@@ -154,6 +156,17 @@ function inlineImageResponse(
   }
 }
 
+function redirectPermanent(location: string): APIGatewayProxyStructuredResultV2 {
+  return {
+    statusCode: 301,
+    headers: {
+      location,
+      'cache-control': TRANSFORM_CACHE_CONTROL,
+    },
+    body: '',
+  }
+}
+
 function redirectNoStore(location: string): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode: 302,
@@ -174,9 +187,13 @@ async function handleTransformRequest(
   }
 
   const segments = rawPath.slice(TRANSFORM_URL_PREFIX.length).split('/')
-  const parsed = parseTransformPath(segments)
+  const parsed = canonicalizeTransformPath(segments)
   if (!parsed.ok) {
     return errorResponse(400, parsed.error)
+  }
+  // Safe to cache for a year: the canonical path canonicalizes to itself, so it never 301s again.
+  if (!parsed.isCanonical) {
+    return redirectPermanent(`${TRANSFORM_URL_PREFIX}${parsed.canonicalPath}`)
   }
 
   const meta = await readMeta(parsed.hash32)
@@ -225,7 +242,7 @@ async function handleTransformRequest(
     return errorResponse(transformed.status, transformed.error)
   }
 
-  const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`
+  const canonicalKey = `${ASSET_PREFIXES.transform}/${parsed.canonicalPath}`
   await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
@@ -240,14 +257,6 @@ async function handleTransformRequest(
     return inlineImageResponse(transformed.data, transformed.contentType)
   }
 
-  // Redirect to the CANONICAL key just written above, NOT `rawPath`. For a
-  // non-canonically-ordered directive request the two differ, and the canonical
-  // key is what actually exists in S3 - redirecting back to `rawPath` would have
-  // CloudFront re-miss that path forever, re-invoking this Lambda on every hit
-  // instead of ever landing a cache hit. URLs canopycms itself generates are
-  // always canonically ordered (`assets/asset-url.ts`'s `assetUrl()` formats
-  // through the same `formatDirectives`), so only a hand-crafted request
-  // reaches this case at all.
   return redirectNoStore(`/${canonicalKey}`)
 }
 

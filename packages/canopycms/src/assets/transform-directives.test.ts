@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  canonicalizeTransformPath,
   formatDirectives,
   isAllowedTransformWidth,
   isValidCropRect,
   parseTransformPath,
+  roundCropRect,
   IDENTITY_TRANSFORM_DIRECTIVE,
   type TransformDirectives,
 } from './transform-directives'
@@ -150,6 +152,89 @@ describe('parseTransformPath - canonicalization', () => {
   it('falls back to identity when formatDirectives receives an all-empty ResizeDirectives', () => {
     const empty: TransformDirectives = { identity: false }
     expect(formatDirectives(empty)).toBe(IDENTITY_TRANSFORM_DIRECTIVE)
+  })
+})
+
+describe('canonicalizeTransformPath', () => {
+  it('reports an already-canonical path as canonical, unchanged', () => {
+    const result = canonicalizeTransformPath([
+      'c=0.1000:0.0000:0.5000:0.5000,w=320',
+      HASH32,
+      'p.png',
+    ])
+    expect(result).toMatchObject({
+      ok: true,
+      isCanonical: true,
+      canonicalPath: `c=0.1000:0.0000:0.5000:0.5000,w=320/${HASH32}/p.png`,
+    })
+  })
+
+  it('reorders directives into canonical order', () => {
+    const result = canonicalizeTransformPath(['w=320,f=webp', HASH32, 'p.webp'])
+    expect(result).toMatchObject({
+      ok: true,
+      isCanonical: false,
+      canonicalPath: `f=webp,w=320/${HASH32}/p.webp`,
+    })
+  })
+
+  it('rounds an over-precision crop, and returns the rounded directives rather than the requested ones', () => {
+    const result = canonicalizeTransformPath(['c=0.123456:0:0.5:0.25', HASH32, 'p.png'])
+    if (!result.ok) throw new Error(result.error)
+    expect(result.isCanonical).toBe(false)
+    expect(result.canonicalPath).toBe(`c=0.1235:0.0000:0.5000:0.2500/${HASH32}/p.png`)
+    expect(result.directives).toEqual({
+      identity: false,
+      crop: { x: 0.1235, y: 0, w: 0.5, h: 0.25 },
+      format: undefined,
+      quality: undefined,
+      width: undefined,
+    })
+  })
+
+  it('rejects a crop that rounds to zero extent', () => {
+    expect(canonicalizeTransformPath(['c=0:0:0.00001:1', HASH32, 'p.png']).ok).toBe(false)
+  })
+
+  it('passes a parse failure through', () => {
+    expect(canonicalizeTransformPath(['w=321', HASH32, 'p.png']).ok).toBe(false)
+  })
+
+  it('is idempotent: every canonical path canonicalizes to itself, so a redirect to it never redirects again', () => {
+    const step = 1e-4
+    const raws = ['0.1', '0.66665', '0.33335', '0.123456', '0.99995', '0.00005', '0.5']
+    for (const x of raws) {
+      for (const w of raws) {
+        if (Number(x) + Number(w) > 1) continue
+        const first = canonicalizeTransformPath([`c=${x}:0:${w}:1,w=320`, HASH32, 'p.png'])
+        if (!first.ok) {
+          expect(Number(w)).toBeLessThan(step)
+          continue
+        }
+        const again = canonicalizeTransformPath(first.canonicalPath.split('/'))
+        expect(again).toMatchObject({ ok: true, isCanonical: true })
+      }
+    }
+  })
+})
+
+describe('roundCropRect', () => {
+  it('rounds each value to 4 decimals', () => {
+    expect(roundCropRect({ x: 0.123456, y: 0.2, w: 0.333333, h: 0.5 })).toEqual({
+      x: 0.1235,
+      y: 0.2,
+      w: 0.3333,
+      h: 0.5,
+    })
+  })
+
+  it('shrinks w and h to the space left when rounding pushes an edge past 1', () => {
+    expect(roundCropRect({ x: 0.66665, y: 0.66665, w: 0.33335, h: 0.33335 })).toEqual({
+      x: 0.6667,
+      y: 0.6667,
+      w: 0.3333,
+      h: 0.3333,
+    })
   })
 })
 

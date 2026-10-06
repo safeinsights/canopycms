@@ -102,12 +102,18 @@ export const MAX_ANIMATED_FRAMES = 60
 // Quality is allowlisted (multiples of 5 in [30, 95] - 14 values) for the
 // same cache-stuffing reason as width: every accepted directive combination
 // becomes a stored cache object in prod, so unbounded q would multiply the
-// per-asset variant space by 100. Crop remains the one effectively unbounded
-// dimension (editor rects need float precision) - prod mitigation (rate
-// limiting / signed crops) is tracked in the design record for the CDK PR.
+// per-asset variant space by 100. Crop stays effectively unbounded (editor
+// rects need float precision); the public path's answer to that is
+// .claude/future-tasks/image-materialization-epic.md.
 const MIN_QUALITY = 30
 const MAX_QUALITY = 95
 const QUALITY_STEP = 5
+
+/**
+ * Decimal places a crop value keeps in its canonical form. The editor rounds a
+ * new crop to this (editor/media/crop-math.ts), so a crop the editor stores is
+ * already canonical; a URL carrying more decimals canonicalizes to the rounded rect.
+ */
 const CROP_PRECISION = 4
 
 const HASH32_RE = /^[a-f0-9]{32}$/
@@ -189,6 +195,27 @@ function parseCrop(value: string): CropRect | null {
   if (nums.some((n) => n === null)) return null
   const [x, y, w, h] = nums as number[]
   if (!isValidCropRect(x, y, w, h)) return null
+  return { x, y, w, h }
+}
+
+function roundToCropPrecision(n: number): number {
+  const factor = 10 ** CROP_PRECISION
+  return Math.round(n * factor) / factor
+}
+
+/**
+ * Round a crop rect to `CROP_PRECISION` decimals, shrinking `w`/`h` to the
+ * space left when rounding pushes `x+w` or `y+h` past 1 (0.66665 + 0.33335
+ * rounds to 0.6667 + 0.3334). The result can still be degenerate (a `w` or `h`
+ * that rounds to 0), which `isValidCropRect` rejects.
+ */
+export function roundCropRect(rect: CropRect): CropRect {
+  const x = roundToCropPrecision(rect.x)
+  const y = roundToCropPrecision(rect.y)
+  let w = roundToCropPrecision(rect.w)
+  let h = roundToCropPrecision(rect.h)
+  if (x + w > 1) w = roundToCropPrecision(1 - x)
+  if (y + h > 1) h = roundToCropPrecision(1 - y)
   return { x, y, w, h }
 }
 
@@ -314,7 +341,8 @@ export function parseTransformPath(segments: readonly string[]): ParseTransformP
 /**
  * Canonical string form of a directive set, so equivalent directive sets
  * (different key order, different float formatting) always map to the same
- * cache key. Order is fixed alphabetically by key: c, f, q, w.
+ * cache key. Order is fixed alphabetically by key: c, f, q, w, and crop is
+ * rounded by `roundCropRect`.
  */
 export function formatDirectives(directives: TransformDirectives): string {
   if (directives.identity) {
@@ -323,7 +351,7 @@ export function formatDirectives(directives: TransformDirectives): string {
 
   const parts: string[] = []
   if (directives.crop) {
-    const { x, y, w, h } = directives.crop
+    const { x, y, w, h } = roundCropRect(directives.crop)
     parts.push(
       `c=${formatUnitFloat(x)}:${formatUnitFloat(y)}:${formatUnitFloat(w)}:${formatUnitFloat(h)}`,
     )
@@ -344,4 +372,41 @@ export function formatDirectives(directives: TransformDirectives): string {
   // could end up all-undefined - fall back to identity rather than emit an
   // empty directives segment.
   return parts.length > 0 ? parts.join(',') : IDENTITY_TRANSFORM_DIRECTIVE
+}
+
+export type CanonicalTransformPathResult =
+  | ({
+      readonly ok: true
+      /** `{directives}/{hash32}/{slug}.{ext}` in canonical form, without the `assets/t/` prefix. */
+      readonly canonicalPath: string
+      /** True when the requested segments already were `canonicalPath`, byte for byte. */
+      readonly isCanonical: boolean
+    } & ParsedTransformPath)
+  | { readonly ok: false; readonly error: string }
+
+/**
+ * Parse transform-path segments and resolve them to the one spelling their
+ * output is stored under. The returned `directives` are parsed back from that
+ * canonical spelling, never taken from the request, so a transform computed
+ * from them always matches its key. A crop that rounds to zero extent has no
+ * canonical spelling and is rejected.
+ */
+export function canonicalizeTransformPath(
+  segments: readonly string[],
+): CanonicalTransformPathResult {
+  const parsed = parseTransformPath(segments)
+  if (!parsed.ok) return parsed
+
+  const canonicalSegments = [
+    formatDirectives(parsed.directives),
+    parsed.hash32,
+    `${parsed.slug}.${parsed.ext}`,
+  ]
+  const canonical = parseTransformPath(canonicalSegments)
+  if (!canonical.ok) {
+    return err(`No valid form at ${CROP_PRECISION} crop decimals: ${canonical.error}`)
+  }
+
+  const canonicalPath = canonicalSegments.join('/')
+  return { ...canonical, canonicalPath, isCanonical: canonicalPath === segments.join('/') }
 }

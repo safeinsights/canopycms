@@ -79,7 +79,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
     authenticated request is never bounced onto the public path.
 - **Crops render.** `AssetRef` gains `crop?`, and `assetUrl`/`assetSrcSet` apply it by
   default (`opts.crop` still overrides). Fix the README examples.
-- **One crop-precision constant.** `editor/media/crop-math.ts` imports `CROP_PRECISION`
+- **One crop-precision constant.** `editor/media/crop-math.ts` shares `roundCropRect`
   instead of keeping its own.
 - **Stale comment.** The crop comment in `transform-directives.ts` points at a design
   record that no longer exists; point it here.

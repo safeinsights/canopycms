@@ -219,6 +219,15 @@ export type { ParsedTransformPath, ParseTransformPathResult } from './assets/tra
 export { formatDirectives } from './assets/transform-directives'
 
 /**
+ * Parse `assets/t/` path segments and resolve them to the canonical spelling their output is
+ * stored under, with directives re-parsed from that spelling. The prod transform Lambda 301s a
+ * non-canonical request to it; the dev-mode emulation serves the canonical bytes.
+ */
+export { canonicalizeTransformPath } from './assets/transform-directives'
+
+export type { CanonicalTransformPathResult } from './assets/transform-directives'
+
+/**
  * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
  * resize/format/quality/crop, EXIF stripped on every re-encode, identity included. Server-only
  * (sharp); reused unchanged by the dev-mode lazy `/assets/t/*` emulation and the prod transform

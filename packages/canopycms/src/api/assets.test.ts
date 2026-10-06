@@ -680,6 +680,50 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(await store.readPublicObject(nonCanonicalKey)).toBeNull()
   })
 
+  it('serves a non-canonical request the bytes already stored under its canonical key, without redirecting or transforming', async () => {
+    const canonicalKey = `assets/t/q=80,w=160/${rasterHash32}/photo.png`
+    const stored = new Uint8Array([1, 2, 3, 4])
+    await store.putPublicObject({ key: canonicalKey, data: stored, contentType: 'image/png' })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/w=160,q=80/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    if (!('body' in res)) throw new Error('expected a binary response')
+    expect(Buffer.from(res.body as Uint8Array).equals(Buffer.from(stored))).toBe(true)
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('transforms an over-precision crop with its rounded directives and stores it under the rounded key', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/c=0.123456:0:0.5:0.25/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    expect(transformModule.applyTransform).toHaveBeenCalledWith(expect.anything(), {
+      identity: false,
+      crop: { x: 0.1235, y: 0, w: 0.5, h: 0.25 },
+      format: undefined,
+      quality: undefined,
+      width: undefined,
+    })
+    expect(
+      await store.readPublicObject(
+        `assets/t/c=0.1235:0.0000:0.5000:0.2500/${rasterHash32}/photo.png`,
+      ),
+    ).not.toBeNull()
+  })
+
+  it('returns 400 for a crop that rounds to zero extent, without transforming', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/c=0:0:0.00001:1/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
   it('returns 400 on a directive parse failure', async () => {
     const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
       key: `assets/t/not-a-directive/${rasterHash32}/photo.png`,

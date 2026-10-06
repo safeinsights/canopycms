@@ -352,10 +352,10 @@ types should `import type` from `types.ts`.
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline
 - `svg-sanitizer.ts` — `sanitizeSvg` via `sanitize-html`
 - `asset-src.ts` — `assetSrc(meta)`, the always-root-relative URL that gets stored in content
-- `transform-directives.ts` — pure parser and formatter for transform URLs, plus the allowed-width rule
+- `transform-directives.ts` — transform-URL parser/formatter, allowed-width rule, `roundCropRect`, `canonicalizeTransformPath`
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
-- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `opts.baseUrl` is applied at render time only
+- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
 Transform URL shape, the stored-versus-rendered split, and which `baseUrl` is correct per topology
@@ -364,7 +364,7 @@ Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs Rendered 
 URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls). Adopter configuration is in
 [README.md](README.md#media-configuration).
 
-`assetUrl`, `assetSrcSet` and the transform types are re-exported from the package's main entry.
+`assetUrl`, `assetSrcSet` and the transform types are re-exported from the main entry; `canonicalizeTransformPath` from `canopycms/server`.
 
 ## Content Store
 
