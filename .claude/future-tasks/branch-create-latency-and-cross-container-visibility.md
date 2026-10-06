@@ -32,7 +32,11 @@ server-side halves remain, both reasoned from code rather than measured on a dep
 4. **Workflow actions on a just-created branch fail closed.** A successful submit, withdraw
    or request-changes drops the branch's overlay, so a lagging listing hides the branch (editor
    locked) until listings catch up. If the workflow endpoints returned the list-item shape, as
-   create now does, the editor could overlay the post-action copy instead.
+   create now does, the editor could overlay the post-action copy instead. System health's
+   admin actions (`markMerged`, purge, repair in `editor/admin/useSystemHealth.tsx`) neither
+   forget the overlay nor reload the branch list, so for a branch created in the same session
+   less than `CREATED_BRANCH_GRACE_MS` earlier the overlay keeps its pre-action copy; the
+   server's write guards still apply.
 
 ## Related
 
