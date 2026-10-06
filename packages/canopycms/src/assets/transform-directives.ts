@@ -114,7 +114,7 @@ const QUALITY_STEP = 5
  * new crop to this (editor/media/crop-math.ts), so a stored crop is already
  * canonical; a URL carrying more decimals canonicalizes to the rounded rect.
  */
-export const CROP_PRECISION = 4
+const CROP_PRECISION = 4
 
 const HASH32_RE = /^[a-f0-9]{32}$/
 const SLUG_RE = /^[a-z0-9-]+$/

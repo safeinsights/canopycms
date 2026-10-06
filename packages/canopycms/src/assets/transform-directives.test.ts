@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest'
 
 import {
   canonicalizeTransformPath,
-  CROP_PRECISION,
   formatDirectives,
   isAllowedTransformWidth,
   isValidCropRect,
@@ -202,7 +201,7 @@ describe('canonicalizeTransformPath', () => {
   })
 
   it('is idempotent: every canonical path canonicalizes to itself, so a redirect to it never redirects again', () => {
-    const step = 10 ** -CROP_PRECISION
+    const step = 1e-4
     const raws = ['0.1', '0.66665', '0.33335', '0.123456', '0.99995', '0.00005', '0.5']
     for (const x of raws) {
       for (const w of raws) {
@@ -220,7 +219,7 @@ describe('canonicalizeTransformPath', () => {
 })
 
 describe('roundCropRect', () => {
-  it('rounds each value to CROP_PRECISION decimals', () => {
+  it('rounds each value to 4 decimals', () => {
     expect(roundCropRect({ x: 0.123456, y: 0.2, w: 0.333333, h: 0.5 })).toEqual({
       x: 0.1235,
       y: 0.2,
