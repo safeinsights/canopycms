@@ -388,7 +388,7 @@ import config from '../canopycms.config'
 export default CanopyEditorPage(config)
 ```
 
-The editor loads entries on the client from `/api/canopycms/[branch]/entries`, so server prefetch is optional. Use `previewBaseByCollection` to control preview URLs per collection.
+The editor loads entries on the client from `/api/canopycms/[branch]/entries`, so server prefetch is optional. Use `editor.previewBase` to override preview URLs.
 
 6. **Theme it**
    Wrap editor surfaces with `CanopyCMSProvider` to load Mantine styles and customize `brand`/`primary`/`neutral`/`accent` colors and color scheme. Pass `themeOptions` into `Editor` if desired.
@@ -402,7 +402,7 @@ _TODO_ show real examples of what to do
 
 ### Preview branch awareness
 
-- When building preview URLs, include the current branch as a query param (e.g., `/?branch=feature-foo` or `/posts/hello?branch=feature-foo`) so SSR preview pages read from the same branch workspace the editor is editing. The `Editor` component appends the branch param automatically to `previewBaseByCollection`; your page loaders should read `searchParams.branch` and pass it as the `branch` option to `getCanopy()`'s `read`/`readByUrlPath`.
+- When building preview URLs, include the current branch as a query param (e.g., `/?branch=feature-foo` or `/posts/hello?branch=feature-foo`) so SSR preview pages read from the same branch workspace the editor is editing. The `Editor` component appends the branch param to the preview URLs it builds; your page loaders should read `searchParams.branch` and pass it as the `branch` option to `getCanopy()`'s `read`/`readByUrlPath`.
 - For public static builds, omit/ignore the branch param; this pattern is only for the editor/preview environment.
 - Likewise, include `branch` in your editor route (e.g., `/edit?branch=feature-foo`) and have your editor page pass it to `<Editor>` so reloads/links preserve the selected branch. The `Editor` will also reflect branch switches back into the query string.
 

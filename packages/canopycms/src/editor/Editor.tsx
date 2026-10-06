@@ -122,7 +122,8 @@ export interface EditorProps {
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
   onCreateEntry?: (collectionPath: LogicalPath) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
-  previewBaseByCollection?: Record<string, string>
+  /** `editor.previewBase` from config (see `buildPreviewSrc`); `false` marks entries with no page. */
+  previewBaseByCollection?: Record<string, string | false>
   /** `editor.previewPrefix` from config: put in front of every preview iframe `src` (see `buildPreviewSrc`). */
   previewPrefix?: string
   currentUser?: string
@@ -293,7 +294,6 @@ export const Editor: React.FC<EditorProps> = ({
     initialSelectedId,
     branchName: branchNameState,
     collections,
-    previewBaseByCollection,
     resolvePreviewSrc: (entry) =>
       buildPreviewSrc(entry, {
         branchName: branchNameState,
@@ -956,7 +956,9 @@ export const Editor: React.FC<EditorProps> = ({
             ? 'Setting up your branch workspace…'
             : entriesInitializing
               ? 'Loading content…'
-              : 'Select an item to start editing.'}
+              : currentEntry && !currentEntry.previewSrc
+                ? 'No preview for this entry.'
+                : 'Select an item to start editing.'}
         </Text>
       </Paper>
     )

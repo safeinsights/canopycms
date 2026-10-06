@@ -4,8 +4,8 @@ import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
-import { normalizeCollectionPath } from '../paths/normalize'
-import { isIndexSlug } from '../utils/entry-url'
+import { normalizeFilesystemPath } from '../paths/normalize'
+import { computeEntryUrl, isIndexSlug } from '../utils/entry-url'
 import { isDataOnlyFormat } from '../utils/format'
 import {
   isAbsoluteUrl,
@@ -14,30 +14,22 @@ import {
   readTrailingSlashEnv,
   stripTrailingSlashes,
 } from '../utils/url-prefix'
-/** @internal Exported for tests. */
-export { normalizeCollectionPath }
-
 export interface PreviewContext {
   branchName?: string
-  previewBaseByCollection?: Record<string, string>
+  /** `editor.previewBase`: routes by root entry path, collection path or name; `false` is no page. */
+  previewBaseByCollection?: Record<string, string | false>
   /** `editor.previewPrefix`: where the host mounts the pages the preview pane loads. */
   previewPrefix?: string
 }
 
 /**
- * The slug portion of a preview URL, or '' for an index entry -- `resolveUrlPathCandidates`
+ * The slug a `previewBase` route is extended by, or '' for an index entry: an index entry's URL
+ * is its collection's, the collapse `computeEntryUrl` applies, and `resolveUrlPathCandidates`
  * refuses `/x/index`, so a preview built that way 404s.
- *
- * An index entry's URL is its COLLECTION's path, the same collapse `computeEntryUrl`,
- * `listEntries`, and `defaultBuildPath` apply.
- *
- * Kept separate from `computeEntryUrl`, which shares only the index decision: this builder
- * must percent-encode each segment and must NOT lowercase, since a preview base is
- * adopter-supplied and case-sensitive.
  */
-const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSlug(slug))
+const encodePreviewSlug = (slug?: string): string => (isIndexSlug(slug) ? '' : encodeSegments(slug))
 
-const encodeSlug = (value?: string): string =>
+const encodeSegments = (value?: string): string =>
   (value ?? '')
     .split('/')
     .filter(Boolean)
@@ -69,34 +61,48 @@ const appendBranch = (url: string, branchName?: string): string => {
 }
 
 /**
- * The entry's route on the host site: its `previewBaseByCollection` value when one matches,
- * otherwise its collection path plus slug. Site-relative unless a matching value is absolute.
+ * The `previewBase` value under `key`, or `undefined` for none. An empty value counts as none, and
+ * so does anything `Object.prototype` supplies.
+ */
+const previewBaseFor = (
+  bases: Record<string, string | false> | undefined,
+  key: string | undefined,
+): string | false | undefined =>
+  bases && key && Object.prototype.hasOwnProperty.call(bases, key) && bases[key] !== ''
+    ? bases[key]
+    : undefined
+
+/**
+ * The entry's route on the host site, or `undefined` when it has no page. The first
+ * `previewBaseByCollection` key present decides: for a root entry its own path
+ * (`<contentRoot>/<slug>`, used as-is), then its collection path, then its collection name (both
+ * with the slug appended). The spelling `<parent>/<name>` names both an entry and a same-named
+ * sibling collection (a landing entry beside its folder), so below the root it is read only as a
+ * collection key, and at the root one key routes both.
+ * A `false` value means no page. With no key, the route is the entry's `urlPath`, by the rule
+ * `listEntries` publishes it, so a root entry previews at `/<slug>` and only a root index at `/`.
+ * Site-relative unless a matching value is absolute.
  */
 const buildPreviewRoute = (
   entry: PreviewEntry,
-  { previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string },
-): string => {
-  // Root-level entries have collectionPath === contentRoot (e.g., 'content')
-  const isRootEntry = contentRoot && entry.collectionPath === contentRoot
+  { previewBaseByCollection, contentRoot = 'content' }: PreviewContext & { contentRoot?: string },
+): string | undefined => {
+  const collectionPath = normalizeFilesystemPath(entry.collectionPath ?? '')
+  const isRootEntry = collectionPath === normalizeFilesystemPath(contentRoot)
+  const entryRoute = previewBaseFor(
+    previewBaseByCollection,
+    isRootEntry && entry.slug ? `${collectionPath}/${entry.slug}` : undefined,
+  )
+  if (entryRoute !== undefined) return entryRoute === false ? undefined : entryRoute
 
-  if (isRootEntry) {
-    return previewBaseByCollection?.[`${contentRoot}/${entry.slug}`] || '/'
+  const pathBase = previewBaseFor(previewBaseByCollection, collectionPath)
+  const base = pathBase ?? previewBaseFor(previewBaseByCollection, entry.collectionName)
+  if (base === false) return undefined
+  if (base === undefined) {
+    const urlPath = computeEntryUrl(collectionPath, entry.slug ?? '', contentRoot)
+    return `/${encodeSegments(urlPath)}`
   }
-
-  const base =
-    (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
-    (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   const encoded = encodePreviewSlug(entry.slug)
-  if (!base) {
-    // Pass contentRoot through so a non-default (or multi-segment, e.g.
-    // "cms/content") configured root is stripped too; normalizeCollectionPath
-    // defaults to 'content' when contentRoot is undefined.
-    const collectionPath = entry.collectionPath
-      ? normalizeCollectionPath(entry.collectionPath, contentRoot)
-      : ''
-    const segments = [collectionPath, encoded].filter(Boolean)
-    return segments.length > 0 ? `/${segments.join('/')}` : '/'
-  }
   const [basePathPart, suffix] = splitPathSuffix(base)
   const trimmed = stripTrailingSlashes(basePathPart)
   return `${encoded ? `${trimmed}/${encoded}` : basePathPart || '/'}${suffix}`
@@ -112,13 +118,16 @@ const buildPreviewRoute = (
  * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
  * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
  * on every load. `trailingSlash` defaults to the value `withCanopy` inlines at build time.
+ *
+ * `undefined` means the entry has no page, so the editor frames nothing rather than another page.
  */
 export const buildPreviewSrc = (
   entry: PreviewEntry,
   context: PreviewContext & { contentRoot?: string; basePath?: string; trailingSlash?: boolean },
-): string => {
+): string | undefined => {
   if (entry.previewSrc) return joinUrlPrefix(context.basePath, entry.previewSrc)
   const route = buildPreviewRoute(entry, context)
+  if (route === undefined) return undefined
   // An absolute route is another site's URL, so the host's trailing-slash form says nothing
   // about it.
   if (isAbsoluteUrl(route)) return appendBranch(route, context.branchName)
@@ -171,7 +180,7 @@ interface BuildEntriesFromListParams {
   response: ListEntriesResponse
   resolvePreviewSrc: (
     entry: Pick<CollectionItem, 'collectionPath' | 'collectionName' | 'slug' | 'entryType'>,
-  ) => string
+  ) => string | undefined
   flatSchema: FlatSchemaItem[]
 }
 

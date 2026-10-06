@@ -33,5 +33,7 @@ export default defineCanopyConfig({
         neutral: '#0f172a',
       },
     },
+    // `app/page.server.tsx` serves the home singleton at `/`.
+    previewBase: { 'content/home': '/' },
   },
 })
