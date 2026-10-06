@@ -1154,8 +1154,8 @@ Recovery:
 
 1. Reach the EFS mount (SSM/SSH into the worker EC2, or any shell with the
    filesystem) and go to `{workspaceRoot}/content-branches/{baseBranch}`.
-2. Inspect what's stranded: `git status`, and `git log origin/<base>..<base>` for
-   stranded local commits.
+2. Inspect what's stranded: `git fetch origin`, then `git status` and
+   `git log origin/<base>..<base>` for stranded local commits.
 3. In the editor, create a rescue branch (it forks from the origin base). Copy the
    stranded `content/` changes from the base clone into the rescue branch's clone
    directory (or, from the base clone, `git checkout -b rescue && git push` and

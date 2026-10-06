@@ -144,7 +144,7 @@ interface ConflictSetup {
  * reads directly; the clone's `origin` is what the loop fetches).
  */
 async function createConflictSetup(tmpDir: string, branchName: string): Promise<ConflictSetup> {
-  const remotePath = path.join(tmpDir, 'remote')
+  const remotePath = path.join(tmpDir, 'remote.git')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 

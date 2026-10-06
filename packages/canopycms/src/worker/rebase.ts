@@ -298,8 +298,8 @@ async function runRebaseRounds(
     if (isLockCompromised()) break
     try {
       if (nextAction === 'start') {
-        // The pinned base tip fetched above (single-branch clones have
-        // no origin/<base> remote-tracking ref for other branches).
+        // The pinned base tip fetched above; a fetch by path updates no
+        // remote-tracking ref.
         await branchGit.rebase([fetchedBaseTip])
       } else if (nextAction === 'continue') {
         await branchGit.rebase(['--continue'])
@@ -842,7 +842,7 @@ async function rebaseOneBranch(
       // the bytes stay untouched, and the wedge is recorded for an operator.
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
-        await branchGit.fetch('origin', ctx.baseBranch)
+        await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
         const reason =
@@ -880,15 +880,13 @@ async function rebaseOneBranch(
         })
       }
 
-      await branchGit.fetch('origin', ctx.baseBranch)
+      await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
 
       // rev-list, not status.behind, which needs an upstream tracking branch
       // that checkoutBranch's fallback paths do not always configure. Against
-      // the just-fetched tip, not origin/<base>: branch clones are
-      // --single-branch, so no remote-tracking ref exists for any base branch
-      // other than the one they were cloned from. Pinned to a SHA immediately
-      // — FETCH_HEAD is one shared mutable file per repo, repointed by any
-      // concurrent fetch.
+      // the just-fetched tip: a fetch by path updates no remote-tracking ref.
+      // Pinned to a SHA immediately — FETCH_HEAD is one shared mutable file per
+      // repo, repointed by any concurrent fetch.
       const fetchedBaseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
       const behindCount = parseInt(
         (await branchGit.raw(['rev-list', '--count', `HEAD..${fetchedBaseTip}`])).trim(),

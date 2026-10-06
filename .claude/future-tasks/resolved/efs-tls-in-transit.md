@@ -1,5 +1,11 @@
 # EFS worker mount: enable TLS in transit
 
+**RESOLVED 2026-10-06** (branch `fix/worker-efs-mount-parity`). The worker mounts the
+`WorkspaceAP` access point at `/mnt/efs`, as the Lambda does, so that git paths one
+process writes on EFS resolve for the other; efs-utils requires `tls` for an access-point
+mount, so both the boot mount and the fstab line now carry it. Verified by the next
+testing-dev deploy.
+
 Flagged by PR #141 review (LOW).
 
 ## Problem
@@ -22,7 +28,7 @@ Add `tls` to the mount options in both places:
 ## Scheduled
 
 Folded into Workstream D's rebuild (2026-07-30) — see
-[program-d-stack-rebuild.md](resolved/program-d-stack-rebuild.md), step 3. D tears the
+[program-d-stack-rebuild.md](program-d-stack-rebuild.md), step 3. D tears the
 deploy-test stack down and rebuilds it from scratch, which is exactly the
 verification deploy this task was waiting for, so it rides along rather than
 needing its own.
@@ -30,6 +36,6 @@ needing its own.
 ## Why deferred
 
 This changes the deploy-proven mount path (the live prod-mode deploy in
-[resolved/cms-service-deployment-test.md](resolved/cms-service-deployment-test.md)
+[cms-service-deployment-test.md](cms-service-deployment-test.md)
 exercised the current `mount -t efs` invocation end to end), so it needs its own
 verification deploy rather than landing opportunistically alongside unrelated fixes.

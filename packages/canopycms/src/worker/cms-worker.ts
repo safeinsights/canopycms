@@ -147,7 +147,7 @@ export class CmsWorker {
   private contentBranchesPath: string
   private baseBranch: string
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
-  // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
+  // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
   private sanitizedBaseBranch: SanitizedBranchName
