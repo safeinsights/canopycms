@@ -111,8 +111,8 @@ const QUALITY_STEP = 5
 
 /**
  * Decimal places a crop value keeps in its canonical form. The editor rounds a
- * new crop to this (editor/media/crop-math.ts), so a stored crop is already
- * canonical; a URL carrying more decimals canonicalizes to the rounded rect.
+ * new crop to this (editor/media/crop-math.ts), so a crop the editor stores is
+ * already canonical; a URL carrying more decimals canonicalizes to the rounded rect.
  */
 const CROP_PRECISION = 4
 
@@ -207,7 +207,7 @@ function roundToCropPrecision(n: number): number {
  * Round a crop rect to `CROP_PRECISION` decimals, shrinking `w`/`h` to the
  * space left when rounding pushes `x+w` or `y+h` past 1 (0.66665 + 0.33335
  * rounds to 0.6667 + 0.3334). The result can still be degenerate (a `w` or `h`
- * that rounds to 0); callers check it with `isValidCropRect`.
+ * that rounds to 0), which `isValidCropRect` rejects.
  */
 export function roundCropRect(rect: CropRect): CropRect {
   const x = roundToCropPrecision(rect.x)

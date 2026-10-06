@@ -320,7 +320,7 @@ async function serveLazyTransform(
   // The slug is decorative in the URL but load-bearing in the stored key, so it must equal the
   // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
   // it aliases the same image into a new cache key. Mirrors the prod transform Lambda's check
-  // (assets/asset-url.ts); the two paths must agree, or dev accepts URLs prod 404s.
+  // (canopycms-cdk's lambda/asset-transform/handler.ts); the two paths must agree, or dev accepts URLs prod 404s.
   if (parsed.slug !== meta.slug) {
     return { ok: false, status: 404, error: 'Not found' }
   }

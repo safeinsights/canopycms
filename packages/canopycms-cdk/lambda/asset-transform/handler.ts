@@ -14,8 +14,8 @@
  * Three orderings here are prod-specific and load-bearing:
  *
  * - A non-canonical spelling is answered with a cacheable 301 to the canonical
- *   path before any S3 read, so each distinct spelling costs one cached
- *   redirect instead of a transform.
+ *   path before any S3 read, so a distinct spelling costs a redirect that
+ *   CloudFront caches, never a transform.
  * - The transformed bytes are written to S3 under the CANONICAL key BEFORE the
  *   response is built, so the object exists for CloudFront's next request even
  *   if this response never reaches the viewer.

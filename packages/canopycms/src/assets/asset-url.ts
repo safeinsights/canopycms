@@ -89,9 +89,9 @@ function mergeDirectives(
 
 /**
  * Build a transform URL, merging `opts` and `ref.crop` over the directives already present
- * in `ref.src` (see `mergeDirectives` for precedence). For static srcs (svg/pdf under `/assets/{hash}/...`,
- * or any src that isn't one of our own transform URLs) the src is returned
- * unchanged and `opts` are ignored - there is nothing to transform.
+ * in `ref.src` (see `mergeDirectives` for precedence). For static srcs (svg/pdf under
+ * `/assets/{hash}/...`, or any src that isn't one of our own transform URLs) the src is
+ * returned unchanged and every directive is ignored - there is nothing to transform.
  */
 export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const { src } = ref
