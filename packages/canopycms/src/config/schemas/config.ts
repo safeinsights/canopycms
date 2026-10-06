@@ -59,7 +59,7 @@ const editorConfigSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
-  previewBase: z.record(z.string()).optional(),
+  previewBase: z.record(z.union([z.string(), z.literal(false)])).optional(),
   previewPrefix: previewPrefixSchema.optional(),
   // UI handler functions (runtime only, don't serialize)
   onAccountClick: z.function().returns(z.void()).optional(),

@@ -1225,7 +1225,7 @@ editor: {
 }
 ```
 
-**Preview URLs.** The pane loads each entry's route (collection path plus slug) with `?branch=`. `previewBase` remaps a collection, or a root entry keyed `'<contentRoot>/<slug>'`. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` gets only the slug and branch; an absolute prefix skips `basePath`.
+**Preview URLs.** The pane loads each entry's `urlPath` with `?branch=`. `previewBase` overrides it by entry path (the whole route), else collection path or name (plus the slug); `false` means no page, and the pane says so. `previewPrefix` precedes every route. Both get `basePath` and `trailingSlash`. An absolute `previewBase` gets only the slug and branch; an absolute prefix skips `basePath`.
 
 ### Custom Field Renderers
 

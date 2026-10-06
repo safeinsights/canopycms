@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { flattenSchema } from '../config'
-import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-config'
+import { buildEditorCollections } from './editor-config'
 
 const baseConfig = {
   contentRoot: 'content',
@@ -71,28 +71,6 @@ describe('editor-config helpers', () => {
     const posts = collections[0].children!.find((c) => c.path === 'content/posts')
     expect(posts?.type).toBe('collection')
     expect(posts?.format).toBe('json')
-  })
-
-  it('derives preview bases from content root and schema paths', () => {
-    const previewBase = buildPreviewBaseByCollection(
-      baseConfig,
-      flattenSchema(baseConfig.schema, baseConfig.contentRoot),
-    )
-    expect(previewBase['content/posts']).toBe('/posts')
-    expect(previewBase['content/nested']).toBe('/nested')
-    expect(previewBase['content/nested/child']).toBe('/nested/child')
-  })
-
-  it('trims content root slashes when building preview bases', () => {
-    const config = {
-      ...baseConfig,
-      contentRoot: '/site/content/',
-    }
-    const previewBase = buildPreviewBaseByCollection(
-      config,
-      flattenSchema(config.schema, config.contentRoot),
-    )
-    expect(previewBase['site/content/posts']).toBe('/posts')
   })
 
   it('includes nested collections under parent collections', () => {

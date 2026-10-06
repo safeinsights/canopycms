@@ -51,6 +51,14 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
+### A root entry previews its own page — **behaviour change for root entries**
+
+**What changed.** The preview pane loads each entry's `urlPath`: `content/about` previews `/about`, not `/`. A `previewBase` value of `false` marks an entry with no page, and the pane says so.
+
+**To adopt.** Key an entry without a page `false` (`'content/settings': false`). A root entry served at `/` without an `index` slug needs `'content/<slug>': '/'`, or re-model it as a root index.
+
+**Now deletable.** `previewBase` keys that restate a root entry's own URL.
+
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS on purpose**
 
 **What changed.** `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
