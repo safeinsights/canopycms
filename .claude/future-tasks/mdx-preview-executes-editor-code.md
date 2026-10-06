@@ -35,3 +35,5 @@ rendering the compiled output executes it.
 ## Related
 
 - [preview-page-followups.md](preview-page-followups.md): item 4, the loader's raw `services`.
+- [mdx-registered-components.md](mdx-registered-components.md): an adopter component registry for
+  the editor, deferred to be designed with this task; its list would be the allowlist in item 2.

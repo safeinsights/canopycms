@@ -538,6 +538,8 @@ Read the required revision from `revision` for `chromium` in `node_modules/.pnpm
 
 Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
 
+**Body-editor locators.** Until `MarkdownField`'s lazy chunk loads, the body sits in a read-only textarea that `getByText` also matches. Scope to `.canopy-mdx-content` (the rich editor) or the `mdx-jsx-tag` / `markdown-source-editor` testids.
+
 ### Integration Test Structure
 
 ```
@@ -695,6 +697,11 @@ vi.mock('../api/client', () => ({ createApiClient: vi.fn() }))
 ```
 
 Mocking `'../api'` will not intercept it. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, `client-reference-resolver.test.ts`.
+
+### Testing MarkdownField (Real MDXEditor in jsdom)
+
+- **Preload both chunks** its `React.lazy` loader imports, in every test file that renders `MarkdownField` (directly or via `FormRenderer`): `import '@mdxeditor/editor'` and `import './mdx-jsx-support'`. Rationale is in the comment in `MarkdownField.test.tsx`.
+- **Type with `@testing-library/user-event`** (`user.click(paragraph)`, `user.keyboard(...)`); `src/editor/test-setup.ts` stubs the `Range.prototype.getBoundingClientRect` this needs. Edits inside a JSX element's nested editor reach `onChange` only after focus leaves it, so click elsewhere before asserting.
 
 ### Testing with Real Git Operations
 
