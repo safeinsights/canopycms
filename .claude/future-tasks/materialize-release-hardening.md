@@ -61,6 +61,38 @@ site's deploy session.
 - Production's materialize never reads the preview prefix, so it never trusts preview bytes.
 - CLI `--output-prefix`. README: the preview role's grants, and that it can read every original.
 
+## Amendments from the adversarial design review
+
+- **The Deny is opt-in** (`AssetSupport` prop, default off). It binds the CMS Lambda, which runs the
+  adopter's installed `canopycms`; upgrading `canopycms-cdk` first would deny every upload. README:
+  upgrade `canopycms` first, then enable. It also denies `aws s3 cp` without `--if-none-match` and
+  any multipart upload. Flipping the default is a follow-up task.
+- **One 409 retry layer**, in the S3 store's conditional-put helper, matching
+  `err.name === 'ConditionalRequestConflict'` with a budget of about 2 s. `isTransientStoreError`
+  does not gain 409 (it also means `OperationAborted`, and `withRetry` would multiply attempts).
+- **Local exclusive create:** temps go where `readOriginal`'s `{hash32}.` scan cannot see them; the
+  headers sidecar is written before the blob is linked in; EEXIST is `already-exists`.
+- **Tests:** a stub returning `undefined` must not read as `already-exists`; add the finalize crash
+  path (original exists, meta absent).
+- **Report v1** includes `copied` and `summary.copied` from PR B, so PR C does not change the schema.
+- **Exit code 1** also covers an uncaught throw (bad refs file, config load failure).
+- **PR C:** `CopySource` is URL-encoded per segment (keys contain `=`, `,`, `:`); per-key presence
+  resolves to `dest | canonical | absent` from optional listings of both prefixes, falling back to
+  HEADs, statics included; `outputPrefix` rejects `.` and `..` segments and compares canonical
+  prefixes by segment.
+- **PR C README:** the preview role needs `s3:ListBucket` (otherwise every miss is a 403 and a store
+  failure); production hosts must route only `/assets/*` to the bucket, since `previews/*` holds
+  attacker-writable bytes; scope each preview's writes to its own id or accept cross-preview
+  overwrites; KMS needs on SSE-KMS buckets.
+- **Unverified until a real-bucket check:** whether `TaggingDirective: REPLACE` with no tags needs
+  `s3:PutObjectTagging`, and whether `s3:if-none-match` is populated on CopyObject. The adopting site
+  runs that check against its test bucket before PR C merges.
+- **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
+  behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
+- **Recovery under versioning:** a delete writes a delete marker, so the bad version stays
+  restorable for the lock period, and the replica keeps serving it unless delete-marker replication
+  is on.
+
 ## Constraints
 
 - S3 accepts `If-None-Match` on CopyObject only since October 2025; raise the
