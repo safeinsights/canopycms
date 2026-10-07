@@ -341,6 +341,20 @@ describe('materializeAssets existence pass against S3', () => {
     expect(report.summary).toMatchObject({ failed: 1, storeFailures: 1, contentFailures: 0 })
   })
 
+  it('reports a missing bucket as a store failure for a static key too', async () => {
+    s3.on(HeadObjectCommand).rejects(awsError('NotFound', 404))
+    s3.on(GetObjectCommand).rejects(awsError('NoSuchBucket', 404))
+    const store = new S3AssetStore({ bucket: 'typo', region: 'us-east-1' })
+
+    const report = await materializeAssets({
+      store,
+      targets: [],
+      statics: [target(`assets/${HASH}/logo.svg`)],
+      sleep: noSleep,
+    })
+    expect(report.summary).toMatchObject({ failed: 1, storeFailures: 1, contentFailures: 0 })
+  })
+
   it('treats a key the listing lacks as missing', async () => {
     const keys = keysAt('w=320', 3)
     s3.on(ListObjectsV2Command).resolves({ Contents: [{ Key: keys[0] }], IsTruncated: false })

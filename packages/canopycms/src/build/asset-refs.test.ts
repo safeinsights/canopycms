@@ -109,6 +109,48 @@ describe('collectAssetRefs', () => {
     expect(refs.statics.map((entry) => entry.key)).toEqual([`assets/${HASH2}/guide.pdf`])
   })
 
+  it('ends a percent-encoded URL where an encoded space or query begins', async () => {
+    await write(
+      'share.html',
+      `<a href="mailto:?body=See%20https%3A%2F%2Fex.com%2Fassets%2Ft%2Forig%2F${HASH}%2Fphoto.png%20now">` +
+        `<a href="/share?u=https%3A%2F%2Fex.com%2Fassets%2Ft%2Fw%3D320%2F${HASH}%2Fphoto.png%3Fv%3D1">`,
+    )
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([
+      `assets/t/orig/${HASH}/photo.png`,
+      `assets/t/w=320/${HASH}/photo.png`,
+    ])
+  })
+
+  it('ends a URL at typographic punctuation', async () => {
+    await write(
+      'quote.md',
+      `\u201C/assets/t/w=320/${HASH}/photo.png\u201D and /assets/${HASH2}/guide.pdf\u2026`,
+    )
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([`assets/t/w=320/${HASH}/photo.png`])
+    expect(refs.statics.map((entry) => entry.key)).toEqual([`assets/${HASH2}/guide.pdf`])
+  })
+
+  it('scans extensionless text files and skips binary ones', async () => {
+    await write('feed', `<item><enclosure url="/assets/t/w=320/${HASH}/photo.png"/></item>`)
+    await write('blob', `\0binary /assets/t/w=333/${HASH}/photo.png`)
+    const { refs, scannedFiles } = await collectAssetRefs(outDir)
+    expect(refs.transforms).toEqual([
+      { key: `assets/t/w=320/${HASH}/photo.png`, routes: [], files: ['feed'] },
+    ])
+    expect(scannedFiles).toBe(1)
+  })
+
+  it('stays linear on a long run with no stop character', async () => {
+    // A long run with no encoded `/assets/` in it is where a backtracking scan goes quadratic.
+    await write('big.js', `${'a%2F'.repeat(250_000)} %2Fassets%2Ft%2Fw%3D320%2F${HASH}%2Fphoto.png`)
+    const started = Date.now()
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([`assets/t/w=320/${HASH}/photo.png`])
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
   it('fails on a non-canonical transform URL, naming the file, and writes nothing', async () => {
     await write('ok.html', `<img src="/assets/t/w=320/${HASH}/photo.png">`)
     await write('bad/page.html', `<img src="/assets/t/w=320,f=webp/${HASH}/photo.webp">`)

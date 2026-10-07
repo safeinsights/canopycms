@@ -18,8 +18,12 @@ import { atomicWriteFile } from '../utils/atomic-write'
 /** @internal Written into the scanned directory, so a manifest the adopter builds afterwards covers it. */
 export const ASSET_REFS_FILENAME = 'canopy-asset-refs.json'
 
-/** Text outputs a URL can hide in: pages, RSC payloads, data, scripts, styles, sitemaps. */
+/**
+ * Text outputs a URL can hide in: pages, RSC payloads, data, scripts, styles, feeds, generated
+ * markdown. A file with no extension (a route handler's output) is scanned unless it is binary.
+ */
 const SCANNED_EXTENSIONS = new Set([
+  '',
   '.html',
   '.htm',
   '.txt',
@@ -30,17 +34,21 @@ const SCANNED_EXTENSIONS = new Set([
   '.cjs',
   '.css',
   '.xml',
+  '.svg',
+  '.md',
+  '.webmanifest',
 ])
 
 /**
  * Anchored on the path, never on an origin or a mount prefix, so whatever precedes `/assets/` —
  * an absolute origin, a basePath, the editor's authenticated prefix — is dropped. The directive
  * and filename classes stop at anything that ends a URL in HTML, JSON, JS or CSS (quotes,
- * whitespace, a backslash escape, parens, query, a srcset comma) and exclude `{`, `}` and `$`,
+ * whitespace, a backslash escape, parens, query, a srcset comma) or at any non-ASCII character
+ * (typographic quotes and dashes in prose; no stored key has one), and exclude `{`, `}` and `$`,
  * so a URL template in a script never reads as a URL. The hash class admits upper case only so
  * that such a URL is reported rather than skipped.
  */
-const URL_STOP = String.raw`\s"'\x60<>()\\/?#&{}$`
+const URL_STOP = String.raw`\s"'\x60<>()\\/?#&{}$\u0080-\uffff`
 // eslint-disable-next-line security/detect-non-literal-regexp -- built from constants above
 const TRANSFORM_URL_RE = new RegExp(
   String.raw`/${ASSET_PREFIXES.transform}/([^${URL_STOP}]+)/([a-fA-F0-9]{32})/([^${URL_STOP},]+)`,
@@ -119,20 +127,48 @@ function routeForFile(file: string): string | undefined {
   return `/${route}`
 }
 
-const PERCENT_ENCODED: Record<string, string> = { '2f': '/', '3d': '=', '2c': ',', '3a': ':' }
+const ENCODED_ASSETS = /%2[fF]assets%2[fF]/g
+const RUN_STOP = /[\s"'`<>&]/
 
-/**
- * JSON and JS may escape `/` as a backslash-slash or a `u002F` unicode escape, and a URL passed as
- * a query parameter (an image optimizer's `?url=`) is percent-encoded; all are decoded first.
- */
-function decodeUrlEscapes(text: string): string {
-  return text
-    .replace(/\\u002[fF]/g, '/')
-    .replace(/\\\//g, '/')
-    .replace(/%(2[fFcC]|3[dDaA])/g, (_, hex: string) => PERCENT_ENCODED[hex.toLowerCase()])
+function decodeOrKeep(run: string): string {
+  try {
+    return decodeURIComponent(run)
+  } catch {
+    return run
+  }
 }
 
-/** A slug and ext end in `[a-z0-9]`, so punctuation after a URL in prose is not part of it. */
+/**
+ * Decode, whole, each percent-encoded run holding an encoded `/assets/` (an image optimizer's
+ * `?url=`), so an encoded `%20` or `%3F` after the URL ends it just as a literal one would. Runs are
+ * found by expanding outward from each match, so the scan stays linear on long text with no stop
+ * character; a run that is not valid percent-encoding is left as it is.
+ */
+function decodeEncodedAssetRuns(text: string): string {
+  let out = ''
+  let last = 0
+  for (const match of text.matchAll(ENCODED_ASSETS)) {
+    if (match.index < last) continue
+    let start = match.index
+    while (start > last && !RUN_STOP.test(text[start - 1])) start--
+    let end = match.index + match[0].length
+    while (end < text.length && !RUN_STOP.test(text[end])) end++
+    out += text.slice(last, start) + decodeOrKeep(text.slice(start, end))
+    last = end
+  }
+  return out + text.slice(last)
+}
+
+/** JSON and JS may escape `/` as a backslash-slash or a `u002F` unicode escape. */
+function decodeUrlEscapes(text: string): string {
+  return decodeEncodedAssetRuns(text.replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/'))
+}
+
+/**
+ * A slug and ext end in `[a-z0-9]`, so punctuation after a URL in prose is not part of it. Trimmed
+ * wherever it occurs: an RSC payload carries prose as JSON strings, where a sentence-final URL is
+ * followed by a quote exactly as an attribute value is.
+ */
 function trimTrailingPunctuation(url: string, filename: string): [string, string] {
   const trimmed = filename.replace(/[.:;!?]+$/, '')
   return [url.slice(0, url.length - (filename.length - trimmed.length)), trimmed]
@@ -174,8 +210,13 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
   const statics = new RefCollector()
   const problems: AssetRefProblem[] = []
 
+  let scannedFiles = 0
   for (const file of files) {
-    const text = decodeUrlEscapes(await fs.readFile(path.join(root, file), 'utf-8'))
+    const bytes = await fs.readFile(path.join(root, file))
+    // A NUL in the first block is how git and grep tell binary from text, too.
+    if (path.extname(file) === '' && bytes.subarray(0, 8192).includes(0)) continue
+    scannedFiles++
+    const text = decodeUrlEscapes(bytes.toString('utf-8'))
 
     for (const match of text.matchAll(TRANSFORM_URL_RE)) {
       const [url, filename] = trimTrailingPunctuation(match[0], match[3])
@@ -214,7 +255,7 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
   }
   const filePath = path.join(root, ASSET_REFS_FILENAME)
   await atomicWriteFile(filePath, `${JSON.stringify(refs, null, 2)}\n`)
-  return { refs, filePath, scannedFiles: files.length }
+  return { refs, filePath, scannedFiles }
 }
 
 /** Read and validate a refs file `collectAssetRefs` wrote. */

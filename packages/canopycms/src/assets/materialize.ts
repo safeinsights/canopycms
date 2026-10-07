@@ -339,7 +339,12 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(validStatics, concurrency, async (key) => {
     try {
-      if (await withRetry(() => store.hasPublicObject(key))) {
+      // A HEAD cannot tell a missing key from a missing bucket, and a static key has no
+      // transform's meta read to tell them apart afterwards; a GET names which.
+      const exists =
+        (await withRetry(() => store.hasPublicObject(key))) ||
+        (await withRetry(() => store.readPublicObject(key))) !== null
+      if (exists) {
         outcomes.set(key, { status: 'existed' })
       } else {
         fail(key, 'content', 'No stored object; an svg or pdf is written at upload only')
