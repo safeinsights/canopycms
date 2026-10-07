@@ -442,7 +442,7 @@ function throttleRetryDelayMs(response: Response, attempt: number): number | und
     if (ms > MAX_RETRY_AFTER_MS) return undefined
     wait = Math.max(ms, base)
   }
-  return Math.min(wait + Math.random() * base * 0.5, MAX_RETRY_AFTER_MS)
+  return wait + Math.random() * base * 0.5
 }
 
 function sleep(ms: number): Promise<void> {
