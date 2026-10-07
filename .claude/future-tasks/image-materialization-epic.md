@@ -1,7 +1,7 @@
 # [P1] Epic: the public image path serves only what a build referenced
 
 Integration branch `int-image-materialization`, cut from `int-202610-a`. Every phase PR
-targets it, and it is rebased onto `main` once `int-202610-a` lands. Supersedes
+targets it, and its epic PR targets `main`. Supersedes
 [transform-crop-signing.md](transform-crop-signing.md) and
 [transform-path-regional-resilience.md](transform-path-regional-resilience.md). Both close
 when this epic's PR merges.
@@ -67,9 +67,9 @@ output is the only place a final URL exists. That creates an adopter contract: e
 | 0 | Hardening that stands alone (below) | merged #406 |
 | 1 | Authenticated route carries editor and preview traffic | merged #409 |
 | 2 | `collect-asset-refs` and `materialize-assets` CLIs | merged #412 |
-| 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open #413 |
-| 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
-| 5 | Docs, bookkeeping, and the final Fable full-diff review | open |
+| 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | merged #413 |
+| 4 | Adopter requests entry (sent to the adopter repo, not landed here) | adopter handoff prompt (manager) |
+| 5 | Docs, bookkeeping, and the final Fable full-diff review | docs PR open |
 
 ### Phase 0: hardening that stands alone (widths unchanged)
 
@@ -216,7 +216,11 @@ This is written up as an adopter request and kept generic here.
   - An unreferenced key is a miss and writes nothing.
   - Denying the primary fails over to the replica.
 
-## Follow-ups to file when the epic closes
+## Follow-ups filed
+
+[asset-derivative-reaper.md](asset-derivative-reaper.md),
+[assets-transform-4xx-alarm.md](assets-transform-4xx-alarm.md) and
+[lazy-transforms-refs-allowlist.md](lazy-transforms-refs-allowlist.md) carry:
 
 - A reference-aware reaper for `assets/t/`, keyed on the refs files of every build inside
   the rollback window.
