@@ -1,6 +1,6 @@
 # Materialize release hardening: create-only writes, release tooling, preview output prefix
 
-**Status:** In progress on `int-materialize-release` (off `int-202610-b`). **Priority: P1.** Filed
+**Status:** Implemented on `int-materialize-release` (off `int-202610-b`); epic PR awaiting human review. **Priority: P1.** Filed
 2026-10-07 from the marketing site's request log, items 80 and 81, with the design confirmed by the
 site's deploy session.
 
