@@ -39,6 +39,7 @@ import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { maintainRemoteGit } from './remote-git-maintenance'
+import { reapplySparseCones } from './sparse-cone'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -47,7 +48,8 @@ import type { WorkerContext } from './worker-context'
  * queue's 5 seconds).
  *
  * One cycle, in order: repair what killed provisioning and deletes left under
- * the branches root (`repairBranchDirResidue`), repack `remote.git` when it needs it
+ * the branches root (`repairBranchDirResidue`), move sparse clones to a changed
+ * content root's cone (sparse-cone.ts), repack `remote.git` when it needs it
  * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
  * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`),
  * push this deployment's own settings branch, fast-forward the base branch's
@@ -418,6 +420,11 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       await repairBranchDirResidue(ctx)
     } catch (err) {
       workerLogWarn(`Branch directory residue repair failed: ${getErrorMessage(err)}`)
+    }
+    try {
+      await reapplySparseCones(ctx)
+    } catch (err) {
+      workerLogWarn(`Sparse-checkout cone update failed: ${getErrorMessage(err)}`)
     }
     try {
       await maintainRemoteGit(ctx.remoteGitPath)
