@@ -476,7 +476,7 @@ pnpm --filter canopycms exec vitest run --coverage
 pnpm --filter canopycms exec vitest                           # watch mode
 ```
 
-`packages/canopycms/vitest.config.ts` defines two projects: `node` (everything outside `src/editor/**`) and `editor` (jsdom, for React components). Git-heavy suites spawn a real `git` per test, which is slow on macOS, so the `node` project raises `testTimeout` to 30s; the `editor` project keeps the default 5s deliberately, since jsdom tests do not shell out and a longer timeout there would mask a real hang. CI runs on ubuntu and does not need the headroom — and CI remains the source of truth for anything timing-sensitive, so never tune an assertion to make a slow local run pass when CI is already green.
+`packages/canopycms/vitest.config.ts` defines two projects: `node` (everything outside `src/editor/**`) and `editor` (jsdom, for React components). Git-heavy suites spawn a real `git` per test, which is slow on macOS, so the `node` project raises `testTimeout` to 30s; the `editor` project keeps the default 5s deliberately, since jsdom tests do not shell out and a longer timeout there would mask a real hang. CI remains the source of truth for anything timing-sensitive; never tune an assertion to make a slow local run pass when CI is green.
 
 The `editor` project loads `src/editor/test-setup.ts` first, which shims the browser APIs jsdom lacks but Mantine expects: `matchMedia`, `ResizeObserver`, and `Element.prototype.scrollIntoView`. Add a shim there when a component reaches for another one. `scrollIntoView` is worth knowing about for _how_ it fails: Mantine's Combobox calls it from a timer that fires after the test which opened the dropdown has finished, so a missing shim surfaces as a Vitest "Unhandled Error" blamed on whichever test ran next. **An unhandled error attributed to a test that plainly cannot have caused it is usually a missing jsdom shim in the test before it.**
 
@@ -485,9 +485,9 @@ The `editor` project loads `src/editor/test-setup.ts` first, which shims the bro
 - **Every test starts without the previous test's rendered trees.** `cleanup()` unmounts what RTL mounted; nodes a test appended to `document.body` by hand are its own to remove. Never depend on a tree an earlier test in the file rendered.
 - **A new jsdom project, or a second editor setup file, must register `cleanup()` too.** Nothing else will.
 
-This is not tidiness. Without the unmount, components stay mounted for the whole file and their timers outlive the test: Mantine's `useTransition` cancels its pending `setTimeout(setState)` from an unmount effect, so an un-unmounted transition can fire after the jsdom environment is torn down and blow up inside React with `ReferenceError: window is not defined` — landing as exactly the kind of misattributed unhandled error described above, a run that exits non-zero while every test passes.
+Without the unmount, components and their timers outlive the test: Mantine's `useTransition` can fire after jsdom is torn down and throw `ReferenceError: window is not defined`, a misattributed unhandled error in a run where every test passes.
 
-**Treat "unhandled error, zero test failures" as a genuine leak and investigate it.** Two separate real bugs presented that way: the mount leak above, and a provisioning-lock race (see [docs/concurrency.md](docs/concurrency.md)) that aliased every branch under one shared `proper-lockfile` registry entry, so releasing one branch's lock tore down another's refresh timer and crashed the process with an uncaught `ECOMPROMISED` from inside it. Both have regression coverage (`provisioning-lock.test.ts`, and the `cleanup()` registration) and both had a real bug behind them, not a test artifact.
+**Treat "unhandled error, zero test failures" as a genuine leak and investigate it.** The mount leak above and a provisioning-lock race (see [docs/concurrency.md](docs/concurrency.md)) that crashed the process with an uncaught `ECOMPROMISED` both presented that way, and both were real bugs.
 
 ### Diagnosing a Test Failure
 
@@ -502,7 +502,7 @@ A `CannotFindAsset` in `canopycms-cdk` is a real failure. Its `test` script chai
 
 **Three ways a run reports success while failing.** All three fail in the dangerous direction, so check for them explicitly:
 
-- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports `tail`'s 0 even when the suite failed, or when `pnpm` was never found. Capture `${PIPESTATUS[0]}`, or run `echo $?` on its own line. The agent-facing form is worse: run that same piped command as a background task and the harness reports _"completed (exit code 0)"_ — a system message, not something you wrote — while the suite actually died with `ERR_PNPM_RECURSIVE_FAIL`, or `pnpm install` died on an EPERM leaving no `node_modules`. A piped background command's notification tells you nothing about the command; read the captured output.
+- **An exit code read through a pipe is the pipe's.** `pnpm test 2>&1 | tail` reports `tail`'s 0 even when the suite failed, or when `pnpm` was never found. Capture `${PIPESTATUS[0]}`, or run `echo $?` on its own line. A piped background command's "completed (exit code 0)" notification tells you nothing about the command; read the captured output.
 - **A backgrounded shell does not inherit the interactive profile**, so `pnpm install` can no-op with "command not found" and still look like it worked. Verify `node_modules` exists afterwards.
 - **When a probe's two arms agree, check they agree for the reason you think.** A scratch workspace with no `packageManager` field makes corepack fetch pnpm over the network; behind a sandbox both arms of a comparison can fail identically for that reason and produce a clean, wrong answer.
 
@@ -758,6 +758,19 @@ Tests also _assign_ through the same cast, over an instance member, which constr
 
 Filter on `file.working_dir` (simple-git's name for the working-tree column), **never on `file.index` or on the pair together** — keying on the wrong column reports committed, safe history as data loss. Read both columns' meanings before writing a filter that asserts "what changed and how" rather than just "is the tree clean".
 
+### Testing Crash Safety with a Real SIGKILL
+
+`branch-provisioning.kill.integration.test.ts` kills the fixture child `src/__integration__/fixtures/provision-child.ts` at provisioning step boundaries and asserts the final path is absent or complete, and a retry succeeds. Copy its mechanics for any kill test:
+
+- Spawn `node --import tsx <file>` (see [Diagnosing a Test Failure](#diagnosing-a-test-failure)).
+- Spawn `detached: true` and kill the group, `process.kill(-pid, 'SIGKILL')`, so git grandchildren die too.
+- Synchronise on the child's stdout step lines, never fixed sleeps; the child pauses after the line a kill targets.
+- To stall or kill only git, put a `git` shim first on the child's `PATH`.
+
+`setProvisioningTestHooks({ beforePublish, inspectBlocked })` (`@internal`, module-level; call it with no argument to clear) injects behaviour around the publish step in-process.
+
+A new simple-git instance that clones or checks out must pass `errors: failOnSignalExit` (`git-manager.ts`); otherwise a signal-killed git reads as success.
+
 ### Extracting from a Class Whose Tests Reach Through the Instance
 
 When you split a large class into module-level functions taking a context object, and its suite drives the class by **mutating the instance**, the context has two hard requirements:
@@ -868,7 +881,9 @@ it('logs error when something fails', () => {
 
 `toHaveErrored`, `toHaveWarned` and `toHaveLogged` match `console.error`/`warn`/`log`, taking a substring or a RegExp; `consoleSpy.all()` dumps everything captured, by method, when an assertion is not matching. Other packages import `mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`, asserted and `mockRestore()`d in a `finally`, works too.
 
-**Keep the reporter "all dots".** The `dot` reporter prints a `stdout | <file> > <test>` block for any test that writes to the console, which buries real problems; GitHub Actions sets `CI=true`, so the existing `pnpm test` step enforces the guard with no extra workflow step. `vitest.shared.ts` names the reporter explicitly; its comment says why an unnamed reporter blinds the guard under an AI coding agent. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
+**Keep the reporter "all dots"**: `vitest.shared.ts` names it explicitly, and its comment says why an unnamed reporter blinds the guard. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
+
+**Provisioning step lines** (`[canopy] provision …`) print unconditionally, so `src/test-utils/quiet-provision-log.ts`, a `node`-project `setupFile`, silences them before every test. A test asserting on them installs its own `setProvisionLogSink(...)`.
 
 **`canopycms-cdk` also sets `JSII_DEPRECATED=fail`**, so calling a deprecated aws-cdk-lib API throws a `DeprecationError` at the call site — locally too, and inside `scaffold-synth.test.ts`'s subprocess synth, whose stderr the console guard never sees. Migrate the call; do not relax the setting.
 
