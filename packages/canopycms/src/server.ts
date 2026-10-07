@@ -254,9 +254,9 @@ export { LAZY_TRANSFORM_TAG } from './assets/materialize'
 /**
  * Make every `assets/t/` key a build references exist in `store` (transforming only the missing
  * ones from the stored originals) and check every referenced svg/pdf key exists. Under an
- * `outputPrefix`, keys are written beneath it, and those production already stores are copied. A release job
- * that bundles its own tool calls this with a store from `createAssetStore` and gates on the
- * returned report; no site config is involved. Needs sharp only when something is missing.
+ * `outputPrefix`, keys are written beneath it, and those production already stores are copied. A
+ * release job that bundles its own tool calls this with a store from `createAssetStore` and gates
+ * on the returned report; no site config is involved. Needs sharp only when something is missing.
  */
 export { materializeAssets } from './assets/materialize'
 

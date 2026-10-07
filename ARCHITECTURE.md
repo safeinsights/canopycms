@@ -658,7 +658,7 @@ Assets live in a single bucket — in prod, new prefixes inside each site's exis
 
 Keys are **immutable, content-addressed and unguessable**, and identical bytes deduplicate. That is what gives assets **branch-awareness without git storage**: a draft branch's newly uploaded image is fetchable-but-unguessable immediately, so drafts and PR previews render it before the referencing content is published; publishing needs no asset-promotion step, because the reference already points at the final key; and rollback always resolves, because old keys are never deleted.
 
-**Every write to a content-addressed key is create-only** — S3 `If-None-Match: *`, a local exclusive create — since no correct writer ever replaces one. `AssetSupport` can enforce this with a bucket-policy Deny, opt-in because it also binds the CMS Lambda, which runs the adopter's installed `canopycms`.
+**Every write to a content-addressed key is create-only** — S3 `If-None-Match: *`, a local exclusive create — since no correct writer ever replaces one. `AssetSupport` can enforce this with a bucket-policy Deny, opt-in because every writer, CMS or lazy Lambda, must first run a create-only release.
 
 **Unlisted is not private.** Key enumeration is an accepted trade-off — the meta listing that powers the media library is open to any authenticated user — so confidential files do not belong in this store. Deleting an asset removes only its meta sidecar; blobs are kept forever.
 

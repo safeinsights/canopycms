@@ -469,16 +469,16 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(toCopy, concurrency, async (key) => {
     try {
-      let attempts = 0
+      let tries = 0
       const copied = await withRetry(() => {
-        attempts++
+        tries++
         return store.copyPublicObject(key, destOf(key))
       })
       if (copied === 'source-missing') {
         presence.set(key, 'absent')
       } else {
-        // As for a transform below: after a failed attempt, `already-exists` may be its own copy.
-        const copiedElsewhere = copied === 'already-exists' && attempts === 1
+        // After a failed try, `already-exists` may be that try's own copy, as for a transform.
+        const copiedElsewhere = copied === 'already-exists' && tries === 1
         outcomes.set(key, { status: copiedElsewhere ? 'existed' : 'copied' })
       }
     } catch (err: unknown) {
@@ -503,16 +503,16 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(missing, transformConcurrency, async (target) => {
     try {
-      let attempts = 0
+      let tries = 0
       const result = await withRetry(() => {
-        attempts++
+        tries++
         return storeTransform(store, target.parsed, destOf(target.key))
       })
       if (result.ok) {
         // After a failed attempt, `already-exists` may be that attempt's own write, whose response
         // was lost, so it counts as `created`: a release waiting on its `created` keys then waits
         // on a key it may not have written, never skips one it did.
-        const createdElsewhere = result.stored === 'already-exists' && attempts === 1
+        const createdElsewhere = result.stored === 'already-exists' && tries === 1
         outcomes.set(target.key, { status: createdElsewhere ? 'existed' : 'created' })
       } else {
         fail(target.key, 'content', `${result.status}: ${result.error}`)

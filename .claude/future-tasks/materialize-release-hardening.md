@@ -63,9 +63,9 @@ site's deploy session.
 
 ## Amendments from the adversarial design review
 
-- **The Deny is opt-in** (`AssetSupport` prop, default off). It binds the CMS Lambda, which runs the
-  adopter's installed `canopycms`; upgrading `canopycms-cdk` first would deny every upload. README:
-  upgrade `canopycms` first, then enable. It also denies `aws s3 cp` without `--if-none-match` and
+- **The Deny is opt-in** (`AssetSupport` prop, default off). It binds every writer: the CMS Lambda,
+  which runs the adopter's installed `canopycms`, and the lazy transform Lambda, which bundles the
+  `canopycms` that `canopycms-cdk` was built with. Upgrade and deploy both, then enable. It also denies `aws s3 cp` without `--if-none-match` and
   any multipart upload. Flipping the default is a follow-up task.
 - **One 409 retry layer**, in the S3 store's conditional-put helper, matching
   `err.name === 'ConditionalRequestConflict'` with a budget of about 2 s. `isTransientStoreError`
@@ -81,7 +81,7 @@ site's deploy session.
   HEADs, statics included; `outputPrefix` rejects `.` and `..` segments and compares canonical
   prefixes by segment.
 - **PR C README:** the preview role needs `s3:ListBucket` (otherwise every miss is a 403 and a store
-  failure); production hosts must route only `/assets/*` to the bucket, since `previews/*` holds
+  failure); no production route may serve the output prefix, since it holds
   attacker-writable bytes; scope each preview's writes to its own id or accept that one
   preview's build can write into another's; KMS needs on SSE-KMS buckets.
 - **Measured on the adopting site's bucket (2026-10-07), with a preview-shaped role:**
@@ -97,8 +97,7 @@ site's deploy session.
 - **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
   behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
 - **Recovery under versioning:** a delete writes a delete marker, so the bad version stays
-  restorable for the lock period, and the replica keeps serving it unless delete-marker replication
-  is on.
+  restorable for the lock period, and a replica keeps it until the rematerialized object replicates.
 
 ## Constraints
 

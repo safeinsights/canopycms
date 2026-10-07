@@ -389,21 +389,21 @@ is that the tier's published assets are readable without the site's password.
 ### Media: the public image path
 
 `AssetSupport` serves `/assets/*` and `/assets/t/*` from the bucket and computes nothing, so
-a build's derivatives must exist before it is released:
+a build's derivatives must exist before release:
 
 ```sh
 canopycms collect-asset-refs out/   # after the build, before your manifest step
 canopycms materialize-assets --refs out/canopy-asset-refs.json
 ```
 
-Anything not materialized is a 403. Materialized derivatives are kept forever. `replicaBucket`
+Anything not materialized is a 403; materialized derivatives are kept forever. `replicaBucket`
 adds a replica both behaviors fail over to on a 5xx; its policy must allow this distribution,
 and replication must cover `assets/`.
 
-CanopyCMS never replaces objects under `assets/`, `asset-originals/` or `asset-meta/`;
-`enforceCreateOnlyWrites: true` denies writes there lacking `If-None-Match` (upgrade
-`canopycms` first). For a bucket you pass in, add this in its defining stack, since an imported
-bucket ignores `addToResourcePolicy`. Replication (`s3:ReplicateObject`) is unaffected:
+`enforceCreateOnlyWrites: true` denies writes lacking `If-None-Match` under `assets/`,
+`asset-originals/` and `asset-meta/`; deploy the CMS and any transform Lambda on a create-only
+release first. For a bucket you pass in, add it where it is defined (an imported bucket ignores
+`addToResourcePolicy`). Replication (`s3:ReplicateObject`) is unaffected:
 
 ```typescript
 bucket.addToResourcePolicy(
@@ -420,7 +420,7 @@ bucket.addToResourcePolicy(
 ```
 
 `lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
-widths, reserved concurrency), letting anyone mint transforms of a public asset; only `/assets/*`
+widths, reserved concurrency), letting anyone transform public assets; only `/assets/*`
 keeps the replica. Its outputs carry the tag `canopy-transform=lazy` and expire after 180 days.
 On a bucket you pass in, it requires `transformOutputRetention` and your own expiry rule on that
 tag, plus noncurrent versions if versioned; remove it before leaving lazy mode.

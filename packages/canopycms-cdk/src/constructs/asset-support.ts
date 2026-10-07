@@ -336,14 +336,19 @@ export interface AssetSupportProps {
    * prefixes. Standalone mode only: with a BYO `bucket` the prop is refused, and the same statement
    * belongs in that bucket's own policy (see docs/deploying-to-aws.md).
    *
-   * Opt-in because the Deny binds every principal, including the CMS Lambda, which runs the
-   * `canopycms` your app installs: upgrade `canopycms` to a release whose asset stores write
-   * create-only, then enable this. It also denies every unconditional write, such as a plain
-   * `aws s3 cp`, and every multipart upload (`UploadPart` carries no `If-None-Match`). Replication is authorized as `s3:ReplicateObject`, so it is not denied.
+   * Opt-in because the Deny binds every writer: the CMS Lambda, which runs the `canopycms` your app
+   * installs, and with `lazyPublicTransforms` the transform Lambda, which bundles the `canopycms`
+   * this package was built with and calls S3 through the Lambda runtime's AWS SDK. Upgrade and
+   * deploy both to releases whose stores write create-only, then enable this. It also denies every
+   * unconditional write, such as a plain `aws s3 cp`, and every multipart upload (`UploadPart`
+   * carries no `If-None-Match`). Replication is authorized as `s3:ReplicateObject`, so it is not
+   * denied; a replica bucket takes the same statement.
    *
-   * To replace a bad derivative, delete it, then rerun `materialize-assets`. On a versioned bucket the
-   * delete writes a delete marker and the bad version stays restorable; a replica keeps serving
-   * it unless delete-marker replication is on.
+   * Create-only holds only as far as `s3:DeleteObject` does: a delete then a create replaces an
+   * object, so keep Delete on `assets/*` and `asset-originals/*` to a break-glass role. That is
+   * also how a bad derivative is replaced: delete it, then rerun `materialize-assets`. On a
+   * versioned bucket the delete writes a delete marker and the bad version stays restorable; a
+   * replica keeps the bad version until the rematerialized object replicates.
    *
    * @default false
    */
