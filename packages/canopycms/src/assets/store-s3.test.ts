@@ -12,8 +12,9 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 
-import { S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, HeadObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
+import { mockClient } from 'aws-sdk-client-mock'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { S3AssetStore } from './store-s3'
@@ -133,6 +134,52 @@ describe('S3AssetStore.beginUpload upload target', () => {
     expect(
       () => new S3AssetStore({ bucket: BUCKET, region: REGION, uploadUrl: '//evil.example.com' }),
     ).toThrow(/Invalid uploadUrl/)
+  })
+})
+
+describe('S3AssetStore.presignPublicObjectRead', () => {
+  const KEY = `assets/t/w=320/${'a'.repeat(32)}/photo.png`
+  const s3Mock = mockClient(S3Client)
+
+  afterEach(() => {
+    s3Mock.reset()
+  })
+
+  it('returns null without signing when the HEAD finds no object', async () => {
+    s3Mock
+      .on(HeadObjectCommand)
+      .rejects(new NotFound({ message: 'Not Found', $metadata: { httpStatusCode: 404 } }))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.presignPublicObjectRead(KEY)).toBeNull()
+    expect(s3Mock.commandCalls(HeadObjectCommand)[0].args[0].input).toEqual({
+      Bucket: BUCKET,
+      Key: KEY,
+    })
+  })
+
+  it('signs a short-lived GET of exactly that key when the object exists', async () => {
+    s3Mock.on(HeadObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    const signed = await store.presignPublicObjectRead(KEY)
+    if (signed === null) throw new Error('expected a presigned URL')
+    const url = new URL(signed)
+
+    // The signer percent-encodes `=` in the directive segment; S3 decodes it back to the key.
+    expect(url.origin).toBe(`https://${BUCKET}.s3.${REGION}.amazonaws.com`)
+    expect(decodeURIComponent(url.pathname)).toBe(`/${KEY}`)
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('300')
+    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/)
+    // Signing is local: the only request the store made was the HEAD.
+    expect(s3Mock.commandCalls(GetObjectCommand)).toHaveLength(0)
+  })
+
+  it('propagates a HEAD failure that is not a missing object', async () => {
+    s3Mock.on(HeadObjectCommand).rejects(new Error('AccessDenied'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    await expect(store.presignPublicObjectRead(KEY)).rejects.toThrow('AccessDenied')
   })
 })
 
