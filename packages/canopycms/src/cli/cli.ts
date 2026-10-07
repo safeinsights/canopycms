@@ -358,8 +358,12 @@ async function main() {
     }
     const bucket = typeof flags['bucket'] === 'string' ? flags['bucket'] : undefined
     process.exitCode = await materializeAssetsCLI({
-      // `--bucket` never reads the site config, so it needs no project.
-      projectDir: bucket === undefined ? await requireProjectRoot('materialize-assets') : undefined,
+      // `--bucket` never reads the site config, so it needs no project; `--region` alone is
+      // refused by materializeAssetsCLI as a missing `--bucket`, not as a missing project.
+      projectDir:
+        bucket === undefined && flags['region'] === undefined
+          ? await requireProjectRoot('materialize-assets')
+          : undefined,
       bucket,
       region: typeof flags['region'] === 'string' ? flags['region'] : undefined,
       allowLocal: flags['allow-local'] === true,

@@ -278,7 +278,7 @@ export type { MaterializeResult } from './assets/materialize'
 export type { MaterializeTarget } from './assets/materialize'
 
 /**
- * Scan a static build's output for `/assets/…` URLs and write `canopy-asset-refs.json` beside it.
+ * Scan a static build's output for `/assets/…` URLs and write `canopy-asset-refs.json` into it.
  * Throws `AssetRefsError` for a URL no stored object can answer (non-canonical or malformed).
  */
 export { collectAssetRefs, type CollectAssetRefsResult } from './build/asset-refs'
