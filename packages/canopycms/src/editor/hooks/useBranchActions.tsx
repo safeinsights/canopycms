@@ -3,6 +3,7 @@ import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
+import { requestBranchCreate } from './create-branch-request'
 
 export interface UseBranchActionsOptions {
   branchName: string
@@ -77,16 +78,16 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     if (!confirmed) return false
 
     try {
-      const result = await apiClient.branches.create({
+      const outcome = await requestBranchCreate(apiClient, {
         branch: branch.name,
         title: branch.title,
         description: branch.description,
       })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to create branch')
+      if (outcome.kind === 'failed') {
+        throw new Error(outcome.message)
       }
 
-      const created = result.data?.branch
+      const created = outcome.branch
       if (created) options.onBranchCreated(created)
 
       // The server sanitizes the branch name (e.g. "feature/x" -> "feature-x")
