@@ -82,11 +82,18 @@ site's deploy session.
   prefixes by segment.
 - **PR C README:** the preview role needs `s3:ListBucket` (otherwise every miss is a 403 and a store
   failure); production hosts must route only `/assets/*` to the bucket, since `previews/*` holds
-  attacker-writable bytes; scope each preview's writes to its own id or accept cross-preview
-  overwrites; KMS needs on SSE-KMS buckets.
-- **Unverified until a real-bucket check:** whether `TaggingDirective: REPLACE` with no tags needs
-  `s3:PutObjectTagging`, and whether `s3:if-none-match` is populated on CopyObject. The adopting site
-  runs that check against its test bucket before PR C merges.
+  attacker-writable bytes; scope each preview's writes to its own id or accept that one
+  preview's build can write into another's; KMS needs on SSE-KMS buckets.
+- **Measured on the adopting site's bucket (2026-10-07), with a preview-shaped role:**
+  - A `ListBucket` grant conditioned on `s3:prefix` gives an in-account role 404, not 403, on a HEAD
+    miss under those prefixes.
+  - A conditional CopyObject with `TaggingDirective: REPLACE` and no tags succeeds without
+    `s3:PutObjectTagging`, from a per-segment-encoded source; a second one is a 412; Content-Type
+    and Cache-Control survive.
+  - `s3:if-none-match` is present on a conditional CopyObject and absent on an unconditional one, so
+    a Deny on the prefix lacking it passes canopy's copies and blocks plain ones.
+  - The same holds for a lazy-tagged source (`canopy-transform=lazy`) with no tagging grant at all,
+    and the copy's tag set is empty.
 - **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
   behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
 - **Recovery under versioning:** a delete writes a delete marker, so the bad version stays

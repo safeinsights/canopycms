@@ -7,9 +7,11 @@ where those rules live.
 
 ## Overview
 
-CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts` (the latter loads the site config through `configured-asset-store.ts`, imported only on that path so `--bucket` never reaches jiti; `MATERIALIZE_EXIT_CODES` is the exit contract), `sync`, `migrate`); project-root discovery (`project-root.ts`)
+CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
-`cli.ts`'s `KNOWN_AUTH_MODES`/`KnownAuthMode`/`isKnownAuthMode(value)` are exported so `worker run-once`'s auth-mode dispatch is independently testable: only `'clerk'`/`'dev'` select a plugin, so a typo'd `CANOPY_AUTH_MODE` must be rejected rather than silently skip the auth-cache refresh
+`asset-refs.ts`'s `resolveStore` builds an `S3AssetStore` from `--bucket`/`--region`, else imports `configured-asset-store.ts` (jiti) and refuses a non-S3 store without `--allow-local`; `MATERIALIZE_EXIT_CODES` is the exit contract a release gates on
+
+`cli.ts` exports `KNOWN_AUTH_MODES`/`isKnownAuthMode` (`worker run-once`'s auth-mode dispatch) and `findMultiValuedMaterializeFlag` (`materialize-assets`'s single-value flags, such as `--output-prefix`) for testing; each one's comment holds its rule
 
 ## `init-github-app.ts`
 

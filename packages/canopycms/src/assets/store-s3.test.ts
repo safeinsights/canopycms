@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import {
+  CopyObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -400,6 +401,69 @@ describe('S3AssetStore create-only writes', () => {
     await expect(putDerivative()).rejects.toMatchObject({ name: 'OperationAborted' })
     expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(1)
     expect(sleep).not.toHaveBeenCalled()
+  })
+})
+
+describe('S3AssetStore.copyPublicObject', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+  let sleep: ReturnType<typeof vi.fn<(ms: number) => Promise<void>>>
+  const awsError = (name: string, httpStatusCode: number) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode } })
+  const source = `assets/t/c=0.1:0.2:0.3:0.4,w=320/${'a'.repeat(32)}/photo.webp`
+  const dest = `previews/7/${source}`
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    sleep = vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const copy = () =>
+    new S3AssetStore({ bucket: BUCKET, region: REGION, sleep }).copyPublicObject(source, dest)
+
+  it('sends a create-only copy that keeps headers, drops tags and encodes each source segment', async () => {
+    s3Mock.on(CopyObjectCommand).resolves({})
+    expect(await copy()).toBe('created')
+    expect(s3Mock.commandCalls(CopyObjectCommand)[0].args[0].input).toEqual({
+      Bucket: BUCKET,
+      Key: dest,
+      CopySource: `${BUCKET}/assets/t/c%3D0.1%3A0.2%3A0.3%3A0.4%2Cw%3D320/${'a'.repeat(32)}/photo.webp`,
+      IfNoneMatch: '*',
+      MetadataDirective: 'COPY',
+      TaggingDirective: 'REPLACE',
+    })
+  })
+
+  it('reports a 412 as already-exists', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError('PreconditionFailed', 412))
+    expect(await copy()).toBe('already-exists')
+  })
+
+  it('retries a ConditionalRequestConflict through the shared create-only helper', async () => {
+    s3Mock
+      .on(CopyObjectCommand)
+      .rejectsOnce(awsError('ConditionalRequestConflict', 409))
+      .resolves({})
+    expect(await copy()).toBe('created')
+    expect(s3Mock.commandCalls(CopyObjectCommand)).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a missing source as source-missing', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError('NoSuchKey', 404))
+    expect(await copy()).toBe('source-missing')
+  })
+
+  it.each([
+    ['NoSuchBucket', 404],
+    ['NotFound', 404],
+    ['AccessDenied', 403],
+  ])('throws %s rather than reading it as a missing source', async (name, status) => {
+    s3Mock.on(CopyObjectCommand).rejects(awsError(name, status))
+    await expect(copy()).rejects.toMatchObject({ name })
   })
 })
 

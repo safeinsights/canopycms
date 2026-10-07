@@ -9,6 +9,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
+  assertValidOutputPrefix,
   materializeAssets,
   type MaterializeReport,
   type MaterializeResult,
@@ -60,8 +61,8 @@ export async function collectAssetRefsCLI(options: {
 
 /**
  * @internal Exported for tests. `materialize-assets` exit codes: a release gates on them, so `1`
- * means the run did not finish, and `2` and `3` mean it ran and
- * some keys are missing.
+ * means the run did not finish, `2` that it finished and some keys cannot be produced, and `3`
+ * that the store refused or kept failing, so nothing is known about the keys it could not check.
  */
 export const MATERIALIZE_EXIT_CODES = {
   ok: 0,
@@ -86,6 +87,8 @@ export interface MaterializeAssetsCLIOptions {
   region?: string
   /** Accept a non-S3 store resolved from the config. */
   allowLocal?: boolean
+  /** `MaterializeOptions.outputPrefix`; an invalid one exits 1 before anything is read. */
+  outputPrefix?: string
   /** @internal Test seam: skips resolving the store. */
   store?: AssetStore
 }
@@ -97,8 +100,9 @@ function describeReferences(result: MaterializeResult): string {
 
 function printReport(report: MaterializeReport): void {
   const { summary } = report
+  const under = report.outputPrefix === undefined ? '' : ` under ${report.outputPrefix}`
   console.log(
-    `canopycms materialize-assets: ${summary.total} key(s): ${summary.existed} existed, ` +
+    `canopycms materialize-assets: ${summary.total} key(s)${under}: ${summary.existed} existed, ` +
       `${summary.created} created, ${summary.copied} copied, ${summary.failed} failed`,
   )
   for (const result of report.results) {
@@ -188,6 +192,8 @@ async function runMaterialize(options: MaterializeAssetsCLIOptions): Promise<num
     options.transformConcurrency,
   )
   if (concurrency === null || transformConcurrency === null) return MATERIALIZE_EXIT_CODES.error
+  // An `InvalidOutputPrefixError` reaches `materializeAssetsCLI`'s catch: exit 1.
+  if (options.outputPrefix !== undefined) assertValidOutputPrefix(options.outputPrefix)
 
   const refs = await readAssetRefsFile(path.resolve(options.refsPath))
   const store = await resolveStore(options)
@@ -200,6 +206,7 @@ async function runMaterialize(options: MaterializeAssetsCLIOptions): Promise<num
     statics: refs.statics,
     concurrency,
     transformConcurrency,
+    outputPrefix: options.outputPrefix,
   })
 
   printReport(report)

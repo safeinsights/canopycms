@@ -65,7 +65,7 @@ Content, git and branch files have their own sections below; the rest:
 
 - `index.ts` — package main entry, client-safe exports only
 - `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
-- `server.ts` — server entry point exports
+- `server.ts` — server entry exports, e.g. `collectAssetRefs`, `readAssetRefsFile`, `materializeAssets`
 - `config.ts` — re-export shim over the `config/` module
 - `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
 - `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
@@ -252,7 +252,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 **Location**: `packages/canopycms/src/cli/` — [AGENTS.md](packages/canopycms/src/cli/AGENTS.md)
 
-- `cli.ts` — entrypoint: arg parsing, command routing, `isKnownAuthMode`, `passthroughArgs`
+- `cli.ts` — entrypoint: arg parsing, command routing, `isKnownAuthMode`, `passthroughArgs`, `findMultiValuedMaterializeFlag`
 - `init.ts` — `init()`, `initDeployAws()`, `workerRunOnce()` as library functions, no CLI logic
 - `templates.ts` — template generators tailored by `authProvider` and `staticBuild`
 - `template-files/` — the scaffolded files themselves: config, routes, edit page, middleware, Dockerfile, workflow, CDK app
@@ -264,7 +264,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
-- `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`
+- `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`; `resolveStore` (`--bucket`/`--region`/`--allow-local`), `MATERIALIZE_EXIT_CODES`
 - `configured-asset-store.ts` — the jiti config loader `materialize-assets` imports only when no `--bucket` is given
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
@@ -278,7 +278,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG, worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
-- `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only read behaviors with optional `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda
+- `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
 - `src/worker.ts` — re-exports `CmsWorker` from core for convenience
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
@@ -344,11 +344,11 @@ for why a single file cannot switch between them, and
 from client bundles and static builds; everything else here is server-only (`node:fs`,
 `node:crypto`, `sharp`, the S3 SDK), so client code takes only types, from `types.ts`.
 
-- `types.ts` — `AssetStore` (incl. public-object existence, listing, presigned reads), `AssetMeta`, `StagedUploadTarget`; type-only, no runtime imports
+- `types.ts` — `AssetStore` (create-only writes, public-object existence, listing, presigned reads), `CreateOnlyResult`, `AssetMeta`, `StagedUploadTarget`; type-only
 - `asset-prefixes.ts` — `ASSET_PREFIXES`, the five bucket-prefix strings
 - `keys.ts` — key, hash and slug helpers: `hashBytes`, `slugifyFilename`, `createKeyBuilders`, the per-prefix key builders
-- `store-local.ts` — `LocalAssetStore`, filesystem-backed adapter mirroring the S3 prefix layout
-- `store-s3.ts` — `S3AssetStore`; `uploadUrl` overrides the presigned-POST target and is not a URL prefix
+- `store-local.ts` — `LocalAssetStore`, filesystem mirror of the S3 prefix layout; `createExclusive` (`.asset-tmp/` + `link()`)
+- `store-s3.ts` — `S3AssetStore`; `createIfAbsent` (`IfNoneMatch: '*'`); `uploadUrl` overrides the presigned-POST target and is not a URL prefix
 - `factory.ts` — `createAssetStore`, instantiates the configured store and falls back to a local dev store
 - `pipeline.ts` — `runFinalizePipeline`: sniff, hash, dimensions, SVG sanitize, real raster decode check
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline
@@ -358,7 +358,7 @@ from client bundles and static builds; everything else here is server-only (`nod
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
 - `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
-- `materialize.ts` — `storeTransform`, `materializeAssets`: writing transform outputs
+- `materialize.ts` — `storeTransform`, `materializeAssets` (`outputPrefix`, `assertValidOutputPrefix`, `MaterializeReport.schemaVersion`): writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
 Design: [On-Demand Image Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs
@@ -823,7 +823,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 [AGENTS.md](packages/canopycms/src/build/AGENTS.md):
 
 - `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content to disk and prunes what a previous run produced
-- `asset-refs.ts` — `collectAssetRefs()`, the asset URLs a build references
+- `asset-refs.ts` — `collectAssetRefs()` / `readAssetRefsFile`, the asset URLs a build references
 - `index.ts` — module exports
 
 ## HTTP Module

@@ -214,6 +214,43 @@ describe('materializeAssetsCLI', () => {
     expect(code).toBe(1)
   })
 
+  it('writes under --output-prefix and names it in the report and summary', async () => {
+    out = mockConsole()
+    const reportPath = path.join(tmpDir, 'report.json')
+    const code = await materializeAssetsCLI({
+      projectDir: tmpDir,
+      refsPath: await writeRefs([ok]),
+      reportPath,
+      outputPrefix: 'previews/7/',
+      allowFailures: false,
+      store,
+    })
+    expect(code).toBe(MATERIALIZE_EXIT_CODES.ok)
+    expect(await store.hasPublicObject(`previews/7/${ok}`)).toBe(true)
+    expect(await store.hasPublicObject(ok)).toBe(false)
+    const report = JSON.parse(await fs.readFile(reportPath, 'utf-8'))
+    expect(report.outputPrefix).toBe('previews/7/')
+    expect(out?.all().log.join('\n')).toContain('1 key(s) under previews/7/: 0 existed, 1 created')
+  })
+
+  it.each(['assets/x/', 'previews/7', '/previews/7/', ''])(
+    'exits 1 on the invalid --output-prefix %j before loading the config',
+    async (outputPrefix) => {
+      out = mockConsole()
+      const code = await materializeAssetsCLI({
+        projectDir: tmpDir,
+        refsPath: await writeRefs([ok]),
+        outputPrefix,
+        allowFailures: false,
+      })
+      expect(code).toBe(MATERIALIZE_EXIT_CODES.error)
+      expect(out?.all().error.join('\n')).toContain(
+        `canopycms materialize-assets: Invalid output prefix ${JSON.stringify(outputPrefix)}`,
+      )
+      expect(loadConfiguredAssetStore).not.toHaveBeenCalled()
+    },
+  )
+
   it.each(['0', 'x'])('refuses a bad --transform-concurrency (%s)', async (value) => {
     out = mockConsole()
     const code = await materializeAssetsCLI({

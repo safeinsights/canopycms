@@ -33,16 +33,17 @@ export type StoreTransformResult =
   | { ok: false; status: 400 | 404 | 413 | 422; error: string }
 
 /**
- * Compute the transform `parsed` names from the asset's original and write it under
- * `canonicalKey`. `parsed` must come from `canonicalizeTransformPath`, so the stored pixels
- * always match their key. A rejection is a fact about the asset or the URL and is never worth
- * retrying; a thrown error belongs to the store or the environment. A 404's `error` names what
- * was missing, so a caller answering a browser replaces it.
+ * Compute the transform `parsed` names from the asset's original and write it under `key`: the
+ * canonical key, or that key beneath an output prefix. `parsed` must come from
+ * `canonicalizeTransformPath`, so the stored pixels always match their key. A rejection is a fact
+ * about the asset or the URL and is never worth retrying; a thrown error belongs to the store or
+ * the environment. A 404's `error` names what was missing, so a caller answering a browser
+ * replaces it.
  */
 export async function storeTransform(
   store: AssetStore,
   parsed: ParsedTransformPath,
-  canonicalKey: string,
+  key: string,
   options: { tags?: Readonly<Record<string, string>> } = {},
 ): Promise<StoreTransformResult> {
   const meta = await store.getMeta(parsed.hash32)
@@ -85,7 +86,7 @@ export async function storeTransform(
   }
 
   const stored = await store.putPublicObject({
-    key: canonicalKey,
+    key,
     data: transformed.data,
     contentType: transformed.contentType,
     cacheControl: TRANSFORM_CACHE_CONTROL,
@@ -123,6 +124,8 @@ export const MATERIALIZE_REPORT_SCHEMA_VERSION = 1
 
 export interface MaterializeReport {
   schemaVersion: typeof MATERIALIZE_REPORT_SCHEMA_VERSION
+  /** `MaterializeOptions.outputPrefix`, present only when one was given. */
+  outputPrefix?: string
   summary: {
     total: number
     existed: number
@@ -141,11 +144,18 @@ export interface MaterializeOptions {
   store: AssetStore
   targets: readonly MaterializeTarget[]
   /**
-   * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are only checked:
-   * finalize writes them at upload, so a missing one is a content failure nothing here can fix,
-   * unless the bucket itself is missing, which is a store failure.
+   * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are never produced
+   * here (finalize writes them at upload), only checked, or copied under an `outputPrefix`, so a
+   * missing one is a content failure, unless the bucket itself is missing: a store failure.
    */
   statics?: readonly MaterializeTarget[]
+  /**
+   * Write every key `k` at `outputPrefix + k` instead, for a build whose writes must never land
+   * where production reads (a PR preview). A key production already stores is copied from there;
+   * the rest are transformed from the canonical originals. Production's own run, with no prefix,
+   * never reads beneath it. See `assertValidOutputPrefix` for what is accepted.
+   */
+  outputPrefix?: string
   /** Store requests in flight at once. Default 8. */
   concurrency?: number
   /**
@@ -175,6 +185,43 @@ export class SharpUnavailableError extends Error {
     )
     this.name = 'SharpUnavailableError'
   }
+}
+
+/** `MaterializeOptions.outputPrefix` broke a rule of `assertValidOutputPrefix`; nothing was read or written. */
+export class InvalidOutputPrefixError extends Error {
+  constructor(prefix: string, reason: string) {
+    super(`Invalid output prefix ${JSON.stringify(prefix)}: ${reason}`)
+    this.name = 'InvalidOutputPrefixError'
+  }
+}
+
+const OUTPUT_PREFIX_SEGMENT_RE = /^[A-Za-z0-9._-]+$/
+const CANOPY_PREFIX_SEGMENTS = Object.values(ASSET_PREFIXES).map((prefix) => prefix.split('/'))
+
+/**
+ * Throws `InvalidOutputPrefixError` unless `prefix` is relative, ends in `/`, and is a run of
+ * `[A-Za-z0-9._-]` segments, none empty, `.` or `..`, whose first segments are not a canopy
+ * prefix. Production trusts whatever is under its own prefixes, so a write beneath one is a write
+ * production serves. Compared by segment: `assets-x/` is accepted, `assets/x/` is not.
+ */
+export function assertValidOutputPrefix(prefix: string): void {
+  const refuse = (reason: string) => {
+    throw new InvalidOutputPrefixError(prefix, reason)
+  }
+  if (prefix.startsWith('/')) refuse('it must be relative, with no leading /')
+  if (!prefix.endsWith('/')) refuse('it must end in /')
+  const segments = prefix.slice(0, -1).split('/')
+  for (const segment of segments) {
+    if (segment === '') refuse('it has an empty segment')
+    if (segment === '.' || segment === '..') refuse(`it has a ${segment} segment`)
+    if (!OUTPUT_PREFIX_SEGMENT_RE.test(segment)) {
+      refuse(`segment ${JSON.stringify(segment)} has a character outside [A-Za-z0-9._-]`)
+    }
+  }
+  const canopy = CANOPY_PREFIX_SEGMENTS.find((prefixSegments) =>
+    prefixSegments.every((segment, i) => segments[i] === segment),
+  )
+  if (canopy) refuse(`it begins with the canopy prefix ${canopy.join('/')}/`)
 }
 
 const DEFAULT_CONCURRENCY = 8
@@ -250,14 +297,28 @@ interface ValidTarget {
 }
 
 /**
+ * Where a key is stored: at its destination, only at its canonical key (production's copy, under an
+ * output prefix), or neither.
+ */
+type Presence = 'dest' | 'canonical' | 'absent'
+
+/** A directive group's listings; an absent one was not taken or kept failing, so HEAD instead. */
+interface Listings {
+  dest?: ReadonlySet<string>
+  canonical?: ReadonlySet<string>
+}
+
+/**
  * Make every referenced transform key exist in `store`, and check every static key does. A key
  * already stored is left alone:
  * keys are content-addressed, so an existing object is the right one. sharp is loaded only when
- * something is missing, and a sharp that cannot load throws `SharpUnavailableError` rather than
- * failing each key.
+ * something must be transformed, and a sharp that cannot load throws `SharpUnavailableError` rather
+ * than failing each key. An invalid `outputPrefix` throws `InvalidOutputPrefixError` first.
  */
 export async function materializeAssets(options: MaterializeOptions): Promise<MaterializeReport> {
-  const { store } = options
+  const { store, outputPrefix } = options
+  if (outputPrefix !== undefined) assertValidOutputPrefix(outputPrefix)
+  const destOf = (key: string) => (outputPrefix ?? '') + key
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY)
   const transformConcurrency = Math.max(
     1,
@@ -332,35 +393,55 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
     byDirectives.set(target.directives, group)
   }
 
-  const toHead: ValidTarget[] = []
-  for (const [directives, group] of byDirectives) {
-    if (store.listPublicObjectKeys && group.length >= listThreshold) {
-      const listPrefix = `${transformPrefix}${directives}/`
-      const listKeys = store.listPublicObjectKeys.bind(store)
-      try {
-        const found = await withRetry(async () => {
+  const listOnce = async (prefix: string): Promise<ReadonlySet<string> | undefined> => {
+    if (!store.listPublicObjectKeys) return undefined
+    const listKeys = store.listPublicObjectKeys.bind(store)
+    try {
+      return new Set(
+        await withRetry(async () => {
           const keys: string[] = []
-          for await (const key of listKeys(listPrefix)) keys.push(key)
+          for await (const key of listKeys(prefix)) keys.push(key)
           return keys
-        })
-        const listed = new Set(found)
-        for (const target of group) {
-          if (listed.has(target.key)) outcomes.set(target.key, { status: 'existed' })
-        }
-        continue
-      } catch {
-        // A listing that keeps failing costs only speed: HEAD the group instead, and let each
-        // HEAD report its own failure.
-      }
+        }),
+      )
+    } catch {
+      // A listing that keeps failing costs only speed: its keys are HEADed instead, and each HEAD
+      // reports its own failure.
+      return undefined
     }
-    toHead.push(...group)
   }
 
-  await forEachBounded(toHead, concurrency, async (target) => {
+  const listingsByDirectives = new Map<string, Listings>()
+  if (store.listPublicObjectKeys) {
+    for (const [directives, group] of byDirectives) {
+      if (group.length < listThreshold) continue
+      const listPrefix = `${transformPrefix}${directives}/`
+      const dest = await listOnce(destOf(listPrefix))
+      const needsCanonical =
+        outputPrefix !== undefined && group.some((target) => !dest?.has(destOf(target.key)))
+      const canonical = needsCanonical ? await listOnce(listPrefix) : undefined
+      listingsByDirectives.set(directives, { dest, canonical })
+    }
+  }
+
+  // Every presence check goes through here. Without an output prefix a key's destination is the
+  // key itself, so this is one listing lookup or HEAD and never `canonical`.
+  const resolvePresence = async (key: string, listings: Listings = {}): Promise<Presence> => {
+    const isStored = async (storeKey: string, listing: ReadonlySet<string> | undefined) =>
+      listing ? listing.has(storeKey) : withRetry(() => store.hasPublicObject(storeKey))
+    const dest = destOf(key)
+    if (await isStored(dest, listings.dest)) return 'dest'
+    if (dest === key) return 'absent'
+    return (await isStored(key, listings.canonical)) ? 'canonical' : 'absent'
+  }
+
+  const presence = new Map<string, Presence>()
+  await forEachBounded(valid, concurrency, async (target) => {
     try {
-      if (await withRetry(() => store.hasPublicObject(target.key))) {
-        outcomes.set(target.key, { status: 'existed' })
-      }
+      presence.set(
+        target.key,
+        await resolvePresence(target.key, listingsByDirectives.get(target.directives)),
+      )
     } catch (err: unknown) {
       fail(target.key, 'store', `Existence check failed: ${getErrorMessage(err)}`)
     }
@@ -368,22 +449,50 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(validStatics, concurrency, async (key) => {
     try {
+      let found = await resolvePresence(key)
       // A HEAD cannot tell a missing key from a missing bucket, and a static key has no
       // transform's meta read to tell them apart afterwards; a GET names which.
-      const exists =
-        (await withRetry(() => store.hasPublicObject(key))) ||
-        (await withRetry(() => store.readPublicObject(key))) !== null
-      if (exists) {
-        outcomes.set(key, { status: 'existed' })
-      } else {
-        fail(key, 'content', 'No stored object; an svg or pdf is written at upload only')
+      if (found === 'absent' && (await withRetry(() => store.readPublicObject(key))) !== null) {
+        found = destOf(key) === key ? 'dest' : 'canonical'
       }
+      presence.set(key, found)
     } catch (err: unknown) {
       fail(key, 'store', `Existence check failed: ${getErrorMessage(err)}`)
     }
   })
 
-  const missing = valid.filter((target) => !outcomes.has(target.key))
+  const toCopy: string[] = []
+  for (const [key, found] of presence) {
+    if (found === 'dest') outcomes.set(key, { status: 'existed' })
+    else if (found === 'canonical') toCopy.push(key)
+  }
+
+  await forEachBounded(toCopy, concurrency, async (key) => {
+    try {
+      let attempts = 0
+      const copied = await withRetry(() => {
+        attempts++
+        return store.copyPublicObject(key, destOf(key))
+      })
+      if (copied === 'source-missing') {
+        presence.set(key, 'absent')
+      } else {
+        // As for a transform below: after a failed attempt, `already-exists` may be its own copy.
+        const copiedElsewhere = copied === 'already-exists' && attempts === 1
+        outcomes.set(key, { status: copiedElsewhere ? 'existed' : 'copied' })
+      }
+    } catch (err: unknown) {
+      fail(key, 'store', `Copy failed: ${getErrorMessage(err)}`)
+    }
+  })
+
+  for (const key of validStatics) {
+    if (presence.get(key) === 'absent') {
+      fail(key, 'content', 'No stored object; an svg or pdf is written at upload only')
+    }
+  }
+
+  const missing = valid.filter((target) => presence.get(target.key) === 'absent')
   if (missing.length > 0) {
     try {
       await loadSharp()
@@ -397,7 +506,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
       let attempts = 0
       const result = await withRetry(() => {
         attempts++
-        return storeTransform(store, target.parsed, target.key)
+        return storeTransform(store, target.parsed, destOf(target.key))
       })
       if (result.ok) {
         // After a failed attempt, `already-exists` may be that attempt's own write, whose response
@@ -432,6 +541,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
     results.filter(predicate).length
   return {
     schemaVersion: MATERIALIZE_REPORT_SCHEMA_VERSION,
+    ...(outputPrefix !== undefined ? { outputPrefix } : {}),
     summary: {
       total: results.length,
       existed: count((r) => r.status === 'existed'),

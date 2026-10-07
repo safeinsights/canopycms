@@ -237,6 +237,18 @@ export class LocalAssetStore implements AssetStore {
     })
   }
 
+  async copyPublicObject(
+    sourceKey: string,
+    destKey: string,
+  ): Promise<CreateOnlyResult | 'source-missing'> {
+    const sourcePath = this.resolveKey(sourceKey)
+    const data = await this.readFileOrNull(sourcePath)
+    if (!data) return 'source-missing'
+    const { contentType, contentDisposition, cacheControl } =
+      await this.readHeadersSidecar(sourcePath)
+    return this.createExclusive(destKey, data, { contentType, contentDisposition, cacheControl })
+  }
+
   async readPublicObject(key: string): Promise<PublicObject | null> {
     const filePath = this.resolveKey(key)
     const data = await this.readFileOrNull(filePath)

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  findMultiValuedMaterializeFlag,
   parseArgs,
   resolveSyncSubcommand,
   parseAuthFlag,
@@ -263,5 +264,26 @@ describe('isKnownAuthMode', () => {
     ['auth0', 'a provider this CLI cannot construct'],
   ])('rejects %j (%s)', (mode) => {
     expect(isKnownAuthMode(mode)).toBe(false)
+  })
+})
+
+describe('materialize-assets value flags', () => {
+  it('parses --output-prefix as a string, even one that looks numeric', () => {
+    expect(parseArgs(['materialize-assets', '--output-prefix', 'previews/7/']).flags).toMatchObject(
+      { 'output-prefix': 'previews/7/' },
+    )
+    expect(parseArgs(['materialize-assets', '--output-prefix', '7']).flags['output-prefix']).toBe(
+      '7',
+    )
+  })
+
+  it.each([
+    [['--output-prefix', 'a/', '--output-prefix', 'b/'], 'output-prefix'],
+    [['--no-output-prefix'], 'output-prefix'],
+    [['--bucket', 'a', '--bucket', 'b'], 'bucket'],
+    [['--output-prefix', 'previews/7/', '--bucket', 'b'], undefined],
+  ])('finds the repeated or negated flag in %j', (args, expected) => {
+    const { argv } = parseArgs(['materialize-assets', ...args])
+    expect(findMultiValuedMaterializeFlag(argv)).toBe(expected)
   })
 })
