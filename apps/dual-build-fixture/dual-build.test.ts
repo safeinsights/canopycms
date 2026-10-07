@@ -19,8 +19,13 @@ import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { CDN_ORIGIN, CLIENT_REFS } from './app/images/image-refs'
+
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url))
 const NEXT_BIN = path.join(APP_DIR, 'node_modules', '.bin', 'next')
+const CANOPY_BIN = path.join(APP_DIR, 'node_modules', '.bin', 'canopycms')
+// Every URL assetUrl returns during the static build, one per line (app/images/record-asset-urls.ts).
+const ASSET_URL_LOG = path.join(APP_DIR, '.asset-urls.log')
 const NEXT_DIR = path.join(APP_DIR, '.next')
 const STATIC_NEXT_DIR = path.join(APP_DIR, '.next-static') // .next/'s non-cache contents, relocated here right after the static build, before the CMS build overwrites .next/
 const OUT_DIR = path.join(APP_DIR, 'out') // only `output: 'export'` (the static build) ever writes this
@@ -73,6 +78,7 @@ interface BuildResult {
 function runNextBuild(flavor: 'static' | 'cms'): BuildResult {
   const env: NodeJS.ProcessEnv = { ...process.env, CANOPY_BUILD: flavor }
   delete env[RUNTIME_KEY_ENV]
+  if (flavor === 'static') env.FIXTURE_ASSET_URL_LOG = ASSET_URL_LOG
   try {
     const output = execFileSync(NEXT_BIN, ['build'], {
       cwd: APP_DIR,
@@ -214,6 +220,7 @@ beforeAll(async () => {
   // local run must not leak into assertions.
   rmSync(STATIC_NEXT_DIR, { recursive: true, force: true })
   rmSync(OUT_DIR, { recursive: true, force: true })
+  rmSync(ASSET_URL_LOG, { force: true })
   cleanNextOutputKeepCache()
 
   staticBuild = runNextBuild('static')
@@ -298,6 +305,36 @@ describe('static build (CANOPY_BUILD=static)', () => {
       hits.length,
       `expected the content marker "${CONTENT_MARKER}" to appear in the prerendered static export (e.g. index.html); found nowhere under out/`,
     ).toBeGreaterThan(0)
+  })
+})
+
+describe('collect-asset-refs on the static export', () => {
+  /** The stored key a URL names, whatever origin or prefix precedes `/assets/`. */
+  const keyOf = (url: string) => url.slice(url.indexOf('/assets/') + 1)
+
+  it('collects every URL assetUrl emitted, and nothing else', () => {
+    execFileSync(CANOPY_BIN, ['collect-asset-refs', OUT_DIR], { cwd: APP_DIR, stdio: 'pipe' })
+    const refs = JSON.parse(readFileSync(path.join(OUT_DIR, 'canopy-asset-refs.json'), 'utf8')) as {
+      transforms: { key: string; routes: string[] }[]
+      statics: { key: string; routes: string[] }[]
+    }
+    const emitted = [...new Set(readFileSync(ASSET_URL_LOG, 'utf8').split('\n').filter(Boolean))]
+
+    // The recorder ran, and its output covers the shapes the page renders: an absolute origin,
+    // a crop rounded to canonical, a static svg, and a client component's srcset.
+    expect(emitted.some((url) => url.startsWith(`${CDN_ORIGIN}/assets/t/`))).toBe(true)
+    expect(emitted.some((url) => url.includes('/c=0.1235:0.1000:0.5000:0.3333,'))).toBe(true)
+    expect(
+      emitted.some((url) => url.startsWith(`${CDN_ORIGIN}/assets/`) && url.endsWith('.svg')),
+    ).toBe(true)
+    expect(emitted.some((url) => url.includes('/f=webp,w=960/fedcba'))).toBe(true)
+
+    const expected = new Set([...emitted, ...CLIENT_REFS.map((ref) => ref.src)].map(keyOf))
+    const collected = [...refs.transforms, ...refs.statics].map((entry) => entry.key)
+    expect(collected.sort()).toEqual([...expected].sort())
+    for (const entry of [...refs.transforms, ...refs.statics]) {
+      expect(entry.routes).toContain('/images')
+    }
   })
 })
 

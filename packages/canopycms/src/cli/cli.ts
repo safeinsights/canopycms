@@ -4,7 +4,8 @@
  * CanopyCMS CLI entrypoint.
  *
  * Routes commands to their implementations:
- *   init, init-deploy, init-github-app, worker, generate-ai-content, sync, migrate
+ *   init, init-deploy, init-github-app, worker, generate-ai-content, collect-asset-refs,
+ *   materialize-assets, sync, migrate
  *
  * Command implementations live in separate files (init.ts, sync.ts, etc.)
  * and are dynamically imported to keep startup fast.
@@ -22,7 +23,7 @@ import type { MigrateFormat } from './migrate'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin'],
+    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures'],
     string: [
       'app-dir',
       'branch',
@@ -39,6 +40,9 @@ export function parseArgs(rawArgs: string[]) {
       'app-id',
       'key-out',
       'key-file',
+      'refs',
+      'report',
+      'concurrency',
     ],
     // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
     // without it, minimist folds those words into `argv._` and discards the `--`,
@@ -332,6 +336,18 @@ async function main() {
       configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
       appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
     })
+  } else if (command === 'collect-asset-refs') {
+    const { collectAssetRefsCLI } = await import('./asset-refs')
+    process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
+  } else if (command === 'materialize-assets') {
+    const { materializeAssetsCLI } = await import('./asset-refs')
+    process.exitCode = await materializeAssetsCLI({
+      projectDir: await requireProjectRoot('materialize-assets'),
+      refsPath: typeof flags['refs'] === 'string' ? flags['refs'] : undefined,
+      reportPath: typeof flags['report'] === 'string' ? flags['report'] : undefined,
+      concurrency: typeof flags['concurrency'] === 'string' ? flags['concurrency'] : undefined,
+      allowFailures: flags['allow-failures'] === true,
+    })
   } else if (command === 'sync') {
     const direction = resolveSyncSubcommand(argv._[1] as string | undefined)
     if (!direction) {
@@ -403,6 +419,15 @@ async function main() {
     console.log('    --output <dir>        Output directory (default: public/ai)')
     console.log('    --config <path>       Path to AI content config file')
     console.log('    --app-dir <path>      App directory (default: app)')
+    console.log('')
+    console.log('  collect-asset-refs <outDir>')
+    console.log('                          Record the image URLs a static build references')
+    console.log('                          (writes <outDir>/canopy-asset-refs.json)')
+    console.log('  materialize-assets      Store every referenced image the store lacks')
+    console.log('    --refs <file>         The canopy-asset-refs.json to materialize')
+    console.log('    --report <file>       Also write the per-key JSON report here')
+    console.log('    --concurrency <n>     Store requests in flight (default: 8)')
+    console.log('    --allow-failures      Exit 0 despite content failures (warns loudly)')
     console.log('')
     console.log('  sync <command>          Sync content between working tree and CMS')
     console.log('    push                  Push working-tree content to a branch workspace')

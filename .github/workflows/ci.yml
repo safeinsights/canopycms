@@ -341,6 +341,11 @@ jobs:
               - 'packages/canopycms/src/cli/template-files/**'
               - 'packages/canopycms/src/build/**'
               - 'packages/canopycms/src/static/**'
+              # dual-build.test.ts statically exports pages that call assetUrl and checks
+              # `collect-asset-refs` finds every URL they emitted.
+              - 'packages/canopycms/src/assets/asset-url.ts'
+              - 'packages/canopycms/src/assets/transform-directives.ts'
+              - 'packages/canopycms/src/cli/asset-refs.ts'
               - 'packages/canopycms/package.json'
               - 'apps/dual-build-fixture/**'
               # The lockfile decides which Next/react/canopycms dep versions

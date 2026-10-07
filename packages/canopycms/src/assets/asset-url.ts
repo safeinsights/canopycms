@@ -63,6 +63,19 @@ export interface AssetUrlOptions {
 const TRANSFORM_URL_PREFIX = `/${ASSET_PREFIXES.transform}/`
 
 /**
+ * Test-only. A function stored on `globalThis` under this symbol is called with every URL
+ * `assetUrl` returns; the dual-build fixture installs one during a static export to prove
+ * `collect-asset-refs` finds every URL its pages emitted.
+ */
+const EMITTED_URL_LISTENER = Symbol.for('canopycms.assetUrl.emitted')
+
+function emitted(url: string): string {
+  const listener: unknown = (globalThis as Record<symbol, unknown>)[EMITTED_URL_LISTENER]
+  if (typeof listener === 'function') listener(url)
+  return url
+}
+
+/**
  * Merge `opts` and the ref's crop over the directives already in its src. Precedence per
  * directive: `opts`, then `ref.crop` (crop only), then the src. There is no way to clear a
  * directive, only to override it.
@@ -109,8 +122,8 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
     // mount point" behaves the same: '', '/', '///' and '//' all mean root, matching
     // `joinUrlPrefix`'s own contract. Plain `!opts.baseUrl` made '' and '/' disagree.
     const mount = opts.baseUrl ? stripTrailingSlashes(opts.baseUrl) : ''
-    if (!mount || isUnprefixablePath(src)) return sanitizeUnprefixedPath(src)
-    return joinUrlPrefix(opts.baseUrl, src)
+    if (!mount || isUnprefixablePath(src)) return emitted(sanitizeUnprefixedPath(src))
+    return emitted(joinUrlPrefix(opts.baseUrl, src))
   }
 
   const base = getPreviewAssetBase() ?? opts.baseUrl
@@ -119,7 +132,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   if (!parsed.ok) {
     // Malformed src (shouldn't happen for a src canopycms itself wrote) -
     // nothing sensible to merge onto, so return it unchanged rather than throw.
-    return joinUrlPrefix(base, src)
+    return emitted(joinUrlPrefix(base, src))
   }
 
   const merged = mergeDirectives(parsed.directives, ref.crop, opts)
@@ -129,7 +142,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const ext = !merged.identity && merged.format !== undefined ? merged.format : parsed.ext
 
   const newSrc = `${TRANSFORM_URL_PREFIX}${formatDirectives(merged)}/${parsed.hash32}/${parsed.slug}.${ext}`
-  return joinUrlPrefix(base, newSrc)
+  return emitted(joinUrlPrefix(base, newSrc))
 }
 
 /**
