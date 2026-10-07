@@ -337,6 +337,15 @@ describe('materializeAssetsCLI store selection', () => {
     expect(await run({ bucket: 'b', region: 'r' })).toBe(MATERIALIZE_EXIT_CODES.ok)
   })
 
+  it('refuses a --report that names the --refs file, leaving the refs file in place', async () => {
+    out = mockConsole()
+    const refsPath = await writeRefs([])
+    expect(await run({ refsPath, reportPath: refsPath, bucket: 'b', region: 'r' })).toBe(
+      MATERIALIZE_EXIT_CODES.error,
+    )
+    expect((await fs.stat(refsPath)).isFile()).toBe(true)
+  })
+
   it('runs against a local store from the config under --allow-local', async () => {
     out = mockConsole()
     vi.mocked(loadConfiguredAssetStore).mockResolvedValue(store)

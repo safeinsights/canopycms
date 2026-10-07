@@ -184,6 +184,10 @@ async function runMaterialize(options: MaterializeAssetsCLIOptions): Promise<num
     console.error('canopycms materialize-assets: --report needs a file')
     return MATERIALIZE_EXIT_CODES.error
   }
+  if (options.reportPath && path.resolve(options.reportPath) === path.resolve(options.refsPath)) {
+    console.error('canopycms materialize-assets: --report must not be the --refs file')
+    return MATERIALIZE_EXIT_CODES.error
+  }
   // A gate reading the report must never find an earlier run's after this run exits early.
   if (options.reportPath) await fs.rm(path.resolve(options.reportPath), { force: true })
   const concurrency = parsePositiveInteger('--concurrency', options.concurrency)

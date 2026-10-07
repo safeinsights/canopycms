@@ -91,6 +91,21 @@ const MATERIALIZE_VALUE_FLAGS = [
 ] as const
 
 /**
+ * The first flag `materialize-assets` does not take, or `undefined`. Refused rather than ignored: a
+ * misspelled `--output-prefix` would send a preview build's writes to production's prefixes.
+ * minimist sets every declared boolean, passed or not, so a `false` one was not given. Exported for
+ * testing.
+ */
+export function findUnknownMaterializeFlag(argv: Record<string, unknown>): string | undefined {
+  const known = new Set<string>([...MATERIALIZE_VALUE_FLAGS, 'allow-failures', 'allow-local'])
+  return Object.keys(argv).find((key) => {
+    const value = argv[key]
+    if (key === '_' || known.has(key) || value === false) return false
+    return key !== '--' || (Array.isArray(value) && value.length > 0)
+  })
+}
+
+/**
  * The first of `materialize-assets`'s value flags that was repeated or negated. minimist makes a
  * repeated flag an array and `--no-x` false; either would otherwise read as absent, sending
  * `--bucket a --bucket b` down the config path to a bucket neither named. Exported for testing.
@@ -371,9 +386,21 @@ async function main() {
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
     // Cleared before any check below can exit, so a gate never reads an earlier run's report. A
-    // repeated `--report` names no single file to clear; it exits 1 below.
-    if (typeof flags['report'] === 'string' && flags['report'] !== '') {
-      await rm(resolvePath(flags['report']), { force: true })
+    // repeated `--report` names no single file to clear, and one naming a `--refs` file is the
+    // input; both exit 1 below.
+    const report = flags['report']
+    if (typeof report === 'string' && report !== '') {
+      const refs: unknown[] = [argv['refs']].flat()
+      const reportPath = resolvePath(report)
+      if (!refs.some((ref) => typeof ref === 'string' && resolvePath(ref) === reportPath)) {
+        await rm(reportPath, { force: true })
+      }
+    }
+    const unknownFlag = findUnknownMaterializeFlag(argv)
+    if (unknownFlag) {
+      console.error(`canopycms materialize-assets: unknown flag --${unknownFlag}`)
+      process.exitCode = 1
+      return
     }
     const repeated = findMultiValuedMaterializeFlag(argv)
     if (repeated) {

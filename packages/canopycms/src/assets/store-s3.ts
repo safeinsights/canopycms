@@ -65,7 +65,8 @@ const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
  */
 interface AwsServiceErrorShape {
   name?: string
-  $metadata?: { httpStatusCode?: number }
+  /** `attempts` counts the SDK's own retries of the request that threw. */
+  $metadata?: { httpStatusCode?: number; attempts?: number }
 }
 
 function matchesAwsError(err: unknown, name: string, httpStatusCode: number): boolean {
@@ -128,14 +129,25 @@ export class S3AssetStore implements AssetStore {
    * Sends one create-only request (`IfNoneMatch: '*'`), so S3 answers a taken key with 412. A
    * `ConditionalRequestConflict` is retried here, the only retry layer for it, so a caller with no
    * retry of its own (the lazy transform Lambda, finalize) ends in one of the two results.
+   *
+   * With `retriedIsCreated`, a 412 after any error the SDK had already retried counts as
+   * `created`: one of those attempts may have committed and lost its response. Public objects use
+   * it; meta does not, since a meta `already-exists` sends finalize to read the stored winner.
    */
-  private async createIfAbsent(send: () => Promise<unknown>): Promise<CreateOnlyResult> {
+  private async createIfAbsent(
+    send: () => Promise<unknown>,
+    options: { retriedIsCreated?: boolean } = {},
+  ): Promise<CreateOnlyResult> {
+    let sdkRetried = false
     for (let attempt = 1; ; attempt++) {
       try {
         await send()
         return 'created'
       } catch (err: unknown) {
-        if (isPreconditionFailed(err)) return 'already-exists'
+        sdkRetried ||= ((err as AwsServiceErrorShape).$metadata?.attempts ?? 1) > 1
+        if (isPreconditionFailed(err)) {
+          return options.retriedIsCreated && sdkRetried ? 'created' : 'already-exists'
+        }
         if (!isConditionalRequestConflict(err) || attempt >= CONFLICT_ATTEMPTS) throw err
         await this.sleep(CONFLICT_BASE_DELAY_MS * 2 ** (attempt - 1) * (0.5 + Math.random() / 2))
       }
@@ -144,9 +156,12 @@ export class S3AssetStore implements AssetStore {
 
   private putIfAbsent(
     input: Omit<PutObjectCommandInput, 'Bucket' | 'IfNoneMatch'>,
+    options: { retriedIsCreated?: boolean } = {},
   ): Promise<CreateOnlyResult> {
-    return this.createIfAbsent(() =>
-      this.client.send(new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' })),
+    return this.createIfAbsent(
+      () =>
+        this.client.send(new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' })),
+      options,
     )
   }
 
@@ -260,14 +275,17 @@ export class S3AssetStore implements AssetStore {
     const tagging = Object.entries(input.tags ?? {})
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
       .join('&')
-    return this.putIfAbsent({
-      Key: input.key,
-      Body: input.data,
-      ContentType: input.contentType,
-      ContentDisposition: input.contentDisposition,
-      CacheControl: input.cacheControl,
-      Tagging: tagging || undefined,
-    })
+    return this.putIfAbsent(
+      {
+        Key: input.key,
+        Body: input.data,
+        ContentType: input.contentType,
+        ContentDisposition: input.contentDisposition,
+        CacheControl: input.cacheControl,
+        Tagging: tagging || undefined,
+      },
+      { retriedIsCreated: true },
+    )
   }
 
   /**
@@ -283,17 +301,19 @@ export class S3AssetStore implements AssetStore {
   ): Promise<CreateOnlyResult | 'source-missing'> {
     const copySource = `${this.bucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
     try {
-      return await this.createIfAbsent(() =>
-        this.client.send(
-          new CopyObjectCommand({
-            Bucket: this.bucket,
-            Key: destKey,
-            CopySource: copySource,
-            IfNoneMatch: '*',
-            MetadataDirective: 'COPY',
-            TaggingDirective: 'REPLACE',
-          }),
-        ),
+      return await this.createIfAbsent(
+        () =>
+          this.client.send(
+            new CopyObjectCommand({
+              Bucket: this.bucket,
+              Key: destKey,
+              CopySource: copySource,
+              IfNoneMatch: '*',
+              MetadataDirective: 'COPY',
+              TaggingDirective: 'REPLACE',
+            }),
+          ),
+        { retriedIsCreated: true },
       )
     } catch (err: unknown) {
       // By name alone: a copy's error always carries its code, and a missing bucket is a 404 too.

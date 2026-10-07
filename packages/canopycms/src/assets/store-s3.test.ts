@@ -396,6 +396,37 @@ describe('S3AssetStore create-only writes', () => {
     expect(delays.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(1750)
   })
 
+  it('counts a 412 after an SDK-retried error as created for a public object, not for meta', async () => {
+    const retried = Object.assign(awsError('PreconditionFailed', 412), {
+      $metadata: { httpStatusCode: 412, attempts: 2 },
+    })
+    s3Mock.on(PutObjectCommand).rejects(retried)
+    expect(await putDerivative()).toBe('created')
+    expect(
+      await store().putMetaIfAbsent('a', {
+        hash32: 'a',
+        filename: 'a.png',
+        slug: 'a',
+        ext: 'png',
+        mime: 'image/png',
+        size: 1,
+        kind: 'raster',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+      }),
+    ).toBe('already-exists')
+  })
+
+  it('counts a 412 as created when an earlier conflict had been retried by the SDK', async () => {
+    const sdkRetriedConflict = Object.assign(conflict(), {
+      $metadata: { httpStatusCode: 409, attempts: 2 },
+    })
+    s3Mock
+      .on(PutObjectCommand)
+      .rejectsOnce(sdkRetriedConflict)
+      .rejectsOnce(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('created')
+  })
+
   it('does not retry any other 409', async () => {
     s3Mock.on(PutObjectCommand).rejects(awsError('OperationAborted', 409))
     await expect(putDerivative()).rejects.toMatchObject({ name: 'OperationAborted' })
@@ -440,6 +471,15 @@ describe('S3AssetStore.copyPublicObject', () => {
   it('reports a 412 as already-exists', async () => {
     s3Mock.on(CopyObjectCommand).rejects(awsError('PreconditionFailed', 412))
     expect(await copy()).toBe('already-exists')
+  })
+
+  it('counts a 412 after an SDK-retried copy as created', async () => {
+    s3Mock.on(CopyObjectCommand).rejects(
+      Object.assign(awsError('PreconditionFailed', 412), {
+        $metadata: { httpStatusCode: 412, attempts: 3 },
+      }),
+    )
+    expect(await copy()).toBe('created')
   })
 
   it('retries a ConditionalRequestConflict through the shared create-only helper', async () => {
