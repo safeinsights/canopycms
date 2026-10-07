@@ -348,6 +348,48 @@ describe('the rename arbiter, racing', () => {
   })
 })
 
+describe('a publish rename that reports ENOENT', () => {
+  it("counts as published when the branch.json at the name carries this build's writeId", async () => {
+    // The rename landed but its reply was lost, and the retransmit found the source gone.
+    setProvisioningTestHooks({
+      beforePublish: async ({ stagingPath, finalPath }) => fs.rename(stagingPath, finalPath),
+    })
+
+    const outcome = await new BranchWorkspaceManager(config()).provisionBranch({
+      branchName: 'feat',
+      mode: 'prod',
+      createdBy: 'user-b',
+    })
+
+    expect(outcome.kind).toBe('created')
+    expect((await readBranchJson(path.join(baseRoot, 'feat'))).branch.createdBy).toBe('user-b')
+  })
+
+  it('is not published when the branch.json at the name carries another writeId', async () => {
+    const finalPath = path.join(baseRoot, 'feat')
+    setProvisioningTestHooks({
+      beforePublish: async ({ stagingPath }) => {
+        await fs.cp(stagingPath, finalPath, { recursive: true })
+        const metaPath = path.join(finalPath, '.canopy-meta', 'branch.json')
+        const other = JSON.parse(await fs.readFile(metaPath, 'utf8'))
+        other.writeId = 'another-build'
+        other.branch.createdBy = 'user-a'
+        await fs.writeFile(metaPath, JSON.stringify(other))
+        await fs.rm(stagingPath, { recursive: true })
+      },
+    })
+
+    await expect(
+      new BranchWorkspaceManager(config()).provisionBranch({
+        branchName: 'feat',
+        mode: 'prod',
+        createdBy: 'user-b',
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readBranchJson(finalPath)).branch.createdBy).toBe('user-a')
+  })
+})
+
 describe('quarantine verifies what it moved', () => {
   it('rolls a live branch straight back when a stale look reported residue at its name', async () => {
     await create('feat', 'user-a')
