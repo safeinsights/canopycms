@@ -150,6 +150,67 @@ export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
   }
 }
 
+/** Above either count, {@link repackBareRemoteIfNeeded} repacks. */
+const REMOTE_GIT_MAX_LOOSE_OBJECTS = 50
+const REMOTE_GIT_MAX_PACKS = 6
+
+interface BareRemoteObjectCounts {
+  loose: number
+  packs: number
+}
+
+async function countObjects(git: SimpleGit, gitDir: string): Promise<BareRemoteObjectCounts> {
+  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v'])
+  const fields = new Map(
+    output.split('\n').map((line): [string, string] => {
+      const [name, value = ''] = line.split(': ')
+      return [name, value.trim()]
+    }),
+  )
+  const field = (name: string): number => {
+    const value = fields.get(name)
+    if (!value || !/^\d+$/.test(value)) {
+      throw new Error(`count-objects -v printed no '${name}' count: ${output.trim()}`)
+    }
+    return Number(value)
+  }
+  return { loose: field('count'), packs: field('packs') }
+}
+
+export type BareRemoteRepackResult =
+  | { repacked: false; before: BareRemoteObjectCounts }
+  | {
+      repacked: true
+      before: BareRemoteObjectCounts
+      after: BareRemoteObjectCounts
+      ms: number
+    }
+
+/**
+ * Repack the bare repo `gitDir` once it holds more than {@link REMOTE_GIT_MAX_LOOSE_OBJECTS}
+ * loose objects or {@link REMOTE_GIT_MAX_PACKS} packs, then pack its refs. Under
+ * {@link REMOTE_GIT_CONFIG} every push adds a pack, and nothing else ever compacts them.
+ *
+ * Safe beside concurrent pushes and clones, which is why it is `--cruft` with no expiry:
+ * unreachable objects move into a cruft pack rather than being dropped, so a push that read an
+ * old object before the repack still finds it, and a repack only deletes packs it listed when it
+ * began. A clone that hardlinked a pack keeps that inode when the repack unlinks the remote's
+ * name for it, and packs are never modified in place. `repack -d` also removes the loose objects
+ * it packed and their emptied fan-out directories.
+ */
+export async function repackBareRemoteIfNeeded(gitDir: string): Promise<BareRemoteRepackResult> {
+  const git = simpleGit().env(gitChildEnv({}))
+  const before = await countObjects(git, gitDir)
+  if (before.loose <= REMOTE_GIT_MAX_LOOSE_OBJECTS && before.packs <= REMOTE_GIT_MAX_PACKS) {
+    return { repacked: false, before }
+  }
+  const startedAt = Date.now()
+  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q'])
+  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all'])
+  const after = await countObjects(git, gitDir)
+  return { repacked: true, before, after, ms: Date.now() - startedAt }
+}
+
 /**
  * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
  * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to
@@ -567,6 +628,19 @@ export class GitManager {
           remoteExists = stat.isDirectory()
         } catch (err: unknown) {
           if (!isNotFoundError(err)) throw err
+        }
+
+        if (remoteExists) {
+          // The worker's per-cycle repack never runs in dev; once per call keeps pushes from
+          // piling up packs. Best-effort: a remote it cannot compact still serves.
+          try {
+            const repack = await repackBareRemoteIfNeeded(options.remotePath)
+            if (repack.repacked) log.debug('git', 'Repacked local simulated remote', repack)
+          } catch (err: unknown) {
+            log.debug('git', 'Could not repack local simulated remote', {
+              error: getErrorMessage(err),
+            })
+          }
         }
 
         if (

@@ -220,7 +220,7 @@ direction, and every invariant.
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
-- `remote-git-maintenance.ts` — `maintainRemoteGit`'s repack of `remote.git` (its config: `git-manager.ts` `ensureRemoteGitConfig`)
+- `remote-git-maintenance.ts` — `maintainRemoteGit`: the worker's logged repack of `remote.git` (rule and config: `git-manager.ts` `repackBareRemoteIfNeeded`, `ensureRemoteGitConfig`)
 - `sparse-cone.ts` — `reapplySparseCones`: moves sparse clones to the recorded cone after a content-root change
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
