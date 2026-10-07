@@ -262,10 +262,16 @@ export { materializeAssets } from './assets/materialize'
 /** Thrown by `materializeAssets` when sharp cannot load and keys are missing, so none can be produced. */
 export { SharpUnavailableError } from './assets/materialize'
 
+/**
+ * Thrown by `materializeAssets` before any store request when `outputPrefix` is not a relative,
+ * `/`-terminated run of `[A-Za-z0-9._-]` segments outside every canopy prefix.
+ */
+export { InvalidOutputPrefixError } from './assets/materialize'
+
 /** The `schemaVersion` carried by every `MaterializeReport`. */
 export { MATERIALIZE_REPORT_SCHEMA_VERSION } from './assets/materialize'
 
-/** Options for `materializeAssets`: the store, the referenced keys, and concurrency/retry limits. */
+/** Options for `materializeAssets`: the store, the referenced keys, an output prefix, and concurrency/retry limits. */
 export type { MaterializeOptions } from './assets/materialize'
 
 /** What `materializeAssets` returns: a versioned summary and one result per key, sorted by key. */

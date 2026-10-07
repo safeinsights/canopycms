@@ -229,7 +229,7 @@ importers:
   packages/canopycms:
     dependencies:
       '@aws-sdk/client-s3':
-        specifier: ^3.600.0
+        specifier: ^3.1092.0
         version: 3.1092.0
       '@aws-sdk/s3-presigned-post':
         specifier: ^3.600.0

@@ -11,6 +11,8 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 
 import {
+  CopyObjectCommand,
+  type CopyObjectCommandInput,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -54,13 +56,30 @@ const makeMeta = (overrides: Partial<AssetMeta> = {}): AssetMeta => ({
 })
 
 const CREATE_ONLY_PREFIXES = ['assets/', 'asset-originals/', 'asset-meta/']
+const FAKE_BUCKET = 'test-bucket'
+
+const encodeKey = (key: string) => key.split('/').map(encodeURIComponent).join('/')
+
+const parseTagging = (tagging: string | undefined): Record<string, string> =>
+  Object.fromEntries(
+    (tagging ? tagging.split('&') : []).map((pair) => {
+      const [key, value = ''] = pair.split('=').map(decodeURIComponent)
+      return [key, value]
+    }),
+  )
 
 /** Minimal in-memory S3 fake, driven by aws-sdk-client-mock's callsFake(). */
 function installS3Fake() {
   const s3Mock = mockClient(S3Client)
   const objects = new Map<
     string,
-    { body: Uint8Array; contentType?: string; contentDisposition?: string; cacheControl?: string }
+    {
+      body: Uint8Array
+      contentType?: string
+      contentDisposition?: string
+      cacheControl?: string
+      tags: Record<string, string>
+    }
   >()
 
   const makeAwsError = (name: string, httpStatusCode: number, message: string) =>
@@ -86,6 +105,34 @@ function installS3Fake() {
       contentType: input.ContentType,
       contentDisposition: input.ContentDisposition,
       cacheControl: input.CacheControl,
+      tags: parseTagging(input.Tagging),
+    })
+    return {}
+  })
+
+  s3Mock.on(CopyObjectCommand).callsFake((input: CopyObjectCommandInput) => {
+    // S3 URL-decodes `x-amz-copy-source`. Stricter than S3, this fake accepts only the per-segment
+    // encoding, so an unencoded `=`/`,`/`:` or an encoded `/` fails rather than passing by luck.
+    const raw = input.CopySource ?? ''
+    const decoded = decodeURIComponent(raw)
+    const slash = decoded.indexOf('/')
+    const sourceBucket = decoded.slice(0, slash)
+    const sourceKey = decoded.slice(slash + 1)
+    if (slash < 1 || raw !== `${sourceBucket}/${encodeKey(sourceKey)}`) {
+      throw makeAwsError('InvalidArgument', 400, `CopySource is not URL-encoded: ${raw}`)
+    }
+    if (sourceBucket !== FAKE_BUCKET) throw makeAwsError('NoSuchBucket', 404, 'No such bucket')
+    const source = objects.get(sourceKey)
+    if (!source) throw makeAwsError('NoSuchKey', 404, 'The specified key does not exist.')
+    const key = input.Key as string
+    if (input.IfNoneMatch === '*' && objects.has(key)) {
+      throw makeAwsError('PreconditionFailed', 412, 'At least one of the pre-conditions failed')
+    }
+    if (input.MetadataDirective !== 'COPY')
+      throw new Error('S3 fake: expected MetadataDirective COPY')
+    objects.set(key, {
+      ...source,
+      tags: input.TaggingDirective === 'REPLACE' ? parseTagging(input.Tagging) : source.tags,
     })
     return {}
   })
@@ -144,6 +191,8 @@ async function collectAllViaPagination(store: AssetStore, limit: number): Promis
 
 interface Harness {
   store: AssetStore
+  /** An object's tags; only a store with tags provides it. */
+  tagsOf?: (key: string) => Record<string, string> | undefined
   /** Assert the store orders listMeta results newest-uploadedAt-first (local guarantees this; S3 does not). */
   assertsNewestFirst: boolean
 }
@@ -326,6 +375,75 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
       expect(stored && textOf(stored.data)).toBe(winner)
     })
 
+    it('copyPublicObject creates the copy with its headers, then reports already-exists, leaving it', async () => {
+      const { store } = harness
+      const source = `assets/${hash32For(50)}/report.pdf`
+      const dest = `previews/7/${source}`
+      await store.putPublicObject({
+        key: source,
+        data: new TextEncoder().encode('source-bytes'),
+        contentType: 'application/pdf',
+        contentDisposition: 'inline; filename="Report.pdf"',
+        cacheControl: 'public, max-age=60',
+      })
+      expect(await store.copyPublicObject(source, dest)).toBe('created')
+      const copied = await store.readPublicObject(dest)
+      expect(copied && textOf(copied.data)).toBe('source-bytes')
+      expect(copied).toMatchObject({
+        contentType: 'application/pdf',
+        contentDisposition: 'inline; filename="Report.pdf"',
+        cacheControl: 'public, max-age=60',
+      })
+
+      const other = `assets/${hash32For(51)}/report.pdf`
+      await store.putPublicObject({
+        key: other,
+        data: new TextEncoder().encode('other-bytes'),
+        contentType: 'text/plain',
+      })
+      expect(await store.copyPublicObject(other, dest)).toBe('already-exists')
+      const kept = await store.readPublicObject(dest)
+      expect(kept && textOf(kept.data)).toBe('source-bytes')
+      expect(kept?.contentType).toBe('application/pdf')
+    })
+
+    it('copyPublicObject reports source-missing and creates nothing', async () => {
+      const { store } = harness
+      const dest = `previews/7/assets/${hash32For(52)}/gone.pdf`
+      expect(await store.copyPublicObject(`assets/${hash32For(52)}/gone.pdf`, dest)).toBe(
+        'source-missing',
+      )
+      expect(await store.hasPublicObject(dest)).toBe(false)
+    })
+
+    it('copyPublicObject resolves a crop-and-width key whose segments hold = , and :', async () => {
+      const { store } = harness
+      const source = `assets/t/c=0.1:0.2:0.3:0.4,w=320/${hash32For(53)}/photo.webp`
+      await store.putPublicObject({
+        key: source,
+        data: new TextEncoder().encode('crop'),
+        contentType: 'image/webp',
+      })
+      expect(await store.copyPublicObject(source, `previews/7/${source}`)).toBe('created')
+      const copied = await store.readPublicObject(`previews/7/${source}`)
+      expect(copied && textOf(copied.data)).toBe('crop')
+    })
+
+    it('copyPublicObject leaves a lazy tag on the source off the copy', async () => {
+      const { store, tagsOf } = harness
+      if (!tagsOf) return
+      const source = `assets/t/w=320/${hash32For(54)}/photo.png`
+      await store.putPublicObject({
+        key: source,
+        data: new TextEncoder().encode('lazy'),
+        contentType: 'image/png',
+        tags: { 'canopy-transform': 'lazy' },
+      })
+      expect(tagsOf(source)).toEqual({ 'canopy-transform': 'lazy' })
+      expect(await store.copyPublicObject(source, `previews/7/${source}`)).toBe('created')
+      expect(tagsOf(`previews/7/${source}`)).toEqual({})
+    })
+
     it('paginates listMeta to exhaustion with no duplicates', async () => {
       const { store } = harness
       const total = 7
@@ -390,9 +508,11 @@ describe('store-parity', () => {
     runParitySuite('S3AssetStore', () => {
       fake?.s3Mock.restore()
       fake = installS3Fake()
+      const { objects } = fake
       return {
-        store: new S3AssetStore({ bucket: 'test-bucket', region: 'us-east-1' }),
+        store: new S3AssetStore({ bucket: FAKE_BUCKET, region: 'us-east-1' }),
         assertsNewestFirst: false,
+        tagsOf: (key) => objects.get(key)?.tags,
       }
     })
 

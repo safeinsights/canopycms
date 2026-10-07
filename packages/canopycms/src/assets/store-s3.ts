@@ -7,6 +7,7 @@
 
 import { randomUUID } from 'node:crypto'
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -124,18 +125,14 @@ export class S3AssetStore implements AssetStore {
   }
 
   /**
-   * A create-only PUT: `IfNoneMatch: '*'`, so S3 answers a taken key with 412. A
+   * Sends one create-only request (`IfNoneMatch: '*'`), so S3 answers a taken key with 412. A
    * `ConditionalRequestConflict` is retried here, the only retry layer for it, so a caller with no
    * retry of its own (the lazy transform Lambda, finalize) ends in one of the two results.
    */
-  private async putIfAbsent(
-    input: Omit<PutObjectCommandInput, 'Bucket' | 'IfNoneMatch'>,
-  ): Promise<CreateOnlyResult> {
+  private async createIfAbsent(send: () => Promise<unknown>): Promise<CreateOnlyResult> {
     for (let attempt = 1; ; attempt++) {
       try {
-        await this.client.send(
-          new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' }),
-        )
+        await send()
         return 'created'
       } catch (err: unknown) {
         if (isPreconditionFailed(err)) return 'already-exists'
@@ -143,6 +140,14 @@ export class S3AssetStore implements AssetStore {
         await this.sleep(CONFLICT_BASE_DELAY_MS * 2 ** (attempt - 1) * (0.5 + Math.random() / 2))
       }
     }
+  }
+
+  private putIfAbsent(
+    input: Omit<PutObjectCommandInput, 'Bucket' | 'IfNoneMatch'>,
+  ): Promise<CreateOnlyResult> {
+    return this.createIfAbsent(() =>
+      this.client.send(new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' })),
+    )
   }
 
   /**
@@ -263,6 +268,37 @@ export class S3AssetStore implements AssetStore {
       CacheControl: input.cacheControl,
       Tagging: tagging || undefined,
     })
+  }
+
+  /**
+   * A server-side CopyObject. S3 URL-decodes `CopySource`, and keys hold `=`, `,` and `:`, so each
+   * segment is encoded and the `/` between them is not. `MetadataDirective: 'COPY'` keeps the
+   * source's Content-Type, Cache-Control and Content-Disposition; `TaggingDirective: 'REPLACE'`
+   * with no `Tagging` leaves the copy untagged.
+   */
+  async copyPublicObject(
+    sourceKey: string,
+    destKey: string,
+  ): Promise<CreateOnlyResult | 'source-missing'> {
+    const copySource = `${this.bucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`
+    try {
+      return await this.createIfAbsent(() =>
+        this.client.send(
+          new CopyObjectCommand({
+            Bucket: this.bucket,
+            Key: destKey,
+            CopySource: copySource,
+            IfNoneMatch: '*',
+            MetadataDirective: 'COPY',
+            TaggingDirective: 'REPLACE',
+          }),
+        ),
+      )
+    } catch (err: unknown) {
+      // By name alone: a copy's error always carries its code, and a missing bucket is a 404 too.
+      if (err instanceof Error && err.name === 'NoSuchKey') return 'source-missing'
+      throw err
+    }
   }
 
   async readPublicObject(key: string): Promise<PublicObject | null> {

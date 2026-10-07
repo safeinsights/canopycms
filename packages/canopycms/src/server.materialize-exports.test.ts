@@ -8,6 +8,7 @@ import {
   AssetRefsError,
   collectAssetRefs,
   createAssetStore,
+  InvalidOutputPrefixError,
   MATERIALIZE_REPORT_SCHEMA_VERSION,
   materializeAssets,
   readAssetRefsFile,
@@ -27,6 +28,7 @@ describe('canopycms/server release-tooling exports', () => {
     expect(createAssetStore).toBeTypeOf('function')
     expect(new SharpUnavailableError(new Error('x'))).toBeInstanceOf(Error)
     expect(new AssetRefsError([])).toBeInstanceOf(Error)
+    expect(new InvalidOutputPrefixError('assets/', 'x')).toBeInstanceOf(Error)
     expect(MATERIALIZE_REPORT_SCHEMA_VERSION).toBe(1)
   })
 
@@ -37,6 +39,8 @@ describe('canopycms/server release-tooling exports', () => {
       'existed' | 'created' | 'copied' | 'failed'
     >()
     expectTypeOf<MaterializeOptions['targets']>().toEqualTypeOf<readonly MaterializeTarget[]>()
+    expectTypeOf<MaterializeOptions['outputPrefix']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<MaterializeReport['outputPrefix']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<AssetRefsFile['transforms'][number]>().toMatchTypeOf<MaterializeTarget>()
   })
 })

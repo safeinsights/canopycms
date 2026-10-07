@@ -1204,22 +1204,22 @@ In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the ed
 
 ### Storing a build's images before it is released
 
-Two CLI steps store every image a static build references before the build is served:
+Two CLI steps store every image a static build references before it is served:
 
 ```bash
 npx canopycms collect-asset-refs out           # after `next build`, before any manifest step
 npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report materialize.json
 ```
 
-`collect-asset-refs` writes the `/assets/…` keys in the output's text files, whatever prefix precedes them, to `out/canopy-asset-refs.json`, and fails on a non-canonical or malformed URL. `materialize-assets` transforms only the keys the store lacks and checks svg/pdf keys exist, naming the pages of any failure. Exit codes: `0` success; `1` it did not finish (bad flags, unreadable refs file, config or sharp failure, a crash); `2` content failures, which `--allow-failures` turns into `0`; `3` any store failure, which it never does. `--report` writes JSON with `schemaVersion: 1`, a `summary` and a `status` per key (`existed`, `created`, `copied`, `failed`).
+`collect-asset-refs` records the `/assets/…` keys in the output's text files and fails on a non-canonical or malformed URL. `materialize-assets` transforms the keys the store lacks, checks svg/pdf keys exist, naming each failure's pages. Exit codes: `0` success; `1` it did not finish; `2` content failures (`0` under `--allow-failures`); `3` any store failure. `--report` writes JSON with `schemaVersion: 1`, a `summary` and a `status` per key (`existed`, `created`, `copied`, `failed`).
 
 **The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too. Widths may be any integer up to 8192; `lazyPublicTransforms` accepts only 32, 48, 64, 96, 128 and multiples of 160 up to 4096.
 
-It reads `media` from `canopycms.config.ts`, refusing a non-S3 store (`mode: 'dev'` with no `media` fills a local directory) unless `--allow-local`; `--bucket <name> --region <region>` names the S3 store instead and never loads the config. The role needs `s3:GetObject` (also authorizes HEAD) on `asset-originals/*`, `asset-meta/*` and `assets/*`; `s3:PutObject` on `assets/t/*` (every write sends `If-None-Match: *`); and `s3:ListBucket` on those prefixes, without which a missing key is a 403: a store failure, exit 3.
+It reads `media` from `canopycms.config.ts`, refusing a non-S3 store unless `--allow-local`; `--bucket <name> --region <region>` names the S3 store without loading the config. The production role needs `s3:GetObject` (HEAD too) on `asset-originals/*`, `asset-meta/*` and `assets/*`; `s3:PutObject` on `assets/t/*` (every write sends `If-None-Match: *`); and `s3:ListBucket` on those prefixes, without which a missing key is a 403: a store failure, exit 3.
 
-A release job can instead bundle its own tool from `canopycms/server` (`materializeAssets` over `createAssetStore`) with no site config: esbuild to CommonJS with `sharp` and `@img/*` external and sharp installed for the runner's platform, as `packages/canopycms-cdk/lambda/asset-transform/build.mjs` does.
+A release job can instead bundle `materializeAssets` over `createAssetStore` from `canopycms/server`, with no site config: CommonJS, `sharp` and `@img/*` external, sharp installed for the runner's platform.
 
-Originals, metadata and derivatives are create-only, so a bad derivative is deleted, then rematerialized. Hashes are public, so a write at a key production has not stored yet succeeds: an untrusted materializer such as a PR preview build must never write under the prefix production serves.
+Stored objects are create-only: delete a bad one, then rematerialize. Hashes are public, so a PR build must never write where production reads. `--output-prefix <p>` (`outputPrefix`) writes every key under `<p>`, copying what production stores and transforming the rest; production's run never reads `<p>`. The preview role needs `s3:GetObject` on `assets/*`, `asset-meta/*` and `asset-originals/*`, so it reads every original, unpublished branches' uploads included; `s3:ListBucket` on those and `<p>`; `s3:PutObject` on `<p>` only, with `If-None-Match` (copies too); and KMS permissions on an SSE-KMS bucket. Production hosts must route only `/assets/*` to the bucket. Scope each preview's writes to its own `<p>`, or one PR can overwrite another's.
 
 ### Deploying under a `basePath`
 

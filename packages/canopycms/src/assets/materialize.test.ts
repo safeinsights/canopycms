@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import {
+  CopyObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -13,6 +14,8 @@ import sharp from 'sharp'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  assertValidOutputPrefix,
+  InvalidOutputPrefixError,
   isTransientStoreError,
   MATERIALIZE_REPORT_SCHEMA_VERSION,
   materializeAssets,
@@ -377,6 +380,264 @@ describe('materializeAssets statics', () => {
   })
 })
 
+describe('materializeAssets with an output prefix', () => {
+  const PREFIX = 'previews/7/'
+  const atProduction = `assets/t/w=320/${HASH}/photo.png`
+  const notStored = `assets/t/w=160/${HASH}/photo.png`
+  const logo = `assets/${HASH}/logo.svg`
+  const gonePdf = `assets/${OTHER_HASH}/gone.pdf`
+  let tmpDir: string
+  let store: LocalAssetStore
+
+  /** Every file under the store's canonical `assets/` tree, with its bytes. */
+  const canonicalTree = async () => {
+    const entries = await fs.readdir(path.join(tmpDir, 'assets'), { recursive: true })
+    const files: Record<string, string> = {}
+    for (const entry of entries.sort()) {
+      const file = path.join(tmpDir, 'assets', entry)
+      if ((await fs.stat(file)).isFile()) files[entry] = await fs.readFile(file, 'utf-8')
+    }
+    return files
+  }
+
+  beforeEach(async () => {
+    vi.mocked(sharpLoader.loadSharp).mockClear()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-materialize-prefix-'))
+    store = new LocalAssetStore({ root: tmpDir })
+    const png = await sharp({
+      create: { width: 800, height: 400, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    await store.putOriginal({ hash32: HASH, ext: 'png', data: png, contentType: 'image/png' })
+    await store.putMetaIfAbsent(HASH, { ...meta, size: png.byteLength })
+    await store.putPublicObject({
+      key: atProduction,
+      data: new TextEncoder().encode('production bytes'),
+      contentType: 'image/png',
+      cacheControl: TRANSFORM_CACHE_CONTROL,
+    })
+    await store.putPublicObject({
+      key: logo,
+      data: new TextEncoder().encode('<svg/>'),
+      contentType: 'image/svg+xml',
+      contentDisposition: 'inline; filename="logo.svg"',
+    })
+  })
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const run = (overrides: Partial<Parameters<typeof materializeAssets>[0]> = {}) =>
+    materializeAssets({
+      store,
+      targets: [target(atProduction), target(notStored)],
+      statics: [target(logo), target(gonePdf, ['/docs'])],
+      outputPrefix: PREFIX,
+      sleep: noSleep,
+      ...overrides,
+    })
+
+  it('copies what production stores, transforms the rest, and writes all of it under the prefix', async () => {
+    const report = await run()
+    expect(report.outputPrefix).toBe(PREFIX)
+    expect(report.results.map(({ key, status }) => [key, status])).toEqual([
+      [logo, 'copied'],
+      [gonePdf, 'failed'],
+      [notStored, 'created'],
+      [atProduction, 'copied'],
+    ])
+    expect(report.summary).toMatchObject({ copied: 2, created: 1, contentFailures: 1 })
+
+    expect(textOf((await store.readPublicObject(`${PREFIX}${atProduction}`))?.data)).toBe(
+      'production bytes',
+    )
+    expect(await store.readPublicObject(`${PREFIX}${logo}`)).toMatchObject({
+      contentType: 'image/svg+xml',
+      contentDisposition: 'inline; filename="logo.svg"',
+    })
+    const transformed = await store.readPublicObject(`${PREFIX}${notStored}`)
+    expect((await sharp(transformed?.data).metadata()).width).toBe(160)
+    expect(await store.hasPublicObject(notStored)).toBe(false)
+  })
+
+  it('never writes or copies outside the prefix, and leaves the canonical tree untouched', async () => {
+    const before = await canonicalTree()
+    const writes = {
+      put: vi.spyOn(store, 'putPublicObject'),
+      original: vi.spyOn(store, 'putOriginal'),
+      meta: vi.spyOn(store, 'putMetaIfAbsent'),
+      copy: vi.spyOn(store, 'copyPublicObject'),
+    }
+
+    await run()
+
+    expect(writes.put).toHaveBeenCalled()
+    expect(writes.copy).toHaveBeenCalled()
+    for (const [input] of writes.put.mock.calls) expect(input.key.startsWith(PREFIX)).toBe(true)
+    for (const [source, dest] of writes.copy.mock.calls) {
+      expect(dest).toBe(`${PREFIX}${source}`)
+      expect(source.startsWith('assets/')).toBe(true)
+    }
+    expect(writes.original).not.toHaveBeenCalled()
+    expect(writes.meta).not.toHaveBeenCalled()
+    expect(await canonicalTree()).toEqual(before)
+  })
+
+  it('a second run finds every key under the prefix and writes nothing', async () => {
+    await run()
+    vi.mocked(sharpLoader.loadSharp).mockClear()
+    const put = vi.spyOn(store, 'putPublicObject')
+    const copy = vi.spyOn(store, 'copyPublicObject')
+
+    const report = await run()
+    expect(report.summary).toMatchObject({ existed: 3, copied: 0, created: 0, contentFailures: 1 })
+    expect(put).not.toHaveBeenCalled()
+    expect(copy).not.toHaveBeenCalled()
+    expect(sharpLoader.loadSharp).not.toHaveBeenCalled()
+  })
+
+  it('does not load sharp when every key is copied', async () => {
+    const report = await run({ targets: [target(atProduction)], statics: [target(logo)] })
+    expect(report.summary).toMatchObject({ copied: 2, failed: 0 })
+    expect(sharpLoader.loadSharp).not.toHaveBeenCalled()
+  })
+
+  it("production's run never reads the prefix, so bytes planted there are never served", async () => {
+    const key = `assets/t/w=640/${HASH}/photo.png`
+    await store.putPublicObject({
+      key: `${PREFIX}${key}`,
+      data: new TextEncoder().encode('planted'),
+      contentType: 'image/png',
+    })
+    const has = vi.spyOn(store, 'hasPublicObject')
+    const read = vi.spyOn(store, 'readPublicObject')
+    const copy = vi.spyOn(store, 'copyPublicObject')
+
+    const report = await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
+
+    expect(report.results[0]).toMatchObject({ key, status: 'created' })
+    expect(report).not.toHaveProperty('outputPrefix')
+    expect((await sharp((await store.readPublicObject(key))?.data).metadata()).width).toBe(640)
+    expect(has.mock.calls).toEqual([[key]])
+    expect(read.mock.calls.filter(([k]) => k.startsWith(PREFIX))).toEqual([])
+    expect(copy).not.toHaveBeenCalled()
+  })
+
+  it('counts a copy that finds the key taken as existed, but as copied after a failed attempt', async () => {
+    const realCopy = store.copyPublicObject.bind(store)
+    const copy = vi.spyOn(store, 'copyPublicObject').mockResolvedValueOnce('already-exists')
+    const first = await run({ targets: [target(atProduction)], statics: [] })
+    expect(first.results[0]).toMatchObject({ status: 'existed' })
+
+    copy.mockReset()
+    copy.mockImplementationOnce(async (source, dest) => {
+      await realCopy(source, dest)
+      throw awsError('ServiceUnavailable', 503)
+    })
+    copy.mockImplementation(realCopy)
+    const second = await run({ targets: [target(atProduction)], statics: [] })
+    expect(copy).toHaveBeenCalledTimes(2)
+    expect(second.results[0]).toMatchObject({ status: 'copied' })
+  })
+
+  it('counts only the literal already-exists as existed', async () => {
+    vi.spyOn(store, 'copyPublicObject').mockResolvedValue(undefined as unknown as CreateOnlyResult)
+    const report = await run({ targets: [target(atProduction)], statics: [] })
+    expect(report.results[0]).toMatchObject({ status: 'copied' })
+  })
+
+  it('transforms a key whose source vanished before the copy, and fails such a static', async () => {
+    vi.spyOn(store, 'copyPublicObject').mockResolvedValue('source-missing')
+    const report = await run({ targets: [target(atProduction)], statics: [target(logo)] })
+    expect(report.results.map(({ key, status }) => [key, status])).toEqual([
+      [logo, 'failed'],
+      [atProduction, 'created'],
+    ])
+    expect(report.results[0]).toMatchObject({ failure: 'content' })
+    const stored = await store.readPublicObject(`${PREFIX}${atProduction}`)
+    expect((await sharp(stored?.data).metadata()).width).toBe(320)
+  })
+
+  it('retries a transient copy failure, and reports one that persists as a store failure', async () => {
+    const realCopy = store.copyPublicObject.bind(store)
+    const copy = vi
+      .spyOn(store, 'copyPublicObject')
+      .mockRejectedValueOnce(awsError('SlowDown', 503))
+      .mockImplementation(realCopy)
+    const retried = await run({ targets: [target(atProduction)], statics: [] })
+    expect(retried.results[0]).toMatchObject({ status: 'copied' })
+    expect(copy).toHaveBeenCalledTimes(2)
+
+    copy.mockReset()
+    copy.mockRejectedValue(awsError('AccessDenied', 403))
+    const denied = await run({ targets: [], statics: [target(logo)] })
+    expect(denied.results[0]).toMatchObject({ status: 'failed', failure: 'store' })
+    expect(copy).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds copies by concurrency, not by transformConcurrency', async () => {
+    const widths = [160, 320, 480, 640, 800, 960]
+    const keys = widths.map((w) => `assets/t/w=${w}/${HASH}/photo.png`)
+    for (const key of keys) {
+      await store.putPublicObject({ key, data: new Uint8Array([1]), contentType: 'image/png' })
+    }
+    const realCopy = store.copyPublicObject.bind(store)
+    let inFlight = 0
+    let peak = 0
+    vi.spyOn(store, 'copyPublicObject').mockImplementation(async (source, dest) => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      try {
+        return await realCopy(source, dest)
+      } finally {
+        inFlight--
+      }
+    })
+    const report = await run({
+      targets: keys.map((key) => target(key)),
+      statics: [],
+      concurrency: 4,
+      transformConcurrency: 1,
+    })
+    expect(report.summary.copied).toBe(widths.length)
+    expect(peak).toBe(4)
+  })
+
+  it.each([
+    '/previews/7/',
+    'previews/7',
+    '',
+    '/',
+    'previews//7/',
+    'previews/./',
+    'previews/../',
+    '../previews/',
+    'previews/a b/',
+    'previews/7?/',
+    'assets/',
+    'assets/t/x/',
+    'assets/x/',
+    'asset-meta/',
+    'asset-originals/x/',
+    'asset-staging/',
+  ])('refuses the output prefix %j before touching the store', async (outputPrefix) => {
+    const has = vi.spyOn(store, 'hasPublicObject')
+    await expect(run({ outputPrefix })).rejects.toBeInstanceOf(InvalidOutputPrefixError)
+    expect(has).not.toHaveBeenCalled()
+  })
+
+  it.each(['previews/7/', 'assets-x/', 'previews/pr-12.3_A/', 'x/assets/'])(
+    'accepts the output prefix %j',
+    (outputPrefix) => {
+      expect(() => assertValidOutputPrefix(outputPrefix)).not.toThrow()
+    },
+  )
+})
+
 describe('isTransientStoreError', () => {
   it.each([
     [awsError('SlowDown', 503), true],
@@ -463,6 +724,132 @@ describe('materializeAssets existence pass against S3', () => {
       sleep: noSleep,
     })
     expect(report.summary).toMatchObject({ failed: 1, storeFailures: 1, contentFailures: 0 })
+  })
+
+  it('without an output prefix: one listing per large group, one HEAD per other key, no copy', async () => {
+    const grouped = keysAt('w=320', 3)
+    const [present, absent] = keysAt('w=640', 2)
+    s3.on(ListObjectsV2Command).resolves({
+      Contents: grouped.slice(0, 2).map((Key) => ({ Key })),
+      IsTruncated: false,
+    })
+    s3.on(HeadObjectCommand).rejects(awsError('NotFound', 404))
+    s3.on(HeadObjectCommand, { Key: present }).resolves({})
+    const store = new S3AssetStore({ bucket: 'b', region: 'us-east-1' })
+    const getMeta = vi.spyOn(store, 'getMeta').mockResolvedValue(null)
+    const copy = vi.spyOn(store, 'copyPublicObject')
+
+    const report = await materializeAssets({
+      store,
+      targets: [...grouped, present, absent].map((key) => target(key)),
+      listThreshold: 3,
+      sleep: noSleep,
+    })
+
+    expect(s3.calls().map((call) => call.args[0].input)).toEqual([
+      { Bucket: 'b', Prefix: 'assets/t/w=320/' },
+      { Bucket: 'b', Key: present },
+      { Bucket: 'b', Key: absent },
+    ])
+    expect(copy).not.toHaveBeenCalled()
+    expect(getMeta.mock.calls.map(([hash]) => hash)).toEqual([
+      grouped[2].split('/')[3],
+      absent.split('/')[3],
+    ])
+    expect(report.summary).toMatchObject({ existed: 3, copied: 0, contentFailures: 2 })
+  })
+
+  it('with an output prefix: lists both prefixes once and copies what only production has', async () => {
+    const keys = keysAt('w=320', 3)
+    s3.on(ListObjectsV2Command, { Prefix: 'previews/7/assets/t/w=320/' }).resolves({
+      Contents: [{ Key: `previews/7/${keys[0]}` }],
+    })
+    s3.on(ListObjectsV2Command, { Prefix: 'assets/t/w=320/' }).resolves({
+      Contents: [{ Key: keys[0] }, { Key: keys[1] }],
+    })
+    s3.on(CopyObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: 'b', region: 'us-east-1' })
+    vi.spyOn(store, 'getMeta').mockResolvedValue(null)
+
+    const report = await materializeAssets({
+      store,
+      targets: keys.map((key) => target(key)),
+      outputPrefix: 'previews/7/',
+      listThreshold: 3,
+      sleep: noSleep,
+    })
+
+    expect(report.results.map((r) => r.status)).toEqual(['existed', 'copied', 'failed'])
+    expect(s3.commandCalls(ListObjectsV2Command)).toHaveLength(2)
+    expect(s3.commandCalls(HeadObjectCommand)).toHaveLength(0)
+    expect(s3.commandCalls(CopyObjectCommand).map((call) => call.args[0].input)).toEqual([
+      expect.objectContaining({
+        Key: `previews/7/${keys[1]}`,
+        CopySource: `b/${keys[1].replace('=', '%3D')}`,
+      }),
+    ])
+  })
+
+  it('with an output prefix: skips the canonical listing when every key is already under the prefix', async () => {
+    const keys = keysAt('w=320', 3)
+    s3.on(ListObjectsV2Command).resolves({
+      Contents: keys.map((key) => ({ Key: `previews/7/${key}` })),
+    })
+    const store = new S3AssetStore({ bucket: 'b', region: 'us-east-1' })
+
+    const report = await materializeAssets({
+      store,
+      targets: keys.map((key) => target(key)),
+      outputPrefix: 'previews/7/',
+      listThreshold: 3,
+      sleep: noSleep,
+    })
+    expect(report.summary.existed).toBe(3)
+    expect(s3.commandCalls(ListObjectsV2Command).map((call) => call.args[0].input.Prefix)).toEqual([
+      'previews/7/assets/t/w=320/',
+    ])
+  })
+
+  it('with an output prefix: HEADs the destination, then the canonical key, when listing fails', async () => {
+    const keys = keysAt('w=320', 2)
+    s3.on(ListObjectsV2Command).rejects(awsError('AccessDenied', 403))
+    s3.on(HeadObjectCommand).rejects(awsError('NotFound', 404))
+    s3.on(HeadObjectCommand, { Key: keys[1] }).resolves({})
+    s3.on(CopyObjectCommand).resolves({})
+    const store = new S3AssetStore({ bucket: 'b', region: 'us-east-1' })
+    vi.spyOn(store, 'getMeta').mockResolvedValue(null)
+
+    const report = await materializeAssets({
+      store,
+      targets: keys.map((key) => target(key)),
+      outputPrefix: 'previews/7/',
+      listThreshold: 2,
+      concurrency: 1,
+      sleep: noSleep,
+    })
+    expect(report.results.map((r) => r.status)).toEqual(['failed', 'copied'])
+    expect(s3.commandCalls(HeadObjectCommand).map((call) => call.args[0].input.Key)).toEqual([
+      `previews/7/${keys[0]}`,
+      keys[0],
+      `previews/7/${keys[1]}`,
+      keys[1],
+    ])
+  })
+
+  it('with an output prefix: still reports a missing bucket as a store failure for a static key', async () => {
+    s3.on(HeadObjectCommand).rejects(awsError('NotFound', 404))
+    s3.on(GetObjectCommand).rejects(awsError('NoSuchBucket', 404))
+    const store = new S3AssetStore({ bucket: 'typo', region: 'us-east-1' })
+
+    const report = await materializeAssets({
+      store,
+      targets: [],
+      statics: [target(`assets/${HASH}/logo.svg`)],
+      outputPrefix: 'previews/7/',
+      sleep: noSleep,
+    })
+    expect(report.summary).toMatchObject({ failed: 1, storeFailures: 1, contentFailures: 0 })
+    expect(s3.commandCalls(GetObjectCommand)[0].args[0].input.Key).toBe(`assets/${HASH}/logo.svg`)
   })
 
   it('treats a key the listing lacks as missing', async () => {

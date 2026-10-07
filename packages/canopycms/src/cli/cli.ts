@@ -46,6 +46,7 @@ export function parseArgs(rawArgs: string[]) {
       'transform-concurrency',
       'bucket',
       'region',
+      'output-prefix',
     ],
     // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
     // without it, minimist folds those words into `argv._` and discards the `--`,
@@ -75,6 +76,21 @@ export function passthroughArgs(argv: Record<string, unknown>): string[] {
 }
 
 const AUTH_PROVIDERS = ['clerk', 'dev'] as const
+
+/** `materialize-assets`'s single-value string flags. */
+const MATERIALIZE_VALUE_FLAGS = ['bucket', 'region', 'refs', 'report', 'output-prefix'] as const
+
+/**
+ * The first of `materialize-assets`'s value flags that was repeated or negated. minimist makes a
+ * repeated flag an array and `--no-x` false; either would otherwise read as absent, sending
+ * `--bucket a --bucket b` down the config path to a bucket neither named. Exported for testing.
+ */
+export function findMultiValuedMaterializeFlag(argv: Record<string, unknown>): string | undefined {
+  return MATERIALIZE_VALUE_FLAGS.find((name) => {
+    const value: unknown = argv[name]
+    return value !== undefined && typeof value !== 'string'
+  })
+}
 
 /**
  * Validates --auth for `init`. Undefined means "not passed" (caller falls
@@ -344,13 +360,7 @@ async function main() {
     process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
-    // minimist makes a repeated flag an array and `--no-x` false; either would otherwise read as
-    // absent, sending `--bucket a --bucket b` down the config path to a bucket neither named.
-    const valueFlags = ['bucket', 'region', 'refs', 'report'] as const
-    const repeated = valueFlags.find((name) => {
-      const value: unknown = argv[name]
-      return value !== undefined && typeof value !== 'string'
-    })
+    const repeated = findMultiValuedMaterializeFlag(argv)
     if (repeated) {
       console.error(`canopycms materialize-assets: --${repeated} takes exactly one value`)
       process.exitCode = 1
@@ -367,6 +377,7 @@ async function main() {
       bucket,
       region: typeof flags['region'] === 'string' ? flags['region'] : undefined,
       allowLocal: flags['allow-local'] === true,
+      outputPrefix: typeof flags['output-prefix'] === 'string' ? flags['output-prefix'] : undefined,
       refsPath: typeof flags['refs'] === 'string' ? flags['refs'] : undefined,
       reportPath: typeof flags['report'] === 'string' ? flags['report'] : undefined,
       concurrency: typeof flags['concurrency'] === 'string' ? flags['concurrency'] : undefined,
@@ -459,6 +470,8 @@ async function main() {
     console.log('    --bucket <name>       S3 bucket to use instead of canopycms.config.ts')
     console.log('    --region <region>     With --bucket: its region (both or neither)')
     console.log('    --allow-local         Accept a non-S3 store resolved from the config')
+    console.log('    --output-prefix <p>   Write every key under <p> (a PR preview), copying')
+    console.log('                          what production stores; never under a canopy prefix')
     console.log('    --allow-failures      Exit 0 despite content failures (warns loudly)')
     console.log('    Exit codes: 0 ok, 1 could not run, 2 content failures, 3 store failures')
     console.log('')

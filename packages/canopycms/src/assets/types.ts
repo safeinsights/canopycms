@@ -83,6 +83,12 @@ export interface AssetStore {
     /** Object tags; bucket lifecycle rules can filter on them. */
     tags?: Readonly<Record<string, string>>
   }): Promise<CreateOnlyResult>
+  /**
+   * Copy the public object at `sourceKey` to `destKey` inside the store, create-only like
+   * `putPublicObject`. The copy keeps the source's headers and carries no tags. `source-missing`
+   * when nothing is at `sourceKey`.
+   */
+  copyPublicObject(sourceKey: string, destKey: string): Promise<CreateOnlyResult | 'source-missing'>
   readPublicObject(key: string): Promise<PublicObject | null>
   /** Whether a public object exists at `key`, without reading its body. */
   hasPublicObject(key: string): Promise<boolean>
