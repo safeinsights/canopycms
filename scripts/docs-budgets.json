@@ -69,7 +69,7 @@
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4119
+      "words": 4126
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -78,13 +78,13 @@
     },
     "README.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 4772,
-      "words": 15186
+      "maxSectionWords": 4914,
+      "words": 15329
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 9591,
-      "words": 14716
+      "words": 14845
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -113,8 +113,8 @@
     },
     "packages/canopycms/src/assets/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 136,
-      "words": 173
+      "maxSectionWords": 146,
+      "words": 181
     },
     "packages/canopycms/src/authorization/AGENTS.md": {
       "historyMarkers": 0,
@@ -123,8 +123,8 @@
     },
     "packages/canopycms/src/build/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 271,
-      "words": 308
+      "maxSectionWords": 284,
+      "words": 320
     },
     "packages/canopycms/src/cli/AGENTS.md": {
       "historyMarkers": 0,

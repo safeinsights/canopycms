@@ -53,8 +53,8 @@ is the map of maps.
 | `assets/`         | Asset store v2, finalize pipeline, on-demand transform engine                                         | [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md)                 |
 | `authorization/`  | Branch + path access control, groups, protected-base-branch policy                                    | [authorization/AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)   |
 | `ai/`             | AI-ready content generation, transforms, route handler                                                | [ai/AGENTS.md](packages/canopycms/src/ai/AGENTS.md)                         |
-| `build/`          | Static build output, and pruning what prior runs produced                                             | [build/AGENTS.md](packages/canopycms/src/build/AGENTS.md)                   |
-| `cli/`            | `init`, `init-deploy`, `init-github-app`, `worker`, `generate-ai-content`, `sync`, `migrate`          | [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md)                       |
+| `build/`          | Static build output, pruning what prior runs produced, collecting a build's asset URLs                | [build/AGENTS.md](packages/canopycms/src/build/AGENTS.md)                   |
+| `cli/`            | `init*`, `worker`, `generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync`, …       | [cli/AGENTS.md](packages/canopycms/src/cli/AGENTS.md)                       |
 | `config/`         | Configuration types, schemas, validation                                                              | —                                                                           |
 | `editor/`         | React editor UI: components, hooks, fields, block editor, preview bridge                              | [editor/AGENTS.md](packages/canopycms/src/editor/AGENTS.md)                 |
 | `http/`           | Request handler and router: the composition root behind the catch-all route, mounting `api/routes.ts` | —                                                                           |

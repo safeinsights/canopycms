@@ -23,3 +23,6 @@ Note why the `SOURCE_DATE_EPOCH` warning earns its keep: when a build id is also
 timestamp means `generated` is OMITTED rather than falling back to a live clock, so without the
 warning the field simply disappears with nothing said. A bad value must not resurrect a field the
 adopter's configuration says is meaningless — but it must not vanish silently either.
+
+`asset-refs.ts` (`collect-asset-refs`) anchors its scan on `/assets/`, dropping any origin or prefix, and
+fails on a non-canonical transform URL, because `assets/materialize.ts` stores canonical keys only.
