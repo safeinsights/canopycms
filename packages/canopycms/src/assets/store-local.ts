@@ -182,6 +182,8 @@ export class LocalAssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    /** Ignored: tags exist for bucket lifecycle rules, and a local store has none. */
+    tags?: Readonly<Record<string, string>>
   }): Promise<void> {
     const filePath = this.resolveKey(input.key)
     await this.writeFile(filePath, input.data)

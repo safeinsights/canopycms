@@ -8,6 +8,7 @@ import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { HttpOrigin } from 'aws-cdk-lib/aws-cloudfront-origins'
 import { describe, expect, it } from 'vitest'
+import { LAZY_TRANSFORM_TAG } from 'canopycms/server'
 
 import {
   AssetSupport,
@@ -390,6 +391,46 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
     )
     expect(prefixes).not.toContain('asset-originals/')
     expect(prefixes).not.toContain('asset-meta/')
+  })
+
+  it('expires only what the Lambda tags, with the tag core writes', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
+    const [bucket] = Object.values(Template.fromStack(stack).findResources('AWS::S3::Bucket'))
+    const rules = bucket.Properties.LifecycleConfiguration.Rules as {
+      Id: string
+      Prefix?: string
+      TagFilters?: unknown
+    }[]
+    const rule = rules.find((r) => r.Id === 'expire-transform-outputs')
+
+    expect(rule?.Prefix).toBe('assets/t/')
+    expect(rule?.TagFilters).toEqual([
+      { Key: LAZY_TRANSFORM_TAG.key, Value: LAZY_TRANSFORM_TAG.value },
+    ])
+  })
+
+  it("grants the Lambda's role s3:PutObjectTagging on assets/*, which a tagged PutObject needs", () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
+    const template = Template.fromStack(stack)
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function'))
+    const roleId = (fn.Properties.Role as { 'Fn::GetAtt': [string, string] })['Fn::GetAtt'][0]
+
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((policy) => JSON.stringify(policy.Properties.Roles).includes(roleId))
+      .flatMap(
+        (policy) =>
+          policy.Properties.PolicyDocument.Statement as {
+            Action: string | string[]
+            Resource: unknown
+          }[],
+      )
+    const tagging = statements.filter((st) => [st.Action].flat().includes('s3:PutObjectTagging'))
+
+    expect(tagging).toHaveLength(1)
+    expect([tagging[0].Action].flat()).toContain('s3:PutObject')
+    expect(JSON.stringify(tagging[0].Resource)).toContain('/assets/*')
   })
 
   it('leaves lifecycle rules to the caller in BYO-bucket mode, even with a lazy retention passed', () => {

@@ -16,6 +16,7 @@ import {
   ASSET_PREFIXES,
   canonicalizeTransformPath,
   createAssetStore,
+  LAZY_TRANSFORM_TAG,
   storeTransform,
   TRANSFORM_CACHE_CONTROL,
 } from 'canopycms/server'
@@ -89,7 +90,9 @@ async function handleTransformRequest(
   }
 
   const canonicalKey = `${ASSET_PREFIXES.transform}/${parsed.canonicalPath}`
-  const result = await storeTransform(store, parsed, canonicalKey)
+  const result = await storeTransform(store, parsed, canonicalKey, {
+    tags: { [LAZY_TRANSFORM_TAG.key]: LAZY_TRANSFORM_TAG.value },
+  })
   if (!result.ok) {
     // A 404's `error` names the hash and the real slug; an anonymous caller gets neither.
     return errorResponse(result.status, result.status === 404 ? 'Not found' : result.error)

@@ -211,7 +211,9 @@ export class S3AssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    tags?: Readonly<Record<string, string>>
   }): Promise<void> {
+    const tagging = input.tags ? new URLSearchParams(input.tags).toString() : ''
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -220,6 +222,7 @@ export class S3AssetStore implements AssetStore {
         ContentType: input.contentType,
         ContentDisposition: input.contentDisposition,
         CacheControl: input.cacheControl,
+        Tagging: tagging || undefined,
       }),
     )
   }

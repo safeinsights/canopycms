@@ -679,6 +679,16 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
   })
 
+  it('stores the transform it computes untagged, so the lazy expiry never deletes it', async () => {
+    const put = vi.spyOn(store, 'putPublicObject')
+    const key = `assets/t/w=160/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put.mock.calls[0][0]).toMatchObject({ key })
+    expect(put.mock.calls[0][0].tags).toBeUndefined()
+  })
+
   it('caches a non-canonically-ordered directive request under its canonical key only', async () => {
     const nonCanonicalKey = `assets/t/w=160,q=80/${rasterHash32}/photo.png`
     const canonicalKey = `assets/t/q=80,w=160/${rasterHash32}/photo.png`

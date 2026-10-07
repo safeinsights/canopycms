@@ -92,6 +92,15 @@ describe('materializeAssets against a local store', () => {
     expect(put).not.toHaveBeenCalled()
   })
 
+  it('writes untagged, so the lazy expiry never deletes a materialized key', async () => {
+    const put = vi.spyOn(store, 'putPublicObject')
+    const key = `assets/t/w=100/${HASH}/photo.png`
+    await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put.mock.calls[0][0]).toMatchObject({ key })
+    expect(put.mock.calls[0][0].tags).toBeUndefined()
+  })
+
   it('materializes a width off the lazy-path allowlist (the any policy)', async () => {
     const key = `assets/t/w=100/${HASH}/photo.png`
     const report = await materializeAssets({ store, targets: [target(key)], sleep: noSleep })

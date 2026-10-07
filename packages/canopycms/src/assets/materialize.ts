@@ -16,6 +16,13 @@ import type { AssetStore } from './types'
 /** Every transform output is stored under a content-addressed key, so it never changes. */
 export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
+/**
+ * The object tag on every derivative the lazy transform Lambda writes. Its bucket's `assets/t/`
+ * expiry filters on it, so materialized derivatives, which the Lambda's allowlist may refuse to
+ * recompute, are never expired. canopycms-cdk's `AssetSupport` copies these two strings as literals.
+ */
+export const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
+
 export type StoreTransformResult =
   | { ok: true; data: Uint8Array; contentType: string }
   | { ok: false; status: 400 | 404 | 413 | 422; error: string }
@@ -31,6 +38,7 @@ export async function storeTransform(
   store: AssetStore,
   parsed: ParsedTransformPath,
   canonicalKey: string,
+  options: { tags?: Readonly<Record<string, string>> } = {},
 ): Promise<StoreTransformResult> {
   const meta = await store.getMeta(parsed.hash32)
   if (!meta) {
@@ -76,6 +84,7 @@ export async function storeTransform(
     data: transformed.data,
     contentType: transformed.contentType,
     cacheControl: TRANSFORM_CACHE_CONTROL,
+    tags: options.tags,
   })
   return { ok: true, data: transformed.data, contentType: transformed.contentType }
 }

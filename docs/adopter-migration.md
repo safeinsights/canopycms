@@ -226,7 +226,7 @@ render.
 
 **What changed.** `canopycms collect-asset-refs <outDir>` writes the image keys a static build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>` transforms and stores whichever of them the configured store lacks.
 
-**To adopt.** Run `collect-asset-refs` right after the static build and before any step that lists the output's files. Run `materialize-assets` before the release is served, with the S3 grants the README lists. Check that every `/assets/t/` URL your pages can request appears as text in the build output: compute widths at render time, not on a client-side interaction.
+**To adopt.** Run `collect-asset-refs` after the static build, before any step that lists its files. Run `materialize-assets` before the release is served, with the S3 grants the README lists. Every `/assets/t/` URL a page can request must appear as text in the build output.
 
 **Now deletable.** A pre-release warm-up step that requests image URLs to get them transformed.
 
@@ -237,9 +237,11 @@ optional `replicaBucket` on a 5xx. An unmaterialized URL is a 403; no transform 
 `assets/t/` expiry exists, `transformFunction`/`transformLogGroup`/`transformFunctionUrl` are
 `undefined`, and the transform-Lambda props throw.
 
-**To adopt.** Until your pipeline runs the two steps above, set `lazyPublicTransforms: true`, plus
-`transformOutputRetention` matching your own `assets/t/` expiry rule on a bucket you pass in. Then
-remove it, and pass `replicaBucket` if you replicate `assets/`.
+**To adopt.** Until your pipeline runs the two steps above, set `lazyPublicTransforms: true`. Only
+objects the Lambda writes now expire, tagged `canopy-transform=lazy`; older ones never do. On a
+bucket you pass in, also pass `transformOutputRetention`, filter your expiry rule on that tag, and
+grant the transform role `s3:PutObjectTagging`. Then remove the opt-in, and pass `replicaBucket` if
+you replicate `assets/`.
 
 **Now deletable.** Your `assets/t/` expiry rule, once out of lazy mode.
 
@@ -259,7 +261,7 @@ remove it, and pass `replicaBucket` if you replicate `assets/`.
 
 **To adopt.** Delete it. Pass `baseUrl` to `assetUrl`/`assetSrcSet` to prefix public asset URLs.
 
-**Now deletable.** Any environment variable that only fed it.
+**Now deletable.** Anything that only fed it.
 
 ---
 

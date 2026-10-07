@@ -399,14 +399,15 @@ canopycms collect-asset-refs out/   # after the build, before your manifest step
 canopycms materialize-assets --refs out/canopy-asset-refs.json
 ```
 
-Anything not materialized is a 403, and nothing is computed. Materialized derivatives are
-kept forever. `replicaBucket` adds a replica both behaviors fail over to on a 5xx; its
-policy must allow this distribution, and replication must cover `assets/`.
+Anything not materialized is a 403. Materialized derivatives are kept forever. `replicaBucket`
+adds a replica both behaviors fail over to on a 5xx; its policy must allow this distribution,
+and replication must cover `assets/`.
 
 `lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
-widths, reserved concurrency, a 180-day `assets/t/` expiry), letting anyone mint transforms of
-a public asset. On a bucket you pass in it requires `transformOutputRetention`, and the expiry
-rule is yours to write.
+widths, reserved concurrency), letting anyone mint transforms of a public asset. Its outputs
+carry the tag `canopy-transform=lazy` and expire after 180 days. On a bucket you pass in, it
+requires `transformOutputRetention` and your own expiry rule, filtered on that tag so it spares
+materialized derivatives.
 
 ### Deploy
 
@@ -1096,13 +1097,13 @@ new CmsStack(app, 'CmsProd', {
 })
 ```
 
-Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing an account (or repo) with either of these should not have to guess that the convention exists. See [Two deployments, one repository](#two-deployments-one-repository).
+Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing either's account should not have to guess the convention. See [Two deployments, one repository](#two-deployments-one-repository).
 
 The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
 
 ### Cross-account asset bucket
 
-A supported topology, and the normal one once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
+The normal topology once assets are shared across per-environment accounts: the **asset bucket lives in one account** (a build account, so a promoted build's `/assets/{hash32}/…` references keep resolving as it moves between tiers) while the **compute is per tier, in the tier's own account**.
 
 The grant this needs has two halves. The identity half goes in the compute's stack. The **resource-policy half must be written in the bucket's own stack**, and it needs the Lambda's principal as a **plain string**.
 
@@ -1136,7 +1137,7 @@ bucket.addToResourcePolicy(
 )
 ```
 
-With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`; the bucket's statement for it also needs `s3:PutObjectTagging`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
 
 Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
 

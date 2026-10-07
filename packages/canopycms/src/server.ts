@@ -250,3 +250,6 @@ export { storeTransform, type StoreTransformResult } from './assets/materialize'
 
 /** The `Cache-Control` every stored transform output carries: content-addressed, so immutable. */
 export { TRANSFORM_CACHE_CONTROL } from './assets/materialize'
+
+/** The object tag the lazy transform Lambda's outputs carry, which its `assets/t/` expiry filters on. */
+export { LAZY_TRANSFORM_TAG } from './assets/materialize'

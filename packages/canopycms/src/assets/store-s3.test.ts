@@ -17,6 +17,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   NotFound,
+  PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
@@ -274,6 +275,42 @@ describe('S3AssetStore.listPublicObjectKeys', () => {
       Prefix: 'assets/t/w=320/',
       ContinuationToken: 'next',
     })
+  })
+})
+
+describe('S3AssetStore.putPublicObject tags', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    s3Mock.on(PutObjectCommand).resolves({})
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const put = (tags?: Record<string, string>) =>
+    new S3AssetStore({ bucket: BUCKET, region: REGION }).putPublicObject({
+      key: 'assets/t/w=320/a/x.png',
+      data: new Uint8Array([1]),
+      contentType: 'image/png',
+      tags,
+    })
+
+  it('sends tags as the URL-encoded Tagging header', async () => {
+    await put({ 'canopy-transform': 'lazy', k: 'a&b' })
+    const calls = s3Mock.commandCalls(PutObjectCommand)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].args[0].input.Tagging).toBe('canopy-transform=lazy&k=a%26b')
+  })
+
+  it.each([undefined, {}])('sends no Tagging header for tags %j', async (tags) => {
+    await put(tags)
+    const calls = s3Mock.commandCalls(PutObjectCommand)
+    expect(calls).toHaveLength(1)
+    expect(Object.keys(calls[0].args[0].input)).toContain('Key')
+    expect(calls[0].args[0].input.Tagging).toBeUndefined()
   })
 })
 

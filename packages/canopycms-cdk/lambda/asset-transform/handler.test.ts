@@ -50,6 +50,7 @@ function makeMeta(overrides: Partial<AssetMeta> = {}): AssetMeta {
 interface FakeObject {
   body: Uint8Array
   contentType?: string
+  tagging?: string
 }
 
 function makeAwsError(name: string, httpStatusCode: number): Error {
@@ -78,7 +79,11 @@ function seedS3Fake(objects: Map<string, FakeObject>): void {
       body instanceof Uint8Array
         ? body
         : new TextEncoder().encode(typeof body === 'string' ? body : '')
-    objects.set(input.Key as string, { body: bytes, contentType: input.ContentType })
+    objects.set(input.Key as string, {
+      body: bytes,
+      contentType: input.ContentType,
+      tagging: input.Tagging,
+    })
     return {}
   })
 }
@@ -148,6 +153,8 @@ describe('asset-transform handler', () => {
     const written = objects.get(canonicalKey)
     expect(written).toBeDefined()
     expect(written?.contentType).toBe('image/png')
+    const { key, value } = canopyServer.LAZY_TRANSFORM_TAG
+    expect(written?.tagging).toBe(`${key}=${value}`)
 
     const bodyBytes = Buffer.from(res.body ?? '', 'base64')
     expect(bodyBytes.equals(Buffer.from(written!.body))).toBe(true)
@@ -216,6 +223,7 @@ describe('asset-transform handler', () => {
         },
       }),
       `assets/t/${canonical}/${HASH32}/photo.png`,
+      expect.anything(),
     )
     expect(objects.has(`assets/t/${canonical}/${HASH32}/photo.png`)).toBe(true)
 
@@ -356,7 +364,12 @@ describe('asset-transform handler', () => {
     expect(res.statusCode).toBe(302)
     expect(res.headers?.location).toBe(rawPath)
     expect(res.headers?.['cache-control']).toBe('no-store')
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.anything(), rawPath.slice(1))
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      rawPath.slice(1),
+      expect.anything(),
+    )
 
     spy.mockRestore()
   })

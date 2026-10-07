@@ -59,6 +59,13 @@ const PREFIXES = {
 } as const
 
 /**
+ * The tag on every object the transform Lambda writes, copied as literals for
+ * the same reason as `PREFIXES`. Source of truth is `LAZY_TRANSFORM_TAG` in
+ * `packages/canopycms/src/assets/materialize.ts`.
+ */
+const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
+
+/**
  * CORS preflight cache duration for presigned-POST uploads from the editor.
  * Used for the bucket's own CORS rule and, when `uploadBehavior` is on, for
  * both the edge's preflight response and its response headers policy.
@@ -343,9 +350,10 @@ export interface AssetSupportProps {
    *
    * On, anyone can mint any allowlisted transform of a public asset - bounded
    * per asset except crop, at ~10^16 rects - capped by reserved concurrency and
-   * the `assets/t/` expiry. That expiry also ages out materialized derivatives,
-   * and on a BYO `bucket` this construct cannot write it, so lazy mode there
-   * requires an explicit `transformOutputRetention`.
+   * an `assets/t/` expiry that applies only to objects the Lambda writes, which
+   * carry the tag `canopy-transform=lazy`: materialized derivatives are never
+   * expired. On a BYO `bucket` this construct cannot write that rule, so lazy
+   * mode there requires an explicit `transformOutputRetention`.
    *
    * @default false
    */
@@ -371,10 +379,13 @@ export interface AssetSupportProps {
   readonly transformReservedConcurrency?: number
 
   /**
-   * Lazy mode only. How long `assets/t/` derivatives are kept (default 180
-   * days), written as a lifecycle rule on a bucket this construct creates. On a
-   * BYO `bucket` nothing is written and the prop is required: passing it states
-   * that your bucket expires `assets/t/` itself.
+   * Lazy mode only. How long the Lambda's `assets/t/` outputs are kept
+   * (default 180 days), written as a lifecycle rule on a bucket this construct
+   * creates. On a BYO `bucket` nothing is written and the prop is required:
+   * passing it states that your bucket expires them itself, filtering on the
+   * tag `canopy-transform=lazy` so materialized derivatives survive. A
+   * cross-account bucket's policy must also grant the transform role
+   * `s3:PutObjectTagging` on `assets/t/*`.
    */
   readonly transformOutputRetention?: Duration
 
@@ -909,9 +920,10 @@ export class AssetSupport extends Construct {
         'AssetSupport: `lazyPublicTransforms` on a BYO `bucket` needs an explicit ' +
           '`transformOutputRetention`. This construct cannot write lifecycle rules on a bucket ' +
           'it did not create, and anonymous callers can mint objects under assets/t/ in lazy ' +
-          'mode. Add an expiry rule for the assets/t/ prefix to your bucket and pass its ' +
-          'duration as `transformOutputRetention`, or drop `lazyPublicTransforms` and run ' +
-          '`canopycms materialize-assets` in your release pipeline instead.',
+          'mode. Add an expiry rule for the assets/t/ prefix and the canopy-transform=lazy tag ' +
+          'to your bucket and pass its duration as `transformOutputRetention`, or drop ' +
+          '`lazyPublicTransforms` and run `canopycms materialize-assets` in your release ' +
+          'pipeline instead.',
       )
     }
 
@@ -975,7 +987,7 @@ export class AssetSupport extends Construct {
         removalPolicy: props.removalPolicy ?? RemovalPolicy.RETAIN,
         autoDeleteObjects: props.autoDeleteObjects ?? false,
         // Everything else is content-addressed and kept forever, materialized
-        // derivatives included; only lazy mode expires `assets/t/`.
+        // derivatives included; only the Lambda's tagged outputs expire.
         lifecycleRules: [
           {
             id: 'expire-asset-staging',
@@ -989,6 +1001,7 @@ export class AssetSupport extends Construct {
                   id: 'expire-transform-outputs',
                   enabled: true,
                   prefix: `${PREFIXES.transform}/`,
+                  tagFilters: { [LAZY_TRANSFORM_TAG.key]: LAZY_TRANSFORM_TAG.value },
                   expiration: props.transformOutputRetention ?? TRANSFORM_OUTPUT_RETENTION,
                 },
               ]
@@ -1133,7 +1146,8 @@ export class AssetSupport extends Construct {
     logGroup.grantWrite(fn)
 
     // `grantRead` includes s3:ListBucket, which `readOriginal`'s prefix lookup
-    // needs. `assets/*` covers `assets/t/*`.
+    // needs. `assets/*` covers `assets/t/*`, and `grantPut` includes the
+    // s3:PutObjectTagging a tagged PutObject needs.
     this.bucket.grantRead(fn, `${PREFIXES.originals}/*`)
     this.bucket.grantRead(fn, `${PREFIXES.meta}/*`)
     this.bucket.grantPut(fn, `${PREFIXES.public}/*`)

@@ -70,6 +70,8 @@ export interface AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    /** Object tags; bucket lifecycle rules can filter on them. */
+    tags?: Readonly<Record<string, string>>
   }): Promise<void>
   readPublicObject(key: string): Promise<PublicObject | null>
   /** Whether a public object exists at `key`, without reading its body. */
