@@ -7,7 +7,8 @@ import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
 import { MdxImageDialog } from './MdxImageDialog'
-import { useApiClient } from '../context'
+import { useApiClient, useAssetContext } from '../context'
+import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
@@ -53,6 +54,11 @@ const MDXEditorLazy = React.lazy(async () => {
       saveImage$,
       closeImageDialog$,
       imageDialogState$,
+      activeEditor$,
+      $isImageNode,
+      // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
+      // a separately resolved copy would throw inside this editor's `read()`.
+      lexical: { $getNodeByKey },
     },
     { mdxJsxPlugins },
   ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
@@ -69,10 +75,23 @@ const MDXEditorLazy = React.lazy(async () => {
    * `EntryLinkToolbarButton` above.
    */
   const MdxImageDialogBridge: React.FC = () => {
-    const [state] = useCellValues(imageDialogState$)
+    const [state, editor] = useCellValues(imageDialogState$, activeEditor$)
     const saveImage = usePublisher(saveImage$)
     const closeImageDialog = usePublisher(closeImageDialog$)
-    return <MdxImageDialog state={state} onSave={saveImage} onClose={closeImageDialog} />
+    // With an `imagePreviewHandler`, MDXEditor seeds an edit dialog with the src the node was
+    // first rendered with, not its current one, so saving after a src change would revert it.
+    // Read the node's live src from the same editor `saveImage$` writes through.
+    const liveState = React.useMemo(() => {
+      if (state.type !== 'editing' || !editor) return state
+      const src = editor.getEditorState().read(() => {
+        const node = $getNodeByKey(state.nodeKey)
+        return $isImageNode(node) ? node.getSrc() : undefined
+      })
+      return src === undefined
+        ? state
+        : { ...state, initialValues: { ...state.initialValues, src } }
+    }, [state, editor])
+    return <MdxImageDialog state={liveState} onSave={saveImage} onClose={closeImageDialog} />
   }
 
   const WrappedEditor: React.FC<{
@@ -81,7 +100,8 @@ const MDXEditorLazy = React.lazy(async () => {
     onError: (payload: { error: string; source: string }) => void
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
-  }> = ({ markdown, onChange, onError, editorRef, imageUploadHandler }) => {
+    imagePreviewHandler: (src: string) => Promise<string>
+  }> = ({ markdown, onChange, onError, editorRef, imageUploadHandler, imagePreviewHandler }) => {
     return (
       <MDXEditor
         ref={editorRef}
@@ -96,7 +116,11 @@ const MDXEditorLazy = React.lazy(async () => {
           markdownShortcutPlugin(),
           linkPlugin(),
           linkDialogPlugin(),
-          imagePlugin({ imageUploadHandler, ImageDialog: MdxImageDialogBridge }),
+          imagePlugin({
+            imageUploadHandler,
+            imagePreviewHandler,
+            ImageDialog: MdxImageDialogBridge,
+          }),
           tablePlugin(),
           ...mdxJsxPlugins(),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
@@ -248,6 +272,13 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [apiClient],
   )
 
+  // MDXEditor displays each body image at whatever this resolves; the markdown keeps its src.
+  const { baseUrl: assetBaseUrl } = useAssetContext()
+  const imagePreviewHandler = useCallback(
+    async (src: string) => editorImageSrc(src, assetBaseUrl),
+    [assetBaseUrl],
+  )
+
   // Sync external value changes into the editor, recording them even while none
   // is mounted, so a later return to an earlier value is still a change.
   useEffect(() => {
@@ -363,6 +394,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
               onError={handleEditorError}
               editorRef={editorRef}
               imageUploadHandler={imageUploadHandler}
+              imagePreviewHandler={imagePreviewHandler}
             />
           </Suspense>
         </div>

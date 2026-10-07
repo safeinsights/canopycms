@@ -9,11 +9,13 @@ import { randomUUID } from 'node:crypto'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import { isHttpUrlOrSameOriginPath } from '../utils/sanitize-href'
 import { ASSET_PREFIXES, createKeyBuilders, type AssetPrefixes } from './keys'
@@ -46,6 +48,8 @@ export interface S3AssetStoreOptions {
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
+/** A presigned read is followed by the browser at once; it is never stored or cached. */
+const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
 
 /**
  * Shape of the fields an AWS SDK v3 service exception carries, narrowed from
@@ -217,6 +221,19 @@ export class S3AssetStore implements AssetStore {
       contentDisposition: result.ContentDisposition,
       cacheControl: result.CacheControl,
     }
+  }
+
+  /** HEADs first: signing is local and succeeds for a missing key too. */
+  async presignPublicObjectRead(key: string): Promise<string | null> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))
+    } catch (err: unknown) {
+      if (isNoSuchKey(err)) return null
+      throw err
+    }
+    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
+    })
   }
 
   async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'> {

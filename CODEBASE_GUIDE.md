@@ -338,7 +338,7 @@ for why a single file cannot switch between them, and
 
 Three files are import-chain-pure so client bundles and static builds can reach them:
 `asset-prefixes.ts` and `transform-directives.ts` have zero imports, and `asset-url.ts` imports only
-those two plus `utils/url-prefix.ts`. Everything else here is server-only (`node:fs`, `node:crypto`,
+those two plus `utils/url-prefix.ts` and `editor/preview-asset-base.ts`. Everything else here is server-only (`node:fs`, `node:crypto`,
 `sharp`, the S3 SDK) and must never be imported from client or editor code; client code needing only
 types should `import type` from `types.ts`.
 
@@ -480,6 +480,7 @@ Top-level components and helpers:
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
+- `preview-asset-base.ts` — the draft's asset-route prefix `assetUrl` reads
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
@@ -493,7 +494,7 @@ Context providers, in `editor/context/`:
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
-- `AssetContext.tsx` — asset base URL for rendered asset URLs
+- `AssetContext.tsx` — `authenticatedAssetBase`, the editor's asset-URL prefix
 - `index.ts` — context exports
 
 Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
@@ -552,6 +553,7 @@ Media UI, in `editor/media/`:
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
+- `editor-image-src.ts` — body-image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
 - `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
 - `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI

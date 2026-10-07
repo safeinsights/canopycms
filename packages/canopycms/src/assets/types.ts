@@ -67,6 +67,8 @@ export interface AssetStore {
     cacheControl?: string
   }): Promise<void>
   readPublicObject(key: string): Promise<PublicObject | null>
+  /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
+  presignPublicObjectRead?(key: string): Promise<string | null>
   putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'>
   getMeta(hash32: string): Promise<AssetMeta | null>
   listMeta(input?: {

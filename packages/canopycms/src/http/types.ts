@@ -44,6 +44,8 @@ export interface CanopyBinaryResponse {
     contentDisposition?: string
     cacheControl?: string
     etag?: string
+    /** Redirect target, for a 3xx `status`; `body` is then empty. */
+    location?: string
   }
 }
 

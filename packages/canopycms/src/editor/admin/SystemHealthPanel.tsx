@@ -349,6 +349,18 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           Media storage:{' '}
           {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}
         </Text>
+        <Text
+          size="xs"
+          c={status.imageProcessing.available ? 'dimmed' : 'orange'}
+          data-testid="build-image-processing"
+        >
+          Image processing:{' '}
+          {status.imageProcessing.available
+            ? 'available'
+            : `unavailable — new editor image sizes and crops fail, and uploads skip decode validation${
+                status.imageProcessing.error ? ` (${status.imageProcessing.error})` : ''
+              }`}
+        </Text>
       </Paper>
 
       {lastGitSync && (

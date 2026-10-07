@@ -299,7 +299,27 @@ const deleteAssetHandler = async (
 const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 /**
- * Lazy dev-mode emulation of the prod transform Lambda, sharing its `applyTransform`: load the
+ * The largest body this route returns inline. The CMS Lambda's Function URL buffers its response
+ * and caps it at 6 MiB after base64 encoding, which inflates by 4/3, so 4 MiB leaves headroom.
+ * Same bound and reasoning as the transform Lambda's `INLINE_BODY_LIMIT_BYTES`.
+ */
+const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
+
+/**
+ * A 302 to a presigned store URL. `no-store` because the URL expires: a cached redirect would
+ * outlive it, and a browser revisiting the page would follow it to a 403.
+ */
+function presignedRedirect(url: string): CanopyBinaryResponse {
+  return {
+    kind: 'binary',
+    status: 302,
+    body: new Uint8Array(),
+    headers: { location: url, cacheControl: 'no-store' },
+  }
+}
+
+/**
+ * This route's own lazy transform, sharing the transform Lambda's `applyTransform`: load the
  * original, transform it, write the result under `canonicalKey`, then serve the bytes just
  * computed. `parsed` is the canonical parse from `canonicalizeTransformPath`, so the stored pixels
  * always match their key, and `canonicalKey` already missed `rawAssetHandler`'s cache check.
@@ -357,6 +377,11 @@ async function serveLazyTransform(
     cacheControl: TRANSFORM_CACHE_CONTROL,
   })
 
+  if (transformed.data.byteLength > INLINE_BODY_LIMIT_BYTES && assetStore.presignPublicObjectRead) {
+    const url = await assetStore.presignPublicObjectRead(canonicalKey)
+    if (url) return presignedRedirect(url)
+  }
+
   return {
     kind: 'binary',
     status: 200,
@@ -365,18 +390,50 @@ async function serveLazyTransform(
   }
 }
 
+/** A redirect to, or the bytes of, the public object stored at `key`; `null` when there is none. */
+async function serveStoredObject(
+  assetStore: AssetStore,
+  key: string,
+): Promise<CanopyBinaryResponse | null> {
+  if (assetStore.presignPublicObjectRead) {
+    const url = await assetStore.presignPublicObjectRead(key)
+    return url ? presignedRedirect(url) : null
+  }
+  const object = await assetStore.readPublicObject(key)
+  if (!object) return null
+  return {
+    kind: 'binary',
+    status: 200,
+    body: object.data,
+    headers: {
+      contentType: object.contentType,
+      contentDisposition: object.contentDisposition,
+      cacheControl: object.cacheControl,
+    },
+  }
+}
+
 /**
  * Serve a public asset object (sanitized svg/pdf finalize wrote, or a cached transform output)
- * for dev-mode `/assets/*` rewrites. Hand-built (not `defineEndpoint`), not registered in
- * `ASSET_ROUTES`/the client generator: this returns raw bytes (`CanopyBinaryResponse`), not a
- * JSON envelope, so a generated `response.json()` client method would be wrong. Consumers hit
- * this route directly (`<img>`/`<a>` src, or a framework rewrite), never through `client.ts`.
+ * to the editor, the live preview, and `withCanopy`'s `/assets/*` rewrite. Hand-built (not
+ * `defineEndpoint`), not registered in `ASSET_ROUTES`/the client generator: this returns raw bytes
+ * (`CanopyBinaryResponse`), not a JSON envelope, so a generated `response.json()` client method
+ * would be wrong. Consumers hit this route directly (`<img>`/`<a>` src, or a framework rewrite),
+ * never through `client.ts`.
  *
  * A transform key (`assets/t/...`) is resolved to its canonical key first, and that key is what is
  * cache-checked and, on a miss, computed by `serveLazyTransform`. Mirrors prod (CloudFront
  * origin-group -> S3 -> Lambda on miss), except that a non-canonical spelling is served the
  * canonical bytes rather than the Lambda's 301: this route is authenticated, and redirecting to
  * `/assets/t/...` would bounce the request onto the public path.
+ *
+ * A stored object on a store that can presign (S3) is answered with a 302 to a presigned GET, so
+ * its bytes never pass through this process: the CMS Lambda is concurrency-capped and uncached,
+ * the live preview asks for every image on a page at once, and its Function URL cannot return a
+ * body over about 6 MiB. The redirect never targets the public `/assets/...` URL, because whether
+ * that URL reaches this route again is topology: `withCanopy` rewrites `/assets/:path*` here, so
+ * on any deployment where Next serves `/assets` the redirect would loop. Other stores stream the
+ * bytes, as does a fresh transform no larger than `INLINE_BODY_LIMIT_BYTES`.
  */
 const rawAssetHandler = async (
   ctx: ApiContext,
@@ -405,19 +462,8 @@ const rawAssetHandler = async (
     transform = canonical
   }
 
-  const object = await ctx.assetStore.readPublicObject(readKey)
-  if (object) {
-    return {
-      kind: 'binary',
-      status: 200,
-      body: object.data,
-      headers: {
-        contentType: object.contentType,
-        contentDisposition: object.contentDisposition,
-        cacheControl: object.cacheControl,
-      },
-    }
-  }
+  const stored = await serveStoredObject(ctx.assetStore, readKey)
+  if (stored) return stored
 
   if (!transform) {
     return { ok: false, status: 404, error: 'Not found' }

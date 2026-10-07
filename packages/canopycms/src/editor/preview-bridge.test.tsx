@@ -14,6 +14,8 @@ import {
   useCanopyPreview,
 } from './preview-bridge'
 import { buildPreviewSrc } from './editor-utils'
+import { assetUrl } from '../assets/asset-url'
+import { getPreviewAssetBase } from './preview-asset-base'
 
 /**
  * Simulate running inside an editor iframe: window.parent becomes a real
@@ -466,6 +468,138 @@ describe('PreviewFrame', () => {
         window.location.origin,
       ),
     )
+  })
+})
+
+describe('PreviewFrame - assetBase', () => {
+  const postedDraft = (src: string, assetBase?: string): unknown => {
+    const { container } = render(
+      <PreviewFrame src={src} path="/x" data={{ value: 'draft' }} assetBase={assetBase} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const postSpy = vi
+      .spyOn(iframe.contentWindow as Window, 'postMessage')
+      .mockImplementation(() => {})
+    fireEvent.load(iframe)
+    return postSpy.mock.calls.find(
+      ([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MESSAGE,
+    )?.[0]
+  }
+
+  it('sends the asset base with the draft to a same-origin preview', () => {
+    expect(postedDraft('/preview/x', '/p/api/canopycms/assets/raw')).toMatchObject({
+      assetBase: '/p/api/canopycms/assets/raw',
+    })
+  })
+
+  it('withholds it from a preview on another origin', () => {
+    const draft = postedDraft('https://site.example/preview/x', '/p/api/canopycms/assets/raw')
+    expect(draft).toMatchObject({ type: CANOPY_PREVIEW_MESSAGE })
+    expect(draft).not.toHaveProperty('assetBase')
+  })
+})
+
+describe('useCanopyPreview - the asset base from a draft drives assetUrl', () => {
+  const HASH = 'a'.repeat(32)
+  const transformSrc = `/assets/t/orig/${HASH}/photo.png`
+  const staticSrc = `/assets/${HASH}/logo.svg`
+
+  const Images = ({ baseUrl }: { baseUrl?: string }) => {
+    const { data } = useCanopyPreview<{ crop: string }>({
+      initialData: { crop: 'none' },
+      path: '/posts/img',
+    })
+    const crop = data.crop === 'set' ? { x: 0.1, y: 0.2, w: 0.5, h: 0.25 } : undefined
+    return (
+      <>
+        <img
+          data-testid="transform"
+          alt=""
+          src={assetUrl({ src: transformSrc, crop }, { baseUrl })}
+        />
+        <img data-testid="static" alt="" src={assetUrl({ src: staticSrc }, { baseUrl })} />
+      </>
+    )
+  }
+
+  const sendDraft = (parentWin: Window, extra: Record<string, unknown>) =>
+    window.dispatchEvent(
+      trustedEvent(
+        { type: CANOPY_PREVIEW_MESSAGE, path: '/posts/img', data: { crop: 'set' }, ...extra },
+        parentWin,
+      ),
+    )
+
+  it('puts transform srcs behind it, over an off-origin baseUrl, and leaves static srcs alone', async () => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images baseUrl="https://cdn.example.com" />)
+    expect(getByTestId('transform').getAttribute('src')).toBe(
+      `https://cdn.example.com${transformSrc}`,
+    )
+
+    sendDraft(parentWin, { assetBase: '/p/api/canopycms/assets/raw' })
+
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toBe(
+        `/p/api/canopycms/assets/raw/assets/t/c=0.1000:0.2000:0.5000:0.2500/${HASH}/photo.png`,
+      ),
+    )
+    expect(getByTestId('static').getAttribute('src')).toBe(`https://cdn.example.com${staticSrc}`)
+  })
+
+  it.each([
+    ['an off-origin URL', 'https://evil.example/raw'],
+    ['a protocol-relative path', '//evil.example/raw'],
+    ['a backslash spelling of one', '/\\evil.example/raw'],
+    ['a relative path', 'api/canopycms/assets/raw'],
+    ['a non-string', 42],
+  ])('ignores %s', async (_label, assetBase) => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images />)
+
+    sendDraft(parentWin, { assetBase })
+
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toBe(
+        `/assets/t/c=0.1000:0.2000:0.5000:0.2500/${HASH}/photo.png`,
+      ),
+    )
+  })
+
+  it('drops an earlier asset base when a later draft carries none', async () => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<Images />)
+    sendDraft(parentWin, { assetBase: '/api/canopycms/assets/raw' })
+    await waitFor(() =>
+      expect(getByTestId('transform').getAttribute('src')).toMatch(
+        /^\/api\/canopycms\/assets\/raw\//,
+      ),
+    )
+
+    sendDraft(parentWin, { data: { crop: 'none' } })
+
+    await waitFor(() => expect(getByTestId('transform').getAttribute('src')).toBe(transformSrc))
+  })
+
+  it('is not set by an untrusted message', async () => {
+    simulateFramed()
+    render(<Images />)
+
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: CANOPY_PREVIEW_MESSAGE,
+          path: '/posts/img',
+          data: { crop: 'set' },
+          assetBase: '/api/canopycms/assets/raw',
+        },
+        origin: 'https://evil.example',
+        source: window.parent,
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(getPreviewAssetBase()).toBeUndefined()
   })
 })
 

@@ -37,12 +37,10 @@ export const uploadTargetUrlSchema = z
   })
 
 /**
- * Where `/assets/…` is mounted for the editor's own previews (`media.publicBaseUrl`).
+ * Where `/assets/…` is mounted (`media.publicBaseUrl`).
  *
- * Accepts an absolute http(s) URL, a protocol-relative `//host` URL, or a site-relative path
- * (see `.claude/future-tasks/editor-asset-mount-topology.md` option 1 — the `basePath` fallback
- * in `editor/context/AssetContext.tsx` exists for sites that need one and can't set an absolute
- * value). Rejects non-http(s) schemes: a plain `z.string().url()` check would accept
+ * Accepts an absolute http(s) URL, a protocol-relative `//host` URL, or a site-relative path.
+ * Rejects non-http(s) schemes: a plain `z.string().url()` check would accept
  * `publicBaseUrl: 'mailto:a@b.c'` and produce `/mailto:a@b.c/assets/…` at render time.
  */
 export const assetMountUrlSchema = z

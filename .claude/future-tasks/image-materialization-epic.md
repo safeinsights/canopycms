@@ -64,8 +64,8 @@ output is the only place a final URL exists. That creates an adopter contract: e
 
 | # | PR scope | Status |
 |---|---|---|
-| 0 | Hardening that stands alone (below) | open |
-| 1 | Authenticated route carries editor and preview traffic | open |
+| 0 | Hardening that stands alone (below) | merged #406 |
+| 1 | Authenticated route carries editor and preview traffic | open #409 |
 | 2 | `collect-asset-refs` and `materialize-assets` CLIs | open |
 | 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
@@ -87,8 +87,9 @@ output is the only place a final URL exists. That creates an adopter contract: e
 ### Phase 1: the authenticated route
 
 - **`rawAssetHandler` behaviour.**
-  - If the derivative already exists, 302 to the public URL. That costs one HEAD and no
-    body through the Lambda. It matters because the CMS Lambda is concurrency-capped and
+  - If the derivative already exists, 302 to a presigned S3 GET, never the public URL:
+    `withCanopy` rewrites `/assets/*` onto this route, so that redirect loops wherever Next
+    serves `/assets`. That costs one HEAD and no body through the Lambda. It matters because the CMS Lambda is concurrency-capped and
     uncached, and preview re-renders every image on the page.
   - If the body is over about 4 MiB, 302 to a presigned S3 GET. The CMS Function URL is
     buffered, with a cap of about 6 MiB; the transform Lambda's `INLINE_BODY_LIMIT_BYTES`
@@ -96,7 +97,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - Transform only on a miss.
 - **Editor.** `AssetContext` always uses the authenticated prefix, built from the origin
   plus `basePath`. That covers previews, thumbnails and the crop source, and it resolves
-  [editor-asset-mount-topology.md](editor-asset-mount-topology.md).
+  [editor-asset-mount-topology.md](resolved/editor-asset-mount-topology.md).
 - **Preview override.**
   - The editor sends the authenticated prefix in the draft message.
   - A module owned by the preview bridge stores it, and `assetUrl` reads it through an
@@ -104,7 +105,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - It applies only to `/assets/t/` srcs, and it wins over `opts.baseUrl`.
   - Check how `attachTo`'s static-export preview route (`previewPrefix`) carries this.
 - **Sharp is now load-bearing for editor images.** Fold in
-  [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md),
+  [admin-status-image-processing-availability.md](resolved/admin-status-image-processing-availability.md),
   and add an e2e that loads a fresh crop through the authenticated route.
 
 ### Phase 2: collect and materialize

@@ -109,8 +109,6 @@ describe('assetMountUrlSchema', () => {
     expect(() => assetMountUrlSchema.parse(value)).toThrow()
   })
 
-  // The relaxation: this is what editor-asset-mount-topology.md option 1 asks for, and what
-  // AssetContext's basePath fallback exists only because the old z.string().url() forbade.
   it('accepts a site-relative mount point, which z.string().url() rejected', () => {
     expect(assetMountUrlSchema.parse('/preview-123')).toBe('/preview-123')
   })

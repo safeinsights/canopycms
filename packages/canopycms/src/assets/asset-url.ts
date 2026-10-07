@@ -1,9 +1,8 @@
 /**
  * Build/adjust transform URLs for `<img>`/srcset without pulling in the
- * server-only transform engine. Isomorphic - depends only on
- * transform-directives.ts, the plain `ASSET_PREFIXES` constant, and
- * utils/url-prefix.ts, none of which import node builtins, so this is safe to
- * import from client (editor) code as well as during static builds.
+ * server-only transform engine. Isomorphic - none of its imports reach a node
+ * builtin, so this is safe to import from client (editor) code as well as during
+ * static builds.
  */
 
 import {
@@ -12,6 +11,7 @@ import {
   sanitizeUnprefixedPath,
   stripTrailingSlashes,
 } from '../utils/url-prefix'
+import { getPreviewAssetBase } from '../editor/preview-asset-base'
 import { ASSET_PREFIXES } from './asset-prefixes'
 import {
   formatDirectives,
@@ -44,16 +44,14 @@ export interface AssetUrlOptions {
    * option beside it. Two shapes are legitimate, and they are alternatives, never composed:
    *
    * - An absolute origin (`https://assets.example.com`) — assets served from another origin.
-   *   `media.publicBaseUrl` is one source of this, and is the source the editor uses; it is
-   *   validated as an absolute URL, so it structurally cannot carry the second shape.
    * - A same-origin path prefix (`/preview-123`) — the site is deployed under a Next `basePath`
    *   AND its assets are served by Next (`withCanopy`'s `/assets/:path*` rewrite, which Next
    *   auto-prefixes). NOT the right value on a CloudFront/CDK deployment, where the asset
    *   behaviors are anchored at the distribution root and a `basePath` does not move them —
    *   there the correct value is none at all. See the README's asset-mount table.
    *
-   * It is a per-render option rather than a config field precisely because the editor and the
-   * public site can legitimately have different answers.
+   * It is a per-render option rather than a config field because different renderers see the
+   * `/assets` space at different places.
    *
    * **Render-time only — never stored.** A stored `src` is always root-relative (see
    * `assets/asset-src.ts`), because content moves between branches and environments. Nothing
@@ -92,6 +90,10 @@ function mergeDirectives(
  * in `ref.src` (see `mergeDirectives` for precedence). For static srcs (svg/pdf under
  * `/assets/{hash}/...`, or any src that isn't one of our own transform URLs) the src is
  * returned unchanged and every directive is ignored - there is nothing to transform.
+ *
+ * In a live preview, a transform URL goes behind the editor's authenticated route
+ * (`editor/preview-asset-base.ts`) instead of `opts.baseUrl`: a draft's crop or width may exist
+ * nowhere a build put it. Static srcs keep `opts.baseUrl`, since finalize wrote them.
  */
 export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const { src } = ref
@@ -111,12 +113,13 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
     return joinUrlPrefix(opts.baseUrl, src)
   }
 
+  const base = getPreviewAssetBase() ?? opts.baseUrl
   const rest = src.slice(TRANSFORM_URL_PREFIX.length)
   const parsed = parseTransformPath(rest.split('/'))
   if (!parsed.ok) {
     // Malformed src (shouldn't happen for a src canopycms itself wrote) -
     // nothing sensible to merge onto, so return it unchanged rather than throw.
-    return joinUrlPrefix(opts.baseUrl, src)
+    return joinUrlPrefix(base, src)
   }
 
   const merged = mergeDirectives(parsed.directives, ref.crop, opts)
@@ -126,7 +129,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const ext = !merged.identity && merged.format !== undefined ? merged.format : parsed.ext
 
   const newSrc = `${TRANSFORM_URL_PREFIX}${formatDirectives(merged)}/${parsed.hash32}/${parsed.slug}.${ext}`
-  return joinUrlPrefix(opts.baseUrl, newSrc)
+  return joinUrlPrefix(base, newSrc)
 }
 
 /**

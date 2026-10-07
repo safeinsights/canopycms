@@ -54,10 +54,10 @@ or example-app styling, and do not leak editor CSS outward.
 
 `preview-bridge.tsx` is the `postMessage` contract between the editor and a host app's
 preview iframe: draft updates, click-to-focus, and highlight. It is exported from
-`canopycms/client` and is one of the few pieces here that an _adopter's public pages_
+`canopycms/client`, one of the few pieces an _adopter's public pages_
 import (via `useCanopyPreview`), so treat its message names and payload shapes as a
 public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
-do not weaken them.
+do not weaken them. Drafts carry `assetUrl`'s preview prefix (`preview-asset-base.ts`).
 
 ## Data loading: SWR for three resources, hand-rolled for the rest
 

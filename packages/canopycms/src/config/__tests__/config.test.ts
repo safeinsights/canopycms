@@ -1126,8 +1126,6 @@ describe('mediaSchema', () => {
   })
 
   describe('publicBaseUrl', () => {
-    // The relaxation asked for by .claude/future-tasks/editor-asset-mount-topology.md's
-    // option 1: the old z.string().url() could not express a bare path at all.
     it('accepts a site-relative mount point', () => {
       expect(mediaSchema.parse({ adapter: 'local', publicBaseUrl: '/preview-123' })).toEqual({
         adapter: 'local',
@@ -1194,6 +1192,15 @@ describe('defineCanopyConfig().client()', () => {
   it('carries editor.previewPrefix through to the client config', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor, editor: { previewPrefix: '/preview' } })
     expect(client().editor?.previewPrefix).toBe('/preview')
+  })
+
+  it('exposes nothing of media to the editor, publicBaseUrl included', () => {
+    // The editor loads assets through the authenticated raw route (editor/context/AssetContext).
+    const { client } = defineCanopyConfig({
+      ...gitAuthor,
+      media: { adapter: 'local', publicBaseUrl: 'https://assets.example.com' },
+    })
+    expect(JSON.stringify(client())).not.toContain('assets.example.com')
   })
 })
 

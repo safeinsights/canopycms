@@ -16,8 +16,6 @@ happy path.
 - **MediaLibraryBody upload-rejection uses the wrong error slot** — `handleReject`
   writes into `listError` (whose Retry reloads the list), not a dedicated upload-error
   slot like `ImageField`/`MdxImageDialog` use. Give it its own `dropError`.
-- **MDX inline image preview ignores `assetBaseUrl`** — only matters in the
-  cross-origin editor/site config.
 - **CropStep silent no-op** when `cropAreaPercentToRect` returns null (practically
   unreachable under an aspect constraint) — add a guard/message.
 - **URL-tab scheme check** in `MdxImageDialog` — light `http(s):`/root-relative
