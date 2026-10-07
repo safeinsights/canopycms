@@ -89,6 +89,26 @@ describe('collectAssetRefs', () => {
     })
   })
 
+  it('ends a URL before prose punctuation and decodes escaped or percent-encoded URLs', async () => {
+    await write(
+      'index.html',
+      `<p>See /assets/t/w=320/${HASH}/photo.png. Or /assets/${HASH2}/guide.pdf: it is long!</p>` +
+        `<img src="/_next/image?url=%2Fassets%2Ft%2Fq%3D80%2Cw%3D640%2F${HASH}%2Fphoto.png&amp;w=640">`,
+    )
+    await write(
+      'data.json',
+      `{"src":"\\u002Fassets\\u002Ft\\u002Forig\\u002F${HASH}\\u002Fphoto.png"}`,
+    )
+
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([
+      `assets/t/orig/${HASH}/photo.png`,
+      `assets/t/q=80,w=640/${HASH}/photo.png`,
+      `assets/t/w=320/${HASH}/photo.png`,
+    ])
+    expect(refs.statics.map((entry) => entry.key)).toEqual([`assets/${HASH2}/guide.pdf`])
+  })
+
   it('fails on a non-canonical transform URL, naming the file, and writes nothing', async () => {
     await write('ok.html', `<img src="/assets/t/w=320/${HASH}/photo.png">`)
     await write('bad/page.html', `<img src="/assets/t/w=320,f=webp/${HASH}/photo.webp">`)

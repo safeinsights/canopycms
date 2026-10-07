@@ -2,7 +2,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { HeadObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3'
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  S3Client,
+} from '@aws-sdk/client-s3'
 import { mockClient } from 'aws-sdk-client-mock'
 import sharp from 'sharp'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -222,6 +227,46 @@ describe('materializeAssets against a local store', () => {
   })
 })
 
+describe('materializeAssets statics', () => {
+  let tmpDir: string
+  let store: LocalAssetStore
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-materialize-statics-'))
+    store = new LocalAssetStore({ root: tmpDir })
+    await store.putPublicObject({
+      key: `assets/${HASH}/logo.svg`,
+      data: new TextEncoder().encode('<svg/>'),
+      contentType: 'image/svg+xml',
+    })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('checks statics without transforming them, failing a missing or malformed one', async () => {
+    vi.mocked(sharpLoader.loadSharp).mockClear()
+    const report = await materializeAssets({
+      store,
+      targets: [],
+      statics: [
+        target(`assets/${HASH}/logo.svg`),
+        target(`assets/${OTHER_HASH}/gone.pdf`, ['/docs']),
+        target(`assets/${HASH}/../logo.svg`),
+      ],
+      sleep: noSleep,
+    })
+    expect(report.results.map(({ key, status }) => [key, status])).toEqual([
+      [`assets/${HASH}/../logo.svg`, 'failed'],
+      [`assets/${HASH}/logo.svg`, 'existed'],
+      [`assets/${OTHER_HASH}/gone.pdf`, 'failed'],
+    ])
+    expect(report.summary).toMatchObject({ existed: 1, contentFailures: 2, storeFailures: 0 })
+    expect(sharpLoader.loadSharp).not.toHaveBeenCalled()
+  })
+})
+
 describe('isTransientStoreError', () => {
   it.each([
     [awsError('SlowDown', 503), true],
@@ -280,6 +325,20 @@ describe('materializeAssets existence pass against S3', () => {
     expect(s3.commandCalls(ListObjectsV2Command)).toHaveLength(2)
     expect(s3.commandCalls(HeadObjectCommand).map((call) => call.args[0].input.Key)).toEqual(headed)
     expect(sharpLoader.loadSharp).not.toHaveBeenCalled()
+  })
+
+  it('reports a bucket that does not exist as a store failure, not a deleted asset', async () => {
+    // A HEAD has no body, so a missing bucket and a missing key are both a bare 404.
+    s3.on(HeadObjectCommand).rejects(awsError('NotFound', 404))
+    s3.on(GetObjectCommand).rejects(awsError('NoSuchBucket', 404))
+    const store = new S3AssetStore({ bucket: 'typo', region: 'us-east-1' })
+
+    const report = await materializeAssets({
+      store,
+      targets: keysAt('w=320', 1).map((key) => target(key)),
+      sleep: noSleep,
+    })
+    expect(report.summary).toMatchObject({ failed: 1, storeFailures: 1, contentFailures: 0 })
   })
 
   it('treats a key the listing lacks as missing', async () => {

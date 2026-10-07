@@ -119,9 +119,23 @@ function routeForFile(file: string): string | undefined {
   return `/${route}`
 }
 
-/** JSON and JS may escape `/` as `\/` or `/`. */
-function unescapeSlashes(text: string): string {
-  return text.replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/')
+const PERCENT_ENCODED: Record<string, string> = { '2f': '/', '3d': '=', '2c': ',', '3a': ':' }
+
+/**
+ * JSON and JS may escape `/` as a backslash-slash or a `u002F` unicode escape, and a URL passed as
+ * a query parameter (an image optimizer's `?url=`) is percent-encoded; all are decoded first.
+ */
+function decodeUrlEscapes(text: string): string {
+  return text
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/')
+    .replace(/%(2[fFcC]|3[dDaA])/g, (_, hex: string) => PERCENT_ENCODED[hex.toLowerCase()])
+}
+
+/** A slug and ext end in `[a-z0-9]`, so punctuation after a URL in prose is not part of it. */
+function trimTrailingPunctuation(url: string, filename: string): [string, string] {
+  const trimmed = filename.replace(/[.:;!?]+$/, '')
+  return [url.slice(0, url.length - (filename.length - trimmed.length)), trimmed]
 }
 
 class RefCollector {
@@ -161,10 +175,11 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
   const problems: AssetRefProblem[] = []
 
   for (const file of files) {
-    const text = unescapeSlashes(await fs.readFile(path.join(root, file), 'utf-8'))
+    const text = decodeUrlEscapes(await fs.readFile(path.join(root, file), 'utf-8'))
 
     for (const match of text.matchAll(TRANSFORM_URL_RE)) {
-      const [url, directives, hash32, filename] = match
+      const [url, filename] = trimTrailingPunctuation(match[0], match[3])
+      const [, directives, hash32] = match
       const canonical = canonicalizeTransformPath([directives, hash32, filename])
       if (!canonical.ok) {
         problems.push({ file, url, error: canonical.error })
@@ -180,7 +195,8 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
     }
 
     for (const match of text.matchAll(STATIC_URL_RE)) {
-      const [url, hash32, filename] = match
+      const [url, filename] = trimTrailingPunctuation(match[0], match[2])
+      const hash32 = match[1]
       if (!HASH32_RE.test(hash32) || !STATIC_FILENAME_RE.test(filename)) {
         problems.push({ file, url, error: 'Not a stored static asset path' })
       } else {

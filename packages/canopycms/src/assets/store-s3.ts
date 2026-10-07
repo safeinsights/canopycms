@@ -72,7 +72,12 @@ function matchesAwsError(err: unknown, name: string, httpStatusCode: number): bo
 const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
-const isNoSuchKey = (err: unknown): boolean => matchesAwsError(err, 'NoSuchKey', 404)
+/**
+ * A missing key, never a missing bucket: S3 answers both with 404, and only a GET names which. A
+ * HEAD has no body, so its 404 is `NotFound` either way, and the first GET after it tells them apart.
+ */
+const isNoSuchKey = (err: unknown): boolean =>
+  matchesAwsError(err, 'NoSuchKey', 404) && (err as AwsServiceErrorShape).name !== 'NoSuchBucket'
 
 export class S3AssetStore implements AssetStore {
   readonly capabilities = { directUpload: true }

@@ -189,6 +189,33 @@ describe('S3AssetStore.presignPublicObjectRead', () => {
   })
 })
 
+describe('S3AssetStore missing key vs missing bucket', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const awsError = (name: string) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode: 404 } })
+
+  it('reads a missing key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchKey'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    expect(await store.getMeta('a'.repeat(32))).toBeNull()
+  })
+
+  it('throws for a missing bucket rather than reading every key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchBucket'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    await expect(store.getMeta('a'.repeat(32))).rejects.toThrow('NoSuchBucket')
+  })
+})
+
 describe('S3AssetStore.listPublicObjectKeys', () => {
   // Created per test, not per describe: a second describe-level mockClient(S3Client) would
   // replace the stub the presign suite above installed at collection time.

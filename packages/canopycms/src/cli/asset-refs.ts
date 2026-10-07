@@ -158,7 +158,12 @@ export async function materializeAssetsCLI(options: MaterializeAssetsCLIOptions)
 
   let report: MaterializeReport
   try {
-    report = await materializeAssets({ store, targets: refs.transforms, concurrency })
+    report = await materializeAssets({
+      store,
+      targets: refs.transforms,
+      statics: refs.statics,
+      concurrency,
+    })
   } catch (err: unknown) {
     if (!(err instanceof SharpUnavailableError)) throw err
     console.error(`canopycms materialize-assets: ${err.message}`)

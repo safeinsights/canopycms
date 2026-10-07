@@ -1204,18 +1204,18 @@ In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the ed
 
 ### Storing a build's images before it is released
 
-Two CLI steps make every image a static build references exist in the store before the build is served:
+Two CLI steps store every image a static build references before the build is served:
 
 ```bash
 npx canopycms collect-asset-refs out           # after `next build`, before any manifest step
 npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report materialize.json
 ```
 
-`collect-asset-refs` writes the `/assets/…` keys found in the output's text files, whatever origin or prefix precedes them, to `out/canopy-asset-refs.json`, and fails on any non-canonical transform URL. `materialize-assets` transforms only the keys the configured store lacks, so a rerun writes nothing. It exits non-zero on any failure, naming the pages that referenced the key. `--allow-failures` tolerates references to assets the store can no longer produce, but never a store error.
+`collect-asset-refs` writes the `/assets/…` keys in the output's text files, whatever prefix precedes them, to `out/canopy-asset-refs.json`, and fails on a non-canonical transform URL. `materialize-assets` transforms only the keys the store lacks. It exits non-zero on any failure, naming the referencing pages; `--allow-failures` tolerates references to assets the store can no longer produce, never a store error.
 
-**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, not on a client-side interaction.
+**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, not on a client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too.
 
-`materialize-assets` reads `media` from `canopycms.config.ts`. On S3 it needs `s3:GetObject` (which also authorizes HEAD) on `asset-originals/*`, `asset-meta/*` and `assets/t/*`, `s3:PutObject` on `assets/t/*`, and `s3:ListBucket` for those prefixes. Without `ListBucket`, S3 answers a missing key with 403, not 404, and every miss becomes a store failure.
+`materialize-assets` reads `media` from `canopycms.config.ts`. On S3 it needs `s3:GetObject` (which also authorizes HEAD) on `asset-originals/*`, `asset-meta/*` and `assets/t/*`, `s3:PutObject` on `assets/t/*`, and `s3:ListBucket` for those prefixes. Without `ListBucket`, a missing key is a 403, so every miss becomes a store failure.
 
 ### Deploying under a `basePath`
 

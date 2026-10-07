@@ -123,6 +123,11 @@ export interface MaterializeReport {
 export interface MaterializeOptions {
   store: AssetStore
   targets: readonly MaterializeTarget[]
+  /**
+   * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are only checked:
+   * finalize writes them at upload, so a missing one is a content failure nothing here can fix.
+   */
+  statics?: readonly MaterializeTarget[]
   /** Store requests in flight at once. Default 8. */
   concurrency?: number
   /**
@@ -150,6 +155,10 @@ export class SharpUnavailableError extends Error {
 }
 
 const DEFAULT_CONCURRENCY = 8
+// eslint-disable-next-line security/detect-non-literal-regexp -- built from a constant
+const STATIC_KEY_RE = new RegExp(
+  `^${ASSET_PREFIXES.public}/[a-f0-9]{32}/[a-z0-9-]+\\.[a-z0-9]{1,10}$`,
+)
 const DEFAULT_LIST_THRESHOLD = 100
 const DEFAULT_ATTEMPTS = 3
 const DEFAULT_BASE_DELAY_MS = 500
@@ -243,7 +252,8 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
   }
 
   const references = new Map<string, { routes: Set<string>; files: Set<string> }>()
-  for (const target of options.targets) {
+  const staticKeys = new Set((options.statics ?? []).map((target) => target.key))
+  for (const target of [...options.targets, ...(options.statics ?? [])]) {
     const entry = references.get(target.key) ?? { routes: new Set(), files: new Set() }
     target.routes.forEach((route) => entry.routes.add(route))
     target.files.forEach((file) => entry.files.add(file))
@@ -260,7 +270,13 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
   // The refs file is an editable file on disk, so every key is re-validated here.
   const transformPrefix = `${ASSET_PREFIXES.transform}/`
   const valid: ValidTarget[] = []
+  const validStatics: string[] = []
   for (const key of references.keys()) {
+    if (staticKeys.has(key)) {
+      if (STATIC_KEY_RE.test(key)) validStatics.push(key)
+      else fail(key, 'content', 'Not a static asset key (expected assets/{hash32}/{slug}.{ext})')
+      continue
+    }
     if (!key.startsWith(transformPrefix)) {
       fail(key, 'content', `Not a transform key (expected a ${transformPrefix} prefix)`)
       continue
@@ -318,6 +334,18 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
       }
     } catch (err: unknown) {
       fail(target.key, 'store', `Existence check failed: ${getErrorMessage(err)}`)
+    }
+  })
+
+  await forEachBounded(validStatics, concurrency, async (key) => {
+    try {
+      if (await withRetry(() => store.hasPublicObject(key))) {
+        outcomes.set(key, { status: 'existed' })
+      } else {
+        fail(key, 'content', 'No stored object; an svg or pdf is written at upload only')
+      }
+    } catch (err: unknown) {
+      fail(key, 'store', `Existence check failed: ${getErrorMessage(err)}`)
     }
   })
 
