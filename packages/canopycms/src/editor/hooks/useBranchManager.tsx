@@ -272,14 +272,27 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     ])
   }, [])
 
-  // After a server-side change to a pending branch, its overlaid copy is stale,
-  // and a lagging listing would show it (a submitted branch as still writable).
-  // Forgetting it leaves the listings alone to decide, failing closed if they lag.
   const forgetCreatedBranch = (name: string) => {
     setPendingBranches((prev) => {
       const kept = prev.filter((p) => p.branch.name !== name)
       return kept.length === prev.length ? prev : kept
     })
+  }
+
+  // After a workflow action, a pending branch's overlaid copy is stale. The
+  // server's returned copy replaces it, so a listing that still lacks the
+  // branch shows its new status instead of hiding it; without one, forgetting
+  // it fails closed rather than showing the pre-action state.
+  const updateCreatedBranch = (name: string, branch: BranchListItem | undefined) => {
+    if (!branch) {
+      forgetCreatedBranch(name)
+      return
+    }
+    setPendingBranches((prev) =>
+      prev.some((p) => p.branch.name === name)
+        ? prev.map((p) => (p.branch.name === name ? { ...p, branch } : p))
+        : prev,
+    )
   }
 
   // Each received listing is a new `branchesData` (see `BranchesData.receivedAt`);
@@ -422,7 +435,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               message: 'Branch submitted for review',
               color: 'green',
             })
-            forgetCreatedBranch(branchNameToSubmit)
+            updateCreatedBranch(branchNameToSubmit, result.data?.branch)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -457,7 +470,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to withdraw branch')
             }
             notifications.show({ message: 'Branch withdrawn', color: 'blue' })
-            forgetCreatedBranch(branchNameToWithdraw)
+            updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -481,7 +494,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         throw new Error(result.error || 'Failed to request changes')
       }
       notifications.show({ message: 'Changes requested', color: 'orange' })
-      forgetCreatedBranch(branchNameForChanges)
+      updateCreatedBranch(branchNameForChanges, result.data?.branch)
       await loadBranches()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to request changes'

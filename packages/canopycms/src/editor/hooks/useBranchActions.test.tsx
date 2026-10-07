@@ -33,6 +33,10 @@ vi.mock('@mantine/modals', () => ({
   },
 }))
 
+/** The URLs the hook passed to `history.replaceState`. */
+const replacedUrls = () =>
+  vi.mocked(window.history.replaceState).mock.calls.map((call) => String(call[2]))
+
 describe('useBranchActions', () => {
   let mockClient: MockApiClient
   let wrapper: ReturnType<typeof createApiClientWrapper>
@@ -139,8 +143,9 @@ describe('useBranchActions', () => {
     mockIsAnyDirty.mockReturnValue(true)
 
     // Mock the confirmation modal to call onCancel
-    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
-      config.onCancel()
+    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+      config.onCancel?.()
+      return 'mock-modal-id'
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), {
@@ -225,8 +230,7 @@ describe('useBranchActions', () => {
     expect(mockOnBranchCreated).toHaveBeenCalledWith(createdBranch)
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
     expect(mockOnBranchSwitch).toHaveBeenCalledWith('new-branch')
-    const calls = (window.history.replaceState as any).mock.calls
-    expect(calls.some((call: any) => call[2].includes('branch=new-branch'))).toBe(true)
+    expect(replacedUrls().some((url) => url.includes('branch=new-branch'))).toBe(true)
   })
 
   it('reports a failed create without switching or registering a branch', async () => {
@@ -253,8 +257,9 @@ describe('useBranchActions', () => {
   it('returns false without creating when the user declines the dirty check', async () => {
     const { modals } = await import('@mantine/modals')
     mockIsAnyDirty.mockReturnValue(true)
-    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
-      config.onCancel()
+    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+      config.onCancel?.()
+      return 'mock-modal-id'
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
@@ -346,9 +351,7 @@ describe('useBranchActions', () => {
     // server persisted, not the raw user-typed name.
     expect(mockSetBranchName).toHaveBeenCalledWith('feature-x')
     expect(mockOnBranchSwitch).toHaveBeenCalledWith('feature-x')
-    const calls = (window.history.replaceState as any).mock.calls
-    const urlCall = calls.find((call: any) => call[2].includes('branch=feature-x'))
-    expect(urlCall).toBeTruthy()
+    expect(replacedUrls().find((url) => url.includes('branch=feature-x'))).toBeTruthy()
   })
 
   it('handles create branch error', async () => {
@@ -393,8 +396,9 @@ describe('useBranchActions', () => {
     mockIsAnyDirty.mockReturnValue(true)
 
     // Mock the confirmation modal to call onCancel
-    ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
-      config.onCancel()
+    vi.mocked(modals.openConfirmModal).mockImplementation((config) => {
+      config.onCancel?.()
+      return 'mock-modal-id'
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), {
@@ -418,9 +422,7 @@ describe('useBranchActions', () => {
     })
 
     expect(window.history.replaceState).toHaveBeenCalled()
-    const calls = (window.history.replaceState as any).mock.calls
-    const urlCall = calls.find((call: any) => call[2].includes('branch=feature'))
-    expect(urlCall).toBeTruthy()
+    expect(replacedUrls().find((url) => url.includes('branch=feature'))).toBeTruthy()
   })
 
   it('calls onBranchSwitch callback when provided', async () => {

@@ -268,7 +268,7 @@ Branch workspaces live on persistent storage (EFS on AWS), and GitHub integratio
 
 Each mode has two strategy implementations: a **ClientSafeStrategy** of UI feature flags and plain configuration (no Node APIs, safe for `'use client'`), and a **ClientUnsafeStrategy** extending it with filesystem and git behavior. Strategies return configuration values and flags, never business logic — git commands belong to `GitManager` and `BranchWorkspaceManager`, which read those flags to decide.
 
-**The workspace root is the single source of truth for where state lives.** `ClientUnsafeStrategy.getWorkspaceRoot()` returns `CANOPYCMS_WORKSPACE_ROOT` (falling back to `/mnt/efs/workspace`) in prod and `{cwd}/.canopy-dev` in dev, and every other path method derives from it internally — so there is exactly one place per mode that decides where the CMS writes, and everything including the auth metadata cache fans out from it with no extra adopter configuration.
+**The workspace root is the single source of truth for where state lives.** `ClientUnsafeStrategy.getWorkspaceRoot()` returns `CANOPYCMS_WORKSPACE_ROOT` (falling back to `/mnt/efs`) in prod and `{cwd}/.canopy-dev` in dev, and every other path method derives from it internally — so there is exactly one place per mode that decides where the CMS writes, and everything including the auth metadata cache fans out from it with no extra adopter configuration.
 
 ## Deployment Architecture
 

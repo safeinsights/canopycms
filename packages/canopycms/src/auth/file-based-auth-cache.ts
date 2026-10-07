@@ -219,14 +219,13 @@ export async function writeAuthCacheSnapshot(
   }
 
   // The symlink target MUST be relative (the bare `snapshot-<ts>` basename),
-  // because writer and reader do not share a mount namespace: in prod the EC2
-  // worker writes through /mnt/efs/workspace/.cache while the CMS Lambda mounts
-  // the /workspace access point and reads the SAME directory as /mnt/efs/.cache.
-  // An absolute target recorded by one is a nonexistent path to the other, and
-  // `resolveActiveCacheDir`'s escape guard then falls back to the flat layout,
-  // where the worker never writes — leaving the Lambda a permanently empty
-  // cache. A relative target resolves against whichever cachePath the reader
-  // was given, so it is correct from both.
+  // because writer and reader are separate hosts (in prod, the EC2 worker and
+  // the CMS Lambda) that each mount EFS themselves, so nothing guarantees they
+  // reach this directory by the same path. An absolute target recorded by one
+  // can be a nonexistent path to the other, and `resolveActiveCacheDir`'s
+  // escape guard then falls back to the flat layout, where the worker never
+  // writes, leaving the reader a permanently empty cache. A relative target
+  // resolves against whichever cachePath the reader was given.
   const currentLink = path.join(cachePath, 'current')
   const tmpLink = path.join(cachePath, `current-${timestamp}`)
   await fs.symlink(path.basename(snapshotDir), tmpLink)

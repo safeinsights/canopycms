@@ -9,7 +9,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import type { BranchCreateResponse } from '../../api/branch'
+import type { BranchListItemResponse } from '../../api/branch'
 import { setProvisioningTestHooks } from '../../branch-workspace'
 import { createApiClient } from '../test-utils/api-client'
 import { createMockAuthPlugin, TEST_USERS } from '../test-utils/multi-user'
@@ -60,7 +60,7 @@ describe('POST /branches over provisioning outcomes', () => {
     })
 
     expect(res.status).toBe(409)
-    expect((await res.json<BranchCreateResponse>()).error).toBe(
+    expect((await res.json<BranchListItemResponse>()).error).toBe(
       'A branch with this name already exists',
     )
     expect(await readAccess()).toEqual({ allowedUsers: ['someone-else'] })
@@ -73,7 +73,7 @@ describe('POST /branches over provisioning outcomes', () => {
     const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
 
     expect(res.status).toBe(200)
-    const body = await res.json<BranchCreateResponse>()
+    const body = await res.json<BranchListItemResponse>()
     expect(body.data?.branch.createdBy).toBe(TEST_USERS.editor.userId)
   })
 
@@ -81,11 +81,11 @@ describe('POST /branches over provisioning outcomes', () => {
     const editor = await clientAs('editor')
     const first = await editor.post('/api/canopycms/branches', { branch: 'feat' })
     expect(first.status).toBe(200)
-    const created = (await first.json<BranchCreateResponse>()).data?.branch
+    const created = (await first.json<BranchListItemResponse>()).data?.branch
 
     const retry = await editor.post('/api/canopycms/branches', { branch: 'feat' })
     expect(retry.status).toBe(200)
-    expect((await retry.json<BranchCreateResponse>()).data?.branch.createdAt).toBe(
+    expect((await retry.json<BranchListItemResponse>()).data?.branch.createdAt).toBe(
       created?.createdAt,
     )
 
@@ -114,7 +114,7 @@ describe('POST /branches over provisioning outcomes', () => {
     const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
 
     expect(res.status).toBe(503)
-    expect((await res.json<BranchCreateResponse>()).error).toBe(
+    expect((await res.json<BranchListItemResponse>()).error).toBe(
       "Branch 'feat' is still being set up. Try again in a minute.",
     )
   })

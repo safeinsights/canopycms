@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
-import type { BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItemResponse, type BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
@@ -34,7 +34,7 @@ const submitBranchForMergeHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
@@ -158,7 +158,11 @@ const submitBranchForMergeHandler = async (
     },
   })
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+  }
 }
 
 const getBranchStatus = defineEndpoint({
@@ -189,8 +193,8 @@ const submitBranchForMerge = defineEndpoint({
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

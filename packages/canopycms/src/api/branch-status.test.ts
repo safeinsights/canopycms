@@ -103,6 +103,11 @@ describe('branch status api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
+    expect(res.data?.branch).toMatchObject({
+      status: 'submitted',
+      writeBlocked: true,
+      submitBlocked: true,
+    })
   })
 
   it('rejects submit on the base branch (protected -- submittableBranch guard, prod)', async () => {
