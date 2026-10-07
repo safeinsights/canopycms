@@ -389,6 +389,25 @@ and the asset prefix out of any Basic-auth gate. The API's 401s carry no
 so editors are prompted again mid-session. Clerk already authenticates them; the cost
 is that the tier's published assets are readable without the site's password.
 
+### Media: the public image path
+
+`AssetSupport` serves `/assets/*` and `/assets/t/*` from the bucket and computes nothing, so
+a build's derivatives must exist before it is released:
+
+```sh
+canopycms collect-asset-refs out/   # after the build, before your manifest step
+canopycms materialize-assets --refs out/canopy-asset-refs.json
+```
+
+Anything not materialized is a 403, and nothing is computed. Materialized derivatives are
+kept forever. `replicaBucket` adds a replica both behaviors fail over to on a 5xx; its
+policy must allow this distribution, and replication must cover `assets/`.
+
+`lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
+widths, reserved concurrency, a 180-day `assets/t/` expiry), letting anyone mint transforms of
+a public asset. On a bucket you pass in it requires `transformOutputRetention`, and the expiry
+rule is yours to write.
+
 ### Deploy
 
 ```bash
@@ -917,44 +936,35 @@ workspace directory name.
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
 amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
-The CMS Lambda and the asset transform Lambda (if you use `AssetSupport`) each
-get their own dedicated log group too, on the same convention.
+The CMS Lambda and, with `lazyPublicTransforms`, `AssetSupport`'s transform
+Lambda get their own log groups on the same convention.
 
-- **Log groups**: all created by CDK with a custom `/canopycms/...` name,
-  90-day default retention, and `RemovalPolicy.DESTROY` — never the
-  CloudFormation-implicit `/aws/lambda/<function-name>` group Lambda would
-  otherwise auto-create (which CDK can't manage: infinite retention, and it
-  survives `cdk destroy`). Filter on the `/canopycms/` prefix in the
-  CloudWatch console to see every deployment's log groups at once.
+- **Log groups**: created by CDK with a `/canopycms/...` name, 90-day default
+  retention and `RemovalPolicy.DESTROY`, never the implicit
+  `/aws/lambda/<function-name>` group, which CDK can't manage. Filter on
+  `/canopycms/` to see every deployment's log groups.
   | Component | Default log group name | Retention override | Name override | Construct property |
   | --- | --- | --- | --- | --- |
   | EC2 worker | `/canopycms/<stackName>/worker` | `workerLogRetention` | `workerLogGroupName` | `service.workerLogGroup` |
   | CMS Lambda | `/canopycms/<stackName>/cms` | `cmsLogRetention` | `cmsLogGroupName` | `service.cmsLogGroup` |
   | Transform Lambda | `/canopycms/<stackName>/transform` | `transformLogRetention` | `transformLogGroupName` | `assetSupport.transformLogGroup` |
 
-  Name overrides are also useful if you instantiate `CanopyCmsService` or
-  `AssetSupport` twice in one stack, since the default names would otherwise
-  collide.
+  Name overrides keep two `CanopyCmsService` or `AssetSupport` instances in one
+  stack from colliding.
 
 - **Log streams**: one per instance id for the worker — a new stream appears
   every time the spot worker is replaced (including by the rolling update
   described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
   below). The Lambdas use their usual per-container-instance streams.
-- **Timestamps**: the worker emits its own ISO-8601 UTC timestamp (plus a level
-  tag) on every line, via `workerLog`/`workerLogWarn`/`workerLogError` in
-  `packages/canopycms/src/worker/log.ts` — see
-  [`.claude/future-tasks/resolved/worker-log-timestamps.md`](../.claude/future-tasks/resolved/worker-log-timestamps.md)
-  for how CloudWatch's own `multi_line_start_pattern` is keyed on that prefix,
-  which is why all worker code must log through those helpers rather than bare
-  `console.*`.
+- **Timestamps**: every worker line starts with an ISO-8601 UTC timestamp and a
+  level tag, which CloudWatch's `multi_line_start_pattern` keys on, so worker
+  code logs through `packages/canopycms/src/worker/log.ts`, never bare `console.*`.
 - **On-instance file**: `/var/log/canopy-worker/worker.log`, bounded by a
   logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
-  this file — `journalctl -u canopy-worker` no longer carries the worker's
-  output, though `systemctl status canopy-worker` still works for a basic
-  running/not-running check.
-- **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
-  cascade to every log group automatically like any other CDK resource, so
-  org-wide tagging policies need no Canopy-specific configuration.
+  this file, so `journalctl -u canopy-worker` shows nothing;
+  `systemctl status canopy-worker` still reports whether it runs.
+- **Org tagging**: stack-wide tag aspects (`Tags.of(stack).add(...)`) reach every
+  log group like any other CDK resource.
 
 ## Redeploying updates the worker too
 
@@ -1096,7 +1106,7 @@ A supported topology, and the normal one once assets are shared across per-envir
 
 The grant this needs has two halves. The identity half goes in the compute's stack. The **resource-policy half must be written in the bucket's own stack**, and it needs the Lambda's principal as a **plain string**.
 
-**Do not reach for the construct reference.** `assetSupport.transformFunction.role` and `service.lambdaFunction.role` both work within one account, but across an account boundary CDK emits `Fn::GetStackOutput` — a CDK-CLI-only intrinsic, resolved at deploy time by assuming a publishing role and calling DescribeStacks. Nothing in the emitted CloudFormation records the dependency, and no deploy path other than `cdk deploy` can resolve it. Unlike a same-account circular dependency, it does not fail synth.
+**Do not reach for the construct reference.** `service.lambdaFunction.role` works within one account, but across an account boundary CDK emits `Fn::GetStackOutput`, a CDK-CLI-only intrinsic: nothing in the emitted CloudFormation records the dependency, no deploy path other than `cdk deploy` can resolve it, and synth does not fail.
 
 Name the roles instead, and pass them in:
 
@@ -1126,11 +1136,11 @@ bucket.addToResourcePolicy(
 )
 ```
 
-`AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
 
 Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
 
-If you are not ready to wire the narrow version, scoping the bucket policy to the tier **account** rather than the role is a bounded, reversible interim step: coarser, since any principal in that account can then reach the asset prefixes, but easy to tighten later without touching the compute.
+Scoping the bucket policy to the tier **account** instead of the role is a coarser, reversible interim step: any principal in that account can then reach the asset prefixes.
 
 ## Troubleshooting
 

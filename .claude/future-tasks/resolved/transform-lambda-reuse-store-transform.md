@@ -1,7 +1,12 @@
 # The transform Lambda repeats `storeTransform`'s checks instead of calling it
 
-**Status:** Open. **Priority: P3.** Filed 2026-10-06 from Phase 2 of
-[image-materialization-epic.md](image-materialization-epic.md).
+**Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of
+[image-materialization-epic.md](../image-materialization-epic.md)). The Lambda builds an
+`S3AssetStore` with `createAssetStore` and calls `storeTransform`, both exported from
+`canopycms/server` with `TRANSFORM_CACHE_CONTROL`; it keeps only the canonical 301, the generic 404
+body, the inline 200 and the over-4 MiB `no-store` 302. Bundle: 1,095,483 B before, 1,112,149 B
+after (the presigner packages were already external and required). `S3AssetStore.readOriginal`
+lists before it reads, so a transform costs one more round trip than the old direct-key-first path.
 
 ## State
 

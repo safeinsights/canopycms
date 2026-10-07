@@ -1,7 +1,13 @@
 # Serialized image values make the materializer store every full-size `orig`
 
-**Status:** Open. **Priority: P3.** Filed 2026-10-06 from review round 1 of
-[image-materialization-epic.md](image-materialization-epic.md) Phase 2.
+**Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of
+[image-materialization-epic.md](../image-materialization-epic.md)). The first option: an identity
+transform is exempt from `MAX_OUTPUT_BYTES` (`assets/transform.ts`), so a serialized `orig` is never
+a release-blocking 413. Measured with sharp 0.35.3, an `orig` re-encode is 1.0x a default-encoded
+PNG, about 2x a level-9 one, and up to 4x a smooth photo saved at maximum compression; any noisy PNG
+over about 10 MiB exceeded the cap. Its size is bounded by the decoded pixels (about 3-4 bytes per
+pixel at `MAX_INPUT_PIXELS`), and an asset has one. The storage cost stays and is accepted: one
+derivative per serialized image, which the collector cannot tell apart from a rendered one.
 
 ## State
 

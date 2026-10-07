@@ -1,7 +1,11 @@
 # `media.publicBaseUrl` is validated but nothing reads it
 
-**Status:** Open. **Priority: P3.** Filed 2026-10-06 by Phase 1 of
-[image-materialization-epic.md](image-materialization-epic.md).
+**Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of
+[image-materialization-epic.md](../image-materialization-epic.md)). Option 1: the key is removed
+from every `media` branch and from `MediaConfig`, along with `assetMountUrlSchema` (it had no other
+caller) and `isHttpUrlOrSameOriginPath`'s `allowProtocolRelative` option (it existed only for this
+key). The strict schema makes a leftover key a startup error, and `docs/adopter-migration.md` says
+to delete it.
 
 ## State
 

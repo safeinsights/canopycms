@@ -274,11 +274,11 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG, worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
-- `src/constructs/asset-support.ts` — `AssetSupport`: asset bucket, transform Lambda, CloudFront behaviors, upload route
+- `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only read behaviors, opt-in transform Lambda, upload route
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
 - `src/worker.ts` — re-exports `CmsWorker` from core for convenience
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
-- `lambda/asset-transform/handler.ts` — the prod on-demand transform Lambda behind `/assets/t/*`
+- `lambda/asset-transform/handler.ts` — the opt-in transform Lambda behind `/assets/t/*`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
 - `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, starts `CmsWorker`
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
