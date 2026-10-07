@@ -92,8 +92,8 @@ site's deploy session.
     and Cache-Control survive.
   - `s3:if-none-match` is present on a conditional CopyObject and absent on an unconditional one, so
     a Deny on the prefix lacking it passes canopy's copies and blocks plain ones.
-- **Unverified:** a copy from a lazy-tagged source (`canopy-transform=lazy`) with the same role, and
-  that the copy carries no tag. The adopting site runs that check before the epic merges.
+  - The same holds for a lazy-tagged source (`canopy-transform=lazy`) with no tagging grant at all,
+    and the copy's tag set is empty.
 - **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
   behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
 - **Recovery under versioning:** a delete writes a delete marker, so the bad version stays

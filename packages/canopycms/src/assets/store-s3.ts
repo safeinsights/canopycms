@@ -274,7 +274,8 @@ export class S3AssetStore implements AssetStore {
    * A server-side CopyObject. S3 URL-decodes `CopySource`, and keys hold `=`, `,` and `:`, so each
    * segment is encoded and the `/` between them is not. `MetadataDirective: 'COPY'` keeps the
    * source's Content-Type, Cache-Control and Content-Disposition; `TaggingDirective: 'REPLACE'`
-   * with no `Tagging` leaves the copy untagged.
+   * with no `Tagging` leaves the copy untagged and needs no tagging permission, even from a
+   * lazy-tagged source; `COPY` would need `s3:GetObjectTagging` and `s3:PutObjectTagging`.
    */
   async copyPublicObject(
     sourceKey: string,
