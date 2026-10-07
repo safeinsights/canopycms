@@ -232,18 +232,20 @@ render.
 
 ### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
 
-**What changed.** `/assets/*` and `/assets/t/*` come from the bucket alone, failing over to an
-optional `replicaBucket` on a 5xx. An unmaterialized URL is a 403; no transform Lambda or
+**What changed.** `/assets/*` and `/assets/t/*` come from the bucket alone, with an optional
+`replicaBucket` for 5xx failover. An unmaterialized URL is a 403; no transform Lambda or
 `assets/t/` expiry exists, `transformFunction`/`transformLogGroup`/`transformFunctionUrl` are
-`undefined`, and the transform-Lambda props throw.
+`undefined`. `transformRole`, `transformReservedConcurrency`, `transformOutputRetention`,
+`transformLogGroupName` and `transformLogRetention` now throw: drop them, or set
+`lazyPublicTransforms: true`.
 
 **To adopt.** Until your pipeline runs both steps above, set `lazyPublicTransforms: true`. Only
-objects the Lambda writes now expire, tagged `canopy-transform=lazy`; older ones never do. On a
+the Lambda's writes expire, tagged `canopy-transform=lazy`; older ones never do. On a
 bucket you pass in, also pass `transformOutputRetention` and filter your expiry rule on that tag;
-cross-account, grant the transform role `s3:PutObjectTagging`. Then remove the opt-in, and pass
-`replicaBucket` if you replicate `assets/`.
+cross-account, grant the transform role `s3:PutObjectTagging`. Then remove the opt-in and those
+props, and pass `replicaBucket` if you replicate `assets/`.
 
-**Now deletable.** Your `assets/t/` expiry rule, removed before leaving lazy mode.
+**Now deletable.** Your `assets/t/` expiry rule, before leaving lazy mode.
 
 ### Wider image limits
 
