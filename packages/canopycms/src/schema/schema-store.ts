@@ -271,15 +271,12 @@ export class SchemaOps {
    * why `updateOrderInner` calls `updateCollectionInner` directly instead of
    * the public `updateCollection`.
    *
-   * Phantom-resurrection guard: `branchRoot` can be removed by a concurrent
-   * `deleteBranch` between the caller resolving its BranchContext and this
-   * call's own lock acquisition, which would otherwise let
-   * `withOccFileLock`'s `mkdir({recursive:true})` silently recreate
-   * `.canopy-meta/` in an otherwise-deleted tree. Checking BEFORE the lock
-   * fails fast instead. Residual (accepted, same shape as
-   * branch-metadata.ts's): a call that passes this check can still race a
-   * `deleteBranch` `rm` starting moments later — not closed here either,
-   * since `deleteBranch` never takes this lock (see the module doc comment).
+   * `branchRoot` can be removed by a concurrent `deleteBranch` between the
+   * caller resolving its BranchContext and this call's lock acquisition. The
+   * stat below fails fast before any lock; past it, neither lock recreates a
+   * missing root (each creates only its own directory), so a later removal
+   * fails the acquisition, and any failure on a vanished root is reported as
+   * `SchemaStoreBusyError` below.
    *
    * Translation happens ONLY at this boundary: inner code always sees the
    * raw {@link OccWriteConflictError} bubble up here untranslated, and a

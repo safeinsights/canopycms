@@ -177,14 +177,24 @@ export async function acquireProvisioningLock(
  *
  * @param staleMs how old the marker must look before this caller takes it over; defaults to
  *   {@link PROVISIONING_LOCK_STALE_MS}
+ * @param createParents whether a missing parent of `lockTargetDir` is created. A lock inside a
+ *   branch passes false: a waiter must never recreate a branch root a delete removed, so a missing
+ *   parent fails with ENOENT instead.
  */
 export async function tryAcquireProvisioningLock(
   lockTargetDir: string,
   lockName: string,
   onCompromised?: OnLockCompromised,
   staleMs: number = PROVISIONING_LOCK_STALE_MS,
+  createParents = true,
 ): Promise<() => Promise<void>> {
-  await fs.mkdir(lockTargetDir, { recursive: true })
+  if (createParents) {
+    await fs.mkdir(lockTargetDir, { recursive: true })
+  } else {
+    await fs.mkdir(lockTargetDir).catch((err: unknown) => {
+      if (!isNodeError(err) || err.code !== 'EEXIST') throw err
+    })
+  }
   const lockPath = path.join(lockTargetDir, lockName)
 
   const release = await lockfile.lock(

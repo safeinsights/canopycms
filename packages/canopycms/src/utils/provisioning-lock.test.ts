@@ -148,6 +148,7 @@ describe('provisioning lock', () => {
       const lockSpy = vi.spyOn(lockfile, 'lock')
       const releasePatient = await acquireProvisioningLock(branchesRoot, '.a.init.lock')
       const releaseTry = await tryAcquireProvisioningLock(branchesRoot, '.b.init.lock')
+      await fs.mkdir(path.join(tmpRoot, 'branch'), { recursive: true })
       const releaseContent = await tryAcquireContentWriteLock(path.join(tmpRoot, 'branch'))
       await Promise.all([releasePatient(), releaseTry(), releaseContent()])
 
