@@ -144,9 +144,9 @@ export interface MaterializeOptions {
   store: AssetStore
   targets: readonly MaterializeTarget[]
   /**
-   * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are only checked:
-   * finalize writes them at upload, so a missing one is a content failure nothing here can fix,
-   * unless the bucket itself is missing, which is a store failure.
+   * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are never produced
+   * here (finalize writes them at upload), only checked, or copied under an `outputPrefix`, so a
+   * missing one is a content failure, unless the bucket itself is missing: a store failure.
    */
   statics?: readonly MaterializeTarget[]
   /**

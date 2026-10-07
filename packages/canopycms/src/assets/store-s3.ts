@@ -1,8 +1,8 @@
 /**
  * S3-backed AssetStore. Same bucket-prefix layout as LocalAssetStore (see
  * keys.ts). Assumes an EXISTING content bucket (versioning/SSE/replication
- * already configured by the site's CDK stack) — this store only ever reads
- * and writes objects under the five asset prefixes.
+ * already configured by the site's CDK stack). It reads and writes under the
+ * five asset prefixes, plus a caller's output prefix for `copyPublicObject`.
  */
 
 import { randomUUID } from 'node:crypto'

@@ -85,8 +85,9 @@ site's deploy session.
   attacker-writable bytes; scope each preview's writes to its own id or accept cross-preview
   overwrites; KMS needs on SSE-KMS buckets.
 - **Unverified until a real-bucket check:** whether `TaggingDirective: REPLACE` with no tags needs
-  `s3:PutObjectTagging`, and whether `s3:if-none-match` is populated on CopyObject. The adopting site
-  runs that check against its test bucket before PR C merges.
+  `s3:PutObjectTagging`; whether `s3:if-none-match` is populated on CopyObject; and whether a
+  `ListBucket` grant conditioned on `s3:prefix` makes a missing key's HEAD a 404 (a HEAD carries no
+  `s3:prefix`). The adopting site runs that check before the epic merges.
 - **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
   behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
 - **Recovery under versioning:** a delete writes a delete marker, so the bad version stays
