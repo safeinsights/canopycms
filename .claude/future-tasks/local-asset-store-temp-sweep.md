@@ -1,7 +1,7 @@
 # Local asset store leaves temp files and orphan sidecars after a hard crash
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from review round 1 of
-[materialize-release-hardening.md](materialize-release-hardening.md) PR A.
+[materialize-release-hardening.md](resolved/materialize-release-hardening.md) PR A.
 
 ## State
 

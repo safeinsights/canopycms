@@ -1,6 +1,6 @@
 # Materialize release hardening: create-only writes, release tooling, preview output prefix
 
-**Status:** Implemented on `int-materialize-release` (off `int-202610-b`); epic PR awaiting human review. **Priority: P1.** Filed
+**Status:** Resolved: merged into `int-202610-b` 2026-10-07 as the epic PR #422 (#419, #420, #421). **Priority: P1.** Filed
 2026-10-07 from the marketing site's request log, items 80 and 81, with the design confirmed by the
 site's deploy session.
 
@@ -35,7 +35,7 @@ site's deploy session.
   creates. Recovery from a bad object is delete, then re-materialize.
 - Docs: that statement for adopter-owned buckets; replication is authorized as
   `s3:ReplicateObject`, not `PutObject`, so the Deny does not block it; the planting caveat.
-- [materialize-adopts-lazy-tagged-objects.md](materialize-adopts-lazy-tagged-objects.md)'s fix
+- [materialize-adopts-lazy-tagged-objects.md](../materialize-adopts-lazy-tagged-objects.md)'s fix
   changes from "rewrite untagged" (now impossible) to "remove the tag".
 
 ### PR B: release tooling
