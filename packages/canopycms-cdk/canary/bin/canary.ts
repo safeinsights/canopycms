@@ -44,6 +44,8 @@ const stack = new Stack(app, 'canopy-assets-canary', {
 
 const assetSupport = new AssetSupport(stack, 'Assets', {
   editorOrigins: ['http://localhost:3000'],
+  // This canary exists to exercise the transform Lambda and its failover.
+  lazyPublicTransforms: true,
   // Ephemeral by design - this stack exists only to be verified and torn down.
   removalPolicy: RemovalPolicy.DESTROY,
   autoDeleteObjects: true,
@@ -53,8 +55,7 @@ const behaviors = assetSupport.assetBehaviors()
 
 new cloudfront.Distribution(stack, 'Distribution', {
   // Default behavior: the plain S3 origin. Any path other than
-  // `/assets/t/*` (including `/`) just 404s from S3 - nothing else is
-  // served by this canary.
+  // `/assets/t/*` (including `/`) is a 403 from S3 unless the key exists.
   defaultBehavior: behaviors.assets,
   additionalBehaviors: {
     '/assets/t/*': behaviors.assetsTransform,

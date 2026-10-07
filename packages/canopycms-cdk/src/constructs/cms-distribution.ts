@@ -97,9 +97,8 @@ function normalizePathPattern(pattern: string): string {
  *    type-checks and deploys clean, synthesizing two behaviors matching the
  *    literal patterns `assets` and `assetsTransform`, which nothing requests.
  * 2. `/assets/*` listed before `/assets/t/*`: CloudFront's first-match-wins
- *    ordering serves every transform request off the broader, S3-only
- *    `/assets/*` behavior, permanently 403ing any derivative not already
- *    computed (an OAC-signed S3 miss reports 403).
+ *    ordering serves every transform request off the broader `/assets/*`
+ *    behavior, so with `lazyPublicTransforms` no miss reaches the Lambda.
  * 3. Either asset pattern in `merged` WHILE the `assetSupport` prop is also
  *    passed: both wiring routes are active at once, so each pattern is attached
  *    twice. Hazard 2 cannot catch it, because the hand-written order is usually
@@ -168,9 +167,9 @@ function assertNoAssetBehaviorOrderingHazards(
       `CanopyCmsDistribution: additionalBehaviors lists '${ASSETS_PATH_PATTERN}' before ` +
         `'${ASSETS_TRANSFORM_PATH_PATTERN}'. CloudFront matches path patterns in the order given ` +
         `and stops at the first match, so every '${ASSETS_TRANSFORM_PATH_PATTERN}' request would ` +
-        `be served by the broader, S3-only '${ASSETS_PATH_PATTERN}' behavior and never fail over ` +
-        `to the transform Lambda - a permanent 403 on any derivative that has not already been ` +
-        `computed. List '${ASSETS_TRANSFORM_PATH_PATTERN}' first, or use ` +
+        `be served by the broader '${ASSETS_PATH_PATTERN}' behavior, and with ` +
+        `\`lazyPublicTransforms\` no miss would ever reach the transform Lambda. List ` +
+        `'${ASSETS_TRANSFORM_PATH_PATTERN}' first, or use ` +
         `assetSupport.attachTo(distribution) / this construct's \`assetSupport\` prop, which get ` +
         `the order right automatically.`,
     )
@@ -219,9 +218,8 @@ export interface CanopyCmsDistributionProps {
    *
    * ORDER MATTERS. CloudFront matches path patterns in the order given, so a
    * more specific pattern must be listed before a more general one that also
-   * matches: `/assets/t/*` before `/assets/*`, or every transform request is
-   * served by the static S3-only behavior and never fails over to the transform
-   * Lambda.
+   * matches: `/assets/t/*` before `/assets/*`, or lazy mode's misses never
+   * reach the transform Lambda.
    *
    * Keys here override this construct's own behaviors on collision, which is
    * deliberate — the caller is more specific than the default — and an

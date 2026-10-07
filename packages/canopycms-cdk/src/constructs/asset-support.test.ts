@@ -37,6 +37,9 @@ const EDITOR_ORIGINS = ['http://localhost:3000']
  */
 const BASE_PROPS = { editorOrigins: EDITOR_ORIGINS, requireDeployableBundle: false }
 
+/** The opt-in shape with the transform Lambda: everything that pins the Lambda runs here. */
+const LAZY_PROPS = { ...BASE_PROPS, lazyPublicTransforms: true }
+
 /**
  * Same derivation `asset-support.ts` uses for its own module-private
  * `transformAssetDir` (see that file). This test file lives in the same
@@ -114,7 +117,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('configures the transform Lambda: arm64/nodejs22.x, memory/timeout, and the bucket name in its environment', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -122,7 +125,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
       Match.objectLike({
         Runtime: 'nodejs22.x',
         Architectures: ['arm64'],
-        MemorySize: 1536,
+        MemorySize: 2048,
         Timeout: 30,
         Environment: Match.objectLike({
           Variables: Match.objectLike({ ASSET_BUCKET: Match.anyValue() }),
@@ -133,7 +136,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('locks the transform Lambda Function URL to AWS_IAM (not publicly invokable)', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties('AWS::Lambda::Url', Match.objectLike({ AuthType: 'AWS_IAM' }))
@@ -141,7 +144,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('grants the transform Lambda read on asset-originals/+asset-meta/ and put on assets/ only', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     const policies = template.findResources('AWS::IAM::Policy')
@@ -163,7 +166,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('assetBehaviors(): the /assets/t/* behavior is an origin group with the same S3 origin as primary, the Lambda Function URL as fallback, and 403+404 failover', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     template.hasResourceProperties(
@@ -194,7 +197,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('assetBehaviors(): the /assets/t/* behavior uses a custom cache policy with minTtl 0 (never the managed CACHING_OPTIMIZED, whose 1s min TTL caches the oversized-output no-store redirect)', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     const policies = template.findResources('AWS::CloudFront::CachePolicy')
@@ -230,7 +233,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
 
   it('creates Origin Access Control resources for both the S3 origin and the Lambda Function URL origin', () => {
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     const oacs = template.findResources('AWS::CloudFront::OriginAccessControl')
@@ -311,7 +314,7 @@ describe('AssetSupport - transform origin read timeout', () => {
     // timeout alone silently started 504ing the slow transforms the raise was
     // meant to allow. The CMS origin has this assertion; this one did not.
     const stack = makeStack()
-    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = synthWithDistribution(assetSupport, stack)
 
     const dists = template.findResources('AWS::CloudFront::Distribution')
@@ -335,7 +338,7 @@ describe('AssetSupport - transform origin read timeout', () => {
 describe('AssetSupport - bounding the anonymous transform path', () => {
   it('caps the transform Lambda with a reserved-concurrency limit', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     // /assets/t/* is anonymous and `crop` is an unbounded float rect, so
@@ -349,7 +352,7 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
 
   it('honours an overridden transform concurrency cap', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, transformReservedConcurrency: 3 })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS, transformReservedConcurrency: 3 })
     Template.fromStack(stack).hasResourceProperties(
       'AWS::Lambda::Function',
       Match.objectLike({ ReservedConcurrentExecutions: 3 }),
@@ -358,7 +361,7 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
 
   it('expires generated derivatives under assets/t/ while keeping originals forever', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -389,10 +392,14 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
     expect(prefixes).not.toContain('asset-meta/')
   })
 
-  it('leaves lifecycle rules to the caller in BYO-bucket mode', () => {
+  it('leaves lifecycle rules to the caller in BYO-bucket mode, even with a lazy retention passed', () => {
     const stack = makeStack()
     const existing = new s3.Bucket(stack, 'Existing')
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket: existing })
+    new AssetSupport(stack, 'Assets', {
+      ...LAZY_PROPS,
+      bucket: existing,
+      transformOutputRetention: Duration.days(30),
+    })
     const template = Template.fromStack(stack)
 
     // A default `s3.Bucket` emits no Properties at all, so this reads through
@@ -406,7 +413,7 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
 describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('creates a dedicated transform log group named /canopycms/<stackName>/transform with 90-day default retention and DESTROY removal', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResource(
@@ -424,7 +431,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('honors transformLogRetention to override the default retention', () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', {
-      ...BASE_PROPS,
+      ...LAZY_PROPS,
       transformLogRetention: RetentionDays.ONE_WEEK,
     })
     const template = Template.fromStack(stack)
@@ -438,7 +445,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   it('honors transformLogGroupName to override the default name', () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', {
-      ...BASE_PROPS,
+      ...LAZY_PROPS,
       transformLogGroupName: '/custom/transform',
     })
     const template = Template.fromStack(stack)
@@ -455,7 +462,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
   // "already exists" the moment it's ever been deployed without one.
   it('the transform log group name does not start with /aws/lambda/', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     const groups = template.findResources('AWS::Logs::LogGroup')
@@ -470,7 +477,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
 
   it('the transform Lambda references its dedicated log group via LoggingConfig.LogGroup', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -485,7 +492,7 @@ describe('AssetSupport - transform Lambda CloudWatch log group', () => {
 
   it('grants the transform Lambda role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
     const stack = makeStack()
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })
     const template = Template.fromStack(stack)
 
     template.hasResourceProperties(
@@ -511,10 +518,222 @@ describe('AssetSupport - BYO bucket mode', () => {
   it('does not create a bucket when an existing one is provided', () => {
     const stack = makeStack()
     const existingBucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket: existingBucket })
-    const template = Template.fromStack(stack)
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      ...BASE_PROPS,
+      bucket: existingBucket,
+    })
+    // Attached so the stack is not empty: materialized mode on an imported bucket emits nothing.
+    const { template } = synthAttached(assetSupport, stack)
 
     template.resourceCountIs('AWS::S3::Bucket', 0)
+  })
+
+  it('refuses lazy mode on a BYO bucket without an explicit transformOutputRetention', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
+
+    expect(() => new AssetSupport(stack, 'Assets', { ...LAZY_PROPS, bucket })).toThrow(
+      /needs an explicit `transformOutputRetention`.*expiry rule/s,
+    )
+  })
+
+  it('accepts lazy mode on a BYO bucket once transformOutputRetention is passed', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
+    new AssetSupport(stack, 'Assets', {
+      ...LAZY_PROPS,
+      bucket,
+      transformOutputRetention: Duration.days(30),
+    })
+
+    Template.fromStack(stack).resourceCountIs('AWS::Lambda::Function', 1)
+  })
+})
+
+/** A distribution whose default behavior is unrelated, with the asset behaviors attached. */
+function synthAttached(assetSupport: AssetSupport, stack: Stack) {
+  const distribution = new cloudfront.Distribution(stack, 'Dist', {
+    defaultBehavior: { origin: new HttpOrigin('site.example.com') },
+  })
+  assetSupport.attachTo(distribution)
+  const template = Template.fromStack(stack)
+  const config = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0]
+    .Properties.DistributionConfig as {
+    CacheBehaviors: { PathPattern: string; TargetOriginId: string; CachePolicyId: unknown }[]
+    Origins: { Id: string; DomainName: unknown; S3OriginConfig?: unknown }[]
+    OriginGroups?: {
+      Items: {
+        Id: string
+        FailoverCriteria: { StatusCodes: { Items: number[] } }
+        Members: { Items: { OriginId: string }[] }
+      }[]
+    }
+  }
+  const behavior = (pattern: string) => {
+    const found = config.CacheBehaviors.find((b) => b.PathPattern === pattern)
+    expect(found, `${pattern} must be attached`).toBeDefined()
+    return found!
+  }
+  return { template, config, behavior }
+}
+
+/** The managed CACHING_OPTIMIZED policy id. */
+const CACHING_OPTIMIZED_ID = '658327ea-f89d-4fab-a63d-7e88639e58f6'
+
+describe('AssetSupport - materialized mode (the default): the public path computes nothing', () => {
+  it('creates no transform Lambda, Function URL, log group, role, custom cache policy or assets/t/ expiry', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const { template } = synthAttached(assetSupport, stack)
+
+    template.resourceCountIs('AWS::Lambda::Function', 0)
+    template.resourceCountIs('AWS::Lambda::Url', 0)
+    template.resourceCountIs('AWS::Logs::LogGroup', 0)
+    template.resourceCountIs('AWS::IAM::Role', 0)
+    template.resourceCountIs('AWS::CloudFront::CachePolicy', 0)
+    expect(assetSupport.transformFunction).toBeUndefined()
+    expect(assetSupport.transformFunctionUrl).toBeUndefined()
+    expect(assetSupport.transformLogGroup).toBeUndefined()
+
+    const [bucket] = Object.values(template.findResources('AWS::S3::Bucket'))
+    const prefixes = (bucket.Properties.LifecycleConfiguration.Rules as { Prefix: string }[]).map(
+      (r) => r.Prefix,
+    )
+    expect(prefixes).toEqual(['asset-staging/'])
+  })
+
+  it('serves both behaviors from one plain S3 origin under CACHING_OPTIMIZED, with no origin group', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const { config, behavior } = synthAttached(assetSupport, stack)
+
+    const transform = behavior(ASSETS_TRANSFORM_PATH_PATTERN)
+    const assets = behavior(ASSETS_PATH_PATTERN)
+    expect(transform.CachePolicyId).toBe(CACHING_OPTIMIZED_ID)
+    expect(assets.CachePolicyId).toBe(CACHING_OPTIMIZED_ID)
+    expect(config.OriginGroups).toBeUndefined()
+
+    const s3Origins = config.Origins.filter((o) => o.S3OriginConfig !== undefined)
+    expect(s3Origins).toHaveLength(1)
+    expect(transform.TargetOriginId).toBe(s3Origins[0].Id)
+    expect(assets.TargetOriginId).toBe(s3Origins[0].Id)
+  })
+
+  it('with replicaBucket, both behaviors share ONE origin group of primary + replica failing over on 5xx only', () => {
+    const stack = makeStack()
+    const replica = new s3.Bucket(stack, 'Replica')
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      ...BASE_PROPS,
+      replicaBucket: replica,
+    })
+    const { template, config, behavior } = synthAttached(assetSupport, stack)
+
+    const groups = config.OriginGroups?.Items ?? []
+    expect(groups).toHaveLength(1)
+    const [group] = groups
+    expect([...group.FailoverCriteria.StatusCodes.Items].sort()).toEqual([500, 502, 503, 504])
+    expect(behavior(ASSETS_TRANSFORM_PATH_PATTERN).TargetOriginId).toBe(group.Id)
+    expect(behavior(ASSETS_PATH_PATTERN).TargetOriginId).toBe(group.Id)
+
+    // Primary first, replica second, each an OAC-signed S3 origin.
+    const domainOf = (id: string) =>
+      JSON.stringify(config.Origins.find((o) => o.Id === id)?.DomainName)
+    const [primaryId, replicaId] = group.Members.Items.map((m) => m.OriginId)
+    expect(domainOf(primaryId)).toContain('AssetsBucket')
+    expect(domainOf(replicaId)).toContain('Replica')
+    template.resourceCountIs('AWS::Lambda::Function', 0)
+  })
+
+  it('refuses every Lambda-only prop, naming lazyPublicTransforms', () => {
+    const stack = makeStack()
+    const lazyOnly = {
+      transformOutputRetention: Duration.days(30),
+      transformReservedConcurrency: 3,
+      transformRole: new iam.Role(stack, 'Role', {
+        assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      }),
+      transformLogGroupName: '/custom/transform',
+      transformLogRetention: RetentionDays.ONE_WEEK,
+    }
+    for (const [name, value] of Object.entries(lazyOnly)) {
+      expect(
+        () => new AssetSupport(stack, `Assets-${name}`, { ...BASE_PROPS, [name]: value }),
+        name,
+      ).toThrow(`${name} only applies with \`lazyPublicTransforms: true\``)
+    }
+  })
+
+  it('does not require the deployable lambda bundle, which it never deploys', () => {
+    const markerWasPresent = existsSync(deployableMarkerPath)
+    const backupPath = `${deployableMarkerPath}.testbak`
+    if (markerWasPresent) {
+      renameSync(deployableMarkerPath, backupPath)
+    }
+    try {
+      const stack = makeStack()
+      expect(
+        () => new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS }),
+      ).not.toThrow()
+    } finally {
+      if (markerWasPresent) {
+        renameSync(backupPath, deployableMarkerPath)
+      }
+    }
+  })
+
+  it('grants the distribution GetObject and never s3:ListBucket, so a miss is 403 and the bucket cannot be listed', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const { template } = synthAttached(assetSupport, stack)
+
+    const statements = Object.values(template.findResources('AWS::S3::BucketPolicy')).flatMap(
+      (policy) =>
+        policy.Properties.PolicyDocument.Statement as {
+          Action: string | string[]
+          Principal?: { Service?: string }
+          Condition?: { StringEquals?: Record<string, unknown> }
+        }[],
+    )
+    const oacStatements = statements.filter(
+      (s) => s.Principal?.Service === 'cloudfront.amazonaws.com',
+    )
+    const actions = oacStatements.flatMap((s) => [s.Action].flat())
+    expect(actions).toContain('s3:GetObject')
+    expect(actions.filter((a) => a.startsWith('s3:List'))).toEqual([])
+    for (const statement of oacStatements) {
+      expect(JSON.stringify(statement.Condition?.StringEquals?.['AWS:SourceArn'])).toContain(
+        'distribution/',
+      )
+    }
+  })
+})
+
+describe('AssetSupport - lazy mode with a replica', () => {
+  it('puts the replica behind /assets/* and keeps the Lambda as /assets/t/*’s only fallback', () => {
+    const stack = makeStack()
+    const replica = new s3.Bucket(stack, 'Replica')
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      ...LAZY_PROPS,
+      replicaBucket: replica,
+    })
+    const { config, behavior } = synthAttached(assetSupport, stack)
+
+    const groups = config.OriginGroups?.Items ?? []
+    expect(groups).toHaveLength(2)
+    const groupOf = (pattern: string) => {
+      const group = groups.find((g) => g.Id === behavior(pattern).TargetOriginId)
+      expect(group, `${pattern} must target an origin group`).toBeDefined()
+      return group!
+    }
+    expect([...groupOf(ASSETS_PATH_PATTERN).FailoverCriteria.StatusCodes.Items].sort()).toEqual([
+      500, 502, 503, 504,
+    ])
+    expect(
+      [...groupOf(ASSETS_TRANSFORM_PATH_PATTERN).FailoverCriteria.StatusCodes.Items].sort(),
+    ).toEqual([403, 404])
+    const fallbackId = groupOf(ASSETS_TRANSFORM_PATH_PATTERN).Members.Items[1].OriginId
+    const fallback = config.Origins.find((o) => o.Id === fallbackId)
+    expect(JSON.stringify(fallback?.DomainName)).toContain('TransformFunction')
   })
 })
 
@@ -548,9 +767,13 @@ describe('deployable-bundle guard', () => {
       // requireDeployableBundle: false and would silently re-vacuate this
       // test. This is the one construction in the whole suite that exercises
       // the guard's real default.
-      expect(() => new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })).toThrow(
-        /\.deployable/,
-      )
+      expect(
+        () =>
+          new AssetSupport(stack, 'Assets', {
+            editorOrigins: EDITOR_ORIGINS,
+            lazyPublicTransforms: true,
+          }),
+      ).toThrow(/\.deployable/)
     } finally {
       if (markerWasPresent) {
         renameSync(backupPath, deployableMarkerPath)
@@ -594,6 +817,26 @@ describe('cms-stack template: the media block names a real API', () => {
     }
   })
 
+  it('both copies carry one media block, which teaches materialize-assets and the lazy opt-in', () => {
+    const mediaBlock = (file: string) => {
+      const source = readFileSync(file, 'utf-8')
+      const start = source.indexOf('// Media support')
+      const end = source.indexOf('// CloudFront + Route53')
+      expect(start, file).toBeGreaterThan(-1)
+      expect(end, file).toBeGreaterThan(start)
+      return source.slice(start, end)
+    }
+    const [template, example] = MEDIA_BLOCK_SOURCES.map(mediaBlock)
+    expect(example).toBe(template)
+    for (const phrase of [
+      'canopycms collect-asset-refs',
+      'canopycms materialize-assets',
+      'lazyPublicTransforms: true',
+    ]) {
+      expect(template).toContain(phrase)
+    }
+  })
+
   it.each(MEDIA_BLOCK_SOURCES)(
     '%s passes editorOrigins -- optional to the construct now, but still what the scaffold should teach',
     (file) => {
@@ -626,7 +869,7 @@ describe('AssetSupport - transformRole', () => {
       roleName: PASSED_ROLE_NAME,
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
     })
-    new AssetSupport(stack, 'Assets', { ...BASE_PROPS, transformRole: role })
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS, transformRole: role })
 
     const template = Template.fromStack(stack)
     const roles = template.findResources('AWS::IAM::Role', {
