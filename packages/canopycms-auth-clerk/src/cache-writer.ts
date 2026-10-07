@@ -39,7 +39,7 @@ function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
 export interface RefreshClerkCacheOptions {
   /** Clerk Secret Key (CLERK_SECRET_KEY) */
   secretKey: string
-  /** Directory to write cache files to (e.g., /mnt/efs/workspace/.cache) */
+  /** Directory to write cache files to (e.g., /mnt/efs/.cache) */
   cachePath: string
   /** Whether to treat Clerk organizations as groups (default: true) */
   useOrganizationsAsGroups?: boolean

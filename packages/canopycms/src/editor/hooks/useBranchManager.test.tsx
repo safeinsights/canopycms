@@ -748,11 +748,47 @@ describe('useBranchManager', () => {
     })
 
     it.each([
+      ['submit', 'handleSubmit', 'submitted'],
+      ['withdraw', 'handleWithdraw', 'editing'],
+      ['requestChanges', 'handleRequestChanges', 'editing'],
+    ] as const)(
+      'overlays the copy %s returns on an added branch a lagging listing still lacks',
+      async (endpoint, handler, status) => {
+        mockStaleListing()
+        const returned: BranchListItem = {
+          ...createdBranch,
+          status,
+          writeBlocked: status !== 'editing',
+          submitBlocked: status !== 'editing',
+        }
+        mockClient.workflow[endpoint].mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branch: returned },
+        })
+        const { result } = await renderLoaded()
+
+        act(() => {
+          result.current.addCreatedBranch(createdBranch)
+          result.current.setBranchName('new-branch')
+        })
+
+        await act(async () => {
+          await result.current[handler]('new-branch')
+        })
+
+        expect(mockClient.workflow[endpoint]).toHaveBeenCalledWith({ branch: 'new-branch' })
+        expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
+        expect(result.current.currentBranch).toEqual(returned)
+      },
+    )
+
+    it.each([
       ['submit', 'handleSubmit'],
       ['withdraw', 'handleWithdraw'],
       ['requestChanges', 'handleRequestChanges'],
     ] as const)(
-      'stops overlaying an added branch once %s succeeds, so a lagging listing cannot show its pre-action state',
+      'stops overlaying an added branch when %s returns no copy, so its pre-action state cannot show',
       async (endpoint, handler) => {
         mockStaleListing()
         mockClient.workflow[endpoint].mockResolvedValueOnce({ ok: true, status: 200 })
@@ -767,7 +803,6 @@ describe('useBranchManager', () => {
           await result.current[handler]('new-branch')
         })
 
-        expect(mockClient.workflow[endpoint]).toHaveBeenCalledWith({ branch: 'new-branch' })
         expect(result.current.branches.map((b) => b.name)).not.toContain('new-branch')
       },
     )

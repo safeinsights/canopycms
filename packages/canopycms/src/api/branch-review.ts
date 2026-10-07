@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
-import type { BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
@@ -12,7 +12,7 @@ const requestChangesHandler = async (
   ctx: ApiContext,
   _req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
   if (branchContext.branch.status !== 'submitted') {
@@ -33,15 +33,19 @@ const requestChangesHandler = async (
 
   // TODO: Optionally record comment in .canopycms/comments.json when comment system is implemented
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+  }
 }
 
 const approveBranchHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
+  ctx: ApiContext,
   _req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
   if (branchContext.branch.status !== 'submitted') {
@@ -60,7 +64,11 @@ const approveBranchHandler = async (
 
   // TODO: Optionally call githubService.approvePullRequest() when GitHub integration is needed
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+  }
 }
 
 export const requestChanges = defineEndpoint({
@@ -71,8 +79,8 @@ export const requestChanges = defineEndpoint({
   params: branchParamSchema,
   // body/bodyType removed: comment field was declared but never stored.
   // Re-add when comment storage is implemented (see TODO in handler).
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',
@@ -93,8 +101,8 @@ export const approveBranch = defineEndpoint({
   method: 'POST',
   path: '/:branch/approve',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

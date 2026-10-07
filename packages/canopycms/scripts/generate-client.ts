@@ -420,14 +420,14 @@ ${namespacesCode}
  */
 const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
 
-/** The longest \`Retry-After\` waited; a throttle asking for longer is reported, not resent. */
+/** The longest \`Retry-After\` honoured; a throttle asking for longer is reported, not resent. */
 const MAX_RETRY_AFTER_MS = 5000
 
 /**
  * The wait before resend \`attempt\`, or undefined when there is to be no resend: the attempts
- * are used up, or \`Retry-After\` asks for longer than {@link MAX_RETRY_AFTER_MS}. Without a
- * \`Retry-After\`, the base delay plus up to half again, so throttled requests do not resend in
- * lockstep.
+ * are used up, or \`Retry-After\` asks for longer than {@link MAX_RETRY_AFTER_MS}. The base delay,
+ * or \`Retry-After\` when longer, plus up to half the base again, so requests throttled in one
+ * burst do not resend in lockstep.
  */
 function throttleRetryDelayMs(response: Response, attempt: number): number | undefined {
   const base = THROTTLE_RETRY_DELAYS_MS[attempt]
@@ -436,11 +436,13 @@ function throttleRetryDelayMs(response: Response, attempt: number): number | und
   // \`fetch\` option may return a Response-like without headers.
   const header = (response.headers as Headers | undefined)?.get('retry-after')?.trim()
   const retryAfter = header ? Number(header) : Number.NaN
+  let wait = base
   if (Number.isFinite(retryAfter) && retryAfter >= 0) {
     const ms = retryAfter * 1000
-    return ms > MAX_RETRY_AFTER_MS ? undefined : ms
+    if (ms > MAX_RETRY_AFTER_MS) return undefined
+    wait = Math.max(ms, base)
   }
-  return base + Math.random() * base * 0.5
+  return wait + Math.random() * base * 0.5
 }
 
 function sleep(ms: number): Promise<void> {

@@ -107,6 +107,11 @@ describe('branch review api - requestChanges', () => {
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
+    expect(res.data?.branch).toMatchObject({
+      status: 'editing',
+      writeBlocked: false,
+      submitBlocked: false,
+    })
   })
 
   it('requests changes when allowed (reviewer)', async () => {

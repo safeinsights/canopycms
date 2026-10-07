@@ -68,11 +68,11 @@ export interface BranchListItem extends BranchMetadata {
 }
 
 /**
- * Response type for branch creation. Carries the list-item shape (server-computed
- * flags included) so the editor can insert the branch without waiting for a
- * listing that may lag behind the create.
+ * Response type for branch creation and the workflow transitions. Carries the
+ * list-item shape (server-computed flags included) so the editor can show the
+ * result without waiting for a listing that may lag behind it.
  */
-export type BranchCreateResponse = ApiResponse<{ branch: BranchListItem }>
+export type BranchListItemResponse = ApiResponse<{ branch: BranchListItem }>
 
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
@@ -207,18 +207,13 @@ const resolveReadOnlyMirrorPath = (
  * Attach server-computed protected-base-branch flags to a branch. Reads config
  * per call so dev-mode refreshActiveBranch() updates are reflected.
  */
-const toBranchListItem = (
+export const toBranchListItem = (
   config: ApiContext['services']['config'],
-  context: BranchContext,
+  branch: BranchMetadata,
 ): BranchListItem => {
-  const protection = getBranchWriteProtection(
-    config,
-    context.branch.name,
-    context.branch.baseBranch,
-    context.branch.status,
-  )
+  const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
   return {
-    ...context.branch,
+    ...branch,
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
@@ -231,7 +226,7 @@ export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof createBranchBodySchema>,
-): Promise<BranchCreateResponse> => {
+): Promise<BranchListItemResponse> => {
   return log.timed('api', 'createBranch', async () => {
     const branchName = body.branch
     log.debug('api', 'Create branch request', {
@@ -487,7 +482,7 @@ export const createBranchHandler = async (
     return {
       ok: true,
       status: 200,
-      data: { branch: toBranchListItem(ctx.services.config, context) },
+      data: { branch: toBranchListItem(ctx.services.config, context.branch) },
     }
   })
 }
@@ -530,7 +525,9 @@ export const listBranchesHandler = async (
       ok: true,
       status: 200,
       data: {
-        branches: allBranches.map((context) => toBranchListItem(ctx.services.config, context)),
+        branches: allBranches.map((context) =>
+          toBranchListItem(ctx.services.config, context.branch),
+        ),
         defaultBranch,
       },
     }
@@ -567,7 +564,9 @@ export const listBranchesHandler = async (
     ok: true,
     status: 200,
     data: {
-      branches: visibleBranches.map((context) => toBranchListItem(ctx.services.config, context)),
+      branches: visibleBranches.map((context) =>
+        toBranchListItem(ctx.services.config, context.branch),
+      ),
       defaultBranch,
     },
   }
@@ -888,8 +887,8 @@ const createBranch = defineEndpoint({
   path: '/branches',
   body: createBranchBodySchema,
   bodyType: 'CreateBranchBody',
-  responseType: 'BranchCreateResponse',
-  response: {} as BranchCreateResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',
