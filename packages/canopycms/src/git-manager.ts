@@ -113,9 +113,42 @@ export function gitNetworkChildEnv(): Record<string, string> {
  * never run inside a Lambda, which can be frozen mid-run with a half-written
  * pack or a `gc.pid` left on EFS. A provisioning clone also persists them
  * into the workspace's own config. `remote.git`'s `receive-pack` never sees
- * them; worker/remote-git-maintenance.ts covers that side.
+ * them; {@link REMOTE_GIT_CONFIG} covers that side.
  */
 const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
+
+/**
+ * Settings written into every bare `remote.git` CanopyCMS creates: the worker's (prod) and the
+ * simulated remote (dev). A push runs `receive-pack` with remote.git's own config and none of the
+ * pusher's: git unsets `GIT_CONFIG_PARAMETERS` before spawning it for a local-path push. Unset, a
+ * push starts auto-housekeeping there (detached, or inside a Lambda that is frozen mid-run) that
+ * repacks while another process clones, and pushes under the default `unpackLimit` (100) leave
+ * loose objects that every local clone copies one NFS round trip at a time.
+ *
+ * Never an `extensions.*` key: git 2.39 refuses to open a repo carrying one it does not know.
+ * @internal Exported for tests.
+ */
+export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: string]> = [
+  ['gc.auto', '0'],
+  ['receive.autogc', 'false'],
+  ['maintenance.auto', 'false'],
+  ['transfer.unpackLimit', '1'],
+]
+
+/** Write each of {@link REMOTE_GIT_CONFIG} into the bare repo `gitDir` only where it differs. */
+export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
+  const git = simpleGit().env(gitChildEnv({}))
+  const current = new Map<string, string>()
+  const listed = await git.raw(['--git-dir', gitDir, 'config', '--local', '--list'])
+  for (const line of listed.split('\n')) {
+    const eq = line.indexOf('=')
+    if (eq > 0) current.set(line.slice(0, eq).toLowerCase(), line.slice(eq + 1))
+  }
+  for (const [key, value] of REMOTE_GIT_CONFIG) {
+    if (current.get(key.toLowerCase()) === value) continue
+    await git.raw(['--git-dir', gitDir, 'config', '--local', key, value])
+  }
+}
 
 /**
  * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
@@ -541,6 +574,7 @@ export class GitManager {
           (await GitManager.bareRemoteHasBranch(options.remotePath, options.baseBranch))
         ) {
           log.debug('git', 'Remote already has base branch, skipping')
+          await ensureRemoteGitConfig(options.remotePath)
           return
         }
 
@@ -607,6 +641,8 @@ export class GitManager {
             options.remotePath,
           ])
         }
+
+        await ensureRemoteGitConfig(options.remotePath)
 
         // Push baseBranch to remote (not current HEAD)
         await GitManager.pushBranchToLocalRemote({

@@ -13,6 +13,7 @@ import {
   type ResolvedGitHubAuth,
 } from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
+import { ensureRemoteGitConfig } from '../git-manager'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
@@ -21,7 +22,6 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
-import { ensureRemoteGitConfig } from './remote-git-maintenance'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,

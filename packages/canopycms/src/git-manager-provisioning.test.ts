@@ -215,6 +215,7 @@ describe('auto-gc around a GitManager', () => {
     const ran = await trace.builtins()
 
     expect(ran).toContain('receive-pack')
-    expect(ran).toContain('gc')
+    // `maintenance run --auto` runs `gc --auto` on git 2.50 and a cruft repack with no gc on 2.55.
+    expect(ran.some((builtin) => builtin === 'gc' || builtin === 'maintenance')).toBe(true)
   })
 })

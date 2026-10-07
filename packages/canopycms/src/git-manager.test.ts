@@ -15,6 +15,7 @@ import {
   gitChildEnv,
   gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
+  REMOTE_GIT_CONFIG,
 } from './git-manager'
 import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
@@ -54,6 +55,38 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     const remoteGit = openBareRepo(remotePath)
     const branches = await remoteGit.branch()
     expect(branches.all).toContain('main')
+  })
+
+  it('writes the bare-remote config on a new remote and on an existing one', async () => {
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+    const configOf = async (remotePath: string, key: string): Promise<string> =>
+      (
+        await simpleGit()
+          .raw(['--git-dir', remotePath, 'config', '--get', key])
+          .catch(() => '')
+      ).trim()
+
+    const fresh = path.join(tmpDir, 'fresh.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath: fresh,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+    for (const [key, value] of REMOTE_GIT_CONFIG) expect(await configOf(fresh, key)).toBe(value)
+
+    // A remote created before the config existed already has the branch: it is configured anyway.
+    const existing = path.join(tmpDir, 'existing.git')
+    await simpleGit().raw(['clone', '-q', '--bare', tmpDir, existing])
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath: existing,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+    for (const [key, value] of REMOTE_GIT_CONFIG) expect(await configOf(existing, key)).toBe(value)
   })
 
   it('is idempotent - does not recreate if remote already exists', async () => {

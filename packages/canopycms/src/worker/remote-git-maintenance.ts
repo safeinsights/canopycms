@@ -2,47 +2,12 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { gitChildEnv } from '../git-manager'
 import { workerLog } from './log'
 
-/**
- * `remote.git` settings the worker owns. Every Lambda push runs `receive-pack`
- * with remote.git's own config and none of the pusher's: git unsets
- * `GIT_CONFIG_PARAMETERS` before spawning `receive-pack` for a local-path
- * push, so a `-c` on the Lambda side cannot reach it. Unset, a push would
- * eventually start `gc --auto` inside a Lambda that is frozen mid-run, and
- * pushes under the default `unpackLimit` (100) leave loose objects that every
- * local clone then copies one NFS round trip at a time.
- *
- * Never an `extensions.*` key: git 2.39 refuses to open a repo carrying one it
- * does not know.
- * @internal Exported for tests.
- */
-export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: string]> = [
-  ['gc.auto', '0'],
-  ['receive.autogc', 'false'],
-  ['maintenance.auto', 'false'],
-  ['transfer.unpackLimit', '1'],
-]
-
 /** Above either count, `maintainRemoteGit` repacks. */
 const REMOTE_GIT_MAX_LOOSE_OBJECTS = 50
 const REMOTE_GIT_MAX_PACKS = 6
 
 function bareGit(): SimpleGit {
   return simpleGit().env(gitChildEnv({}))
-}
-
-/** Write each of {@link REMOTE_GIT_CONFIG} into `gitDir` only where it differs. */
-export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
-  const git = bareGit()
-  const current = new Map<string, string>()
-  const listed = await git.raw(['--git-dir', gitDir, 'config', '--local', '--list'])
-  for (const line of listed.split('\n')) {
-    const eq = line.indexOf('=')
-    if (eq > 0) current.set(line.slice(0, eq).toLowerCase(), line.slice(eq + 1))
-  }
-  for (const [key, value] of REMOTE_GIT_CONFIG) {
-    if (current.get(key.toLowerCase()) === value) continue
-    await git.raw(['--git-dir', gitDir, 'config', '--local', key, value])
-  }
 }
 
 interface ObjectCounts {

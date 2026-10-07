@@ -5,11 +5,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import {
-  REMOTE_GIT_CONFIG,
-  ensureRemoteGitConfig,
-  maintainRemoteGit,
-} from './remote-git-maintenance'
+import { REMOTE_GIT_CONFIG, ensureRemoteGitConfig } from '../git-manager'
+import { maintainRemoteGit } from './remote-git-maintenance'
 
 let tmpDir: string
 let gitDir: string

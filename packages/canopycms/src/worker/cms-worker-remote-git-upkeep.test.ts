@@ -11,6 +11,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { mockConsole, type MockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
+import { ensureRemoteGitConfig } from '../git-manager'
 
 type WorkerInternals = {
   ensureRemoteGit(): Promise<void>
@@ -224,7 +225,9 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
 
   it('repacks once remote.git holds more than six packs', async () => {
     await initRemoteGit()
-    await bare(remoteGitPath, ['config', 'transfer.unpackLimit', '1'])
+    // The worker's own config (one pack per push, no auto-housekeeping): without it, git 2.55's
+    // post-push `maintenance run --auto` consolidates the packs before the worker sees them.
+    await ensureRemoteGitConfig(remoteGitPath)
     const work = await workingClone(remoteGitPath, 'pusher')
     await pushCommits(work, 'packed', 8)
     expect((await counts(remoteGitPath)).packs).toBeGreaterThan(6)

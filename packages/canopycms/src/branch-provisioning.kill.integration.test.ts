@@ -38,6 +38,10 @@ beforeAll(async () => {
   await fs.mkdir(path.join(sourceDir, 'content'), { recursive: true })
   const source = await initTestRepo(sourceDir)
   await source.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+  // Each scenario clones this repo; git 2.55's post-commit auto-maintenance would repack it in
+  // the background while a clone copies its loose objects.
+  await source.addConfig('gc.auto', '0')
+  await source.addConfig('maintenance.auto', 'false')
   // Enough files that a checkout is not instantaneous.
   for (let i = 0; i < 300; i++) {
     await fs.writeFile(path.join(sourceDir, 'content', `entry-${i}.md`), `# entry ${i}\n`)
