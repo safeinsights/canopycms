@@ -170,6 +170,24 @@ describe('reapplySparseCones', () => {
     expect(second.reapplied.sort()).toEqual(['feat', 'other'])
   })
 
+  it('skips a clone with a rebase in progress, and applies it once the rebase is gone', async () => {
+    const feat = await provision('feat', 'content')
+    await recordConfiguredSparseCone(config('cms/content'))
+    const rebaseDir = path.join(feat, '.git', 'rebase-merge')
+    await fs.mkdir(rebaseDir)
+
+    expect(await reapplySparseCones({ contentBranchesPath: baseRoot })).toEqual({
+      reapplied: [],
+      failed: [],
+    })
+    expect(await cone(feat)).toEqual(['.canopy-meta', 'content'])
+
+    await fs.rm(rebaseDir, { recursive: true })
+    expect((await reapplySparseCones({ contentBranchesPath: baseRoot })).reapplied).toEqual([
+      'feat',
+    ])
+  })
+
   it('runs first in the sync cycle, even when the GitHub fetch then fails', async () => {
     const feat = await provision('feat', 'content')
     await recordConfiguredSparseCone(config('cms/content'))
