@@ -39,7 +39,7 @@ lint and still break the layering above. Keep the direction by review.
   function: the same comment, and the `TaskRunnerContext` pick list in `task-runner.ts`.
 - Non-fast-forward and workflow-content push refusals fail fast as `PermanentTaskError`, not
   retries: `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
-- Sync-cycle order, upkeep ahead of the GitHub fetch: `git-sync.ts`, `syncGit`'s doc comment.
+- Sync-cycle order, upkeep ahead of the GitHub fetch: `git-sync.ts`'s top comment.
 - Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
   function (it is part of provisioning, so it stays there).

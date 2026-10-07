@@ -2,8 +2,8 @@
 
 ## Priority: P3 [BOTH]
 
-The worker repacks `remote.git` with `git repack -a -d --cruft` and **no expiry**
-(`worker/remote-git-maintenance.ts`). Unreachable objects go into one cruft pack instead of being
+`remote.git` is repacked with `git repack -a -d --cruft` and **no expiry**
+(`git-manager.ts` `repackBareRemoteIfNeeded`). Unreachable objects go into one cruft pack instead of being
 deleted, so a Lambda push that depends on an old object is never broken by a concurrent repack.
 
 The cost is that the cruft pack only grows. Every force-with-lease history rewrite leaves its

@@ -181,8 +181,8 @@ async function listDir(dirPath: string): Promise<string[] | null> {
   }
 }
 
-/** Remote URLs in a git config file's text. Read as a file because git refuses to run while a
- * stale `config.lock` is present. */
+/** Remote URLs in a git config file's text. Read as a file: git does not treat a `.git` that a
+ * kill left without `HEAD` as a repository, and a stale `config.lock` blocks only config writes. */
 function gitConfigRemoteUrls(text: string): string[] {
   const urls: string[] = []
   let inRemote = false

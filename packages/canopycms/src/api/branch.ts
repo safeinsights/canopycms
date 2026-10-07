@@ -680,8 +680,9 @@ export const deleteBranchHandler = async (
 
   // The branch directory leaves its name by one rename, under the same
   // server-enforced lockfile branch-metadata saves hold (see
-  // utils/occ-json-write.ts), so a racing save() cannot resurrect a phantom
-  // branch.json at the old name, and a process killed during the `rm` leaves
+  // utils/occ-json-write.ts), so a save() already waiting on that lock fails
+  // rather than writing into the moved tree (save()'s doc names the window it
+  // cannot close), and a process killed during the `rm` leaves
   // only a `.deleting-*` directory the worker sweeps, never residue under a
   // name that may be created again.
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')

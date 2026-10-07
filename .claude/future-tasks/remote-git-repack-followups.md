@@ -2,18 +2,18 @@
 
 ## Priority: P3 [BOTH]
 
-The worker keeps `remote.git` packed (`worker/remote-git-maintenance.ts`, with config from
-`git-manager.ts` `REMOTE_GIT_CONFIG`). Object safety is covered: `--cruft` with no expiry drops
+`remote.git` is kept packed by `git-manager.ts` `repackBareRemoteIfNeeded` (run each cycle by the
+worker, and by dev's `ensureLocalSimulatedRemote`), with config from `REMOTE_GIT_CONFIG`. Object safety is covered: `--cruft` with no expiry drops
 nothing, and hardlinked packs keep their inodes. Four smaller points were found in review and are
 not yet handled.
 
-## 1. `objects/incoming-*` leftovers
+## 1. `objects/tmp_objdir-incoming-*` leftovers
 
-`receive-pack` writes a push into an `objects/incoming-*` quarantine directory before moving it
+`receive-pack` writes a push into an `objects/tmp_objdir-incoming-*` quarantine directory before moving it
 in. A Lambda killed mid-push leaves that directory behind. gc used to remove old ones; nothing
 does now that gc never runs in `remote.git`.
 
-**Fix:** have `maintainRemoteGit` sweep `incoming-*` directories older than an hour.
+**Fix:** have `repackBareRemoteIfNeeded` sweep `objects/tmp_objdir-incoming-*` directories older than an hour.
 
 ## 2. Repack frequency
 

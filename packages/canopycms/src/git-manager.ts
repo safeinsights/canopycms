@@ -125,7 +125,8 @@ const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=fal
  * repacks while another process clones, and pushes under the default `unpackLimit` (100) leave
  * loose objects that every local clone copies one NFS round trip at a time.
  *
- * Never an `extensions.*` key: git 2.39 refuses to open a repo carrying one it does not know.
+ * Never an `extensions.*` key: once a repo is at `repositoryformatversion` 1, a git that does not
+ * know the key refuses it, and Lambda runs git 2.39.
  * @internal Exported for tests.
  */
 export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: string]> = [
@@ -213,8 +214,9 @@ export async function repackBareRemoteIfNeeded(gitDir: string): Promise<BareRemo
 
 /**
  * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
- * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to
- * every simple-git instance GitManager creates.
+ * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to a
+ * GitManager's own instance and to `cloneRepo`'s; its static helpers and the bare-remote functions
+ * do not pass it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
  */
 function failOnSignalExit(
   error: Buffer | Error | undefined,

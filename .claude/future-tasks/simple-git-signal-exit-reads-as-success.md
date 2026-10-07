@@ -12,15 +12,18 @@ only when `exitCode && stdErr.length`. A git process killed by a signal closes w
 killed only the git child of a clone: the clone "succeeded", the clone retry never ran, and the
 next step failed with `not a git repository`.
 
-`GitManager` now passes `errors: failOnSignalExit` (git-manager.ts) to every simple-git instance it
-creates, including the clone's, so provisioning, settings and every `GitManager` operation treat a
-signal exit as a failure. Every other `simpleGit(...)` in the package still has the default:
+`GitManager` now passes `errors: failOnSignalExit` (git-manager.ts) to its own instance and the
+clone's, so provisioning, settings and every `GitManager` instance operation treat a signal exit
+as a failure. Every other `simpleGit(...)` in the package still has the default:
 
 - the worker's own instances in `worker/cms-worker.ts`, `worker/git-sync.ts` (the GitHub fetch
   and push, the base-branch refresh's fetch and `merge --ff-only`), `worker/rebase.ts`,
-  `worker/history-rewrite.ts`, `worker/remote-git-maintenance.ts` and `worker/task-runner.ts`;
+  `worker/history-rewrite.ts`, `worker/sparse-cone.ts` (its `sparse-checkout set` checks files out) and
+  `worker/task-runner.ts`;
 - `sync-core.ts`, `utils/git.ts`, `cli/sync.ts`, `cli/project-detect.ts`,
-  `api/admin-branch-health.ts`, and `GitManager.repoExistsAt`'s.
+  `api/admin-branch-health.ts`, and git-manager.ts's static helpers (`ensureLocalSimulatedRemote`,
+  `bareRemoteHasBranch`, `deleteBareRemoteHead`, `findGitRoot`, `repoExistsAt`) and
+  `ensureRemoteGitConfig`/`repackBareRemoteIfNeeded`.
 
 A worker git killed by the EC2 OOM killer mid-`rebase` or mid-`merge` would be read as done. The
 interrupted-rebase recovery catches a stopped rebase on the next cycle, but a "successful" merge

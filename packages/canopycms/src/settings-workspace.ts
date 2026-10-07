@@ -79,8 +79,8 @@ const SETTINGS_INIT_LOCK_NAME = 'lock'
  * its target, and `GitManager.initializeWorkspace` clones INTO the settings
  * root, which `git clone` refuses if anything is already there. A dedicated
  * dot-directory also keeps this marker out of `path.dirname(settingsRoot)`,
- * where `ensureLocalSimulatedRemote` puts `.remote-init.lock` — settings init
- * calls into that while holding this lock, so separate directories make the
+ * where `ensureLocalSimulatedRemote` puts `.remote-init.lock` — an in-place
+ * settings re-init calls into that while holding this lock, so separate directories make the
  * nesting obvious rather than incidental. For how a lock's anchor path is
  * chosen, see utils/provisioning-lock.ts and docs/concurrency.md.
  * @internal Exported for tests.

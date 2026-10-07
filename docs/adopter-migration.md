@@ -46,7 +46,7 @@ which entries belong to it is still a read of `git log`.
 worker repairs branch directories an interrupted create or delete left wedged, and owns
 `remote.git`'s gc config and repacking. A content branch's clone checks out only the content root,
 `.canopy-meta` and root-level files, so request-time reads elsewhere in it find nothing. The editor
-recovers a create that timed out instead of spinning.
+recovers a create that timed out instead of reporting an HTTP 504.
 
 **To adopt.** Upgrade `canopycms` and `canopycms-cdk` together; no config, no deploy order. A changed
 `contentRoot` reaches existing clones within a worker cycle of the API restarting.

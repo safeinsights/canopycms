@@ -769,7 +769,7 @@ Filter on `file.working_dir` (simple-git's name for the working-tree column), **
 
 `setProvisioningTestHooks({ beforePublish, inspectBlocked })` (`@internal`, module-level; call it with no argument to clear) injects behaviour around the publish step in-process.
 
-A new simple-git instance that clones or checks out must pass `errors: failOnSignalExit` (`git-manager.ts`); otherwise a signal-killed git reads as success.
+A simple-git instance that clones or checks out must fail on a signal exit: in `git-manager.ts` pass `errors: failOnSignalExit`. It is not exported yet; see `.claude/future-tasks/simple-git-signal-exit-reads-as-success.md`.
 
 ### Extracting from a Class Whose Tests Reach Through the Instance
 

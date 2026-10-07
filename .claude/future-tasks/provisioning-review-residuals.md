@@ -26,8 +26,8 @@ path. These smaller items were left for later.
 3. **A phantom `branch.json` after delete.** This predates the provisioning change.
    - `deleteBranchHandler` renames the branch directory under `withOccFileLock(branch.json)`, but
      that lock `mkdir -p`s its parent (`utils/occ-json-write.ts`).
-   - So a `save()` queued on the same lock can recreate `<old>/.canopy-meta/branch.json`, with no
-     `.git`, after the rename.
+   - So a `save()` that passed its branch-root check before the rename and reaches the lock after
+     it recreates `<old>/.canopy-meta/branch.json`, with no `.git`.
    - `classifyFinalDir` calls that `live`, so a create of the name answers 409 and the worker never
      repairs it. Only admin purge clears it.
    - Fix: make the OCC lock refuse to recreate a missing branch root, or classify "`branch.json`
