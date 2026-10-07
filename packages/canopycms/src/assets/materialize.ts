@@ -94,7 +94,7 @@ export async function storeTransform(
   return { ok: true, data: transformed.data, contentType: transformed.contentType, stored }
 }
 
-/** @internal One key a build references, and where it was referenced, for the failure report. */
+/** One key a build references, and where it was referenced, for the failure report. */
 export interface MaterializeTarget {
   /** `assets/t/{directives}/{hash32}/{slug}.{ext}`. */
   key: string
@@ -114,15 +114,21 @@ export type MaterializeResult = {
   routes: string[]
   files: string[]
 } & (
-  | { status: 'existed' | 'created' }
+  | { status: 'existed' | 'created' | 'copied' }
   | { status: 'failed'; failure: MaterializeFailureKind; error: string }
 )
 
+/** The `schemaVersion` of every `MaterializeReport`; a consumer gating on the JSON checks it. */
+export const MATERIALIZE_REPORT_SCHEMA_VERSION = 1
+
 export interface MaterializeReport {
+  schemaVersion: typeof MATERIALIZE_REPORT_SCHEMA_VERSION
   summary: {
     total: number
     existed: number
     created: number
+    /** Keys copied from the canonical prefix into an output prefix; 0 until one is configured. */
+    copied: number
     failed: number
     contentFailures: number
     storeFailures: number
@@ -284,7 +290,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
   }
 
   type Outcome =
-    | { status: 'existed' | 'created' }
+    | { status: 'existed' | 'created' | 'copied' }
     | { status: 'failed'; failure: MaterializeFailureKind; error: string }
   const outcomes = new Map<string, Outcome>()
   const fail = (key: string, failure: MaterializeFailureKind, error: string) =>
@@ -425,10 +431,12 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
   const count = (predicate: (result: MaterializeResult) => boolean) =>
     results.filter(predicate).length
   return {
+    schemaVersion: MATERIALIZE_REPORT_SCHEMA_VERSION,
     summary: {
       total: results.length,
       existed: count((r) => r.status === 'existed'),
       created: count((r) => r.status === 'created'),
+      copied: count((r) => r.status === 'copied'),
       failed: count((r) => r.status === 'failed'),
       contentFailures: count((r) => r.status === 'failed' && r.failure === 'content'),
       storeFailures: count((r) => r.status === 'failed' && r.failure === 'store'),
