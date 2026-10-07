@@ -2,7 +2,9 @@
 
 ## Priority: P3
 
-Filed 2026-09-12 by PR 2 (`fix/sharp-lazy-load`) of [cms-image-build-epic.md](resolved/cms-image-build-epic.md),
+**Status:** Resolved 2026-10-06, branch `feat/authenticated-editor-assets`. `GET /admin/status` probes `loadSharp()` and reports `imageProcessing: { available, error? }`, and the System health Overview shows an "Image processing" row beside Media storage.
+
+Filed 2026-09-12 by PR 2 (`fix/sharp-lazy-load`) of [cms-image-build-epic.md](cms-image-build-epic.md),
 which deferred it by decision: for now the loud signal is a one-time error log.
 
 ## State

@@ -10,6 +10,9 @@ import { enqueueTask, dequeueTask, failTask } from '../task-queue/cms-task-queue
 import type { AssetStore } from '../assets/types'
 import { CANOPYCMS_VERSION } from '../version'
 
+const { loadSharpMock } = vi.hoisted(() => ({ loadSharpMock: vi.fn() }))
+vi.mock('../assets/sharp-loader', () => ({ loadSharp: loadSharpMock }))
+
 // Extract composed (guard + handler) functions for testing, matching
 // branch-merge.test.ts's pattern.
 const statusHandler = ADMIN_ROUTES.status.handler
@@ -29,6 +32,9 @@ describe('admin api', () => {
     // getTaskQueueDir({mode:'prod'}) resolves to {CANOPYCMS_WORKSPACE_ROOT}/.tasks
     process.env.CANOPYCMS_WORKSPACE_ROOT = tmpDir
     taskDir = path.join(tmpDir, '.tasks')
+
+    loadSharpMock.mockReset()
+    loadSharpMock.mockResolvedValue(() => undefined)
 
     ctx = createMockApiContext({ services: { config: { mode: 'prod' } as CanopyConfig } })
     req = { user: createMockUser('admin'), body: {} }
@@ -72,6 +78,24 @@ describe('admin api', () => {
       it('reports the asset store as not configured when the context has none', async () => {
         const result = await statusHandler(ctx, req)
         expect(result.data?.assetStore).toEqual({ configured: false })
+      })
+    })
+
+    describe('image processing', () => {
+      it('reports image processing as available when sharp loads', async () => {
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.imageProcessing).toEqual({ available: true })
+      })
+
+      it('reports image processing as unavailable with the error when sharp fails to load, and still answers 200', async () => {
+        loadSharpMock.mockRejectedValue(new Error('libvips-cpp.so.42: cannot open shared object'))
+        const result = await statusHandler(ctx, req)
+        expect(result.ok).toBe(true)
+        expect(result.status).toBe(200)
+        expect(result.data?.imageProcessing).toEqual({
+          available: false,
+          error: 'libvips-cpp.so.42: cannot open shared object',
+        })
       })
     })
 

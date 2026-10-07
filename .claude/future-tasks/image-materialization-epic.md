@@ -104,7 +104,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - It applies only to `/assets/t/` srcs, and it wins over `opts.baseUrl`.
   - Check how `attachTo`'s static-export preview route (`previewPrefix`) carries this.
 - **Sharp is now load-bearing for editor images.** Fold in
-  [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md),
+  [admin-status-image-processing-availability.md](resolved/admin-status-image-processing-availability.md),
   and add an e2e that loads a fresh crop through the authenticated route.
 
 ### Phase 2: collect and materialize

@@ -25,6 +25,7 @@ import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
 import { getBuildIdentity } from '../build-identity'
+import { loadSharp } from '../assets/sharp-loader'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
@@ -166,6 +167,12 @@ export interface AdminStatusData {
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */
   assetStore: { configured: boolean }
+  /**
+   * Whether THIS API process can load sharp. When false, editor images (thumbnails, crops and
+   * previews, which are transformed on demand here) fail and raster uploads are accepted without
+   * decode validation. Speaks only for the process that answers the status request.
+   */
+  imageProcessing: { available: boolean; error?: string }
 }
 
 /** Response type for GET /admin/status */
@@ -224,6 +231,16 @@ const deleteTaskParamsSchema = z.object({
 })
 export type DeleteTaskParams = z.infer<typeof deleteTaskParamsSchema>
 
+/** Loads sharp in this process; a failure is reported, never thrown. */
+async function probeImageProcessing(): Promise<AdminStatusData['imageProcessing']> {
+  try {
+    await loadSharp()
+    return { available: true }
+  } catch (err) {
+    return { available: false, error: getErrorMessage(err) }
+  }
+}
+
 const getAdminStatusHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -238,12 +255,14 @@ const getAdminStatusHandler = async (
       worker,
       { workerStatus, statusReadError },
       settingsWorkspaceError,
+      imageProcessing,
     ] = await Promise.all([
       getQueueStats(taskDir),
       getOldestPendingAgeMs(taskDir),
       classifyWorkerLiveness(taskDir),
       readWorkerStatus(taskDir),
       readSettingsWorkspaceError(ctx),
+      probeImageProcessing(),
     ])
 
     return {
@@ -262,6 +281,7 @@ const getAdminStatusHandler = async (
         ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
         build: getBuildIdentity(),
         assetStore: { configured: !!ctx.assetStore },
+        imageProcessing,
       },
     }
   } catch (err) {
@@ -394,6 +414,7 @@ const getAdminStatus = defineEndpoint({
     workerStatus: null,
     build: { canopycmsVersion: '0.0.0' },
     assetStore: { configured: false },
+    imageProcessing: { available: true },
   },
   guards: ['admin'] as const,
   handler: getAdminStatusHandler,
