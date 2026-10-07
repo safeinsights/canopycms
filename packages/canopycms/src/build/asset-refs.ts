@@ -130,11 +130,19 @@ function routeForFile(file: string): string | undefined {
 const ENCODED_ASSETS = /%2[fF]assets%2[fF]/g
 const RUN_STOP = /[\s"'`<>&]/
 
+/** Each `%XX` escape of an ASCII character, decoded on its own; anything else stays as written. */
+function decodeAsciiEscapes(text: string): string {
+  return text.replace(/%([0-7][0-9a-fA-F])/g, (_, hex: string) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  )
+}
+
+/** One malformed or non-UTF-8 escape elsewhere in the run must not hide the URL inside it. */
 function decodeOrKeep(run: string): string {
   try {
     return decodeURIComponent(run)
   } catch {
-    return run
+    return decodeAsciiEscapes(run)
   }
 }
 
@@ -172,6 +180,18 @@ function decodeUrlEscapes(text: string): string {
 function trimTrailingPunctuation(url: string, filename: string): [string, string] {
   const trimmed = filename.replace(/[.:;!?]+$/, '')
   return [url.slice(0, url.length - (filename.length - trimmed.length)), trimmed]
+}
+
+/** A NUL in the first 8 KiB, the test git and grep use; only that block is read. */
+async function startsBinary(filePath: string): Promise<boolean> {
+  const handle = await fs.open(filePath, 'r')
+  try {
+    const block = Buffer.alloc(8192)
+    const { bytesRead } = await handle.read(block, 0, block.length, 0)
+    return block.subarray(0, bytesRead).includes(0)
+  } finally {
+    await handle.close()
+  }
 }
 
 class RefCollector {
@@ -212,15 +232,16 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
 
   let scannedFiles = 0
   for (const file of files) {
-    const bytes = await fs.readFile(path.join(root, file))
-    // A NUL in the first block is how git and grep tell binary from text, too.
-    if (path.extname(file) === '' && bytes.subarray(0, 8192).includes(0)) continue
+    const filePath = path.join(root, file)
+    if (path.extname(file) === '' && (await startsBinary(filePath))) continue
     scannedFiles++
-    const text = decodeUrlEscapes(bytes.toString('utf-8'))
+    const text = decodeUrlEscapes(await fs.readFile(filePath, 'utf-8'))
 
     for (const match of text.matchAll(TRANSFORM_URL_RE)) {
       const [url, filename] = trimTrailingPunctuation(match[0], match[3])
-      const [, directives, hash32] = match
+      const [, encodedDirectives, hash32] = match
+      // A loader that encodes the directive segment alone is still requesting this key.
+      const directives = decodeAsciiEscapes(encodedDirectives)
       const canonical = canonicalizeTransformPath([directives, hash32, filename])
       if (!canonical.ok) {
         problems.push({ file, url, error: canonical.error })

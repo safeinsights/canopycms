@@ -122,6 +122,19 @@ describe('collectAssetRefs', () => {
     ])
   })
 
+  it('still finds an encoded URL whose run holds a malformed escape, or an encoded directive', async () => {
+    await write(
+      'style.css',
+      `.h{width:100%;background:url(/img?u=%2Fassets%2Ft%2Fw%3D320%2F${HASH}%2Fphoto.png&w=640)}`,
+    )
+    await write('loader.html', `<img src="/assets/t/q%3D80%2Cw%3D640/${HASH}/photo.png">`)
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([
+      `assets/t/q=80,w=640/${HASH}/photo.png`,
+      `assets/t/w=320/${HASH}/photo.png`,
+    ])
+  })
+
   it('ends a URL at typographic punctuation', async () => {
     await write(
       'quote.md',
