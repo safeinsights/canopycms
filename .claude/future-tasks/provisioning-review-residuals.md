@@ -17,8 +17,10 @@ path. These smaller items were left for later.
      re-records the old cone.
    - The worker then flips every sparse clone back, and forward again after the next new-config
      record.
-   - Files are preserved (dirty, untracked and deleted files survive a cone change), but content
-     disappears and reappears for editors until old containers drain.
+   - Modified and untracked files survive a cone change, and the worker skips a clone holding an
+     unpublished deletion (a cone change would hide it, and re-widening would restore the file;
+     `worker/sparse-cone.ts`). But content disappears and reappears for editors until old
+     containers drain.
    - Possible fix: stamp the record with the config's build identity and have the worker ignore an
      older one.
 3. **A phantom `branch.json` after delete.** This predates the provisioning change.
@@ -39,3 +41,18 @@ path. These smaller items were left for later.
    - This is by design for retrying a killed request.
    - If it confuses anyone, compare the request body with the stored metadata and answer 409 when
      they differ.
+6. **A first settings init clones once per container.**
+   - The settings build runs before any cross-process lock (`settings-workspace.ts`).
+   - So on a first boot, or with an interrupted workspace, every Lambda container serving the
+     editor's parallel first requests clones the whole repo (settings clones are never sparse)
+     into its own `.prov-settings-*`, and only one is published.
+   - It heals once any clone finishes, but it multiplies EFS load. A clone killed at the request
+     budget leaves staging that is swept only after 20 minutes.
+   - Fix: let later arrivals wait briefly on the publish lock and re-check before cloning.
+7. **Settings quarantine trusts one look through the path.**
+   - Under the init lock, the settings publish reads `settingsRootState` and renames `settings` to
+     trash by name.
+   - It has none of branch quarantine's move-then-verify-by-inode, so a host with a stale NFS
+     dentry for an interrupted clone could trash a workspace another host has just published.
+   - The cost is small (an unpushed empty orphan commit, kept 30 days in trash), but it should reuse
+     `quarantineResidueAt`'s pattern.
