@@ -15,6 +15,7 @@ import type {
   AssetMeta,
   AssetStore,
   BeginUploadInput,
+  CreateOnlyResult,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -28,6 +29,13 @@ export interface LocalAssetStoreOptions {
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const DEFAULT_LIST_LIMIT = 24
 const HEADERS_SIDECAR_SUFFIX = '.headers.json'
+/**
+ * Where create-only writes stage their bytes: under the root, so `link()` stays on one filesystem,
+ * and outside every prefix, so no read or listing of a prefix ever sees a partial file.
+ */
+const TEMP_DIR = '.asset-tmp'
+/** An original's file name after `{hash32}.`; a sidecar or any other name in the directory fails it. */
+const ORIGINAL_EXT_RE = /^[a-z0-9]+$/
 
 /** Side-channel headers persisted next to a blob (filesystem has no native HTTP header storage). */
 interface StoredHeaders {
@@ -67,10 +75,6 @@ export class LocalAssetStore implements AssetStore {
     return `${filePath}${HEADERS_SIDECAR_SUFFIX}`
   }
 
-  private async writeHeadersSidecar(filePath: string, headers: StoredHeaders): Promise<void> {
-    await atomicWriteFile(this.headersSidecarPath(filePath), JSON.stringify(headers))
-  }
-
   private async readHeadersSidecar(filePath: string): Promise<StoredHeaders> {
     try {
       const raw = await fs.readFile(this.headersSidecarPath(filePath), 'utf-8')
@@ -103,6 +107,47 @@ export class LocalAssetStore implements AssetStore {
     }
     // Best-effort sidecar cleanup; a missing sidecar is not an error.
     await fs.unlink(this.headersSidecarPath(filePath)).catch(() => {})
+  }
+
+  /** Link `tempPath` in at `filePath`; `false` when something is already there. */
+  private async linkIfAbsent(tempPath: string, filePath: string): Promise<boolean> {
+    try {
+      await fs.link(tempPath, filePath)
+      return true
+    } catch (err: unknown) {
+      if (isFileExistsError(err)) return false
+      throw err
+    }
+  }
+
+  /**
+   * Create-only write of a blob and its headers sidecar. Each is written whole to a temp file, then
+   * `link()`ed into place, which fails with EEXIST rather than replacing (see docs/concurrency.md).
+   * The sidecar is linked first, so a reader never finds a blob without its headers. A sidecar
+   * already there was linked by an earlier writer of this key and is kept, as the blob is: the
+   * first writer's headers win, as on S3 (a static's Content-Disposition names its uploaded file).
+   */
+  private async createExclusive(
+    key: string,
+    data: Uint8Array,
+    headers: StoredHeaders,
+  ): Promise<CreateOnlyResult> {
+    const filePath = this.resolveKey(key)
+    const tempDir = this.resolveKey(TEMP_DIR)
+    await Promise.all([
+      fs.mkdir(tempDir, { recursive: true }),
+      fs.mkdir(path.dirname(filePath), { recursive: true }),
+    ])
+    const tempBlob = path.join(tempDir, randomUUID())
+    const tempHeaders = path.join(tempDir, randomUUID())
+    try {
+      await fs.writeFile(tempBlob, data)
+      await fs.writeFile(tempHeaders, JSON.stringify(headers), 'utf-8')
+      await this.linkIfAbsent(tempHeaders, this.headersSidecarPath(filePath))
+      return (await this.linkIfAbsent(tempBlob, filePath)) ? 'created' : 'already-exists'
+    } finally {
+      await Promise.all([tempBlob, tempHeaders].map((temp) => fs.unlink(temp).catch(() => {})))
+    }
   }
 
   async beginUpload(_input: BeginUploadInput): Promise<StagedUploadTarget> {
@@ -145,10 +190,10 @@ export class LocalAssetStore implements AssetStore {
     ext: string
     data: Uint8Array
     contentType: string
-  }): Promise<void> {
-    const filePath = this.resolveKey(originalKey(input.hash32, input.ext))
-    await this.writeFile(filePath, input.data)
-    await this.writeHeadersSidecar(filePath, { contentType: input.contentType })
+  }): Promise<CreateOnlyResult> {
+    return this.createExclusive(originalKey(input.hash32, input.ext), input.data, {
+      contentType: input.contentType,
+    })
   }
 
   /** Ignores the `ext` hint: a directory read costs nothing here and needs no permission. */
@@ -165,7 +210,7 @@ export class LocalAssetStore implements AssetStore {
     }
     const prefix = `${hash32}.`
     const match = entries.find(
-      (name) => name.startsWith(prefix) && !name.endsWith(HEADERS_SIDECAR_SUFFIX),
+      (name) => name.startsWith(prefix) && ORIGINAL_EXT_RE.test(name.slice(prefix.length)),
     )
     if (!match) return null
 
@@ -184,14 +229,24 @@ export class LocalAssetStore implements AssetStore {
     cacheControl?: string
     /** Ignored: tags exist for bucket lifecycle rules, and a local store has none. */
     tags?: Readonly<Record<string, string>>
-  }): Promise<void> {
-    const filePath = this.resolveKey(input.key)
-    await this.writeFile(filePath, input.data)
-    await this.writeHeadersSidecar(filePath, {
+  }): Promise<CreateOnlyResult> {
+    return this.createExclusive(input.key, input.data, {
       contentType: input.contentType,
       contentDisposition: input.contentDisposition,
       cacheControl: input.cacheControl,
     })
+  }
+
+  async copyPublicObject(
+    sourceKey: string,
+    destKey: string,
+  ): Promise<CreateOnlyResult | 'source-missing'> {
+    const sourcePath = this.resolveKey(sourceKey)
+    const data = await this.readFileOrNull(sourcePath)
+    if (!data) return 'source-missing'
+    const { contentType, contentDisposition, cacheControl } =
+      await this.readHeadersSidecar(sourcePath)
+    return this.createExclusive(destKey, data, { contentType, contentDisposition, cacheControl })
   }
 
   async readPublicObject(key: string): Promise<PublicObject | null> {
@@ -224,7 +279,7 @@ export class LocalAssetStore implements AssetStore {
    * always clobbers the destination, which would let the second writer
    * silently overwrite the first instead of losing cleanly.
    */
-  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'> {
+  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult> {
     const filePath = this.resolveKey(metaKey(hash32))
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     try {

@@ -50,6 +50,9 @@ export async function finalizeAsset(
   const existing = await store.getMeta(meta.hash32)
   if (existing) return { ok: true, meta: existing }
 
+  // Either put may find its key taken (`already-exists`): by an earlier attempt that stopped
+  // before the meta commit, or by a concurrent identical upload. The object kept there is this
+  // content's, so finalize goes on to commit the meta either way.
   await store.putOriginal({ hash32: meta.hash32, ext: meta.ext, data, contentType: meta.mime })
   if (publicObject) {
     await store.putPublicObject(publicObject)

@@ -17,10 +17,10 @@ const TEST_APP_ROOT = path.resolve(process.cwd(), 'apps/test-app')
 const ASSETS_ROOT = path.join(TEST_APP_ROOT, '.canopy-dev/assets')
 
 /**
- * Every top-level bucket LocalAssetStore writes under its root (see
- * asset-prefixes.ts). `ASSET_PREFIXES.transform` ('assets/t') nests inside
- * `ASSET_PREFIXES.public` ('assets'), so removing `public` also removes every
- * transform output -- no separate entry needed.
+ * Every top-level bucket LocalAssetStore keeps objects under (see asset-prefixes.ts); its
+ * `.asset-tmp/` holds only in-flight writes. `ASSET_PREFIXES.transform` ('assets/t') nests inside
+ * `ASSET_PREFIXES.public` ('assets'), so removing `public` also removes every transform output --
+ * no separate entry needed.
  */
 const ASSET_SUBDIRS = [
   ASSET_PREFIXES.originals,
