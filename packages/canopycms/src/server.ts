@@ -250,3 +250,44 @@ export { TRANSFORM_CACHE_CONTROL } from './assets/materialize'
 
 /** The object tag the lazy transform Lambda's outputs carry, which its `assets/t/` expiry filters on. */
 export { LAZY_TRANSFORM_TAG } from './assets/materialize'
+
+/**
+ * Make every `assets/t/` key a build references exist in `store` (transforming only the missing
+ * ones from the stored originals) and check every referenced svg/pdf key exists. A release job
+ * that bundles its own tool calls this with a store from `createAssetStore` and gates on the
+ * returned report; no site config is involved. Needs sharp only when something is missing.
+ */
+export { materializeAssets } from './assets/materialize'
+
+/** Thrown by `materializeAssets` when sharp cannot load and keys are missing, so none can be produced. */
+export { SharpUnavailableError } from './assets/materialize'
+
+/** The `schemaVersion` carried by every `MaterializeReport`. */
+export { MATERIALIZE_REPORT_SCHEMA_VERSION } from './assets/materialize'
+
+/** Options for `materializeAssets`: the store, the referenced keys, and concurrency/retry limits. */
+export type { MaterializeOptions } from './assets/materialize'
+
+/** What `materializeAssets` returns: a versioned summary and one result per key, sorted by key. */
+export type { MaterializeReport } from './assets/materialize'
+
+/** One key's outcome in a `MaterializeReport`: `existed`, `created`, `copied` or `failed` (`content` or `store`). */
+export type { MaterializeResult } from './assets/materialize'
+
+/** One key a build references, with the pages and output files that reference it. */
+export type { MaterializeTarget } from './assets/materialize'
+
+/**
+ * Scan a static build's output for `/assets/…` URLs and write `canopy-asset-refs.json` beside it.
+ * Throws `AssetRefsError` for a URL no stored object can answer (non-canonical or malformed).
+ */
+export { collectAssetRefs, type CollectAssetRefsResult } from './build/asset-refs'
+
+/** Read and validate a `canopy-asset-refs.json`; throws when it is unreadable or malformed. */
+export { readAssetRefsFile } from './build/asset-refs'
+
+/** Thrown by `collectAssetRefs`; `problems` lists each offending file and URL. */
+export { AssetRefsError } from './build/asset-refs'
+
+/** The shape of `canopy-asset-refs.json`: the transform and static keys a build references. */
+export type { AssetRefsFile } from './build/asset-refs'

@@ -265,6 +265,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
 - `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`
+- `configured-asset-store.ts` — the jiti config loader `materialize-assets` imports only when no `--bucket` is given
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
 `generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in

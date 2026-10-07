@@ -23,7 +23,7 @@ import type { MigrateFormat } from './migrate'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures'],
+    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures', 'allow-local'],
     string: [
       'app-dir',
       'branch',
@@ -44,6 +44,8 @@ export function parseArgs(rawArgs: string[]) {
       'report',
       'concurrency',
       'transform-concurrency',
+      'bucket',
+      'region',
     ],
     // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
     // without it, minimist folds those words into `argv._` and discards the `--`,
@@ -342,8 +344,13 @@ async function main() {
     process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
+    const bucket = typeof flags['bucket'] === 'string' ? flags['bucket'] : undefined
     process.exitCode = await materializeAssetsCLI({
-      projectDir: await requireProjectRoot('materialize-assets'),
+      // `--bucket` never reads the site config, so it needs no project.
+      projectDir: bucket === undefined ? await requireProjectRoot('materialize-assets') : undefined,
+      bucket,
+      region: typeof flags['region'] === 'string' ? flags['region'] : undefined,
+      allowLocal: flags['allow-local'] === true,
       refsPath: typeof flags['refs'] === 'string' ? flags['refs'] : undefined,
       reportPath: typeof flags['report'] === 'string' ? flags['report'] : undefined,
       concurrency: typeof flags['concurrency'] === 'string' ? flags['concurrency'] : undefined,
@@ -433,7 +440,11 @@ async function main() {
     console.log('    --report <file>       Also write the per-key JSON report here')
     console.log('    --concurrency <n>     Store requests in flight (default: 8)')
     console.log('    --transform-concurrency <n>  Image transforms in flight (default: 2)')
+    console.log('    --bucket <name>       S3 bucket to use instead of canopycms.config.ts')
+    console.log('    --region <region>     With --bucket: its region (both or neither)')
+    console.log('    --allow-local         Accept a non-S3 store resolved from the config')
     console.log('    --allow-failures      Exit 0 despite content failures (warns loudly)')
+    console.log('    Exit codes: 0 ok, 1 could not run, 2 content failures, 3 store failures')
     console.log('')
     console.log('  sync <command>          Sync content between working tree and CMS')
     console.log('    push                  Push working-tree content to a branch workspace')

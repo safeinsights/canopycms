@@ -14,6 +14,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import {
   isTransientStoreError,
+  MATERIALIZE_REPORT_SCHEMA_VERSION,
   materializeAssets,
   SharpUnavailableError,
   storeTransform,
@@ -93,6 +94,17 @@ describe('materializeAssets against a local store', () => {
     const second = await materializeAssets({ store, targets, sleep: noSleep })
     expect(second.summary).toMatchObject({ total: 2, created: 0, existed: 2, failed: 0 })
     expect(put).not.toHaveBeenCalled()
+  })
+
+  it('reports schemaVersion 1 and a copied count of 0', async () => {
+    const report = await materializeAssets({
+      store,
+      targets: [target(`assets/t/w=320/${HASH}/photo.png`)],
+      sleep: noSleep,
+    })
+    expect(MATERIALIZE_REPORT_SCHEMA_VERSION).toBe(1)
+    expect(report.schemaVersion).toBe(1)
+    expect(report.summary.copied).toBe(0)
   })
 
   it('writes untagged, so the lazy expiry never deletes a materialized key', async () => {
