@@ -365,6 +365,53 @@ describe('branch api', () => {
     expect(res.error).toBe('A branch with this name already exists')
   })
 
+  describe('a create naming an existing branch that its own creator just made', () => {
+    const createAgainst = async (
+      existing: { createdBy: string; ageMs: number },
+      userId: string,
+    ) => {
+      const registry = createMockRegistry([])
+      registry.get.mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'feature/test',
+          createdBy: existing.createdBy,
+          createdAt: new Date(Date.now() - existing.ageMs).toISOString(),
+        }),
+      )
+      const ctx = createMockApiContext({
+        branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+        services: { registry: registry as unknown as BranchRegistry },
+      })
+      return createBranch(
+        ctx,
+        { user: { type: 'authenticated', userId, groups: [] } },
+        { branch: unsafeAsBranchName('feature/test') },
+      )
+    }
+
+    it('answers the same creator within the window with the existing branch (200)', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(true)
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe('feature/test')
+      expect(res.data?.branch.createdBy).toBe('u1')
+    })
+
+    it('answers a different user with a 409, however recent the branch', async () => {
+      const res = await createAgainst({ createdBy: 'someone-else', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
+
+    it('answers the same creator with a 409 once the window has passed', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 6 * 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
+  })
+
   describe('branch-name collision guards (settings-branch + reserved namespace)', () => {
     // baseCtx's mock config defaults to mode: 'dev' (see createMockServices),
     // so DevStrategy.getSettingsBranchName(config) resolves to
