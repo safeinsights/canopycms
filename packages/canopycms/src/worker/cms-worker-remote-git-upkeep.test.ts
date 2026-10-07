@@ -178,10 +178,12 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
     await bare(remoteGitPath, ['remote', 'remove', 'origin'])
   }
 
-  it('repacks loose objects, keeping unreachable objects and clones made before the repack', async () => {
-    await initRemoteGit()
-    // Housekeeping off but the default unpackLimit, so pushes stay loose: git 2.55's post-push
-    // `maintenance run --auto` would otherwise pack some before the worker's repack runs.
+  /**
+   * Housekeeping off but the default unpackLimit, so pushes stay loose: git 2.55's post-push
+   * `maintenance run --auto` would otherwise pack some before the worker's repack runs, leaving
+   * remote.git under the threshold that triggers one.
+   */
+  async function keepPushesLoose(): Promise<void> {
     for (const [key, value] of [
       ['gc.auto', '0'],
       ['receive.autogc', 'false'],
@@ -189,6 +191,11 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
     ]) {
       await bare(remoteGitPath, ['config', key, value])
     }
+  }
+
+  it('repacks loose objects, keeping unreachable objects and clones made before the repack', async () => {
+    await initRemoteGit()
+    await keepPushesLoose()
     const work = await workingClone(remoteGitPath, 'pusher')
     await pushCommits(work, 'loose', 20)
 
@@ -218,8 +225,10 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
 
   it('logs a failed repack and still completes the cycle', async () => {
     await initRemoteGit()
+    await keepPushesLoose()
     const work = await workingClone(remoteGitPath, 'pusher')
     await pushCommits(work, 'loose', 20)
+    expect((await counts(remoteGitPath)).loose).toBeGreaterThan(50)
     const packDir = path.join(remoteGitPath, 'objects', 'pack')
     await fs.chmod(packDir, 0o555)
     try {
