@@ -320,6 +320,8 @@ describe('MarkdownField', () => {
   describe('source editor fallback', () => {
     it.each([
       ['an unclosed tag', 'Line one<br>line two'],
+      // MDXEditor trims a document before importing it, so it reports a different source.
+      ['surrounding whitespace, as front-matter parsing leaves it', '\nLine one<br>line two\n'],
       ['an unbalanced expression', 'Costs { 5 dollars.'],
       [
         'content inside an element that the rich editor cannot import',
@@ -355,6 +357,7 @@ describe('MarkdownField', () => {
       renderField(body, onChange)
 
       expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+      expect(screen.queryByTestId('markdown-insert-rejected')).toBeNull()
       const source = screen.getByTestId('markdown-source-editor')
       if (!(source instanceof HTMLTextAreaElement))
         throw new Error('source editor is not a textarea')
@@ -483,14 +486,24 @@ describe('MarkdownField', () => {
       expect(lastValue(onChange)).toContain('Body text.')
     })
 
-    it('that MDXEditor rejects leaves the body intact and opens it as source', async () => {
+    it('that MDXEditor rejects leaves the body intact and rich text editable', async () => {
       const onChange = await insertInto('Body text.', '[Use <br> tags](entry:abc123)')
 
-      expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
-      expect(screen.getByTestId<HTMLTextAreaElement>('markdown-source-editor').value).toBe(
-        'Body text.',
-      )
+      expect(await screen.findByTestId('markdown-insert-rejected')).toBeTruthy()
+      expect(screen.queryByTestId('markdown-source-fallback')).toBeNull()
       expect(onChange).not.toHaveBeenCalled()
+
+      // MDXEditor emits nothing after a rejected import until one succeeds.
+      const root = await richEditor()
+      expect(root.textContent).toBe('Body text.')
+      const user = userEvent.setup()
+      await user.click(root.querySelector('p') ?? root)
+      await user.keyboard('X')
+
+      await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1))
+      expect(lastValue(onChange)).toContain('X')
+      expect(lastValue(onChange)).toContain('Body text')
+      expect(screen.queryByTestId('markdown-insert-rejected')).toBeNull()
     })
   })
 

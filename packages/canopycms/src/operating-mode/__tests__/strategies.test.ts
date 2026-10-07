@@ -171,7 +171,7 @@ describe('Operating Mode Strategies', () => {
         delete process.env.CANOPYCMS_WORKSPACE_ROOT
         const strategy = operatingStrategy(mode)
         const branchesRoot = strategy.getContentBranchesRoot()
-        expect(branchesRoot).toContain('/mnt/efs/workspace/content-branches')
+        expect(branchesRoot).toContain('/mnt/efs/content-branches')
       })
 
       it('should use env variable for content branches root', () => {
@@ -273,7 +273,7 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const config = strategy.getRemoteUrlConfig()
         expect(config.shouldAutoInitLocal).toBe(false)
-        expect(config.autoDetectRemotePath).toContain('/mnt/efs/workspace/remote.git')
+        expect(config.autoDetectRemotePath).toContain('/mnt/efs/remote.git')
       })
 
       it('should use custom workspace root in autoDetectRemotePath', () => {

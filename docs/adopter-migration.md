@@ -59,6 +59,12 @@ will not let a shipped version go unlisted.
 
 **Now deletable.** A `media.publicBaseUrl` set only so editor previews would resolve, and any code passing `assetBaseUrl` into the editor.
 
+### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
+
+**What changed.** With `CANOPYCMS_WORKSPACE_ROOT` unset, prod mode keeps its branches, settings, task queue and auth cache under `/mnt/efs` instead of `/mnt/efs/workspace` (`DEFAULT_PROD_WORKSPACE`). `CanopyCmsService` sets the variable to `/mnt/efs` in the Lambda and the worker, so CDK deployments are unaffected.
+
+**To adopt.** If you run prod without the CDK and without `CANOPYCMS_WORKSPACE_ROOT`, set it to `/mnt/efs/workspace` to keep your existing workspace, or move that directory's contents up to `/mnt/efs`.
+
 ### A root entry previews its own page — **behaviour change for root entries**
 
 **What changed.** The preview pane loads each entry's `urlPath`: `content/about` previews `/about`, not `/`. A `previewBase` value of `false` marks an entry with no page, and the pane says so.

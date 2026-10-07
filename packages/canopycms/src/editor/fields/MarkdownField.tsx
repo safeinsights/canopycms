@@ -63,9 +63,15 @@ const MDXEditorLazy = React.lazy(async () => {
     { mdxJsxPlugins },
   ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
 
-  const EntryLinkToolbarButton: React.FC = () => {
+  const EntryLinkToolbarButton: React.FC<{
+    onInsert: (insert: () => void, markdown: string) => void
+  }> = ({ onInsert }) => {
     const insertMarkdown = usePublisher(insertMarkdown$)
-    return <InsertEntryLink onInsert={insertMarkdown} />
+    return (
+      <InsertEntryLink
+        onInsert={(markdown) => onInsert(() => insertMarkdown(markdown), markdown)}
+      />
+    )
   }
 
   /**
@@ -98,10 +104,19 @@ const MDXEditorLazy = React.lazy(async () => {
     markdown: string
     onChange: (value: string, initialMarkdownNormalize: boolean) => void
     onError: (payload: { error: string; source: string }) => void
+    onInsert: (insert: () => void, markdown: string) => void
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
     imagePreviewHandler: (src: string) => Promise<string>
-  }> = ({ markdown, onChange, onError, editorRef, imageUploadHandler, imagePreviewHandler }) => {
+  }> = ({
+    markdown,
+    onChange,
+    onError,
+    onInsert,
+    editorRef,
+    imageUploadHandler,
+    imagePreviewHandler,
+  }) => {
     return (
       <MDXEditor
         ref={editorRef}
@@ -153,7 +168,7 @@ const MDXEditorLazy = React.lazy(async () => {
                 <ListsToggle />
                 <Separator />
                 <CreateLink />
-                <EntryLinkToolbarButton />
+                <EntryLinkToolbarButton onInsert={onInsert} />
                 <InsertImage />
                 <InsertTable />
                 <InsertThematicBreak />
@@ -257,8 +272,11 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
   const lastRejectedSource = useRef<string | null>(null)
+  const pendingInsert = useRef<string | null>(null)
   const apiClient = useApiClient()
   const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
+  const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
+  const [editorGeneration, setEditorGeneration] = useState(0)
 
   // Drives both MDXEditor's drag/drop/paste upload and the custom image
   // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
@@ -290,6 +308,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const emitChange = useCallback(
     (newValue: string) => {
       lastExternalValue.current = newValue
+      setRejectedInsert(null)
       onChange(newValue)
     },
     [onChange],
@@ -297,8 +316,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   // Dropped: MDXEditor's re-serialization of the document it was mounted with
   // (flagged `initialMarkdownNormalize`; it would mark an unedited entry
-  // modified), and inserted markdown it rejected, which it reports as the
-  // whole document.
+  // modified), and inserted markdown it rejected, which it emits as if that
+  // snippet were the whole document.
   const handleEditorChange = useCallback(
     (newValue: string, initialMarkdownNormalize: boolean) => {
       if (initialMarkdownNormalize || newValue === lastRejectedSource.current) return
@@ -307,14 +326,36 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [emitChange],
   )
 
+  // MDXEditor reports a rejected insert synchronously, inside insertMarkdown
+  // (with no selection it imports nothing, and reports nothing).
+  const handleInsert = useCallback((insert: () => void, markdown: string) => {
+    pendingInsert.current = markdown
+    try {
+      insert()
+    } finally {
+      pendingInsert.current = null
+    }
+  }, [])
+
   // MDXEditor can report the error while rendering (it imports as it is
-  // created), hence the microtask. The rejected document is this render's
-  // `value`: MDXEditor is created from it, and gets this handler again before
-  // the sync effect hands it a later value.
+  // created), hence the microtask. Any rejection outside an insert is the
+  // document, this render's `value`: MDXEditor is created from it, and gets
+  // this handler again before the sync effect hands it a later value. `source`
+  // can't identify it, because MDXEditor trims the document it mounts with.
+  // Either way MDXEditor emits no further edits until an import succeeds, so a
+  // rejected insert remounts it from the unchanged document.
   const handleEditorError = useCallback(
     ({ error, source }: { error: string; source: string }) => {
       lastRejectedSource.current = source
-      queueMicrotask(() => setMode({ kind: 'source', reason: error, failedValue: value }))
+      const isInsert = pendingInsert.current !== null && source === pendingInsert.current
+      queueMicrotask(() => {
+        if (isInsert) {
+          setRejectedInsert(error)
+          setEditorGeneration((n) => n + 1)
+        } else {
+          setMode({ kind: 'source', reason: error, failedValue: value })
+        }
+      })
     },
     [value],
   )
@@ -387,11 +428,30 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
         </>
       ) : (
         <div style={editorWrapperStyle}>
+          {rejectedInsert !== null && (
+            <Alert
+              color="yellow"
+              variant="light"
+              mb="xs"
+              withCloseButton
+              onClose={() => setRejectedInsert(null)}
+              data-testid="markdown-insert-rejected"
+            >
+              <Text size="sm">
+                The rich-text editor can&apos;t show what was inserted, so nothing was added.
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                {rejectedInsert}
+              </Text>
+            </Alert>
+          )}
           <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
             <MDXEditorLazy
+              key={editorGeneration}
               markdown={value}
               onChange={handleEditorChange}
               onError={handleEditorError}
+              onInsert={handleInsert}
               editorRef={editorRef}
               imageUploadHandler={imageUploadHandler}
               imagePreviewHandler={imagePreviewHandler}

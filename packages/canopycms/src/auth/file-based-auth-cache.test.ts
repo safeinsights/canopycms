@@ -209,14 +209,11 @@ describe('FileBasedAuthCache', () => {
       expect(users2[0].name).toBe('Charlie')
     })
 
-    // The prod topology, which no other test in this file has: the EC2 worker
-    // writes the snapshot through CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace
-    // (so its cachePath is /mnt/efs/workspace/.cache) while the CMS Lambda
-    // reads the SAME EFS directory as /mnt/efs/.cache, having mounted the
-    // /workspace access point at /mnt/efs. An absolute `current` target is
-    // meaningless across that boundary; a relative one resolves from either
-    // side. Reproduced here with a symlinked alias directory, which gives the
-    // reader a different path string for the same bytes on disk.
+    // Writer and reader on separate hosts can reach the same EFS directory by
+    // different paths. An absolute `current` target is meaningless across that
+    // boundary; a relative one resolves from either side. Reproduced here with
+    // a symlinked alias directory, which gives the reader a different path
+    // string for the same bytes on disk.
     it('reads a snapshot written under a different path to the same directory', async () => {
       const realDir = path.join(tmpDir, 'real-cache')
       const aliasDir = path.join(tmpDir, 'alias-cache')
