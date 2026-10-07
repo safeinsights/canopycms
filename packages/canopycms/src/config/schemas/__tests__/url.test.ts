@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { assetMountUrlSchema, uploadTargetUrlSchema } from '../url'
+import { uploadTargetUrlSchema } from '../url'
 
-// Shapes both schemas agree on. Kept as one table so a change to either schema that
-// accidentally diverges them on ordinary input shows up as a failure rather than as drift.
-const ACCEPTED_BY_BOTH = [
+const ACCEPTED = [
   'https://cdn.example.com',
   'https://cdn.example.com/asset-upload/',
   // http is deliberately legal: a local S3-compatible endpoint (MinIO, LocalStack) is
@@ -25,9 +23,12 @@ const ACCEPTED_BY_BOTH = [
 
 // Every one of these reads as harmless to a human or to a naive startsWith('/') check.
 // The comments record what a browser ACTUALLY does with each, since that is the reason.
-const REJECTED_BY_BOTH: [string, string][] = [
+const REJECTED: [string, string][] = [
   ['///x', 'resolves to host "x", not to pathname "/x"'],
   ['////x', 'same, with more slashes'],
+  // Ambiguous, not unsafe: it resolves to http or https depending on the editor page issuing
+  // the upload, so the config would not determine where a live credential is sent.
+  ['//cdn.example.com', 'protocol-relative: the scheme is left to the page'],
   ['//', 'empty authority; new URL() throws on it'],
   ['/\\evil.example.com', 'WHATWG treats backslash as slash: host evil.example.com'],
   ['\\\\evil.example.com', 'same'],
@@ -77,48 +78,15 @@ const REJECTED_BY_BOTH: [string, string][] = [
 ]
 
 describe('uploadTargetUrlSchema', () => {
-  it.each(ACCEPTED_BY_BOTH)('accepts %j', (value) => {
+  it.each(ACCEPTED)('accepts %j', (value) => {
     expect(uploadTargetUrlSchema.parse(value)).toBe(value)
   })
 
-  it.each(REJECTED_BY_BOTH)('rejects %j (%s)', (value) => {
+  it.each(REJECTED)('rejects %j (%s)', (value) => {
     expect(() => uploadTargetUrlSchema.parse(value)).toThrow()
-  })
-
-  // The difference between the two schemas, and the only one — a census over every 4-character
-  // string from an 11-symbol alphabet found 39 divergent values, every one a literal //host. It is rejected here
-  // because it is AMBIGUOUS, not because http is unsafe: it resolves to http or https
-  // depending on the editor page issuing the upload, so the config would not determine where
-  // a live credential is sent. Bare http:// is accepted (see ACCEPTED_BY_BOTH).
-  it('rejects a protocol-relative //host, which the mount schema accepts', () => {
-    expect(() => uploadTargetUrlSchema.parse('//cdn.example.com')).toThrow()
-    expect(assetMountUrlSchema.parse('//cdn.example.com')).toBe('//cdn.example.com')
   })
 
   it('trims surrounding whitespace, so a templated env var with a trailing newline still parses', () => {
     expect(uploadTargetUrlSchema.parse('  /asset-upload/\n')).toBe('/asset-upload/')
-  })
-})
-
-describe('assetMountUrlSchema', () => {
-  it.each(ACCEPTED_BY_BOTH)('accepts %j', (value) => {
-    expect(assetMountUrlSchema.parse(value)).toBe(value)
-  })
-
-  it.each(REJECTED_BY_BOTH)('rejects %j (%s)', (value) => {
-    expect(() => assetMountUrlSchema.parse(value)).toThrow()
-  })
-
-  it('accepts a site-relative mount point, which z.string().url() rejected', () => {
-    expect(assetMountUrlSchema.parse('/preview-123')).toBe('/preview-123')
-  })
-
-  // The tightening, in the same change: z.string().url() accepted any scheme new URL() parses.
-  it('rejects a non-http scheme that z.string().url() used to accept', () => {
-    expect(() => assetMountUrlSchema.parse('mailto:a@b.c')).toThrow()
-  })
-
-  it('accepts a protocol-relative //host, which url-prefix.ts documents as intentional', () => {
-    expect(assetMountUrlSchema.parse('//cdn.example.com')).toBe('//cdn.example.com')
   })
 })

@@ -17,16 +17,8 @@ import { isHttpUrlOrSameOriginPath } from '../../utils/sanitize-href'
 /**
  * Where the browser POSTs a presigned direct upload (`media.uploadUrl`).
  *
- * Stricter than `assetMountUrlSchema` by exactly one case — no protocol-relative `//host` —
- * because that spelling is ambiguous rather than insecure: it resolves to http or https
- * depending on the editor page issuing the upload, so the config would not determine where a
- * live credential is sent. `isHttpUrlOrSameOriginPath`'s doc carries the full reasoning,
- * including why bare `http://` is nonetheless accepted.
- *
- * "Exactly one case" is measured, not asserted: a census over every 4-character string
- * drawn from an 11-symbol alphabet (slash, backslash, dot, colon, %2e, ?, #, tab, and three
- * letters), plus hand-written shapes, found 39 values the two schemas treat differently — and
- * every one is a literal `//host` (three only after `.trim()` strips a leading tab).
+ * `isHttpUrlOrSameOriginPath`'s doc carries the reasoning, including why a protocol-relative
+ * `//host` is refused while bare `http://` is accepted.
  */
 export const uploadTargetUrlSchema = z
   .string()
@@ -34,21 +26,6 @@ export const uploadTargetUrlSchema = z
   .refine((value) => isHttpUrlOrSameOriginPath(value), {
     message:
       'must be an absolute http(s) URL or a site-relative path beginning with a single "/", with no query or fragment',
-  })
-
-/**
- * Where `/assets/…` is mounted (`media.publicBaseUrl`).
- *
- * Accepts an absolute http(s) URL, a protocol-relative `//host` URL, or a site-relative path.
- * Rejects non-http(s) schemes: a plain `z.string().url()` check would accept
- * `publicBaseUrl: 'mailto:a@b.c'` and produce `/mailto:a@b.c/assets/…` at render time.
- */
-export const assetMountUrlSchema = z
-  .string()
-  .trim()
-  .refine((value) => isHttpUrlOrSameOriginPath(value, { allowProtocolRelative: true }), {
-    message:
-      'must be an absolute http(s) URL, a protocol-relative "//host" URL, or a site-relative path beginning with a single "/", with no query or fragment',
   })
 
 /** `editor.previewPrefix`, by `uploadTargetUrlSchema`'s rule: `//host` leaves the scheme open. */

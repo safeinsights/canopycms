@@ -2,9 +2,8 @@
  * Writing transform outputs into the store. Server-only.
  *
  * `storeTransform` computes one key and is shared by the authenticated raw route
- * (api/assets.ts) and `materializeAssets`, the batch run that writes every key a build
- * references before that build is released. The transform Lambda in canopycms-cdk keeps its
- * own S3 plumbing around the same checks and an equal Cache-Control string.
+ * (api/assets.ts), `materializeAssets` (the batch run that writes every key a build references
+ * before that build is released) and canopycms-cdk's lazy transform Lambda.
  */
 
 import { getErrorMessage, isNodeError } from '../utils/error'
@@ -43,9 +42,7 @@ export async function storeTransform(
 
   // The slug is decorative in the URL but load-bearing in the stored key, so it must equal the
   // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
-  // it aliases the same image into a new cache key. The prod transform Lambda
-  // (canopycms-cdk's lambda/asset-transform/handler.ts) makes the same check; the two must agree,
-  // or the authenticated route accepts URLs the public path 404s.
+  // it aliases the same image into a new cache key.
   if (parsed.slug !== meta.slug) {
     return {
       ok: false,
@@ -284,7 +281,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
       continue
     }
     const segments = key.slice(transformPrefix.length).split('/')
-    const canonical = canonicalizeTransformPath(segments)
+    const canonical = canonicalizeTransformPath(segments, 'any')
     if (!canonical.ok) {
       fail(key, 'content', `Invalid transform key: ${canonical.error}`)
     } else if (!canonical.isCanonical) {

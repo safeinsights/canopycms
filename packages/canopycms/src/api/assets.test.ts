@@ -648,6 +648,14 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(cached).not.toBeNull()
   })
 
+  it('transforms a width off the lazy-path allowlist (the any policy)', async () => {
+    const key = `assets/t/w=100/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    if (!('body' in res)) return
+    expect(imageSize(Buffer.from(res.body as Uint8Array)).width).toBe(100)
+  })
+
   it('rejects a slug that is not the asset’s own, without transforming or caching', async () => {
     // Parity with the prod transform Lambda (canopycms-cdk's handler.ts): the
     // slug is load-bearing in the stored key, and `[a-z0-9-]+` is all the

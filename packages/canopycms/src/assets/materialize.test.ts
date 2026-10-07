@@ -92,6 +92,14 @@ describe('materializeAssets against a local store', () => {
     expect(put).not.toHaveBeenCalled()
   })
 
+  it('materializes a width off the lazy-path allowlist (the any policy)', async () => {
+    const key = `assets/t/w=100/${HASH}/photo.png`
+    const report = await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
+    expect(report.summary).toMatchObject({ created: 1, failed: 0 })
+    const stored = await store.readPublicObject(key)
+    expect((await sharp(stored?.data).metadata()).width).toBe(100)
+  })
+
   it('does not load sharp when every key already exists', async () => {
     const key = `assets/t/w=320/${HASH}/photo.png`
     await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
@@ -149,7 +157,7 @@ describe('materializeAssets against a local store', () => {
       store,
       targets: [
         target(`assets/t/w=320,f=webp/${HASH}/photo.webp`),
-        target(`assets/t/w=333/${HASH}/photo.png`),
+        target(`assets/t/w=8193/${HASH}/photo.png`),
         target(`assets/${HASH}/photo.png`),
       ],
       sleep: noSleep,

@@ -5,7 +5,7 @@
 import { z } from 'zod'
 
 import { relativePathSchema } from './collection'
-import { assetMountUrlSchema, uploadTargetUrlSchema } from './url'
+import { uploadTargetUrlSchema } from './url'
 
 // Media adapter configuration schema.
 // Keyed as a discriminated union on `adapter` so each adapter's required fields are
@@ -29,7 +29,6 @@ export const mediaSchema = z.discriminatedUnion('adapter', [
   z
     .object({
       adapter: z.literal('local'),
-      publicBaseUrl: assetMountUrlSchema.optional(),
       /** Root directory for local asset storage. Defaults to the caller's dev-assets dir. */
       directory: relativePathSchema.optional(),
     })
@@ -39,7 +38,6 @@ export const mediaSchema = z.discriminatedUnion('adapter', [
       adapter: z.literal('s3'),
       bucket: z.string().min(1),
       region: z.string().min(1),
-      publicBaseUrl: assetMountUrlSchema.optional(),
       /**
        * Where the browser POSTs a presigned direct upload. Absolute http(s) URL or a
        * site-relative path; defaults to the S3 REST endpoint the AWS SDK returns.
@@ -49,8 +47,7 @@ export const mediaSchema = z.discriminatedUnion('adapter', [
        * signature is unaffected — a presigned POST's string-to-sign is the base64 policy
        * alone, so the host never enters it (pinned by store-s3.test.ts).
        *
-       * NOT a prefix. Unlike `publicBaseUrl`, nothing is joined onto this value; it replaces
-       * the POST target outright and is passed through byte-for-byte. Do not route it through
+       * NOT a prefix: nothing is joined onto this value; it replaces the POST target outright and is passed through byte-for-byte. Do not route it through
        * `joinUrlPrefix` "for consistency" — that would strip the trailing slash and silently
        * stop a CDN path pattern like `/asset-upload/*` from matching.
        */
@@ -62,7 +59,6 @@ export const mediaSchema = z.discriminatedUnion('adapter', [
   z
     .object({
       adapter: z.literal('lfs'),
-      publicBaseUrl: assetMountUrlSchema.optional(),
     })
     .strict(),
 ])

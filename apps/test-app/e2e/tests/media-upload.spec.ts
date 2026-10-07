@@ -377,8 +377,6 @@ test.describe('Assets / Media pipeline', () => {
       expect(src).toMatch(/^\/assets\/t\/orig\//)
     })
 
-    // Width must be on the allowlist (multiple of 160, [160,4096] - see
-    // transform-directives.ts) - 320 is the smallest valid step above 160.
     const derivedUrl = src.replace('/orig/', '/w=320/')
 
     await test.step('first request computes and serves the transform', async () => {

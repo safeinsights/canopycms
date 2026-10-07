@@ -323,8 +323,15 @@ describe('assetSrcSet', () => {
     expect(srcset).toBe(`https://cms.example.com/assets/t/w=320/${HASH32}/photo.png 320w`)
   })
 
-  it('throws on a width not in the allowlist', () => {
-    expect(() => assetSrcSet({ src: identitySrc }, [321])).toThrow()
-    expect(() => assetSrcSet({ src: identitySrc }, [320, 4160])).toThrow()
+  it('accepts any integer width in [1, 8192]', () => {
+    expect(assetSrcSet({ src: identitySrc }, [1, 100, 8192])).toBe(
+      [1, 100, 8192].map((w) => `/assets/t/w=${w}/${HASH32}/photo.png ${w}w`).join(', '),
+    )
+  })
+
+  it('throws on a width outside [1, 8192] or not an integer', () => {
+    expect(() => assetSrcSet({ src: identitySrc }, [0])).toThrow()
+    expect(() => assetSrcSet({ src: identitySrc }, [320, 8193])).toThrow()
+    expect(() => assetSrcSet({ src: identitySrc }, [320.5])).toThrow()
   })
 })

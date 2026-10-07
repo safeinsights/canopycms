@@ -411,7 +411,7 @@ const rawAssetHandler = async (
   let readKey = key
   let transform: ParsedTransformPath | undefined
   if (key.startsWith(transformPrefix)) {
-    const canonical = canonicalizeTransformPath(key.slice(transformPrefix.length).split('/'))
+    const canonical = canonicalizeTransformPath(key.slice(transformPrefix.length).split('/'), 'any')
     if (!canonical.ok) return { ok: false, status: 400, error: canonical.error }
     readKey = `${transformPrefix}${canonical.canonicalPath}`
     transform = canonical

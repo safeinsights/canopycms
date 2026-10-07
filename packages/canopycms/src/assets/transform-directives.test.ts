@@ -30,7 +30,7 @@ describe('module purity', () => {
 
 describe('parseTransformPath - happy paths', () => {
   it('parses the identity directive', () => {
-    const result = parseTransformPath([IDENTITY_TRANSFORM_DIRECTIVE, HASH32, 'photo.png'])
+    const result = parseTransformPath([IDENTITY_TRANSFORM_DIRECTIVE, HASH32, 'photo.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.directives).toEqual({ identity: true })
@@ -40,7 +40,7 @@ describe('parseTransformPath - happy paths', () => {
   })
 
   it('parses a single width directive', () => {
-    const result = parseTransformPath(['w=320', HASH32, 'photo.png'])
+    const result = parseTransformPath(['w=320', HASH32, 'photo.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.directives).toEqual({
@@ -53,7 +53,7 @@ describe('parseTransformPath - happy paths', () => {
   })
 
   it('parses format + ext matching', () => {
-    const result = parseTransformPath(['f=webp', HASH32, 'photo.webp'])
+    const result = parseTransformPath(['f=webp', HASH32, 'photo.webp'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.directives.identity).toBe(false)
@@ -62,7 +62,7 @@ describe('parseTransformPath - happy paths', () => {
   })
 
   it('parses quality', () => {
-    const result = parseTransformPath(['q=80', HASH32, 'photo.png'])
+    const result = parseTransformPath(['q=80', HASH32, 'photo.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     if (result.directives.identity) return
@@ -70,7 +70,7 @@ describe('parseTransformPath - happy paths', () => {
   })
 
   it('parses a crop rect', () => {
-    const result = parseTransformPath(['c=0.1:0.2:0.5:0.5', HASH32, 'photo.png'])
+    const result = parseTransformPath(['c=0.1:0.2:0.5:0.5', HASH32, 'photo.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     if (result.directives.identity) return
@@ -78,43 +78,38 @@ describe('parseTransformPath - happy paths', () => {
   })
 
   it('parses multiple directives combined, in any input order', () => {
-    const result = parseTransformPath(['w=320,f=webp,q=70', HASH32, 'photo.webp'])
+    const result = parseTransformPath(['w=320,f=webp,q=70', HASH32, 'photo.webp'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok || result.directives.identity) return
     expect(result.directives).toMatchObject({ width: 320, format: 'webp', quality: 70 })
   })
 
-  it('accepts a boundary-valid width (160) and (4000, the largest multiple of 160 <= 4096)', () => {
-    expect(parseTransformPath(['w=160', HASH32, 'a.png']).ok).toBe(true)
-    expect(parseTransformPath(['w=4000', HASH32, 'a.png']).ok).toBe(true)
-  })
-
   it('accepts allowlisted quality boundaries (30 and 95) and rejects everything else', () => {
-    expect(parseTransformPath(['q=30', HASH32, 'a.png']).ok).toBe(true)
-    expect(parseTransformPath(['q=95', HASH32, 'a.png']).ok).toBe(true)
+    expect(parseTransformPath(['q=30', HASH32, 'a.png'], 'any').ok).toBe(true)
+    expect(parseTransformPath(['q=95', HASH32, 'a.png'], 'any').ok).toBe(true)
     // Quality outside the multiples-of-5 [30,95] allowlist is rejected
     // (bounded variant space; see cache-stuffing note in the parser).
-    expect(parseTransformPath(['q=1', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['q=25', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['q=72', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['q=100', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['q=1', HASH32, 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['q=25', HASH32, 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['q=72', HASH32, 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['q=100', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('accepts a crop touching the full-frame boundary (x+w==1, y+h==1)', () => {
-    const result = parseTransformPath(['c=0.5:0.5:0.5:0.5', HASH32, 'a.png'])
+    const result = parseTransformPath(['c=0.5:0.5:0.5:0.5', HASH32, 'a.png'], 'any')
     expect(result.ok).toBe(true)
   })
 
   it('accepts a full-frame crop (0:0:1:1)', () => {
-    const result = parseTransformPath(['c=0:0:1:1', HASH32, 'a.png'])
+    const result = parseTransformPath(['c=0:0:1:1', HASH32, 'a.png'], 'any')
     expect(result.ok).toBe(true)
   })
 })
 
 describe('parseTransformPath - canonicalization', () => {
   it('formatDirectives is order-independent: f=webp,w=320 and w=320,f=webp produce identical output', () => {
-    const a = parseTransformPath(['f=webp,w=320', HASH32, 'p.webp'])
-    const b = parseTransformPath(['w=320,f=webp', HASH32, 'p.webp'])
+    const a = parseTransformPath(['f=webp,w=320', HASH32, 'p.webp'], 'any')
+    const b = parseTransformPath(['w=320,f=webp', HASH32, 'p.webp'], 'any')
     expect(a.ok).toBe(true)
     expect(b.ok).toBe(true)
     if (!a.ok || !b.ok) return
@@ -123,7 +118,7 @@ describe('parseTransformPath - canonicalization', () => {
   })
 
   it('always orders directives alphabetically: c, f, q, w', () => {
-    const result = parseTransformPath(['w=320,q=80,f=png,c=0:0:1:1', HASH32, 'p.png'])
+    const result = parseTransformPath(['w=320,q=80,f=png,c=0:0:1:1', HASH32, 'p.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(formatDirectives(result.directives)).toBe(
@@ -132,7 +127,7 @@ describe('parseTransformPath - canonicalization', () => {
   })
 
   it('formats the identity directive as the bare token', () => {
-    const result = parseTransformPath([IDENTITY_TRANSFORM_DIRECTIVE, HASH32, 'p.png'])
+    const result = parseTransformPath([IDENTITY_TRANSFORM_DIRECTIVE, HASH32, 'p.png'], 'any')
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(formatDirectives(result.directives)).toBe(IDENTITY_TRANSFORM_DIRECTIVE)
@@ -141,7 +136,7 @@ describe('parseTransformPath - canonicalization', () => {
   it('crop float precision is stable regardless of input formatting (0.1 vs 0.10 vs 0.100)', () => {
     const inputs = ['c=0.1:0.2:0.5:0.5', 'c=0.10:0.20:0.50:0.50', 'c=0.100:0.200:0.500:0.500']
     const formatted = inputs.map((crop) => {
-      const result = parseTransformPath([crop, HASH32, 'p.png'])
+      const result = parseTransformPath([crop, HASH32, 'p.png'], 'any')
       if (!result.ok) throw new Error('expected ok')
       return formatDirectives(result.directives)
     })
@@ -157,11 +152,10 @@ describe('parseTransformPath - canonicalization', () => {
 
 describe('canonicalizeTransformPath', () => {
   it('reports an already-canonical path as canonical, unchanged', () => {
-    const result = canonicalizeTransformPath([
-      'c=0.1000:0.0000:0.5000:0.5000,w=320',
-      HASH32,
-      'p.png',
-    ])
+    const result = canonicalizeTransformPath(
+      ['c=0.1000:0.0000:0.5000:0.5000,w=320', HASH32, 'p.png'],
+      'any',
+    )
     expect(result).toMatchObject({
       ok: true,
       isCanonical: true,
@@ -170,7 +164,7 @@ describe('canonicalizeTransformPath', () => {
   })
 
   it('reorders directives into canonical order', () => {
-    const result = canonicalizeTransformPath(['w=320,f=webp', HASH32, 'p.webp'])
+    const result = canonicalizeTransformPath(['w=320,f=webp', HASH32, 'p.webp'], 'any')
     expect(result).toMatchObject({
       ok: true,
       isCanonical: false,
@@ -179,7 +173,7 @@ describe('canonicalizeTransformPath', () => {
   })
 
   it('rounds an over-precision crop, and returns the rounded directives rather than the requested ones', () => {
-    const result = canonicalizeTransformPath(['c=0.123456:0:0.5:0.25', HASH32, 'p.png'])
+    const result = canonicalizeTransformPath(['c=0.123456:0:0.5:0.25', HASH32, 'p.png'], 'any')
     if (!result.ok) throw new Error(result.error)
     expect(result.isCanonical).toBe(false)
     expect(result.canonicalPath).toBe(`c=0.1235:0.0000:0.5000:0.2500/${HASH32}/p.png`)
@@ -193,11 +187,12 @@ describe('canonicalizeTransformPath', () => {
   })
 
   it('rejects a crop that rounds to zero extent', () => {
-    expect(canonicalizeTransformPath(['c=0:0:0.00001:1', HASH32, 'p.png']).ok).toBe(false)
+    expect(canonicalizeTransformPath(['c=0:0:0.00001:1', HASH32, 'p.png'], 'any').ok).toBe(false)
   })
 
   it('passes a parse failure through', () => {
-    expect(canonicalizeTransformPath(['w=321', HASH32, 'p.png']).ok).toBe(false)
+    expect(canonicalizeTransformPath(['w=321', HASH32, 'p.png'], 'allowlist').ok).toBe(false)
+    expect(canonicalizeTransformPath(['w=8193', HASH32, 'p.png'], 'any').ok).toBe(false)
   })
 
   it('is idempotent: every canonical path canonicalizes to itself, so a redirect to it never redirects again', () => {
@@ -206,12 +201,12 @@ describe('canonicalizeTransformPath', () => {
     for (const x of raws) {
       for (const w of raws) {
         if (Number(x) + Number(w) > 1) continue
-        const first = canonicalizeTransformPath([`c=${x}:0:${w}:1,w=320`, HASH32, 'p.png'])
+        const first = canonicalizeTransformPath([`c=${x}:0:${w}:1,w=320`, HASH32, 'p.png'], 'any')
         if (!first.ok) {
           expect(Number(w)).toBeLessThan(step)
           continue
         }
-        const again = canonicalizeTransformPath(first.canonicalPath.split('/'))
+        const again = canonicalizeTransformPath(first.canonicalPath.split('/'), 'any')
         expect(again).toMatchObject({ ok: true, isCanonical: true })
       }
     }
@@ -239,119 +234,152 @@ describe('roundCropRect', () => {
 })
 
 describe('parseTransformPath - rejections', () => {
-  it('rejects a width that is not a multiple of 160', () => {
-    expect(parseTransformPath(['w=161', HASH32, 'a.png']).ok).toBe(false)
-  })
-
-  it('rejects width 0', () => {
-    expect(parseTransformPath(['w=0', HASH32, 'a.png']).ok).toBe(false)
-  })
-
-  it('rejects a width above the 4096 cap even though it is a "round" number (4160)', () => {
-    expect(parseTransformPath(['w=4160', HASH32, 'a.png']).ok).toBe(false)
-  })
-
-  it('rejects a width far above the cap', () => {
-    expect(parseTransformPath(['w=8320', HASH32, 'a.png']).ok).toBe(false)
-  })
-
-  it('rejects a negative or non-numeric width', () => {
-    expect(parseTransformPath(['w=-160', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['w=abc', HASH32, 'a.png']).ok).toBe(false)
-  })
+  it.each(['any', 'allowlist'] as const)(
+    'rejects a zero, negative, padded or non-numeric width under %s',
+    (policy) => {
+      for (const w of ['0', '-160', '0320', '320.0', 'abc', '']) {
+        expect(parseTransformPath([`w=${w}`, HASH32, 'a.png'], policy).ok).toBe(false)
+      }
+    },
+  )
 
   it('rejects duplicate keys', () => {
-    expect(parseTransformPath(['w=320,w=480', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['w=320,w=480', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects an unknown key', () => {
-    expect(parseTransformPath(['x=1', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['x=1', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects an empty directives segment', () => {
-    expect(parseTransformPath(['', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it("rejects 'orig' combined with another directive, in either order", () => {
-    expect(parseTransformPath(['orig,w=320', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['w=320,orig', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['orig,w=320', HASH32, 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['w=320,orig', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects an ext that does not match an explicit format', () => {
-    expect(parseTransformPath(['f=webp', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['f=webp', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects an unrecognized format value', () => {
-    expect(parseTransformPath(['f=avif', HASH32, 'a.avif']).ok).toBe(false)
+    expect(parseTransformPath(['f=avif', HASH32, 'a.avif'], 'any').ok).toBe(false)
   })
 
   it('rejects quality out of range', () => {
-    expect(parseTransformPath(['q=0', HASH32, 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['q=101', HASH32, 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['q=0', HASH32, 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['q=101', HASH32, 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects a bad hash32 (wrong length / uppercase / non-hex)', () => {
-    expect(parseTransformPath(['orig', 'a'.repeat(31), 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['orig', 'A'.repeat(32), 'a.png']).ok).toBe(false)
-    expect(parseTransformPath(['orig', 'g'.repeat(32), 'a.png']).ok).toBe(false)
+    expect(parseTransformPath(['orig', 'a'.repeat(31), 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['orig', 'A'.repeat(32), 'a.png'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['orig', 'g'.repeat(32), 'a.png'], 'any').ok).toBe(false)
   })
 
   it('rejects a bad slug charset', () => {
-    expect(parseTransformPath(['orig', HASH32, 'Photo File.png']).ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32, 'Photo File.png'], 'any').ok).toBe(false)
   })
 
   it('rejects a bad ext charset or missing ext', () => {
-    expect(parseTransformPath(['orig', HASH32, 'photo.']).ok).toBe(false)
-    expect(parseTransformPath(['orig', HASH32, 'photo']).ok).toBe(false)
-    expect(parseTransformPath(['orig', HASH32, 'photo.p!g']).ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32, 'photo.'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32, 'photo'], 'any').ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32, 'photo.p!g'], 'any').ok).toBe(false)
   })
 
   it('rejects the wrong number of path segments', () => {
-    expect(parseTransformPath(['orig', HASH32]).ok).toBe(false)
-    expect(parseTransformPath(['orig', HASH32, 'a.png', 'extra']).ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32], 'any').ok).toBe(false)
+    expect(parseTransformPath(['orig', HASH32, 'a.png', 'extra'], 'any').ok).toBe(false)
   })
 
   describe('malformed crop', () => {
     it('rejects too few/many parts', () => {
-      expect(parseTransformPath(['c=0.1:0.2:0.5', HASH32, 'a.png']).ok).toBe(false)
-      expect(parseTransformPath(['c=0.1:0.2:0.5:0.5:0.1', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=0.1:0.2:0.5', HASH32, 'a.png'], 'any').ok).toBe(false)
+      expect(parseTransformPath(['c=0.1:0.2:0.5:0.5:0.1', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
 
     it('rejects x+w > 1 or y+h > 1', () => {
-      expect(parseTransformPath(['c=0.6:0.1:0.5:0.1', HASH32, 'a.png']).ok).toBe(false)
-      expect(parseTransformPath(['c=0.1:0.6:0.1:0.5', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=0.6:0.1:0.5:0.1', HASH32, 'a.png'], 'any').ok).toBe(false)
+      expect(parseTransformPath(['c=0.1:0.6:0.1:0.5', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
 
     it('rejects negative components', () => {
-      expect(parseTransformPath(['c=-0.1:0.2:0.5:0.5', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=-0.1:0.2:0.5:0.5', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
 
     it('rejects zero or negative w/h', () => {
-      expect(parseTransformPath(['c=0.1:0.2:0:0.5', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=0.1:0.2:0:0.5', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
 
     it('rejects an empty crop value', () => {
-      expect(parseTransformPath(['c=', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
 
     it('rejects a component greater than 1', () => {
-      expect(parseTransformPath(['c=0.1:0.2:1.5:0.5', HASH32, 'a.png']).ok).toBe(false)
+      expect(parseTransformPath(['c=0.1:0.2:1.5:0.5', HASH32, 'a.png'], 'any').ok).toBe(false)
     })
   })
 })
 
-describe('isAllowedTransformWidth', () => {
-  it('accepts multiples of 160 within [160, 4096]', () => {
-    expect(isAllowedTransformWidth(160)).toBe(true)
-    expect(isAllowedTransformWidth(320)).toBe(true)
-    expect(isAllowedTransformWidth(4000)).toBe(true)
+const SMALL_RUNGS = [32, 48, 64, 96, 128]
+const STEP_RUNGS = Array.from({ length: 4096 / 160 }, (_, i) => (i + 1) * 160).filter(
+  (w) => w <= 4096,
+)
+
+describe('width policy', () => {
+  it('allowlist accepts the small rungs and every multiple of 160 in [160, 4096], and nothing else up to 8192', () => {
+    const allowed = new Set([...SMALL_RUNGS, ...STEP_RUNGS])
+    expect(STEP_RUNGS.at(-1)).toBe(4000)
+    for (let w = 1; w <= 8192; w++) {
+      expect(isAllowedTransformWidth(w, 'allowlist')).toBe(allowed.has(w))
+      expect(parseTransformPath([`w=${w}`, HASH32, 'a.png'], 'allowlist').ok).toBe(allowed.has(w))
+    }
   })
 
-  it('rejects non-multiples, out-of-range, and non-integer values', () => {
-    expect(isAllowedTransformWidth(161)).toBe(false)
-    expect(isAllowedTransformWidth(0)).toBe(false)
-    expect(isAllowedTransformWidth(4160)).toBe(false)
-    expect(isAllowedTransformWidth(320.5)).toBe(false)
+  it('any accepts every integer in [1, 8192]', () => {
+    for (const w of [1, 31, 33, 100, 161, 4097, 4160, 6000, 8191, 8192]) {
+      expect(isAllowedTransformWidth(w, 'any')).toBe(true)
+      expect(parseTransformPath([`w=${w}`, HASH32, 'a.png'], 'any').ok).toBe(true)
+    }
+  })
+
+  it('any rejects past 8192, and both reject 0 and non-integers', () => {
+    expect(isAllowedTransformWidth(8193, 'any')).toBe(false)
+    expect(parseTransformPath(['w=8193', HASH32, 'a.png'], 'any').ok).toBe(false)
+    for (const policy of ['any', 'allowlist'] as const) {
+      expect(isAllowedTransformWidth(0, policy)).toBe(false)
+      expect(isAllowedTransformWidth(320.5, policy)).toBe(false)
+      expect(isAllowedTransformWidth(Number.NaN, policy)).toBe(false)
+    }
+  })
+
+  it('quality stays allowlisted under any', () => {
+    expect(parseTransformPath(['q=80', HASH32, 'a.png'], 'any').ok).toBe(true)
+    expect(parseTransformPath(['q=72', HASH32, 'a.png'], 'any').ok).toBe(false)
+  })
+
+  it('a width valid under both policies has the same canonical path under both', () => {
+    for (const w of [...SMALL_RUNGS, ...STEP_RUNGS]) {
+      const segments = [`q=80,w=${w},c=0.1:0.1:0.5:0.5,f=webp`, HASH32, 'p.webp']
+      const viaAny = canonicalizeTransformPath(segments, 'any')
+      const viaAllowlist = canonicalizeTransformPath(segments, 'allowlist')
+      expect(viaAny.ok && viaAllowlist.ok).toBe(true)
+      if (!viaAny.ok || !viaAllowlist.ok) continue
+      expect(viaAllowlist.canonicalPath).toBe(viaAny.canonicalPath)
+      expect(viaAllowlist.directives).toEqual(viaAny.directives)
+    }
+  })
+
+  it('a width only any accepts canonicalizes under any and is refused under allowlist', () => {
+    const segments = ['w=100', HASH32, 'p.png']
+    expect(canonicalizeTransformPath(segments, 'any')).toMatchObject({
+      ok: true,
+      canonicalPath: `w=100/${HASH32}/p.png`,
+      isCanonical: true,
+    })
+    expect(canonicalizeTransformPath(segments, 'allowlist').ok).toBe(false)
   })
 })
 

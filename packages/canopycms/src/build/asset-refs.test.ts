@@ -181,7 +181,8 @@ describe('collectAssetRefs', () => {
   })
 
   it.each([
-    ['an off-allowlist width', `/assets/t/w=333/${HASH}/photo.png`],
+    ['a width past 8192', `/assets/t/w=8193/${HASH}/photo.png`],
+    ['an off-allowlist quality', `/assets/t/q=72/${HASH}/photo.png`],
     ['an over-precise crop', `/assets/t/c=0.12345:0:0.5:0.5/${HASH}/photo.png`],
     ['an upper-case hash', `/assets/t/w=320/${HASH.toUpperCase()}/photo.png`],
     ['an upper-case slug', `/assets/t/w=320/${HASH}/Photo.png`],
@@ -191,6 +192,18 @@ describe('collectAssetRefs', () => {
     const error = await collectAssetRefs(outDir).catch((err: unknown) => err)
     expect(error).toBeInstanceOf(AssetRefsError)
     expect((error as AssetRefsError).problems.map((p) => p.url)).toEqual([url])
+  })
+
+  it('records a width off the lazy-path allowlist: any integer in [1, 8192]', async () => {
+    await write(
+      'index.html',
+      `<img src="/assets/t/w=100/${HASH}/photo.png" srcset="/assets/t/w=8192/${HASH}/photo.png 8192w">`,
+    )
+    const { refs } = await collectAssetRefs(outDir)
+    expect(refs.transforms.map((entry) => entry.key)).toEqual([
+      `assets/t/w=100/${HASH}/photo.png`,
+      `assets/t/w=8192/${HASH}/photo.png`,
+    ])
   })
 
   it('ignores URL templates in scripts and text that only mentions the path shape', async () => {

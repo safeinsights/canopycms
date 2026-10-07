@@ -1030,31 +1030,38 @@ describe('mediaSchema', () => {
       adapter: 's3',
       bucket: 'my-bucket',
       region: 'us-east-1',
-      publicBaseUrl: 'https://cdn.example.com',
+      uploadUrl: '/asset-upload/',
+      maxUploadBytes: 1024,
     })
 
     expect(result).toEqual({
       adapter: 's3',
       bucket: 'my-bucket',
       region: 'us-east-1',
-      publicBaseUrl: 'https://cdn.example.com',
+      uploadUrl: '/asset-upload/',
+      maxUploadBytes: 1024,
     })
   })
 
   it('parses a valid local config with all fields intact', () => {
-    const result = mediaSchema.parse({
+    expect(mediaSchema.parse({ adapter: 'local', directory: 'assets-dir' })).toEqual({
       adapter: 'local',
-      publicBaseUrl: 'https://cdn.example.com',
-    })
-
-    expect(result).toEqual({
-      adapter: 'local',
-      publicBaseUrl: 'https://cdn.example.com',
+      directory: 'assets-dir',
     })
   })
 
-  it('parses a minimal local config without publicBaseUrl', () => {
+  it('parses a minimal local config', () => {
     expect(mediaSchema.parse({ adapter: 'local' })).toEqual({ adapter: 'local' })
+  })
+
+  it.each([
+    { adapter: 'local' },
+    { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
+    { adapter: 'lfs' },
+  ])('rejects publicBaseUrl on the $adapter adapter, which nothing reads', (media) => {
+    expect(() => mediaSchema.parse({ ...media, publicBaseUrl: '/assets-mount' })).toThrow(
+      /publicBaseUrl/,
+    )
   })
 
   it('rejects an unknown adapter name', () => {
@@ -1124,20 +1131,6 @@ describe('mediaSchema', () => {
       ).toThrow()
     })
   })
-
-  describe('publicBaseUrl', () => {
-    it('accepts a site-relative mount point', () => {
-      expect(mediaSchema.parse({ adapter: 'local', publicBaseUrl: '/preview-123' })).toEqual({
-        adapter: 'local',
-        publicBaseUrl: '/preview-123',
-      })
-    })
-
-    // The tightening that rode along: z.string().url() accepted anything new URL() parsed.
-    it('rejects a non-http scheme', () => {
-      expect(() => mediaSchema.parse({ adapter: 'local', publicBaseUrl: 'mailto:a@b.c' })).toThrow()
-    })
-  })
 })
 
 // basePath is the deployment prefix the host Next.js app is served under (e.g.
@@ -1194,13 +1187,13 @@ describe('defineCanopyConfig().client()', () => {
     expect(client().editor?.previewPrefix).toBe('/preview')
   })
 
-  it('exposes nothing of media to the editor, publicBaseUrl included', () => {
+  it('exposes nothing of media to the editor', () => {
     // The editor loads assets through the authenticated raw route (editor/context/AssetContext).
     const { client } = defineCanopyConfig({
       ...gitAuthor,
-      media: { adapter: 'local', publicBaseUrl: 'https://assets.example.com' },
+      media: { adapter: 's3', bucket: 'canary-bucket-name', region: 'us-east-1' },
     })
-    expect(JSON.stringify(client())).not.toContain('assets.example.com')
+    expect(JSON.stringify(client())).not.toContain('canary-bucket-name')
   })
 })
 

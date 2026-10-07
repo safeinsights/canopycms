@@ -38,7 +38,12 @@ import {
 /** Raster formats the transform engine accepts as input. svg/pdf never reach here - they're served statically. */
 const ALLOWED_INPUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 
-/** Defensive cap on encoded output size - prevents cache-stuffing with giant re-encodes. */
+/**
+ * Cap on a resize's encoded output, against cache-stuffing with giant re-encodes. An identity
+ * (`orig`) is exempt: an asset has one, its input is bounded by the upload and pixel caps, and a
+ * noisy PNG over about 10 MiB re-encodes to at least its own size, so the cap would refuse an
+ * ordinary upload's `orig` and fail the release that references it.
+ */
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
 const CONTENT_TYPE_BY_FORMAT: Record<OutputFormat, string> = {
@@ -212,9 +217,9 @@ export async function applyTransform(
     // `pages` value that EXCEEDS the source's actual page count makes sharp
     // throw ("bad page number") rather than clamping, so `MAX_ANIMATED_FRAMES`
     // can only be applied as `Math.min(totalPages, MAX_ANIMATED_FRAMES)`.
-    // `limitInputPixels` gates this probe exactly like it gates the real
-    // pipeline below - an oversized source throws here already, before any
-    // pixel buffer is ever allocated.
+    // `limitInputPixels` on this probe counts one frame, so an oversized still
+    // throws here; the load below counts every frame it reads, so an over-cap
+    // animation throws there, also before any frame is decoded.
     const probeMeta = await sharp(input.data, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
     const totalPages = probeMeta.pages ?? 1
     const pagesToRead = Math.min(totalPages, MAX_ANIMATED_FRAMES)
@@ -243,7 +248,7 @@ export async function applyTransform(
       : encodeSourceFormat(pipeline, sourceExt, quality)
 
     const data = await pipeline.toBuffer()
-    if (data.byteLength > MAX_OUTPUT_BYTES) {
+    if (!directives.identity && data.byteLength > MAX_OUTPUT_BYTES) {
       return {
         ok: false,
         status: 413,

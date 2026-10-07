@@ -225,7 +225,10 @@ export { formatDirectives } from './assets/transform-directives'
  */
 export { canonicalizeTransformPath } from './assets/transform-directives'
 
-export type { CanonicalTransformPathResult } from './assets/transform-directives'
+export type {
+  CanonicalTransformPathResult,
+  TransformWidthPolicy,
+} from './assets/transform-directives'
 
 /**
  * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
@@ -236,3 +239,14 @@ export type { CanonicalTransformPathResult } from './assets/transform-directives
 export { applyTransform } from './assets/transform'
 
 export type { ApplyTransformInput, TransformResult } from './assets/transform'
+
+/**
+ * Compute the transform a canonical `assets/t/` path names and store it under that key: meta
+ * lookup, raster-only, slug and ext checks, then `applyTransform`. Shared by the authenticated raw
+ * route, `materialize-assets` and the lazy transform Lambda. A 404's `error` names hashes and
+ * slugs, so a caller answering a browser replaces it.
+ */
+export { storeTransform, type StoreTransformResult } from './assets/materialize'
+
+/** The `Cache-Control` every stored transform output carries: content-addressed, so immutable. */
+export { TRANSFORM_CACHE_CONTROL } from './assets/materialize'
