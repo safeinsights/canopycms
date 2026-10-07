@@ -331,6 +331,21 @@ describe('CanopyApiClient', () => {
       await pending
     })
 
+    it('never waits longer than the longest Retry-After it honours', async () => {
+      vi.mocked(Math.random).mockReturnValue(1)
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled({ 'Retry-After': '5' }))
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+      await vi.advanceTimersByTimeAsync(4999)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      await pending
+    })
+
     it('falls back to its own delay for a blank or date-valued Retry-After', async () => {
       for (const retryAfter of ['', 'Wed, 21 Oct 2026 07:28:00 GMT']) {
         const mockFetch = vi

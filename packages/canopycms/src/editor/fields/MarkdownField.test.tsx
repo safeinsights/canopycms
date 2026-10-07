@@ -255,6 +255,8 @@ describe('MarkdownField', () => {
   describe('source editor fallback', () => {
     it.each([
       ['an unclosed tag', 'Line one<br>line two'],
+      // MDXEditor trims a document before importing it, so it reports a different source.
+      ['surrounding whitespace, as front-matter parsing leaves it', '\nLine one<br>line two\n'],
       ['an unbalanced expression', 'Costs { 5 dollars.'],
       [
         'content inside an element that the rich editor cannot import',
@@ -290,6 +292,7 @@ describe('MarkdownField', () => {
       renderField(body, onChange)
 
       expect(await screen.findByTestId('markdown-source-fallback')).toBeTruthy()
+      expect(screen.queryByTestId('markdown-insert-rejected')).toBeNull()
       const source = screen.getByTestId('markdown-source-editor')
       if (!(source instanceof HTMLTextAreaElement))
         throw new Error('source editor is not a textarea')
