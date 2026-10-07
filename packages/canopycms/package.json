@@ -19,6 +19,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
+    "./preview": "./src/preview.ts",
     "./server": "./src/server.ts",
     "./auth": "./src/auth/index.ts",
     "./auth/cache": "./src/auth/cache.ts",
@@ -45,6 +46,11 @@
         "types": "./dist/client.d.ts",
         "import": "./dist/client.js",
         "require": "./dist/client.js"
+      },
+      "./preview": {
+        "types": "./dist/preview.d.ts",
+        "import": "./dist/preview.js",
+        "require": "./dist/preview.js"
       },
       "./server": {
         "types": "./dist/server.d.ts",

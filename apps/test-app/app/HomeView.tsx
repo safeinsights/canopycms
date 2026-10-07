@@ -1,7 +1,7 @@
 'use client'
 
 import { assetUrl, type AssetRef } from 'canopycms'
-import { useCanopyPreview } from 'canopycms/client'
+import { useCanopyPreview } from 'canopycms/preview'
 
 interface HomeData {
   title?: string

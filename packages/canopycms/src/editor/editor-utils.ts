@@ -115,8 +115,8 @@ const buildPreviewRoute = (
  * (from `previewBaseByCollection`) skips all three and gets only `?branch=`. An entry's own
  * `previewSrc` gets only the `basePath`.
  *
- * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame` in
- * preview-bridge.tsx) 404s without the prefixes, and a URL the host redirects costs a round trip
+ * The result must equal the framed page's own URL: the `<iframe src>` (`PreviewFrame.tsx`)
+ * 404s without the prefixes, and a URL the host redirects costs a round trip
  * on every load. `trailingSlash` defaults to the value `withCanopy` inlines at build time.
  *
  * `undefined` means the entry has no page, so the editor frames nothing rather than another page.

@@ -682,6 +682,13 @@ jobs:
               - 'packages/canopycms/src/paths/**'
               - 'packages/canopycms/src/validation/**'
               - 'packages/canopycms/src/operating-mode/**'
+              # The no-Mantine assertion on a public page: the host-page side
+              # of the preview bridge, behind canopycms/preview.
+              - 'packages/canopycms/src/preview.ts'
+              - 'packages/canopycms/src/editor/preview-*'
+              - 'packages/canopycms/src/editor/canopy-path.ts'
+              - 'packages/canopycms/src/utils/url-prefix.ts'
+              - 'packages/canopycms/src/utils/sanitize-href.ts'
               - 'packages/canopycms/package.json'
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'

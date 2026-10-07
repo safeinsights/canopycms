@@ -65,6 +65,7 @@ Content, git and branch files have their own sections below; the rest:
 
 - `index.ts` — package main entry, client-safe exports only
 - `client.ts` — `use client` editor exports for `canopycms/client`, including `EditorSignInProps`
+- `preview.ts` — `use client` host-page exports for `canopycms/preview`
 - `server.ts` — server entry exports, e.g. `collectAssetRefs`, `readAssetRefsFile`, `materializeAssets`
 - `config.ts` — re-export shim over the `config/` module
 - `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
@@ -306,13 +307,14 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `adapter.ts` — `createCanopyCatchAllHandler()` and `wrapNextRequest()` for the catch-all API route
 - `context-wrapper.ts` — `createNextCanopyContext()`: request-scoped `getCanopy`, `getCanopyForBuild`, phase-selecting reads, bound static helpers, `createPreviewPage`, `guardBuildContext`
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
-- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself; `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
-- `preview-page.tsx` — `createPreviewPageFor`, behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` (or a `previewView({ view, load })` whose `load` feeds `extras`), else `notFound()`; types only from `client.tsx`, held by `server-entry-client-boundary.test.ts`
+- `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
+- `preview.tsx` — `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
+- `preview-page.tsx` — `createPreviewPageFor`, behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` (or a `previewView({ view, load })` whose `load` feeds `extras`), else `notFound()`; types only from `preview.tsx`, held by `server-entry-client-boundary.test.ts`
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
 
-Entry points: `canopycms-next` (ESM), `canopycms-next/client` (ESM), `canopycms-next/config` (ESM
+Entry points: `canopycms-next` (ESM), `canopycms-next/client` (ESM), `canopycms-next/preview` (ESM), `canopycms-next/config` (ESM
 and CJS, for `next.config.ts` on Next 13/14).
 
 ### Dual-Build Support
@@ -472,7 +474,7 @@ Top-level components and helpers:
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
-- `preview-bridge.tsx` — editor-to-preview `postMessage` bridge; see [Preview Bridge](#preview-bridge)
+- `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
@@ -597,15 +599,15 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
 ### Preview Bridge
 
-**Location**: `packages/canopycms/src/editor/preview-bridge.tsx` (`'use client'`, exported via
-`canopycms/client`)
+**Location**: `packages/canopycms/src/editor/preview-bridge.tsx` (protocol and host-page hooks,
+exported via `canopycms/preview`) and `PreviewFrame.tsx` (editor side, via `canopycms/client`)
 
 Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:preview:highlight`,
 `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
 - `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
-- `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — the site-side primitives it wraps
+- `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — site-side primitives it wraps
 - `isTrustedEditorMessage` / `resolveMessageOrigin` — origin resolution and the inbound trust check
 
 All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in

@@ -60,6 +60,7 @@ const PACKAGES = [
         "@mantine/core/styles.css, which Node's ESM loader rejects outright " +
         '(TypeError: Unknown file extension ".css") — only ever consumed through ' +
         'a bundler (webpack/Next), never plain Node.',
+      './preview': 'test',
       './server': 'test',
       './auth': 'test',
       './auth/cache': 'test',
@@ -135,6 +136,7 @@ const PACKAGES = [
       './client':
         'skip: client-only ("use client"), and hits the same next/navigation ' +
         'resolution limitation as "." above.',
+      './preview': 'test',
       './config': 'test',
     },
   },

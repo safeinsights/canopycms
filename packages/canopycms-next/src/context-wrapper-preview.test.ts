@@ -20,7 +20,6 @@ vi.mock('canopycms/server', async (importOriginal) => {
     startDevContentWatcher: vi.fn(),
   }
 })
-vi.mock('canopycms/client', () => ({ CanopyEditorPage: vi.fn(), useCanopyPreview: vi.fn() }))
 vi.mock('next/navigation', () => ({
   notFound: () => {
     throw new Error('NEXT_NOT_FOUND')

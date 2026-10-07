@@ -9,10 +9,10 @@ import {
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   isTrustedEditorMessage,
-  PreviewFrame,
   resolveMessageOrigin,
   useCanopyPreview,
 } from './preview-bridge'
+import { PreviewFrame } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
 import { assetUrl } from '../assets/asset-url'
 import { getPreviewAssetBase } from './preview-asset-base'

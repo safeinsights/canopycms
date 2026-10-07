@@ -2,7 +2,8 @@
  * Bundle-boundary guard for the browser-facing entry points.
  *
  * The editor ships to browsers through `canopycms/client` and
- * `canopycms-next/client`, and the bare `canopycms` entry's `assetUrl` runs in
+ * `canopycms-next/client`, host pages load the `/preview` entries of both, and
+ * the bare `canopycms` entry's `assetUrl` runs in
  * adopters' client components. Anything reachable from those entries — however many
  * hops away — must stay free of node built-ins, or an adopter's production
  * `next build` fails with "Module not found: Can't resolve 'fs'". `next dev`
@@ -20,7 +21,11 @@
 
 /** The browser-facing entry points. Cruise these, and only rule on these. */
 const CLIENT_ENTRIES =
-  '^packages/canopycms(-next)?/src/client\\.tsx?$|^packages/canopycms/src/index\\.ts$'
+  '^packages/canopycms(-next)?/src/(client|preview)\\.tsx?$|^packages/canopycms/src/index\\.ts$'
+
+/** The entries a host's own pages import: the `/preview` entries and the bare `canopycms` entry. */
+const HOST_PAGE_ENTRIES =
+  '^packages/canopycms(-next)?/src/preview\\.tsx?$|^packages/canopycms/src/index\\.ts$'
 
 /** Our own first-party sources (i.e. not resolved npm packages). */
 const OWN_SRC = '^packages/[^/]+/src/'
@@ -48,6 +53,14 @@ export default {
         'A module reachable from a client entry imports a node built-in. Browser bundles cannot resolve node:*. Import the dependency-free sibling instead (paths/branch-name, not paths/branch or the paths barrel; assets/asset-prefixes, not assets/keys; assets/transform-directives, not assets/transform), or make the import type-only.',
       from: { path: CLIENT_ENTRIES },
       to: { path: NODE_BUILTIN, reachable: true },
+    },
+    {
+      name: 'host-page-entries-no-editor-styles',
+      severity: 'error',
+      comment:
+        "A module reachable from a host-page entry (a `/preview` entry or the bare `canopycms` entry) resolves a stylesheet or a @mantine/ module. Host pages import these entries, so whatever they reach loads in the adopter's own pages: Mantine's unlayered CSS overrides the adopter's styles in the editor's preview, and the editor ships to public pages. Host-side preview code belongs in editor/preview-bridge.tsx, which imports no editor UI; import editor code from canopycms/client only.",
+      from: { path: HOST_PAGE_ENTRIES },
+      to: { path: '\\.css$|(^|/)@mantine/', reachable: true },
     },
     {
       name: 'core-no-github-app-auth',

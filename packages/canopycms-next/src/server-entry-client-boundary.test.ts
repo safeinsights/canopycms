@@ -129,7 +129,7 @@ const walk = () => {
         } else {
           queue.push(resolution.file)
         }
-      } else if (/\/client$/.test(specifier)) {
+      } else if (/\/(client|preview)$/.test(specifier)) {
         problems.push(`${importer} -> ${specifier}`)
       }
     }

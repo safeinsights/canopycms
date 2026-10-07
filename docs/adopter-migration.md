@@ -40,6 +40,14 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Preview hooks move to `/preview` entries — **breaking (imports)**
+
+**What changed.** `withCanopyPreview` and its prop types moved from `canopycms-next/client` to `canopycms-next/preview`; `useCanopyPreview` and the other preview hooks from `canopycms/client` to `canopycms/preview`. The `/client` entries are the editor: importing them loaded Mantine's unlayered CSS, which beat the site's own styles in the preview, and shipped the editor to public pages.
+
+**To adopt.** Import them from the `/preview` entries.
+
+**Now deletable.** Any CSS layer or specificity workaround added to keep site styles ahead of Mantine's in the preview.
+
 ### Fast, crash-safe branch creation — **behaviour change: branch clones hold only the content root**
 
 **What changed.** A branch is built under a staging name and appears only when complete. The
@@ -99,7 +107,7 @@ function made for them, and any response-headers policy added only to stop frami
 
 ### Static-export sites can preview a branch through `createPreviewPage`
 
-**What changed.** The context's `createPreviewPage({ views })` serves a `[[...path]]` route at `editor.previewPrefix`, rendering `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`. `previewView({ view, load })` feeds a view server-read `extras`.
+**What changed.** The context's `createPreviewPage({ views })` serves a `[[...path]]` route at `editor.previewPrefix`, rendering `?branch=` through `views[entryType]`. `canopycms-next/preview` adds `withCanopyPreview` and `CanopyPreviewViewProps`. `previewView({ view, load })` feeds a view server-read `extras`.
 
 **To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
 

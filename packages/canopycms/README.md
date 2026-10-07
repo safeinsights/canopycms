@@ -396,7 +396,7 @@ The editor loads entries on the client from `/api/canopycms/[branch]/entries`, s
 _TODO_ show an example
 
 7. **Split builds**
-   Keep your public build free of editor bundles by importing only from `canopycms` (server helpers + data loaders). Host the editor in a separate app or build target that imports from `canopycms/client` and mounts the API routes above.
+   Keep your public build free of editor bundles by importing only from `canopycms` (server helpers + data loaders) and `canopycms/preview` (the live-preview hook). Host the editor in a separate app or build target that imports from `canopycms/client` and mounts the API routes above.
 
 _TODO_ show real examples of what to do
 
@@ -415,7 +415,7 @@ The `useCanopyPreview` hook provides live updates to your preview components as 
 ```tsx
 'use client'
 
-import { useCanopyPreview } from 'canopycms/client'
+import { useCanopyPreview } from 'canopycms/preview'
 import type { PostContent } from './schemas'
 
 export function PostView({ data }: { data: PostContent }) {
@@ -451,7 +451,7 @@ When using reference fields (foreign key relationships to other content), the ed
 ```tsx
 'use client'
 
-import { useCanopyPreview } from 'canopycms/client'
+import { useCanopyPreview } from 'canopycms/preview'
 
 export function PostView({ data }: { data: PostContent }) {
   const { data: liveData, isLoading } = useCanopyPreview<PostContent>({
