@@ -105,6 +105,7 @@ describe('read / readByUrlPath with a branch option', () => {
     vi.spyOn(GitManager.prototype, 'checkoutFreshClone').mockImplementation(async (branch) => {
       provisioned.push(branch)
     })
+    vi.spyOn(GitManager.prototype, 'setSparseCone').mockResolvedValue()
     vi.spyOn(GitManager.prototype, 'ensureGitExclude').mockResolvedValue()
     await addBranch('main', 'on main')
   })

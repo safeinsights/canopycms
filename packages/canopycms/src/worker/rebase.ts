@@ -333,18 +333,21 @@ async function runRebaseRounds(
         //
         // A per-file resolution that STILL fails routes into the `!completed`
         // path below, which aborts and records, rather than escaping.
+        //
+        // `--sparse` on add/rm: a conflicted path outside a sparse clone's cone
+        // is materialised for the conflict, but git refuses to stage it without.
         const conflictKind = new Map(st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]))
         let resolutionFailure: string | undefined
         for (const file of st.conflicted) {
           const kind = conflictKind.get(file)
           try {
             if (kind === 'UD') {
-              await branchGit.raw(['rm', '-f', '--', file])
+              await branchGit.raw(['rm', '-f', '--sparse', '--', file])
             } else if (kind === 'DU') {
-              await branchGit.add(file)
+              await branchGit.raw(['add', '--sparse', '--', file])
             } else {
               await branchGit.raw(['checkout', '--theirs', file])
-              await branchGit.add(file)
+              await branchGit.raw(['add', '--sparse', '--', file])
             }
           } catch (resolveErr: unknown) {
             resolutionFailure =

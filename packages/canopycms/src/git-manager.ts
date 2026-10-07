@@ -1378,9 +1378,18 @@ export class GitManager {
     }
   }
 
+  /** `--sparse` stages a named path outside a sparse clone's cone (branch-sparse.ts). */
   async add(files: string | string[]): Promise<void> {
     const fileArray = Array.isArray(files) ? files : [files]
-    await this.git.add(fileArray)
+    await this.git.raw(['add', '--sparse', '--', ...fileArray])
+  }
+
+  /**
+   * Restrict the working tree to `dirs` in cone mode, which always keeps the root-level files.
+   * Runs before a `--no-checkout` clone's one checkout, which invalidates the content caches.
+   */
+  async setSparseCone(dirs: readonly string[]): Promise<void> {
+    await this.git.raw(['sparse-checkout', 'set', '--cone', '--', ...dirs])
   }
 
   /** Stage every working-tree change except canopycms's own state. See {@link stageAllExceptCanopyState}. */
@@ -1646,11 +1655,15 @@ export class GitManager {
     // validation additionally rejects a leading-hyphen value here.
     await this.git.raw(['checkout', '--orphan', branchName])
 
-    // Remove all files from index (orphan checkout keeps working tree)
-    try {
-      await this.git.raw(['rm', '-rf', '.'])
-    } catch {
-      // Ignore errors (might fail if index is already empty)
+    // The orphan starts from the base branch's index. `--sparse` also removes entries outside a
+    // sparse cone, which a plain `rm` leaves in the index, and so in the first commit.
+    await this.git.raw(['rm', '-r', '-f', '-q', '--sparse', '--ignore-unmatch', '--', '.'])
+    const leftover = (await this.git.raw(['ls-files'])).trim()
+    if (leftover) {
+      throw new Error(
+        `Settings branch '${branchName}' was not created: the base branch's files ` +
+          `(${leftover.split('\n').slice(0, 3).join(', ')}) stayed in its index`,
+      )
     }
 
     for (const [filePath, content] of Object.entries(initialFiles)) {

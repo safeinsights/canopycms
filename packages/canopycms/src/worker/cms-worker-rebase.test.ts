@@ -86,9 +86,14 @@ interface BranchSetup {
 async function createBranchSetup(
   tmpDir: string,
   branchName: string,
-  opts: { baseBranch?: string; initialFiles?: Record<string, string> } = {},
+  opts: {
+    baseBranch?: string
+    initialFiles?: Record<string, string>
+    /** Make the clone sparse with this cone, as content-branch provisioning does. */
+    sparseCone?: string[]
+  } = {},
 ): Promise<BranchSetup> {
-  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' } } = opts
+  const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, sparseCone } = opts
 
   const remotePath = path.join(tmpDir, 'remote.git')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
@@ -124,6 +129,8 @@ async function createBranchSetup(
   await fs.mkdir(path.dirname(excludeFile), { recursive: true })
   await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
 
+  if (sparseCone) await branchGit.raw(['sparse-checkout', 'set', '--cone', '--', ...sparseCone])
+
   // Check out a feature branch (distinct from baseBranch) that tracks origin/<baseBranch>
   await branchGit.checkoutBranch(branchName, `origin/${baseBranch}`)
   await branchGit.raw(['branch', `--set-upstream-to=origin/${baseBranch}`, branchName])
@@ -144,7 +151,7 @@ async function createBranchSetup(
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
-    await branchGit.add(['.'])
+    await branchGit.raw(['add', '--sparse', '.'])
     await branchGit.commit(message)
   }
 
@@ -480,14 +487,19 @@ describe('CmsWorker rebaseActiveBranches', () => {
     })
   })
 
-  describe("canopycms's own state", () => {
+  // Adopter-tracked `.canopy-meta` is inside a content branch's cone, so a sparse clone behaves
+  // the same.
+  describe.each([
+    { clone: 'full', sparseCone: undefined },
+    { clone: 'sparse', sparseCone: ['content', '.canopy-meta'] },
+  ])("canopycms's own state ($clone clone)", ({ sparseCone }) => {
     const behindCount = async (setup: BranchSetup) => {
       await setup.branchGit.fetch('origin', 'main')
       return (await setup.branchGit.status()).behind
     }
 
     it('rebases when the only dirt is untracked canopycms state (a clone without the exclude)', async () => {
-      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const setup = await createBranchSetup(tmpDir, 'my-feature', { sparseCone })
       await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -504,6 +516,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('restores the retired in-tree schema cache a repo tracks, then rebases', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/schema-cache.json': '{"v":"committed"}' },
       })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -522,6 +535,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('skips, naming the fix, when other tracked canopycms state is modified', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -553,6 +567,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('names the fix from its own remote.git path when the clone records another origin', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       // The path the cloning process saw, which this process cannot resolve.
@@ -579,6 +594,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('leaves the index and the bytes alone even after the base branch untracks the state', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        sparseCone,
         initialFiles: { '.canopy-meta/comments.json': '{"threads":[]}' },
       })
       // A pre-fix submit committed the state on the branch; replaying this
@@ -605,7 +621,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
     })
 
     it('still skips real editor dirt when canopycms state is dirty too', async () => {
-      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const setup = await createBranchSetup(tmpDir, 'my-feature', { sparseCone })
       await fs.writeFile(path.join(setup.branchPath, '.git', 'info', 'exclude'), '')
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -840,6 +856,36 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictStatus).toBe('conflicts-detected')
       expect(meta?.conflictFiles).toContain(COLLECTION_ID)
       expect(meta?.conflictFiles).toContain('TESTENTRYabc')
+    })
+
+    it('resolves conflicts on paths outside the cone of a sparse clone, keeping the branch side', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: {
+          'content/a.md': 'a',
+          'src/both.ts': 'base',
+          'src/branch-deletes.ts': 'base',
+          'src/main-deletes.ts': 'base',
+        },
+        sparseCone: ['content', '.canopy-meta'],
+      })
+      await setup.commitToBranch({ 'src/both.ts': 'branch', 'src/main-deletes.ts': 'branch' })
+      await setup.branchGit.raw(['rm', '-q', '--sparse', '--', 'src/branch-deletes.ts'])
+      await setup.branchGit.commit('branch: delete')
+      await setup.pushToRemote({ 'src/both.ts': 'main', 'src/branch-deletes.ts': 'main' })
+      await setup.remoteGit.rm(['src/main-deletes.ts'])
+      await setup.remoteGit.commit('main: delete')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.rebaseFailure).toBeUndefined()
+      expect((await setup.branchGit.status()).behind).toBe(0)
+      const tree = (await setup.branchGit.raw(['ls-tree', '-r', '--name-only', 'HEAD']))
+        .trim()
+        .split('\n')
+      expect(tree).toEqual(['content/a.md', 'src/both.ts', 'src/main-deletes.ts'])
+      expect(await setup.branchGit.show(['HEAD:src/both.ts'])).toBe('branch')
     })
   })
 

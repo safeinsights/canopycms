@@ -18,6 +18,7 @@ import {
   stageBranchWorkspace,
   type BlockingKind,
 } from './branch-provisioning'
+import { recordSparseCone, sparseConeFor } from './branch-sparse'
 import { readsFromCheckout } from './build-mode'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
@@ -185,6 +186,11 @@ export class BranchWorkspaceManager {
       throw new BranchProvisioningBusyError(dirName)
     }
 
+    const sparseCone = sparseConeFor(this.config.contentRoot)
+    await recordSparseCone(baseRoot, sparseCone).catch((err: unknown) => {
+      canopyLogWarn(`[canopy] Could not record the sparse-checkout cone: ${getErrorMessage(err)}`)
+    })
+
     const provisionLog = new ProvisionLog(dirName)
     let outcome: ProvisionOutcome
     try {
@@ -194,6 +200,7 @@ export class BranchWorkspaceManager {
         remoteUrl,
         metadata,
         mode: options.mode,
+        sparseCone,
       })
     } catch (err) {
       provisionLog.finish('error')
@@ -211,6 +218,7 @@ export class BranchWorkspaceManager {
       remoteUrl: string
       metadata: ReturnType<typeof buildInitialBranchMetadata>
       mode: OperatingMode
+      sparseCone: string[] | null
     },
   ): Promise<ProvisionOutcome> {
     const { branchRoot, baseRoot, dirName } = paths
@@ -227,6 +235,7 @@ export class BranchWorkspaceManager {
       gitExcludePattern: operatingStrategy(run.mode).getGitExcludePattern(),
       metadata: run.metadata,
       provisionLog: run.provisionLog,
+      sparseCone: run.sparseCone,
     })
     if (staged.kind === 'exists') return this.existing(paths)
 

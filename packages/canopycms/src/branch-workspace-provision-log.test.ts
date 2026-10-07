@@ -84,6 +84,8 @@ describe('branch provisioning step log', () => {
     expect(steps).toEqual([
       'clone start',
       'clone done',
+      'sparse start',
+      'sparse done',
       'checkout start',
       'checkout done',
       'exclude start',
@@ -99,7 +101,7 @@ describe('branch provisioning step log', () => {
     expect(ids.size).toBe(1)
     expect(provision.every((line) => line.includes(' dir=feature-x '))).toBe(true)
     expect(provision.at(-1)).toMatch(
-      /outcome=ok total=\d+ clone=\d+ checkout=\d+ exclude=\d+ metadata=\d+ publish=\d+ register=\d+$/,
+      /outcome=ok total=\d+ clone=\d+ sparse=\d+ checkout=\d+ exclude=\d+ metadata=\d+ publish=\d+ register=\d+$/,
     )
   })
 

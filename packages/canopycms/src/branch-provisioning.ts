@@ -356,9 +356,6 @@ export async function quarantineResidueAt(
 
 // --- Build and publish ------------------------------------------------------------------------
 
-/** Runs between the no-checkout clone and its checkout. */
-type PrepareCheckout = (git: GitManager, stagingPath: string) => Promise<void>
-
 export interface StageBranchOptions {
   baseRoot: string
   dirName: string
@@ -369,7 +366,8 @@ export interface StageBranchOptions {
   gitExcludePattern: string
   metadata: BranchMetadataFile
   provisionLog: ProvisionLog
-  prepareCheckout?: PrepareCheckout
+  /** The sparse-checkout cone (branch-sparse.ts), set before the checkout; none for a full clone. */
+  sparseCone?: readonly string[] | null
 }
 
 export type StageResult =
@@ -414,8 +412,8 @@ export async function stageBranchWorkspace(options: StageBranchOptions): Promise
       baseBranch: options.baseBranch,
       remote: options.clone.remoteName,
     })
-    const prepare = options.prepareCheckout
-    if (prepare) await log.step('prepare', () => prepare(git, stagingPath))
+    const cone = options.sparseCone
+    if (cone) await log.step('sparse', () => git.setSparseCone(cone))
 
     // The checkout is the expensive half; skip it when a competitor has already won.
     if (await hasBranchMetadata(path.join(options.baseRoot, options.dirName))) {

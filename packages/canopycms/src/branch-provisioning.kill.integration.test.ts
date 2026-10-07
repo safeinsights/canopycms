@@ -42,6 +42,9 @@ beforeAll(async () => {
   for (let i = 0; i < 300; i++) {
     await fs.writeFile(path.join(sourceDir, 'content', `entry-${i}.md`), `# entry ${i}\n`)
   }
+  // Outside the content root, so a branch clone's cone leaves it out.
+  await fs.mkdir(path.join(sourceDir, 'src'))
+  await fs.writeFile(path.join(sourceDir, 'src', 'app.ts'), 'export {}\n')
   await source.add('.')
   await source.commit('initial')
 })
@@ -182,7 +185,10 @@ async function expectBranchAbsentOrComplete(workspaceRoot: string, remoteUrl: st
   const finalPath = path.join(workspaceRoot, 'content-branches', 'feat')
   const state = await classifyFinalDir(finalPath, remoteUrl)
   expect(['vacant', 'live']).toContain(state.kind)
-  if (state.kind === 'live') await expectCleanCheckout(finalPath, 'feat')
+  if (state.kind === 'live') {
+    await expectCleanCheckout(finalPath, 'feat')
+    await expect(fs.stat(path.join(finalPath, 'src'))).rejects.toThrow()
+  }
 }
 
 async function expectSettingsAbsentOrComplete(workspaceRoot: string) {
@@ -245,6 +251,7 @@ const boundaries = (steps: string[]) => [
 
 const BRANCH_BOUNDARIES = boundaries([
   'clone',
+  'sparse',
   'checkout',
   'exclude',
   'metadata',

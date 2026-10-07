@@ -321,4 +321,25 @@ describe('stageAllExceptCanopyState', () => {
 
     expect((await git.raw(['diff', '--cached', '--name-only'])).trim()).toBe('x.md')
   })
+
+  it('in a sparse clone, stages what is on disk outside the cone and never what is not', async () => {
+    const root = await repoTrackingCanopyMeta()
+    const git = simpleGit({ baseDir: root })
+    await fs.mkdir(path.join(root, 'src'))
+    await fs.writeFile(path.join(root, 'src/app.ts'), 'tracked, outside the cone')
+    await git.add(['src/app.ts'])
+    await git.commit('add src')
+    await git.raw(['sparse-checkout', 'set', '--cone', 'content', '.canopy-meta'])
+    await expect(fs.stat(path.join(root, 'src/app.ts'))).rejects.toThrow()
+    await fs.writeFile(path.join(root, 'content/edited.md'), 'one, edited')
+    await fs.writeFile(path.join(root, 'root-new.md'), 'root')
+    await fs.mkdir(path.join(root, 'src'))
+    await fs.writeFile(path.join(root, 'src/stray.ts'), 'untracked, outside the cone')
+
+    await stageAllExceptCanopyState(git)
+
+    const staged = (await git.raw(['diff', '--cached', '--name-status'])).trim().split('\n').sort()
+    // src/app.ts is absent only because it is out of the cone, so it is not a deletion.
+    expect(staged).toEqual(['A\troot-new.md', 'A\tsrc/stray.ts', 'M\tcontent/edited.md'])
+  })
 })
