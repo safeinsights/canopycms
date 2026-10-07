@@ -1,7 +1,7 @@
 # Alarm on a 4xx rate for `/assets/t/*`
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of
-[image-materialization-epic.md](image-materialization-epic.md).
+[image-materialization-epic.md](resolved/image-materialization-epic.md).
 
 ## State
 
@@ -17,3 +17,6 @@ backstop for refs the collector misses. CloudFront's standard metrics are per di
 behaviour, so this needs either additional metrics on a dedicated distribution, a metric filter over
 real-time or standard logs, or a CloudFront Function that counts misses. Pick the cheapest that can
 name the failing path, and let `AssetSupport` create it behind an opt-in prop.
+
+Preview sessions are a standing source of that 4xx rate until
+[preview-first-paint-public-asset-urls.md](preview-first-paint-public-asset-urls.md) is fixed.

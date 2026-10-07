@@ -1,7 +1,7 @@
 # `materialize-assets` leaves a lazily-written derivative expiring
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from review round 3 of
-[image-materialization-epic.md](image-materialization-epic.md) Phase 3.
+[image-materialization-epic.md](resolved/image-materialization-epic.md) Phase 3.
 
 ## State
 

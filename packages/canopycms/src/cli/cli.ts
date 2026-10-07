@@ -43,6 +43,7 @@ export function parseArgs(rawArgs: string[]) {
       'refs',
       'report',
       'concurrency',
+      'transform-concurrency',
     ],
     // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
     // without it, minimist folds those words into `argv._` and discards the `--`,
@@ -346,6 +347,10 @@ async function main() {
       refsPath: typeof flags['refs'] === 'string' ? flags['refs'] : undefined,
       reportPath: typeof flags['report'] === 'string' ? flags['report'] : undefined,
       concurrency: typeof flags['concurrency'] === 'string' ? flags['concurrency'] : undefined,
+      transformConcurrency:
+        typeof flags['transform-concurrency'] === 'string'
+          ? flags['transform-concurrency']
+          : undefined,
       allowFailures: flags['allow-failures'] === true,
     })
   } else if (command === 'sync') {
@@ -427,6 +432,7 @@ async function main() {
     console.log('    --refs <file>         The canopy-asset-refs.json to materialize')
     console.log('    --report <file>       Also write the per-key JSON report here')
     console.log('    --concurrency <n>     Store requests in flight (default: 8)')
+    console.log('    --transform-concurrency <n>  Image transforms in flight (default: 2)')
     console.log('    --allow-failures      Exit 0 despite content failures (warns loudly)')
     console.log('')
     console.log('  sync <command>          Sync content between working tree and CMS')

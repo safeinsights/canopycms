@@ -175,6 +175,29 @@ describe('materializeAssets against a local store', () => {
     expect(head).not.toHaveBeenCalled()
   })
 
+  it('bounds transforms in flight separately from store requests', async () => {
+    const widths = [160, 320, 480, 640, 800, 960]
+    const targets = widths.map((w) => target(`assets/t/w=${w}/${HASH}/photo.png`))
+    const readOriginal = store.readOriginal.bind(store)
+    let inFlight = 0
+    let peak = 0
+    vi.spyOn(store, 'readOriginal').mockImplementation(async (...args) => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      try {
+        return await readOriginal(...args)
+      } finally {
+        inFlight--
+      }
+    })
+
+    const report = await materializeAssets({ store, targets, concurrency: 8 })
+
+    expect(report.summary.created).toBe(widths.length)
+    expect(peak).toBe(2)
+  })
+
   it('merges duplicate targets for one key', async () => {
     const key = `assets/t/w=320/${HASH}/photo.png`
     const report = await materializeAssets({

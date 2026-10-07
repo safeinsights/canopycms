@@ -112,6 +112,7 @@ export interface MaterializeAssetsCLIOptions {
   reportPath?: string
   allowFailures: boolean
   concurrency?: string
+  transformConcurrency?: string
   /** @internal Test seam: skips loading the project's config. */
   store?: AssetStore
 }
@@ -135,6 +136,15 @@ function printReport(report: MaterializeReport): void {
   }
 }
 
+/** `undefined` when the flag is absent; `null`, after printing why, when it is not a positive integer. */
+function parsePositiveInteger(flag: string, value: string | undefined): number | undefined | null {
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  if (Number.isInteger(parsed) && parsed >= 1) return parsed
+  console.error(`${flag} must be a positive integer, got "${value}"`)
+  return null
+}
+
 /**
  * Exits non-zero on any failure. `--allow-failures` tolerates content failures only — a
  * reference to an asset the store can no longer produce — so one deleted image does not block a
@@ -148,11 +158,12 @@ export async function materializeAssetsCLI(options: MaterializeAssetsCLIOptions)
     console.error('Usage: canopycms materialize-assets --refs <file> [--report <file>]')
     return 1
   }
-  const concurrency = options.concurrency === undefined ? undefined : Number(options.concurrency)
-  if (concurrency !== undefined && (!Number.isInteger(concurrency) || concurrency < 1)) {
-    console.error(`--concurrency must be a positive integer, got "${options.concurrency}"`)
-    return 1
-  }
+  const concurrency = parsePositiveInteger('--concurrency', options.concurrency)
+  const transformConcurrency = parsePositiveInteger(
+    '--transform-concurrency',
+    options.transformConcurrency,
+  )
+  if (concurrency === null || transformConcurrency === null) return 1
 
   const refs = await readAssetRefsFile(path.resolve(options.refsPath))
   const store = options.store ?? (await loadConfiguredAssetStore(options.projectDir))
@@ -164,6 +175,7 @@ export async function materializeAssetsCLI(options: MaterializeAssetsCLIOptions)
       targets: refs.transforms,
       statics: refs.statics,
       concurrency,
+      transformConcurrency,
     })
   } catch (err: unknown) {
     if (!(err instanceof SharpUnavailableError)) throw err

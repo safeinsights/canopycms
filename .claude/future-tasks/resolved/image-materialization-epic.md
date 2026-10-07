@@ -1,5 +1,9 @@
 # [P1] Epic: the public image path serves only what a build referenced
 
+**RESOLVED 2026-10-07.** Phases 0 to 3 and the docs PR merged into `int-image-materialization`, and
+the final-review PR closed it; the epic PR targets `main`. Sandbox deploy verification (below) is
+pending.
+
 Integration branch `int-image-materialization`, cut from `int-202610-a`. Every phase PR
 targets it, and its epic PR targets `main`. Supersedes
 [transform-crop-signing.md](transform-crop-signing.md) and
@@ -69,7 +73,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
 | 2 | `collect-asset-refs` and `materialize-assets` CLIs | merged #412 |
 | 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | merged #413 |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | adopter handoff prompt (manager) |
-| 5 | Docs, bookkeeping, and the final Fable full-diff review | docs PR open |
+| 5 | Docs, bookkeeping, and the final Fable full-diff review | merged #414 and the final-review PR |
 
 ### Phase 0: hardening that stands alone (widths unchanged)
 
@@ -97,7 +101,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - Transform only on a miss.
 - **Editor.** `AssetContext` always uses the authenticated prefix, built from the origin
   plus `basePath`. That covers previews, thumbnails and the crop source, and it resolves
-  [editor-asset-mount-topology.md](resolved/editor-asset-mount-topology.md).
+  [editor-asset-mount-topology.md](editor-asset-mount-topology.md).
 - **Preview override.**
   - The editor sends the authenticated prefix in the draft message.
   - A module owned by the preview bridge stores it, and `assetUrl` reads it through an
@@ -105,7 +109,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - It applies only to `/assets/t/` srcs, and it wins over `opts.baseUrl`.
   - Check how `attachTo`'s static-export preview route (`previewPrefix`) carries this.
 - **Sharp is now load-bearing for editor images.** Fold in
-  [admin-status-image-processing-availability.md](resolved/admin-status-image-processing-availability.md),
+  [admin-status-image-processing-availability.md](admin-status-image-processing-availability.md),
   and add an e2e that loads a fresh crop through the authenticated route.
 
 ### Phase 2: collect and materialize
@@ -169,7 +173,7 @@ This is written up as an adopter request and kept generic here.
     only, never a wrong image.
 - **Infrastructure.** Drop any `assets/t/` expiry rule, pass the replica to
   `AssetSupport`, and give the materializer a role with the grants above.
-- Sequence this with [adopter-image-field-migration.md](adopter-image-field-migration.md).
+- Sequence this with [adopter-image-field-migration.md](../adopter-image-field-migration.md).
 
 ## New adopter touchpoints (approved as a set, 2026-10-06)
 
@@ -218,9 +222,9 @@ This is written up as an adopter request and kept generic here.
 
 ## Follow-ups filed
 
-[asset-derivative-reaper.md](asset-derivative-reaper.md),
-[assets-transform-4xx-alarm.md](assets-transform-4xx-alarm.md) and
-[lazy-transforms-refs-allowlist.md](lazy-transforms-refs-allowlist.md) carry:
+[asset-derivative-reaper.md](../asset-derivative-reaper.md),
+[assets-transform-4xx-alarm.md](../assets-transform-4xx-alarm.md) and
+[lazy-transforms-refs-allowlist.md](../lazy-transforms-refs-allowlist.md) carry:
 
 - A reference-aware reaper for `assets/t/`, keyed on the refs files of every build inside
   the rollback window.

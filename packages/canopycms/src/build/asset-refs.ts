@@ -1,11 +1,10 @@
 /**
  * Collect the asset URLs a static build references, so a release can make them exist first.
  *
- * The public `/assets/t/` path is to serve only what is stored (image-materialization-epic.md,
- * Phase 3), and widths are chosen by site code at render time, so build output is the one place
- * every final URL appears. The adopter contract
+ * The public `/assets/t/` path serves only what is stored, and widths are chosen by site code at
+ * render time, so build output is the one place every final URL appears. The adopter contract
  * that follows: every `/assets/t/` URL the site can request must appear as text in its build
- * output (see .claude/future-tasks/image-materialization-epic.md).
+ * output (ARCHITECTURE.md, "Why transform by URL directive and materialize at release?").
  */
 
 import fs from 'node:fs/promises'

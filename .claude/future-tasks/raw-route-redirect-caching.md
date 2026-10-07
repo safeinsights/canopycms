@@ -1,7 +1,7 @@
 # Raw-route presigned redirects are never cached by the browser
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-06 from review round 2 of
-[image-materialization-epic.md](image-materialization-epic.md) Phase 1.
+[image-materialization-epic.md](resolved/image-materialization-epic.md) Phase 1.
 
 ## State
 
