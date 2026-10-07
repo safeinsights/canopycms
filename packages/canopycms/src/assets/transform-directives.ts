@@ -90,7 +90,7 @@ const MAX_ANY_WIDTH = 8192
  * both without pulling sharp or file-type into anything. 24 MP (a 6000x4000
  * camera frame) is sized by measured peak memory: the worst case, a full-size
  * WebP encode of an RGBA WebP source, peaks at 1246 MiB here and grows about
- * 40 MiB per MP, so this is the largest cap that fits the 2048 MB CMS and
+ * 37 MiB per MP, so this is the largest cap that fits the 2048 MB CMS and
  * transform Lambdas with allocator headroom. For an animation the cap bounds
  * all decoded frames together.
  */
