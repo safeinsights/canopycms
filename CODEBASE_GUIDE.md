@@ -132,7 +132,7 @@ Support files:
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
-- `entries-constants.ts` — entries pagination caps, dependency-free so the editor bundle can import them
+- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps; the idempotent branch-create window. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
@@ -141,8 +141,8 @@ Support files:
 Handlers reach git through [service methods](#git-operations-service-methods) and paths through
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
 `.dependency-cruiser.mjs` under `pnpm lint:cycles`: `http/` value-imports `api/` only via
-`routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts`,
-`entries-constants.ts`.
+`routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts` and
+the two dependency-free modules above.
 
 ## Authentication & Permissions
 

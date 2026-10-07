@@ -1,4 +1,5 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
+import { isCreatorsRecentBranch } from '../../api/branch-create-window'
 import { isNonApiResponse, type CanopyApiClient } from '../../api/client'
 import { sanitizeBranchName } from '../../paths/branch-name'
 
@@ -45,7 +46,7 @@ export async function requestBranchCreate(
     : { kind: 'failed', message }
 }
 
-/** A same-named branch someone else made is a name conflict: adopting it would drop this create. */
+/** A same-named branch the server would not answer this create with is a name conflict. */
 async function settle(
   apiClient: Pick<CanopyApiClient, 'branches'>,
   requested: string,
@@ -54,8 +55,7 @@ async function settle(
 ): Promise<CreateBranchOutcome> {
   const listed = await findListedBranch(apiClient, requested)
   if (!listed) return { kind: 'failed', message }
-  if (userId !== undefined && listed.createdBy === userId)
-    return { kind: 'created', branch: listed }
+  if (isCreatorsRecentBranch(listed, userId)) return { kind: 'created', branch: listed }
   return { kind: 'failed', message: `A branch named "${listed.name}" already exists` }
 }
 

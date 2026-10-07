@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BranchListItem } from '../../api/branch'
+import { IDEMPOTENT_CREATE_WINDOW_MS } from '../../api/branch-create-window'
 import { CanopyApiClient } from '../../api/client'
 import {
   CREATE_BRANCH_DEADLINE_MS,
@@ -17,8 +18,16 @@ interface FakeResponse {
 /** The user making the create. */
 const me = 'u1'
 
-const branch = (name: string, createdBy = me): BranchListItem =>
-  ({ name, status: 'editing', access: {}, createdBy }) as unknown as BranchListItem
+const NOW = Date.parse('2026-01-01T00:00:00Z')
+
+const branch = (name: string, createdBy = me, createdAt = NOW): BranchListItem =>
+  ({
+    name,
+    status: 'editing',
+    access: {},
+    createdBy,
+    createdAt: new Date(createdAt).toISOString(),
+  }) as unknown as BranchListItem
 
 const listing = (...names: string[]): FakeResponse => listingOf(names.map((name) => branch(name)))
 
@@ -50,7 +59,7 @@ const body = { branch: 'feature/x' }
 
 describe('requestBranchCreate', () => {
   beforeEach(() => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ now: NOW })
   })
 
   afterEach(() => {
@@ -173,6 +182,23 @@ describe('requestBranchCreate', () => {
       theirs,
     )
     expect(await requestBranchCreate(afterBusy.apiClient, body, me)).toEqual(conflict)
+  })
+
+  it("treats the current user's branch as a conflict once it is older than the server's retry window", async () => {
+    const created = Date.now() + CREATE_BRANCH_DEADLINE_MS
+    const mine = vi.fn(async () => listingOf([branch('feature-x', me, created)]))
+    const conflict = { kind: 'failed', message: 'A branch named "feature-x" already exists' }
+
+    vi.setSystemTime(created + IDEMPOTENT_CREATE_WINDOW_MS - 1)
+    const recent = client(async () => ({ status: 504 }), mine)
+    expect(await requestBranchCreate(recent.apiClient, body, me)).toEqual({
+      kind: 'created',
+      branch: branch('feature-x', me, created),
+    })
+
+    vi.setSystemTime(created + IDEMPOTENT_CREATE_WINDOW_MS)
+    const old = client(async () => ({ status: 504 }), mine)
+    expect(await requestBranchCreate(old.apiClient, body, me)).toEqual(conflict)
   })
 
   it('adopts no listed branch when the current user is unknown', async () => {

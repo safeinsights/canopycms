@@ -13,6 +13,7 @@ import {
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withOccFileLock } from '../utils/occ-json-write'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
@@ -497,24 +498,13 @@ export const createBranchHandler = async (
   })
 }
 
-/**
- * How long a create of a branch name its own creator just made answers with that branch rather
- * than a 409: a request killed between publishing the branch and responding is then safe to
- * retry.
- */
-const IDEMPOTENT_CREATE_WINDOW_MS = 5 * 60_000
-
 /** A create that names an existing branch: 409, unless it is that creator's recent retry. */
 const existingBranchResponse = (
   ctx: ApiContext,
   req: ApiRequest,
   existing: BranchContext,
 ): BranchCreateResponse => {
-  const createdAt = Date.parse(existing.branch.createdAt)
-  if (
-    existing.branch.createdBy === req.user.userId &&
-    Date.now() - createdAt < IDEMPOTENT_CREATE_WINDOW_MS
-  ) {
+  if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
     return {
       ok: true,
       status: 200,
