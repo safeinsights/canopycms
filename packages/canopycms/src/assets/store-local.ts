@@ -204,6 +204,15 @@ export class LocalAssetStore implements AssetStore {
     }
   }
 
+  async hasPublicObject(key: string): Promise<boolean> {
+    try {
+      return (await fs.stat(this.resolveKey(key))).isFile()
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return false
+      throw err
+    }
+  }
+
   /**
    * Atomic-exclusive create: opens with the `wx` flag so two concurrent
    * writers racing on the same hash32 have exactly one winner ('created')

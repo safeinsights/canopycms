@@ -67,6 +67,10 @@ export interface AssetStore {
     cacheControl?: string
   }): Promise<void>
   readPublicObject(key: string): Promise<PublicObject | null>
+  /** Whether a public object exists at `key`, without reading its body. */
+  hasPublicObject(key: string): Promise<boolean>
+  /** Every public object key under `prefix`, in the store's own pages. S3 only. */
+  listPublicObjectKeys?(prefix: string): AsyncIterable<string>
   /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
   presignPublicObjectRead?(key: string): Promise<string | null>
   putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'>
