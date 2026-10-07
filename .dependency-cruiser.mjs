@@ -23,8 +23,9 @@
 const CLIENT_ENTRIES =
   '^packages/canopycms(-next)?/src/(client|preview)\\.tsx?$|^packages/canopycms/src/index\\.ts$'
 
-/** The entries a host's own pages import, which render inside the editor's preview frame. */
-const PREVIEW_ENTRIES = '^packages/canopycms(-next)?/src/preview\\.tsx?$'
+/** The entries a host's own pages import: the `/preview` entries and the bare `canopycms` entry. */
+const HOST_PAGE_ENTRIES =
+  '^packages/canopycms(-next)?/src/preview\\.tsx?$|^packages/canopycms/src/index\\.ts$'
 
 /** Our own first-party sources (i.e. not resolved npm packages). */
 const OWN_SRC = '^packages/[^/]+/src/'
@@ -54,11 +55,11 @@ export default {
       to: { path: NODE_BUILTIN, reachable: true },
     },
     {
-      name: 'preview-entries-no-editor-styles',
+      name: 'host-page-entries-no-editor-styles',
       severity: 'error',
       comment:
-        "A module reachable from a preview entry resolves a stylesheet or a @mantine/ module. Host pages import these entries, so whatever they reach loads in the adopter's own pages: Mantine's unlayered CSS overrides the adopter's styles in the editor's preview, and the editor ships to public pages. Host-side preview code belongs in editor/preview-bridge.tsx, which imports no editor UI; import editor code from canopycms/client only.",
-      from: { path: PREVIEW_ENTRIES },
+        "A module reachable from a host-page entry (a `/preview` entry or the bare `canopycms` entry) resolves a stylesheet or a @mantine/ module. Host pages import these entries, so whatever they reach loads in the adopter's own pages: Mantine's unlayered CSS overrides the adopter's styles in the editor's preview, and the editor ships to public pages. Host-side preview code belongs in editor/preview-bridge.tsx, which imports no editor UI; import editor code from canopycms/client only.",
+      from: { path: HOST_PAGE_ENTRIES },
       to: { path: '\\.css$|(^|/)@mantine/', reachable: true },
     },
     {

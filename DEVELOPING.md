@@ -1183,7 +1183,7 @@ stories, `.storybook/`, the config barrel and the groups barrel are the entries.
 
 ### Client-Bundle Boundary Check
 
-The editor reaches browsers through `canopycms/client` and `canopycms-next/client`, host pages through the `/preview` entries of both, and the bare `canopycms` entry (`assetUrl`) through adopters' client components. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build. The `/preview` entries also must not reach a `.css` file or a `@mantine/` module (`preview-entries-no-editor-styles`); `node_modules` is not followed, but the edge into it is still checked.
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`, host pages through the `/preview` entries of both, and the bare `canopycms` entry (`assetUrl`) through adopters' client components. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build. The `/preview` entries and the bare entry also must not reach a `.css` file or a `@mantine/` module (`host-page-entries-no-editor-styles`); `node_modules` is not followed, but the edge into it is still checked.
 
 ```bash
 pnpm lint:bundle

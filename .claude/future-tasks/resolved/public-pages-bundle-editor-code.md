@@ -7,7 +7,7 @@ narrower import rather than `sideEffects`.
   neither `/client` entry exports it. `PreviewFrame` moved out of `editor/preview-bridge.tsx`,
   so the preview graph holds no editor code even without tree-shaking.
 - `pnpm lint:bundle` fails when a preview entry reaches a `.css` file or a `@mantine/` module
-  (`preview-entries-no-editor-styles`); check:esm imports both entries under plain Node, which
+  (`host-page-entries-no-editor-styles`, which also covers the bare `canopycms` entry); check:esm imports both entries under plain Node, which
   rejects CSS.
 - Measured in example1's `next build`: `/posts/hello-world` now loads 11 assets, 1.26 MB, none
   containing `--mantine-`. `build-verify.test.ts` asserts that; importing `canopycms/client` into
