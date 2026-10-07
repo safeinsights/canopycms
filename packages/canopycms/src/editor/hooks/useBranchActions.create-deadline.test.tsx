@@ -45,6 +45,7 @@ describe('useBranchActions create past the deadline', () => {
     onReloadBranches: vi.fn().mockResolvedValue(undefined),
     onBranchCreated: vi.fn(),
     onBranchSwitch: vi.fn(),
+    userId: 'user1',
   }
 
   beforeEach(async () => {
@@ -84,6 +85,24 @@ describe('useBranchActions create past the deadline', () => {
     expect(options.onBranchCreated).toHaveBeenCalledWith(listedBranch)
     expect(options.setBranchName).toHaveBeenCalledWith('feature-x')
     expect(options.onBranchSwitch).toHaveBeenCalledWith('feature-x')
+  })
+
+  it("stays put and reports a conflict when the listed branch is another user's", async () => {
+    mockClient.branches.create.mockReturnValue(new Promise(() => {}))
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: [{ ...listedBranch, createdBy: 'someone-else' }] },
+    })
+
+    expect(await createAfterDeadline()).toBe(false)
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: 'A branch named "feature-x" already exists',
+      color: 'red',
+    })
+    expect(options.onBranchCreated).not.toHaveBeenCalled()
+    expect(options.setBranchName).not.toHaveBeenCalled()
+    expect(options.onBranchSwitch).not.toHaveBeenCalled()
   })
 
   it('says the create did not finish when the branch is not there', async () => {

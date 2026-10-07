@@ -373,6 +373,7 @@ export const Editor: React.FC<EditorProps> = ({
     isAnyDirty,
     onReloadBranches: () => loadBranches(),
     onBranchCreated: addCreatedBranch,
+    userId: userContext?.userId,
   })
 
   // 5. Comment system (depends on branchNameState)

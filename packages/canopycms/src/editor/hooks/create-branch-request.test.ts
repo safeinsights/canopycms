@@ -14,12 +14,17 @@ interface FakeResponse {
   body?: unknown
 }
 
-const branch = (name: string): BranchListItem =>
-  ({ name, status: 'editing', access: {}, createdBy: 'u1' }) as unknown as BranchListItem
+/** The user making the create. */
+const me = 'u1'
 
-const listing = (...names: string[]): FakeResponse => ({
+const branch = (name: string, createdBy = me): BranchListItem =>
+  ({ name, status: 'editing', access: {}, createdBy }) as unknown as BranchListItem
+
+const listing = (...names: string[]): FakeResponse => listingOf(names.map((name) => branch(name)))
+
+const listingOf = (branches: BranchListItem[]): FakeResponse => ({
   status: 200,
-  body: { ok: true, status: 200, data: { branches: names.map(branch) } },
+  body: { ok: true, status: 200, data: { branches } },
 })
 
 const never = (): Promise<FakeResponse> => new Promise(() => {})
@@ -58,7 +63,7 @@ describe('requestBranchCreate', () => {
       body: { ok: true, status: 200, data: { branch: branch('feature-x') } },
     }))
 
-    expect(await requestBranchCreate(apiClient, body)).toEqual({
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
       kind: 'created',
       branch: branch('feature-x'),
     })
@@ -71,7 +76,7 @@ describe('requestBranchCreate', () => {
       body: { ok: false, status: 409, error: 'Branch already exists' },
     }))
 
-    expect(await requestBranchCreate(apiClient, body)).toEqual({
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
       kind: 'failed',
       message: 'Branch already exists',
     })
@@ -84,7 +89,7 @@ describe('requestBranchCreate', () => {
       vi.fn(async () => listing('main', 'feature-x')),
     )
 
-    const outcome = requestBranchCreate(apiClient, body)
+    const outcome = requestBranchCreate(apiClient, body, me)
     await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS - 1)
     expect(list).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
@@ -98,7 +103,7 @@ describe('requestBranchCreate', () => {
       vi.fn(async () => listing('main')),
     )
 
-    const outcome = requestBranchCreate(apiClient, body)
+    const outcome = requestBranchCreate(apiClient, body, me)
     await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
 
     expect(await outcome).toEqual({ kind: 'failed', message: CREATE_TIMED_OUT_MESSAGE })
@@ -112,13 +117,13 @@ describe('requestBranchCreate', () => {
       async () => ({ status: 504 }),
       vi.fn(async () => listing('feature-x')),
     )
-    expect(await requestBranchCreate(found.apiClient, body)).toEqual({
+    expect(await requestBranchCreate(found.apiClient, body, me)).toEqual({
       kind: 'created',
       branch: branch('feature-x'),
     })
 
     const missing = client(async () => ({ status: 504 }))
-    expect(await requestBranchCreate(missing.apiClient, body)).toEqual({
+    expect(await requestBranchCreate(missing.apiClient, body, me)).toEqual({
       kind: 'failed',
       message: CREATE_TIMED_OUT_MESSAGE,
     })
@@ -132,7 +137,7 @@ describe('requestBranchCreate', () => {
     })
 
     const missing = client(busy)
-    expect(await requestBranchCreate(missing.apiClient, body)).toEqual({
+    expect(await requestBranchCreate(missing.apiClient, body, me)).toEqual({
       kind: 'failed',
       message: "Branch 'feature-x' is being created. Try again.",
     })
@@ -142,9 +147,43 @@ describe('requestBranchCreate', () => {
       busy,
       vi.fn(async () => listing('feature-x')),
     )
-    expect(await requestBranchCreate(found.apiClient, body)).toEqual({
+    expect(await requestBranchCreate(found.apiClient, body, me)).toEqual({
       kind: 'created',
       branch: branch('feature-x'),
+    })
+  })
+
+  it("treats another user's branch of the same name as a conflict, not as this create", async () => {
+    const theirs = vi.fn(async () => listingOf([branch('feature-x', 'someone-else')]))
+    const conflict = { kind: 'failed', message: 'A branch named "feature-x" already exists' }
+
+    const afterDeadline = client(never, theirs)
+    const outcome = requestBranchCreate(afterDeadline.apiClient, body, me)
+    await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
+    expect(await outcome).toEqual(conflict)
+
+    const afterGatewayTimeout = client(async () => ({ status: 504 }), theirs)
+    expect(await requestBranchCreate(afterGatewayTimeout.apiClient, body, me)).toEqual(conflict)
+
+    const afterBusy = client(
+      async () => ({
+        status: 503,
+        body: { ok: false, status: 503, error: "Branch 'feature-x' is being created. Try again." },
+      }),
+      theirs,
+    )
+    expect(await requestBranchCreate(afterBusy.apiClient, body, me)).toEqual(conflict)
+  })
+
+  it('adopts no listed branch when the current user is unknown', async () => {
+    const { apiClient } = client(
+      async () => ({ status: 504 }),
+      vi.fn(async () => listing('feature-x')),
+    )
+
+    expect(await requestBranchCreate(apiClient, body, undefined)).toEqual({
+      kind: 'failed',
+      message: 'A branch named "feature-x" already exists',
     })
   })
 
@@ -154,7 +193,7 @@ describe('requestBranchCreate', () => {
       vi.fn(async (): Promise<FakeResponse> => ({ status: 502 })),
     )
 
-    expect(await requestBranchCreate(apiClient, body)).toEqual({
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
       kind: 'failed',
       message: CREATE_TIMED_OUT_MESSAGE,
     })

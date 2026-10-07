@@ -13,6 +13,8 @@ export interface UseBranchActionsOptions {
   /** Receives the branch the server just created, so it can be shown before any listing includes it. */
   onBranchCreated: (branch: BranchListItem) => void
   onBranchSwitch?: (branch: string) => void
+  /** The current user; a create the server never answered adopts only a listed branch they made. */
+  userId?: string
 }
 
 export interface UseBranchActionsReturn {
@@ -78,11 +80,15 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     if (!confirmed) return false
 
     try {
-      const outcome = await requestBranchCreate(apiClient, {
-        branch: branch.name,
-        title: branch.title,
-        description: branch.description,
-      })
+      const outcome = await requestBranchCreate(
+        apiClient,
+        {
+          branch: branch.name,
+          title: branch.title,
+          description: branch.description,
+        },
+        options.userId,
+      )
       if (outcome.kind === 'failed') {
         throw new Error(outcome.message)
       }
