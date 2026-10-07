@@ -344,6 +344,18 @@ async function main() {
     process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
+    // minimist makes a repeated flag an array and `--no-x` false; either would otherwise read as
+    // absent, sending `--bucket a --bucket b` down the config path to a bucket neither named.
+    const valueFlags = ['bucket', 'region', 'refs', 'report'] as const
+    const repeated = valueFlags.find((name) => {
+      const value: unknown = argv[name]
+      return value !== undefined && typeof value !== 'string'
+    })
+    if (repeated) {
+      console.error(`canopycms materialize-assets: --${repeated} takes exactly one value`)
+      process.exitCode = 1
+      return
+    }
     const bucket = typeof flags['bucket'] === 'string' ? flags['bucket'] : undefined
     process.exitCode = await materializeAssetsCLI({
       // `--bucket` never reads the site config, so it needs no project.

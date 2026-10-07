@@ -10,7 +10,6 @@ import path from 'node:path'
 
 import {
   materializeAssets,
-  SharpUnavailableError,
   type MaterializeReport,
   type MaterializeResult,
 } from '../assets/materialize'
@@ -177,6 +176,12 @@ async function runMaterialize(options: MaterializeAssetsCLIOptions): Promise<num
     )
     return MATERIALIZE_EXIT_CODES.error
   }
+  if (options.reportPath === '') {
+    console.error('canopycms materialize-assets: --report needs a file')
+    return MATERIALIZE_EXIT_CODES.error
+  }
+  // A gate reading the report must never find an earlier run's after this run exits early.
+  if (options.reportPath) await fs.rm(path.resolve(options.reportPath), { force: true })
   const concurrency = parsePositiveInteger('--concurrency', options.concurrency)
   const transformConcurrency = parsePositiveInteger(
     '--transform-concurrency',
@@ -188,25 +193,19 @@ async function runMaterialize(options: MaterializeAssetsCLIOptions): Promise<num
   const store = await resolveStore(options)
   if (!store) return MATERIALIZE_EXIT_CODES.error
 
-  let report: MaterializeReport
-  try {
-    report = await materializeAssets({
-      store,
-      targets: refs.transforms,
-      statics: refs.statics,
-      concurrency,
-      transformConcurrency,
-    })
-  } catch (err: unknown) {
-    if (!(err instanceof SharpUnavailableError)) throw err
-    console.error(`canopycms materialize-assets: ${err.message}`)
-    return MATERIALIZE_EXIT_CODES.error
-  }
+  // A `SharpUnavailableError` reaches `materializeAssetsCLI`'s catch: exit 1.
+  const report = await materializeAssets({
+    store,
+    targets: refs.transforms,
+    statics: refs.statics,
+    concurrency,
+    transformConcurrency,
+  })
 
+  printReport(report)
   if (options.reportPath) {
     await atomicWriteFile(path.resolve(options.reportPath), `${JSON.stringify(report, null, 2)}\n`)
   }
-  printReport(report)
 
   const { contentFailures, storeFailures } = report.summary
   if (storeFailures > 0) {

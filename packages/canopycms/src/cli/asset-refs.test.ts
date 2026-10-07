@@ -280,6 +280,26 @@ describe('materializeAssetsCLI store selection', () => {
     expect(await store.hasPublicObject(ok)).toBe(false)
   })
 
+  it('runs against an S3 store from the config without --allow-local', async () => {
+    out = mockConsole()
+    const { S3AssetStore } = await import('../assets/store-s3')
+    const s3 = new S3AssetStore({ bucket: 'config-bucket', region: 'us-east-2' })
+    vi.mocked(loadConfiguredAssetStore).mockResolvedValue(s3)
+    expect(await run({})).toBe(MATERIALIZE_EXIT_CODES.ok)
+  })
+
+  it('removes an earlier report before a run that exits early, and refuses an empty --report', async () => {
+    out = mockConsole()
+    const reportPath = path.join(tmpDir, 'report.json')
+    await fs.writeFile(reportPath, '{"stale":true}')
+    expect(await run({ reportPath, bucket: 'b' })).toBe(MATERIALIZE_EXIT_CODES.error)
+    await expect(fs.stat(reportPath)).rejects.toThrow()
+    expect(await run({ reportPath: '', bucket: 'b', region: 'r' })).toBe(
+      MATERIALIZE_EXIT_CODES.error,
+    )
+    expect(await run({ bucket: 'b', region: 'r' })).toBe(MATERIALIZE_EXIT_CODES.ok)
+  })
+
   it('runs against a local store from the config under --allow-local', async () => {
     out = mockConsole()
     vi.mocked(loadConfiguredAssetStore).mockResolvedValue(store)
