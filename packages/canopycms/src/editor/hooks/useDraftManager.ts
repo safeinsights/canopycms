@@ -97,6 +97,12 @@ export interface UseDraftManagerOptions {
   entries: EditorEntry[]
   initialValues?: Record<string, FormValue>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  /**
+   * Server read that records no OCC token (useEntryManager's `readEntryValue`),
+   * for checking restored drafts of unopened entries. Without it they stay
+   * unverified and count as dirty.
+   */
+  readEntryValue?: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   /**
    * The OCC version token currently held for an entry on the branch being
@@ -116,6 +122,16 @@ export interface UseDraftManagerOptions {
   onSaved?: () => void
 }
 
+/** The unsaved work a branch-level action would leave behind. `labels` names the entries (it may be shorter than `count`). */
+export interface UnsavedSummary {
+  count: number
+  labels: string[]
+}
+
+const VERIFY_CONCURRENCY = 4
+/** How long `whenDraftsVerified` waits before answering with whatever is known. */
+const VERIFY_WAIT_CAP_MS = 3000
+
 export interface UseDraftManagerReturn {
   drafts: Record<string, FormValue>
   setDrafts: React.Dispatch<React.SetStateAction<Record<string, FormValue>>>
@@ -133,6 +149,10 @@ export interface UseDraftManagerReturn {
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
   isAnyDirty: () => boolean
+  /** Resolves once restored drafts have been checked against the server (or a read failed), capped so a hung read cannot block. */
+  whenDraftsVerified: () => Promise<void>
+  /** `whenDraftsVerified`, then the entries still counted dirty. */
+  resolveUnsaved: () => Promise<UnsavedSummary>
   /**
    * Per-field validation errors for the selected entry, keyed by canonical
    * canopy path (e.g. `blocks[0].title`). Populated when a save is blocked by
@@ -193,38 +213,91 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     [errorState, currentId],
   )
 
-  // Number of draft entries that differ from their loaded server value.
+  // Server values read for restored drafts of unopened entries that differ from
+  // the draft. Not `loadedValues`: that map gates the entry load and OCC token.
+  const [verifiedBaselines, setVerifiedBaselines] = useState<Record<string, FormValue>>({})
+  // Ids whose verification read failed: still dirty, but no longer awaited.
+  const [unreadableIds, setUnreadableIds] = useState<ReadonlySet<string>>(() => new Set())
+  const requestedIdsRef = useRef<Set<string>>(new Set())
+  const verifyQueueRef = useRef<Array<{ entry: EditorEntry; branch: string }>>([])
+  const verifyActiveRef = useRef(0)
+  const verifyWaitersRef = useRef<Array<() => void>>([])
+
+  const entryById = useMemo(
+    () => new Map(options.entries.map((e) => [e.contentId as string, e])),
+    [options.entries],
+  )
+  // Empty while a branch switch loads, so only a non-empty list can say an entry is gone.
+  const entriesKnown = options.entries.length > 0
+
+  // The draft ids that count as unsaved work:
   //
-  // Two intentional behaviors worth noting:
+  // 1. A draft with no baseline (loaded or verified value) counts as dirty: it
+  //    cannot be proven to match the server, and counting it keeps the
+  //    branch-switch guard from silently discarding restored drafts.
+  //    Verification (below) removes the ones that turn out pristine.
   //
-  // 1. A draft without a corresponding `loadedValues` entry (e.g. a localStorage-restored
-  //    draft whose entry has not been opened in this session) is counted as dirty. We
-  //    cannot prove such a draft matches server state, so we conservatively treat it
-  //    as unsaved work — this is what keeps the branch-switch guard from silently
-  //    discarding restored drafts.
+  // 2. A draft for an entry that no longer exists can never be loaded or saved,
+  //    so it is not counted. It stays in storage.
   //
-  // 2. The comparison uses `fast-deep-equal`, a value-based deep equality
-  //    check -- not property-order sensitive the way `JSON.stringify`
-  //    comparison was. A rehydrated draft whose keys were serialized in a
-  //    different order than the server-loaded object no longer shows as
-  //    dirty when the values are semantically identical.
-  const modifiedCount = useMemo(
+  // 3. The comparison is `fast-deep-equal`, so key insertion order of a
+  //    rehydrated draft does not make it dirty.
+  const dirtyIds = useMemo(
     () =>
-      Object.keys(drafts).filter((id) => !loadedValues[id] || !equal(drafts[id], loadedValues[id]))
-        .length,
-    [drafts, loadedValues],
+      Object.keys(drafts).filter((id) => {
+        if (entriesKnown && !entryById.has(id)) return false
+        const baseline = loadedValues[id] ?? verifiedBaselines[id]
+        return baseline === undefined || !equal(drafts[id], baseline)
+      }),
+    [drafts, loadedValues, verifiedBaselines, entriesKnown, entryById],
+  )
+  const modifiedCount = dirtyIds.length
+
+  const editedFiles = useMemo(
+    () =>
+      dirtyIds
+        .map((id) => {
+          const entry = entryById.get(id)
+          return entry ? { path: entry.path, label: entry.label } : null
+        })
+        .filter((x): x is { path: LogicalPath; label: string } => x !== null),
+    [dirtyIds, entryById],
   )
 
-  const editedFiles = useMemo(() => {
-    const draftIds = Object.keys(drafts)
-    if (draftIds.length === 0) return []
-    return draftIds
-      .map((id) => {
-        const entry = options.entries.find((e) => e.contentId === id)
-        return entry ? { path: entry.path, label: entry.label } : null
-      })
-      .filter((x): x is { path: LogicalPath; label: string } => x !== null)
-  }, [drafts, options.entries])
+  // Draft ids verification can still settle.
+  const unresolvedIds = useMemo(
+    () =>
+      options.readEntryValue && entriesKnown
+        ? Object.keys(drafts).filter(
+            (id) =>
+              entryById.has(id) &&
+              loadedValues[id] === undefined &&
+              verifiedBaselines[id] === undefined &&
+              !unreadableIds.has(id),
+          )
+        : [],
+    [
+      drafts,
+      loadedValues,
+      verifiedBaselines,
+      unreadableIds,
+      entriesKnown,
+      entryById,
+      options.readEntryValue,
+    ],
+  )
+
+  // Async callbacks outlive the render that created them; these give them current values.
+  const latestRef = useRef({ drafts, loadedValues, unresolvedCount: 0, modifiedCount, editedFiles })
+  latestRef.current = {
+    drafts,
+    loadedValues,
+    unresolvedCount: unresolvedIds.length,
+    modifiedCount,
+    editedFiles,
+  }
+  const latestOptionsRef = useRef(options)
+  latestOptionsRef.current = options
 
   // Clear drafts when branch changes (before localStorage restore)
   const prevBranchRef = useRef(options.branchName)
@@ -232,6 +305,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (prevBranchRef.current && prevBranchRef.current !== options.branchName) {
       setDrafts({})
       setLoadedValues({})
+      setVerifiedBaselines({})
+      setUnreadableIds(new Set())
+      requestedIdsRef.current = new Set()
+      verifyQueueRef.current = []
       // Base versions are file mtimes, i.e. inherently per-branch -- carrying
       // them across a switch would compare one branch's version against
       // another's.
@@ -348,6 +425,94 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       console.warn('Failed to persist drafts', err)
     }
   }, [drafts, storageKey])
+
+  // A draft equal to its entry's loaded value is not an edit. Drops it so it
+  // neither counts as dirty nor lingers in storage.
+  useEffect(() => {
+    const redundant = Object.keys(drafts).filter(
+      (id) => loadedValues[id] !== undefined && equal(drafts[id], loadedValues[id]),
+    )
+    if (redundant.length === 0) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const id of redundant) {
+        if (id in next && equal(next[id], loadedValues[id])) {
+          delete next[id]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [drafts, loadedValues])
+
+  // Checks one restored draft against the server. The branch is re-read at
+  // settle time: a switch mid-read makes the result another branch's value.
+  const verifyDraft = async (job: { entry: EditorEntry; branch: string }) => {
+    const id = job.entry.contentId as string
+    const read = latestOptionsRef.current.readEntryValue
+    if (!read) return
+    try {
+      const server = await read(job.entry)
+      if (latestOptionsRef.current.branchName !== job.branch) return
+      const { drafts: latestDrafts, loadedValues: latestLoaded } = latestRef.current
+      // Gone, or the entry's own load has taken over as the baseline.
+      if (latestDrafts[id] === undefined || latestLoaded[id] !== undefined) return
+      if (equal(latestDrafts[id], server)) {
+        setDrafts((prev) => {
+          if (!(id in prev) || !equal(prev[id], server)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      } else {
+        setVerifiedBaselines((prev) => ({ ...prev, [id]: server }))
+      }
+    } catch {
+      // Stays unverified, so the draft keeps counting as dirty.
+      if (latestOptionsRef.current.branchName !== job.branch) return
+      setUnreadableIds((prev) => new Set(prev).add(id))
+    }
+  }
+
+  const pumpVerification = () => {
+    while (verifyActiveRef.current < VERIFY_CONCURRENCY && verifyQueueRef.current.length > 0) {
+      const job = verifyQueueRef.current.shift()
+      if (!job) break
+      verifyActiveRef.current++
+      void verifyDraft(job).finally(() => {
+        verifyActiveRef.current--
+        pumpVerification()
+      })
+    }
+  }
+
+  // Once per branch session, reads the server value of every restored draft
+  // whose entry has not loaded. The selected entry is left to its own load,
+  // which fills `loadedValues` and lets the effect above drop a pristine draft.
+  useEffect(() => {
+    if (!options.readEntryValue || !entriesKnown) return
+    // `drafts` lags a branch switch by a render (see draftsStorageKeyRef); reading
+    // the old branch's drafts under the new branch's name would be wrong.
+    if (draftsStorageKeyRef.current !== storageKey) return
+    const todo = unresolvedIds.filter((id) => id !== currentId && !requestedIdsRef.current.has(id))
+    if (todo.length === 0) return
+    for (const id of todo) {
+      requestedIdsRef.current.add(id)
+      const entry = entryById.get(id)
+      if (entry) verifyQueueRef.current.push({ entry, branch: options.branchName })
+    }
+    pumpVerification()
+    // pumpVerification/verifyDraft only touch refs and stable setters.
+  }, [unresolvedIds, currentId, storageKey])
+
+  // Wakes `whenDraftsVerified` callers once nothing is left to settle.
+  useEffect(() => {
+    if (unresolvedIds.length > 0) return
+    const waiters = verifyWaitersRef.current
+    verifyWaitersRef.current = []
+    for (const wake of waiters) wake()
+  }, [unresolvedIds])
 
   // Recomputes field errors as the user edits, or as the selected entry's
   // schema/format changes while it stays open, so each error clears when its
@@ -514,9 +679,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // to become `saved` below, so removing the draft key is a no-op for
       // the rendered value while fixing the "phantom dirty" bug: a draft
       // that lingers forever is what made every fresh page load show Save
-      // enabled with zero real edits (see modifiedCount's doc comment above
-      // — a draft without a matching loadedValues entry is conservatively
-      // treated as dirty).
+      // enabled with zero real edits (see `dirtyIds` above: a draft with no
+      // baseline is conservatively treated as dirty).
       setDrafts((prev) => {
         if (!(currentId in prev)) return prev
         const next = { ...prev }
@@ -730,7 +894,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
     const id = entry.contentId
     if (!drafts[id]) return false
-    return !loadedValues[id] || !equal(drafts[id], loadedValues[id])
+    const baseline = loadedValues[id] ?? verifiedBaselines[id]
+    return baseline === undefined || !equal(drafts[id], baseline)
   }
 
   const isSelectedDirty = (): boolean => {
@@ -739,13 +904,30 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     return !loadedValues[currentId] || !equal(drafts[currentId], loadedValues[currentId])
   }
 
-  // Returns true if ANY draft entry differs from its loaded value.
-  //
-  // Used for branch-switch guards so unsaved work in non-selected entries is not
-  // silently discarded. Derived from `modifiedCount`, so its semantics note
-  // above also applies: localStorage-restored drafts without a loaded value
-  // count as dirty.
+  // True if ANY counted draft is dirty (see `dirtyIds`). Used for branch-level
+  // guards so unsaved work in non-selected entries is not silently discarded.
   const isAnyDirty = (): boolean => modifiedCount > 0
+
+  const whenDraftsVerified = (): Promise<void> => {
+    if (latestRef.current.unresolvedCount === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const wake = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        verifyWaitersRef.current = verifyWaitersRef.current.filter((w) => w !== wake)
+        resolve()
+      }, VERIFY_WAIT_CAP_MS)
+      verifyWaitersRef.current.push(wake)
+    })
+  }
+
+  const resolveUnsaved = async (): Promise<UnsavedSummary> => {
+    await whenDraftsVerified()
+    const { modifiedCount: count, editedFiles: files } = latestRef.current
+    return { count, labels: files.map((f) => f.label) }
+  }
 
   return {
     drafts,
@@ -764,6 +946,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     isDirtyForEntry,
     isSelectedDirty,
     isAnyDirty,
+    whenDraftsVerified,
+    resolveUnsaved,
     fieldErrors,
   }
 }

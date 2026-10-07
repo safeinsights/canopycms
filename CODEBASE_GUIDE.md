@@ -503,9 +503,9 @@ Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
-- `useBranchActions.tsx` — create, submit, withdraw, merge; adopts the server-sanitized branch name after create
-- `useEntryManager.ts` — entry loading and saving, and `listAllEntries` cursor following
-- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors
+- `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm (`confirmCreate`); adopts server-sanitized names
+- `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
+- `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
 - `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
@@ -538,6 +538,7 @@ Components, in `editor/components/`:
 - `EditorHeader.tsx` — save, submit and the read-only protected-branch banner
 - `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
+- `BranchesDrawer.tsx` — Branches drawer
 - `UserBadge.tsx` — user avatar and name
 - `index.ts` — component exports
 

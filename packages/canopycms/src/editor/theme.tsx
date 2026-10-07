@@ -5,6 +5,7 @@ import React, { useMemo } from 'react'
 import {
   DEFAULT_THEME,
   MantineProvider,
+  getDefaultZIndex,
   type MantineColorScheme,
   type MantineColorsTuple,
   type MantineThemeOverride,
@@ -111,7 +112,8 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
 
   return (
     <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
-      <ModalsProvider>
+      {/* Confirms open from inside Drawers (level 'modal'), so sit a level above; notifications stay higher. */}
+      <ModalsProvider modalProps={{ zIndex: getDefaultZIndex('popover') }}>
         {withNotifications ? <Notifications position="bottom-left" /> : null}
         {children}
       </ModalsProvider>

@@ -791,6 +791,76 @@ describe('BranchManager', () => {
       expect(screen.getByTestId('create-branch-submit').getAttribute('data-loading')).toBeNull()
     })
 
+    it('does not show the create as in flight while onBeforeCreate is pending', async () => {
+      const gate = deferred()
+      const onBeforeCreate = vi.fn(() => gate.promise)
+      const onCreate = vi.fn(async () => true)
+      renderBranchManager({ branches: baseBranches, onBeforeCreate, onCreate, mode: 'prod' })
+      await openAndFill('feature/gated')
+
+      const submitButton = screen.getByTestId('create-branch-submit')
+      await userEvent.click(submitButton)
+
+      expect(onBeforeCreate).toHaveBeenCalledTimes(1)
+      expect(submitButton.getAttribute('data-loading')).toBeNull()
+      expect(onCreate).not.toHaveBeenCalled()
+
+      await act(async () => {
+        gate.resolve(true)
+      })
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledTimes(1)
+      })
+      expect(onCreate).toHaveBeenCalledWith({
+        name: 'feature/gated',
+        title: 'A title',
+        description: 'A description',
+      })
+    })
+
+    it('does not call onCreate, and keeps the form as entered, when onBeforeCreate resolves false', async () => {
+      const onBeforeCreate = vi.fn(async () => false)
+      const onCreate = vi.fn(async () => true)
+      renderBranchManager({ branches: baseBranches, onBeforeCreate, onCreate, mode: 'prod' })
+      await openAndFill('feature/declined')
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+      await waitFor(() => {
+        expect(onBeforeCreate).toHaveBeenCalledTimes(1)
+      })
+      expect(onCreate).not.toHaveBeenCalled()
+      expect(screen.getByTestId('create-branch-submit').getAttribute('data-loading')).toBeNull()
+      expect(screen.getByTestId('create-branch-button').textContent).toBe('Cancel')
+      expect((screen.getByTestId('branch-name-input') as HTMLInputElement).value).toBe(
+        'feature/declined',
+      )
+    })
+
+    it('ignores a second submit while onBeforeCreate is still pending', async () => {
+      const gate = deferred()
+      const onBeforeCreate = vi.fn(() => gate.promise)
+      const onCreate = vi.fn(async () => true)
+      renderBranchManager({ branches: baseBranches, onBeforeCreate, onCreate, mode: 'prod' })
+      await openAndFill('feature/twice')
+
+      const submitButton = screen.getByTestId('create-branch-submit')
+      act(() => {
+        fireEvent.click(submitButton)
+        fireEvent.click(submitButton)
+      })
+
+      expect(onBeforeCreate).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        gate.resolve(true)
+      })
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledTimes(1)
+      })
+    })
+
     it('treats a synchronous onCreate (no promise) as success', async () => {
       const onCreate = vi.fn()
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
