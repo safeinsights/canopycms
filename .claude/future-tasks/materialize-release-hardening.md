@@ -82,8 +82,8 @@ site's deploy session.
   prefixes by segment.
 - **PR C README:** the preview role needs `s3:ListBucket` (otherwise every miss is a 403 and a store
   failure); production hosts must route only `/assets/*` to the bucket, since `previews/*` holds
-  attacker-writable bytes; scope each preview's writes to its own id or accept cross-preview
-  overwrites; KMS needs on SSE-KMS buckets.
+  attacker-writable bytes; scope each preview's writes to its own id or accept that one
+  preview's build can write into another's; KMS needs on SSE-KMS buckets.
 - **Unverified until a real-bucket check:** whether `TaggingDirective: REPLACE` with no tags needs
   `s3:PutObjectTagging`; whether `s3:if-none-match` is populated on CopyObject; and whether a
   `ListBucket` grant conditioned on `s3:prefix` makes a missing key's HEAD a 404 (a HEAD carries no

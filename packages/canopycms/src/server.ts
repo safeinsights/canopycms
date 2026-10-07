@@ -253,11 +253,18 @@ export { LAZY_TRANSFORM_TAG } from './assets/materialize'
 
 /**
  * Make every `assets/t/` key a build references exist in `store` (transforming only the missing
- * ones from the stored originals) and check every referenced svg/pdf key exists. A release job
+ * ones from the stored originals) and check every referenced svg/pdf key exists. Under an
+ * `outputPrefix`, keys are written beneath it, and those production already stores are copied. A release job
  * that bundles its own tool calls this with a store from `createAssetStore` and gates on the
  * returned report; no site config is involved. Needs sharp only when something is missing.
  */
 export { materializeAssets } from './assets/materialize'
+
+/** The asset store `createAssetStore` returns and `materializeAssets` takes. */
+export type { AssetStore } from './assets/types'
+
+/** What a create-only store write did: `created`, or `already-exists` (the stored object was kept). */
+export type { CreateOnlyResult } from './assets/types'
 
 /** Thrown by `materializeAssets` when sharp cannot load and keys are missing, so none can be produced. */
 export { SharpUnavailableError } from './assets/materialize'

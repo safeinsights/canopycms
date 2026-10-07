@@ -61,8 +61,8 @@ export async function collectAssetRefsCLI(options: {
 
 /**
  * @internal Exported for tests. `materialize-assets` exit codes: a release gates on them, so `1`
- * means the run did not finish, and `2` and `3` mean it ran and
- * some keys are missing.
+ * means the run did not finish, `2` that it finished and some keys cannot be produced, and `3`
+ * that the store refused or kept failing, so nothing is known about the keys it could not check.
  */
 export const MATERIALIZE_EXIT_CODES = {
   ok: 0,

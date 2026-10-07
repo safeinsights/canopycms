@@ -12,6 +12,8 @@
  */
 
 import { realpathSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
+import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import minimist from 'minimist'
 import * as p from '@clack/prompts'
@@ -78,7 +80,15 @@ export function passthroughArgs(argv: Record<string, unknown>): string[] {
 const AUTH_PROVIDERS = ['clerk', 'dev'] as const
 
 /** `materialize-assets`'s single-value string flags. */
-const MATERIALIZE_VALUE_FLAGS = ['bucket', 'region', 'refs', 'report', 'output-prefix'] as const
+const MATERIALIZE_VALUE_FLAGS = [
+  'bucket',
+  'region',
+  'refs',
+  'report',
+  'output-prefix',
+  'concurrency',
+  'transform-concurrency',
+] as const
 
 /**
  * The first of `materialize-assets`'s value flags that was repeated or negated. minimist makes a
@@ -360,6 +370,11 @@ async function main() {
     process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
+    // Cleared before any check below can exit, so a gate never reads an earlier run's report. A
+    // repeated `--report` names no single file to clear; it exits 1 below.
+    if (typeof flags['report'] === 'string' && flags['report'] !== '') {
+      await rm(resolvePath(flags['report']), { force: true })
+    }
     const repeated = findMultiValuedMaterializeFlag(argv)
     if (repeated) {
       console.error(`canopycms materialize-assets: --${repeated} takes exactly one value`)

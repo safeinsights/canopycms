@@ -14,6 +14,8 @@ import {
   readAssetRefsFile,
   SharpUnavailableError,
   type AssetRefsFile,
+  type AssetStore,
+  type CreateOnlyResult,
   type MaterializeOptions,
   type MaterializeReport,
   type MaterializeResult,
@@ -42,5 +44,8 @@ describe('canopycms/server release-tooling exports', () => {
     expectTypeOf<MaterializeOptions['outputPrefix']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<MaterializeReport['outputPrefix']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<AssetRefsFile['transforms'][number]>().toMatchTypeOf<MaterializeTarget>()
+    expectTypeOf<MaterializeOptions['store']>().toEqualTypeOf<AssetStore>()
+    expectTypeOf<ReturnType<typeof createAssetStore>>().toEqualTypeOf<AssetStore | undefined>()
+    expectTypeOf<CreateOnlyResult>().toEqualTypeOf<'created' | 'already-exists'>()
   })
 })
