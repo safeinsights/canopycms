@@ -188,6 +188,28 @@ describe('reapplySparseCones', () => {
     ])
   })
 
+  it('skips a clone with an unpublished deletion, and applies it once the deletion is committed', async () => {
+    const feat = await provision('feat', 'content')
+    await recordConfiguredSparseCone(config('cms/content'))
+    const git = simpleGit({ baseDir: feat })
+    await fs.rm(path.join(feat, 'content/a.md'))
+
+    const first = await reapplySparseCones({ contentBranchesPath: baseRoot })
+
+    expect((await git.status()).deleted).toEqual(['content/a.md'])
+    expect(first).toEqual({ reapplied: [], failed: [] })
+    expect(await cone(feat)).toEqual(['.canopy-meta', 'content'])
+    expect(consoleSpy).toHaveLogged(/feat: sparse-checkout cone waits for 1 unpublished deletion/)
+
+    await git.raw(['rm', '-q', '--cached', 'content/a.md'])
+    await git.commit('delete a')
+    expect((await reapplySparseCones({ contentBranchesPath: baseRoot })).reapplied).toEqual([
+      'feat',
+    ])
+    expect(await cone(feat)).toEqual(['.canopy-meta', 'cms/content'])
+    expect((await git.raw(['ls-files', 'content'])).trim()).toBe('')
+  })
+
   it('runs first in the sync cycle, even when the GitHub fetch then fails', async () => {
     const feat = await provision('feat', 'content')
     await recordConfiguredSparseCone(config('cms/content'))

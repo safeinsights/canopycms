@@ -34,7 +34,7 @@ async function currentCone(git: SimpleGit): Promise<string[] | null> {
  *
  * The cone is compared without a lock, and changed only under the clone's provisioning lock
  * and content-write lock, both zero-retry, outside a rebase: `sparse-checkout set` rewrites the
- * working tree. A clone that is busy is retried next cycle.
+ * working tree. A clone that is busy, or holds an unpublished deletion, is retried next cycle.
  */
 export async function reapplySparseCones(ctx: {
   contentBranchesPath: string
@@ -66,12 +66,18 @@ export async function reapplySparseCones(ctx: {
     const cone = await currentCone(git)
     if (cone === null || sameCone(cone, recorded.cone)) continue
     try {
-      if (await reapplyOne(ctx.contentBranchesPath, dirName, git, recorded.cone)) {
+      const outcome = await reapplyOne(ctx.contentBranchesPath, dirName, git, recorded.cone)
+      if (outcome === 'applied') {
         workerLog(
           `  ${dirName}: sparse-checkout cone ${[...cone].sort().join(',')} -> ` +
             (recorded.cone ? [...recorded.cone].sort().join(',') : 'full checkout'),
         )
         report.reapplied.push(dirName)
+      } else if (typeof outcome === 'number') {
+        workerLog(
+          `  ${dirName}: sparse-checkout cone waits for ${outcome} unpublished ` +
+            `deletion${outcome === 1 ? '' : 's'} to be published`,
+        )
       }
     } catch (err: unknown) {
       const error = getErrorMessage(err)
@@ -82,16 +88,19 @@ export async function reapplySparseCones(ctx: {
   return report
 }
 
-/** Apply `target` under both locks; false when the clone is busy or no longer differs. */
+/**
+ * Apply `target` under both locks: `'applied'`, `'skipped'` when the clone is busy or no longer
+ * differs, or the count of its unpublished deletions, which hold the cone where it is.
+ */
 async function reapplyOne(
   contentBranchesPath: string,
   dirName: string,
   git: SimpleGit,
   target: string[] | null,
-): Promise<boolean> {
+): Promise<'applied' | 'skipped' | number> {
   const branchPath = path.join(contentBranchesPath, dirName)
   const hold = await holdProvisionedWorkspace(contentBranchesPath, dirName)
-  if (hold.kind !== 'held') return false
+  if (hold.kind !== 'held') return 'skipped'
   try {
     let releaseContent: () => Promise<void>
     let contentLost = false
@@ -100,14 +109,19 @@ async function reapplyOne(
         contentLost = true
       })
     } catch (err: unknown) {
-      if (isNodeError(err) && err.code === 'ELOCKED') return false
+      if (isNodeError(err) && err.code === 'ELOCKED') return 'skipped'
       throw err
     }
     try {
-      if (await isRebaseInProgress(branchPath)) return false
+      if (await isRebaseInProgress(branchPath)) return 'skipped'
       const cone = await currentCone(git)
-      if (cone === null || sameCone(cone, target)) return false
-      if (hold.isCompromised() || contentLost) return false
+      if (cone === null || sameCone(cone, target)) return 'skipped'
+      // A tracked file missing from the working tree is the one edit a cone change loses: leaving
+      // the cone marks it skip-worktree, so the deletion drops out of `status` and `add -A`, and a
+      // wider cone checks the file out again. Modified, untracked and staged changes all survive.
+      const deleted = (await git.raw(['ls-files', '--deleted', '-z'])).split('\0').filter(Boolean)
+      if (deleted.length > 0) return deleted.length
+      if (hold.isCompromised() || contentLost) return 'skipped'
       try {
         await git.raw(
           target
@@ -117,7 +131,7 @@ async function reapplyOne(
       } finally {
         await invalidateBranchContentCaches(branchPath)
       }
-      return true
+      return 'applied'
     } finally {
       await releaseContent().catch(() => {})
     }
