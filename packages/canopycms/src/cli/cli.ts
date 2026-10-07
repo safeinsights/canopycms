@@ -12,6 +12,8 @@
  */
 
 import { realpathSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
+import { resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import minimist from 'minimist'
 import * as p from '@clack/prompts'
@@ -23,7 +25,7 @@ import type { MigrateFormat } from './migrate'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures'],
+    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures', 'allow-local'],
     string: [
       'app-dir',
       'branch',
@@ -44,6 +46,9 @@ export function parseArgs(rawArgs: string[]) {
       'report',
       'concurrency',
       'transform-concurrency',
+      'bucket',
+      'region',
+      'output-prefix',
     ],
     // Preserves `-- <command> [args…]` as init-github-app's private-key destination:
     // without it, minimist folds those words into `argv._` and discards the `--`,
@@ -73,6 +78,44 @@ export function passthroughArgs(argv: Record<string, unknown>): string[] {
 }
 
 const AUTH_PROVIDERS = ['clerk', 'dev'] as const
+
+/** `materialize-assets`'s single-value string flags. */
+const MATERIALIZE_VALUE_FLAGS = [
+  'bucket',
+  'region',
+  'refs',
+  'report',
+  'output-prefix',
+  'concurrency',
+  'transform-concurrency',
+] as const
+
+/**
+ * The first flag `materialize-assets` does not take, or `undefined`. Refused rather than ignored: a
+ * misspelled `--output-prefix` would send a preview build's writes to production's prefixes.
+ * minimist sets every declared boolean, passed or not, so a `false` one (absent, or `--no-x`)
+ * changes nothing and is let through. Exported for testing.
+ */
+export function findUnknownMaterializeFlag(argv: Record<string, unknown>): string | undefined {
+  const known = new Set<string>([...MATERIALIZE_VALUE_FLAGS, 'allow-failures', 'allow-local'])
+  return Object.keys(argv).find((key) => {
+    const value = argv[key]
+    if (key === '_' || known.has(key) || value === false) return false
+    return key !== '--' || (Array.isArray(value) && value.length > 0)
+  })
+}
+
+/**
+ * The first of `materialize-assets`'s value flags that was repeated or negated. minimist makes a
+ * repeated flag an array and `--no-x` false; either would otherwise read as absent, sending
+ * `--bucket a --bucket b` down the config path to a bucket neither named. Exported for testing.
+ */
+export function findMultiValuedMaterializeFlag(argv: Record<string, unknown>): string | undefined {
+  return MATERIALIZE_VALUE_FLAGS.find((name) => {
+    const value: unknown = argv[name]
+    return value !== undefined && typeof value !== 'string'
+  })
+}
 
 /**
  * Validates --auth for `init`. Undefined means "not passed" (caller falls
@@ -342,8 +385,41 @@ async function main() {
     process.exitCode = await collectAssetRefsCLI({ outDir: argv._[1] as string | undefined })
   } else if (command === 'materialize-assets') {
     const { materializeAssetsCLI } = await import('./asset-refs')
+    // Cleared before any check below can exit, so a gate never reads an earlier run's report. A
+    // repeated `--report` names no single file to clear, and one naming a `--refs` file is the
+    // input; both exit 1 below.
+    const report = flags['report']
+    if (typeof report === 'string' && report !== '') {
+      const refs: unknown[] = [argv['refs']].flat()
+      const reportPath = resolvePath(report)
+      if (!refs.some((ref) => typeof ref === 'string' && resolvePath(ref) === reportPath)) {
+        await rm(reportPath, { force: true })
+      }
+    }
+    const unknownFlag = findUnknownMaterializeFlag(argv)
+    if (unknownFlag) {
+      console.error(`canopycms materialize-assets: unknown flag --${unknownFlag}`)
+      process.exitCode = 1
+      return
+    }
+    const repeated = findMultiValuedMaterializeFlag(argv)
+    if (repeated) {
+      console.error(`canopycms materialize-assets: --${repeated} takes exactly one value`)
+      process.exitCode = 1
+      return
+    }
+    const bucket = typeof flags['bucket'] === 'string' ? flags['bucket'] : undefined
     process.exitCode = await materializeAssetsCLI({
-      projectDir: await requireProjectRoot('materialize-assets'),
+      // `--bucket` never reads the site config, so it needs no project; `--region` alone is
+      // refused by materializeAssetsCLI as a missing `--bucket`, not as a missing project.
+      projectDir:
+        bucket === undefined && flags['region'] === undefined
+          ? await requireProjectRoot('materialize-assets')
+          : undefined,
+      bucket,
+      region: typeof flags['region'] === 'string' ? flags['region'] : undefined,
+      allowLocal: flags['allow-local'] === true,
+      outputPrefix: typeof flags['output-prefix'] === 'string' ? flags['output-prefix'] : undefined,
       refsPath: typeof flags['refs'] === 'string' ? flags['refs'] : undefined,
       reportPath: typeof flags['report'] === 'string' ? flags['report'] : undefined,
       concurrency: typeof flags['concurrency'] === 'string' ? flags['concurrency'] : undefined,
@@ -433,7 +509,13 @@ async function main() {
     console.log('    --report <file>       Also write the per-key JSON report here')
     console.log('    --concurrency <n>     Store requests in flight (default: 8)')
     console.log('    --transform-concurrency <n>  Image transforms in flight (default: 2)')
+    console.log('    --bucket <name>       S3 bucket to use instead of canopycms.config.ts')
+    console.log('    --region <region>     With --bucket: its region (both or neither)')
+    console.log('    --allow-local         Accept a non-S3 store resolved from the config')
+    console.log('    --output-prefix <p>   Write every key under <p> (a PR preview), copying')
+    console.log('                          what production stores; never under a canopy prefix')
     console.log('    --allow-failures      Exit 0 despite content failures (warns loudly)')
+    console.log('    Exit codes: 0 ok, 1 could not run, 2 content failures, 3 store failures')
     console.log('')
     console.log('  sync <command>          Sync content between working tree and CMS')
     console.log('    push                  Push working-tree content to a branch workspace')

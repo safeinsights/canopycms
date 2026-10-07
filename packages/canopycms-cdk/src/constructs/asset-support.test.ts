@@ -609,6 +609,84 @@ describe('AssetSupport - BYO bucket mode', () => {
   })
 })
 
+describe('AssetSupport - enforceCreateOnlyWrites', () => {
+  interface PolicyStatement {
+    Effect: string
+    Principal?: unknown
+    Action: string | string[]
+    Resource: unknown
+    Condition?: unknown
+  }
+
+  const denyStatements = (template: Template): PolicyStatement[] =>
+    Object.values(template.findResources('AWS::S3::BucketPolicy'))
+      .flatMap((policy) => policy.Properties.PolicyDocument.Statement as PolicyStatement[])
+      .filter((statement) => statement.Effect === 'Deny')
+
+  /** A resource ARN's object-path suffix, from the `Fn::Join` CDK writes for `arnForObjects`. */
+  const objectPattern = (resource: unknown): string => {
+    const parts = (resource as { 'Fn::Join': [string, unknown[]] })['Fn::Join'][1]
+    return String(parts[parts.length - 1])
+  }
+
+  it('writes no Deny by default', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { ...BASE_PROPS })
+    const { template } = synthAttached(assetSupport, stack)
+
+    expect(denyStatements(template)).toEqual([])
+  })
+
+  it('denies an unconditional PutObject to the three content-addressed prefixes', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', {
+      ...BASE_PROPS,
+      enforceCreateOnlyWrites: true,
+    })
+    const { template } = synthAttached(assetSupport, stack)
+
+    const [deny, ...rest] = denyStatements(template)
+    expect(rest).toEqual([])
+    expect(deny).toMatchObject({
+      Principal: '*',
+      Action: 's3:PutObject',
+      Condition: { Null: { 's3:if-none-match': 'true' } },
+    })
+    expect([deny.Resource].flat().map(objectPattern).sort()).toEqual([
+      '/asset-meta/*',
+      '/asset-originals/*',
+      '/assets/*',
+    ])
+    expect(JSON.stringify(deny.Resource)).toContain('AssetsBucket')
+  })
+
+  it('refuses the prop on a BYO bucket, naming the statement to add instead', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', { ...BASE_PROPS, bucket, enforceCreateOnlyWrites: true }),
+    ).toThrow(
+      /enforceCreateOnlyWrites.*BYO `bucket`.*assets\/\*, asset-originals\/\*, asset-meta\/\*/s,
+    )
+  })
+
+  it('accepts enforceCreateOnlyWrites: false on a BYO bucket', () => {
+    const stack = makeStack()
+    const bucket = s3.Bucket.fromBucketName(stack, 'Existing', 'my-existing-bucket')
+
+    expect(
+      () =>
+        new AssetSupport(stack, 'Assets', {
+          ...BASE_PROPS,
+          bucket,
+          enforceCreateOnlyWrites: false,
+        }),
+    ).not.toThrow()
+  })
+})
+
 /** A distribution whose default behavior is unrelated, with the asset behaviors attached. */
 function synthAttached(assetSupport: AssetSupport, stack: Stack) {
   const distribution = new cloudfront.Distribution(stack, 'Dist', {
