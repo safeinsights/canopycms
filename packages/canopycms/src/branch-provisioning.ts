@@ -276,13 +276,12 @@ export async function quietAgeMs(dirPath: string, now = Date.now()): Promise<num
 
 // --- Quarantine -------------------------------------------------------------------------------
 
+type KeptReason = 'live' | 'corrupt' | 'protected' | 'foreign' | 'too-young' | 'replaced'
+
 export type QuarantineResult =
   | { kind: 'quarantined'; trashName: string }
   | { kind: 'vacant' }
-  | {
-      kind: 'kept'
-      reason: 'live' | 'corrupt' | 'protected' | 'foreign' | 'too-young' | 'replaced'
-    }
+  | { kind: 'kept'; reason: KeptReason }
 
 export interface QuarantineOptions {
   minQuietMs: number
@@ -298,7 +297,8 @@ export interface QuarantineOptions {
  * Move-then-verify: the name is renamed aside first and only what arrived at the new name is
  * judged — the same inode the old name showed, still residue, quiet for `minQuietMs` — because
  * a look through the old name can come from a stale NFS dentry for a directory another host has
- * since replaced with a live clone. Anything that fails a check is renamed straight back.
+ * since replaced with a live clone. Anything that fails a check, or cannot be checked, is
+ * renamed straight back: the sweep would trash a `.repair-*` without branch.json.
  */
 export async function quarantineResidueAt(
   baseRoot: string,
@@ -323,14 +323,23 @@ export async function quarantineResidueAt(
     throw err
   }
 
-  const state = await classifyFinalDir(candidate, options.expectedRemoteUrl)
-  const moved = await fs.lstat(candidate).catch(() => null)
-  const quiet = await quietAgeMs(candidate, options.now)
-  let reason: Extract<QuarantineResult, { kind: 'kept' }>['reason'] | undefined
-  if (!moved || moved.ino !== inode) reason = 'replaced'
-  else if (state.kind === 'vacant') reason = 'replaced'
-  else if (state.kind !== 'residue') reason = state.kind
-  else if (quiet < options.minQuietMs) reason = 'too-young'
+  const moveBack = async (why: string): Promise<void> => {
+    try {
+      await fs.rename(candidate, finalPath)
+    } catch (err: unknown) {
+      canopyLogError(
+        `[canopy] Could not move '${dirName}' back from ${candidateName} after ${why}: ` +
+          `${getErrorMessage(err)}. The worker's sweep restores or trashes it.`,
+      )
+    }
+  }
+
+  const { state, quiet, reason } = await judgeQuarantineCandidate(candidate, inode, options).catch(
+    async (err: unknown) => {
+      await moveBack(`failing to judge it (${getErrorMessage(err)})`)
+      throw err
+    },
+  )
 
   if (reason === undefined && state.kind === 'residue') {
     const trashName = stampedName(TRASH_PREFIX, dirName, new Date())
@@ -343,15 +352,25 @@ export async function quarantineResidueAt(
     return { kind: 'quarantined', trashName }
   }
 
-  try {
-    await fs.rename(candidate, finalPath)
-  } catch (err: unknown) {
-    canopyLogError(
-      `[canopy] Could not move '${dirName}' back from ${candidateName} after declining to ` +
-        `quarantine it (${reason}): ${getErrorMessage(err)}. The worker's sweep recovers it.`,
-    )
-  }
+  await moveBack(`declining to quarantine it (${reason})`)
   return { kind: 'kept', reason: reason ?? 'replaced' }
+}
+
+/** Judge what arrived at the quarantine candidate name; `reason` is set when it must be kept. */
+async function judgeQuarantineCandidate(
+  candidate: string,
+  inode: number,
+  options: QuarantineOptions,
+): Promise<{ state: FinalDirState; quiet: number; reason: KeptReason | undefined }> {
+  const state = await classifyFinalDir(candidate, options.expectedRemoteUrl)
+  const moved = await fs.lstat(candidate).catch(() => null)
+  const quiet = await quietAgeMs(candidate, options.now)
+  let reason: KeptReason | undefined
+  if (!moved || moved.ino !== inode) reason = 'replaced'
+  else if (state.kind === 'vacant') reason = 'replaced'
+  else if (state.kind !== 'residue') reason = state.kind
+  else if (quiet < options.minQuietMs) reason = 'too-young'
+  return { state, quiet, reason }
 }
 
 // --- Build and publish ------------------------------------------------------------------------

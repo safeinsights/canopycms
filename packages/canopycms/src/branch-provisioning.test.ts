@@ -3,6 +3,7 @@
  * real git in prod mode. Every residue below is built by hand in the exact
  * shape a killed process leaves behind.
  */
+import { lstatSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -393,6 +394,30 @@ describe('quarantine verifies what it moved', () => {
     expect(result).toEqual({ kind: 'kept', reason: 'replaced' })
     await expect(fs.stat(path.join(finalPath, '.git', 'config.lock'))).resolves.toBeTruthy()
     expect(await trashDirs(baseRoot)).toEqual([])
+  })
+
+  it('moves the directory back to its name when judging it throws', async () => {
+    const finalPath = await makeIncidentResidue('feat', 10 * 60_000)
+    const { ino } = await fs.lstat(finalPath)
+    // Through lstatSync: `fs.lstat` may already be a spy left by an earlier test.
+    const lstat = vi.spyOn(fs, 'lstat').mockImplementation(async (target) => {
+      if (path.basename(String(target)).startsWith('.repair-')) {
+        throw Object.assign(new Error('EIO: i/o error, lstat'), { code: 'EIO' })
+      }
+      return lstatSync(target)
+    })
+
+    try {
+      await expect(
+        quarantineResidueAt(baseRoot, 'feat', { minQuietMs: 60_000, expectedRemoteUrl: remoteUrl }),
+      ).rejects.toThrow('EIO')
+    } finally {
+      lstat.mockRestore()
+    }
+
+    expect((await fs.lstat(finalPath)).ino).toBe(ino)
+    await expect(fs.stat(path.join(finalPath, '.git', 'config.lock'))).resolves.toBeTruthy()
+    expect(await leftoverDirs(baseRoot)).toEqual([])
   })
 
   it.each([
