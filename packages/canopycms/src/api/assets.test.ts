@@ -648,8 +648,16 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(cached).not.toBeNull()
   })
 
+  it('transforms a width off the lazy-path allowlist (the any policy)', async () => {
+    const key = `assets/t/w=100/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    if (!('body' in res)) return
+    expect(imageSize(Buffer.from(res.body as Uint8Array)).width).toBe(100)
+  })
+
   it('rejects a slug that is not the asset’s own, without transforming or caching', async () => {
-    // Parity with the prod transform Lambda (canopycms-cdk's handler.ts): the
+    // The check lives in storeTransform, shared with the lazy transform Lambda: the
     // slug is load-bearing in the stored key, and `[a-z0-9-]+` is all the
     // parser can enforce, so every distinct string would otherwise alias the
     // same image into a new cache entry and a new transform.
@@ -669,6 +677,16 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     const second = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
     expect(second).toMatchObject({ kind: 'binary', status: 200 })
     expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+  })
+
+  it('stores the transform it computes untagged, so the lazy expiry never deletes it', async () => {
+    const put = vi.spyOn(store, 'putPublicObject')
+    const key = `assets/t/w=160/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put.mock.calls[0][0]).toMatchObject({ key })
+    expect(put.mock.calls[0][0].tags).toBeUndefined()
   })
 
   it('caches a non-canonically-ordered directive request under its canonical key only', async () => {

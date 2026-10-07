@@ -151,6 +151,7 @@ export class LocalAssetStore implements AssetStore {
     await this.writeHeadersSidecar(filePath, { contentType: input.contentType })
   }
 
+  /** Ignores the `ext` hint: a directory read costs nothing here and needs no permission. */
   async readOriginal(
     hash32: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null> {
@@ -181,6 +182,8 @@ export class LocalAssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    /** Ignored: tags exist for bucket lifecycle rules, and a local store has none. */
+    tags?: Readonly<Record<string, string>>
   }): Promise<void> {
     const filePath = this.resolveKey(input.key)
     await this.writeFile(filePath, input.data)

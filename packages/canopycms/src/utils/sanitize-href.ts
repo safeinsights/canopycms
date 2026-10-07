@@ -92,37 +92,22 @@ export function neutralizeImplicitOffOrigin(url: string): string {
  * this file either way, so the two surfaces cannot drift into disagreeing about which schemes
  * are acceptable (that drift is exactly why `utils/url-prefix.ts` exists — see its header).
  *
- * `allowProtocolRelative` exists because the two callers genuinely differ, and the difference
- * is blast radius rather than taste:
- *
- * - A READ-side prefix (`media.publicBaseUrl`, joined onto `/assets/…`) may legitimately be
- *   `//cdn.example.com`. `utils/url-prefix.ts`'s `isAbsoluteUrl` documents that literal
- *   spelling as an intentionally-supported off-site pointer, so rejecting it here would break
- *   a working configuration. A bad value costs a broken `<img>`.
- * - A WRITE-side endpoint (`media.uploadUrl`, where the browser POSTs a presigned upload) must
- *   not be protocol-relative even when spelled literally, because such a URL is AMBIGUOUS: it
- *   resolves to http or https depending on the scheme of whichever editor page happens to
- *   issue the upload, so the stored config does not determine where a live presigned credential
- *   and the user's file bytes are sent. That is the same principle every other rule here
- *   enforces — a config value must describe what actually happens.
- *
- *   Note this is NOT an argument that http is forbidden on the write side; bare `http://` is
- *   accepted, because a loopback or in-cluster S3-compatible endpoint is a real need and a
- *   browser on an https editor blocks the mixed-content request anyway, so it fails closed. The
- *   objection to `//host` is that it is undetermined, not that it might be insecure.
+ * A protocol-relative `//host` is refused even when spelled literally, because it is AMBIGUOUS:
+ * it resolves to http or https depending on the page issuing the request, so the stored config
+ * does not determine where, for `media.uploadUrl`, a live presigned credential and the user's
+ * file bytes are sent. Bare `http://` is accepted: a loopback or in-cluster S3-compatible
+ * endpoint is a real need, and a browser on an https editor blocks the mixed-content request
+ * anyway, so it fails closed.
  *
  * Every spelling that READS as site-relative while redefining the authority — `/\host`,
- * `\\host`, `\/host`, `///host` — is rejected for both, in both modes. Those look site-relative
+ * `\\host`, `\/host`, `///host` — is rejected too. Those look site-relative
  * to a human and to a naive `startsWith('/')` check, but WHATWG URL resolves each to a
  * different authority (measured: `///x` resolves to host `x`, not to pathname `/x`), so they
  * are never what an adopter meant. A scheme-qualified absolute URL is a separate case and is
  * accepted — `https:///cdn.example.com/` is unusual but unambiguous, resolving identically
  * standalone and against any base.
  */
-export function isHttpUrlOrSameOriginPath(
-  value: string,
-  opts: { allowProtocolRelative?: boolean } = {},
-): boolean {
+export function isHttpUrlOrSameOriginPath(value: string): boolean {
   if (value === '') return false
 
   // Reject ASCII control characters and spaces ANYWHERE in the value, not only at the edges.
@@ -137,7 +122,7 @@ export function isHttpUrlOrSameOriginPath(
 
   // A query or fragment is meaningless on both sides this predicate serves. S3's POST Object
   // takes no query parameters and a browser never transmits a fragment; and on the read side a
-  // prefix carrying either produces `https://cdn.example.com/?x=1/assets/…` once joined.
+  // prefix carrying either produces `https://cdn.example.com/?x=1/…` once joined.
   if (value.includes('?') || value.includes('#')) return false
 
   // A backslash is never legitimate in a configured URL, and it is not merely cosmetic: WHATWG
@@ -173,13 +158,7 @@ export function isHttpUrlOrSameOriginPath(
     }
   }
 
-  // A LITERAL `//host` is the only off-origin spelling that can be intentional, and only for
-  // callers that opt in. `value[2] !== '/'` matters: `///x` and `////x` are also "implicitly
-  // off-origin" and also start with `//`, but resolve to a host named `x` rather than to a
-  // path — so they must not ride in on the opt-in.
-  if (isImplicitlyOffOrigin(value)) {
-    return opts.allowProtocolRelative === true && value.startsWith('//') && value[2] !== '/'
-  }
+  if (isImplicitlyOffOrigin(value)) return false
 
   // Site-relative, with exactly one leading slash. The second clause also covers `//`, which
   // `isImplicitlyOffOrigin` reports as false only because `new URL('//', base)` throws.

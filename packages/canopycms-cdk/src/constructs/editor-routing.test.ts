@@ -363,14 +363,18 @@ describe('CanopyCmsService.attachTo', () => {
     expect(() => Template.fromStack(stack)).not.toThrow()
   })
 
-  it('composes with AssetSupport.attachTo in either order', () => {
-    const { stack, service } = buildStack('AttachWithAssetsStack')
+  it.each([
+    ['materialized', false],
+    ['lazy', true],
+  ])('composes with AssetSupport.attachTo and previewPrefix (%s)', (mode, lazyPublicTransforms) => {
+    const { stack, service } = buildStack(`AttachWithAssetsStack-${mode}`)
     const assetSupport = new AssetSupport(stack, 'Assets', {
       editorOrigins: ['https://site.example.org'],
       requireDeployableBundle: false,
+      lazyPublicTransforms,
     })
     const site = siteDistribution(stack)
-    service.attachTo(site)
+    service.attachTo(site, { previewPrefix: '/preview' })
     assetSupport.attachTo(site)
 
     const patterns = distributionConfig(Template.fromStack(stack)).CacheBehaviors!.map(
@@ -378,6 +382,8 @@ describe('CanopyCmsService.attachTo', () => {
     )
     expect(patterns).toEqual([
       ...EDITOR_PATTERNS,
+      '/preview',
+      '/preview/*',
       ASSETS_TRANSFORM_PATH_PATTERN,
       ASSETS_PATH_PATTERN,
     ])

@@ -26,7 +26,7 @@ describe('cropAreaPercentToRect', () => {
     const rect = cropAreaPercentToRect({ x: 12.345678, y: 66.665, width: 33.335, height: 33.335 })
     if (!rect) throw new Error('expected a rect')
     const directive = formatDirectives({ identity: false, crop: rect })
-    const parsed = parseTransformPath([directive, 'a'.repeat(32), 'p.png'])
+    const parsed = parseTransformPath([directive, 'a'.repeat(32), 'p.png'], 'any')
     if (!parsed.ok || parsed.directives.identity) throw new Error('expected a crop directive')
     expect(parsed.directives.crop).toEqual(rect)
   })

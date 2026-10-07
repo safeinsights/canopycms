@@ -56,8 +56,14 @@ export interface AssetStore {
     data: Uint8Array
     contentType: string
   }): Promise<void>
+  /**
+   * `ext` is where the original is expected (its meta's `ext`): that key is read first, and any
+   * `{hash32}.*` is looked for only on a miss. A hit needs no list permission; on S3 without
+   * `s3:ListBucket` a miss is a 403, which throws.
+   */
   readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null>
   putPublicObject(input: {
     key: string
@@ -65,6 +71,8 @@ export interface AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    /** Object tags; bucket lifecycle rules can filter on them. */
+    tags?: Readonly<Record<string, string>>
   }): Promise<void>
   readPublicObject(key: string): Promise<PublicObject | null>
   /** Whether a public object exists at `key`, without reading its body. */

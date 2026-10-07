@@ -128,7 +128,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
 
   const base = getPreviewAssetBase() ?? opts.baseUrl
   const rest = src.slice(TRANSFORM_URL_PREFIX.length)
-  const parsed = parseTransformPath(rest.split('/'))
+  const parsed = parseTransformPath(rest.split('/'), 'any')
   if (!parsed.ok) {
     // Malformed src (shouldn't happen for a src canopycms itself wrote) -
     // nothing sensible to merge onto, so return it unchanged rather than throw.
@@ -147,9 +147,10 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
 
 /**
  * Build a comma-joined `url w` srcset descriptor list. `widths` must all be
- * on the transform width allowlist (multiples of 160 in [160, 4096]) - this
- * is developer-facing (a host app's own responsive-image markup), so an
- * invalid width throws rather than silently dropping it.
+ * integers in [1, 8192] (the `any` width policy) - this is developer-facing (a
+ * host app's own responsive-image markup), so an invalid width throws rather
+ * than silently dropping it. A site serving the opt-in lazy public path, which
+ * transforms only allowlisted widths, must pick widths from that allowlist.
  */
 export function assetSrcSet(
   ref: AssetRef,
@@ -158,9 +159,9 @@ export function assetSrcSet(
 ): string {
   return widths
     .map((width) => {
-      if (!isAllowedTransformWidth(width)) {
+      if (!isAllowedTransformWidth(width, 'any')) {
         throw new Error(
-          `assetSrcSet: width ${width} is not allowed (must be a multiple of 160 between 160 and 4096)`,
+          `assetSrcSet: width ${width} is not allowed (must be an integer between 1 and 8192)`,
         )
       }
       return `${assetUrl(ref, { ...opts, width })} ${width}w`

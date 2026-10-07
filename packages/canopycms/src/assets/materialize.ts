@@ -2,9 +2,8 @@
  * Writing transform outputs into the store. Server-only.
  *
  * `storeTransform` computes one key and is shared by the authenticated raw route
- * (api/assets.ts) and `materializeAssets`, the batch run that writes every key a build
- * references before that build is released. The transform Lambda in canopycms-cdk keeps its
- * own S3 plumbing around the same checks and an equal Cache-Control string.
+ * (api/assets.ts), `materializeAssets` (the batch run that writes every key a build references
+ * before that build is released) and canopycms-cdk's lazy transform Lambda.
  */
 
 import { getErrorMessage, isNodeError } from '../utils/error'
@@ -16,6 +15,14 @@ import type { AssetStore } from './types'
 
 /** Every transform output is stored under a content-addressed key, so it never changes. */
 export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+
+/**
+ * The object tag on every derivative the lazy transform Lambda writes. Its bucket's `assets/t/`
+ * expiry filters on it, so what `materializeAssets` writes, which the Lambda's allowlist may refuse
+ * to recompute, is never expired. canopycms-cdk's `AssetSupport` copies these two strings as
+ * literals.
+ */
+export const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
 
 export type StoreTransformResult =
   | { ok: true; data: Uint8Array; contentType: string }
@@ -32,6 +39,7 @@ export async function storeTransform(
   store: AssetStore,
   parsed: ParsedTransformPath,
   canonicalKey: string,
+  options: { tags?: Readonly<Record<string, string>> } = {},
 ): Promise<StoreTransformResult> {
   const meta = await store.getMeta(parsed.hash32)
   if (!meta) {
@@ -43,9 +51,7 @@ export async function storeTransform(
 
   // The slug is decorative in the URL but load-bearing in the stored key, so it must equal the
   // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
-  // it aliases the same image into a new cache key. The prod transform Lambda
-  // (canopycms-cdk's lambda/asset-transform/handler.ts) makes the same check; the two must agree,
-  // or the authenticated route accepts URLs the public path 404s.
+  // it aliases the same image into a new cache key.
   if (parsed.slug !== meta.slug) {
     return {
       ok: false,
@@ -61,7 +67,7 @@ export async function storeTransform(
     return { ok: false, status: 400, error: 'Extension does not match the source format' }
   }
 
-  const original = await store.readOriginal(parsed.hash32)
+  const original = await store.readOriginal(parsed.hash32, meta.ext)
   if (!original) {
     return { ok: false, status: 404, error: `Asset ${parsed.hash32} has no original in the store` }
   }
@@ -79,6 +85,7 @@ export async function storeTransform(
     data: transformed.data,
     contentType: transformed.contentType,
     cacheControl: TRANSFORM_CACHE_CONTROL,
+    tags: options.tags,
   })
   return { ok: true, data: transformed.data, contentType: transformed.contentType }
 }
@@ -284,7 +291,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
       continue
     }
     const segments = key.slice(transformPrefix.length).split('/')
-    const canonical = canonicalizeTransformPath(segments)
+    const canonical = canonicalizeTransformPath(segments, 'any')
     if (!canonical.ok) {
       fail(key, 'content', `Invalid transform key: ${canonical.error}`)
     } else if (!canonical.isCanonical) {

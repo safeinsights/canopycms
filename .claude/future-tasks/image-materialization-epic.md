@@ -67,7 +67,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
 | 0 | Hardening that stands alone (below) | merged #406 |
 | 1 | Authenticated route carries editor and preview traffic | merged #409 |
 | 2 | `collect-asset-refs` and `materialize-assets` CLIs | merged #412 |
-| 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open |
+| 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open #413 |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
 | 5 | Docs, bookkeeping, and the final Fable full-diff review | open |
 
@@ -144,7 +144,9 @@ output is the only place a final URL exists. That creates an adopter contract: e
     because a shared prefix cannot hold both forever-kept and anonymous objects.
 - **The width policy becomes a parser option** (`allowlist` | `any`).
 - **Raise `MAX_INPUT_PIXELS` to about 50MP (8192×6144)** only after a measured memory
-  gate.
+  gate. Outcome: 24 MP (6000×4000). A full-size WebP encode of an RGBA WebP source peaked at
+  2233 MiB at 50 MP and about 37 MiB per MP, so 24 MP is the largest cap that fits a 2048 MB
+  Lambda with allocator headroom; the transform Lambda went from 1536 to 2048 MB to match.
   - Measure in both the transform Lambda and the CMS Lambda.
   - Include a 60-frame animated WebP at the cap.
   - Record the numbers in the PR.

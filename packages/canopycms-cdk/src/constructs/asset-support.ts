@@ -59,6 +59,13 @@ const PREFIXES = {
 } as const
 
 /**
+ * The tag on every object the transform Lambda writes, copied as literals for
+ * the same reason as `PREFIXES`. Source of truth is `LAZY_TRANSFORM_TAG` in
+ * `packages/canopycms/src/assets/materialize.ts`.
+ */
+const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
+
+/**
  * CORS preflight cache duration for presigned-POST uploads from the editor.
  * Used for the bucket's own CORS rule and, when `uploadBehavior` is on, for
  * both the edge's preflight response and its response headers policy.
@@ -93,57 +100,44 @@ function toFunctionLiteral(values: string[]): string {
 /** Matches packages/canopycms/src/assets/store-s3.ts's `DEFAULT_MAX_UPLOAD_BYTES`. */
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-const TRANSFORM_LAMBDA_MEMORY_MB = 1536
+/** Fits a full-size transform at `MAX_INPUT_PIXELS`; see that constant in canopycms. */
+const TRANSFORM_LAMBDA_MEMORY_MB = 2048
 const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
 
 /**
- * Concurrency cap on the transform Lambda.
- *
- * `/assets/t/*` is reachable by any anonymous viewer through CloudFront, and
- * `hash32` is not secret — it appears in every published page's `<img src>`.
- * Width and quality are allowlisted precisely to bound how many cache keys one
- * asset can have, but `crop` is a 4-decimal float rect (~10^16 values), so a
- * scripted loop of unique crops is an unbounded stream of guaranteed
- * CloudFront+S3 misses, each a sharp transform on a 1536MB Lambda plus a
- * permanently stored S3 object.
- *
- * A reservation is a CAP carved from the account's concurrency pool, not
- * pre-warmed capacity, so it costs nothing when idle (that is
- * `provisionedConcurrentExecutions`, which this is not). Genuine demand is
- * first-render misses only, since every already-generated derivative is served
- * by the S3 primary origin without invoking this function at all.
+ * Concurrency cap on the lazy transform Lambda. `hash32` is public and `crop`
+ * allows ~10^16 rects per asset, so a loop of unique crops is an unbounded
+ * stream of misses, each a sharp run plus a stored object. A reservation is a
+ * cap, not provisioned capacity, so it costs nothing idle.
  */
 const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
 
 /**
- * Retention for generated derivatives under `assets/t/`.
- *
- * Everything under that prefix is REGENERABLE — source assets live under
- * `asset-originals/` and are never touched by this rule. Without it the bucket
- * keeps every derivative forever, including every object minted by the crop
- * amplifier above.
- *
- * S3 lifecycle is prefix+age based; there is no "expire if not recently read"
- * mode. Expiry is self-healing anyway: the next request for an expired
- * derivative misses S3, fails over to the transform Lambda, regenerates and
- * re-stores it. 180 days is long enough that only genuinely cold or abusive
- * objects age out.
+ * Lazy mode's expiry for the Lambda's tagged `assets/t/` outputs, which bounds
+ * how long the crop loop above keeps what it stores. The next request
+ * regenerates an expired object while the Lambda runs.
  */
 const TRANSFORM_OUTPUT_RETENTION = Duration.days(180)
 
 /**
- * `/assets/t/*`-specific cache TTLs, custom rather than the managed
- * `CACHING_OPTIMIZED` used for plain `/assets/*`, whose 1-second MIN TTL is the
- * bug this policy exists to avoid. The transform Lambda's oversized-output path
- * (handler.ts) returns a `Cache-Control: no-store` 302 to the canonical S3 key;
- * ANY nonzero min TTL caches that redirect regardless of the origin's
- * `no-store`, and re-serving it while CloudFront's hit for the canonical key
- * still 403s/404s off S3 falls back to the Lambda again - a self-sustaining
- * redirect loop. `minTtl: 0` honors the origin's own `Cache-Control`
- * immediately; `maxTtl`/`defaultTtl` stay generous so the normal case (an
- * immutable 200 with a real `max-age`) still caches well.
+ * Lazy mode's `/assets/t/*` cache TTLs. The Lambda answers an oversized output
+ * with a `no-store` 302 to the canonical key, and any nonzero min TTL caches
+ * that redirect regardless, looping it back to the Lambda while the key still
+ * misses. `minTtl: 0` honors the origin's own `Cache-Control`.
  */
 const TRANSFORM_CACHE_MIN_TTL = Duration.seconds(0)
+
+/** Props that configure only the transform Lambda, refused without `lazyPublicTransforms`. */
+const LAZY_ONLY_PROPS = [
+  'transformOutputRetention',
+  'transformReservedConcurrency',
+  'transformRole',
+  'transformLogGroupName',
+  'transformLogRetention',
+] as const satisfies readonly (keyof AssetSupportProps)[]
+
+/** S3 statuses that send a read to `replicaBucket`. A miss (403) never does. */
+const REPLICA_FAILOVER_STATUS_CODES = [500, 502, 503, 504]
 const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
 const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
 
@@ -334,54 +328,72 @@ export interface AssetSupportProps {
   readonly autoDeleteObjects?: boolean
 
   /**
-   * Require the transform Lambda's code asset to carry proof that it was
-   * built with its native sharp binary (the `.deployable` marker written by
-   * `build:lambda`). Leave this ON for anything that can reach a real
-   * deploy.
+   * A replica of the bucket's `assets/` prefix. Both public behaviors fail over
+   * to it on 500, 502, 503 or 504 from the primary, never on a miss: the
+   * replica only holds what the primary has. With `lazyPublicTransforms`,
+   * `/assets/t/*`'s one fallback slot is the transform Lambda, so only
+   * `/assets/*` gets the replica.
    *
-   * Set to `false` ONLY in this package's own tests, which synth against the
-   * cheap `--skip-native` fixture bundle `build:test-fixtures` produces: the
-   * suite never executes the handler, so the binary is irrelevant to what it
-   * asserts, and requiring a real build would put a live `npm install sharp` in
-   * front of every test run and price the suite out of CI.
+   * It is read through its own OAC, whose grant CDK writes only on a bucket it
+   * owns: an imported replica's policy must allow this distribution itself.
+   * Import one in another region with `Bucket.fromBucketAttributes({ bucketName,
+   * region })` so its regional domain name is right. Replication must cover
+   * `assets/`; `materialize-assets` writes only the primary.
    *
-   * Adopters never need this: the published package's asset is built by
-   * `prepack`'s full `build:lambda`, so the marker is always present.
+   * @default - no failover
+   */
+  readonly replicaBucket?: s3.IBucket
+
+  /**
+   * Compute a missing `/assets/t/*` derivative on request with a transform
+   * Lambda, instead of serving only what `canopycms materialize-assets` wrote.
+   * Off, the public path computes nothing and an unmaterialized URL is a miss.
+   *
+   * On, anyone can mint any allowlisted transform of a public asset - bounded
+   * per asset except crop, at ~10^16 rects - capped by reserved concurrency and
+   * an `assets/t/` expiry that applies only to objects the Lambda writes, which
+   * carry the tag `canopy-transform=lazy`: what `materialize-assets` writes is
+   * never expired. On a BYO `bucket` this construct cannot write that rule, so
+   * lazy mode there requires an explicit `transformOutputRetention`.
+   *
+   * @default false
+   */
+  readonly lazyPublicTransforms?: boolean
+
+  /**
+   * Require the transform Lambda's code asset to carry the `.deployable`
+   * marker a full `build:lambda` writes, proving it has its native sharp
+   * binary. Checked only with `lazyPublicTransforms`. Set `false` ONLY in this
+   * package's own tests, which synth against the `--skip-native` fixture.
    *
    * @default true
    */
   readonly requireDeployableBundle?: boolean
 
-  /**
-   * Retention for the transform Lambda's CloudWatch log group (default:
-   * three months / 90 days).
-   */
+  /** Lazy mode only. Retention for the transform Lambda's log group (default 90 days). */
   readonly transformLogRetention?: logs.RetentionDays
 
   /**
-   * Concurrency cap on the transform Lambda (default: 10).
-   *
-   * This is a reservation — a CAP carved from the account's concurrency pool,
-   * not pre-warmed capacity, so it costs nothing when idle. It bounds the
-   * blast radius of the anonymous `/assets/t/*` path; see the default
-   * constant's doc comment. Raise it for an unusually image-heavy site;
-   * setting it to 0 would disable transforms entirely.
+   * Lazy mode only. Concurrency cap on the transform Lambda (default 10), a
+   * reservation that costs nothing idle. 0 disables transforms.
    */
   readonly transformReservedConcurrency?: number
 
   /**
-   * How long generated derivatives under `assets/t/` are kept (default: 180
-   * days). Only applies to a bucket this construct creates — in BYO-bucket
-   * mode the caller owns lifecycle rules.
-   *
-   * These objects are regenerable; expiry is self-healing (the next request
-   * regenerates and re-stores). Source assets under `asset-originals/` are
-   * never affected.
+   * Lazy mode only. How long the Lambda's `assets/t/` outputs are kept
+   * (default 180 days), written as a lifecycle rule on a bucket this construct
+   * creates. On a BYO `bucket` nothing is written and the prop is required:
+   * passing it states that your bucket expires them itself, filtering on the
+   * tag `canopy-transform=lazy` so what `materialize-assets` writes survives,
+   * and on a versioned bucket also expiring noncurrent versions. Remove that
+   * rule before leaving lazy mode: a key the Lambda wrote first stays tagged
+   * after a build references it. A cross-account bucket's policy must also
+   * grant the transform role `s3:PutObjectTagging` on `assets/t/*`.
    */
   readonly transformOutputRetention?: Duration
 
   /**
-   * Execution role for the transform Lambda (default: CDK creates one).
+   * Lazy mode only. Execution role for the transform Lambda (default: CDK creates one).
    *
    * Set this when the role's ARN has to be computable WITHOUT a reference to
    * this construct - the motivating case is an asset bucket in a different AWS
@@ -403,11 +415,10 @@ export interface AssetSupportProps {
   readonly transformRole?: iam.Role
 
   /**
-   * Name for the transform Lambda's CloudWatch log group (default:
+   * Lazy mode only. Name for the transform Lambda's CloudWatch log group (default:
    * `/canopycms/<stackName>/transform`). Deliberately NOT
-   * `/aws/lambda/<function-name>` - see `transformLogGroup`'s comment in the
-   * constructor for why a CDK-managed group must avoid that exact name once
-   * the function has ever been deployed without one. Override to follow an
+   * `/aws/lambda/<function-name>` - see the log group's comment in
+   * `buildTransformLambda` for why. Override to follow an
    * org naming convention, or when instantiating this construct twice in one
    * stack (the default name would collide).
    */
@@ -463,10 +474,8 @@ export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] 
  * ```ts
  * const behaviors = assetSupport.assetBehaviors()
  *
- * // CloudFront matches path patterns in the order listed and stops at the
- * // first match, so the more specific '/assets/t/*' MUST come before
- * // '/assets/*' - otherwise the broader S3-only pattern swallows transform
- * // requests and they 403 with no Lambda fallback.
+ * // CloudFront stops at the first matching pattern, so '/assets/t/*' MUST
+ * // come before '/assets/*', or lazy mode's misses never reach the Lambda.
  * new cloudfront.Distribution(this, 'Dist', {
  *   defaultBehavior: ...,
  *   additionalBehaviors: {
@@ -478,19 +487,14 @@ export const ASSET_BEHAVIOR_SPREAD_MISTAKE_KEYS = ['assets', 'assetsTransform'] 
  */
 export interface AssetCloudFrontBehaviors {
   /**
-   * `/assets/*` - static objects only (sanitized SVG/PDF the finalize
-   * pipeline wrote, plus already-computed transform outputs under
-   * `assets/t/...`, which also live under this prefix). S3 origin only -
-   * nothing here is ever computed on demand.
+   * `/assets/*`: the S3 read origin (an origin group with `replicaBucket`).
    */
   readonly assets: cloudfront.BehaviorOptions
 
   /**
-   * `/assets/t/*` - transform outputs specifically. Origin group: the same
-   * S3 origin as `assets` primary, falling over to the transform Lambda's
-   * Function URL on 403 OR 404 (a signed OAC origin reports a miss as 403;
-   * configuring both is defense-in-depth). CloudFront caches the failover
-   * response.
+   * `/assets/t/*`: the same read origin as `assets`, or with
+   * `lazyPublicTransforms` an origin group falling over to the transform
+   * Lambda on 403 or 404.
    */
   readonly assetsTransform: cloudfront.BehaviorOptions
 }
@@ -799,15 +803,8 @@ function buildUploadBehavior(
  * ```
  *
  * Separate from `AssetSupport.uploadBehavior()` because the upload route needs
- * the bucket and nothing else, while that construct's CONSTRUCTOR always builds
- * the transform Lambda, a log group, a Function URL, a role and prefix grants.
- * Those grants never reach the BUCKET policy: `Grant.addToPrincipalOrResource`
- * stops after the identity statement for a same-account grantee, and
- * `addToResourcePolicy` on a bucket CDK does not own is a no-op - an owned
- * bucket, one imported by name, and one imported by ARN in another account all
- * emit zero `AWS::S3::BucketPolicy`, so a cross-account adopter writes the
- * resource half on the bucket's own side. Prefer the method when you already
- * have an `AssetSupport`; both funnel into the same builder and cannot drift.
+ * the bucket and nothing else. Prefer the method when you already have an
+ * `AssetSupport`; both funnel into the same builder and cannot drift.
  *
  * No bucket CORS rule is written and none is needed: the edge supplies
  * `Access-Control-Allow-Origin`, and S3's ACCEPTANCE of a presigned POST is
@@ -844,12 +841,12 @@ export function assetUploadBehavior(
  * Wires:
  *
  * - The bucket's asset-prefix lifecycle rule + CORS (standalone mode only).
- * - The transform Lambda (`../../lambda/asset-transform/handler.ts`, built
- *   via `pnpm run build:lambda` - see that script's doc comment for the
- *   no-Docker sharp bundling approach), its dedicated CloudWatch log group
- *   (custom name/retention/removal policy instead of the
- *   CloudFormation-implicit `/aws/lambda/<function-name>` group), and its
- *   OAC-locked Function URL.
+ * - The public read path: `/assets/*` and `/assets/t/*` served from S3 (plus
+ *   `replicaBucket` on 5xx). It computes nothing; derivatives come from
+ *   `canopycms materialize-assets`.
+ * - With `lazyPublicTransforms`, the transform Lambda
+ *   (`../../lambda/asset-transform/handler.ts`, built by `build:lambda`), its
+ *   log group and its OAC-locked Function URL, behind `/assets/t/*`.
  * - `attachTo(distribution)`, which attaches the two CloudFront behaviors a
  *   consuming distribution needs in the only safe order (see its doc comment
  *   for why the order is the whole point); `assetBehaviors()` is the escape
@@ -865,13 +862,14 @@ export class AssetSupport extends Construct {
   /** The bucket in use (either created here, or the BYO `props.bucket`). */
   public readonly bucket: s3.IBucket
 
-  public readonly transformFunction: lambda.Function
+  /** The lazy transform Lambda; undefined unless `lazyPublicTransforms`. */
+  public readonly transformFunction: lambda.Function | undefined
 
-  /** The transform Lambda's CloudWatch log group (Lambda stdout/stderr). */
-  public readonly transformLogGroup: logs.LogGroup
+  /** The transform Lambda's CloudWatch log group; undefined unless `lazyPublicTransforms`. */
+  public readonly transformLogGroup: logs.LogGroup | undefined
 
-  /** The transform Lambda's Function URL - use as a CloudFront origin (see `assetBehaviors()`). */
-  public readonly transformFunctionUrl: lambda.FunctionUrl
+  /** The transform Lambda's Function URL; undefined unless `lazyPublicTransforms`. */
+  public readonly transformFunctionUrl: lambda.FunctionUrl | undefined
 
   /** Effective advisory upload-size cap (see `AssetSupportProps.maxUploadBytes`). */
   public readonly maxUploadBytes: number
@@ -907,15 +905,37 @@ export class AssetSupport extends Construct {
   constructor(scope: Construct, id: string, props: AssetSupportProps) {
     super(scope, id)
 
-    // Fail closed before anything else: refuse to build a stack around a
-    // transform Lambda whose code asset was never verified to contain the
-    // linux/arm64 sharp binary. `pnpm test` (whose canopycms-cdk suite rebuilds
-    // that directory as a --skip-native fixture) and any partially-failed build
-    // leave a sharp-less bundle on disk, and a later in-repo `cdk deploy` ships
-    // it - a Lambda that throws at cold start on the first image request, a
-    // long way from the cause. In the construct rather than at one deploy
-    // entrypoint, so future entrypoints inherit the protection.
+    const lazy = props.lazyPublicTransforms ?? false
+    if (!lazy) {
+      // A retention silently ignored here is the dangerous case: materialized derivatives are
+      // kept forever, so the adopter would believe in an expiry that does not exist.
+      const lambdaOnly = LAZY_ONLY_PROPS.filter((name) => props[name] !== undefined)
+      if (lambdaOnly.length > 0) {
+        throw new Error(
+          `AssetSupport: ${lambdaOnly.join(', ')} only appl${lambdaOnly.length === 1 ? 'ies' : 'y'} ` +
+            'with `lazyPublicTransforms: true`. Without it there is no transform Lambda and ' +
+            'materialized derivatives under assets/t/ are kept forever. Remove the prop(s), or ' +
+            'set `lazyPublicTransforms: true` if you mean to compute derivatives on request.',
+        )
+      }
+    } else if (props.bucket && props.transformOutputRetention === undefined) {
+      throw new Error(
+        'AssetSupport: `lazyPublicTransforms` on a BYO `bucket` needs an explicit ' +
+          '`transformOutputRetention`. This construct cannot write lifecycle rules on a bucket ' +
+          'it did not create, and anonymous callers can mint objects under assets/t/ in lazy ' +
+          'mode. Add an expiry rule for the assets/t/ prefix and the canopy-transform=lazy tag ' +
+          '(on a versioned bucket, also expiring noncurrent versions) to your bucket and pass ' +
+          'its duration as `transformOutputRetention`, or drop ' +
+          '`lazyPublicTransforms` and run `canopycms materialize-assets` in your release ' +
+          'pipeline instead.',
+      )
+    }
+
+    // Fail closed: a bundle without the marker has no linux/arm64 sharp and
+    // throws at cold start on the first image request, far from the cause.
+    // `pnpm test` leaves exactly such a fixture on disk.
     if (
+      lazy &&
       (props.requireDeployableBundle ?? true) &&
       !existsSync(path.join(transformAssetDir, DEPLOYABLE_MARKER))
     ) {
@@ -970,23 +990,30 @@ export class AssetSupport extends Construct {
         versioned: props.versioned ?? false,
         removalPolicy: props.removalPolicy ?? RemovalPolicy.RETAIN,
         autoDeleteObjects: props.autoDeleteObjects ?? false,
-        // `asset-staging/` expires after a day, and generated derivatives
-        // under `assets/t/` after `transformOutputRetention`. Originals, meta
-        // and the public prefix are kept forever by design (content-addressed,
-        // immutable - see the design record's "Storage" section).
+        // Everything else is content-addressed and kept forever, materialized
+        // derivatives included; only the Lambda's tagged outputs expire. On a
+        // versioned bucket an expiry only adds a delete marker, so each rule
+        // also expires noncurrent versions or it would free nothing.
         lifecycleRules: [
           {
             id: 'expire-asset-staging',
             enabled: true,
             prefix: `${PREFIXES.staging}/`,
             expiration: Duration.days(1),
+            noncurrentVersionExpiration: Duration.days(1),
           },
-          {
-            id: 'expire-transform-outputs',
-            enabled: true,
-            prefix: `${PREFIXES.transform}/`,
-            expiration: props.transformOutputRetention ?? TRANSFORM_OUTPUT_RETENTION,
-          },
+          ...(lazy
+            ? [
+                {
+                  id: 'expire-transform-outputs',
+                  enabled: true,
+                  prefix: `${PREFIXES.transform}/`,
+                  tagFilters: { [LAZY_TRANSFORM_TAG.key]: LAZY_TRANSFORM_TAG.value },
+                  expiration: props.transformOutputRetention ?? TRANSFORM_OUTPUT_RETENTION,
+                  noncurrentVersionExpiration: Duration.days(1),
+                },
+              ]
+            : []),
         ],
         // Omitted entirely when `editorOrigins` is absent - the upload is then
         // going through `uploadBehavior`, which supplies ACAO at the edge, and
@@ -1006,89 +1033,14 @@ export class AssetSupport extends Construct {
       })
     }
 
-    // Dedicated CloudWatch log group for the transform Lambda's stdout/stderr,
-    // custom-named and NOT the CloudFormation-implicit
-    // `/aws/lambda/<function name>`: CDK does not manage that group at all
-    // (infinite retention, and `cdk destroy` leaves it behind), and Lambda
-    // auto-creates it on first invoke OUTSIDE CloudFormation, after which a CDK
-    // `LogGroup` using that exact name fails `CreateLogGroup` with "already
-    // exists" and blocks every future `cdk deploy`. Same convention as
-    // `CanopyCmsService`'s log groups (cms-service.ts).
-    this.transformLogGroup = new logs.LogGroup(this, 'TransformFunctionLogs', {
-      logGroupName:
-        props.transformLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/transform`,
-      retention: props.transformLogRetention ?? logs.RetentionDays.THREE_MONTHS,
-      removalPolicy: RemovalPolicy.DESTROY,
-    })
-
-    // Re-attach what CDK silently drops for a caller-supplied role. MUST run
-    // for every passed role - see that function's doc comment. This function is
-    // not VPC-attached, so it takes basic execution only and must NOT be
-    // collapsed into the CMS Lambda's `vpc: true` call site.
-    if (props.transformRole) {
-      attachLambdaExecutionPolicies(props.transformRole, { vpc: false })
+    if (lazy) {
+      const transform = this.buildTransformLambda(props)
+      this.transformFunction = transform.fn
+      this.transformLogGroup = transform.logGroup
+      this.transformFunctionUrl = transform.url
     }
 
-    this.transformFunction = new lambda.Function(this, 'TransformFunction', {
-      // Default (unset) leaves CDK to create the execution role, with its own
-      // managed policies intact. See `transformRole`'s doc comment.
-      role: props.transformRole,
-      // Built by `pnpm run build:lambda` (lambda/asset-transform/build.mjs) -
-      // esbuild bundle + a real linux/arm64 `npm install sharp` alongside it,
-      // no Docker. `cdk synth`/`deploy` need that script run first; it is NOT
-      // run automatically here.
-      code: lambda.Code.fromAsset(transformAssetDir),
-      handler: 'handler.handler',
-      // nodejs20.x is deprecated and CDK's CloudFormation validation fails synth
-      // on it. The esbuild bundle (lambda/asset-transform/build.mjs) targets
-      // node22 to match; move the two together.
-      runtime: lambda.Runtime.NODEJS_22_X,
-      architecture: lambda.Architecture.ARM_64,
-      memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
-      timeout: TRANSFORM_LAMBDA_TIMEOUT,
-      // See the constant's doc comment: this is an anonymous, uncapped compute
-      // and storage amplifier without it.
-      reservedConcurrentExecutions:
-        props.transformReservedConcurrency ?? TRANSFORM_LAMBDA_RESERVED_CONCURRENCY,
-      // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
-      // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
-      // both are set on the same function) - the removal policy lives on the
-      // LogGroup construct above instead.
-      logGroup: this.transformLogGroup,
-      environment: {
-        ASSET_BUCKET: this.bucket.bucketName,
-      },
-    })
-
-    // Explicit, scoped grant - NOT a reliance on the auto-created execution
-    // role's AWSLambdaBasicExecutionRole managed policy, which CDK attaches
-    // regardless of `logGroup` and never adjusts for it (passing `logGroup`
-    // only points the function's LoggingConfig at this group; it grants no
-    // IAM). That policy's logs:CreateLogStream/logs:PutLogEvents statement is
-    // scoped to `arn:aws:logs:*:*:log-group:/aws/lambda/*:*`, so it grants
-    // nothing for a custom-named group. Without this grantWrite, log delivery
-    // fails its permission check with no error surfaced anywhere - logs simply
-    // vanish.
-    this.transformLogGroup.grantWrite(this.transformFunction)
-
-    // Originals are what it transforms; `asset-meta/{hash32}.json` carries the
-    // kind/ext it must look up before it can transform anything, so meta is
-    // read too.
-    this.bucket.grantRead(this.transformFunction, `${PREFIXES.originals}/*`)
-    this.bucket.grantRead(this.transformFunction, `${PREFIXES.meta}/*`)
-    // Write access to `assets/*` covers both the public prefix and
-    // `assets/t/*` (transform outputs nest under it) in one grant.
-    this.bucket.grantPut(this.transformFunction, `${PREFIXES.public}/*`)
-
-    // AWS_IAM (not NONE): only reachable through CloudFront's Origin Access
-    // Control, matching CanopyCmsService/CanopyCmsDistribution's existing
-    // Function URL pattern (see cms-service.ts / cms-distribution.ts) -
-    // direct hits to the Function URL are rejected.
-    this.transformFunctionUrl = this.transformFunction.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.AWS_IAM,
-    })
-
-    this.behaviors = this.buildBehaviors()
+    this.behaviors = this.buildBehaviors(props.replicaBucket)
 
     // Validated eagerly, built lazily (see `upload`'s comment) - the accessor
     // may never be called, and a bad `allowedOrigins` should not wait for it
@@ -1156,30 +1108,94 @@ export class AssetSupport extends Construct {
     })
   }
 
-  private buildBehaviors(): AssetCloudFrontBehaviors {
-    const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(this.bucket)
-    // readTimeout passed EXPLICITLY, matching the transform Lambda's own
-    // timeout. Unset, CloudFront applies its 30s service default, which
-    // happens to equal TRANSFORM_LAMBDA_TIMEOUT today -- an accidental match,
-    // not an asserted one: raising the Lambda's timeout alone would silently
-    // start 504ing the slow transforms the raise was meant to allow.
-    const transformLambdaOrigin = origins.FunctionUrlOrigin.withOriginAccessControl(
-      this.transformFunctionUrl,
-      { readTimeout: TRANSFORM_LAMBDA_TIMEOUT },
-    )
+  private buildTransformLambda(props: AssetSupportProps): {
+    fn: lambda.Function
+    logGroup: logs.LogGroup
+    url: lambda.FunctionUrl
+  } {
+    // Custom-named, never `/aws/lambda/<function name>`: Lambda auto-creates that
+    // group outside CloudFormation on first invoke, after which a CDK `LogGroup`
+    // of the same name fails every deploy with "already exists". Same convention
+    // as `CanopyCmsService`'s log groups.
+    const logGroup = new logs.LogGroup(this, 'TransformFunctionLogs', {
+      logGroupName:
+        props.transformLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/transform`,
+      retention: props.transformLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+
+    // Re-attach what CDK silently drops for a caller-supplied role. This function
+    // is not VPC-attached, so it takes basic execution only.
+    if (props.transformRole) {
+      attachLambdaExecutionPolicies(props.transformRole, { vpc: false })
+    }
+
+    const fn = new lambda.Function(this, 'TransformFunction', {
+      role: props.transformRole,
+      // Built by `build:lambda` (lambda/asset-transform/build.mjs), not here.
+      code: lambda.Code.fromAsset(transformAssetDir),
+      handler: 'handler.handler',
+      // build.mjs targets node22 to match; move the two together.
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      memorySize: TRANSFORM_LAMBDA_MEMORY_MB,
+      timeout: TRANSFORM_LAMBDA_TIMEOUT,
+      reservedConcurrentExecutions:
+        props.transformReservedConcurrency ?? TRANSFORM_LAMBDA_RESERVED_CONCURRENCY,
+      // `logGroup`, not `logRetention`: CDK refuses both on one function.
+      logGroup,
+      environment: {
+        ASSET_BUCKET: this.bucket.bucketName,
+      },
+    })
+
+    // The managed basic-execution policy's log statement covers only
+    // `/aws/lambda/*`, so without this a custom-named group silently gets no logs.
+    logGroup.grantWrite(fn)
+
+    // `grantRead` includes s3:ListBucket, so an unknown hash is a 404 rather than
+    // a 403 the store throws on, and `readOriginal` can list when the meta's ext
+    // misses. `assets/*` covers `assets/t/*`, and `grantPut` includes the
+    // s3:PutObjectTagging a tagged PutObject needs.
+    this.bucket.grantRead(fn, `${PREFIXES.originals}/*`)
+    this.bucket.grantRead(fn, `${PREFIXES.meta}/*`)
+    this.bucket.grantPut(fn, `${PREFIXES.public}/*`)
+
+    // AWS_IAM: reachable only through CloudFront's OAC.
+    const url = fn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM })
+    return { fn, logGroup, url }
+  }
+
+  private buildBehaviors(replicaBucket: s3.IBucket | undefined): AssetCloudFrontBehaviors {
+    // READ only, so a miss is 403: without s3:ListBucket, S3 does not reveal
+    // whether a key exists. LIST would make it 404 but lets any behavior that
+    // reaches the bucket root list it, and CDK warns on every synth.
+    const readOrigin = (bucket: s3.IBucket) =>
+      origins.S3BucketOrigin.withOriginAccessControl(bucket)
+    const primary = readOrigin(this.bucket)
+    // Materialized mode gives both behaviors this one object, so the distribution
+    // emits one origin (or one origin group), not two. Lazy mode's `/assets/t/*`
+    // group binds `primary` again, as a second origin.
+    const read = replicaBucket
+      ? new origins.OriginGroup({
+          primaryOrigin: primary,
+          fallbackOrigin: readOrigin(replicaBucket),
+          fallbackStatusCodes: REPLICA_FAILOVER_STATUS_CODES,
+        })
+      : primary
 
     const assets: cloudfront.BehaviorOptions = {
-      origin: s3Origin,
+      origin: read,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       compress: true,
     }
+    if (!this.transformFunctionUrl) {
+      return { assets, assetsTransform: { ...assets } }
+    }
 
-    // Custom (not managed CACHING_OPTIMIZED) - see TRANSFORM_CACHE_MIN_TTL's
-    // doc comment for why this behavior specifically needs minTtl: 0.
-    // Directives live entirely in the path (no query string), and the
-    // response never varies by cookie/request header, so nothing is
-    // forwarded into the cache key.
+    // Directives live in the path and the response varies by nothing else, so
+    // nothing enters the cache key.
     const transformCachePolicy = new cloudfront.CachePolicy(this, 'AssetsTransformCachePolicy', {
       minTtl: TRANSFORM_CACHE_MIN_TTL,
       defaultTtl: TRANSFORM_CACHE_DEFAULT_TTL,
@@ -1192,14 +1208,16 @@ export class AssetSupport extends Construct {
     })
 
     const assetsTransform: cloudfront.BehaviorOptions = {
+      // The group's one fallback slot is the Lambda, so no replica here. An
+      // OAC miss is 403; 404 is listed too for a bucket whose policy grants list.
       origin: new origins.OriginGroup({
-        primaryOrigin: s3Origin,
-        fallbackOrigin: transformLambdaOrigin,
-        // A signed OAC origin reports a miss as 403 (not 404, since it
-        // never reveals object existence) - CloudFront's own S3 origin
-        // handling can still surface 404 in some paths, so both are
-        // configured. Confirmed working end-to-end by the sandbox spike
-        // (.claude/future-tasks/resolved/assets-media-system.md's SPIKE RESULT).
+        primaryOrigin: primary,
+        // readTimeout explicit: CloudFront's 30s default only happens to equal
+        // the Lambda's timeout, and raising one alone would 504 slow transforms.
+        fallbackOrigin: origins.FunctionUrlOrigin.withOriginAccessControl(
+          this.transformFunctionUrl,
+          { readTimeout: TRANSFORM_LAMBDA_TIMEOUT },
+        ),
         fallbackStatusCodes: [403, 404],
       }),
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -1247,9 +1265,8 @@ export class AssetSupport extends Construct {
    *   site's cookies and any cached basic-auth credential are live hazards
    *   there, stripped by policy and function rather than never sent at all.
    * - NOT one shared distribution serving asset reads AND writes for every
-   *   environment. That means one `AssetSupport`, which owns the transform
-   *   Lambda shipping inside this package, so a `canopycms-cdk` bump would move
-   *   every environment's asset pipeline at once. Only the upload route moves;
+   *   environment. That means one `AssetSupport`, so a `canopycms-cdk` bump
+   *   would move every environment's asset pipeline at once. Only the upload route moves;
    *   it depends on the bucket and nothing else, the same property that lets
    *   `assetUploadBehavior` build it from a bucket alone.
    */
@@ -1290,17 +1307,12 @@ export class AssetSupport extends Construct {
    * Attach both asset behaviors to a concrete CloudFront distribution, in the
    * only safe order.
    *
-   * THE ORDER IS THE WHOLE POINT. CloudFront matches path patterns in the order
-   * given and stops at the first match. `/assets/*` is a broader, S3-only
-   * pattern that also matches every `/assets/t/*` request; `/assets/t/*` is an
-   * origin group that fails over to the transform Lambda on a miss. Attach
-   * `/assets/*` first and every never-yet-computed transform gets a permanent
-   * 403 (an OAC-signed S3 miss reports 403) while already-computed transforms
-   * keep working. `'/assets/*'` also sorts BEFORE `'/assets/t/*'`
-   * lexicographically (`*` = 0x2A, `t` = 0x74), so alphabetizing the keys
-   * reproduces exactly this failure with no synth or deploy error to catch it -
-   * and `assetBehaviors()` attaches no path pattern, so nothing there stops a
-   * caller getting it wrong.
+   * CloudFront stops at the first matching pattern, and `/assets/*` also
+   * matches every `/assets/t/*` request. With `lazyPublicTransforms`, attaching
+   * it first means no miss ever reaches the transform Lambda, with no synth or
+   * deploy error; `'/assets/*'` also sorts first alphabetically. The two
+   * behaviors are identical otherwise, and the order is kept so that switching
+   * modes changes nothing else.
    *
    * `overrides` is merged into BOTH behaviors. The motivating case is a
    * distribution running a viewer-request function on every behavior - tier
@@ -1338,19 +1350,10 @@ export class AssetSupport extends Construct {
     }
     new Construct(distribution, ATTACHED_MARKER_ID)
 
-    // Drop explicitly-`undefined` keys before merging. A spread copies own
-    // enumerable keys INCLUDING ones whose value is undefined, so
-    // `{ ...transformRest, ...{ cachePolicy: undefined } }` deletes the
-    // construct's choice and lets CDK substitute a DIFFERENT default:
-    // `cachePolicy: undefined` swaps this behavior's custom policy
-    // (TRANSFORM_CACHE_MIN_TTL = 0, which exists solely to stop the
-    // oversized-output redirect loop) for the managed CACHING_OPTIMIZED and its
-    // 1-second min TTL, and `viewerProtocolPolicy: undefined` downgrades BOTH
-    // behaviors from redirect-to-https to allow-all, serving assets over plain
-    // HTTP. Not a contrived input: `attachTo(dist, { cachePolicy:
-    // props.maybePolicy })` with the prop unset typechecks (every
-    // AddBehaviorOptions field is already optional), synthesizes and deploys
-    // clean.
+    // Drop explicitly-`undefined` keys: a spread copies them, so forwarding an
+    // unset optional prop would replace the construct's choice with CDK's
+    // default - lazy mode's minTtl-0 policy with CACHING_OPTIMIZED, and
+    // redirect-to-https with allow-all on both behaviors.
     const definedOverrides = Object.fromEntries(
       Object.entries(overrides ?? {}).filter(([, value]) => value !== undefined),
     )

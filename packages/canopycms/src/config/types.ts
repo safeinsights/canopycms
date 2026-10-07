@@ -205,17 +205,16 @@ export type FieldConfig =
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
-  | { adapter: 'local'; publicBaseUrl?: string; directory?: string }
+  | { adapter: 'local'; directory?: string }
   | {
       adapter: 's3'
       bucket: string
       region: string
-      publicBaseUrl?: string
       /** POST target for presigned direct uploads; see mediaSchema's s3 branch. */
       uploadUrl?: string
       maxUploadBytes?: number
     }
-  | { adapter: 'lfs'; publicBaseUrl?: string }
+  | { adapter: 'lfs' }
 
 /**
  * Field definitions for one entry type — the array of FieldConfig that

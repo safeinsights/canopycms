@@ -183,7 +183,14 @@ export class S3AssetStore implements AssetStore {
 
   async readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null> {
+    if (ext !== undefined) {
+      const direct = await this.getObject(this.keys.originalKey(hash32, ext))
+      const data = await direct?.Body?.transformToByteArray()
+      if (data) return { data, ext, contentType: direct?.ContentType }
+    }
+
     const prefix = this.keys.originalPrefix(hash32)
     const listed = await this.client.send(
       new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, MaxKeys: 1 }),
@@ -204,7 +211,13 @@ export class S3AssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    tags?: Readonly<Record<string, string>>
   }): Promise<void> {
+    // `encodeURIComponent` writes a space as `%20`, which reads the same to any decoder;
+    // URLSearchParams writes `+`.
+    const tagging = Object.entries(input.tags ?? {})
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&')
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -213,6 +226,7 @@ export class S3AssetStore implements AssetStore {
         ContentType: input.contentType,
         ContentDisposition: input.contentDisposition,
         CacheControl: input.cacheControl,
+        Tagging: tagging || undefined,
       }),
     )
   }

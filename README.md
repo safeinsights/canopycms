@@ -1133,11 +1133,11 @@ media: {
 }
 ```
 
-The editor needs no asset mount point: it loads every image through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `publicBaseUrl` is accepted but no longer read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
+The editor needs no asset mount point: it loads every image through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
 
 For local development, omit `media` entirely (uploads go to `.canopy-dev/assets/` via the built-in local adapter), point it at `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket to test the S3 path.
 
-Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST — the bytes never pass through your API route — and on completion the server sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs that transform on first request and cache immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the exported helpers:
+Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST — the bytes never pass through your API route — and on completion the server sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the exported helpers:
 
 ```typescript
 import { assetUrl, assetSrcSet } from 'canopycms'
@@ -1158,7 +1158,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 
 > **The asset store is site-wide, not branch-scoped.** Because assets are content-addressed and shared (which is what lets a branch merge avoid moving files), branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Asset URLs are unguessable, but the library listing is open to every signed-in user, so treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
-**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to an existing one) and the transform Lambda. Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order, since CloudFront matches path patterns in the order given and a more specific pattern listed after a more general one is never reached. For a distribution built outside `CanopyCmsDistribution`, `assetBehaviors()` and `attachTo(distribution)` remain available, and a hand-wired `additionalBehaviors` that gets the order wrong fails `cdk synth` with an actionable error instead of deploying broken. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to an existing one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` transforms misses in a Lambda instead. Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order (CloudFront takes the first matching pattern). For a distribution built outside `CanopyCmsDistribution`, `assetBehaviors()` and `attachTo(distribution)` remain available, and a hand-wired `additionalBehaviors` that gets the order wrong fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 **Routing uploads through your own CDN**
 
@@ -1177,7 +1177,7 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 // media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
-Both entry points build the route through one shared internal function, so they cannot drift; the difference is what else gets built, since `AssetSupport`'s constructor always creates the transform Lambda, its log group, Function URL and execution role. Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
+Both entry points build the route through one shared internal function, so they cannot drift; the difference is that `AssetSupport` also builds the read behaviors. Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
 
 Wiring the route by hand instead, five things are easy to get wrong:
 
@@ -1213,7 +1213,7 @@ npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report mate
 
 `collect-asset-refs` writes the `/assets/…` keys in the output's text files, whatever prefix precedes them, to `out/canopy-asset-refs.json`, and fails on a non-canonical or malformed URL. `materialize-assets` transforms only the keys the store lacks and checks svg/pdf keys exist. It exits non-zero on any failure, naming the pages; `--allow-failures` tolerates references to assets the store cannot produce, never store errors.
 
-**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too.
+**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too. Widths may be any integer up to 8192; `lazyPublicTransforms` accepts only 32, 48, 64, 96, 128 and multiples of 160 up to 4096.
 
 `materialize-assets` reads `media` from `canopycms.config.ts`, and on S3 needs `s3:GetObject` (which also authorizes HEAD) on `asset-originals/*`, `asset-meta/*` and `assets/*`, `s3:PutObject` on `assets/t/*`, and `s3:ListBucket` for those prefixes. Without `ListBucket`, a missing key is a 403: a store failure.
 

@@ -224,11 +224,46 @@ render.
 
 ### `collect-asset-refs` and `materialize-assets` store a build's images before release
 
-**What changed.** `canopycms collect-asset-refs <outDir>` writes the image keys a static build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>` transforms and stores whichever of them the configured store lacks. Nothing yet depends on them: the public `/assets/t/` path still transforms on a miss.
+**What changed.** `canopycms collect-asset-refs <outDir>` writes the image keys a static build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>` transforms and stores whichever of them the configured store lacks.
 
-**To adopt.** Optional until the public path stops transforming. Run `collect-asset-refs` right after the static build and before any step that lists the output's files. Run `materialize-assets` from the project before the release is served, with the S3 grants listed in the README's "Storing a build's images before it is released". Check that every `/assets/t/` URL your pages can request appears as text in the build output: compute widths at render time, not on a client-side interaction.
+**To adopt.** Run `collect-asset-refs` after the static build, before any step that lists its files. Run `materialize-assets` before the release is served, with the S3 grants the README lists. Every `/assets/t/` URL a page can request must appear as text in the build output.
 
 **Now deletable.** A pre-release warm-up step that requests image URLs to get them transformed.
+
+### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
+
+**What changed.** `/assets/*` and `/assets/t/*` come from the bucket alone, with an optional
+`replicaBucket` for 5xx failover. An unmaterialized URL is a 403; no transform Lambda or
+`assets/t/` expiry exists, `transformFunction`/`transformLogGroup`/`transformFunctionUrl` are
+`undefined`. `transformRole`, `transformReservedConcurrency`, `transformOutputRetention`,
+`transformLogGroupName` and `transformLogRetention` now throw: drop them, or set
+`lazyPublicTransforms: true`.
+
+**To adopt.** Until your pipeline runs both steps above, set `lazyPublicTransforms: true`. Only
+the Lambda's writes expire, tagged `canopy-transform=lazy`; older ones never do. On a
+bucket you pass in, also pass `transformOutputRetention` and filter your expiry rule on that tag;
+cross-account, grant the transform role `s3:PutObjectTagging`. Then remove the opt-in and those
+props, and pass `replicaBucket` if you replicate `assets/`.
+
+**Now deletable.** Your `assets/t/` expiry rule, before leaving lazy mode.
+
+### Wider image limits
+
+**What changed.** Uploads up to 24 MP (6000×4000), up from 16.7 MP. Widths are any integer up to
+8192 everywhere but the lazy Lambda, whose allowlist gains 32, 48, 64, 96 and 128 and which now has
+2048 MB. An `orig` over 10 MiB is no longer refused.
+
+**To adopt.** Nothing.
+
+**Now deletable.** Rounding widths to a multiple of 160.
+
+### `media.publicBaseUrl` is removed — **breaking (config)**
+
+**What changed.** Nothing read it, and the strict `media` schema now fails a config that sets it.
+
+**To adopt.** Delete it. Pass `baseUrl` to `assetUrl`/`assetSrcSet` to prefix public asset URLs.
+
+**Now deletable.** Anything that only fed it.
 
 ---
 
@@ -665,24 +700,6 @@ site-relative value only works where that path routes to the bucket, so it 404s 
 With `canopycms-cdk`'s `AssetSupport` in standalone mode, `editorOrigins` becomes inert at the same
 moment; it stays a required prop, since a cross-origin editor is still the default shape.
 
-#### `media.publicBaseUrl` accepts a site-relative path, and rejects non-http(s) schemes
-
-**What changed.** `publicBaseUrl` was `z.string().url()`. It now accepts an absolute `http(s)` URL,
-a protocol-relative `//host` URL, **or** a site-relative path such as `/preview-123`, so you can
-state the asset mount point directly in every topology instead of relying on the deployment
-`basePath` inference. That inference is kept, so nothing breaks on upgrade.
-
-**To adopt.** Nothing required.
-
-**Watch out — this is also a tightening.** `z.string().url()` accepted anything `new URL()` parses,
-including `mailto:` and `javascript:`. Those now fail validation; a value of that shape never
-worked, so this converts a silent misconfiguration into a startup error.
-
-Four narrower shapes are also rejected, because the browser rewrites them so the stored value stops
-describing what is requested: a literal space (use `%20`); a backslash anywhere (`/asset\upload/` is
-sent as `/asset/upload/`); `.` or `..` segments in any spelling, percent-encoded included; and a
-scheme with no `//` (`https:cdn.example.com`), which resolves as a relative reference.
-
 #### `media` config now rejects unknown keys
 
 **What changed.** Each branch of `mediaSchema` is `.strict()`. `CanopyConfigSchema`'s own
@@ -1044,7 +1061,7 @@ Every entry below shipped in `0.0.64`.
 
 #### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
-**What changed.** Three things, all pointing at the same failure — deploying under a Next.js
+**What changed.** Two things, both pointing at the same failure — deploying under a Next.js
 `basePath`, where Next auto-prefixes only its own `Image`/`Link`/`Script` and leaves every raw
 string URL resolving at the origin root.
 
@@ -1057,8 +1074,6 @@ string URL resolving at the origin root.
 2. A new top-level `basePath` config key makes the **editor** work under a `basePath`. Its API route
    base and preview pane were hardcoded to the origin root, so the editor loaded no API response at
    all on such a deployment.
-3. `media.publicBaseUrl` is documented for what it actually is: the editor's own answer to "where is
-   `/assets` mounted", editor-display-only.
 
 **To adopt.** Nothing if you deploy at the origin root. If you deploy under a `basePath`, state it
 in your Canopy config as well as `next.config` (CanopyCMS cannot read `next.config`):

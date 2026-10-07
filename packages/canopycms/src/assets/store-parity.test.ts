@@ -184,6 +184,23 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
       expect(result?.contentType).toBe('image/png')
     })
 
+    it('reads an original by its expected ext, and finds it under another ext on a miss', async () => {
+      const { store } = harness
+      const hash32 = hash32For(43)
+      await store.putOriginal({
+        hash32,
+        ext: 'jpg',
+        data: new TextEncoder().encode('jpg-bytes'),
+        contentType: 'image/jpeg',
+      })
+      for (const hint of ['jpg', 'jpeg']) {
+        const result = await store.readOriginal(hash32, hint)
+        expect(result && textOf(result.data)).toBe('jpg-bytes')
+        expect(result?.ext).toBe('jpg')
+      }
+      expect(await store.readOriginal(hash32For(998), 'png')).toBeNull()
+    })
+
     it('returns null for readOriginal of a missing hash', async () => {
       expect(await harness.store.readOriginal(hash32For(999))).toBeNull()
     })

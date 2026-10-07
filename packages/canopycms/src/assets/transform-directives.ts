@@ -4,17 +4,16 @@
  * NO imports (not even other files in this directory) so it can be imported
  * from client bundles (via `assetUrl`/`assetSrcSet` in asset-url.ts, exported
  * off the package's main entry) as well as from the server-only transform
- * engine (transform.ts) and the prod transform Lambda, without
+ * engine (transform.ts) and the lazy transform Lambda, without
  * ever pulling in node:crypto, sharp, or any other server-only dependency.
  *
  * `{directives}` is either the literal identity token (`orig`) or a
  * comma-separated list of `key=value` pairs drawn from:
- *   w={int}   output width - allowlisted to multiples of 160 in [160, 4096]
- *             (bounds cache-stuffing; upscaling is rejected at transform
- *             time via `withoutEnlargement`, not here)
+ *   w={int}   output width, accepted per `TransformWidthPolicy` (upscaling
+ *             is rejected at transform time via `withoutEnlargement`, not here)
  *   f={fmt}   output format: webp | jpeg | png - when present, the URL's
  *             `{ext}` must equal it exactly
- *   q={int}   quality 1..100 (encoder-dependent)
+ *   q={int}   quality, a multiple of 5 in [30, 95] under either policy
  *   c={rect}  normalized crop rect `x:y:w:h`, four floats in [0,1] with
  *             x+w<=1 and y+h<=1, w>0 and h>0 (colon-separated - commas are
  *             the directive separator)
@@ -62,9 +61,24 @@ export type ParseTransformPathResult =
   | ({ readonly ok: true } & ParsedTransformPath)
   | { readonly ok: false; readonly error: string }
 
-const MIN_WIDTH = 160
-const MAX_WIDTH = 4096
-const WIDTH_STEP = 160
+/**
+ * Which widths a transform path accepts. The policy only narrows what parses; a width that parses
+ * under both has the same canonical spelling under both.
+ *
+ * - `allowlist`: multiples of 160 in [160, 4096], plus the small rungs 32, 48, 64, 96 and 128. For
+ *   the opt-in anonymous on-demand path, where every accepted width is a new stored object an
+ *   anonymous caller can mint.
+ * - `any`: any integer in [1, 8192]. For every path where the URLs come from site code or a
+ *   signed-in editor: the authenticated route, `assetUrl`/`assetSrcSet`, the collector and the
+ *   materializer.
+ */
+export type TransformWidthPolicy = 'allowlist' | 'any'
+
+const MIN_ALLOWLIST_WIDTH = 160
+const MAX_ALLOWLIST_WIDTH = 4096
+const ALLOWLIST_WIDTH_STEP = 160
+const SMALL_ALLOWLIST_WIDTHS: ReadonlySet<number> = new Set([32, 48, 64, 96, 128])
+const MAX_ANY_WIDTH = 8192
 
 /**
  * Decompression-bomb cap: the max `width * height` (post-decode pixel count)
@@ -73,12 +87,14 @@ const WIDTH_STEP = 160
  * time (transform.ts, via sharp's `limitInputPixels`). Shared here (rather
  * than duplicated in each server-only module) so it stays a single number,
  * and because this file is dependency-free/isomorphic it can be imported by
- * both without pulling sharp or file-type into anything. 4096x4096 (16.7 MP)
- * comfortably covers the largest output this system ever serves (MAX_WIDTH)
- * while still bounding decode-time memory for a small/compressible-but-huge
- * source (e.g. a 30000x30000 solid-color PNG).
+ * both without pulling sharp or file-type into anything. 24 MP (a 6000x4000
+ * camera frame) is sized by measured peak memory: the worst case, a full-size
+ * WebP encode of an RGBA WebP source, peaks at 1246 MiB here and grows about
+ * 37 MiB per MP, so this is the largest cap that fits the 2048 MB CMS and
+ * transform Lambdas with allocator headroom. For an animation the cap bounds
+ * all decoded frames together.
  */
-export const MAX_INPUT_PIXELS = 4096 * 4096
+export const MAX_INPUT_PIXELS = 6000 * 4000
 
 /**
  * Cap on decoded animated frames (GIF/WebP) - without this, `{ animated: true }`
@@ -136,17 +152,22 @@ function isOutputFormat(value: string): value is OutputFormat {
   return value === 'webp' || value === 'jpeg' || value === 'png'
 }
 
-/** True if `width` is on the allowlist: a multiple of 160 in [160, 4096]. */
-export function isAllowedTransformWidth(width: number): boolean {
+/** True if `policy` accepts `width`; see `TransformWidthPolicy`. */
+export function isAllowedTransformWidth(width: number, policy: TransformWidthPolicy): boolean {
+  if (!Number.isInteger(width)) return false
+  if (policy === 'any') return width >= 1 && width <= MAX_ANY_WIDTH
   return (
-    Number.isInteger(width) && width >= MIN_WIDTH && width <= MAX_WIDTH && width % WIDTH_STEP === 0
+    SMALL_ALLOWLIST_WIDTHS.has(width) ||
+    (width >= MIN_ALLOWLIST_WIDTH &&
+      width <= MAX_ALLOWLIST_WIDTH &&
+      width % ALLOWLIST_WIDTH_STEP === 0)
   )
 }
 
-function parseWidth(value: string): number | null {
+function parseWidth(value: string, policy: TransformWidthPolicy): number | null {
   if (!POSITIVE_INT_RE.test(value)) return null
   const n = Number(value)
-  return isAllowedTransformWidth(n) ? n : null
+  return isAllowedTransformWidth(n, policy) ? n : null
 }
 
 /** True if `quality` is on the allowlist: a multiple of 5 in [30, 95]. */
@@ -234,6 +255,7 @@ function err(error: string): { ok: false; error: string } {
  */
 function parseDirectivesString(
   raw: string,
+  policy: TransformWidthPolicy,
 ): { ok: true; directives: TransformDirectives } | { ok: false; error: string } {
   if (raw === IDENTITY_TRANSFORM_DIRECTIVE) {
     return { ok: true, directives: { identity: true } }
@@ -269,7 +291,7 @@ function parseDirectivesString(
 
     switch (key) {
       case 'w': {
-        const w = parseWidth(value)
+        const w = parseWidth(value, policy)
         if (w === null) return err(`Invalid width: '${value}'`)
         width = w
         break
@@ -302,7 +324,10 @@ function parseDirectivesString(
  * `[directivesRaw, hash32, "{slug}.{ext}"]`. The raw route strips the
  * `assets/t/` prefix and splits the remaining key by `/` before calling this.
  */
-export function parseTransformPath(segments: readonly string[]): ParseTransformPathResult {
+export function parseTransformPath(
+  segments: readonly string[],
+  policy: TransformWidthPolicy,
+): ParseTransformPathResult {
   if (segments.length !== 3) {
     return err(`Expected 3 path segments (directives/hash32/slug.ext), got ${segments.length}`)
   }
@@ -325,7 +350,7 @@ export function parseTransformPath(segments: readonly string[]): ParseTransformP
     return err(`Invalid ext: '${ext}'`)
   }
 
-  const parsedDirectives = parseDirectivesString(directivesRaw)
+  const parsedDirectives = parseDirectivesString(directivesRaw, policy)
   if (!parsedDirectives.ok) {
     return parsedDirectives
   }
@@ -393,8 +418,9 @@ export type CanonicalTransformPathResult =
  */
 export function canonicalizeTransformPath(
   segments: readonly string[],
+  policy: TransformWidthPolicy,
 ): CanonicalTransformPathResult {
-  const parsed = parseTransformPath(segments)
+  const parsed = parseTransformPath(segments, policy)
   if (!parsed.ok) return parsed
 
   const canonicalSegments = [
@@ -402,7 +428,7 @@ export function canonicalizeTransformPath(
     parsed.hash32,
     `${parsed.slug}.${parsed.ext}`,
   ]
-  const canonical = parseTransformPath(canonicalSegments)
+  const canonical = parseTransformPath(canonicalSegments, policy)
   if (!canonical.ok) {
     return err(`No valid form at ${CROP_PRECISION} crop decimals: ${canonical.error}`)
   }

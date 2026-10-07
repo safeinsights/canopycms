@@ -245,7 +245,7 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
       const [, encodedDirectives, hash32] = match
       // A loader that encodes the directive segment alone is still requesting this key.
       const directives = decodeAsciiEscapes(encodedDirectives)
-      const canonical = canonicalizeTransformPath([directives, hash32, filename])
+      const canonical = canonicalizeTransformPath([directives, hash32, filename], 'any')
       if (!canonical.ok) {
         problems.push({ file, url, error: canonical.error })
       } else if (!canonical.isCanonical) {

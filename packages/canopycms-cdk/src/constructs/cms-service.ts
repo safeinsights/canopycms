@@ -571,14 +571,14 @@ export interface CanopyCmsServiceProps {
    * A reservation costs nothing while idle; it is a ceiling, and a share of
    * the account's concurrency set aside so other functions cannot use it.
    * Lambda keeps 100 of the account's limit unreserved, so this plus every
-   * other reservation (AssetSupport's transform Lambda reserves 10) must fit
+   * other reservation (AssetSupport's lazy transform Lambda reserves 10) must fit
    * within the account limit minus 100.
    */
   reservedConcurrency?: number
 
   /**
    * Lambda architecture (default: `Architecture.ARM_64`, matching the EC2
-   * worker and AssetSupport's transform Lambda).
+   * worker and AssetSupport's lazy transform Lambda).
    *
    * This also decides the image's architecture for
    * `DockerImageCode.fromImageAsset`: the construct always passes a resolved
