@@ -209,6 +209,24 @@ describe('S3AssetStore missing key vs missing bucket', () => {
     expect(await store.getMeta('a'.repeat(32))).toBeNull()
   })
 
+  it('reads an original by its expected ext without listing, and lists only on a miss', async () => {
+    const body = { transformToByteArray: async () => new TextEncoder().encode('png-bytes') }
+    s3Mock
+      .on(GetObjectCommand, { Key: `asset-originals/${'a'.repeat(32)}.png` })
+      .resolves({ Body: body, ContentType: 'image/png' } as never)
+    s3Mock
+      .on(GetObjectCommand, { Key: `asset-originals/${'a'.repeat(32)}.jpg` })
+      .rejects(awsError('NoSuchKey'))
+    s3Mock.on(ListObjectsV2Command).resolves({ Contents: [] })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    expect(await store.readOriginal('a'.repeat(32), 'png')).toMatchObject({ ext: 'png' })
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(0)
+
+    expect(await store.readOriginal('a'.repeat(32), 'jpg')).toBeNull()
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(1)
+  })
+
   it('throws for a missing bucket rather than reading every key as absent', async () => {
     s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchBucket'))
     const store = new S3AssetStore({ bucket: BUCKET, region: REGION })

@@ -56,8 +56,13 @@ export interface AssetStore {
     data: Uint8Array
     contentType: string
   }): Promise<void>
+  /**
+   * `ext` is where the original is expected (its meta's `ext`): that key is read first, and any
+   * `{hash32}.*` is looked for only on a miss. Reading by key needs no list permission.
+   */
   readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null>
   putPublicObject(input: {
     key: string

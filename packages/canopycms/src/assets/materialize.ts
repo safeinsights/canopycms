@@ -58,7 +58,7 @@ export async function storeTransform(
     return { ok: false, status: 400, error: 'Extension does not match the source format' }
   }
 
-  const original = await store.readOriginal(parsed.hash32)
+  const original = await store.readOriginal(parsed.hash32, meta.ext)
   if (!original) {
     return { ok: false, status: 404, error: `Asset ${parsed.hash32} has no original in the store` }
   }

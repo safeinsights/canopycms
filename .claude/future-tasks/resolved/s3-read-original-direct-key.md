@@ -1,7 +1,11 @@
 # `S3AssetStore.readOriginal` lists before every read
 
-**Status:** Open. **Priority: P3.** Filed 2026-10-07 from Phase 3 of
-[image-materialization-epic.md](image-materialization-epic.md).
+**Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of
+[image-materialization-epic.md](../image-materialization-epic.md)). Raised from P3 by review round 1:
+list-first made every lazy-Lambda miss need `s3:ListBucket`, which a cross-account bucket policy
+written for the old direct GET does not grant. `readOriginal(hash32, ext?)` now GETs
+`asset-originals/{hash32}.{ext}` first and lists only on a miss; `storeTransform` passes `meta.ext`.
+`LocalAssetStore` ignores the hint.
 
 ## State
 

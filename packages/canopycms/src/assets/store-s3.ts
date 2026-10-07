@@ -183,7 +183,14 @@ export class S3AssetStore implements AssetStore {
 
   async readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null> {
+    if (ext !== undefined) {
+      const direct = await this.getObject(this.keys.originalKey(hash32, ext))
+      const data = await direct?.Body?.transformToByteArray()
+      if (data) return { data, ext, contentType: direct?.ContentType }
+    }
+
     const prefix = this.keys.originalPrefix(hash32)
     const listed = await this.client.send(
       new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, MaxKeys: 1 }),

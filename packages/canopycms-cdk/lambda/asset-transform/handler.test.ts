@@ -153,6 +153,14 @@ describe('asset-transform handler', () => {
     expect(bodyBytes.equals(Buffer.from(written!.body))).toBe(true)
   })
 
+  it('transforms without listing the bucket, so a role without s3:ListBucket still works', async () => {
+    s3Mock.on(ListObjectsV2Command).rejects(makeAwsError('AccessDenied', 403))
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(200)
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(0)
+  })
+
   it('301s a non-canonically-ordered directive request to the canonical path without touching S3', async () => {
     // formatDirectives' fixed order is c, f, q, w - `w` before `f` parses but is not canonical.
     const res = await handler(makeEvent(`/assets/t/w=160,f=webp/${HASH32}/photo.webp`))
