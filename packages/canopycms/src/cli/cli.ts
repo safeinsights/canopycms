@@ -93,8 +93,8 @@ const MATERIALIZE_VALUE_FLAGS = [
 /**
  * The first flag `materialize-assets` does not take, or `undefined`. Refused rather than ignored: a
  * misspelled `--output-prefix` would send a preview build's writes to production's prefixes.
- * minimist sets every declared boolean, passed or not, so a `false` one was not given. Exported for
- * testing.
+ * minimist sets every declared boolean, passed or not, so a `false` one (absent, or `--no-x`)
+ * changes nothing and is let through. Exported for testing.
  */
 export function findUnknownMaterializeFlag(argv: Record<string, unknown>): string | undefined {
   const known = new Set<string>([...MATERIALIZE_VALUE_FLAGS, 'allow-failures', 'allow-local'])
