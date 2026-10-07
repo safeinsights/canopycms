@@ -4,7 +4,7 @@
  * in `../../src/constructs/asset-support.ts`) whenever the primary S3 origin
  * misses (403/404 - the canonical transform output doesn't exist yet).
  *
- * Reuses the SAME transform engine as the dev-mode `/assets/t/*` emulation
+ * Reuses the SAME transform engine as the authenticated raw route and `materialize-assets`
  * (`packages/canopycms/src/assets/materialize.ts`'s `storeTransform`) via
  * `canopycms/server`'s `canonicalizeTransformPath`/`applyTransform` re-exports
  * - this file must NEVER reimplement directive parsing or the sharp pipeline,

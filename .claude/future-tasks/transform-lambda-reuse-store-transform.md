@@ -15,6 +15,6 @@ string. Comments in both say they must agree; nothing checks it.
 ## Proposal
 
 When Phase 3 reshapes the lazy path, have the Lambda build an `S3AssetStore` for its bucket and call
-`storeTransform` (exported through `canopycms/server`), keeping only the Lambda-specific 301 and
+`storeTransform` (after exporting it through `canopycms/server`), keeping only the Lambda-specific 301 and
 inline-size handling. Check the Lambda bundle size before and after: `S3AssetStore` also pulls the
 presigned-post and request-presigner packages.

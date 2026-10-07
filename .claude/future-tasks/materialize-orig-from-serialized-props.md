@@ -5,7 +5,7 @@
 
 ## State
 
-An image value handed to a client component (`<PostView initialData={data}>`, the README's
+An image value handed to a client component (`<PostPreview initialData={data} />`, the README's
 pattern) is serialized into the RSC payload, so its stored `src`,
 `/assets/t/orig/{hash32}/{slug}.{ext}`, appears in the build output. `collect-asset-refs` records
 it, and `materialize-assets` stores an EXIF-stripped full-size copy of every such image even when

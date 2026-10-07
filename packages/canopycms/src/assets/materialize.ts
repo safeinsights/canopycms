@@ -4,7 +4,7 @@
  * `storeTransform` computes one key and is shared by the authenticated raw route
  * (api/assets.ts) and `materializeAssets`, the batch run that writes every key a build
  * references before that build is released. The transform Lambda in canopycms-cdk keeps its
- * own S3 plumbing around the same checks and the same `TRANSFORM_CACHE_CONTROL`.
+ * own S3 plumbing around the same checks and an equal Cache-Control string.
  */
 
 import { getErrorMessage, isNodeError } from '../utils/error'
@@ -45,7 +45,7 @@ export async function storeTransform(
   // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
   // it aliases the same image into a new cache key. The prod transform Lambda
   // (canopycms-cdk's lambda/asset-transform/handler.ts) makes the same check; the two must agree,
-  // or dev accepts URLs prod 404s.
+  // or the authenticated route accepts URLs the public path 404s.
   if (parsed.slug !== meta.slug) {
     return {
       ok: false,
@@ -125,7 +125,8 @@ export interface MaterializeOptions {
   targets: readonly MaterializeTarget[]
   /**
    * `assets/{hash32}/{slug}.{ext}` keys (svg, pdf) a build references. These are only checked:
-   * finalize writes them at upload, so a missing one is a content failure nothing here can fix.
+   * finalize writes them at upload, so a missing one is a content failure nothing here can fix,
+   * unless the bucket itself is missing, which is a store failure.
    */
   statics?: readonly MaterializeTarget[]
   /** Store requests in flight at once. Default 8. */
@@ -190,8 +191,8 @@ interface AwsErrorShape {
 }
 
 /**
- * @internal Exported for tests. Throttling, 5xx and dropped connections are transient. Any other 4xx (AccessDenied,
- * NoSuchBucket) is a configuration fault that a retry only delays.
+ * @internal Exported for tests. Throttling, 5xx and dropped connections are transient. Any other
+ * 4xx (AccessDenied, NoSuchBucket) is a configuration fault that a retry only delays.
  */
 export function isTransientStoreError(err: unknown): boolean {
   if (!(err instanceof Error)) return false
@@ -226,7 +227,8 @@ interface ValidTarget {
 }
 
 /**
- * Make every referenced transform key exist in `store`. A key already stored is left alone:
+ * Make every referenced transform key exist in `store`, and check every static key does. A key
+ * already stored is left alone:
  * keys are content-addressed, so an existing object is the right one. sharp is loaded only when
  * something is missing, and a sharp that cannot load throws `SharpUnavailableError` rather than
  * failing each key.

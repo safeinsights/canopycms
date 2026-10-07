@@ -127,8 +127,8 @@ output is the only place a final URL exists. That creates an adopter contract: e
     failure). The report names the page so it can be fixed.
   - It exits non-zero on any failure. `--allow-failures` (off by default) lets a release
     proceed, loudly, with only those URLs missing.
-  - IAM: `GetObject` on `asset-originals/`, `asset-meta/` and `assets/t/` (HEAD), `PutObject`
-    on `assets/t/`, and `ListBucket` for those prefixes, without which a miss is a 403.
+  - IAM: `GetObject` on `asset-originals/`, `asset-meta/` and `assets/` (HEAD included),
+    `PutObject` on `assets/t/`, and `ListBucket` for those prefixes, without which a miss is a 403.
 
 ### Phase 3: the CDK public path and width policy
 

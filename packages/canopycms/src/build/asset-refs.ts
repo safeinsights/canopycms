@@ -1,8 +1,9 @@
 /**
  * Collect the asset URLs a static build references, so a release can make them exist first.
  *
- * The public `/assets/t/` path serves only what is stored, and widths are chosen by site code at
- * render time, so build output is the one place every final URL appears. The adopter contract
+ * The public `/assets/t/` path is to serve only what is stored (image-materialization-epic.md,
+ * Phase 3), and widths are chosen by site code at render time, so build output is the one place
+ * every final URL appears. The adopter contract
  * that follows: every `/assets/t/` URL the site can request must appear as text in its build
  * output (see .claude/future-tasks/image-materialization-epic.md).
  */
@@ -43,10 +44,11 @@ const SCANNED_EXTENSIONS = new Set([
  * Anchored on the path, never on an origin or a mount prefix, so whatever precedes `/assets/` —
  * an absolute origin, a basePath, the editor's authenticated prefix — is dropped. The directive
  * and filename classes stop at anything that ends a URL in HTML, JSON, JS or CSS (quotes,
- * whitespace, a backslash escape, parens, query, a srcset comma) or at any non-ASCII character
- * (typographic quotes and dashes in prose; no stored key has one), and exclude `{`, `}` and `$`,
- * so a URL template in a script never reads as a URL. The hash class admits upper case only so
- * that such a URL is reported rather than skipped.
+ * whitespace, a backslash escape, parens, a query; the filename also at a srcset comma) or at any
+ * non-ASCII character (typographic quotes and dashes in prose; no stored key has one), and exclude
+ * `{`, `}` and `$`, so a URL template in a script never reads as a URL. A non-ASCII character
+ * inside a directive segment therefore ends the match and the URL is not seen. The hash class
+ * admits upper case only so that such a URL is reported rather than skipped.
  */
 const URL_STOP = String.raw`\s"'\x60<>()\\/?#&{}$\u0080-\uffff`
 // eslint-disable-next-line security/detect-non-literal-regexp -- built from constants above
@@ -108,7 +110,7 @@ export interface CollectAssetRefsResult {
   scannedFiles: number
 }
 
-/** Output-relative POSIX paths of every scanned text file under `root`, sorted. */
+/** Output-relative POSIX paths of every file under `root` with a scanned extension, sorted. */
 async function listScannedFiles(root: string): Promise<string[]> {
   const entries = await fs.readdir(root, { recursive: true, withFileTypes: true })
   return entries
@@ -150,7 +152,7 @@ function decodeOrKeep(run: string): string {
  * Decode, whole, each percent-encoded run holding an encoded `/assets/` (an image optimizer's
  * `?url=`), so an encoded `%20` or `%3F` after the URL ends it just as a literal one would. Runs are
  * found by expanding outward from each match, so the scan stays linear on long text with no stop
- * character; a run that is not valid percent-encoding is left as it is.
+ * character.
  */
 function decodeEncodedAssetRuns(text: string): string {
   let out = ''
@@ -182,7 +184,7 @@ function trimTrailingPunctuation(url: string, filename: string): [string, string
   return [url.slice(0, url.length - (filename.length - trimmed.length)), trimmed]
 }
 
-/** A NUL in the first 8 KiB, the test git and grep use; only that block is read. */
+/** A NUL in the first 8 KiB marks a file binary, close to git's own test; only that block is read. */
 async function startsBinary(filePath: string): Promise<boolean> {
   const handle = await fs.open(filePath, 'r')
   try {
@@ -221,7 +223,8 @@ class RefCollector {
  * Scan `outDir` for `/assets/t/...` transform URLs and `/assets/{hash32}/...` static URLs and
  * write their stored keys to `outDir/canopy-asset-refs.json`, sorted so the same output always
  * yields the same file. Throws `AssetRefsError`, writing nothing, if any transform URL is not in
- * canonical form: the public path stores only canonical keys and computes nothing on a miss.
+ * canonical form or any static URL is malformed: only canonical keys are stored, and the public
+ * path is to compute nothing on a miss.
  */
 export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefsResult> {
   const root = path.resolve(outDir)

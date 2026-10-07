@@ -73,8 +73,9 @@ const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
 /**
- * A missing key, never a missing bucket: S3 answers both with 404, and only a GET names which. A
- * HEAD has no body, so its 404 is `NotFound` either way, and the first GET after it tells them apart.
+ * A missing key, never a missing bucket: S3 answers both with 404, and only a GET's error code names
+ * which. A HEAD's 404 has no body, so `hasPublicObject` reads either as absent; a caller that must
+ * tell them apart follows with a GET (assets/materialize.ts does).
  */
 const isNoSuchKey = (err: unknown): boolean =>
   matchesAwsError(err, 'NoSuchKey', 404) && (err as AwsServiceErrorShape).name !== 'NoSuchBucket'

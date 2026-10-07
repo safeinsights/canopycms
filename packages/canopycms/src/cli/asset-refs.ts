@@ -69,8 +69,9 @@ const serverConfigSchema = z.object({
 })
 
 /**
- * The store the site's `media` config names, resolved exactly as the running CMS resolves it:
- * dev mode with no `media` falls back to the dev workspace's local store, prod never does.
+ * The store the site's `media` config names, resolved as the running CMS resolves it when its
+ * working directory is the project: dev mode with no `media` falls back to the dev workspace's
+ * local store, prod never does.
  */
 async function loadConfiguredAssetStore(projectDir: string): Promise<AssetStore> {
   const configPath = path.join(projectDir, 'canopycms.config.ts')
