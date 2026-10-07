@@ -20,7 +20,12 @@ import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../bran
 // Same constants the reader uses, rather than a second copy of the two string
 // literals.
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
-import { scanBranchHealth, type BranchHealthEntry } from '../branch-health'
+import {
+  ORPHAN_YOUTH_THRESHOLD_MS,
+  scanBranchHealth,
+  type BranchHealthEntry,
+} from '../branch-health'
+import { formatDirStamp } from '../branch-provisioning'
 import { ContentIdIndex } from '../content-id-index'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { getDefaultBranchBase, sanitizeBranchName } from '../paths'
@@ -37,9 +42,6 @@ import { defineEndpoint } from './route-builder'
 
 /** [H1] A fresh (< 5 min old) init lock blocks purge -- provisioning may be running. */
 const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
-
-/** An orphan dir younger than this may still be a clone in progress; corrupt dirs are exempt. */
-const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
 
 export interface BranchHealthData {
   entries: BranchHealthEntry[]
@@ -109,14 +111,6 @@ const dirNameSchema = z
 
 const branchDirParamsSchema = z.object({ dirName: dirNameSchema })
 type BranchDirParams = z.infer<typeof branchDirParamsSchema>
-
-/** Compact UTC stamp for trash/archive names: `YYYYMMDDTHHMMSSZ` (no colons -- portability). */
-function formatTrashStamp(date: Date): string {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z')
-}
 
 /**
  * Re-resolve dirName under baseRoot and enforce containment (belt-and-
@@ -295,7 +289,7 @@ const purgeBranchDirHandler = async (
       // [C1] The timestamp lives in the NAME, not the dir's mtime: rename()
       // preserves the original mtime, so mtime-based retention would delete
       // a months-stale orphan's trash on the very first cleanup pass.
-      const trashName = `.trash-${params.dirName}-${formatTrashStamp(new Date())}`
+      const trashName = `.trash-${params.dirName}-${formatDirStamp(new Date())}`
       const trashPath = path.join(baseRoot, trashName)
       try {
         await fs.rename(dirPath, trashPath)
@@ -413,7 +407,7 @@ const repairBranchDirHandler = async (
           throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
         }
 
-        const archivedName = `${BRANCH_META_FILE}.corrupt-${formatTrashStamp(new Date())}`
+        const archivedName = `${BRANCH_META_FILE}.corrupt-${formatDirStamp(new Date())}`
         await fs.rename(branchJsonPath, path.join(dirPath, BRANCH_META_DIR, archivedName))
         return archivedName
       })
@@ -570,7 +564,7 @@ const repairContentDuplicatesHandler = async (
           return { ok: false, status: 409, error: 'No duplicate content IDs found' }
         }
 
-        const stamp = formatTrashStamp(new Date())
+        const stamp = formatDirStamp(new Date())
         try {
           for (const dup of duplicates) {
             const archivedAs: string[] = []

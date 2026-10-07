@@ -24,6 +24,7 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.{ts,tsx}'],
           exclude: [...configDefaults.exclude, 'src/editor/**'],
+          setupFiles: ['src/test-utils/quiet-provision-log.ts'],
           // Git-heavy integration suites (git-manager, branch-workspace,
           // role-permissions) spawn real git subprocesses per test and can
           // exceed the 5s default on slower/loaded machines (e.g. local

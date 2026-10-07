@@ -214,6 +214,7 @@ describe('at build, every public read comes from the working tree with zero git'
       // loadOrCreateBranchContext would happily find and serve it instead of
       // reading the working tree.
       const staleBranchRoot = path.join(root, '.canopy-dev', 'content-branches', 'main')
+      await fs.mkdir(staleBranchRoot, { recursive: true })
       const staleStore = new ContentStore(staleBranchRoot, flat)
       await staleStore.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
         format: 'md',

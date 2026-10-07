@@ -135,11 +135,9 @@ export class BranchMetadataFileManager {
    * entry with no clone behind it. It runs BEFORE the lock stack so a doomed
    * save fails fast instead of paying for a lock.
    *
-   * Accepted residual window: a save that passes the check can still race a
-   * `rm` that starts moments later and is mid-flight when the write lands.
-   * Closing that needs a tombstone OUTSIDE the tree being removed, and the
-   * lockfile taken next lives INSIDE `branchRoot`, so it can promise no more
-   * than "the directory existed a moment ago".
+   * A save that passes the check just before a delete still cannot write: the
+   * delete renames the tree away under the same lockfile, and that lockfile
+   * creates only its own directory (`withOccFileLock`), so the save fails there.
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
     try {
@@ -157,40 +155,7 @@ export class BranchMetadataFileManager {
         withOccFileLock(this.filePath, () =>
           withOccRetry(async () => {
             const { meta: existing, version } = await this.load()
-            const now = new Date().toISOString()
-
-            const defaults: BranchMetadata = {
-              name: 'unknown',
-              status: 'editing' as BranchStatus,
-              access: {},
-              createdBy: 'unknown',
-              createdAt: now,
-              updatedAt: now,
-            }
-
-            const merged: BranchMetadataFile = {
-              schemaVersion: CURRENT_SCHEMA_VERSION,
-              version: version ?? 0,
-              branch: {
-                ...defaults,
-                ...existing?.branch,
-                ...incoming.branch,
-                access: {
-                  ...existing?.branch?.access,
-                  ...incoming.branch?.access,
-                },
-                // Immutable after creation
-                createdBy:
-                  existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
-                createdAt: existing?.branch.createdAt ?? defaults.createdAt,
-                // Fork point is recorded once at creation; later saves must not move it
-                baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
-                // Always stamped fresh; the spreads above would otherwise let
-                // the creation-time value win forever, freezing the timestamp
-                // the editor's Branches panel sorts and displays by
-                updatedAt: now,
-              },
-            }
+            const merged = mergeBranchMetadata(existing, version, incoming)
             const written = await this.write(merged, version)
             merged.version = written.version
             merged.writeId = written.writeId
@@ -218,6 +183,57 @@ export class BranchMetadataFileManager {
     const registry = new BranchRegistry(this.baseRoot)
     await registry.invalidate()
   }
+}
+
+/**
+ * The branch.json that {@link BranchMetadataFileManager.save} writes for `incoming` over
+ * `existing`. Pure, so a staged workspace's first branch.json (branch-provisioning.ts) is built by
+ * the same rules as a save and the two cannot drift.
+ */
+function mergeBranchMetadata(
+  existing: BranchMetadataFile | null,
+  version: number | null,
+  incoming: BranchMetadataUpdate,
+  now: string = new Date().toISOString(),
+): BranchMetadataFile {
+  const defaults: BranchMetadata = {
+    name: 'unknown',
+    status: 'editing' as BranchStatus,
+    access: {},
+    createdBy: 'unknown',
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    version: version ?? 0,
+    branch: {
+      ...defaults,
+      ...existing?.branch,
+      ...incoming.branch,
+      access: {
+        ...existing?.branch?.access,
+        ...incoming.branch?.access,
+      },
+      // Immutable after creation
+      createdBy: existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
+      createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+      // Fork point is recorded once at creation; later saves must not move it
+      baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
+      // Always stamped fresh; the spreads above would otherwise let the creation-time value win
+      // forever, freezing the timestamp the editor's Branches panel sorts and displays by
+      updatedAt: now,
+    },
+  }
+}
+
+/** The branch.json a brand-new branch starts with: {@link mergeBranchMetadata} over nothing. */
+export function buildInitialBranchMetadata(
+  incoming: BranchMetadataUpdate,
+  now?: string,
+): BranchMetadataFile {
+  return mergeBranchMetadata(null, null, incoming, now)
 }
 
 /**

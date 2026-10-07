@@ -7,6 +7,7 @@ import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
+import { recordConfiguredSparseCone } from '../branch-sparse'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { resolveCanopyUser } from '../resolve-canopy-user'
@@ -40,6 +41,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   if (!services) {
     throw new Error('CanopyCMS: config or services is required')
   }
+  await recordConfiguredSparseCone(services.config)
   const operatingMode = services.config.mode
   // Derived from the strategy, which resolves deploymentName; a literal here
   // would miss a deployment-namespaced settings branch (say canopycms-settings-acme).

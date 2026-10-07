@@ -23,7 +23,7 @@ which resolves a relative path against **cwd**:
 
 The branch side mis-joins the same way: `getContentBranchRoot(branch, sourceRoot)` resolves
 `.canopy-dev/content-branches/<branch>` from that same cwd-relative `sourceRoot`, while the dev
-server provisions clones through `ensureBranchRoot`, which `openOrCreateBranch` calls without a
+server provisions clones through `resolveBranchPath`, which `provisionBranch` calls without a
 `sourceRoot` at all.
 
 So the divergence warning that the default `dev.contentSync: 'warn'` promises never fires for an

@@ -13,43 +13,46 @@ entry has the same three parts:
   upgrade that adds the new API without removing the code it replaces leaves two implementations to
   drift apart, which is the failure mode most of these changes exist to end.
 
-Where an entry names what a hand-rolled version's bug looked like, that is usually the fastest way
-to recognise the code in your own repo.
-
-Entries are grouped by the release that carries them, and sit under **Unreleased** until they ship.
+An entry's description of a hand-rolled version's bug is often the fastest way to find that code
+in your repo.
 
 ## Picking a target version
 
-Resolve your target when you plan the upgrade, with `npm view canopycms version` — do not copy a
-version number out of this document. `main` auto-publishes a patch on every push, so the number
-moves.
+Resolve your target when you plan the upgrade, with `npm view canopycms version`, never from a
+number in this document: `main` auto-publishes a patch on every push.
 
-If you are several releases behind, read every entry between your pin and your target, not just the
-newest: the deletable-code lists compound, and a later entry sometimes supersedes an earlier one's
-workaround entirely.
+Read every entry between your pin and your target, not just the newest: deletable-code lists
+compound, and a later entry can supersede an earlier one's workaround.
 
-**On the `int` channel, that command answers the wrong question.** `npm view canopycms version`
-reports the `latest` dist-tag — the newest _stable_ release. A prerelease like `0.0.67-int.90` is
-published from an integration branch that has not merged to `main`, so it is both newer than
-`latest` and absent from this document as published on `main`. If you are pinned to an `-int.N`
-version, read this file at the ref your build came from; `packages/canopycms/README.md` ships inside
-your installed package and shows how to resolve that ref from the npm provenance attestation. Your
-entries are the ones under **Unreleased** there.
+**On the `int` channel, that command answers the wrong question.** It reports the `latest`
+dist-tag, the newest _stable_ release. A prerelease like `0.0.67-int.90` comes from an integration
+branch not yet merged to `main`, so it is newer than `latest` and absent from this document on
+`main`. Read this file at the ref your build came from (`packages/canopycms/README.md`, inside your
+installed package, shows how to resolve it from the npm provenance attestation); your entries are
+under **Unreleased** there.
 
 ---
 
 ## Unreleased
 
-_Entries land here as changes merge._
+**Promoting entries is manual.** `main` publishes a patch on every push, so an entry here usually
+ships within hours: move it under its version in `## Released`, demoting `###` to `####`.
+`pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
+which entries belong to it is still a read of `git log`.
 
-**Promoting them is a manual step.** `main` auto-publishes a patch on every push, so an entry
-written here is usually released within hours while this heading still says "Unreleased". Move it
-into `## Released` under its version heading, demoting it from `###` to `####`.
+### Fast, crash-safe branch creation — **behaviour change: branch clones hold only the content root**
 
-Forgetting is no longer silent: `pnpm lint:docs` fails when a release tag reachable from `HEAD` has
-no `### <version>` section, and lint-staged runs it on every commit touching a Markdown file. It
-cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
-will not let a shipped version go unlisted.
+**What changed.** A branch is built under a staging name and appears only when complete. The
+worker repairs branch directories an interrupted create or delete left wedged, and owns
+`remote.git`'s gc config and repacking. A content branch's clone checks out only the content root,
+`.canopy-meta` and root-level files, so request-time reads elsewhere in it find nothing. The editor
+recovers a create that timed out instead of reporting an HTTP 504.
+
+**To adopt.** Upgrade `canopycms` and `canopycms-cdk` together; no config, no deploy order. A changed
+`contentRoot` reaches existing clones within a worker cycle of the API restarting.
+
+**Now deletable.** Manual EFS cleanup of provisioning locks or half-made branch directories, and
+`remote.git` gc scripts.
 
 ### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
 
@@ -217,11 +220,10 @@ Template for each entry — copy, don't improvise:
 
 **To adopt.** Concrete steps, with the import path and the call shape.
 
-**Now deletable.** Describe the PATTERN of local code this supersedes ("a hand-rolled
-filename parser") so any adopter can recognise it in their own tree. Never name files,
-paths, branches, hosts or identifiers from a specific adopter's repo: this package is
-public and its adopters' repos generally are not. If nothing becomes deletable, say so
-explicitly — that is a real and useful answer.
+**Now deletable.** The PATTERN of local code this supersedes ("a hand-rolled filename
+parser"), recognisable in any adopter's tree. Never name files, paths, branches, hosts or
+identifiers from an adopter's repo: this package is public and theirs generally are not. If
+nothing becomes deletable, say so.
 -->
 
 ### Listings take a `branch`

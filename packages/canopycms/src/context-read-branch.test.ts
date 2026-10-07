@@ -12,9 +12,9 @@ import { GitManager } from './git-manager'
 import type { BranchAccessControl } from './types'
 
 /**
- * Real branch workspaces under a temporary prod workspace root. Only the git clone is stubbed (a
- * bare mkdir), so `provisioned` records every workspace the code under test sets up and a
- * provisioned branch leaves a real directory and `branch.json` behind.
+ * Real branch workspaces under a temporary prod workspace root. Only git is stubbed (the clone is
+ * a bare mkdir, the checkout a no-op), so `provisioned` records every workspace the code under
+ * test sets up and a provisioned branch leaves a real directory and `branch.json` behind.
  */
 const provisioned: string[] = []
 
@@ -96,11 +96,17 @@ describe('read / readByUrlPath with a branch option', () => {
     await fs.mkdir(settingsRoot, { recursive: true })
     vi.stubEnv('CANOPYCMS_WORKSPACE_ROOT', workspaceRoot)
     provisioned.length = 0
-    vi.spyOn(GitManager, 'initializeWorkspace').mockImplementation(async (options) => {
-      provisioned.push(options.branchName)
-      await fs.mkdir(options.workspacePath, { recursive: true })
-      return {} as GitManager
+    vi.spyOn(GitManager, 'resolveCloneRemoteUrl').mockResolvedValue(
+      path.join(workspaceRoot, 'remote.git'),
+    )
+    vi.spyOn(GitManager, 'cloneWorkspace').mockImplementation(async (_remote, workspacePath) => {
+      await fs.mkdir(workspacePath, { recursive: true })
     })
+    vi.spyOn(GitManager.prototype, 'checkoutFreshClone').mockImplementation(async (branch) => {
+      provisioned.push(branch)
+    })
+    vi.spyOn(GitManager.prototype, 'setSparseCone').mockResolvedValue()
+    vi.spyOn(GitManager.prototype, 'ensureGitExclude').mockResolvedValue()
     await addBranch('main', 'on main')
   })
 

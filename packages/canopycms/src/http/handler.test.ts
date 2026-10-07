@@ -7,28 +7,33 @@ import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { RemoteNotReadyError } from '../git-manager'
+import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 
 // Mock the BranchWorkspaceManager to avoid git operations
-vi.mock('../branch-workspace', () => ({
-  BranchWorkspaceManager: vi.fn().mockImplementation(function () {
-    return {
-      openOrCreateBranch: vi.fn().mockResolvedValue({
-        branch: {
-          name: 'new-branch',
-          status: 'editing',
-          createdBy: 'test-user',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          access: {},
-        },
-        branchRoot: '/tmp/test',
-        baseRoot: '/tmp/base',
-      }),
-    }
-  }),
-  loadBranchContext: vi.fn().mockResolvedValue(null),
-}))
+vi.mock('../branch-workspace', () => {
+  const context = {
+    branch: {
+      name: 'new-branch',
+      status: 'editing',
+      createdBy: 'test-user',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      access: {},
+    },
+    branchRoot: '/tmp/test',
+    baseRoot: '/tmp/base',
+  }
+  return {
+    BranchWorkspaceManager: vi.fn().mockImplementation(function () {
+      return {
+        openOrCreateBranch: vi.fn().mockResolvedValue(context),
+        provisionBranch: vi.fn().mockResolvedValue({ kind: 'created', context }),
+      }
+    }),
+    loadBranchContext: vi.fn().mockResolvedValue(null),
+  }
+})
 
 // Mock the permissions loader to avoid file system operations
 vi.mock('../authorization/permissions', () => ({
@@ -597,6 +602,31 @@ describe('createCanopyRequestHandler', () => {
         expectFriendly503(await handler(createMockRequest(), ['branches']))
         // The detailed message still reaches the server log.
         expect(consoleSpy).toHaveErrored(/CANOPYCMS_REMOTE_URL/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s with Retry-After and the busy message when the base branch is still being set up', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw new BranchProvisioningBusyError('main')
+          },
+        })
+
+        const response = await handler(createMockRequest(), ['branches'])
+
+        expect(response.status).toBe(503)
+        expect(response.body).toEqual({
+          ok: false,
+          status: 503,
+          error: "Branch 'main' is still being set up. Try again in a minute.",
+        })
+        expect(response.headers).toEqual({ 'Retry-After': '30' })
       } finally {
         consoleSpy.restore()
       }

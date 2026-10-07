@@ -8,14 +8,12 @@ switches to it immediately, shows the form in flight, and keeps the inserted bra
 stale listings for `CREATED_BRANCH_GRACE_MS` (`editor/hooks/useBranchManager.tsx`). Two
 server-side halves remain, both reasoned from code rather than measured on a deployment:
 
-1. **The POST provisions synchronously.** `createBranchHandler` (`api/branch.ts`) awaits
-   `BranchWorkspaceManager.openOrCreateBranch`, which clones the workspace onto EFS under the
-   provisioning lock before responding. The client switches only when that returns, so its
-   latency is the user's wait. Read the deployed `createBranch` / `ensureGitWorkspace`
-   `log.timed` spans (`CANOPYCMS_DEBUG`) first; if the clone dominates, decide between a
-   faster clone (shared objects or a reference clone from `remote.git`) and responding before
-   provisioning finishes, which would need a provisioning state on the branch the editor can
-   render.
+1. **The POST provisions synchronously.** It is now fast and crash-safe
+   (`branch-provisioning.ts`: packed `remote.git`, one parallel sparse checkout, staging +
+   publish by rename), and each step logs a `provision … step=… ms=` line without
+   `CANOPYCMS_DEBUG`. Read those on a deployment; the remaining options are
+   [branch-provisioning-warm-spares.md](branch-provisioning-warm-spares.md) and
+   [branch-provisioning-async.md](branch-provisioning-async.md).
 2. **Other containers can lag the new branch.** `GET /branches` served by a container other
    than the creating one can omit the branch for the NFS attribute/dentry cache window
    (docs/concurrency.md, window A). The registry carries no TTL of its own: `list()` compares

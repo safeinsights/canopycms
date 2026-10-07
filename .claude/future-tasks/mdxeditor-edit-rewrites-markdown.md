@@ -12,10 +12,12 @@ MarkdownField saves MDXEditor's serialization of the whole body after any edit. 
 | Ordered list starting at 3 | Renumbered from 1 | `LexicalListVisitor` exports no `start` |
 | `<div className="a"><span className="b">x</span></div>` | `<div className="a b">x</div>` | `collapseNestedHtmlTags` merges a lone `span` child into its parent |
 | `<span style={…}><span style="…">x</span></span>` | Inner style only | the inner `addStyle` overwrites the outer one |
+| `1. item\n\n   <Callout …>x</Callout>` (a flow JSX element in a list item) | `1. item<Callout …>x</Callout>`: the element joins the item's text | not yet traced. An adopter measured it headless on 3.55 with MarkdownField's plugin set; no live content has it yet |
 
 Already safe: content MDXEditor would lose outright, corrupt, or crash on opens in MarkdownField's
-source editor instead (see the round-trip guard in `editor/fields/mdx-jsx-support.tsx`). These four
-are subtler: they round-trip into valid but different markdown, so no error fires.
+source editor instead (see the round-trip guard in `editor/fields/mdx-jsx-support.tsx`). These five
+are subtler: they round-trip into valid but different markdown, so no error fires. The list-item
+case could instead route to the source editor, as the guard does for shapes MDXEditor breaks.
 
 ## Directions
 

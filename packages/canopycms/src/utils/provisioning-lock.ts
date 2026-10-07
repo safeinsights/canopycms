@@ -24,7 +24,7 @@ export type OnLockCompromised = (err: Error) => void
  * which EFS serves from the NFS attribute cache for up to 60s, so a live holder's 15s refreshes
  * can look 60s late; one threshold above that for every acquirer means none reaps a live hold.
  */
-const PROVISIONING_LOCK_STALE_MS = 90_000
+export const PROVISIONING_LOCK_STALE_MS = 90_000
 
 /**
  * Shared option set for both provisioning-lock variants.
@@ -177,14 +177,24 @@ export async function acquireProvisioningLock(
  *
  * @param staleMs how old the marker must look before this caller takes it over; defaults to
  *   {@link PROVISIONING_LOCK_STALE_MS}
+ * @param createParents whether a missing parent of `lockTargetDir` is created. A lock inside a
+ *   branch passes false: a waiter must never recreate a branch root a delete removed, so a missing
+ *   parent fails with ENOENT instead.
  */
 export async function tryAcquireProvisioningLock(
   lockTargetDir: string,
   lockName: string,
   onCompromised?: OnLockCompromised,
   staleMs: number = PROVISIONING_LOCK_STALE_MS,
+  createParents = true,
 ): Promise<() => Promise<void>> {
-  await fs.mkdir(lockTargetDir, { recursive: true })
+  if (createParents) {
+    await fs.mkdir(lockTargetDir, { recursive: true })
+  } else {
+    await fs.mkdir(lockTargetDir).catch((err: unknown) => {
+      if (!isNodeError(err) || err.code !== 'EEXIST') throw err
+    })
+  }
   const lockPath = path.join(lockTargetDir, lockName)
 
   const release = await lockfile.lock(
@@ -192,4 +202,39 @@ export async function tryAcquireProvisioningLock(
     provisioningLockOptions(lockPath, 0, onCompromised, staleMs),
   )
   return releaseIgnoringAlreadyReleased(release, lockPath)
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+/**
+ * {@link tryAcquireProvisioningLock} retried for at most `waitMs`, for a caller whose own hold is
+ * milliseconds long (publishing a staged branch workspace). A dead holder's marker stays live for
+ * {@link PROVISIONING_LOCK_STALE_MS}, so waiting it out from a request would spend the request's
+ * whole timeout; this gives up instead.
+ *
+ * Retries only on `ELOCKED`, like the content-write lock's bounded wait.
+ *
+ * @throws the last `ELOCKED` error once the budget is spent
+ */
+export async function acquireProvisioningLockWithin(
+  lockTargetDir: string,
+  lockName: string,
+  waitMs: number,
+  onCompromised?: OnLockCompromised,
+): Promise<() => Promise<void>> {
+  const startedAt = Date.now()
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await tryAcquireProvisioningLock(lockTargetDir, lockName, onCompromised)
+    } catch (err: unknown) {
+      if (!isNodeError(err) || err.code !== 'ELOCKED') throw err
+      const remaining = waitMs - (Date.now() - startedAt)
+      if (remaining <= 0) throw err
+      const base = Math.min(50 * 2 ** attempt, 500)
+      await sleep(Math.min(base * (0.5 + Math.random()), remaining))
+    }
+  }
 }

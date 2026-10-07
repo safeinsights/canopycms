@@ -178,9 +178,13 @@ export function isCanopyInternalPath(repoRelativePath: string): boolean {
  * {@link CANOPY_META_DIR}, including files an adopter committed there by mistake. Stage-all then
  * unstage, because git rejects `:(exclude)` pathspecs (six spellings tried) with "paths are ignored" when
  * the excluded directory is itself ignored, which `.git/info/exclude` makes it in every clone.
+ *
+ * `--sparse`: in a sparse clone a plain `add -A` fails on any file present outside the cone.
+ * With it, such a file is staged like any other, and a tracked file absent only because it is
+ * outside the cone is still not staged as a deletion. A no-op in a full clone.
  */
 export async function stageAllExceptCanopyState(git: SimpleGit): Promise<void> {
-  await git.add(['-A'])
+  await git.raw(['add', '-A', '--sparse'])
   await git.raw(['reset', '-q', '--', CANOPY_META_DIR])
 }
 

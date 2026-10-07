@@ -4,6 +4,7 @@ import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
+import { requestBranchCreate } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
 
 export interface UseBranchActionsOptions {
@@ -15,6 +16,8 @@ export interface UseBranchActionsOptions {
   /** Receives the branch the server just created, so it can be shown before any listing includes it. */
   onBranchCreated: (branch: BranchListItem) => void
   onBranchSwitch?: (branch: string) => void
+  /** The current user; a create the server never answered adopts only a listed branch they made. */
+  userId?: string
 }
 
 export interface UseBranchActionsReturn {
@@ -108,16 +111,20 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     description?: string
   }): Promise<boolean> => {
     try {
-      const result = await apiClient.branches.create({
-        branch: branch.name,
-        title: branch.title,
-        description: branch.description,
-      })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to create branch')
+      const outcome = await requestBranchCreate(
+        apiClient,
+        {
+          branch: branch.name,
+          title: branch.title,
+          description: branch.description,
+        },
+        options.userId,
+      )
+      if (outcome.kind === 'failed') {
+        throw new Error(outcome.message)
       }
 
-      const created = result.data?.branch
+      const created = outcome.branch
       if (created) options.onBranchCreated(created)
 
       // The server sanitizes the branch name (e.g. "feature/x" -> "feature-x")

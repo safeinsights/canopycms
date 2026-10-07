@@ -381,6 +381,7 @@ export const Editor: React.FC<EditorProps> = ({
     getUnsaved: resolveUnsaved,
     onReloadBranches: () => loadBranches(),
     onBranchCreated: addCreatedBranch,
+    userId: userContext?.userId,
   })
 
   // 5. Comment system (depends on branchNameState)

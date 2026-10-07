@@ -1,15 +1,6 @@
-import fs from 'node:fs/promises'
-import os from 'node:os'
-import path from 'node:path'
-
 import { describe, expect, it } from 'vitest'
 
-import {
-  BranchPathError,
-  ensureBranchRoot,
-  getDefaultBranchBase,
-  resolveBranchPath,
-} from '../branch'
+import { BranchPathError, getDefaultBranchBase, resolveBranchPath } from '../branch'
 
 describe('paths', () => {
   it('resolves prod content branches root from default workspace', () => {
@@ -26,20 +17,6 @@ describe('paths', () => {
         branchName: '../evil',
       }),
     ).toThrow(BranchPathError)
-  })
-
-  it('ensures branch root is created under base in dev mode', async () => {
-    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branches-'))
-    const { branchRoot, baseRoot } = await ensureBranchRoot({
-      mode: 'dev',
-      branchName: 'feature/test',
-      basePathOverride: temp,
-    })
-    const stat = await fs.stat(branchRoot)
-    expect(stat.isDirectory()).toBe(true)
-    // baseRoot is now .canopy-dev/content-branches inside the override path
-    expect(baseRoot).toBe(path.resolve(temp, '.canopy-dev', 'content-branches'))
-    expect(branchRoot.startsWith(baseRoot)).toBe(true)
   })
 
   it('resolves branch path correctly in dev mode', () => {

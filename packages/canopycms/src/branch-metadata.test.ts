@@ -435,11 +435,9 @@ describe('BranchMetadataFileManager', () => {
       expect(metaDirExists).toBe(false)
     })
 
-    it('creation flow still works: branch-workspace provisions the clone directory before save() runs', async () => {
-      // ensureBranchRoot() (branch-workspace.ts) does fs.mkdir(branchRoot,
-      // {recursive: true}) before ever calling metadata.save() -- mirror
-      // that ordering directly against the manager to confirm the new
-      // pre-check doesn't break brand-new branch creation.
+    it('creates branch.json in an existing directory that has none', async () => {
+      // Admin repair-metadata archives a corrupt branch.json and then save()s
+      // defaults into the same directory; the pre-check must let that through.
       const root = path.join(await tmpDir(), 'not-yet-created-branch')
       const registryDir = await tmpDir()
       await fs.mkdir(root, { recursive: true })
