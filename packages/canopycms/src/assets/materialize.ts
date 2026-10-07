@@ -388,12 +388,17 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(missing, transformConcurrency, async (target) => {
     try {
-      const result = await withRetry(() => storeTransform(store, target.parsed, target.key))
+      let attempts = 0
+      const result = await withRetry(() => {
+        attempts++
+        return storeTransform(store, target.parsed, target.key)
+      })
       if (result.ok) {
-        // A key written between the existence check and here was written by another writer.
-        outcomes.set(target.key, {
-          status: result.stored === 'already-exists' ? 'existed' : 'created',
-        })
+        // After a failed attempt, `already-exists` may be that attempt's own write, whose response
+        // was lost, so it counts as `created`: a release waiting on its `created` keys then waits
+        // on a key it may not have written, never skips one it did.
+        const createdElsewhere = result.stored === 'already-exists' && attempts === 1
+        outcomes.set(target.key, { status: createdElsewhere ? 'existed' : 'created' })
       } else {
         fail(target.key, 'content', `${result.status}: ${result.error}`)
       }

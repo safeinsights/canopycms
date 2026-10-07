@@ -224,6 +224,20 @@ describe('materializeAssets against a local store', () => {
     expect(textOf((await store.readPublicObject(key))?.data)).toBe('stored by another writer')
   })
 
+  it('counts a key it stored before a lost response as created, not existed', async () => {
+    const key = `assets/t/w=320/${HASH}/photo.png`
+    vi.spyOn(store, 'hasPublicObject').mockResolvedValue(false)
+    const realPut = store.putPublicObject.bind(store)
+    vi.spyOn(store, 'putPublicObject').mockImplementationOnce(async (input) => {
+      await realPut(input)
+      throw awsError('ServiceUnavailable', 503)
+    })
+
+    const report = await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
+    expect(report.results[0]).toMatchObject({ key, status: 'created' })
+    expect(report.summary).toMatchObject({ existed: 0, created: 1, failed: 0 })
+  })
+
   it('counts only the literal already-exists as existed', async () => {
     vi.spyOn(store, 'putPublicObject').mockResolvedValue(undefined as unknown as CreateOnlyResult)
     const report = await materializeAssets({
