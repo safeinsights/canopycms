@@ -74,6 +74,9 @@ function seedS3Fake(objects: Map<string, FakeObject>): void {
   })
 
   s3Mock.on(PutObjectCommand).callsFake((input) => {
+    if (input.IfNoneMatch === '*' && objects.has(input.Key as string)) {
+      throw makeAwsError('PreconditionFailed', 412)
+    }
     const body = input.Body
     const bytes =
       body instanceof Uint8Array
@@ -158,6 +161,23 @@ describe('asset-transform handler', () => {
 
     const bodyBytes = Buffer.from(res.body ?? '', 'base64')
     expect(bodyBytes.equals(Buffer.from(written!.body))).toBe(true)
+  })
+
+  it('serves the bytes it computed when another request stored the key first, leaving that object', async () => {
+    const canonicalKey = `assets/t/w=160/${HASH32}/photo.png`
+    const theirs = { body: new TextEncoder().encode('stored first'), contentType: 'image/png' }
+    objects.set(canonicalKey, theirs)
+
+    const res = await handler(makeEvent(`/${canonicalKey}`))
+
+    expect(res.statusCode).toBe(200)
+    const puts = s3Mock.commandCalls(PutObjectCommand)
+    expect(puts).toHaveLength(1)
+    expect(puts[0].args[0].input).toMatchObject({ Key: canonicalKey, IfNoneMatch: '*' })
+    expect(objects.get(canonicalKey)).toBe(theirs)
+    const served = Buffer.from(res.body ?? '', 'base64')
+    expect(served.subarray(1, 4).toString('latin1')).toBe('PNG')
+    expect(served.equals(Buffer.from(theirs.body))).toBe(false)
   })
 
   it('transforms without listing the bucket, so a role without s3:ListBucket still works', async () => {
@@ -356,6 +376,7 @@ describe('asset-transform handler', () => {
       ok: true,
       data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
       contentType: 'image/png',
+      stored: 'created',
     })
 
     const rawPath = `/assets/t/orig/${HASH32}/photo.png`

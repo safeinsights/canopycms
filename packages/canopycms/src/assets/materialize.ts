@@ -11,7 +11,7 @@ import { ASSET_PREFIXES } from './asset-prefixes'
 import { loadSharp } from './sharp-loader'
 import { applyTransform } from './transform'
 import { canonicalizeTransformPath, type ParsedTransformPath } from './transform-directives'
-import type { AssetStore } from './types'
+import type { AssetStore, CreateOnlyResult } from './types'
 
 /** Every transform output is stored under a content-addressed key, so it never changes. */
 export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
@@ -24,8 +24,12 @@ export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
  */
 export const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
 
+/**
+ * `data` is the computed output whether or not it was stored: `stored: 'already-exists'` means
+ * another writer stored the key first, and the store kept that object.
+ */
 export type StoreTransformResult =
-  | { ok: true; data: Uint8Array; contentType: string }
+  | { ok: true; data: Uint8Array; contentType: string; stored: CreateOnlyResult }
   | { ok: false; status: 400 | 404 | 413 | 422; error: string }
 
 /**
@@ -80,14 +84,14 @@ export async function storeTransform(
     return { ok: false, status: transformed.status, error: transformed.error }
   }
 
-  await store.putPublicObject({
+  const stored = await store.putPublicObject({
     key: canonicalKey,
     data: transformed.data,
     contentType: transformed.contentType,
     cacheControl: TRANSFORM_CACHE_CONTROL,
     tags: options.tags,
   })
-  return { ok: true, data: transformed.data, contentType: transformed.contentType }
+  return { ok: true, data: transformed.data, contentType: transformed.contentType, stored }
 }
 
 /** @internal One key a build references, and where it was referenced, for the failure report. */
@@ -384,9 +388,17 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
 
   await forEachBounded(missing, transformConcurrency, async (target) => {
     try {
-      const result = await withRetry(() => storeTransform(store, target.parsed, target.key))
+      let attempts = 0
+      const result = await withRetry(() => {
+        attempts++
+        return storeTransform(store, target.parsed, target.key)
+      })
       if (result.ok) {
-        outcomes.set(target.key, { status: 'created' })
+        // After a failed attempt, `already-exists` may be that attempt's own write, whose response
+        // was lost, so it counts as `created`: a release waiting on its `created` keys then waits
+        // on a key it may not have written, never skips one it did.
+        const createdElsewhere = result.stored === 'already-exists' && attempts === 1
+        outcomes.set(target.key, { status: createdElsewhere ? 'existed' : 'created' })
       } else {
         fail(target.key, 'content', `${result.status}: ${result.error}`)
       }

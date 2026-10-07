@@ -1,7 +1,12 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 
 import { finalizeAsset, finalizeStagedUpload } from './finalize'
+import { LocalAssetStore } from './store-local'
 import type { AssetMeta, AssetStore } from './types'
 
 /**
@@ -31,9 +36,9 @@ function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
     writeStaging: vi.fn(),
     readStaging: vi.fn().mockResolvedValue(null),
     deleteStaging: vi.fn().mockResolvedValue(undefined),
-    putOriginal: vi.fn().mockResolvedValue(undefined),
+    putOriginal: vi.fn().mockResolvedValue('created'),
     readOriginal: vi.fn(),
-    putPublicObject: vi.fn().mockResolvedValue(undefined),
+    putPublicObject: vi.fn().mockResolvedValue('created'),
     readPublicObject: vi.fn(),
     hasPublicObject: vi.fn().mockResolvedValue(false),
     putMetaIfAbsent: vi.fn().mockResolvedValue('created'),
@@ -73,6 +78,7 @@ describe('finalizeAsset', () => {
     const calls: string[] = []
     ;(store.putOriginal as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       calls.push('putOriginal')
+      return 'created'
     })
     ;(store.putMetaIfAbsent as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       calls.push('putMetaIfAbsent')
@@ -137,6 +143,31 @@ describe('finalizeAsset', () => {
     if (!result.ok) return
     expect(result.meta).toBe(winner)
     expect(getMetaCalls).toBe(2)
+  })
+})
+
+describe('finalizeAsset after a crash before the meta commit', () => {
+  it('commits the meta when the original (and an svg public object) is already stored', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-finalize-crash-'))
+    try {
+      const store = new LocalAssetStore({ root })
+      const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>')
+      const first = await finalizeAsset(store, { data: svg, filename: 'a.svg' })
+      if (!first.ok) throw new Error(first.error)
+      // The state a crash between the puts and `putMetaIfAbsent` leaves behind.
+      await store.deleteMeta(first.meta.hash32)
+
+      const putOriginal = vi.spyOn(store, 'putOriginal')
+      const putPublicObject = vi.spyOn(store, 'putPublicObject')
+      const retried = await finalizeAsset(store, { data: svg, filename: 'a.svg' })
+
+      expect(retried.ok).toBe(true)
+      await expect(putOriginal.mock.results[0].value).resolves.toBe('already-exists')
+      await expect(putPublicObject.mock.results[0].value).resolves.toBe('already-exists')
+      expect(await store.getMeta(first.meta.hash32)).toMatchObject({ filename: 'a.svg' })
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 })
 

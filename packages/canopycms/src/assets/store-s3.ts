@@ -12,6 +12,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  type PutObjectCommandInput,
   S3Client,
   paginateListObjectsV2,
 } from '@aws-sdk/client-s3'
@@ -24,6 +25,7 @@ import type {
   AssetMeta,
   AssetStore,
   BeginUploadInput,
+  CreateOnlyResult,
   PublicObject,
   StagedUploadTarget,
 } from './types'
@@ -45,6 +47,8 @@ export interface S3AssetStoreOptions {
   uploadUrl?: string
   /** Override the default bucket-prefix layout (rarely needed). */
   prefixes?: AssetPrefixes
+  /** @internal Test seam for the conditional-write retry delay. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -73,6 +77,17 @@ const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
 /**
+ * S3's 409 for a conditional write racing another write to the same key that is still in flight.
+ * Matched by name only: a 409 is also `OperationAborted`, which is not this.
+ */
+const isConditionalRequestConflict = (err: unknown): boolean =>
+  err instanceof Error && err.name === 'ConditionalRequestConflict'
+
+/** At most 4 attempts and under 1.75 s of waiting; a race still unresolved after that throws the 409. */
+const CONFLICT_ATTEMPTS = 4
+const CONFLICT_BASE_DELAY_MS = 250
+
+/**
  * A missing key, never a missing bucket: S3 answers both with 404, and only a GET's error code names
  * which. A HEAD's 404 has no body, so `hasPublicObject` reads either as absent; a caller that must
  * tell them apart follows with a GET (assets/materialize.ts does).
@@ -88,6 +103,7 @@ export class S3AssetStore implements AssetStore {
   private readonly uploadUrl: string | undefined
   private readonly keys: ReturnType<typeof createKeyBuilders>
   private readonly stagingPrefix: string
+  private readonly sleep: (ms: number) => Promise<void>
 
   constructor(options: S3AssetStoreOptions) {
     this.bucket = options.bucket
@@ -103,6 +119,30 @@ export class S3AssetStore implements AssetStore {
     const prefixes = options.prefixes ?? ASSET_PREFIXES
     this.keys = createKeyBuilders(prefixes)
     this.stagingPrefix = `${prefixes.staging}/`
+    this.sleep =
+      options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  }
+
+  /**
+   * A create-only PUT: `IfNoneMatch: '*'`, so S3 answers a taken key with 412. A
+   * `ConditionalRequestConflict` is retried here, the only retry layer for it, so a caller with no
+   * retry of its own (the lazy transform Lambda, finalize) ends in one of the two results.
+   */
+  private async putIfAbsent(
+    input: Omit<PutObjectCommandInput, 'Bucket' | 'IfNoneMatch'>,
+  ): Promise<CreateOnlyResult> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.client.send(
+          new PutObjectCommand({ ...input, Bucket: this.bucket, IfNoneMatch: '*' }),
+        )
+        return 'created'
+      } catch (err: unknown) {
+        if (isPreconditionFailed(err)) return 'already-exists'
+        if (!isConditionalRequestConflict(err) || attempt >= CONFLICT_ATTEMPTS) throw err
+        await this.sleep(CONFLICT_BASE_DELAY_MS * 2 ** (attempt - 1) * (0.5 + Math.random() / 2))
+      }
+    }
   }
 
   /**
@@ -170,15 +210,12 @@ export class S3AssetStore implements AssetStore {
     ext: string
     data: Uint8Array
     contentType: string
-  }): Promise<void> {
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: this.keys.originalKey(input.hash32, input.ext),
-        Body: input.data,
-        ContentType: input.contentType,
-      }),
-    )
+  }): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.originalKey(input.hash32, input.ext),
+      Body: input.data,
+      ContentType: input.contentType,
+    })
   }
 
   async readOriginal(
@@ -212,23 +249,20 @@ export class S3AssetStore implements AssetStore {
     contentDisposition?: string
     cacheControl?: string
     tags?: Readonly<Record<string, string>>
-  }): Promise<void> {
+  }): Promise<CreateOnlyResult> {
     // `encodeURIComponent` writes a space as `%20`, which reads the same to any decoder;
     // URLSearchParams writes `+`.
     const tagging = Object.entries(input.tags ?? {})
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
       .join('&')
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: input.key,
-        Body: input.data,
-        ContentType: input.contentType,
-        ContentDisposition: input.contentDisposition,
-        CacheControl: input.cacheControl,
-        Tagging: tagging || undefined,
-      }),
-    )
+    return this.putIfAbsent({
+      Key: input.key,
+      Body: input.data,
+      ContentType: input.contentType,
+      ContentDisposition: input.contentDisposition,
+      CacheControl: input.cacheControl,
+      Tagging: tagging || undefined,
+    })
   }
 
   async readPublicObject(key: string): Promise<PublicObject | null> {
@@ -278,22 +312,12 @@ export class S3AssetStore implements AssetStore {
     })
   }
 
-  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'> {
-    try {
-      await this.client.send(
-        new PutObjectCommand({
-          Bucket: this.bucket,
-          Key: this.keys.metaKey(hash32),
-          Body: JSON.stringify(meta),
-          ContentType: 'application/json',
-          IfNoneMatch: '*',
-        }),
-      )
-      return 'created'
-    } catch (err: unknown) {
-      if (isPreconditionFailed(err)) return 'already-exists'
-      throw err
-    }
+  async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult> {
+    return this.putIfAbsent({
+      Key: this.keys.metaKey(hash32),
+      Body: JSON.stringify(meta),
+      ContentType: 'application/json',
+    })
   }
 
   async getMeta(hash32: string): Promise<AssetMeta | null> {
