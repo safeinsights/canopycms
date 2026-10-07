@@ -1,7 +1,7 @@
 # The transform Lambda repeats `storeTransform`'s checks instead of calling it
 
 **Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of
-[image-materialization-epic.md](../image-materialization-epic.md)). The Lambda builds an
+[image-materialization-epic.md](image-materialization-epic.md)). The Lambda builds an
 `S3AssetStore` with `createAssetStore` and calls `storeTransform`, both exported from
 `canopycms/server` with `TRANSFORM_CACHE_CONTROL`; it keeps only the canonical 301, the generic 404
 body, the inline 200 and the over-4 MiB `no-store` 302. Bundle (`build.mjs --skip-native`):

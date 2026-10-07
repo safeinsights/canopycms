@@ -119,8 +119,8 @@ export const MAX_ANIMATED_FRAMES = 60
 // same cache-stuffing reason as width: every accepted directive combination
 // becomes a stored cache object in prod, so unbounded q would multiply the
 // per-asset variant space by 100. Crop stays effectively unbounded (editor
-// rects need float precision); the public path's answer to that is
-// .claude/future-tasks/image-materialization-epic.md.
+// rects need float precision); the public path answers it by computing nothing
+// (ARCHITECTURE.md, "Why transform by URL directive and materialize at release?").
 const MIN_QUALITY = 30
 const MAX_QUALITY = 95
 const QUALITY_STEP = 5

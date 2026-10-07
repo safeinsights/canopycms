@@ -1,7 +1,7 @@
 # Three CLI commands each load `canopycms.config.ts` their own way
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-06 from Phase 2 of
-[image-materialization-epic.md](image-materialization-epic.md).
+[image-materialization-epic.md](resolved/image-materialization-epic.md).
 
 ## State
 

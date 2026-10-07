@@ -1198,9 +1198,9 @@ Stored asset URLs are always root-relative (`/assets/…`), deliberately: the st
 - Assets on CloudFront via `canopycms-cdk`'s `AssetSupport` — omit it; a `basePath` does not move them
 - Assets on a separate host or CDN origin — that origin, e.g. `'https://assets.example.com'`
 
-`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option rather than a config key because different renderers see the `/assets` space at different places. The prefix is applied at render time only and is **never** written into content.
+`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option because renderers see the `/assets` space at different places. The prefix is applied at render time only and is **never** written into content.
 
-In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the editor's signed-in route instead of `baseUrl`, so drafts can show crops and widths no build produced. Only a same-origin framed page is affected, never a server render or static build.
+In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the editor's signed-in route instead of `baseUrl`, so drafts can show crops and widths no build produced. Only a same-origin framed page is affected, from its first draft on; an off-origin preview shows only stored derivatives.
 
 ### Storing a build's images before it is released
 

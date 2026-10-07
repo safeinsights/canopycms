@@ -133,6 +133,21 @@ describe('materializeAssetsCLI', () => {
     })
     expect(code).toBe(1)
   })
+
+  it.each(['0', 'x'])('refuses a bad --transform-concurrency (%s)', async (value) => {
+    out = mockConsole()
+    const code = await materializeAssetsCLI({
+      projectDir: tmpDir,
+      refsPath: await writeRefs([ok]),
+      transformConcurrency: value,
+      allowFailures: false,
+      store,
+    })
+    expect(code).toBe(1)
+    expect(out?.all().error).toContain(
+      `--transform-concurrency must be a positive integer, got "${value}"`,
+    )
+  })
 })
 
 describe('collectAssetRefsCLI', () => {

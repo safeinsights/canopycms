@@ -1,7 +1,7 @@
 # Reap `assets/t/` derivatives no build in the rollback window references
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of
-[image-materialization-epic.md](image-materialization-epic.md).
+[image-materialization-epic.md](resolved/image-materialization-epic.md).
 
 ## State
 

@@ -1,7 +1,7 @@
 # The public repo carries a sandbox AWS account id and an adopter's stack names
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07, noticed while Phase 3 of
-[image-materialization-epic.md](image-materialization-epic.md) edited the canary.
+[image-materialization-epic.md](resolved/image-materialization-epic.md) edited the canary.
 
 ## State
 

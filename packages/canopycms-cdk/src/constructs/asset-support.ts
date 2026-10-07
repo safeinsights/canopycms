@@ -347,7 +347,9 @@ export interface AssetSupportProps {
   /**
    * Compute a missing `/assets/t/*` derivative on request with a transform
    * Lambda, instead of serving only what `canopycms materialize-assets` wrote.
-   * Off, the public path computes nothing and an unmaterialized URL is a miss.
+   * Off, the public path computes nothing and an unmaterialized URL is a miss,
+   * which is also what a live preview on another origin than the editor shows
+   * for a draft's new crop.
    *
    * On, anyone can mint any allowlisted transform of a public asset - bounded
    * per asset except crop, at ~10^16 rects - capped by reserved concurrency and

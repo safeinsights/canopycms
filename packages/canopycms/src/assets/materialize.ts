@@ -139,6 +139,11 @@ export interface MaterializeOptions {
   /** Store requests in flight at once. Default 8. */
   concurrency?: number
   /**
+   * Transforms in flight at once. Each holds a decoded image, up to about 1.2 GiB at
+   * `MAX_INPUT_PIXELS`, so this stays small whatever `concurrency` is. Default 2.
+   */
+  transformConcurrency?: number
+  /**
    * A directive string referenced by at least this many keys has its whole `assets/t/{directives}/`
    * prefix listed once instead of a HEAD per key, when the store can list. Default 100.
    */
@@ -163,6 +168,7 @@ export class SharpUnavailableError extends Error {
 }
 
 const DEFAULT_CONCURRENCY = 8
+const DEFAULT_TRANSFORM_CONCURRENCY = 2
 // eslint-disable-next-line security/detect-non-literal-regexp -- built from a constant
 const STATIC_KEY_RE = new RegExp(
   `^${ASSET_PREFIXES.public}/[a-f0-9]{32}/[a-z0-9-]+\\.[a-z0-9]{1,10}$`,
@@ -243,6 +249,10 @@ interface ValidTarget {
 export async function materializeAssets(options: MaterializeOptions): Promise<MaterializeReport> {
   const { store } = options
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY)
+  const transformConcurrency = Math.max(
+    1,
+    options.transformConcurrency ?? DEFAULT_TRANSFORM_CONCURRENCY,
+  )
   const listThreshold = options.listThreshold ?? DEFAULT_LIST_THRESHOLD
   const attempts = Math.max(1, options.attempts ?? DEFAULT_ATTEMPTS)
   const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS
@@ -372,7 +382,7 @@ export async function materializeAssets(options: MaterializeOptions): Promise<Ma
     }
   }
 
-  await forEachBounded(missing, concurrency, async (target) => {
+  await forEachBounded(missing, transformConcurrency, async (target) => {
     try {
       const result = await withRetry(() => storeTransform(store, target.parsed, target.key))
       if (result.ok) {

@@ -99,8 +99,8 @@ test.describe('Editor and preview images use the authenticated asset route', () 
       expect(new Set(srcs).size).toBe(24)
     })
 
-    await test.step('nothing was throttled, failed, or fetched from the public path', () => {
-      expect(assetResponses.filter((r) => r.status === 429 || r.status >= 500)).toEqual([])
+    // The dev server has no concurrency cap, so throttling is covered by the unit tests, not here.
+    await test.step('nothing failed or was fetched from the public path', () => {
       expect(assetResponses.filter((r) => r.status !== 200)).toEqual([])
       expect(assetResponses.filter((r) => r.path.startsWith('/assets/'))).toEqual([])
       expect(assetResponses.length).toBeGreaterThanOrEqual(26)

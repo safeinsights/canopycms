@@ -1,7 +1,7 @@
 # A lazy transform mode that only fills keys a refs manifest names
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of
-[image-materialization-epic.md](image-materialization-epic.md). Build it only if an adopter cannot
+[image-materialization-epic.md](resolved/image-materialization-epic.md). Build it only if an adopter cannot
 add the `collect-asset-refs` and `materialize-assets` release steps.
 
 ## State

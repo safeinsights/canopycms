@@ -2,7 +2,8 @@
  * Bundle-boundary guard for the browser-facing entry points.
  *
  * The editor ships to browsers through `canopycms/client` and
- * `canopycms-next/client`. Anything reachable from those entries — however many
+ * `canopycms-next/client`, and the bare `canopycms` entry's `assetUrl` runs in
+ * adopters' client components. Anything reachable from those entries — however many
  * hops away — must stay free of node built-ins, or an adopter's production
  * `next build` fails with "Module not found: Can't resolve 'fs'". `next dev`
  * tolerates the violation, so nothing flags it while authoring; this config
@@ -18,7 +19,8 @@
  */
 
 /** The browser-facing entry points. Cruise these, and only rule on these. */
-const CLIENT_ENTRIES = '^packages/canopycms(-next)?/src/client\\.tsx?$'
+const CLIENT_ENTRIES =
+  '^packages/canopycms(-next)?/src/client\\.tsx?$|^packages/canopycms/src/index\\.ts$'
 
 /** Our own first-party sources (i.e. not resolved npm packages). */
 const OWN_SRC = '^packages/[^/]+/src/'
@@ -51,7 +53,7 @@ export default {
       name: 'core-no-github-app-auth',
       severity: 'error',
       comment:
-        "`@octokit/auth-app` must not enter canopycms's own graph. github-service.ts is reachable from services.ts, so anything it imports lands in EVERY adopter's Next.js server bundle — including the majority who authenticate with a personal access token and will never register a GitHub App. The client-bundle rule above does not cover the server bundle, which is why this rule exists. A deployment that does use an App constructs the strategy in its own entrypoint and injects it through the structural `{ authStrategy, auth }` passthrough in github-service.ts; the dependency is declared by packages/canopycms-cdk/package.json. NOTE this rule is evaluated by `pnpm lint:cycles`, not `pnpm lint:bundle` -- lint:bundle cruises only the two client entries, which never reach github-service.ts.",
+        "`@octokit/auth-app` must not enter canopycms's own graph. github-service.ts is reachable from services.ts, so anything it imports lands in EVERY adopter's Next.js server bundle — including the majority who authenticate with a personal access token and will never register a GitHub App. The client-bundle rule above does not cover the server bundle, which is why this rule exists. A deployment that does use an App constructs the strategy in its own entrypoint and injects it through the structural `{ authStrategy, auth }` passthrough in github-service.ts; the dependency is declared by packages/canopycms-cdk/package.json. NOTE this rule is evaluated by `pnpm lint:cycles`, not `pnpm lint:bundle` -- lint:bundle cruises only the browser-facing entries, which never reach github-service.ts.",
       from: { path: OWN_SRC },
       to: { path: '@octokit[/+]auth-app' },
     },
