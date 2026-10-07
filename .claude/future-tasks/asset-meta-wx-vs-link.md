@@ -59,8 +59,8 @@ never considers `link()`, which has neither drawback.
 
 ## Fix direction
 
-Swap `wx` for the temp + `link()` pattern `occ-json-write.ts` already implements (the same
-file's `createExclusive` does it for blobs, staging temps in `.asset-tmp/`),
+Swap `wx` for the temp + `link()` pattern `occ-json-write.ts` already implements (`store-local.ts`'s
+`createExclusive` does it for blobs, staging temps in `.asset-tmp/`),
 keeping the `EEXIST` → `'already-exists'` mapping exactly as it is
 (`isFileExistsError` already covers it). If the current behaviour is preferred
 for a reason not captured in the comment, record that reason there instead — the

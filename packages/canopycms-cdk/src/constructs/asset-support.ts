@@ -338,10 +338,10 @@ export interface AssetSupportProps {
    *
    * Opt-in because the Deny binds every principal, including the CMS Lambda, which runs the
    * `canopycms` your app installs: upgrade `canopycms` to a release whose asset stores write
-   * create-only, then enable this. It also denies `aws s3 cp` without `--if-none-match`, and every
-   * multipart upload. Replication is authorized as `s3:ReplicateObject`, so it is not denied.
+   * create-only, then enable this. It also denies every unconditional write, such as a plain
+   * `aws s3 cp`, and every multipart upload (`UploadPart` carries no `If-None-Match`). Replication is authorized as `s3:ReplicateObject`, so it is not denied.
    *
-   * To replace a bad object, delete it, then rerun `materialize-assets`. On a versioned bucket the
+   * To replace a bad derivative, delete it, then rerun `materialize-assets`. On a versioned bucket the
    * delete writes a delete marker and the bad version stays restorable; a replica keeps serving
    * it unless delete-marker replication is on.
    *

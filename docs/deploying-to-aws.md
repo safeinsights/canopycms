@@ -400,10 +400,10 @@ Anything not materialized is a 403. Materialized derivatives are kept forever. `
 adds a replica both behaviors fail over to on a 5xx; its policy must allow this distribution,
 and replication must cover `assets/`.
 
-CanopyCMS never replaces an object under `assets/`, `asset-originals/` or `asset-meta/`.
-`enforceCreateOnlyWrites: true` denies any write there lacking `If-None-Match`; upgrade
-`canopycms` first. On a bucket you pass in, add the statement yourself; replication is
-`s3:ReplicateObject`, which it does not block:
+CanopyCMS never replaces objects under `assets/`, `asset-originals/` or `asset-meta/`;
+`enforceCreateOnlyWrites: true` denies writes there lacking `If-None-Match` (upgrade
+`canopycms` first). For a bucket you pass in, add this in its defining stack, since an imported
+bucket ignores `addToResourcePolicy`. Replication (`s3:ReplicateObject`) is unaffected:
 
 ```typescript
 bucket.addToResourcePolicy(
