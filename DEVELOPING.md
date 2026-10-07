@@ -989,7 +989,8 @@ pnpm --filter canopycms-example-one run verify:build
 
 (`--filter example1` matches nothing — `example1` is the directory name, the package is `canopycms-example-one`.)
 
-- **It asserts on the build's OUTPUT, not its exit code.** Re-modelling the `home` entry as a root `index` entry changed its on-disk slug while `app/page.tsx` still read the old one, so `readByUrlPath('/')` resolved nothing and Next prerendered the not-found boundary **at `/`** while the exit code stayed 0, with `sitemap.xml` still advertising the stale `/home`. "The build passed" was evidence of nothing. So the test greps the emitted `.next/server/app/index.html` for the home entry's actual hero title (read from its content file, not hardcoded) and checks `sitemap.xml.body` for `/` while asserting `/home` is absent, plus a floor against a near-empty sitemap. Duplicate-URL collisions are not re-checked here: `assertNoDuplicateUrlPaths` already runs during a normal `next build` via the sitemap and static-params calls, so a real collision fails the build outright.
+- **It asserts on the build's OUTPUT, not its exit code.** A stale slug makes `readByUrlPath('/')` resolve nothing, and Next then prerenders the not-found boundary **at `/`** with exit code 0 while `sitemap.xml` still advertises the stale `/home`: "the build passed" is evidence of nothing. So the test greps the emitted `.next/server/app/index.html` for the home entry's actual hero title (read from its content file, not hardcoded) and checks `sitemap.xml.body` for `/` while asserting `/home` is absent, plus a floor against a near-empty sitemap. Duplicate-URL collisions are not re-checked here: `assertNoDuplicateUrlPaths` already runs during a normal `next build` via the sitemap and static-params calls, so a real collision fails the build outright.
+- **It also scans `/posts/hello-world`'s chunks for `--mantine-`**, so a `/preview` import reaching the editor fails here.
 - **The CI job builds on the detached HEAD `actions/checkout` leaves, with no git setup.** A build reads the working tree, never a branch clone, so it reads exactly the PR's content and a green run is the live proof; `build-verify.test.ts` also asserts the build creates no `.canopy-dev`. `dual-build` still attaches HEAD, for its request-time reads.
 
 ### Scaffold-and-Synth Verification (`canopycms-cdk/src/scaffold-synth.test.ts`)
@@ -1182,7 +1183,7 @@ stories, `.storybook/`, the config barrel and the groups barrel are the entries.
 
 ### Client-Bundle Boundary Check
 
-The editor reaches browsers through `canopycms/client` and `canopycms-next/client`, and the bare `canopycms` entry (`assetUrl`) through adopters' client components. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build.
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`, host pages through the `/preview` entries of both, and the bare `canopycms` entry (`assetUrl`) through adopters' client components. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build. The `/preview` entries also must not reach a `.css` file or a `@mantine/` module (`preview-entries-no-editor-styles`); `node_modules` is not followed, but the edge into it is still checked.
 
 ```bash
 pnpm lint:bundle

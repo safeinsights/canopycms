@@ -2,7 +2,7 @@ import type { ReactElement, ReactNode } from 'react'
 import { notFound } from 'next/navigation'
 import type { CanopyConfig } from 'canopycms'
 import type { CanopyContext } from 'canopycms/server'
-import type { CanopyPreviewProps } from './client'
+import type { CanopyPreviewProps } from './preview'
 
 type ReadEntry = NonNullable<Awaited<ReturnType<CanopyContext['readByUrlPath']>>>
 
@@ -79,7 +79,7 @@ function hasLoader(
 export interface CreatePreviewPageOptions {
   /**
    * The view for each entry type the preview route serves, keyed by entry type name, each made by
-   * `withCanopyPreview` (`canopycms-next/client`) in a `'use client'` module, or a
+   * `withCanopyPreview` (`canopycms-next/preview`) in a `'use client'` module, or a
    * `previewView({ view, load })` pair when the view needs more than the entry. An entry whose
    * type has no view is a 404.
    */

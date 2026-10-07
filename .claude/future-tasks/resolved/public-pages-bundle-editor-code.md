@@ -1,5 +1,20 @@
 # Public pages that import `canopycms/client` ship the editor
 
+**Status: RESOLVED 2026-10-07**, branch `fix/preview-entrypoints`, base `int-202610-b`, by the
+narrower import rather than `sideEffects`.
+
+- Host pages import the bridge from new `canopycms/preview` and `canopycms-next/preview` entries;
+  neither `/client` entry exports it. `PreviewFrame` moved out of `editor/preview-bridge.tsx`,
+  so the preview graph holds no editor code even without tree-shaking.
+- `pnpm lint:bundle` fails when a preview entry reaches a `.css` file or a `@mantine/` module
+  (`preview-entries-no-editor-styles`); check:esm imports both entries under plain Node, which
+  rejects CSS.
+- Measured in example1's `next build`: `/posts/hello-world` now loads 11 assets, 1.26 MB, none
+  containing `--mantine-`. `build-verify.test.ts` asserts that; importing `canopycms/client` into
+  `PostView` makes it fail on 4 Mantine assets.
+- An adopter saw the same gap inside the editor: the preview iframe loaded Mantine's unlayered
+  CSS, whose Button rule beat the adopter's CSS-module rules.
+
 ## Priority: P2 [BOTH]
 
 Filed 2026-10-05, from the round-1 review of the `createPreviewPage` PR. **Measured** in an

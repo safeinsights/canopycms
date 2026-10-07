@@ -4,7 +4,7 @@ import type { ComponentType } from 'react'
 import React from 'react'
 
 import type { BlockComponentRegistry } from 'canopycms'
-import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/client'
+import { type CanopyPreviewViewProps, withCanopyPreview } from 'canopycms-next/preview'
 
 import type { PostContent } from '../schemas'
 import { AuthorCard } from './AuthorCard'

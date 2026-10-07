@@ -5,7 +5,7 @@ export type { CustomFieldRenderers, CustomFieldRenderProps } from './editor/Form
 export * from './editor/EditorPanes'
 export * from './editor/EntryNavigator'
 export * from './editor/Editor'
-export * from './editor/preview-bridge'
+export { PreviewFrame } from './editor/PreviewFrame'
 export * from './editor/canopy-path'
 export * from './editor/theme'
 export * from './editor/editor-config'
