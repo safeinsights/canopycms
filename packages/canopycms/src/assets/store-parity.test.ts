@@ -22,7 +22,7 @@ import {
 } from '@aws-sdk/client-s3'
 import { sdkStreamMixin } from '@smithy/util-stream'
 import { mockClient } from 'aws-sdk-client-mock'
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AssetMeta, AssetStore } from './types'
 import { LocalAssetStore } from './store-local'
@@ -53,6 +53,8 @@ const makeMeta = (overrides: Partial<AssetMeta> = {}): AssetMeta => ({
   ...overrides,
 })
 
+const CREATE_ONLY_PREFIXES = ['assets/', 'asset-originals/', 'asset-meta/']
+
 /** Minimal in-memory S3 fake, driven by aws-sdk-client-mock's callsFake(). */
 function installS3Fake() {
   const s3Mock = mockClient(S3Client)
@@ -72,6 +74,10 @@ function installS3Fake() {
 
   s3Mock.on(PutObjectCommand).callsFake((input: PutObjectCommandInput) => {
     const key = input.Key as string
+    // AssetSupport's `enforceCreateOnlyWrites` bucket-policy Deny.
+    if (CREATE_ONLY_PREFIXES.some((prefix) => key.startsWith(prefix)) && !input.IfNoneMatch) {
+      throw makeAwsError('AccessDenied', 403, 'Access Denied')
+    }
     if (input.IfNoneMatch === '*' && objects.has(key)) {
       throw makeAwsError('PreconditionFailed', 412, 'At least one of the pre-conditions failed')
     }
@@ -268,6 +274,58 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
       expect(await store.hasPublicObject(`assets/t/w=320/${hash32For(7)}`)).toBe(false)
     })
 
+    it('putOriginal is create-only: a second write reports already-exists and changes nothing', async () => {
+      const { store } = harness
+      const hash32 = hash32For(44)
+      const put = (text: string, contentType: string) =>
+        store.putOriginal({ hash32, ext: 'png', data: new TextEncoder().encode(text), contentType })
+      expect(await put('first', 'image/png')).toBe('created')
+      expect(await put('second', 'image/webp')).toBe('already-exists')
+      const result = await store.readOriginal(hash32, 'png')
+      expect(result && textOf(result.data)).toBe('first')
+      expect(result?.contentType).toBe('image/png')
+    })
+
+    it('putPublicObject is create-only: a second write reports already-exists and changes nothing', async () => {
+      const { store } = harness
+      const key = `assets/${hash32For(45)}/report.pdf`
+      const put = (text: string, filename: string) =>
+        store.putPublicObject({
+          key,
+          data: new TextEncoder().encode(text),
+          contentType: 'application/pdf',
+          contentDisposition: `inline; filename="${filename}"`,
+        })
+      expect(await put('first', 'Report.pdf')).toBe('created')
+      expect(await put('second', 'report.pdf')).toBe('already-exists')
+      const result = await store.readPublicObject(key)
+      expect(result && textOf(result.data)).toBe('first')
+      expect(result?.contentDisposition).toBe('inline; filename="Report.pdf"')
+    })
+
+    it('concurrent writes of one key: exactly one creates, and its bytes are the ones stored', async () => {
+      const { store } = harness
+      const key = `assets/t/w=320/${hash32For(46)}/photo.png`
+      const writers = ['a', 'b', 'c', 'd'].map((text) => ({
+        text,
+        result: store.putPublicObject({
+          key,
+          data: new TextEncoder().encode(text),
+          contentType: 'image/png',
+        }),
+      }))
+      const results = await Promise.all(writers.map((writer) => writer.result))
+      expect([...results].sort()).toEqual([
+        'already-exists',
+        'already-exists',
+        'already-exists',
+        'created',
+      ])
+      const winner = writers[results.indexOf('created')].text
+      const stored = await store.readPublicObject(key)
+      expect(stored && textOf(stored.data)).toBe(winner)
+    })
+
     it('paginates listMeta to exhaustion with no duplicates', async () => {
       const { store } = harness
       const total = 7
@@ -371,5 +429,83 @@ describe('LocalAssetStore path-traversal guard', () => {
     ).rejects.toThrow('Path traversal detected')
 
     await fs.rm(parent, { recursive: true, force: true })
+  })
+})
+
+describe('LocalAssetStore create-only writes', () => {
+  let root: string
+  let store: LocalAssetStore
+  const hash32 = hash32For(77)
+  const originalsDir = () => path.join(root, 'asset-originals')
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-assets-create-only-'))
+    store = new LocalAssetStore({ root })
+  })
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  const exists = (file: string) =>
+    fs.stat(file).then(
+      () => true,
+      () => false,
+    )
+
+  it('never shows readOriginal a partial write, and links the sidecar before the blob', async () => {
+    const blob = path.join(originalsDir(), `${hash32}.png`)
+    const realLink = fs.link.bind(fs)
+    const observed: { readable: boolean; blob: boolean; sidecar: boolean }[] = []
+    const observe = async () => {
+      observed.push({
+        readable: (await store.readOriginal(hash32)) !== null,
+        blob: await exists(blob),
+        sidecar: await exists(`${blob}.headers.json`),
+      })
+    }
+    vi.spyOn(fs, 'link').mockImplementation(async (from, to) => {
+      await observe()
+      await realLink(from, to)
+      await observe()
+    })
+
+    await store.putOriginal({
+      hash32,
+      ext: 'png',
+      data: new TextEncoder().encode('bytes'),
+      contentType: 'image/png',
+    })
+
+    expect(observed.length).toBeGreaterThan(0)
+    for (const state of observed) {
+      expect(state.readable).toBe(state.blob)
+      if (state.blob) expect(state.sidecar).toBe(true)
+    }
+    expect((await fs.readdir(originalsDir())).sort()).toEqual([
+      `${hash32}.png`,
+      `${hash32}.png.headers.json`,
+    ])
+    expect((await store.readOriginal(hash32))?.contentType).toBe('image/png')
+  })
+
+  it('readOriginal ignores a sidecar or stray temp file named after the hash', async () => {
+    await fs.mkdir(originalsDir(), { recursive: true })
+    await fs.writeFile(path.join(originalsDir(), `${hash32}.png.headers.json`), '{}')
+    await fs.writeFile(path.join(originalsDir(), `${hash32}.png.1700000000000.x1y2.tmp`), 'partial')
+    expect(await store.readOriginal(hash32)).toBeNull()
+  })
+
+  it('leaves no temp file behind, whether it created or found the key', async () => {
+    const put = () =>
+      store.putPublicObject({
+        key: `assets/t/w=320/${hash32}/photo.png`,
+        data: new TextEncoder().encode('x'),
+        contentType: 'image/png',
+      })
+    expect(await put()).toBe('created')
+    expect(await put()).toBe('already-exists')
+    expect(await fs.readdir(path.join(root, '.asset-tmp'))).toEqual([])
   })
 })

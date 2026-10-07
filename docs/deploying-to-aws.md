@@ -309,9 +309,8 @@ configured, and setting both is refused at synth.
 
 Then edit `infrastructure/lib/cms-stack.ts` for anything beyond that — memory
 and concurrency, `AssetSupport` for media (a commented block in the generated
-file: uncomment it, then pass the resulting `assetSupport` to
-`CanopyCmsDistribution`'s `assetSupport` prop, which attaches its CloudFront
-behaviors in the only safe order for you), or a distribution you already own.
+file: uncomment it and pass `assetSupport` to `CanopyCmsDistribution`, which
+attaches its behaviors in the only safe order), or a distribution you already own.
 
 `githubOwner` / `githubRepo` in `infrastructure/bin/app.ts` are prefilled from
 your `origin` remote. Check them: they decide which repository the worker
@@ -319,11 +318,9 @@ pushes branches and opens PRs against.
 
 ### Why `cdk.json`'s `context` is empty
 
-`cdk init` pins a long list of feature flags into new projects. This scaffold
-deliberately pins none: the `canopycms-cdk` constructs are developed and tested
-under aws-cdk-lib's own defaults, so an inherited flag set would be untested
-here. Add flags if you need them, but note that a flag which only existed in
-CDKv1 is rejected outright at synth (`UnsupportedFeatureFlag`).
+This scaffold pins none of the feature flags `cdk init` would: the
+`canopycms-cdk` constructs are tested under aws-cdk-lib's own defaults. Add flags
+if you need them; a CDKv1-only flag is rejected at synth (`UnsupportedFeatureFlag`).
 
 ### CloudFront in front of the Function URL
 
@@ -402,6 +399,25 @@ canopycms materialize-assets --refs out/canopy-asset-refs.json
 Anything not materialized is a 403. Materialized derivatives are kept forever. `replicaBucket`
 adds a replica both behaviors fail over to on a 5xx; its policy must allow this distribution,
 and replication must cover `assets/`.
+
+CanopyCMS never replaces an object under `assets/`, `asset-originals/` or `asset-meta/`.
+`enforceCreateOnlyWrites: true` denies any write there lacking `If-None-Match`; upgrade
+`canopycms` first. On a bucket you pass in, add the statement yourself; replication is
+`s3:ReplicateObject`, which it does not block:
+
+```typescript
+bucket.addToResourcePolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.DENY,
+    principals: [new iam.StarPrincipal()],
+    actions: ['s3:PutObject'],
+    resources: ['assets', 'asset-originals', 'asset-meta'].map((p) =>
+      bucket.arnForObjects(`${p}/*`),
+    ),
+    conditions: { Null: { 's3:if-none-match': 'true' } },
+  }),
+)
+```
 
 `lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
 widths, reserved concurrency), letting anyone mint transforms of a public asset; only `/assets/*`

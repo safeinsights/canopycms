@@ -314,6 +314,95 @@ describe('S3AssetStore.putPublicObject tags', () => {
   })
 })
 
+describe('S3AssetStore create-only writes', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+  let sleep: ReturnType<typeof vi.fn<(ms: number) => Promise<void>>>
+
+  const awsError = (name: string, httpStatusCode: number) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode } })
+  const conflict = () => awsError('ConditionalRequestConflict', 409)
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+    sleep = vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const store = () => new S3AssetStore({ bucket: BUCKET, region: REGION, sleep })
+  const putDerivative = () =>
+    store().putPublicObject({
+      key: 'assets/t/w=320/a/x.png',
+      data: new Uint8Array([1]),
+      contentType: 'image/png',
+    })
+
+  it('sends IfNoneMatch on every content-addressed put', async () => {
+    s3Mock.on(PutObjectCommand).resolves({})
+    const s = store()
+    await s.putOriginal({ hash32: 'a', ext: 'png', data: new Uint8Array([1]), contentType: 'x' })
+    await putDerivative()
+    await s.putMetaIfAbsent('a', {
+      hash32: 'a',
+      filename: 'a.png',
+      slug: 'a',
+      ext: 'png',
+      mime: 'image/png',
+      size: 1,
+      kind: 'raster',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    })
+    const inputs = s3Mock.commandCalls(PutObjectCommand).map((call) => call.args[0].input)
+    expect(inputs.map((input) => input.Key)).toEqual([
+      'asset-originals/a.png',
+      'assets/t/w=320/a/x.png',
+      'asset-meta/a.json',
+    ])
+    expect(inputs.map((input) => input.IfNoneMatch)).toEqual(['*', '*', '*'])
+  })
+
+  it('reports a 412 as already-exists', async () => {
+    s3Mock.on(PutObjectCommand).rejects(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('already-exists')
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it('retries a ConditionalRequestConflict, then reports what the retry found', async () => {
+    s3Mock
+      .on(PutObjectCommand)
+      .rejectsOnce(conflict())
+      .rejectsOnce(awsError('PreconditionFailed', 412))
+    expect(await putDerivative()).toBe('already-exists')
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a ConditionalRequestConflict that clears into a created write', async () => {
+    s3Mock.on(PutObjectCommand).rejectsOnce(conflict()).resolves({})
+    expect(await putDerivative()).toBe('created')
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(2)
+  })
+
+  it('throws the conflict after 4 attempts and under 1.75 s of waiting', async () => {
+    s3Mock.on(PutObjectCommand).rejects(conflict())
+    await expect(putDerivative()).rejects.toMatchObject({ name: 'ConditionalRequestConflict' })
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(4)
+    const delays = sleep.mock.calls.map(([ms]) => ms)
+    expect(delays).toHaveLength(3)
+    expect(delays.every((ms) => ms > 0)).toBe(true)
+    expect(delays.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(1750)
+  })
+
+  it('does not retry any other 409', async () => {
+    s3Mock.on(PutObjectCommand).rejects(awsError('OperationAborted', 409))
+    await expect(putDerivative()).rejects.toMatchObject({ name: 'OperationAborted' })
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+})
+
 /**
  * UPSTREAM CONTRACT PIN — not a test of our code.
  *

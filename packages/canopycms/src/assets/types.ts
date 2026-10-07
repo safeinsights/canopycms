@@ -44,18 +44,26 @@ export interface PublicObject {
   cacheControl?: string
 }
 
+/**
+ * What a create-only write did. Every key the store writes this way is content-addressed, so no
+ * correct writer ever replaces an object: `already-exists` means an object was already at the key
+ * and was left alone.
+ */
+export type CreateOnlyResult = 'created' | 'already-exists'
+
 export interface AssetStore {
   readonly capabilities: { directUpload: boolean }
   beginUpload(input: BeginUploadInput): Promise<StagedUploadTarget>
   writeStaging(stagingKey: string, data: Uint8Array, contentType?: string): Promise<void>
   readStaging(stagingKey: string): Promise<Uint8Array | null>
   deleteStaging(stagingKey: string): Promise<void>
+  /** Create-only; see `CreateOnlyResult`. */
   putOriginal(input: {
     hash32: string
     ext: string
     data: Uint8Array
     contentType: string
-  }): Promise<void>
+  }): Promise<CreateOnlyResult>
   /**
    * `ext` is where the original is expected (its meta's `ext`): that key is read first, and any
    * `{hash32}.*` is looked for only on a miss. A hit needs no list permission; on S3 without
@@ -65,6 +73,7 @@ export interface AssetStore {
     hash32: string,
     ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null>
+  /** Create-only; see `CreateOnlyResult`. */
   putPublicObject(input: {
     key: string
     data: Uint8Array
@@ -73,7 +82,7 @@ export interface AssetStore {
     cacheControl?: string
     /** Object tags; bucket lifecycle rules can filter on them. */
     tags?: Readonly<Record<string, string>>
-  }): Promise<void>
+  }): Promise<CreateOnlyResult>
   readPublicObject(key: string): Promise<PublicObject | null>
   /** Whether a public object exists at `key`, without reading its body. */
   hasPublicObject(key: string): Promise<boolean>
@@ -81,7 +90,7 @@ export interface AssetStore {
   listPublicObjectKeys?(prefix: string): AsyncIterable<string>
   /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
   presignPublicObjectRead?(key: string): Promise<string | null>
-  putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'>
+  putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<CreateOnlyResult>
   getMeta(hash32: string): Promise<AssetMeta | null>
   listMeta(input?: {
     cursor?: string

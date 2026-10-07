@@ -16,13 +16,15 @@ import {
   isTransientStoreError,
   materializeAssets,
   SharpUnavailableError,
+  storeTransform,
   TRANSFORM_CACHE_CONTROL,
   type MaterializeTarget,
 } from './materialize'
 import * as sharpLoader from './sharp-loader'
 import { LocalAssetStore } from './store-local'
 import { S3AssetStore } from './store-s3'
-import type { AssetMeta, AssetStore } from './types'
+import { canonicalizeTransformPath } from './transform-directives'
+import type { AssetMeta, AssetStore, CreateOnlyResult } from './types'
 
 vi.mock('./sharp-loader', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./sharp-loader')>()
@@ -32,6 +34,7 @@ vi.mock('./sharp-loader', async (importOriginal) => {
 const HASH = 'a'.repeat(32)
 const OTHER_HASH = 'b'.repeat(32)
 const noSleep = () => Promise.resolve()
+const textOf = (data: Uint8Array | undefined) => (data ? Buffer.from(data).toString('utf-8') : '')
 
 const meta: AssetMeta = {
   hash32: HASH,
@@ -207,6 +210,47 @@ describe('materializeAssets against a local store', () => {
     })
     expect(report.results).toHaveLength(1)
     expect(report.results[0]).toMatchObject({ routes: ['/a', '/b'], files: ['a.html', 'b.html'] })
+  })
+
+  it('counts a key another writer stored after the existence check as existed, keeping its bytes', async () => {
+    const key = `assets/t/w=320/${HASH}/photo.png`
+    const theirs = new TextEncoder().encode('stored by another writer')
+    await store.putPublicObject({ key, data: theirs, contentType: 'image/png' })
+    vi.spyOn(store, 'hasPublicObject').mockResolvedValue(false)
+
+    const report = await materializeAssets({ store, targets: [target(key)], sleep: noSleep })
+    expect(report.results[0]).toMatchObject({ key, status: 'existed' })
+    expect(report.summary).toMatchObject({ existed: 1, created: 0, failed: 0 })
+    expect(textOf((await store.readPublicObject(key))?.data)).toBe('stored by another writer')
+  })
+
+  it('counts only the literal already-exists as existed', async () => {
+    vi.spyOn(store, 'putPublicObject').mockResolvedValue(undefined as unknown as CreateOnlyResult)
+    const report = await materializeAssets({
+      store,
+      targets: [target(`assets/t/w=320/${HASH}/photo.png`)],
+      sleep: noSleep,
+    })
+    expect(report.summary).toMatchObject({ existed: 0, created: 1, failed: 0 })
+  })
+
+  it('two racing storeTransforms on one key both serve bytes; one creates, one finds it stored', async () => {
+    const segments = ['w=320', HASH, 'photo.png']
+    const parsed = canonicalizeTransformPath(segments, 'any')
+    if (!parsed.ok) throw new Error(parsed.error)
+    const key = `assets/t/${segments.join('/')}`
+
+    const results = await Promise.all([
+      storeTransform(store, parsed, key),
+      storeTransform(store, parsed, key),
+    ])
+    const stored: string[] = []
+    for (const result of results) {
+      if (!result.ok) throw new Error(result.error)
+      expect((await sharp(result.data).metadata()).width).toBe(320)
+      stored.push(result.stored)
+    }
+    expect(stored.sort()).toEqual(['already-exists', 'created'])
   })
 
   it('retries a transient store error and succeeds', async () => {

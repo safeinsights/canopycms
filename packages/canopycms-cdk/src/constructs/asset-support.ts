@@ -58,6 +58,9 @@ const PREFIXES = {
   transform: 'assets/t',
 } as const
 
+/** The content-addressed prefixes, whose objects no correct writer ever replaces. */
+const CREATE_ONLY_PREFIXES = [PREFIXES.public, PREFIXES.originals, PREFIXES.meta] as const
+
 /**
  * The tag on every object the transform Lambda writes, copied as literals for
  * the same reason as `PREFIXES`. Source of truth is `LAZY_TRANSFORM_TAG` in
@@ -326,6 +329,25 @@ export interface AssetSupportProps {
    * @default false
    */
   readonly autoDeleteObjects?: boolean
+
+  /**
+   * Deny every `s3:PutObject` to `assets/*`, `asset-originals/*` and `asset-meta/*` that carries
+   * no `If-None-Match`, so no principal can replace an object under those content-addressed
+   * prefixes. Standalone mode only: with a BYO `bucket` the prop is refused, and the same statement
+   * belongs in that bucket's own policy (see docs/deploying-to-aws.md).
+   *
+   * Opt-in because the Deny binds every principal, including the CMS Lambda, which runs the
+   * `canopycms` your app installs: upgrade `canopycms` to a release whose asset stores write
+   * create-only, then enable this. It also denies `aws s3 cp` without `--if-none-match`, and every
+   * multipart upload. Replication is authorized as `s3:ReplicateObject`, so it is not denied.
+   *
+   * To replace a bad object, delete it, then rerun `materialize-assets`. On a versioned bucket the
+   * delete writes a delete marker and the bad version stays restorable; a replica keeps serving
+   * it unless delete-marker replication is on.
+   *
+   * @default false
+   */
+  readonly enforceCreateOnlyWrites?: boolean
 
   /**
    * A replica of the bucket's `assets/` prefix. Both public behaviors fail over
@@ -933,6 +955,16 @@ export class AssetSupport extends Construct {
       )
     }
 
+    if (props.bucket && props.enforceCreateOnlyWrites) {
+      throw new Error(
+        'AssetSupport: `enforceCreateOnlyWrites` writes its Deny into the policy of a bucket this ' +
+          'construct creates, and cannot write one on a BYO `bucket`. Drop the prop and add the ' +
+          "statement to your bucket's own policy: Deny s3:PutObject to any principal on " +
+          `${CREATE_ONLY_PREFIXES.map((prefix) => `${prefix}/*`).join(', ')} under the condition ` +
+          '{ Null: { "s3:if-none-match": "true" } }.',
+      )
+    }
+
     // Fail closed: a bundle without the marker has no linux/arm64 sharp and
     // throws at cold start on the first image request, far from the cause.
     // `pnpm test` leaves exactly such a fixture on disk.
@@ -1033,6 +1065,19 @@ export class AssetSupport extends Construct {
               ]
             : undefined,
       })
+    }
+
+    if (props.enforceCreateOnlyWrites) {
+      this.bucket.addToResourcePolicy(
+        new iam.PolicyStatement({
+          sid: 'DenyAssetOverwrites',
+          effect: iam.Effect.DENY,
+          principals: [new iam.StarPrincipal()],
+          actions: ['s3:PutObject'],
+          resources: CREATE_ONLY_PREFIXES.map((prefix) => this.bucket.arnForObjects(`${prefix}/*`)),
+          conditions: { Null: { 's3:if-none-match': 'true' } },
+        }),
+      )
     }
 
     if (lazy) {
