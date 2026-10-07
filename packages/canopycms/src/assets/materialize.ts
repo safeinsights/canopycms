@@ -18,8 +18,9 @@ export const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 /**
  * The object tag on every derivative the lazy transform Lambda writes. Its bucket's `assets/t/`
- * expiry filters on it, so materialized derivatives, which the Lambda's allowlist may refuse to
- * recompute, are never expired. canopycms-cdk's `AssetSupport` copies these two strings as literals.
+ * expiry filters on it, so what `materializeAssets` writes, which the Lambda's allowlist may refuse
+ * to recompute, is never expired. canopycms-cdk's `AssetSupport` copies these two strings as
+ * literals.
  */
 export const LAZY_TRANSFORM_TAG = { key: 'canopy-transform', value: 'lazy' } as const
 

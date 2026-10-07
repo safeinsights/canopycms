@@ -1,9 +1,9 @@
 /**
  * The shared transform engine: applies a parsed `TransformDirectives` to source image bytes
  * with sharp. Server-only - never import this from client/editor code (kept in its own file,
- * separate from the dependency-free transform-directives.ts). Used by the dev-mode lazy
- * `/assets/t/*` emulation in api/assets.ts and, unchanged, by the prod transform Lambda
- * (packages/canopycms-cdk/lambda/asset-transform).
+ * separate from the dependency-free transform-directives.ts). Its one caller here is
+ * `storeTransform` (materialize.ts), which the raw route, `materialize-assets` and the lazy
+ * transform Lambda share.
  *
  * sharp is imported for its TYPES only and loaded on first use through `loadSharp()`
  * (sharp-loader.ts), so importing this module never loads libvips - see sharp-loader.ts for
@@ -219,7 +219,7 @@ export async function applyTransform(
     // can only be applied as `Math.min(totalPages, MAX_ANIMATED_FRAMES)`.
     // `limitInputPixels` on this probe counts one frame, so an oversized still
     // throws here; the load below counts every frame it reads, so an over-cap
-    // animation throws there, also before any frame is decoded.
+    // animation throws there (measured at the cap: at most about one frame's buffer).
     const probeMeta = await sharp(input.data, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
     const totalPages = probeMeta.pages ?? 1
     const pagesToRead = Math.min(totalPages, MAX_ANIMATED_FRAMES)

@@ -237,13 +237,13 @@ optional `replicaBucket` on a 5xx. An unmaterialized URL is a 403; no transform 
 `assets/t/` expiry exists, `transformFunction`/`transformLogGroup`/`transformFunctionUrl` are
 `undefined`, and the transform-Lambda props throw.
 
-**To adopt.** Until your pipeline runs the two steps above, set `lazyPublicTransforms: true`. Only
+**To adopt.** Until your pipeline runs both steps above, set `lazyPublicTransforms: true`. Only
 objects the Lambda writes now expire, tagged `canopy-transform=lazy`; older ones never do. On a
-bucket you pass in, also pass `transformOutputRetention`, filter your expiry rule on that tag, and
-grant the transform role `s3:PutObjectTagging`. Then remove the opt-in, and pass `replicaBucket` if
-you replicate `assets/`.
+bucket you pass in, also pass `transformOutputRetention` and filter your expiry rule on that tag;
+cross-account, grant the transform role `s3:PutObjectTagging`. Then remove the opt-in, and pass
+`replicaBucket` if you replicate `assets/`.
 
-**Now deletable.** Your `assets/t/` expiry rule, once out of lazy mode.
+**Now deletable.** Your `assets/t/` expiry rule, removed before leaving lazy mode.
 
 ### Wider image limits
 

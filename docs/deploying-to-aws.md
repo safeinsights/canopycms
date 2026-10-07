@@ -404,10 +404,10 @@ adds a replica both behaviors fail over to on a 5xx; its policy must allow this 
 and replication must cover `assets/`.
 
 `lazyPublicTransforms: true` instead computes misses with a transform Lambda (allowlisted
-widths, reserved concurrency), letting anyone mint transforms of a public asset. Its outputs
-carry the tag `canopy-transform=lazy` and expire after 180 days. On a bucket you pass in, it
-requires `transformOutputRetention` and your own expiry rule, filtered on that tag so it spares
-materialized derivatives.
+widths, reserved concurrency), letting anyone mint transforms of a public asset; only `/assets/*`
+keeps the replica. Its outputs carry the tag `canopy-transform=lazy` and expire after 180 days.
+On a bucket you pass in, it requires `transformOutputRetention` and your own expiry rule on that
+tag, plus noncurrent versions if versioned; remove it before leaving lazy mode.
 
 ### Deploy
 
@@ -1128,16 +1128,29 @@ new CanopyCmsService(this, 'Cms', {
 
 ```typescript
 // Bucket stack, in the build account. No reference, no import - literals only.
-bucket.addToResourcePolicy(
-  new iam.PolicyStatement({
-    principals: [new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/canopy-cms-${tier}`)],
-    actions: ['s3:GetObject', 's3:PutObject'],
-    resources: [`${bucket.bucketArn}/assets/*`],
-  }),
-)
+// Each statement mirrors an identity grant the construct writes on its own side.
+const role = (name: string) => new iam.ArnPrincipal(`arn:aws:iam::${tierAccount}:role/${name}`)
+const objects = (...prefixes: string[]) => prefixes.map((p) => `${bucket.bucketArn}/${p}/*`)
+const allow = (name: string, actions: string[], resources: string[]) =>
+  bucket.addToResourcePolicy(
+    new iam.PolicyStatement({ principals: [role(name)], actions, resources }),
+  )
+
+// CanopyCmsService's `assetBucket` grants (cms-service.ts).
+const cms = `canopy-cms-${tier}`
+allow(cms, ['s3:GetObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
+allow(cms, ['s3:PutObject'], objects('asset-staging', 'asset-originals', 'asset-meta', 'assets'))
+allow(cms, ['s3:DeleteObject'], objects('asset-staging', 'asset-meta'))
+allow(cms, ['s3:ListBucket'], [bucket.bucketArn]) // the media library lists asset-meta/
+
+// With lazyPublicTransforms, AssetSupport's transformRole. Without ListBucket an
+// unknown hash is a 500 rather than a 404.
+const transform = `canopy-transform-${tier}`
+allow(transform, ['s3:GetObject'], objects('asset-originals', 'asset-meta'))
+allow(transform, ['s3:PutObject', 's3:PutObjectTagging'], objects('assets/t'))
 ```
 
-With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`; the bucket's statement for it also needs `s3:PutObjectTagging`. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
+With `lazyPublicTransforms`, `AssetSupport` takes the same prop for its transform Lambda, as `transformRole`, which the last two statements above grant. Both props are `iam.Role` rather than `iam.IRole`, and both cause the construct to re-attach the execution-role managed policies CDK silently drops for a caller-supplied role — including the VPC-ENI policy the CMS Lambda cannot start without. See the [#42 migration entry](adopter-migration.md#assetsupport-and-canopycmsservice-take-an-execution-role-so-its-arn-is-derivable-without-a-construct-reference-42) for both, and for why passing `Role.fromRoleArn` is the one thing to avoid.
 
 Two consequences of naming a role: the tier stack needs **`CAPABILITY_NAMED_IAM`**, and a customer-named IAM role **cannot be replaced in place** without a rename — so pick names you can live with for the life of the deployment.
 

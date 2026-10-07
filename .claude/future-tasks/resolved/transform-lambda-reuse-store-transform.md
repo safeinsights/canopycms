@@ -4,10 +4,11 @@
 [image-materialization-epic.md](../image-materialization-epic.md)). The Lambda builds an
 `S3AssetStore` with `createAssetStore` and calls `storeTransform`, both exported from
 `canopycms/server` with `TRANSFORM_CACHE_CONTROL`; it keeps only the canonical 301, the generic 404
-body, the inline 200 and the over-4 MiB `no-store` 302. Bundle: 1,095,483 B before, 1,112,149 B
-after (the presigner packages were already external and required). `readOriginal` takes the meta's ext and reads
-that key first ([s3-read-original-direct-key.md](s3-read-original-direct-key.md)), so the Lambda
-still needs no `s3:ListBucket` on the common path.
+body, the inline 200 and the over-4 MiB `no-store` 302. Bundle (`build.mjs --skip-native`):
+1,112,906 B at the branch head, about 17 KB more than the base (the presigner packages were already
+external and required). `readOriginal` takes the meta's ext and reads that key first
+([s3-read-original-direct-key.md](s3-read-original-direct-key.md)), so the Lambda still needs no
+`s3:ListBucket` to transform an asset that exists.
 
 ## State
 

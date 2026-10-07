@@ -617,8 +617,8 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   immutable and deduplicated. A draft branch references its images immediately; publishing
   needs no separate asset step.
 - **Delivery** — images are served from `/assets/t/{directives}/…` URLs that resize, crop and
-  convert to WebP on first request, then cache immutably. Build responsive markup with the
-  exported helpers, which are client-safe:
+  convert, written before release by `canopycms materialize-assets` and cached immutably. Build
+  responsive markup with the exported helpers, which are client-safe:
 
   ```typescript
   import { assetUrl, assetSrcSet } from 'canopycms'

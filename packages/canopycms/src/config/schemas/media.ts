@@ -47,9 +47,10 @@ export const mediaSchema = z.discriminatedUnion('adapter', [
        * signature is unaffected — a presigned POST's string-to-sign is the base64 policy
        * alone, so the host never enters it (pinned by store-s3.test.ts).
        *
-       * NOT a prefix: nothing is joined onto this value; it replaces the POST target outright and is passed through byte-for-byte. Do not route it through
-       * `joinUrlPrefix` "for consistency" — that would strip the trailing slash and silently
-       * stop a CDN path pattern like `/asset-upload/*` from matching.
+       * NOT a prefix: nothing is joined onto this value; it replaces the POST target outright
+       * and is passed through byte-for-byte. Do not route it through `joinUrlPrefix` "for
+       * consistency" — that would strip the trailing slash and silently stop a CDN path
+       * pattern like `/asset-upload/*` from matching.
        */
       uploadUrl: uploadTargetUrlSchema.optional(),
       /** Max upload size in bytes for presigned direct uploads. Defaults to 50 MiB. */

@@ -113,8 +113,9 @@ const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
 const TRANSFORM_LAMBDA_RESERVED_CONCURRENCY = 10
 
 /**
- * Lazy mode's expiry for `assets/t/`, which bounds what the crop loop above
- * can store. Expiry is self-healing: the next request regenerates the object.
+ * Lazy mode's expiry for the Lambda's tagged `assets/t/` outputs, which bounds
+ * how long the crop loop above keeps what it stores. The next request
+ * regenerates an expired object while the Lambda runs.
  */
 const TRANSFORM_OUTPUT_RETENTION = Duration.days(180)
 
@@ -351,9 +352,9 @@ export interface AssetSupportProps {
    * On, anyone can mint any allowlisted transform of a public asset - bounded
    * per asset except crop, at ~10^16 rects - capped by reserved concurrency and
    * an `assets/t/` expiry that applies only to objects the Lambda writes, which
-   * carry the tag `canopy-transform=lazy`: materialized derivatives are never
-   * expired. On a BYO `bucket` this construct cannot write that rule, so lazy
-   * mode there requires an explicit `transformOutputRetention`.
+   * carry the tag `canopy-transform=lazy`: what `materialize-assets` writes is
+   * never expired. On a BYO `bucket` this construct cannot write that rule, so
+   * lazy mode there requires an explicit `transformOutputRetention`.
    *
    * @default false
    */
@@ -383,9 +384,11 @@ export interface AssetSupportProps {
    * (default 180 days), written as a lifecycle rule on a bucket this construct
    * creates. On a BYO `bucket` nothing is written and the prop is required:
    * passing it states that your bucket expires them itself, filtering on the
-   * tag `canopy-transform=lazy` so materialized derivatives survive. A
-   * cross-account bucket's policy must also grant the transform role
-   * `s3:PutObjectTagging` on `assets/t/*`.
+   * tag `canopy-transform=lazy` so what `materialize-assets` writes survives,
+   * and on a versioned bucket also expiring noncurrent versions. Remove that
+   * rule before leaving lazy mode: a key the Lambda wrote first stays tagged
+   * after a build references it. A cross-account bucket's policy must also
+   * grant the transform role `s3:PutObjectTagging` on `assets/t/*`.
    */
   readonly transformOutputRetention?: Duration
 
@@ -921,7 +924,8 @@ export class AssetSupport extends Construct {
           '`transformOutputRetention`. This construct cannot write lifecycle rules on a bucket ' +
           'it did not create, and anonymous callers can mint objects under assets/t/ in lazy ' +
           'mode. Add an expiry rule for the assets/t/ prefix and the canopy-transform=lazy tag ' +
-          'to your bucket and pass its duration as `transformOutputRetention`, or drop ' +
+          '(on a versioned bucket, also expiring noncurrent versions) to your bucket and pass ' +
+          'its duration as `transformOutputRetention`, or drop ' +
           '`lazyPublicTransforms` and run `canopycms materialize-assets` in your release ' +
           'pipeline instead.',
       )
@@ -1149,8 +1153,9 @@ export class AssetSupport extends Construct {
     // `/aws/lambda/*`, so without this a custom-named group silently gets no logs.
     logGroup.grantWrite(fn)
 
-    // `grantRead` includes s3:ListBucket, which `readOriginal`'s prefix lookup
-    // needs. `assets/*` covers `assets/t/*`, and `grantPut` includes the
+    // `grantRead` includes s3:ListBucket, so an unknown hash is a 404 rather than
+    // a 403 the store throws on, and `readOriginal` can list when the meta's ext
+    // misses. `assets/*` covers `assets/t/*`, and `grantPut` includes the
     // s3:PutObjectTagging a tagged PutObject needs.
     this.bucket.grantRead(fn, `${PREFIXES.originals}/*`)
     this.bucket.grantRead(fn, `${PREFIXES.meta}/*`)
@@ -1168,8 +1173,9 @@ export class AssetSupport extends Construct {
     const readOrigin = (bucket: s3.IBucket) =>
       origins.S3BucketOrigin.withOriginAccessControl(bucket)
     const primary = readOrigin(this.bucket)
-    // One origin object for both behaviors, so a distribution carrying both emits
-    // one origin (or one origin group), not two.
+    // Materialized mode gives both behaviors this one object, so the distribution
+    // emits one origin (or one origin group), not two. Lazy mode's `/assets/t/*`
+    // group binds `primary` again, as a second origin.
     const read = replicaBucket
       ? new origins.OriginGroup({
           primaryOrigin: primary,

@@ -58,7 +58,8 @@ export interface AssetStore {
   }): Promise<void>
   /**
    * `ext` is where the original is expected (its meta's `ext`): that key is read first, and any
-   * `{hash32}.*` is looked for only on a miss. Reading by key needs no list permission.
+   * `{hash32}.*` is looked for only on a miss. A hit needs no list permission; on S3 without
+   * `s3:ListBucket` a miss is a 403, which throws.
    */
   readOriginal(
     hash32: string,

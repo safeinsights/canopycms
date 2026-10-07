@@ -377,10 +377,10 @@ async function serveStoredObject(
  * never through `client.ts`.
  *
  * A transform key (`assets/t/...`) is resolved to its canonical key first, and that key is what is
- * cache-checked and, on a miss, computed by `serveLazyTransform`. Mirrors prod (CloudFront
- * origin-group -> S3 -> Lambda on miss), except that a non-canonical spelling is served the
- * canonical bytes rather than the Lambda's 301: this route is authenticated, and redirecting to
- * `/assets/t/...` would bounce the request onto the public path.
+ * cache-checked and, on a miss, computed by `serveLazyTransform`. Mirrors `AssetSupport`'s lazy
+ * mode (CloudFront origin-group -> S3 -> Lambda on miss), except that a non-canonical spelling is
+ * served the canonical bytes rather than the Lambda's 301: this route is authenticated, and
+ * redirecting to `/assets/t/...` would bounce the request onto the public path.
  *
  * A stored object on a store that can presign (S3) is answered with a 302 to a presigned GET, so
  * its bytes never pass through this process: the CMS Lambda is concurrency-capped and uncached,

@@ -1,13 +1,14 @@
 /**
  * The opt-in lazy transform Lambda (`AssetSupport`'s `lazyPublicTransforms`), behind the
  * `/assets/t/*` origin group's S3 miss. It computes and stores through `storeTransform`, the same
- * code the authenticated raw route and `materialize-assets` use, and adds only what is specific
- * to an anonymous Function URL:
+ * code the authenticated raw route and `materialize-assets` use, and adds what is specific to an
+ * anonymous Function URL: the allowlist width policy, the lazy tag, a generic 404 body, and
  *
  * - A non-canonical spelling gets a cacheable 301 to the canonical path before any S3 call, so a
  *   new spelling costs a cached redirect, never a transform.
- * - An output over the Function URL's ~6 MiB buffered-response cap gets a `no-store` 302 to the
- *   key just written. `AssetSupport`'s minTtl-0 cache policy keeps CloudFront from caching it.
+ * - An output over `INLINE_BODY_LIMIT_BYTES` (4 MiB, under the Function URL's ~6 MiB cap once
+ *   base64-encoded) gets a `no-store` 302 to the key just written. `AssetSupport`'s minTtl-0
+ *   cache policy keeps CloudFront from caching it.
  */
 
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda'

@@ -4,7 +4,7 @@
  * NO imports (not even other files in this directory) so it can be imported
  * from client bundles (via `assetUrl`/`assetSrcSet` in asset-url.ts, exported
  * off the package's main entry) as well as from the server-only transform
- * engine (transform.ts) and the prod transform Lambda, without
+ * engine (transform.ts) and the lazy transform Lambda, without
  * ever pulling in node:crypto, sharp, or any other server-only dependency.
  *
  * `{directives}` is either the literal identity token (`orig`) or a
@@ -13,7 +13,7 @@
  *             is rejected at transform time via `withoutEnlargement`, not here)
  *   f={fmt}   output format: webp | jpeg | png - when present, the URL's
  *             `{ext}` must equal it exactly
- *   q={int}   quality 1..100 (encoder-dependent)
+ *   q={int}   quality, a multiple of 5 in [30, 95] under either policy
  *   c={rect}  normalized crop rect `x:y:w:h`, four floats in [0,1] with
  *             x+w<=1 and y+h<=1, w>0 and h>0 (colon-separated - commas are
  *             the directive separator)
@@ -89,7 +89,7 @@ const MAX_ANY_WIDTH = 8192
  * and because this file is dependency-free/isomorphic it can be imported by
  * both without pulling sharp or file-type into anything. 24 MP (a 6000x4000
  * camera frame) is sized by measured peak memory: the worst case, a full-size
- * WebP encode of an RGBA WebP source, peaks near 1.25 GiB here and grows about
+ * WebP encode of an RGBA WebP source, peaks at 1246 MiB here and grows about
  * 40 MiB per MP, so this is the largest cap that fits the 2048 MB CMS and
  * transform Lambdas with allocator headroom. For an animation the cap bounds
  * all decoded frames together.

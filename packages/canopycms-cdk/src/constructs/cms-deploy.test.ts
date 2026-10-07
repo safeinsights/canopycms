@@ -563,10 +563,10 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
       expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
       expect(patterns).toContain(ASSETS_PATH_PATTERN)
       expect(patterns).toContain('/_next/static/*')
-      // The whole point: the more specific transform pattern must precede the
-      // broader static one, or CloudFront's first-match-wins ordering serves
-      // every transform request off the S3-only behavior and never fails over
-      // to the transform Lambda.
+      // The more specific transform pattern must precede the broader one: in
+      // lazy mode, CloudFront's first-match-wins ordering would otherwise serve
+      // every transform request off `/assets/*`, never failing over to the
+      // transform Lambda. Materialized mode keeps the same order.
       expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
         patterns.indexOf(ASSETS_PATH_PATTERN),
       )

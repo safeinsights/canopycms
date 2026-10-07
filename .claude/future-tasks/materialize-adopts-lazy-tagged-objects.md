@@ -18,7 +18,10 @@ The key then expires into a permanent 403 that no build reports.
 
 ## Proposal
 
-Have the existence check report the tag count (`HeadObject` returns it as `TagCount`, so no extra
-call), and let `materializeAssets` treat a lazy-tagged key as missing and rewrite it untagged. A
-materialized derivative is then kept forever whoever wrote it first. Until then, the guidance is:
-remove the tag-filtered rule before leaving lazy mode.
+Have the existence check report the tag count and let `materializeAssets` treat a lazy-tagged key
+as missing and rewrite it untagged. A materialized derivative is then kept forever whoever wrote it
+first. `HeadObject` returns `TagCount` only to a caller with `s3:GetObjectTagging` (the
+`@aws-sdk/client-s3` `HeadObjectOutput` doc), which the README's `materialize-assets` grant list
+lacks, and a directive group large enough to be listed rather than HEADed (`materialize.ts`'s
+`listThreshold`) gets no tag information from the listing, so it needs a HEAD per key in lazy
+mode. Until then, the guidance is: remove the tag-filtered rule before leaving lazy mode.

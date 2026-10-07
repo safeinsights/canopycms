@@ -192,19 +192,18 @@ export { createAssetStore } from './assets/factory'
 /**
  * The five S3/local bucket-prefix strings (`asset-originals/`, `asset-staging/`, `asset-meta/`,
  * `assets/`, `assets/t/`). Exported so server-only consumers outside this package — notably the
- * prod transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`) — build and parse
+ * lazy transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`) — build and parse
  * asset keys through the same constants `S3AssetStore` uses rather than duplicating the strings.
  */
 export { ASSET_PREFIXES, type AssetPrefixes } from './assets/keys'
 
-/** Asset metadata sidecar shape (`asset-meta/{hash32}.json`), written by the finalize pipeline and read by the transform layer (dev-mode emulation and the prod transform Lambda). */
+/** Asset metadata sidecar shape (`asset-meta/{hash32}.json`), written by the finalize pipeline and read by `storeTransform`. */
 export type { AssetMeta } from './assets/types'
 
 /**
  * Parse the three path segments after `assets/t/` (`{directives}/{hash32}/{slug}.{ext}`) into a
- * validated `TransformDirectives` set, or a structured parse error. Reused unchanged by the
- * dev-mode lazy `/assets/t/*` emulation (`api/assets.ts`) and the prod transform Lambda, so the
- * URL grammar is defined in exactly one place.
+ * validated `TransformDirectives` set, or a structured parse error, so the URL grammar is
+ * defined in exactly one place.
  */
 export { parseTransformPath } from './assets/transform-directives'
 
@@ -213,15 +212,14 @@ export type { ParsedTransformPath, ParseTransformPathResult } from './assets/tra
 /**
  * Canonical string form of a `TransformDirectives` set — the cache key every transform output is
  * stored under (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`). Equivalent directive
- * sets (different key order or float formatting) always format to the same string. Reused by the
- * prod transform Lambda so its writes agree with the dev-mode emulation and `assetUrl()`.
+ * sets (different key order or float formatting) always format to the same string.
  */
 export { formatDirectives } from './assets/transform-directives'
 
 /**
  * Parse `assets/t/` path segments and resolve them to the canonical spelling their output is
- * stored under, with directives re-parsed from that spelling. The prod transform Lambda 301s a
- * non-canonical request to it; the dev-mode emulation serves the canonical bytes.
+ * stored under, with directives re-parsed from that spelling. The lazy transform Lambda 301s a
+ * non-canonical request to it; the authenticated raw route serves the canonical bytes.
  */
 export { canonicalizeTransformPath } from './assets/transform-directives'
 
@@ -233,8 +231,7 @@ export type {
 /**
  * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
  * resize/format/quality/crop, EXIF stripped on every re-encode, identity included. Server-only
- * (sharp); reused unchanged by the dev-mode lazy `/assets/t/*` emulation and the prod transform
- * Lambda.
+ * (sharp); `storeTransform` below wraps it for every caller that stores the output.
  */
 export { applyTransform } from './assets/transform'
 

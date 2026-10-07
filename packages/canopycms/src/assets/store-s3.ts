@@ -213,7 +213,8 @@ export class S3AssetStore implements AssetStore {
     cacheControl?: string
     tags?: Readonly<Record<string, string>>
   }): Promise<void> {
-    // `encodeURIComponent`, not URLSearchParams, whose `+` for a space S3 may read literally.
+    // `encodeURIComponent` writes a space as `%20`, which reads the same to any decoder;
+    // URLSearchParams writes `+`.
     const tagging = Object.entries(input.tags ?? {})
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
       .join('&')

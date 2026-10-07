@@ -1,7 +1,7 @@
 /**
  * Handler unit tests. The handler's `S3AssetStore` talks to an aws-sdk-client-mock S3 backed by an
  * in-memory object map, and `storeTransform` and sharp run for real (sharp resolves from
- * packages/canopycms's own node_modules). Only the 413 and oversized-output cases spy on
+ * packages/canopycms's own node_modules). Only the 413 and oversized-output cases stub
  * `storeTransform`: reaching either for real needs a multi-megabyte fixture.
  */
 

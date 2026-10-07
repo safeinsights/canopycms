@@ -432,7 +432,7 @@ standalone function from `canopycms/server` and as a method on `CanopyContext`; 
 - `schemas/collection.ts` — Zod schemas for collections and entry types
 - `schemas/permissions.ts` — Zod schemas for permissions
 - `schemas/media.ts` — Zod schema for media config; each branch is `.strict()`, since the outer `.strict()` does not recurse
-- `schemas/url.ts` — `uploadTargetUrlSchema` and `assetMountUrlSchema` over `isHttpUrlOrSameOriginPath`
+- `schemas/url.ts` — `uploadTargetUrlSchema` and `previewPrefixSchema` over `isHttpUrlOrSameOriginPath`
 - `flatten.ts` — schema flattening for O(1) lookups
 - `validation.ts` — `ensureReferenceFieldsHaveScope`, `ensureNoGroupsInsideComplexFields`, `forEachReferenceField`
 - `helpers.ts` — `defineCanopyConfig`, `composeCanopyConfig`, and the `.client()` projection

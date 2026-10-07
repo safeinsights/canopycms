@@ -657,7 +657,7 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
   })
 
   it('rejects a slug that is not the asset’s own, without transforming or caching', async () => {
-    // Parity with the prod transform Lambda (canopycms-cdk's handler.ts): the
+    // The check lives in storeTransform, shared with the lazy transform Lambda: the
     // slug is load-bearing in the stored key, and `[a-z0-9-]+` is all the
     // parser can enforce, so every distinct string would otherwise alias the
     // same image into a new cache entry and a new transform.

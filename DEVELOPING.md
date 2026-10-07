@@ -1096,7 +1096,7 @@ The `sharp` version is read from `packages/canopycms`'s own `dependencies.sharp`
 pnpm --filter canopycms-cdk run build:lambda
 ```
 
-Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fromAsset()` points. `AssetSupport` checks the `.deployable` marker only when `lazyPublicTransforms` is set, so `build:lambda` matters only there; without it lazy-mode `cdk synth` fails with "Cannot find asset".
+Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fromAsset()` points. `AssetSupport` checks the `.deployable` marker only when `lazyPublicTransforms` is set, so `build:lambda` matters only there; without it lazy-mode `cdk synth` throws the missing-marker error.
 
 ### CDK Asset Verification: the Canary Stack
 
