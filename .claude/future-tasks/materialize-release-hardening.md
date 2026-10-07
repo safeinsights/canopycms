@@ -84,10 +84,12 @@ site's deploy session.
   failure); production hosts must route only `/assets/*` to the bucket, since `previews/*` holds
   attacker-writable bytes; scope each preview's writes to its own id or accept that one
   preview's build can write into another's; KMS needs on SSE-KMS buckets.
+- **Measured on the adopting site's bucket (2026-10-07):** an in-account role whose `ListBucket` is
+  conditioned on `s3:prefix` gets 404, not 403, on a HEAD miss under those prefixes. The AWS CLI's
+  header for a raw `--copy-source` equals the per-segment encoding `copyPublicObject` sends.
 - **Unverified until a real-bucket check:** whether `TaggingDirective: REPLACE` with no tags needs
-  `s3:PutObjectTagging`; whether `s3:if-none-match` is populated on CopyObject; and whether a
-  `ListBucket` grant conditioned on `s3:prefix` makes a missing key's HEAD a 404 (a HEAD carries no
-  `s3:prefix`). The adopting site runs that check before the epic merges.
+  `s3:PutObjectTagging`, and whether `s3:if-none-match` is populated on CopyObject. The adopting
+  site runs that check before the epic merges.
 - **Copy, not CloudFront failover:** an origin group falling back to the bucket root cannot work
   behind a viewer-request function that has already rewritten the URI to `/previews/{id}/…`.
 - **Recovery under versioning:** a delete writes a delete marker, so the bad version stays
