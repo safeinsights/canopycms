@@ -3,10 +3,17 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
-import { BranchWorkspaceManager } from '../branch-workspace'
+import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
+import {
+  BranchDirOccupiedError,
+  BranchProvisioningBusyError,
+  deletingDirName,
+  removeLeftoverDir,
+} from '../branch-provisioning'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withOccFileLock } from '../utils/occ-json-write'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
@@ -297,13 +304,9 @@ export const createBranchHandler = async (
       }
     }
 
-    // Reject the base branch name outright. openOrCreateBranch's save() (see
-    // branch-metadata.ts) field-merges the caller-supplied `access` over an
-    // EXISTING branch's metadata rather than replacing it, so a request
-    // naming the base branch would let the caller inject themselves into the
-    // protected base branch's ACL (gaining e.g. withdraw rights via the
-    // allowed_by_acl path). No recorded fork point exists yet for a
-    // not-yet-created branch, so this checks config protection only.
+    // Reject the base branch name outright, even before the base branch is
+    // provisioned. No recorded fork point exists yet for a not-yet-created
+    // branch, so this checks config protection only.
     const { isProtected } = getBranchProtection(ctx.services.config, branchName)
     if (isProtected) {
       return {
@@ -313,14 +316,10 @@ export const createBranchHandler = async (
       }
     }
 
-    // Reject a name collision with ANY existing branch for the same
-    // field-merge reason: creating over an existing branch name would let
-    // the caller's `access` ACL overwrite that branch's real ACL instead of
-    // creating a new, separate branch. Comparison uses the sanitized name
-    // since that's what's persisted in branch.json (see
-    // BranchWorkspaceManager.openOrCreateBranch). System branches
-    // auto-provisioned via http/handler.ts's getBranchContext don't go
-    // through this handler, so rejecting collisions here doesn't affect them.
+    // A name collision with ANY existing branch answers before a clone is paid
+    // for. Provisioning never merges into an existing branch either: it reports
+    // `exists`, mapped the same way below. Compared sanitized, the form
+    // branch.json records.
     if (!ctx.services.registry) {
       return {
         ok: false,
@@ -330,11 +329,7 @@ export const createBranchHandler = async (
     }
     const existingBranch = await ctx.services.registry.get(sanitizeBranchName(branchName))
     if (existingBranch) {
-      return {
-        ok: false,
-        status: 409,
-        error: 'A branch with this name already exists',
-      }
+      return existingBranchResponse(ctx, req, existingBranch)
     }
 
     // L2: create-time collision check against this deployment's local
@@ -468,23 +463,50 @@ export const createBranchHandler = async (
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
-    const operatingMode = ctx.services.config.mode
-    const context = await manager.openOrCreateBranch({
-      branchName,
-      mode: operatingMode,
-      createdBy: req.user.userId,
-      title: body.title,
-      description: body.description,
-      access: body.access,
-    })
+    let outcome: ProvisionOutcome
+    try {
+      outcome = await manager.provisionBranch({
+        branchName,
+        mode: ctx.services.config.mode,
+        createdBy: req.user.userId,
+        title: body.title,
+        description: body.description,
+        access: body.access,
+      })
+    } catch (err: unknown) {
+      if (err instanceof BranchProvisioningBusyError) {
+        return { ok: false, status: 503, error: err.message }
+      }
+      if (err instanceof BranchDirOccupiedError) {
+        return { ok: false, status: 409, error: err.message }
+      }
+      throw err
+    }
+    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context)
 
-    log.debug('api', 'Branch created', { branchName: context.branch.name })
+    log.debug('api', 'Branch created', { branchName: outcome.context.branch.name })
     return {
       ok: true,
       status: 200,
-      data: { branch: toBranchListItem(ctx.services.config, context.branch) },
+      data: { branch: toBranchListItem(ctx.services.config, outcome.context.branch) },
     }
   })
+}
+
+/** A create that names an existing branch: 409, unless it is that creator's recent retry. */
+const existingBranchResponse = (
+  ctx: ApiContext,
+  req: ApiRequest,
+  existing: BranchContext,
+): BranchListItemResponse => {
+  if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
+    return {
+      ok: true,
+      status: 200,
+      data: { branch: toBranchListItem(ctx.services.config, existing.branch) },
+    }
+  }
+  return { ok: false, status: 409, error: 'A branch with this name already exists' }
 }
 
 /** @internal Exported for tests. */
@@ -655,53 +677,42 @@ export const deleteBranchHandler = async (
     }
   }
 
-  // Delete branch metadata file so it disappears from registry scans.
-  // Hold the same server-enforced lockfile branch-metadata saves hold
-  // (see utils/occ-json-write.ts): an unguarded unlink racing a concurrent
-  // save() would let the save's create path resurrect a phantom branch.json
-  // inside a deleted branch, which the registry's next scan would list as a
-  // live branch with no clone. The directory removal happens inside the
-  // same hold so a racing save cannot slip between unlink and rm either.
+  // The branch directory leaves its name by one rename, under the same
+  // server-enforced lockfile branch-metadata saves hold (see
+  // utils/occ-json-write.ts), so a save() that reaches that lock after the
+  // rename fails rather than recreating the tree, and a process killed during
+  // the `rm` leaves
+  // only a `.deleting-*` directory the worker sweeps, never residue under a
+  // name that may be created again.
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
   let cleanupWarning: string | undefined
+  let deletingPath: string | undefined
   try {
     await withOccFileLock(metadataFile, async () => {
-      try {
-        await fs.unlink(metadataFile)
-      } catch (err: unknown) {
-        if (!isNotFoundError(err)) {
-          console.error(
-            `CanopyCMS: Failed to delete branch metadata for ${branchName}:`,
-            getErrorMessage(err),
-          )
-        }
+      if (branchContext.branchRoot === branchContext.baseRoot) {
+        await fs.unlink(metadataFile).catch((err: unknown) => {
+          if (!isNotFoundError(err)) throw err
+        })
+        return
       }
-
-      // In multi-branch modes, also delete the entire branch directory.
-      // Retry transient EFS/NFS errors (ENOTEMPTY from a concurrent writer,
-      // EBUSY) a few times before giving up -- rm's failure must never be
-      // swallowed: metadata is gone either way (the branch is logically
-      // deleted and will no longer appear in listings), but silently
-      // succeeding here would leave a full orphan clone on disk with
-      // nothing in the API surfacing its existence.
-      if (branchContext.branchRoot !== branchContext.baseRoot) {
-        try {
-          await fs.rm(branchContext.branchRoot, {
-            recursive: true,
-            force: true,
-            maxRetries: 3,
-            retryDelay: 100,
-          })
-        } catch (err: unknown) {
-          // sanitizeErrorMessage: this string goes back to the browser in the
-          // delete response (API-H2 — no absolute EFS paths to clients);
-          // the console line below keeps the raw detail for server logs.
-          cleanupWarning = `Failed to fully remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
-          console.error(
-            `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
-            getErrorMessage(err),
-          )
-        }
+      const target = path.join(
+        branchContext.baseRoot,
+        deletingDirName(path.basename(branchContext.branchRoot)),
+      )
+      try {
+        await fs.rename(branchContext.branchRoot, target)
+        deletingPath = target
+      } catch (err: unknown) {
+        if (isNotFoundError(err)) return
+        // Still deleted logically: without branch.json the branch is unlisted,
+        // and the worker quarantines what is left.
+        await fs.unlink(metadataFile).catch(() => {})
+        // [REDACT] Returned to the browser; the console line keeps the path.
+        cleanupWarning = `Failed to remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
+        console.error(
+          `CanopyCMS: Failed to move branch directory for ${branchName} aside:`,
+          getErrorMessage(err),
+        )
       }
     })
   } catch (err: unknown) {
@@ -713,6 +724,7 @@ export const deleteBranchHandler = async (
       error: `Branch is busy, try again: ${getErrorMessage(err)}`,
     }
   }
+  if (deletingPath) await removeLeftoverDir(deletingPath)
 
   // Also delete the branch's local head from the remote.git mirror (the
   // deployment's local origin). The sync loop deliberately never deletes a

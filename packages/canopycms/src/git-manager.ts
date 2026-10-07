@@ -28,13 +28,15 @@ import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
-import { getErrorMessage, isNotFoundError } from './utils/error'
+import { getErrorMessage, isNodeError, isNotFoundError, redactCredentials } from './utils/error'
 import {
   isMissingRemoteRefFailure,
   isNetworkRemoteUrl,
   resolveBaseBranch,
   stageAllExceptCanopyState,
 } from './utils/git'
+import { canopyLogWarn } from './utils/logger'
+import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -104,6 +106,170 @@ export function gitNetworkChildEnv(): Record<string, string> {
     if (GIT_ENV_PASSTHROUGH.test(key) || GIT_NETWORK_ENV_PASSTHROUGH.test(key)) env[key] = value
   }
   return { ...env, ...FORCE_C_LOCALE }
+}
+
+/**
+ * `-c` on every git process a GitManager starts, so gc and auto-maintenance
+ * never run inside a Lambda, which can be frozen mid-run with a half-written
+ * pack or a `gc.pid` left on EFS. A provisioning clone also persists them
+ * into the workspace's own config. `remote.git`'s `receive-pack` never sees
+ * them; {@link REMOTE_GIT_CONFIG} covers that side.
+ */
+const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=false']
+
+/**
+ * Settings written into every bare `remote.git` CanopyCMS creates: the worker's (prod) and the
+ * simulated remote (dev). A push runs `receive-pack` with remote.git's own config and none of the
+ * pusher's: git unsets `GIT_CONFIG_PARAMETERS` before spawning it for a local-path push. Unset, a
+ * push starts auto-housekeeping there (detached, or inside a Lambda that is frozen mid-run) that
+ * repacks while another process clones, and pushes under the default `unpackLimit` (100) leave
+ * loose objects that every local clone copies one NFS round trip at a time.
+ *
+ * Never an `extensions.*` key: once a repo is at `repositoryformatversion` 1, a git that does not
+ * know the key refuses it, and Lambda runs git 2.39.
+ * @internal Exported for tests.
+ */
+export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: string]> = [
+  ['gc.auto', '0'],
+  ['receive.autogc', 'false'],
+  ['maintenance.auto', 'false'],
+  ['transfer.unpackLimit', '1'],
+]
+
+/** Write each of {@link REMOTE_GIT_CONFIG} into the bare repo `gitDir` only where it differs. */
+export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
+  const git = simpleGit().env(gitChildEnv({}))
+  const current = new Map<string, string>()
+  const listed = await git.raw(['--git-dir', gitDir, 'config', '--local', '--list'])
+  for (const line of listed.split('\n')) {
+    const eq = line.indexOf('=')
+    if (eq > 0) current.set(line.slice(0, eq).toLowerCase(), line.slice(eq + 1))
+  }
+  for (const [key, value] of REMOTE_GIT_CONFIG) {
+    if (current.get(key.toLowerCase()) === value) continue
+    await git.raw(['--git-dir', gitDir, 'config', '--local', key, value])
+  }
+}
+
+/** Above either count, {@link repackBareRemoteIfNeeded} repacks. */
+const REMOTE_GIT_MAX_LOOSE_OBJECTS = 50
+const REMOTE_GIT_MAX_PACKS = 6
+
+interface BareRemoteObjectCounts {
+  loose: number
+  packs: number
+}
+
+async function countObjects(git: SimpleGit, gitDir: string): Promise<BareRemoteObjectCounts> {
+  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v'])
+  const fields = new Map(
+    output.split('\n').map((line): [string, string] => {
+      const [name, value = ''] = line.split(': ')
+      return [name, value.trim()]
+    }),
+  )
+  const field = (name: string): number => {
+    const value = fields.get(name)
+    if (!value || !/^\d+$/.test(value)) {
+      throw new Error(`count-objects -v printed no '${name}' count: ${output.trim()}`)
+    }
+    return Number(value)
+  }
+  return { loose: field('count'), packs: field('packs') }
+}
+
+export type BareRemoteRepackResult =
+  | { repacked: false; before: BareRemoteObjectCounts }
+  | {
+      repacked: true
+      before: BareRemoteObjectCounts
+      after: BareRemoteObjectCounts
+      ms: number
+    }
+
+/**
+ * Repack the bare repo `gitDir` once it holds more than {@link REMOTE_GIT_MAX_LOOSE_OBJECTS}
+ * loose objects or {@link REMOTE_GIT_MAX_PACKS} packs, then pack its refs. Under
+ * {@link REMOTE_GIT_CONFIG} every push adds a pack, and nothing else ever compacts them.
+ *
+ * Safe beside concurrent pushes and clones, which is why it is `--cruft` with no expiry:
+ * unreachable objects move into a cruft pack rather than being dropped, so a push that read an
+ * old object before the repack still finds it, and a repack only deletes packs it listed when it
+ * began. A clone that hardlinked a pack keeps that inode when the repack unlinks the remote's
+ * name for it, and packs are never modified in place. `repack -d` also removes the loose objects
+ * it packed and their emptied fan-out directories.
+ */
+export async function repackBareRemoteIfNeeded(gitDir: string): Promise<BareRemoteRepackResult> {
+  const git = simpleGit().env(gitChildEnv({}))
+  const before = await countObjects(git, gitDir)
+  if (before.loose <= REMOTE_GIT_MAX_LOOSE_OBJECTS && before.packs <= REMOTE_GIT_MAX_PACKS) {
+    return { repacked: false, before }
+  }
+  const startedAt = Date.now()
+  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q'])
+  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all'])
+  const after = await countObjects(git, gitDir)
+  return { repacked: true, before, after, ms: Date.now() - startedAt }
+}
+
+/**
+ * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
+ * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to a
+ * GitManager's own instance and to `cloneRepo`'s; its static helpers and the bare-remote functions
+ * do not pass it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
+ */
+function failOnSignalExit(
+  error: Buffer | Error | undefined,
+  result: { exitCode: number },
+): Buffer | Error | undefined {
+  if (error) return error
+  if ((result.exitCode as number | null) === null) {
+    return new Error('git was killed by a signal before it finished')
+  }
+  return undefined
+}
+
+/** EFS cost is per-file latency, which parallel file creation overlaps. git >= 2.32. */
+const PARALLEL_CHECKOUT_ARGS = [
+  '-c',
+  'checkout.workers=8',
+  '-c',
+  'checkout.thresholdForParallelism=1',
+]
+
+async function dirState(dir: string): Promise<'absent' | 'empty' | 'occupied'> {
+  try {
+    return (await fs.readdir(dir)).length === 0 ? 'empty' : 'occupied'
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return 'absent'
+    throw err
+  }
+}
+
+/**
+ * Config every workspace clone writes into its own `.git/config`: the managed
+ * marker that ensureRemote's guard checks, and a fallback author for internal
+ * commits such as the orphan settings init (ensureAuthor() sets the real one
+ * before user-facing commits).
+ */
+export function managedWorkspaceConfig(
+  gitBotAuthorName: string,
+  gitBotAuthorEmail: string,
+): Record<string, string> {
+  return {
+    'canopycms.managed': 'true',
+    'user.name': gitBotAuthorName,
+    'user.email': gitBotAuthorEmail,
+  }
+}
+
+export interface CloneRepoOptions {
+  /** The clone's remote name; git's default is `origin`. */
+  remoteName?: string
+  /** Leave the working tree unpopulated for the caller to check out. */
+  noCheckout?: boolean
+  /** Written into the new repo's own config by the clone (`git clone -c`). */
+  config?: Record<string, string>
 }
 
 // In-memory lock to prevent concurrent remote.git initialization
@@ -330,6 +496,8 @@ export interface InitializeWorkspaceOptions {
    * only; settings workspaces commit by explicit path and don't need it.
    */
   gitExcludePattern?: string
+  /** Times each provisioning step; no step lines are printed without one. */
+  provisionLog?: ProvisionLog
 }
 
 export class GitManager {
@@ -344,7 +512,12 @@ export class GitManager {
     this.baseBranch = options.baseBranch ?? 'main'
     this.remote = options.remote ?? 'origin'
     this.skipIndexMarker = options.skipIndexMarker ?? false
-    this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
+    this.git = simpleGit({
+      baseDir: this.repoPath,
+      errors: failOnSignalExit,
+      ...gitOptions,
+      config: [...NO_AUTO_GC_CONFIG, ...(gitOptions?.config ?? [])],
+    })
     // `this.git` is for LOCAL working-tree ops: in the intended prod topology
     // `origin` resolves to a local path (an auto-detected/initialized
     // `remote.git`), so its env is gitChildEnv's allowlist, which drops
@@ -360,18 +533,49 @@ export class GitManager {
     this.git.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }))
   }
 
+  /**
+   * Single-branch clone of `baseBranch`, retried once: a clone can lose a race
+   * with the worker's repack of `remote.git` deleting a pack it had just
+   * listed. Before the retry it clears only what it created itself, so a
+   * target that held files beforehand is never touched.
+   */
   static async cloneRepo(
     remoteUrl: string,
     targetPath: string,
     baseBranch = 'main',
+    options: CloneRepoOptions = {},
   ): Promise<void> {
     log.debug('git', 'Cloning repository', {
       remoteUrl,
       targetPath,
       baseBranch,
     })
-    const git = simpleGit()
-    await git.clone(remoteUrl, targetPath, ['--branch', baseBranch, '--single-branch'])
+    const args = ['--single-branch', '--branch', baseBranch]
+    if (options.noCheckout) args.push('--no-checkout')
+    if (options.remoteName) args.push('--origin', options.remoteName)
+    for (const [key, value] of Object.entries(options.config ?? {})) {
+      args.push('-c', `${key}=${value}`)
+    }
+    for (const setting of NO_AUTO_GC_CONFIG) args.push('-c', setting)
+
+    const git = simpleGit({ config: [...NO_AUTO_GC_CONFIG], errors: failOnSignalExit })
+    git.env({
+      ...(isNetworkRemoteUrl(remoteUrl) ? gitNetworkChildEnv() : gitChildEnv({})),
+      GIT_CEILING_DIRECTORIES: path.dirname(targetPath),
+    })
+    const before = await dirState(targetPath)
+    try {
+      await git.clone(remoteUrl, targetPath, args)
+    } catch (err) {
+      if (before === 'occupied') throw err
+      canopyLogWarn(
+        `[canopy] clone into ${targetPath} failed, retrying once: ` +
+          redactCredentials(getErrorMessage(err)),
+      )
+      await fs.rm(targetPath, { recursive: true, force: true })
+      if (before === 'empty') await fs.mkdir(targetPath)
+      await git.clone(remoteUrl, targetPath, args)
+    }
     log.debug('git', 'Clone complete')
   }
 
@@ -428,11 +632,25 @@ export class GitManager {
           if (!isNotFoundError(err)) throw err
         }
 
+        if (remoteExists) {
+          // The worker's per-cycle repack never runs in dev; once per call keeps pushes from
+          // piling up packs. Best-effort: a remote it cannot compact still serves.
+          try {
+            const repack = await repackBareRemoteIfNeeded(options.remotePath)
+            if (repack.repacked) log.debug('git', 'Repacked local simulated remote', repack)
+          } catch (err: unknown) {
+            log.debug('git', 'Could not repack local simulated remote', {
+              error: getErrorMessage(err),
+            })
+          }
+        }
+
         if (
           remoteExists &&
           (await GitManager.bareRemoteHasBranch(options.remotePath, options.baseBranch))
         ) {
           log.debug('git', 'Remote already has base branch, skipping')
+          await ensureRemoteGitConfig(options.remotePath)
           return
         }
 
@@ -499,6 +717,8 @@ export class GitManager {
             options.remotePath,
           ])
         }
+
+        await ensureRemoteGitConfig(options.remotePath)
 
         // Push baseBranch to remote (not current HEAD)
         await GitManager.pushBranchToLocalRemote({
@@ -877,6 +1097,41 @@ export class GitManager {
   }
 
   /**
+   * {@link resolveRemoteUrl} for a workspace about to be cloned, which needs a
+   * remote: none resolving is the worker-not-ready error in a mode whose
+   * remote the worker creates, and a configuration error otherwise.
+   */
+  static async resolveCloneRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string> {
+    const remoteUrl = await GitManager.resolveRemoteUrl(options)
+    if (remoteUrl) return remoteUrl
+    const notReady = await GitManager.remoteNotReadyError(options.mode)
+    if (notReady) throw notReady
+    throw new Error(
+      'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
+    )
+  }
+
+  /**
+   * {@link cloneRepo} for a workspace, failing with one message that names the
+   * workspace, the remote and the base branch, which git's own error mixes.
+   */
+  static async cloneWorkspace(
+    remoteUrl: string,
+    workspacePath: string,
+    baseBranch: string,
+    options: CloneRepoOptions,
+  ): Promise<void> {
+    try {
+      await GitManager.cloneRepo(remoteUrl, workspacePath, baseBranch, options)
+    } catch (err) {
+      throw new Error(
+        `Failed to clone branch workspace at ${workspacePath} ` +
+          `from ${remoteUrl} (base branch '${baseBranch}'): ${getErrorMessage(err)}`,
+      )
+    }
+  }
+
+  /**
    * Check whether a git repository is already initialized at `workspacePath`.
    *
    * Uses `rev-parse --git-dir` with `GIT_CEILING_DIRECTORIES` pinned to the
@@ -934,10 +1189,14 @@ export class GitManager {
       }
     }
 
+    const step = <T>(name: string, run: () => Promise<T>): Promise<T> =>
+      options.provisionLog ? options.provisionLog.step(name, run) : run()
+    const identity = managedWorkspaceConfig(options.gitBotAuthorName, options.gitBotAuthorEmail)
+
     let justCloned = false
     let resolvedRemoteUrl: string | undefined
     if (!repoExists) {
-      const remoteUrl = await GitManager.resolveRemoteUrl({
+      const remoteUrl = await GitManager.resolveCloneRemoteUrl({
         mode: options.mode,
         remoteUrl: options.remoteUrl,
         defaultRemoteUrl: options.defaultRemoteUrl,
@@ -946,36 +1205,17 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      if (!remoteUrl) {
-        const notReady = await GitManager.remoteNotReadyError(options.mode)
-        if (notReady) throw notReady
-        throw new Error(
-          'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
-        )
-      }
-
-      try {
-        await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
-      } catch (err) {
-        // The raw git error ("Cloning into <workspace>… branch <base> not found")
-        // mixes the workspace name and the base branch — spell both out.
-        throw new Error(
-          `Failed to clone branch workspace at ${options.workspacePath} ` +
-            `from ${remoteUrl} (base branch '${baseBranch}'): ${getErrorMessage(err)}`,
-        )
-      }
+      // A content clone skips its own checkout because checkoutFreshClone runs
+      // the one checkout this workspace needs.
+      await step('clone', () =>
+        GitManager.cloneWorkspace(remoteUrl, options.workspacePath, baseBranch, {
+          remoteName,
+          noCheckout: options.branchType === 'content',
+          config: identity,
+        }),
+      )
       justCloned = true
       resolvedRemoteUrl = remoteUrl
-
-      // Mark as managed immediately after clone so ensureRemote's guard works,
-      // and set a fallback author identity: GIT_CEILING_DIRECTORIES blocks
-      // global gitconfig, and internal commits (e.g. orphan branch init) need
-      // one. ensureAuthor() sets the real bot author before user-facing commits.
-      const freshGit = simpleGit({ baseDir: options.workspacePath })
-      freshGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
-      await freshGit.addConfig('canopycms.managed', 'true')
-      await freshGit.addConfig('user.name', options.gitBotAuthorName)
-      await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
     // Settings (orphan) workspaces never host ContentStores, so they skip the
@@ -987,35 +1227,29 @@ export class GitManager {
       skipIndexMarker: options.branchType === 'orphan',
     })
 
-    // The managed marker and fallback identity must be set before ensureRemote
-    // (which checks the marker) and before createOrphanSettingsBranch (which
-    // commits and needs an author). Idempotent — the clone above may have set them.
-    await git.git.addConfig('canopycms.managed', 'true')
-    await git.git.addConfig('user.name', options.gitBotAuthorName)
-    await git.git.addConfig('user.email', options.gitBotAuthorEmail)
-    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
-      workspacePath: options.workspacePath,
-    })
-
-    // Configure the remote only if we didn't just clone (clone sets up 'origin')
+    // A reused workspace gets the same marker and identity the clone writes,
+    // set before ensureRemote checks the marker; a healthy one writes nothing.
     if (!justCloned) {
-      const remoteUrl = await GitManager.resolveRemoteUrl({
-        mode: options.mode,
-        remoteUrl: options.remoteUrl,
-        defaultRemoteUrl: options.defaultRemoteUrl,
-        baseBranch,
-        sourceRoot: options.sourceRoot,
-        allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
+      await step('config', async () => {
+        await git.ensureLocalConfig(identity)
+        const remoteUrl = await GitManager.resolveRemoteUrl({
+          mode: options.mode,
+          remoteUrl: options.remoteUrl,
+          defaultRemoteUrl: options.defaultRemoteUrl,
+          baseBranch,
+          sourceRoot: options.sourceRoot,
+          allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
+        })
+        if (remoteUrl) {
+          await git.ensureRemote(remoteUrl)
+        }
+        resolvedRemoteUrl = remoteUrl
       })
-      if (remoteUrl) {
-        await git.ensureRemote(remoteUrl)
-      }
-      resolvedRemoteUrl = remoteUrl
     }
 
     if (options.branchType === 'orphan') {
       try {
-        await git.createOrphanSettingsBranch(options.branchName, {})
+        await step('checkout', () => git.createOrphanSettingsBranch(options.branchName, {}))
       } catch (err) {
         // A remote that is unreadable because the worker has not (re)created
         // it yet is the transient not-ready case, not a broken workspace.
@@ -1029,15 +1263,20 @@ export class GitManager {
       // workspace. Commits here stage explicit paths, but a crash-orphaned lock
       // dir must never be committable by a future broad stage either. Runs on
       // every init, so existing clones pick it up.
-      await git.ensureGitExclude('*.lock')
+      await step('exclude', () => git.ensureGitExclude('*.lock'))
     } else {
-      await git.checkoutBranch(options.branchName)
+      await step('checkout', () =>
+        justCloned
+          ? git.checkoutFreshClone(options.branchName)
+          : git.checkoutBranch(options.branchName),
+      )
       // Excludes runtime metadata (.canopy-meta/) from git tracking on content
       // branches. Settings workspaces don't need it: they stage explicit file
       // paths at the workspace root and skip the index marker entirely
       // (skipIndexMarker), so nothing under .canopy-meta/ is ever staged.
-      if (options.gitExcludePattern) {
-        await git.ensureGitExclude(options.gitExcludePattern)
+      const pattern = options.gitExcludePattern
+      if (pattern) {
+        await step('exclude', () => git.ensureGitExclude(pattern))
       }
     }
 
@@ -1079,6 +1318,25 @@ export class GitManager {
   async checkoutBranch(branch: string): Promise<void> {
     try {
       await this.checkoutBranchInner(branch)
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  /**
+   * The one checkout of a `--no-checkout` clone, which has the base branch
+   * and its remote-tracking ref and nothing else, so neither the branch
+   * listing nor the fetch that {@link checkoutBranch} starts with is needed.
+   * The missing index makes git populate the whole tree, even for the base
+   * branch HEAD already names.
+   */
+  async checkoutFreshClone(branch: string): Promise<void> {
+    const target =
+      branch === this.baseBranch
+        ? ['checkout', branch]
+        : ['checkout', '-b', branch, `${this.remote}/${this.baseBranch}`]
+    try {
+      await this.git.raw([...PARALLEL_CHECKOUT_ARGS, ...target])
     } finally {
       await this.invalidateContentIndexes()
     }
@@ -1232,9 +1490,18 @@ export class GitManager {
     }
   }
 
+  /** `--sparse` stages a named path outside a sparse clone's cone (branch-sparse.ts). */
   async add(files: string | string[]): Promise<void> {
     const fileArray = Array.isArray(files) ? files : [files]
-    await this.git.add(fileArray)
+    await this.git.raw(['add', '--sparse', '--', ...fileArray])
+  }
+
+  /**
+   * Restrict the working tree to `dirs` in cone mode, which always keeps the root-level files.
+   * Runs before a `--no-checkout` clone's one checkout, which invalidates the content caches.
+   */
+  async setSparseCone(dirs: readonly string[]): Promise<void> {
+    await this.git.raw(['sparse-checkout', 'set', '--cone', '--', ...dirs])
   }
 
   /** Stage every working-tree change except canopycms's own state. See {@link stageAllExceptCanopyState}. */
@@ -1365,6 +1632,14 @@ export class GitManager {
     }
   }
 
+  /** Writes each key into this repo's own config only where it differs. */
+  async ensureLocalConfig(values: Record<string, string>): Promise<void> {
+    const local = (await this.git.listConfig('local')) as ConfigListSummary
+    for (const [key, value] of Object.entries(values)) {
+      if (local.all[key] !== value) await this.git.addConfig(key, value)
+    }
+  }
+
   async ensureRemote(remoteUrl: string): Promise<void> {
     // Safety: verify this is a managed workspace before modifying remotes.
     // Prevents accidentally overwriting the host repo's origin if git
@@ -1492,11 +1767,15 @@ export class GitManager {
     // validation additionally rejects a leading-hyphen value here.
     await this.git.raw(['checkout', '--orphan', branchName])
 
-    // Remove all files from index (orphan checkout keeps working tree)
-    try {
-      await this.git.raw(['rm', '-rf', '.'])
-    } catch {
-      // Ignore errors (might fail if index is already empty)
+    // The orphan starts from the base branch's index. `--sparse` also removes entries outside a
+    // sparse cone, which a plain `rm` leaves in the index, and so in the first commit.
+    await this.git.raw(['rm', '-r', '-f', '-q', '--sparse', '--ignore-unmatch', '--', '.'])
+    const leftover = (await this.git.raw(['ls-files'])).trim()
+    if (leftover) {
+      throw new Error(
+        `Settings branch '${branchName}' was not created: the base branch's files ` +
+          `(${leftover.split('\n').slice(0, 3).join(', ')}) stayed in its index`,
+      )
     }
 
     for (const [filePath, content] of Object.entries(initialFiles)) {

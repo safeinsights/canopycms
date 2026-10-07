@@ -18,7 +18,7 @@ import path from 'node:path'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { initTestRepo, openBareRepo } from './test-utils'
+import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 import { GitManager, GitRemoteRefMissingError } from './git-manager'
@@ -28,6 +28,16 @@ const baseConfig: Partial<CanopyConfig> = {
   mode: 'dev',
   gitBotAuthorName: 'Test Bot',
   gitBotAuthorEmail: 'test@canopycms.test',
+}
+
+/**
+ * `vi.resetModules()` for a test standing in for another process. The fresh graph gets its own
+ * provision-log module, whose step lines the setup file's sink does not silence.
+ */
+async function resetModulesQuietly(): Promise<void> {
+  vi.resetModules()
+  const provisionLog = await import('./utils/provision-log')
+  provisionLog.setProvisionLogSink(() => {})
 }
 
 /** Bare remote seeded with a `main` commit — what a settings workspace clones from. */
@@ -201,9 +211,9 @@ describe('SettingsWorkspaceManager cross-process init lock', () => {
   async function loadTwoInstances(): Promise<
     [typeof import('./settings-workspace'), typeof import('./settings-workspace')]
   > {
-    vi.resetModules()
+    await resetModulesQuietly()
     const a = await import('./settings-workspace')
-    vi.resetModules()
+    await resetModulesQuietly()
     const b = await import('./settings-workspace')
     expect(a).not.toBe(b)
     return [a, b]
@@ -374,7 +384,10 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
       remoteUrl: path.join(tmpRoot, 'remote.git'),
     }
 
+    const consoleSpy = mockConsole()
     await expect(manager.ensureGitWorkspace(options)).rejects.toThrow(/Failed to clone/)
+    expect(consoleSpy).toHaveWarned(/retrying once/)
+    consoleSpy.restore()
 
     await seedBareRemote(tmpRoot)
     const init = vi.spyOn(GitManager, 'initializeWorkspace')
@@ -415,7 +428,7 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
     try {
       // Two module graphs stand in for two Lambda containers: each has its own memo.
       const loadProcess = async () => {
-        vi.resetModules()
+        await resetModulesQuietly()
         return {
           services: await import('./services'),
           resolveUser: await import('./resolve-canopy-user'),
@@ -464,7 +477,7 @@ describe('SettingsWorkspaceManager per-process ensure memo', () => {
     } finally {
       if (originalRoot === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
       else process.env.CANOPYCMS_WORKSPACE_ROOT = originalRoot
-      vi.resetModules()
+      await resetModulesQuietly()
     }
   }, 60_000)
 
@@ -497,7 +510,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     const options = { settingsRoot, branchName: BRANCH, mode: 'dev' as const, remoteUrl }
     // Fresh module graphs stand in for cold starts: each has its own ensure memo.
     const coldStart = async () => {
-      vi.resetModules()
+      await resetModulesQuietly()
       const mod = await import('./settings-workspace')
       return new mod.SettingsWorkspaceManager({
         ...baseConfig,
@@ -637,9 +650,9 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await simpleGit().clone(remoteUrl, settingsRoot, ['--branch', 'main', '--single-branch'])
     await fs.rename(remoteUrl, `${remoteUrl}.gone`)
 
-    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(
-      /could not read settings branch/,
-    )
+    const consoleSpy = mockConsole()
+    await expect((await coldStart()).ensureGitWorkspace(options)).rejects.toThrow(/Failed to clone/)
+    consoleSpy.restore()
 
     const git = simpleGit({ baseDir: settingsRoot })
     expect((await git.status()).current).toBe('main')
@@ -740,7 +753,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
 
   /** A cold start whose base branch is `base` rather than `main`. */
   async function coldStartOnBase(base: string) {
-    vi.resetModules()
+    await resetModulesQuietly()
     const mod = await import('./settings-workspace')
     return new mod.SettingsWorkspaceManager({
       ...baseConfig,
@@ -756,9 +769,8 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
       /holds content, not settings \(it holds readme\.md\)/,
     )
 
-    const git = simpleGit({ baseDir: settingsRoot })
-    expect((await git.status()).current).toBe('main')
-    expect((await git.branchLocal()).all).not.toContain(BRANCH)
+    // The refused clone was staged, so nothing reached the settings root.
+    await expect(fs.stat(settingsRoot)).rejects.toThrow(/ENOENT/)
   }, 60_000)
 
   it('refuses to repair an empty orphan onto a remote settings branch that carries content history', async () => {
@@ -791,7 +803,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
     await expect((await coldStartOnBase('trunk')).ensureGitWorkspace(options)).rejects.toThrow(
       /holds content, not settings \(it holds readme\.md\)/,
     )
-    expect((await simpleGit({ baseDir: settingsRoot }).branchLocal()).all).not.toContain(BRANCH)
+    await expect(fs.stat(settingsRoot)).rejects.toThrow(/ENOENT/)
   }, 60_000)
 
   it('refuses a pruned content branch by its history, reading a base the clone lacks from the remote', async () => {
@@ -874,7 +886,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
       const settingsRoot = path.join(workspaceRoot, 'settings')
       const options = { settingsRoot, branchName: BRANCH, mode: 'prod' as const }
       const coldStart = async () => {
-        vi.resetModules()
+        await resetModulesQuietly()
         const mod = await import('./settings-workspace')
         const git = await import('./git-manager')
         return { manager: new mod.SettingsWorkspaceManager(baseConfig as CanopyConfig), git }
@@ -893,7 +905,7 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
       else process.env.CANOPYCMS_WORKSPACE_ROOT = originalRoot
       const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
       clearStrategyCache()
-      vi.resetModules()
+      await resetModulesQuietly()
     }
   }, 60_000)
 })

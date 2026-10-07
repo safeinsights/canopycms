@@ -34,6 +34,7 @@ import type { OperatingMode } from '../operating-mode'
 import { EditorPanes } from './EditorPanes'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
+import { BranchesDrawer } from './components/BranchesDrawer'
 import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
@@ -278,6 +279,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleCreateEntry,
     renameEntry,
     loadEntry,
+    readEntryValue,
     saveEntry,
     getEntryVersion,
     createModalOpen,
@@ -344,7 +346,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleDiscardFileDraft,
     handleReload,
     isSelectedDirty,
-    isAnyDirty,
+    resolveUnsaved,
     fieldErrors,
   } = useDraftManager({
     branchName: branchNameState,
@@ -353,6 +355,7 @@ export const Editor: React.FC<EditorProps> = ({
     entries: entriesState,
     initialValues,
     loadEntry,
+    readEntryValue,
     saveEntry,
     getEntryVersion,
     setBusy: setEntriesLoading,
@@ -363,13 +366,19 @@ export const Editor: React.FC<EditorProps> = ({
     },
   })
 
-  // 4. Branch actions (depends on isAnyDirty, setBranchName)
-  const { handleBranchChange, handleCreateBranch } = useBranchActions({
+  // 4. Branch actions (depends on resolveUnsaved, setBranchName)
+  const {
+    handleBranchChange,
+    confirmCreate: confirmCreateBranch,
+    handleCreateBranch,
+    confirmOpen: branchConfirmOpen,
+  } = useBranchActions({
     branchName: branchNameState,
     setBranchName,
-    isAnyDirty,
+    getUnsaved: resolveUnsaved,
     onReloadBranches: () => loadBranches(),
     onBranchCreated: addCreatedBranch,
+    userId: userContext?.userId,
   })
 
   // 5. Comment system (depends on branchNameState)
@@ -1222,21 +1231,10 @@ export const Editor: React.FC<EditorProps> = ({
               </Drawer.Body>
             </Drawer.Content>
           </Drawer.Root>
-          <Drawer
+          <BranchesDrawer
             opened={branchManagerOpen}
             onClose={() => setBranchManagerOpen(false)}
-            position="right"
-            title={
-              <div>
-                <Title order={4}>Branches</Title>
-                <Text size="xs" c="dimmed">
-                  Manage access, status, and lifecycle
-                </Text>
-              </div>
-            }
-            padding="md"
-            size={420}
-            overlayProps={{ blur: 2 }}
+            confirmOpen={branchConfirmOpen}
           >
             <BranchManager
               branches={branchSummaries}
@@ -1251,6 +1249,7 @@ export const Editor: React.FC<EditorProps> = ({
                   // Don't close branch manager if there was an error or user cancelled
                 }
               }}
+              onBeforeCreate={confirmCreateBranch}
               onCreate={handleCreateBranch}
               onSubmit={(name) => {
                 handleSubmit(name).catch((err) => console.error(err))
@@ -1273,7 +1272,7 @@ export const Editor: React.FC<EditorProps> = ({
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={handleGetUserMetadata}
             />
-          </Drawer>
+          </BranchesDrawer>
           {commentsPanelOpen && branchNameState && (
             <CommentsPanel
               branchName={branchNameState}

@@ -203,8 +203,15 @@ export async function withOccRetry<T>(
  * legitimately take many seconds.
  */
 export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  const dir = path.dirname(filePath)
-  await fs.mkdir(dir, { recursive: true })
+  // The lock's own directory only, never its ancestors: a waiter must not recreate a branch root
+  // that a delete removed under it (the same rule as the ENOENT case in the loop below).
+  try {
+    await fs.mkdir(path.dirname(filePath))
+  } catch (err: unknown) {
+    if (!isNodeError(err) || err.code !== 'EEXIST') {
+      throw new OccWriteConflictError(`Could not acquire file lock: ${getErrorMessage(err)}`)
+    }
+  }
 
   // Acquisition retries are OUR loop, not proper-lockfile's built-in
   // `retries`: the built-in loop retries blindly on ANY error, so a waiter

@@ -66,6 +66,8 @@ export interface UseEntryManagerReturn {
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  /** Reads an entry's server value without recording the OCC token that `loadEntry` records. */
+  readEntryValue: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   /**
    * The OCC version token currently held for `contentId` ON THE BRANCH BEING
@@ -279,14 +281,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     )
   }, [entriesState, createModalCollection])
 
-  const loadEntry = async (entry: EditorEntry) => {
+  // The read both entry paths share; returns the raw payload so `loadEntry` can take its version.
+  const readEntryPayload = async (entry: EditorEntry, requestBranch: string) => {
     if (!entry.collectionPath) {
       throw new Error('Entry missing collectionPath')
     }
-    // Pin the branch this request targets: if the user switches branches
-    // while the read is in flight, the token must be recorded under the
-    // branch that actually served it, not the current one.
-    const requestBranch = options.branchName
     // Build path from collectionPath and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const result = await apiClient.content.read({
@@ -295,12 +294,26 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     })
     if (!result.ok)
       throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
-    // Capture OCC version token for next save
-    if (entry.contentId && typeof result.data?.version === 'number') {
-      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
-    }
-    return normalizeContentPayload(result.data)
+    return result.data
   }
+
+  const loadEntry = async (entry: EditorEntry) => {
+    // Pin the branch this request targets: if the user switches branches
+    // while the read is in flight, the token must be recorded under the
+    // branch that actually served it, not the current one.
+    const requestBranch = options.branchName
+    const data = await readEntryPayload(entry, requestBranch)
+    // Capture OCC version token for next save
+    if (entry.contentId && typeof data?.version === 'number') {
+      entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), data.version)
+    }
+    return normalizeContentPayload(data)
+  }
+
+  // The same read as `loadEntry`, minus the token capture. A value read this way can be
+  // compared against but never saved against: only `loadEntry` makes an entry saveable.
+  const readEntryValue = async (entry: EditorEntry) =>
+    normalizeContentPayload(await readEntryPayload(entry, options.branchName))
 
   // Read side of the same branch-qualified token map `saveEntry` writes/reads.
   // Deliberately keyed off the CURRENT branch (not a pinned one): callers use
@@ -697,6 +710,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     handleCreateEntry,
     renameEntry,
     loadEntry,
+    readEntryValue,
     saveEntry,
     getEntryVersion,
     collectionByPath: collectionByPath,

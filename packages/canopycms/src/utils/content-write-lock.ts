@@ -112,6 +112,7 @@ export function tryAcquireContentWriteLock(
     CONTENT_WRITE_LOCK_NAME,
     onCompromised,
     CONTENT_WRITE_LOCK_STALE_MS,
+    false,
   )
 }
 

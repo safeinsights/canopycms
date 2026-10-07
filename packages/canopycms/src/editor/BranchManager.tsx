@@ -163,6 +163,8 @@ export interface BranchManagerProps {
   /** Current user context for permission checks */
   user?: UserContext
   onSelect?: (name: string) => void
+  /** Awaited before the spinner starts, so a confirmation it shows never reads as a hung create. `false` abandons the create. */
+  onBeforeCreate?: () => Promise<boolean>
   /**
    * Resolving `false` means the branch was not created, so the form stays open
    * with the user's values; any other return (including none) closes it.
@@ -198,6 +200,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   mode,
   user,
   onSelect,
+  onBeforeCreate,
   onCreate,
   onDelete,
   onSubmit,
@@ -225,8 +228,9 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const handleCreate = async () => {
     if (creatingRef.current || !newBranchName.trim()) return
     creatingRef.current = true
-    setCreating(true)
     try {
+      if (onBeforeCreate && !(await onBeforeCreate())) return
+      setCreating(true)
       const created = await onCreate?.({
         name: newBranchName.trim(),
         title: newBranchTitle.trim() || undefined,

@@ -52,16 +52,19 @@ vi.mock('../utils/occ-json-write', async (importOriginal) => {
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
     return {
-      openOrCreateBranch: vi.fn().mockResolvedValue({
-        baseRoot: '/tmp/base',
-        branchRoot: '/tmp/base/feature-test',
-        branch: {
-          name: 'feature/test',
-          status: 'editing',
-          access: {},
-          createdBy: 'user-1',
-          createdAt: 'now',
-          updatedAt: 'now',
+      provisionBranch: vi.fn().mockResolvedValue({
+        kind: 'created',
+        context: {
+          baseRoot: '/tmp/base',
+          branchRoot: '/tmp/base/feature-test',
+          branch: {
+            name: 'feature/test',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: 'now',
+            updatedAt: 'now',
+          },
         },
       }),
     }
@@ -360,6 +363,53 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toBe('A branch with this name already exists')
+  })
+
+  describe('a create naming an existing branch that its own creator just made', () => {
+    const createAgainst = async (
+      existing: { createdBy: string; ageMs: number },
+      userId: string,
+    ) => {
+      const registry = createMockRegistry([])
+      registry.get.mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'feature/test',
+          createdBy: existing.createdBy,
+          createdAt: new Date(Date.now() - existing.ageMs).toISOString(),
+        }),
+      )
+      const ctx = createMockApiContext({
+        branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+        services: { registry: registry as unknown as BranchRegistry },
+      })
+      return createBranch(
+        ctx,
+        { user: { type: 'authenticated', userId, groups: [] } },
+        { branch: unsafeAsBranchName('feature/test') },
+      )
+    }
+
+    it('answers the same creator within the window with the existing branch (200)', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(true)
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe('feature/test')
+      expect(res.data?.branch.createdBy).toBe('u1')
+    })
+
+    it('answers a different user with a 409, however recent the branch', async () => {
+      const res = await createAgainst({ createdBy: 'someone-else', ageMs: 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
+
+    it('answers the same creator with a 409 once the window has passed', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 6 * 60_000 }, 'u1')
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toBe('A branch with this name already exists')
+    })
   })
 
   describe('branch-name collision guards (settings-branch + reserved namespace)', () => {
@@ -1006,12 +1056,17 @@ describe('deleteBranch api', () => {
     expect(res.data?.deleted).toBe(true)
   })
 
-  it('surfaces a cleanupWarning (but still reports deleted: true) when the directory rm fails (regression)', async () => {
+  it('surfaces a cleanupWarning (but still reports deleted: true) when the directory cannot be moved aside', async () => {
     const ctx = {
       ...deleteCtx,
       getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
     }
-    const rmSpy = vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('EACCES: permission denied'))
+    const renameSpy = vi
+      .spyOn(fs, 'rename')
+      .mockRejectedValueOnce(
+        Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+      )
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockResolvedValueOnce(undefined)
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const res = await deleteBranch(
@@ -1020,16 +1075,41 @@ describe('deleteBranch api', () => {
       { branch: unsafeAsBranchName('feature/x') },
     )
 
-    // Metadata is gone either way -- the branch is logically deleted and
-    // must not silently report failure, but the orphan clone's persistence
-    // must not be hidden from the caller either.
+    // Unlisted either way (branch.json is removed in place), so it must not
+    // report failure, but the directory left behind must not be hidden.
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
     expect(res.data?.cleanupWarning).toContain('EACCES')
+    expect(unlinkSpy).toHaveBeenCalledWith(expect.stringMatching(/branch\.json$/))
     expect(consoleErrorSpy).toHaveBeenCalled()
 
-    rmSpy.mockRestore()
+    renameSpy.mockRestore()
+    unlinkSpy.mockRestore()
     consoleErrorSpy.mockRestore()
+  })
+
+  it('moves the branch directory aside to a .deleting-* sibling before removing it', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
+    }
+    const renameSpy = vi.spyOn(fs, 'rename').mockResolvedValueOnce(undefined)
+    const rmSpy = vi.spyOn(fs, 'rm').mockResolvedValueOnce(undefined)
+
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+
+    expect(res.ok).toBe(true)
+    const [from, to] = renameSpy.mock.calls[0] ?? []
+    expect(from).toBe('/tmp/base/feature/x')
+    expect(to).toMatch(/^\/tmp\/base\/\.deleting-x-[0-9a-f]{10}-[0-9a-f]{6}-\d{8}T\d{6}Z$/)
+    expect(rmSpy).toHaveBeenCalledWith(to, expect.objectContaining({ recursive: true }))
+
+    renameSpy.mockRestore()
+    rmSpy.mockRestore()
   })
 
   it('omits cleanupWarning when the directory rm succeeds', async () => {

@@ -333,18 +333,21 @@ async function runRebaseRounds(
         //
         // A per-file resolution that STILL fails routes into the `!completed`
         // path below, which aborts and records, rather than escaping.
+        //
+        // `--sparse` on add/rm: a conflicted path outside a sparse clone's cone
+        // is materialised for the conflict, but git refuses to stage it without.
         const conflictKind = new Map(st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]))
         let resolutionFailure: string | undefined
         for (const file of st.conflicted) {
           const kind = conflictKind.get(file)
           try {
             if (kind === 'UD') {
-              await branchGit.raw(['rm', '-f', '--', file])
+              await branchGit.raw(['rm', '-f', '--sparse', '--', file])
             } else if (kind === 'DU') {
-              await branchGit.add(file)
+              await branchGit.raw(['add', '--sparse', '--', file])
             } else {
               await branchGit.raw(['checkout', '--theirs', file])
-              await branchGit.add(file)
+              await branchGit.raw(['add', '--sparse', '--', file])
             }
           } catch (resolveErr: unknown) {
             resolutionFailure =
@@ -619,7 +622,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
 /**
  * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
  * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
- * one with no `branch.json` yet is skipped as not provisioned. Lock order: provisioning, then the
+ * one with no `branch.json` is skipped. Lock order: provisioning, then the
  * content-write lock inside it; see `provisioned-workspace.ts` for why that order cannot deadlock.
  * Never throws, like rebaseOneBranch.
  */
@@ -641,10 +644,9 @@ async function holdAndRebaseOneBranch(
     workerLog(`  Skipping ${branchDir}: provisioning lock held elsewhere (retrying next cycle)`)
     return { kind: 'skippedLocked' }
   }
-  if (hold.kind === 'not-provisioned') {
-    workerLog(`  Skipping ${branchDir}: not yet provisioned (no branch.json)`)
-    return { kind: 'none' }
-  }
+  // Silent: a directory without branch.json is a staging-era leftover, which
+  // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
+  if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
     return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
   } finally {
