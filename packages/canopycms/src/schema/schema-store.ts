@@ -331,6 +331,13 @@ export class SchemaOps {
           err.outcome,
         )
       }
+      // A delete that removes the branch root mid-operation fails it wherever it is (a lock's
+      // mkdir ENOENT, a vanished collection meta); the deletion is the cause, whatever the symptom.
+      const rootGone = await fs.stat(this.branchRoot).then(
+        () => false,
+        (statErr: unknown) => isNotFoundError(statErr),
+      )
+      if (rootGone) throw new SchemaStoreBusyError('Branch no longer exists')
       throw err
     }
   }

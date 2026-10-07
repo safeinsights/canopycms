@@ -187,6 +187,19 @@ describe('occ-json-write', () => {
   })
 
   describe('withOccFileLock', () => {
+    it("creates the lock's own directory but never a missing ancestor", async () => {
+      const goneRoot = path.join(tmpDir, 'deleted-branch')
+      await expect(
+        withOccFileLock(path.join(goneRoot, '.canopy-meta', 'branch.json'), async () => {}),
+      ).rejects.toBeInstanceOf(OccWriteConflictError)
+      await expect(fs.stat(goneRoot)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      const liveRoot = path.join(tmpDir, 'live-branch')
+      await fs.mkdir(liveRoot)
+      await withOccFileLock(path.join(liveRoot, '.canopy-meta', 'branch.json'), async () => {})
+      expect((await fs.stat(path.join(liveRoot, '.canopy-meta'))).isDirectory()).toBe(true)
+    })
+
     it('serializes concurrent critical sections on the same file', async () => {
       let active = 0
       let sawOverlap = false

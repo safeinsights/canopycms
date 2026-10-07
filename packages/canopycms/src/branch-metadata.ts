@@ -135,11 +135,9 @@ export class BranchMetadataFileManager {
    * entry with no clone behind it. It runs BEFORE the lock stack so a doomed
    * save fails fast instead of paying for a lock.
    *
-   * Accepted residual window: a save that passes the check can still race a
-   * `rm` that starts moments later and is mid-flight when the write lands.
-   * Closing that needs a tombstone OUTSIDE the tree being removed, and the
-   * lockfile taken next lives INSIDE `branchRoot`, so it can promise no more
-   * than "the directory existed a moment ago".
+   * A save that passes the check just before a delete still cannot write: the
+   * delete renames the tree away under the same lockfile, and that lockfile
+   * creates only its own directory (`withOccFileLock`), so the save fails there.
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
     try {
