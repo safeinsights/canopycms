@@ -41,7 +41,7 @@ describe('useBranchActions create past the deadline', () => {
   const options = {
     branchName: 'main',
     setBranchName: vi.fn(),
-    isAnyDirty: () => false,
+    getUnsaved: async () => ({ count: 0, labels: [] }),
     onReloadBranches: vi.fn().mockResolvedValue(undefined),
     onBranchCreated: vi.fn(),
     onBranchSwitch: vi.fn(),

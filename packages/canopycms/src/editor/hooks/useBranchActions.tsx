@@ -1,14 +1,17 @@
+import { useState } from 'react'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 import { requestBranchCreate } from './create-branch-request'
+import type { UnsavedSummary } from './useDraftManager'
 
 export interface UseBranchActionsOptions {
   branchName: string
   setBranchName: (name: string) => void
-  isAnyDirty: () => boolean // From useDraftManager
+  /** From useDraftManager's `resolveUnsaved`: what a branch-level action would leave behind. */
+  getUnsaved: () => Promise<UnsavedSummary>
   onReloadBranches: () => Promise<void>
   /** Receives the branch the server just created, so it can be shown before any listing includes it. */
   onBranchCreated: (branch: BranchListItem) => void
@@ -19,11 +22,25 @@ export interface UseBranchActionsOptions {
 
 export interface UseBranchActionsReturn {
   handleBranchChange: (branch: string | null) => Promise<void>
+  /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
+  confirmCreate: () => Promise<boolean>
   handleCreateBranch: (branch: {
     name: string
     title?: string
     description?: string
   }) => Promise<boolean>
+  /** True while the unsaved-changes confirm is on screen. */
+  confirmOpen: boolean
+}
+
+const MAX_LISTED_LABELS = 5
+
+/** "Unsaved changes in: A, B." */
+const describeUnsaved = ({ labels }: UnsavedSummary): string => {
+  if (labels.length === 0) return 'You have unsaved changes.'
+  const shown = labels.slice(0, MAX_LISTED_LABELS).join(', ')
+  const rest = labels.length - MAX_LISTED_LABELS
+  return `Unsaved changes in: ${shown}${rest > 0 ? ` and ${rest} more` : ''}.`
 }
 
 /**
@@ -31,6 +48,7 @@ export interface UseBranchActionsReturn {
  */
 export function useBranchActions(options: UseBranchActionsOptions): UseBranchActionsReturn {
   const apiClient = useApiClient()
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const performBranchSwitch = (next: string) => {
     options.setBranchName(next)
@@ -43,20 +61,34 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     options.onBranchSwitch?.(next)
   }
 
-  const confirmIfDirty = async (message: string): Promise<boolean> => {
-    if (!options.isAnyDirty()) return true
+  const confirmIfDirty = async (question: string): Promise<boolean> => {
+    const unsaved = await options.getUnsaved()
+    if (unsaved.count === 0) return true
 
     return new Promise<boolean>((resolve) => {
+      const settle = (value: boolean) => {
+        // Mantine calls onClose and onCancel from its modals reducer, which runs while
+        // ModalsProvider renders, so a setState here must be deferred; resolving needs no deferral.
+        queueMicrotask(() => setConfirmOpen(false))
+        resolve(value)
+      }
+      setConfirmOpen(true)
       modals.openConfirmModal({
         title: 'Unsaved Changes',
-        children: <Text size="sm">{message}</Text>,
+        // Drafts are stored per branch, so leaving does not lose them.
+        children: (
+          <Text size="sm">
+            {describeUnsaved(unsaved)} Your drafts stay on “{options.branchName}” and come back when
+            you return. {question}
+          </Text>
+        ),
         labels: { confirm: 'Continue Anyway', cancel: 'Cancel' },
         confirmProps: { color: 'red' },
-        onCancel: () => resolve(false),
-        onConfirm: () => resolve(true),
+        onCancel: () => settle(false),
+        onConfirm: () => settle(true),
         // Escape and overlay dismissals fire only onClose. Mantine also calls it
         // right after onConfirm, which is harmless: a promise settles once.
-        onClose: () => resolve(false),
+        onClose: () => settle(false),
       })
     })
   }
@@ -64,11 +96,13 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const handleBranchChange = async (next: string | null) => {
     if (!next || next === options.branchName) return
 
-    const confirmed = await confirmIfDirty('You have unsaved changes. Switch branches anyway?')
+    const confirmed = await confirmIfDirty('Switch branches anyway?')
     if (!confirmed) throw new Error('User cancelled branch switch')
 
     performBranchSwitch(next)
   }
+
+  const confirmCreate = () => confirmIfDirty('Create the new branch anyway?')
 
   /** Resolves true when the branch was created and switched to, false when it was not. */
   const handleCreateBranch = async (branch: {
@@ -76,9 +110,6 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     title?: string
     description?: string
   }): Promise<boolean> => {
-    const confirmed = await confirmIfDirty('Create new branch without saving changes?')
-    if (!confirmed) return false
-
     try {
       const outcome = await requestBranchCreate(
         apiClient,
@@ -108,7 +139,6 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         color: 'green',
       })
 
-      // Switch to new branch (already confirmed dirty check)
       performBranchSwitch(createdName)
 
       // Not awaited: a listing can lag the create, and the switch must not wait
@@ -124,6 +154,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
   return {
     handleBranchChange,
+    confirmCreate,
     handleCreateBranch,
+    confirmOpen,
   }
 }
