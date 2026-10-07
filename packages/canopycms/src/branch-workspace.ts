@@ -1,7 +1,7 @@
 import path from 'node:path'
 
 import type { CanopyConfig } from './config'
-import { ensureBranchRoot } from './paths'
+import { BranchPathError, ensureBranchRoot, isSettingsBranchName } from './paths'
 import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
 import { readsFromCheckout } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
@@ -10,7 +10,7 @@ import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 import { resolveBaseBranch } from './utils/git'
-import { acquireProvisioningLock } from './utils/provisioning-lock'
+import { acquireProvisioningLock, branchProvisioningLockName } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
@@ -72,7 +72,7 @@ export class BranchWorkspaceManager {
 
           releaseLock = await acquireProvisioningLock(
             path.dirname(options.branchRoot),
-            `.${path.basename(options.branchRoot)}.init.lock`,
+            branchProvisioningLockName(path.basename(options.branchRoot)),
           )
 
           await GitManager.initializeWorkspace({
@@ -112,6 +112,13 @@ export class BranchWorkspaceManager {
   async openOrCreateBranch(options: OpenBranchOptions): Promise<BranchContext> {
     const { branchName, mode, basePathOverride, title, description, access, createdBy, remoteUrl } =
       options
+    // resolveBranchPath refuses the reserved prefix; this also refuses an adopter's
+    // configured settings branch name, which only the config knows.
+    if (
+      isSettingsBranchName(branchName, operatingStrategy(mode).getSettingsBranchName(this.config))
+    ) {
+      throw new BranchPathError('Settings branches are not content branches')
+    }
     const {
       branchRoot,
       baseRoot,

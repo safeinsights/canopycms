@@ -58,6 +58,19 @@ export function createLogicalPath(...segments: string[]): LogicalPath {
 }
 
 /**
+ * An entry's logical path: `<collection logical path>/<slug>`, e.g. `content/blog/my-post`,
+ * or `content/about` for an entry of the root collection. Path-permission rules match this
+ * form. No traversal check, unlike `createLogicalPath`: a slug read off disk may contain
+ * `..`, and listing must not throw on one.
+ */
+export function entryLogicalPath(
+  collectionLogicalPath: LogicalPath | string,
+  slug: string,
+): LogicalPath {
+  return (collectionLogicalPath ? `${collectionLogicalPath}/${slug}` : slug) as LogicalPath
+}
+
+/**
  * Join segments into a PhysicalPath (segments may carry embedded content IDs,
  * e.g. `my-post.ABC123.mdx`), throwing on a traversal sequence.
  * @internal Exported for tests.

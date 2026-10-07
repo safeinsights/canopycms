@@ -7,9 +7,11 @@ import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
 import { mediaSchema } from '../schemas/media'
+import { fieldSchema } from '../schemas/field'
 import {
   ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
+  ensureItemTitleFieldsExist,
   ensureNoGroupsInsideComplexFields,
   ensureNoFlattenedFieldNameCollisions,
   validateCanopyConfig,
@@ -147,7 +149,6 @@ describe('config validation', () => {
       githubTokenEnvVar: 'MY_BOT_TOKEN',
       deployedAs: 'static',
       settingsBranch: 'canopy-settings',
-      autoCreateSettingsPR: true,
       allowNetworkRemoteInProd: true,
       editor: { title: 'My Editor' },
       entryLinkUrl: () => '/some/url',
@@ -160,7 +161,6 @@ describe('config validation', () => {
     expect(config.githubTokenEnvVar).toBe('MY_BOT_TOKEN')
     expect(config.deployedAs).toBe('static')
     expect(config.settingsBranch).toBe('canopy-settings')
-    expect(config.autoCreateSettingsPR).toBe(true)
     expect(config.allowNetworkRemoteInProd).toBe(true)
     expect(config.editor?.title).toBe('My Editor')
     expect(typeof config.entryLinkUrl).toBe('function')
@@ -808,6 +808,86 @@ describe('ensureReferenceFieldsHaveScope', () => {
   })
 })
 
+describe('ensureItemTitleFieldsExist', () => {
+  const listObject = (itemTitleField?: string) => ({
+    name: 'features',
+    type: 'object',
+    list: true,
+    ...(itemTitleField === undefined ? {} : { itemTitleField }),
+    fields: [{ name: 'title', type: 'string' }],
+  })
+
+  it('passes when itemTitleField names a direct child, or is absent', () => {
+    expect(() => ensureItemTitleFieldsExist([listObject('title')])).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist([listObject()])).not.toThrow()
+  })
+
+  it('throws when itemTitleField names no direct child', () => {
+    expect(() => ensureItemTitleFieldsExist([listObject('missing')])).toThrow(
+      'Object field "features" has itemTitleField "missing"',
+    )
+  })
+
+  it('accepts a number child and rejects a child whose value is not shown as typed', () => {
+    const withChild = (type: string) => [
+      {
+        name: 'features',
+        type: 'object',
+        list: true,
+        itemTitleField: 'pick',
+        fields: [{ name: 'pick', type, ...(type === 'reference' ? { collections: ['x'] } : {}) }],
+      },
+    ]
+    expect(() => ensureItemTitleFieldsExist(withChild('number'))).not.toThrow()
+    expect(() => ensureItemTitleFieldsExist(withChild('reference'))).toThrow(
+      'must name a string or number field',
+    )
+    expect(() => ensureItemTitleFieldsExist(withChild('markdown'))).toThrow(
+      'must name a string or number field',
+    )
+  })
+
+  it('rejects itemTitleField on an object that is not a list', () => {
+    expect(() => ensureItemTitleFieldsExist([{ ...listObject('title'), list: false }])).toThrow(
+      'applies only to list: true objects',
+    )
+  })
+
+  it('does not accept a field that is only nested deeper', () => {
+    expect(() =>
+      ensureItemTitleFieldsExist([
+        {
+          name: 'outer',
+          type: 'object',
+          list: true,
+          itemTitleField: 'title',
+          fields: [{ name: 'inner', type: 'object', fields: [{ name: 'title', type: 'string' }] }],
+        },
+      ]),
+    ).toThrow('itemTitleField "title"')
+  })
+
+  it('checks objects nested in groups, objects and block templates', () => {
+    const bad = listObject('missing')
+    expect(() =>
+      ensureItemTitleFieldsExist([{ type: 'group', name: 'g', fields: [bad] }]),
+    ).toThrow()
+    expect(() =>
+      ensureItemTitleFieldsExist([{ name: 'o', type: 'object', fields: [bad] }]),
+    ).toThrow()
+    expect(() =>
+      ensureItemTitleFieldsExist([
+        { name: 'b', type: 'block', templates: [{ name: 't', fields: [bad] }] },
+      ]),
+    ).toThrow()
+  })
+
+  it('is kept by the field schema rather than stripped', () => {
+    const parsed = fieldSchema.parse(listObject('title'))
+    expect(parsed).toMatchObject({ itemTitleField: 'title' })
+  })
+})
+
 describe('ensureNoGroupsInsideComplexFields', () => {
   it('passes when a group is at the top level', () => {
     expect(() =>
@@ -1110,5 +1190,55 @@ describe('defineCanopyConfig().client()', () => {
   it('leaves basePath undefined on the client config when unset (regression guard)', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor })
     expect(client().basePath).toBeUndefined()
+  })
+  it('carries editor.previewPrefix through to the client config', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor, editor: { previewPrefix: '/preview' } })
+    expect(client().editor?.previewPrefix).toBe('/preview')
+  })
+})
+
+describe('editor.previewPrefix validation', () => {
+  const withPrefix = (previewPrefix: string) =>
+    validateCanopyConfig({ ...gitAuthor, editor: { previewPrefix } })
+
+  it.each(['/preview', '/preview/', '/a/b', 'https://cms.example.com', 'http://localhost:3000/p'])(
+    'accepts %s',
+    (value) => {
+      expect(withPrefix(value).editor?.previewPrefix).toBe(value)
+    },
+  )
+
+  it.each([
+    'preview',
+    '',
+    '//cdn.example.com',
+    '/\\evil.example.com',
+    '/preview\\x',
+    'https://cms.example.com\\evil',
+    '/preview?x=1',
+    '/preview#top',
+    'https://cms.example.com?x=1',
+    'javascript:alert(1)',
+    'ftp://cms.example.com',
+    '/preview/../x',
+    '/pre\tview',
+    'https:cms.example.com',
+  ])('rejects %s', (value) => {
+    expect(() => withPrefix(value)).toThrow(/previewPrefix/)
+  })
+})
+
+describe('editor.previewBase validation', () => {
+  it('accepts a route or false, which marks entries with no page', () => {
+    const previewBase = { 'content/posts': '/blog', 'content/settings': false as const }
+    expect(
+      validateCanopyConfig({ ...gitAuthor, editor: { previewBase } }).editor?.previewBase,
+    ).toEqual(previewBase)
+  })
+
+  it('rejects true, which names no route', () => {
+    expect(() =>
+      validateCanopyConfig({ ...gitAuthor, editor: { previewBase: { 'content/settings': true } } }),
+    ).toThrow(/previewBase/)
   })
 })

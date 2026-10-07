@@ -135,7 +135,7 @@ would let an adopter resolve a combination nothing has tested.
 
 ## Related
 
-- [clerk-middleware-runtime-key-unverified.md](../clerk-middleware-runtime-key-unverified.md)
+- [clerk-middleware-runtime-key-unverified.md](clerk-middleware-runtime-key-unverified.md)
   and
   [deploy-test-lambda-plaintext-clerk-secret.md](../deploy-test-lambda-plaintext-clerk-secret.md)
   both turn on `clerkMiddleware`'s key resolution, which is exactly what a

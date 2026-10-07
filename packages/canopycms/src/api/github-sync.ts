@@ -6,6 +6,7 @@ import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { clientOperatingStrategy } from '../operating-mode'
 import { getErrorMessage } from '../utils/error'
 import { sanitizeBranchName } from '../paths/branch-name'
+import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submission-attribution'
 
 /**
  * The caller uses this to update branch metadata.
@@ -16,17 +17,31 @@ export interface GitHubSyncResult {
   syncStatus?: SyncStatus
 }
 
+/** What the PR body records about a submit. */
+export interface SubmissionRecord {
+  submitter?: SubmissionEditor
+  changedPaths: readonly string[]
+}
+
 /**
  * Uses githubService directly if available, otherwise queues a task for the worker.
+ *
+ * The body is the canopycms PR section (submission-attribution.ts): an existing
+ * PR keeps whatever a human wrote outside it.
  */
 export async function syncSubmitPr(
   ctx: ApiContext,
   context: BranchContext,
+  submission: SubmissionRecord,
 ): Promise<GitHubSyncResult> {
   const { githubService } = ctx.services
   const mode = ctx.services.config.mode
   const prTitle = context.branch.title || `Submit ${context.branch.name}`
-  const prBody = context.branch.description || ''
+  const prSection = buildPrSection({
+    description: context.branch.description,
+    submitter: submission.submitter,
+    changedPaths: submission.changedPaths,
+  })
   // Target the fork point recorded at branch creation when available.
   const baseBranch = context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
 
@@ -50,9 +65,12 @@ export async function syncSubmitPr(
   if (githubService) {
     try {
       if (context.branch.pullRequestNumber) {
+        // Read before writing: the update keeps the human text around the
+        // canopycms section, and the same read says whether the PR is a draft.
+        const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
         await githubService.updatePullRequest(context.branch.pullRequestNumber, {
           title: prTitle,
-          body: prBody,
+          body: mergePrSection(pr.body, prSection),
         })
         // Best-effort draft->ready conversion. This branch updates a known
         // PR number directly (not through createOrUpdatePR), so it doesn't
@@ -63,7 +81,6 @@ export async function syncSubmitPr(
         // consistent with createOrUpdatePullRequest's best-effort handling
         // in github-service.ts.
         try {
-          const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
           if (pr.draft) {
             await githubService.convertToReady(context.branch.pullRequestNumber)
           }
@@ -95,8 +112,9 @@ export async function syncSubmitPr(
           head: context.branch.name,
           base: baseBranch,
           title: prTitle,
-          body: prBody,
+          body: prSection,
           markReadyIfDraft: true,
+          mergeSectionIntoBody: true,
         })
         return {
           prUrl: result.url,
@@ -127,13 +145,12 @@ export async function syncSubmitPr(
     payload: {
       branch: context.branch.name,
       title: prTitle,
-      body: prBody,
+      body: prSection,
+      mergeSectionIntoBody: true,
       baseBranch,
       pullRequestNumber: context.branch.pullRequestNumber,
-      // Content submits are an explicit "ready for review" action — convert
-      // a pre-existing draft PR to ready, unlike the settings-branch sync
-      // path (services.ts commitToSettingsBranch), which enqueues the same
-      // action without this flag.
+      // A content submit is an explicit "ready for review" action: convert a
+      // pre-existing draft PR to ready.
       markReadyIfDraft: true,
     },
   })

@@ -16,9 +16,10 @@ import type { BranchMetadataFile } from '../branch-metadata'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
-import type { WorkerStatusReport } from '../types'
+import type { BaseRefreshReport, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { writeWorkerStatus } from '../task-queue/worker-status'
+import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
+import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
 import {
@@ -72,11 +73,11 @@ export type AuthCacheRefresher = () => Promise<void>
  * interface for the two shapes and why an App is optional.
  */
 export interface CmsWorkerConfig extends GitHubAuthConfig {
-  /** Path to workspace root on EFS (e.g., /mnt/efs/workspace) */
+  /** Path to workspace root on EFS (e.g., /mnt/efs) */
   workspacePath: string
-  /** GitHub owner (e.g., 'safeinsights') */
+  /** GitHub owner (e.g., 'acme') */
   githubOwner: string
-  /** GitHub repo name (e.g., 'docs-site') */
+  /** GitHub repo name (e.g., 'site') */
   githubRepo: string
   /** Called periodically to update the auth metadata cache on EFS. */
   refreshAuthCache?: AuthCacheRefresher
@@ -146,7 +147,7 @@ export class CmsWorker {
   private contentBranchesPath: string
   private baseBranch: string
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
-  // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
+  // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
   private sanitizedBaseBranch: SanitizedBranchName
@@ -200,7 +201,12 @@ export class CmsWorker {
   private ensureStatusReport(): WorkerStatusReport {
     if (!this.statusReport) {
       const now = new Date().toISOString()
-      this.statusReport = { version: 1, startedAt: now, updatedAt: now }
+      this.statusReport = {
+        version: 1,
+        workerVersion: CANOPYCMS_VERSION,
+        startedAt: now,
+        updatedAt: now,
+      }
     }
     return this.statusReport
   }
@@ -281,6 +287,24 @@ export class CmsWorker {
     this.ensureStatusReport()
 
     await this.acquireLock()
+
+    // Replace the previous holder's status file now: the first sync can take
+    // minutes, and until then System health would report the old worker's
+    // version. Best-effort, like the startup-failure write below. The previous
+    // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
+    // its alert between restarts while the first successful sync still clears it.
+    try {
+      const lastFatalError = await readLastFatalError(this.taskDir)
+      await writeWorkerStatus(this.taskDir, {
+        ...this.ensureStatusReport(),
+        ...(lastFatalError ? { lastFatalError } : {}),
+      })
+    } catch (err) {
+      workerLogError(
+        'Failed to write worker status after acquiring the lock:',
+        getErrorMessage(err),
+      )
+    }
 
     // Everything below runs while holding the cross-host worker lock. A failure
     // here (most notably the empty-remote guard inside ensureRemoteGit) means
@@ -953,7 +977,7 @@ export class CmsWorker {
     return pushSettingsBranches(this.ctx(), git, trackedNames)
   }
 
-  private async refreshBaseBranchWorkspace(): Promise<void> {
+  private async refreshBaseBranchWorkspace(): Promise<BaseRefreshReport> {
     return refreshBaseBranchWorkspace(this.ctx())
   }
 

@@ -2,12 +2,14 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
+  Annotations,
   Duration,
   RemovalPolicy,
   Stack,
   Token,
   aws_ec2 as ec2,
   aws_efs as efs,
+  aws_cloudfront as cloudfront,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
@@ -16,6 +18,8 @@ import {
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
+import { attachEditorBehaviors } from './editor-routing'
+import type { CanopyCmsAttachOptions } from './editor-routing'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
 // is real ESM and `__dirname` is not a global there - the worker asset path
@@ -50,6 +54,16 @@ const isValidDeploymentName = (name: string): boolean =>
   !name.includes('..') &&
   !name.endsWith('.') &&
   !name.endsWith('.lock')
+
+/**
+ * Where the Lambda AND the worker mount the `WorkspaceAP` access point (rooted
+ * at EFS:/workspace), and so the workspace root of both.
+ *
+ * One path string, not merely one directory: git records absolute paths on
+ * EFS (a workspace clone's `origin` is `<root>/remote.git`), and a path written
+ * by one process must resolve for the other.
+ */
+const EFS_MOUNT_PATH = '/mnt/efs'
 
 /**
  * The heredoc delimiter user-data uses to write the worker's `.env` (see the
@@ -518,8 +532,16 @@ function assertGitHubAuthProps(props: CanopyCmsServiceProps): void {
  */
 export const DEFAULT_CMS_LAMBDA_TIMEOUT = Duration.seconds(60)
 
-/** CloudFront's maximum origin read timeout without a service-quota increase. */
-export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
+/**
+ * The cap below which synth warns. With nothing cached, a cold editor load on
+ * the example app sends the Lambda about 25 requests, 14 of them chunks
+ * requested together, and each invocation holds an execution environment
+ * through its cold start.
+ */
+export const MIN_CMS_RESERVED_CONCURRENCY = 20
+
+/** Default `reservedConcurrency`; see that prop for what it caps and costs. */
+export const DEFAULT_CMS_RESERVED_CONCURRENCY = 50
 
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
@@ -534,7 +556,24 @@ export interface CanopyCmsServiceProps {
   /** Lambda timeout (default: 60 seconds) */
   timeout?: Duration
 
-  /** Lambda reserved concurrency cap (default: 10) */
+  /**
+   * Cap on the CMS Lambda's concurrent invocations (default: 50).
+   *
+   * Everything the Lambda serves counts against it, including the editor's
+   * static chunks (`editorAssetPrefix` on `attachTo`, `/_next/static/*` on
+   * `CanopyCmsDistribution`) whenever CloudFront misses them. CloudFront caches
+   * per regional edge cache, so after a deploy the first editor load behind
+   * each one requests every chunk together, and an invocation over the cap is
+   * answered 429: the
+   * browser refuses that as a script and the editor fails with
+   * `ChunkLoadError`. Synth warns below {@link MIN_CMS_RESERVED_CONCURRENCY}.
+   *
+   * A reservation costs nothing while idle; it is a ceiling, and a share of
+   * the account's concurrency set aside so other functions cannot use it.
+   * Lambda keeps 100 of the account's limit unreserved, so this plus every
+   * other reservation (AssetSupport's transform Lambda reserves 10) must fit
+   * within the account limit minus 100.
+   */
   reservedConcurrency?: number
 
   /**
@@ -569,11 +608,12 @@ export interface CanopyCmsServiceProps {
   /**
    * Environment variables for the Lambda function.
    *
-   * Two keys are not free-form here, because the construct configures the
+   * Three keys are not free-form here, because the construct configures the
    * worker from the same values and the two halves must agree:
    * `CANOPYCMS_DEPLOYMENT_NAME` is folded into `deploymentName` (validated,
-   * and mirrored into the worker's `.env`), and `CANOPY_MODE` accepts only
-   * `'prod'`. Everything else is passed through untouched.
+   * and mirrored into the worker's `.env`), `CANOPY_MODE` accepts only
+   * `'prod'`, and `CANOPYCMS_WORKSPACE_ROOT` accepts only the shared EFS mount
+   * path, `/mnt/efs`. Everything else is passed through untouched.
    */
   environment?: Record<string, string>
 
@@ -1003,6 +1043,17 @@ export class CanopyCmsService extends Construct {
       )
     }
 
+    const envWorkspaceRootOverride = props.environment?.['CANOPYCMS_WORKSPACE_ROOT']
+    if (envWorkspaceRootOverride !== undefined && envWorkspaceRootOverride !== EFS_MOUNT_PATH) {
+      throw new Error(
+        `CanopyCmsService: invalid environment.CANOPYCMS_WORKSPACE_ROOT ` +
+          `${JSON.stringify(envWorkspaceRootOverride)}. The Lambda and the worker both mount the ` +
+          `workspace at ${EFS_MOUNT_PATH}, and git paths one writes on EFS must resolve for the ` +
+          `other, so the only supported value is ${JSON.stringify(EFS_MOUNT_PATH)}. ` +
+          `Omit it to get the default.`,
+      )
+    }
+
     this.vpc =
       props.vpc ??
       new ec2.Vpc(this, 'Vpc', {
@@ -1126,6 +1177,20 @@ export class CanopyCmsService extends Construct {
     // the mismatch only shows at invoke. See `architecture`'s doc comment.
     const architecture = props.architecture ?? lambda.Architecture.ARM_64
 
+    const reservedConcurrency = props.reservedConcurrency ?? DEFAULT_CMS_RESERVED_CONCURRENCY
+    if (
+      !Token.isUnresolved(reservedConcurrency) &&
+      reservedConcurrency < MIN_CMS_RESERVED_CONCURRENCY
+    ) {
+      Annotations.of(this).addWarningV2(
+        'canopycms:cms-reserved-concurrency-low',
+        `reservedConcurrency is ${reservedConcurrency}, below ${MIN_CMS_RESERVED_CONCURRENCY}. ` +
+          `The editor's static chunks are served by this Lambda until CloudFront caches them, ` +
+          `and a cold editor load requests them together, so a throttled chunk fails the ` +
+          `editor with ChunkLoadError. See the reservedConcurrency prop.`,
+      )
+    }
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       // Default (unset) leaves CDK to create the execution role, with its own
@@ -1133,26 +1198,21 @@ export class CanopyCmsService extends Construct {
       role: props.lambdaRole,
       memorySize: props.memorySize ?? 2048,
       timeout: this.timeout,
-      reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
+      reservedConcurrentExecutions: reservedConcurrency,
       architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
-      filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, '/mnt/efs'),
+      filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, EFS_MOUNT_PATH),
       // Pass the pre-created group via `logGroup`, NOT `logRetention` (CDK
       // throws LogRetentionLogGroupConflict/ConflictingLogPolicyOptions if
       // both are set on the same function) - the removal policy lives on the
       // LogGroup construct above instead.
       logGroup: this.cmsLogGroup,
       environment: {
-        // INVARIANT: the Lambda mounts EFS through the WorkspaceAP access point
-        // above, which is already rooted at EFS:/workspace - so /mnt/efs here IS
-        // EFS:/workspace. The EC2 worker instead mounts the filesystem ROOT at
-        // /mnt/efs (see UserData below) and reaches the same directory via
-        // /mnt/efs/workspace. Both paths must resolve to EFS:/workspace, or the
-        // Lambda and worker silently operate on different directories.
-        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
-        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // The worker's `.env` gets the same root; see EFS_MOUNT_PATH.
+        CANOPYCMS_WORKSPACE_ROOT: EFS_MOUNT_PATH,
+        CANOPY_AUTH_CACHE_PATH: `${EFS_MOUNT_PATH}/.cache`,
         // git >= 2.35.2 refuses repos owned by another uid (the access point
         // forces uid 1000; Lambda containers run as a different user).
         // Env-based GIT_CONFIG_* CANNOT fix this - simple-git hard-blocks env
@@ -1298,7 +1358,7 @@ export class CanopyCmsService extends Construct {
     // through `assertEnvSafe` in the single `map` below, so a value added here
     // later is guarded whether or not whoever adds it remembers to.
     const envEntries: Array<[string, string]> = [
-      ['CANOPYCMS_WORKSPACE_ROOT', '/mnt/efs/workspace'],
+      ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH],
       ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
       ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
       ['CANOPYCMS_BASE_BRANCH', baseBranch],
@@ -1364,6 +1424,7 @@ export class CanopyCmsService extends Construct {
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
 
+    const efsMountOptions = `tls,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
     userData.addCommands(
       '#!/bin/bash',
@@ -1423,15 +1484,17 @@ export class CanopyCmsService extends Construct {
       '# selection AWS documents as able to change at any time.',
       'retry dnf install -y nodejs22',
       '',
-      '# Mount EFS',
+      '# Mount EFS through the same access point, at the same path, as the',
+      '# Lambda (see EFS_MOUNT_PATH). amazon-efs-utils refuses an access-point',
+      '# mount without tls (efs_utils_common/mount_options.py).',
       'retry dnf install -y amazon-efs-utils',
-      'mkdir -p /mnt/efs',
-      `mount -t efs ${this.fileSystem.fileSystemId}:/ /mnt/efs`,
+      `mkdir -p ${EFS_MOUNT_PATH}`,
+      `mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
       '# Persist the mount across instance reboots: user-data runs once per',
       '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
       '# empty local dir and the worker would clone a divergent remote.git',
       '# onto the instance disk, invisible to the Lambda.',
-      `echo '${this.fileSystem.fileSystemId}:/ /mnt/efs efs _netdev 0 0' >> /etc/fstab`,
+      `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
       '',
       '# Download worker from CDK S3 Asset',
       `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
@@ -1457,7 +1520,7 @@ export class CanopyCmsService extends Construct {
       'Description=CanopyCMS Worker Daemon',
       'After=network.target',
       '# Never run against an unmounted /mnt/efs (see the fstab note above).',
-      'RequiresMountsFor=/mnt/efs',
+      `RequiresMountsFor=${EFS_MOUNT_PATH}`,
       '',
       '[Service]',
       'Type=simple',
@@ -1488,12 +1551,6 @@ export class CanopyCmsService extends Construct {
       '',
       '# Set ownership for ec2-user',
       'chown -R ec2-user:ec2-user /opt/canopy-worker',
-      '# Non-recursive: EFS access point enforces UID 1000 for Lambda.',
-      '# Only set ownership on mount point and workspace dir to avoid',
-      '# slow recursive chown on large filesystems during ASG replacements.',
-      'chown ec2-user:ec2-user /mnt/efs',
-      'mkdir -p /mnt/efs/workspace',
-      'chown ec2-user:ec2-user /mnt/efs/workspace',
       '',
       '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
       '# first systemctl start): systemd opens StandardOutput=append: files',
@@ -1668,5 +1725,29 @@ export class CanopyCmsService extends Construct {
     // `mount -t efs` failure kills the whole bootstrap and the
     // EC2-health-checked ASG never notices.
     this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
+  }
+
+  /**
+   * Serve the editor from a CloudFront distribution you already own, such as
+   * the site's: adds `/edit`, `/edit/*` and `/api/canopycms/*` behaviors
+   * (plus any `previewPrefix` and `editorAssetPrefix` routes) to this
+   * service's Function URL, behind OAC, with
+   * an origin read timeout equal to {@link timeout}, no caching, the whole
+   * viewer request forwarded, an `x-forwarded-host` viewer-request function and
+   * the editor's response headers policy (framing protection, `noindex`).
+   *
+   * The behaviors are appended. Synth fails if a behavior listed before them
+   * matches an editor route, since CloudFront would never reach the editor's.
+   * It warns when the distribution has custom error responses, which also
+   * rewrite the API's errors.
+   *
+   * Pass `editorAssetPrefix` with the CMS build's Next `assetPrefix`, so the
+   * editor's chunks stay out of the site's `/_next/static/*`, and
+   * `previewPrefix` with a static-export site's preview route.
+   * `AssetSupport.attachTo` adds `/assets/*`. Use `CanopyCmsDistribution`
+   * instead when the CMS gets a domain of its own.
+   */
+  public attachTo(distribution: cloudfront.Distribution, options?: CanopyCmsAttachOptions): void {
+    attachEditorBehaviors(distribution, this.functionUrl, this.timeout, options)
   }
 }

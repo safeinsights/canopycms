@@ -17,6 +17,7 @@ import {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
   RESERVED_ROUTE_BRANCH_NAMES,
+  isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
 import { branchNameSchema, branchParamSchema } from './validators'
@@ -65,6 +66,13 @@ export interface BranchListItem extends BranchMetadata {
    */
   submitBlocked?: boolean
 }
+
+/**
+ * Response type for branch creation and the workflow transitions. Carries the
+ * list-item shape (server-computed flags included) so the editor can show the
+ * result without waiting for a listing that may lag behind it.
+ */
+export type BranchListItemResponse = ApiResponse<{ branch: BranchListItem }>
 
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
@@ -195,12 +203,30 @@ const resolveReadOnlyMirrorPath = (
   )
 }
 
+/**
+ * Attach server-computed protected-base-branch flags to a branch. Reads config
+ * per call so dev-mode refreshActiveBranch() updates are reflected.
+ */
+export const toBranchListItem = (
+  config: ApiContext['services']['config'],
+  branch: BranchMetadata,
+): BranchListItem => {
+  const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
+  return {
+    ...branch,
+    isProtected: protection.isProtected,
+    readOnly: protection.readOnly,
+    writeBlocked: protection.writeBlocked,
+    submitBlocked: protection.submitBlockedIncludingStatus,
+  }
+}
+
 /** @internal Exported for tests. */
 export const createBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof createBranchBodySchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   return log.timed('api', 'createBranch', async () => {
     const branchName = body.branch
     log.debug('api', 'Create branch request', {
@@ -208,15 +234,12 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    // Scope note: the collision guards below (settings-branch collision,
-    // reserved canopycms-settings- prefix, and the remote-mirror check
-    // further down) apply ONLY to this user-facing creation path.
-    // http/handler.ts's auto-create (base/active/settings branches) and
-    // branch-workspace.ts's loadOrCreateBranchContext (reached from run-time
-    // content reads and the AI pipeline; build-time reads return the checkout
-    // and never provision) provision system/known branch names, not
-    // user-chosen ones, and deliberately stay uncovered -- intentional, not
-    // an oversight.
+    // Scope note: the remote-mirror check further down applies ONLY to this
+    // user-facing creation path; http/handler.ts's auto-create (base/active
+    // branches) and loadOrCreateBranchContext provision known names. The two
+    // settings-branch checks below give this path a specific 400; every
+    // provisioning path, this one included, also refuses a settings branch in
+    // BranchWorkspaceManager.openOrCreateBranch.
 
     // Prevent git branch name collision with the settings branch. Settings
     // live in a separate directory but share the same git remote, and
@@ -456,7 +479,11 @@ export const createBranchHandler = async (
     })
 
     log.debug('api', 'Branch created', { branchName: context.branch.name })
-    return { ok: true, status: 200, data: { branch: context.branch } }
+    return {
+      ok: true,
+      status: 200,
+      data: { branch: toBranchListItem(ctx.services.config, context.branch) },
+    }
   })
 }
 
@@ -473,7 +500,14 @@ export const listBranchesHandler = async (
     }
   }
 
-  const allBranches = await ctx.services.registry.list()
+  // A settings-branch workspace is never resolvable as a content branch (see
+  // http/handler.ts), so one left on disk is hidden rather than listed unopenable.
+  const settingsBranch = operatingStrategy(ctx.services.config.mode).getSettingsBranchName(
+    ctx.services.config,
+  )
+  const allBranches = (await ctx.services.registry.list()).filter(
+    (context) => !isSettingsBranchName(context.branch.name, settingsBranch),
+  )
 
   // The branch the editor should open when none is pinned via URL/config.
   // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
@@ -485,30 +519,17 @@ export const listBranchesHandler = async (
     ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
   )
 
-  // Attach server-computed protected-base-branch flags; read config per-request
-  // so dev-mode refreshActiveBranch() updates are reflected here too.
-  const toListItem = (context: BranchContext): BranchListItem => {
-    const protection = getBranchWriteProtection(
-      ctx.services.config,
-      context.branch.name,
-      context.branch.baseBranch,
-      context.branch.status,
-    )
-    return {
-      ...context.branch,
-      isProtected: protection.isProtected,
-      readOnly: protection.readOnly,
-      writeBlocked: protection.writeBlocked,
-      submitBlocked: protection.submitBlockedIncludingStatus,
-    }
-  }
-
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
     return {
       ok: true,
       status: 200,
-      data: { branches: allBranches.map(toListItem), defaultBranch },
+      data: {
+        branches: allBranches.map((context) =>
+          toBranchListItem(ctx.services.config, context.branch),
+        ),
+        defaultBranch,
+      },
     }
   }
 
@@ -542,7 +563,12 @@ export const listBranchesHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branches: visibleBranches.map(toListItem), defaultBranch },
+    data: {
+      branches: visibleBranches.map((context) =>
+        toBranchListItem(ctx.services.config, context.branch),
+      ),
+      defaultBranch,
+    },
   }
 }
 
@@ -861,8 +887,8 @@ const createBranch = defineEndpoint({
   path: '/branches',
   body: createBranchBodySchema,
   bodyType: 'CreateBranchBody',
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

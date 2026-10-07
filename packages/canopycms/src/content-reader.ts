@@ -1,6 +1,7 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
-import { ContentStore, ContentStoreError } from './content-store'
+import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
+  namesNoWorkspace,
   resolveBranchPaths,
   type ContentId,
   type LogicalPath,
@@ -22,7 +23,16 @@ export interface ContentReaderOptions {
   basePathOverride?: string
   defaultBranch?: string
   createdBy?: string
+  /**
+   * Provision a workspace for a branch that has none. Off by default: a `branch` handed in from a
+   * request (`?branch=`) would otherwise let any visitor create a workspace per distinct name, so
+   * turn it on only when every branch name the reader sees is trusted.
+   */
   allowCreateBranch?: boolean
+  /**
+   * The sole branch resolver when given, replacing `allowCreateBranch`: null reads as NOT_FOUND.
+   * Reads from the checkout (static deployments, builds) never call it.
+   */
   getBranchContext?: (branch: string) => Promise<BranchContext | null>
 }
 
@@ -106,8 +116,8 @@ export interface ContentReader {
 }
 
 /**
- * Server-side helper to read content directly from a branch workspace.
- * Falls back to creating the branch workspace (metadata + checkout) if missing.
+ * Server-side helper to read content directly from a branch workspace. A branch with no workspace
+ * reads as NOT_FOUND unless `allowCreateBranch` or a `getBranchContext` resolver says otherwise.
  */
 export const createContentReader = (options: ContentReaderOptions): ContentReader => {
   const services = options.services
@@ -118,7 +128,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     services.config.defaultActiveBranch ??
     services.config.defaultBaseBranch ??
     'main'
-  const allowCreateBranch = options.allowCreateBranch ?? true
+  const allowCreateBranch = options.allowCreateBranch ?? false
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
@@ -136,10 +146,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    // Check custom resolver first (e.g., from HTTP handler)
     if (options.getBranchContext) {
-      const existing = await options.getBranchContext(branchName)
-      if (existing) return existing
+      const resolved = await options.getBranchContext(branchName)
+      if (!resolved) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
+      return resolved
     }
 
     if (allowCreateBranch) {
@@ -153,11 +163,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    // Not allowed to create — must exist
     const existing = await loadBranchContext({
       branchName,
       mode: operatingMode,
       basePathOverride,
+    }).catch((err: unknown) => {
+      if (namesNoWorkspace(err)) return null
+      throw err
     })
     if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
     return existing
@@ -252,10 +264,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
 
     // Get the path WITHOUT reading the file
-    let relativePath: PhysicalPath
+    let logicalPath: LogicalPath
     // Absolute filesystem path to the entry file. Surfaced on read() / readByUrlPath()
     // for server-side colocated-artifact reads (e.g. a sibling profile.json). Already
-    // computed here for permission checks; just carried through.
+    // computed here by path resolution; just carried through.
     let physicalPath: PhysicalPath
     // Entry type + content ID come out of path resolution (buildPaths() derives both from the
     // schema item / filename), surfaced on read() / readByUrlPath() so callers can route or
@@ -264,7 +276,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     let entryId: ContentId | undefined
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
-      relativePath = resolved.relativePath
+      logicalPath = resolved.logicalPath
       physicalPath = resolved.absolutePath as PhysicalPath
       // resolveDocumentPath() always sets entryTypeName for a valid schema item, so no
       // further fallback is needed here; `id` is the one field that can be legitimately
@@ -289,16 +301,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       )
     }
 
-    // Check permissions BEFORE reading the file (security)
+    // Check permissions BEFORE reading the file (security). The same checker then judges every
+    // reference target, so a reference cannot carry a target's data past these rules.
     const shouldCheckPermissions = !(isDeployedStatic(services.config) || isBuildMode())
+    let referenceAccess: ReferenceTargetAccess | undefined
     if (shouldCheckPermissions) {
-      const access = await services.checkContentAccess(
-        context,
-        branchRoot,
-        relativePath,
-        user,
-        'read',
-      )
+      const checkAccess = await services.createContentAccessChecker(context, branchRoot, user)
+      referenceAccess = (targetPath) => checkAccess(targetPath, 'read').allowed
+      const access = checkAccess(logicalPath, 'read')
       if (!access.allowed) {
         if (services.config.mode !== 'prod') {
           const reasons: string[] = []
@@ -323,6 +333,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     try {
       const doc = await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
+        referenceAccess,
       })
       return { doc, store, physicalPath, entryType, entryId }
     } catch (err: unknown) {

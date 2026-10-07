@@ -26,7 +26,8 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
-import { buildResolvedReference } from './entry-schema'
+import { buildResolvedReference, buildRestrictedReference } from './entry-schema'
+import { resolveEntryTitle } from './utils/title-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { findUrlPathClaimant } from './url-collision'
 import type {
@@ -53,6 +54,7 @@ import { isNodeError } from './utils/error'
 import { filePathExists, readFileIfExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
+  entryLogicalPath,
   normalizeFilesystemPath,
   parseSlug,
   type LogicalPath,
@@ -102,7 +104,8 @@ export type ContentDocument = (MarkdownDocument | JsonDocument | YamlDocument) &
   version?: number
 }
 
-// expectedVersion: undefined = blind write; a number = OCC, must match the file's
+// expectedVersion: undefined = blind write, for direct store callers only (the content API maps
+// an omitted token to null); a number = OCC, must match the file's
 // current mtime; null = create-only, the file must NOT exist yet. Same three-way
 // convention as writeOccJsonFile's WriteOccJsonFileOptions.expectedVersion.
 export type WriteInput =
@@ -304,7 +307,8 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
  * shorter than the `ContentStore` whose memoized `idIndex()` it sits on, so it adds no
  * staleness window and is out of scope for the generation-marker protocol in
  * `docs/concurrency.md`. Never make one module-global, persist one, or reuse one across
- * requests.
+ * requests. A cached value has the batch's {@link ReferenceTargetAccess} already applied, so a
+ * cache must never be shared by two readers.
  *
  * Misses are memoized alongside hits so one batch stays internally coherent: a shared block
  * resolving to data on page 1 and `null` on page 40 of one sitemap is worse than either
@@ -314,6 +318,23 @@ export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown> 
 
 /** Create a cache for one batch of reference resolution. See {@link ReferenceResolveCache}. */
 export const createReferenceResolveCache = (): ReferenceResolveCache => new Map()
+
+/**
+ * Whether the reader may see a reference's target in full, given the target's logical path
+ * (`entryLogicalPath`). A denied target resolves to a `RestrictedReference` (entry-schema.ts).
+ *
+ * Built from `services.createContentAccessChecker` for the request's user, so reference
+ * targets are judged by the same rules as the entry being read. Omitted, every target resolves
+ * in full, which is what a build and a static deployment want (merged content is public there).
+ * Every request-time surface that returns resolved data to a user passes one.
+ */
+export type ReferenceTargetAccess = (logicalPath: LogicalPath) => boolean
+
+export interface ReadOptions {
+  resolveReferences?: boolean
+  /** See {@link ReferenceTargetAccess}. */
+  referenceAccess?: ReferenceTargetAccess
+}
 
 export class ContentStore {
   private readonly root: string
@@ -686,6 +707,8 @@ export class ContentStore {
   ): Promise<{
     absolutePath: string
     relativePath: PhysicalPath
+    /** The entry's logical path, the form path-permission rules match (`entryLogicalPath`). */
+    logicalPath: LogicalPath
     id?: string
     /**
      * Always populated for a valid schema item: the collection branch below resolves a name
@@ -823,6 +846,7 @@ export class ContentStore {
       return {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved) as PhysicalPath,
+        logicalPath: entryLogicalPath(schemaItem.logicalPath, safeSlug),
         id,
         entryTypeName: finalEntryTypeName,
         existed,
@@ -864,10 +888,14 @@ export class ContentStore {
     return await this.buildPaths(schemaItem, slug)
   }
 
+  /**
+   * Read one entry. References resolve unless `resolveReferences: false`; a target that
+   * `referenceAccess` denies resolves to a `RestrictedReference` rather than its data.
+   */
   async read(
     collectionPath: LogicalPath,
     slug: Slug | '' = '',
-    options: { resolveReferences?: boolean } = {},
+    options: ReadOptions = {},
   ): Promise<ContentDocument> {
     const schemaItem = this.assertSchemaItem(collectionPath)
     const {
@@ -945,7 +973,12 @@ export class ContentStore {
     }
 
     if (options.resolveReferences !== false) {
-      doc.data = await this.resolveReferencesInData(doc.data, fields)
+      doc.data = await this.resolveReferencesInData(
+        doc.data,
+        fields,
+        undefined,
+        options.referenceAccess,
+      )
     }
 
     doc.version = stat.mtimeMs
@@ -1713,23 +1746,34 @@ export class ContentStore {
    * a target referenced by many entries is read once; omit `cache` for exactly `read()`'s
    * unmemoized behavior.
    *
-   * **Path ACLs are not consulted for the targets.** Resolution goes through this store's own
-   * `read()`, below the per-entry permission check in content-reader.ts, so a resolved target
-   * may be an entry the caller could not `read()` directly -- pre-existing `read()` behavior,
-   * matched here on purpose so one rule covers both.
+   * `access` applies to every target exactly as in `read()`; see {@link ReferenceTargetAccess}.
    */
   public async resolveReferences(
     data: Record<string, unknown>,
     fields: EntrySchema,
     cache?: ReferenceResolveCache,
+    access?: ReferenceTargetAccess,
   ): Promise<Record<string, unknown>> {
-    return this.resolveReferencesInData(data, fields, cache)
+    return this.resolveReferencesInData(data, fields, cache, access)
+  }
+
+  /**
+   * Resolve one reference id the way a reference field resolves it, for the editor's
+   * live-preview endpoint (api/resolve-references.ts), which has ids but no field to walk. Null
+   * when the id names no entry. No body is embedded, since there is no field to ask for one.
+   */
+  public async resolveReferenceTarget(
+    id: string,
+    access?: ReferenceTargetAccess,
+  ): Promise<Record<string, unknown> | null> {
+    return this.resolveSingleReference(id, await this.idIndex(), false, undefined, access)
   }
 
   private async resolveReferencesInData(
     data: Record<string, unknown>,
     fields: EntrySchema,
     cache?: ReferenceResolveCache,
+    access?: ReferenceTargetAccess,
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()
@@ -1741,6 +1785,7 @@ export class ContentStore {
           resolved,
           (field as InlineGroupFieldConfig).fields,
           cache,
+          access,
         )
         Object.assign(resolved, groupResolved)
         continue
@@ -1759,12 +1804,13 @@ export class ContentStore {
             idIndex,
             includeBody,
             cache,
+            access,
           )
         } else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((id) =>
               typeof id === 'string'
-                ? this.resolveSingleReference(id, idIndex, includeBody, cache)
+                ? this.resolveSingleReference(id, idIndex, includeBody, cache, access)
                 : null,
             ),
           )
@@ -1780,6 +1826,7 @@ export class ContentStore {
                     item as Record<string, unknown>,
                     objectField.fields,
                     cache,
+                    access,
                   )
                 : item,
             ),
@@ -1789,6 +1836,7 @@ export class ContentStore {
             value as Record<string, unknown>,
             objectField.fields,
             cache,
+            access,
           )
         }
       } else if (field.type === 'block' && Array.isArray(value)) {
@@ -1806,6 +1854,7 @@ export class ContentStore {
                 b.value as Record<string, unknown>,
                 template.fields,
                 cache,
+                access,
               ),
             }
           }),
@@ -1845,8 +1894,9 @@ export class ContentStore {
     idIndex: ContentIdIndex,
     includeBody: boolean,
     cache?: ReferenceResolveCache,
+    access?: ReferenceTargetAccess,
   ): Promise<Record<string, unknown> | null> {
-    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+    if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody, access)
     // The key carries `includeBody`, not just the id: two fields can reference the SAME target
     // with different settings, and sharing one entry between them would make the shape depend
     // on which field the walk reached first.
@@ -1856,7 +1906,7 @@ export class ContentStore {
       // Store the in-flight promise with no `await` in between, so concurrent lookups from
       // one Promise.all batch find it and collapse onto a single read. Memoizing the promise
       // also shares the self-healing retry below rather than repeating it.
-      pending = this.resolveSingleReferenceUncached(id, idIndex, includeBody)
+      pending = this.resolveSingleReferenceUncached(id, idIndex, includeBody, access)
       cache.set(key, pending)
     }
     // The cached promise always has this handler attached, so it is never an unhandled
@@ -1882,21 +1932,43 @@ export class ContentStore {
     id: string,
     idIndex: ContentIdIndex,
     includeBody: boolean,
+    access?: ReferenceTargetAccess,
   ): Promise<Record<string, unknown> | null> {
-    const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody)
+    const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody, access)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle, retry against the
     // live index: a sibling lookup in the same batch may have won it and rebuilt (idIndex()
     // dedupes in-flight builds), so every miss in a Promise.all batch heals.
     await this.refreshIndexForSuspiciousLookup()
-    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex(), includeBody)
+    const second = await this.resolveSingleReferenceOnce(
+      id,
+      await this.idIndex(),
+      includeBody,
+      access,
+    )
     return second === STALE_LOOKUP ? null : second
+  }
+
+  /**
+   * The entry type an entry file was written as, by its filename's type token, falling back to
+   * the collection's default the way `read()` does for a legacy untyped file.
+   */
+  private entryTypeOf(
+    collectionPath: LogicalPath,
+    relativePath: string,
+  ): { schema: EntrySchema; label?: string } | undefined {
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    if (schemaItem.type === 'entry-type') return schemaItem
+    const entries = schemaItem.entries as readonly EntryTypeConfig[] | undefined
+    const typeName = extractEntryTypeFromFilename(path.basename(relativePath))
+    return entries?.find((e) => e.name === typeName) ?? getDefaultEntryType(schemaItem.entries)
   }
 
   private async resolveSingleReferenceOnce(
     id: string,
     idIndex: ContentIdIndex,
     includeBody: boolean,
+    access?: ReferenceTargetAccess,
   ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
@@ -1910,22 +1982,35 @@ export class ContentStore {
       const doc = await this.read(location.collection, location.slug, {
         resolveReferences: false,
       })
-
-      // `urlPath` is what makes a resolved reference linkable: without it a page rendering
-      // "see also: <Target>" as a real anchor has no href from the resolution it already paid
-      // for, and had to run a SECOND full listing over the tree to build a contentId -> url
-      // table.
-      //
-      // Deliberately `computeEntryUrl` (utils/entry-url.ts), the same forward
-      // collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
+      // `urlPath` is what makes a resolved reference linkable without a second listing pass to
+      // build a contentId -> url table. Deliberately `computeEntryUrl` (utils/entry-url.ts), the
+      // forward collection+slug -> url rule `listEntries` publishes as `item.urlPath` and
       // `entry-link-resolver.ts` uses for `entry:ID` links -- NOT the reverse url -> entry
-      // resolver in url-path-resolver.ts. They agree today, but direction matters: this is the
-      // surface that DEFINES an entry's URL, so sourcing it from the resolver that consumes
-      // that definition would invert the dependency.
-      //
-      // The assembly -- data, then the embedded body, then the reserved metadata -- is
-      // `buildResolvedReference`'s job, because api/resolve-references.ts builds the same
-      // object for live preview and the two had drifted; its doc comment carries the ordering.
+      // resolver in url-path-resolver.ts: this is the surface that DEFINES an entry's URL, so
+      // sourcing it from the resolver that consumes that definition would invert the dependency.
+      const meta = {
+        id,
+        slug: location.slug,
+        collection: location.collection,
+        urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
+      }
+
+      // Checked on the target's logical path, the space path rules are written in. The title is
+      // the same `resolveEntryTitle` chain the entries API labels a listed entry with.
+      if (access && !access(entryLogicalPath(location.collection, location.slug))) {
+        const entryType = this.entryTypeOf(location.collection, location.relativePath)
+        return buildRestrictedReference(
+          meta,
+          resolveEntryTitle(doc.data, {
+            schema: entryType?.schema,
+            entryTypeLabel: entryType?.label,
+            slug: location.slug,
+          }),
+        )
+      }
+
+      // `buildResolvedReference` owns the assembly order (data, embedded body, reserved
+      // metadata); its doc comment says why the order is the contract.
       //
       // `'body' in doc` narrows the ContentDocument union to its markdown variant, so
       // `doc.body`/`doc.bodyFieldName` are reachable at all -- a type guard, not a redundant
@@ -1933,16 +2018,7 @@ export class ContentStore {
       const bodyForEmbed =
         includeBody && 'body' in doc ? { fieldName: doc.bodyFieldName, value: doc.body } : undefined
 
-      return buildResolvedReference(
-        doc.data,
-        {
-          id,
-          slug: location.slug,
-          collection: location.collection,
-          urlPath: computeEntryUrl(location.collection, location.slug, this.contentRootName),
-        },
-        bodyForEmbed,
-      )
+      return buildResolvedReference(doc.data, meta, bodyForEmbed)
     } catch (error) {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.

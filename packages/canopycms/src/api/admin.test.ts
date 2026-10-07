@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -7,6 +7,8 @@ import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser } from '../test-utils'
 import { enqueueTask, dequeueTask, failTask } from '../task-queue/cms-task-queue'
+import type { AssetStore } from '../assets/types'
+import { CANOPYCMS_VERSION } from '../version'
 
 // Extract composed (guard + handler) functions for testing, matching
 // branch-merge.test.ts's pattern.
@@ -34,10 +36,45 @@ describe('admin api', () => {
 
   afterEach(async () => {
     process.env.CANOPYCMS_WORKSPACE_ROOT = originalWorkspaceRoot
+    vi.unstubAllEnvs()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
   describe('GET /admin/status', () => {
+    describe('build identity', () => {
+      it('reports the canopycms version of the API process', async () => {
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.build.canopycmsVersion).toBe(CANOPYCMS_VERSION)
+      })
+
+      it('reports the source revision when CANOPY_SOURCE_SHA is set', async () => {
+        vi.stubEnv('CANOPY_SOURCE_SHA', 'abc123def456')
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.build.sourceRevision).toBe('abc123def456')
+      })
+
+      it('omits the source revision when CANOPY_SOURCE_SHA is absent', async () => {
+        vi.stubEnv('CANOPY_SOURCE_SHA', undefined)
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.build).toBeDefined()
+        expect('sourceRevision' in (result.data?.build ?? {})).toBe(false)
+      })
+
+      it('reports the asset store as configured when the context has one', async () => {
+        const withStore = createMockApiContext({
+          services: { config: { mode: 'prod' } as CanopyConfig },
+          assetStore: {} as AssetStore,
+        })
+        const result = await statusHandler(withStore, req)
+        expect(result.data?.assetStore).toEqual({ configured: true })
+      })
+
+      it('reports the asset store as not configured when the context has none', async () => {
+        const result = await statusHandler(ctx, req)
+        expect(result.data?.assetStore).toEqual({ configured: false })
+      })
+    })
+
     it('returns zeroed stats, absent worker, and null status for an empty queue', async () => {
       const result = await statusHandler(ctx, req)
 
@@ -99,6 +136,32 @@ describe('admin api', () => {
 
       expect(result.data?.workerStatus).toEqual(report)
       expect(result.data?.statusReadError).toBeUndefined()
+    })
+
+    it('reports why the settings workspace cannot be provisioned, without failing the status call', async () => {
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod' } as CanopyConfig,
+          getSettingsBranchRoot: vi
+            .fn()
+            .mockRejectedValue(
+              new Error("settings branch 'b' at https://x-access-token:secret@example.test/r.git"),
+            ),
+        },
+      })
+
+      const result = await statusHandler(ctx, req)
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.settingsWorkspaceError).toBe(
+        "settings branch 'b' at https://***@example.test/r.git",
+      )
+    })
+
+    it('omits settingsWorkspaceError when the settings workspace is provisioned', async () => {
+      const result = await statusHandler(ctx, req)
+
+      expect(result.data).not.toHaveProperty('settingsWorkspaceError')
     })
 
     it('returns null status + statusReadError for a garbage worker-status.json', async () => {

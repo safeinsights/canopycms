@@ -15,12 +15,17 @@ import {
   isGenerationCurrent,
   type GenerationReadResult,
 } from './resource-generation'
+import { timeRequestPhase } from './utils/request-timing'
+import { CANOPY_META_DIR } from './utils/git'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
 const SCHEMA_CACHE_VERSION = 3
 
 /** Minimum interval between mtime staleness checks (ms) */
 const MTIME_CHECK_DEBOUNCE_MS = 1000
+
+/** File name of the schema cache inside {@link schemaCacheDir}. */
+export const SCHEMA_CACHE_FILE = 'schema-cache.json'
 
 /** resource-generation.ts resource key for the schema cache's marker. */
 export const SCHEMA_GENERATION_RESOURCE = 'schema'
@@ -68,8 +73,26 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
 }
 
 /**
- * Per-branch schema cache: a file at {branchRoot}/.canopy-meta/schema-cache.json
- * with no in-memory layer, so it stays coherent across Lambda invocations.
+ * Directory holding a branch's schema cache: `{branchRoot}/.git/canopycms` when
+ * the branch root is a full clone (every canopycms branch workspace is), else
+ * `{branchRoot}/.canopy-meta`. Under `.git/` because nothing there is ever
+ * tracked or reported by `git status`, so the cache can neither dirty the
+ * workspace nor enter a commit, even where an adopter has committed
+ * `.canopy-meta/`. It also lives and dies with the clone, so a re-clone never
+ * reads its predecessor's snapshot.
+ */
+async function schemaCacheDir(branchRoot: string): Promise<string> {
+  const gitDir = path.join(branchRoot, '.git')
+  const isClone = await fs.stat(gitDir).then(
+    (stat) => stat.isDirectory(),
+    () => false,
+  )
+  return isClone ? path.join(gitDir, 'canopycms') : path.join(branchRoot, CANOPY_META_DIR)
+}
+
+/**
+ * Per-branch schema cache: one file in {@link schemaCacheDir} with no in-memory
+ * layer, so it stays coherent across Lambda invocations.
  *
  * Freshness follows the generation-marker protocol owned by
  * resource-generation.ts, and this is one of that protocol's durable-snapshot
@@ -94,7 +117,7 @@ export class BranchSchemaCache {
   /**
    * Whether to skip the on-disk cache for this branchRoot.
    *
-   * Never write `.canopy-meta/` at the project root, whichever entrypoint
+   * Never write a schema cache at the project root, whichever entrypoint
    * produced the cwd branchRoot. branchRoot equals process.cwd() only in the
    * synthetic contexts static deployments and build phases use; a real branch
    * root is always nested under the workspace.
@@ -109,7 +132,9 @@ export class BranchSchemaCache {
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
+    return timeRequestPhase('schema', () =>
+      this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName),
+    )
   }
 
   /**
@@ -134,8 +159,7 @@ export class BranchSchemaCache {
     const skipDiskCache = this.skipDiskCache(branchRoot)
 
     if (!skipDiskCache) {
-      const cacheDir = path.join(branchRoot, '.canopy-meta')
-      const cachePath = path.join(cacheDir, 'schema-cache.json')
+      const cachePath = path.join(await schemaCacheDir(branchRoot), SCHEMA_CACHE_FILE)
 
       let cacheData: BranchSchemaCacheEntry | null = null
       try {
@@ -202,7 +226,10 @@ export class BranchSchemaCache {
       ? null
       : await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
 
-    const result = await this.resolveFresh(contentRoot, entrySchemaRegistry)
+    // Nested under `schema`, so a request summary names a cache miss (`…schema>resolve`).
+    const result = await timeRequestPhase('resolve', () =>
+      this.resolveFresh(contentRoot, entrySchemaRegistry),
+    )
 
     // Validate schema has content
     if (!isValidSchema(result.schema)) {
@@ -227,12 +254,12 @@ export class BranchSchemaCache {
     const flatSchema = flattenSchema(result.schema, contentRootName)
 
     if (!skipDiskCache) {
-      const cacheDir = path.join(branchRoot, '.canopy-meta')
-      const cachePath = path.join(cacheDir, 'schema-cache.json')
+      const cacheDir = await schemaCacheDir(branchRoot)
+      const cachePath = path.join(cacheDir, SCHEMA_CACHE_FILE)
 
       // Opportunistic cleanup of the retired .stale marker file, which a
       // mid-flight deploy can leave behind. Not load-bearing.
-      await fs.unlink(path.join(cacheDir, 'schema-cache.stale')).catch(() => {})
+      await fs.unlink(path.join(branchRoot, CANOPY_META_DIR, 'schema-cache.stale')).catch(() => {})
 
       if (read && read.ok) {
         const newCache: BranchSchemaCacheEntry = {
@@ -244,7 +271,7 @@ export class BranchSchemaCache {
         }
 
         // Temp file then rename, with the temp file unlinked on a failed
-        // rename so a transient error leaves no stray `.tmp` in `.canopy-meta/`.
+        // rename so a transient error leaves no stray `.tmp` beside the cache.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
         await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')

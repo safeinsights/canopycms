@@ -62,4 +62,10 @@ if (typeof window !== 'undefined') {
   if (!Element.prototype.scrollIntoView) {
     Element.prototype.scrollIntoView = () => {}
   }
+
+  // Nor does Range measure anything. Lexical measures the caret after each
+  // keystroke to scroll it into view, so typing into MDXEditor needs this.
+  if (!Range.prototype.getBoundingClientRect) {
+    Range.prototype.getBoundingClientRect = () => document.body.getBoundingClientRect()
+  }
 }

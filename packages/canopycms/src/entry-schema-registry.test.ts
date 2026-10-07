@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'fs/promises'
 import { join } from 'pathe'
 import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
+import type { EntrySchema } from './config'
 
 describe('createEntrySchemaRegistry', () => {
   it('accepts valid schema registry', () => {
@@ -28,6 +29,24 @@ describe('createEntrySchemaRegistry', () => {
 
   it('throws error for empty registry', () => {
     expect(() => createEntrySchemaRegistry({})).toThrow('Entry schema registry cannot be empty')
+  })
+
+  it('rejects an itemTitleField that names no child of its object', () => {
+    const items = (itemTitleField: string) => ({
+      pageSchema: [
+        {
+          type: 'object' as const,
+          name: 'items',
+          list: true,
+          itemTitleField,
+          fields: [{ type: 'string' as const, name: 'title' }],
+        },
+      ],
+    })
+    expect(() => createEntrySchemaRegistry(items('title'))).not.toThrow()
+    expect(() => createEntrySchemaRegistry(items('nope'))).toThrow(
+      'Object field "items" has itemTitleField "nope"',
+    )
   })
 
   it('throws error for non-array schema', () => {
@@ -157,6 +176,34 @@ describe('createEntrySchemaRegistry', () => {
       ).toThrow(/is reserved/)
     },
   )
+
+  it.each([
+    ['a top-level field', [{ type: 'boolean', name: 'unavailable' }]],
+    [
+      'a field inside an inline group',
+      [{ type: 'group', name: 'stock', fields: [{ type: 'boolean', name: 'unavailable' }] }],
+    ],
+  ] as const)(
+    'throws when %s is named unavailable, the restricted-reference marker',
+    (_, fields) => {
+      expect(() =>
+        createEntrySchemaRegistry({
+          product: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+        }),
+      ).toThrow(/field "unavailable" is reserved/)
+    },
+  )
+
+  it('allows unavailable nested inside an object field, which is not a top-level key', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        product: [
+          { type: 'string', name: 'title' },
+          { type: 'object', name: 'stock', fields: [{ type: 'boolean', name: 'unavailable' }] },
+        ],
+      }),
+    ).not.toThrow()
+  })
 
   it('allows a body field with any non-reserved name', () => {
     expect(() =>

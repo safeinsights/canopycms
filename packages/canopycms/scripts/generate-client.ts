@@ -258,6 +258,8 @@ function generateClientCode(namespaces: NamespaceRoutes[]): string {
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
+import type { ApiResponse } from './types'
+import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 
 ${responseTypeImports}
 
@@ -267,6 +269,12 @@ export interface ApiClientOptions {
   baseUrl?: string
   /** Custom fetch implementation, e.g. a mock in tests. */
   fetch?: typeof fetch
+  /**
+   * End request paths with \`/\` (by \`withTrailingSlash\`'s rule), matching a Next host built with
+   * \`trailingSlash: true\`. Defaults to the value \`withCanopy\` inlines at build time (see
+   * \`readTrailingSlashEnv\`), else false.
+   */
+  trailingSlash?: boolean
 
   /**
    * Called whenever a response comes back 401: the credential is no longer accepted. A
@@ -288,6 +296,7 @@ export interface ApiClientOptions {
 export class CanopyApiClient {
   private baseUrl: string
   private fetchFn: typeof fetch
+  private trailingSlash: boolean
   private onUnauthorized: (() => void) | undefined
 
 ${namespacesCode}
@@ -296,6 +305,7 @@ ${namespacesCode}
     this.baseUrl = options.baseUrl ?? '/api/canopycms'
     // An unbound fetch throws "Illegal invocation" in browsers; Node has no window.
     this.fetchFn = options.fetch ?? (typeof window !== 'undefined' ? fetch.bind(window) : fetch)
+    this.trailingSlash = options.trailingSlash ?? readTrailingSlashEnv()
     this.onUnauthorized = options.onUnauthorized
   }
 
@@ -337,7 +347,7 @@ ${namespacesCode}
     body?: unknown,
     headers: Record<string, string> = {}
   ): Promise<T> {
-    const url = \`\${this.baseUrl}\${path}\`
+    const url = \`\${this.baseUrl}\${this.trailingSlash ? withTrailingSlash(path) : path}\`
 
     const requestHeaders: Record<string, string> = {
       ...headers,
@@ -375,23 +385,90 @@ ${namespacesCode}
       init.body = requestBody
     }
 
-    const response = await this.fetchFn(url, init)
+    let response = await this.fetchFn(url, init)
+    // A body from in front of the API (a proxy or CDN error page) may be empty, not JSON, or
+    // not an ApiResponse; every such body becomes an \`ok: false\` ApiResponse, never a throw.
+    let parsed: unknown = await response.json().catch(() => undefined)
+    // A 429 no handler wrote is a throttle in front of the API, such as Lambda's concurrency
+    // cap, which answers before the function runs. The request was never handled, so
+    // resending it is safe for writes too.
+    for (let attempt = 0; response.status === 429 && !isApiResponseBody(parsed); attempt++) {
+      const delay = throttleRetryDelayMs(response, attempt)
+      if (delay === undefined) break
+      await sleep(delay)
+      response = await this.fetchFn(url, init)
+      parsed = await response.json().catch(() => undefined)
+    }
     if (response.status === 401) {
       this.onUnauthorized?.()
-      // A 401 is an auth answer whatever its body: one from in front of the API (a proxy) may
-      // not be an ApiResponse, or not JSON. Always return it as one rather than throwing.
-      const body: unknown = await response.json().catch(() => undefined)
-      const error =
-        typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
-          ? body.error
-          : 'Unauthorized'
-      return { ok: false, status: 401, error } as T
+      return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
     }
-    const payload = await response.json()
-
-    // All responses use ApiResponse format: { ok, status, data?, error? }
-    return payload as T
+    if (isApiResponseBody(parsed)) return parsed as T
+    const converted = {
+      ok: false,
+      status: response.status,
+      error: errorFromBody(parsed) ?? \`Unexpected response from server (HTTP \${response.status})\`,
+    }
+    convertedResponses.add(converted)
+    return converted as T
   }
+}
+
+/**
+ * Base wait before each resend of a throttled request. A throttle from a burst of cold starts
+ * clears as they finish, so the waits span a few seconds.
+ */
+const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
+
+/** The longest \`Retry-After\` honoured; a throttle asking for longer is reported, not resent. */
+const MAX_RETRY_AFTER_MS = 5000
+
+/**
+ * The wait before resend \`attempt\`, or undefined when there is to be no resend: the attempts
+ * are used up, or \`Retry-After\` asks for longer than {@link MAX_RETRY_AFTER_MS}. The base delay,
+ * or \`Retry-After\` when longer, plus up to half the base again, so requests throttled in one
+ * burst do not resend in lockstep.
+ */
+function throttleRetryDelayMs(response: Response, attempt: number): number | undefined {
+  const base = THROTTLE_RETRY_DELAYS_MS[attempt]
+  if (base === undefined) return undefined
+  // Delta-seconds only; an HTTP-date or a blank value falls back to the base delay. A custom
+  // \`fetch\` option may return a Response-like without headers.
+  const header = (response.headers as Headers | undefined)?.get('retry-after')?.trim()
+  const retryAfter = header ? Number(header) : Number.NaN
+  let wait = base
+  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+    const ms = retryAfter * 1000
+    if (ms > MAX_RETRY_AFTER_MS) return undefined
+    wait = Math.max(ms, base)
+  }
+  return wait + Math.random() * base * 0.5
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const convertedResponses = new WeakSet<object>()
+
+/**
+ * Whether \`result\` was converted from a body no CanopyCMS handler wrote (a proxy or CDN
+ * error page), so its status says nothing about the API itself.
+ */
+export function isNonApiResponse(result: object): boolean {
+  return convertedResponses.has(result)
+}
+
+/** The \`error\` string of a JSON body, when it has one. */
+function errorFromBody(body: unknown): string | undefined {
+  return typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+    ? body.error
+    : undefined
+}
+
+/** Whether a parsed body has the \`{ ok, status, ... }\` shape every handler returns. */
+function isApiResponseBody(body: unknown): body is ApiResponse {
+  return typeof body === 'object' && body !== null && 'ok' in body && typeof body.ok === 'boolean'
 }
 
 /** Create a {@link CanopyApiClient}; pass a custom fetch for tests. */

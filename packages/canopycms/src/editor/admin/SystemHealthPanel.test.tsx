@@ -11,6 +11,7 @@ import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
+import type { BaseRefreshReport, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
@@ -41,8 +42,35 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     queue: { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 },
     worker: { state: 'alive' },
     workerStatus: null,
+    build: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
+    assetStore: { configured: true },
     ...overrides,
   }
+}
+
+/** A status whose last git sync carries `baseRefresh` (omitted when undefined). */
+function makeStatusWithSync(baseRefresh?: BaseRefreshReport): AdminStatusData {
+  const workerStatus: WorkerStatusReport = {
+    version: 1,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: new Date().toISOString(),
+    lastGitSyncAt: '2026-01-01T00:25:54.000Z',
+    lastGitSync: {
+      durationMs: 1200,
+      rebased: [],
+      skippedDirty: baseRefresh?.outcome === 'skipped-dirty' ? ['main'] : [],
+      failed: [],
+      ...(baseRefresh ? { baseRefresh } : {}),
+    },
+  }
+  return makeStatus({ workerStatus })
+}
+
+const dirtyBaseRefresh: BaseRefreshReport = {
+  outcome: 'skipped-dirty',
+  dirtyFiles: ['content/home.md'],
+  message: '1 uncommitted tracked file(s) in the base branch workspace',
+  trackedCanopyMeta: ['.canopy-meta/schema-cache.json'],
 }
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -103,6 +131,149 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('Worker: stale (possible crash)')).toBeTruthy())
     })
 
+    describe('Build section', () => {
+      /** A status whose worker reports `workerVersion` (omitted when undefined). */
+      const statusWithWorkerVersion = (
+        workerVersion: string | undefined,
+        overrides: Partial<AdminStatusData> = {},
+      ): AdminStatusData =>
+        makeStatus({
+          workerStatus: {
+            version: 1,
+            ...(workerVersion !== undefined ? { workerVersion } : {}),
+            startedAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+          ...overrides,
+        })
+
+      it('renders the API version, truncated source revision and worker version', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-api-version')).toBeTruthy())
+        expect(screen.getByTestId('build-api-version').textContent).toContain('1.2.3')
+        const revision = screen.getByTestId('build-source-revision').textContent
+        expect(revision).toContain('abcdef012345')
+        expect(revision).not.toContain('abcdef0123456')
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('1.2.3')
+      })
+
+      it('keeps "Worker: " unique to the liveness badge, which the e2e page object selects by it', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getAllByText(/^Worker: /)).toHaveLength(1)
+      })
+
+      it('shows "not set" with the env var name when the source revision is absent', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(makeStatus({ build: { canopycmsVersion: '1.2.3' } })),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-source-revision')).toBeTruthy())
+        const text = screen.getByTestId('build-source-revision').textContent ?? ''
+        expect(text).toContain('not set')
+        expect(text).toContain('CANOPY_SOURCE_SHA')
+      })
+
+      it('shows the worker version as unknown when the worker did not report one', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(statusWithWorkerVersion(undefined)),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('unknown')
+      })
+
+      it('warns when the API and worker versions differ', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.2')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('version-skew-warning')).toBeTruthy())
+        const text = screen.getByTestId('version-skew-warning').textContent ?? ''
+        expect(text).toContain('API and worker versions differ')
+        expect(text).toContain('1.2.3')
+        expect(text).toContain('1.2.2')
+      })
+
+      it('does not warn when the API and worker versions match', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
+      it('does not warn when the worker version is absent', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(statusWithWorkerVersion(undefined)),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
+      it.each(['stale', 'absent'] as const)(
+        'does not warn when the worker is %s, since its version is not a running build',
+        async (state) => {
+          mockClient.admin.status.mockResolvedValueOnce(
+            mockSuccess(statusWithWorkerVersion('1.2.2', { worker: { state } })),
+          )
+
+          renderPanel()
+
+          await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+          expect(screen.getByTestId('build-worker-version').textContent).toContain('1.2.2')
+          expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+        },
+      )
+
+      it('treats an empty worker version as unknown, not as skew', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.getByTestId('build-worker-version').textContent).toContain('unknown')
+        expect(screen.queryByTestId('version-skew-warning')).toBeNull()
+      })
+
+      it('shows media storage as configured', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-media')).toBeTruthy())
+        expect(screen.getByTestId('build-media').textContent).toContain('configured')
+        expect(screen.getByTestId('build-media').textContent).not.toContain('not configured')
+      })
+
+      it('says uploads are disabled when media storage is not configured', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(makeStatus({ assetStore: { configured: false } })),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-media')).toBeTruthy())
+        expect(screen.getByTestId('build-media').textContent).toContain(
+          'not configured — uploads are disabled',
+        )
+      })
+    })
+
     it('shows a muted dev-mode note instead of alarming colors', async () => {
       mockClient.admin.status.mockResolvedValueOnce(
         mockSuccess(makeStatus({ mode: 'dev', worker: { state: 'absent' } })),
@@ -137,6 +308,78 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
       expect(screen.getByText('Worker crash detected')).toBeTruthy()
       expect(screen.getByText('Worker crashed on boot')).toBeTruthy()
+    })
+  })
+
+  describe('Overview tab: settings workspace', () => {
+    it('alerts with the reason when the settings workspace cannot be provisioned', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatus({ settingsWorkspaceError: 'settings branch shares no history' })),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(
+          screen.getByText('Settings workspace unavailable: groups and path rules are not loading'),
+        ).toBeTruthy(),
+      )
+      expect(screen.getByText('settings branch shares no history')).toBeTruthy()
+    })
+
+    it('shows no settings alert while the settings workspace is healthy', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByText(/Settings workspace unavailable/)).toBeNull()
+    })
+  })
+
+  describe('Overview tab: base branch refresh', () => {
+    it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatusWithSync(dirtyBaseRefresh)),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(screen.getByTestId('base-refresh-outcome').textContent).toBe(
+          'Base branch: refresh skipped (uncommitted changes)',
+        ),
+      )
+      expect(screen.getByText(/1 skipped \(dirty\)/)).toBeTruthy()
+      const warning = screen.getByTestId('base-refresh-warning').textContent ?? ''
+      expect(warning).toContain('Uncommitted: content/home.md')
+      expect(warning).toContain('.canopy-meta/schema-cache.json')
+      expect(warning).toContain('git rm -r --cached .canopy-meta')
+    })
+
+    it('shows a healthy base refresh without a warning', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(makeStatusWithSync({ outcome: 'up-to-date' })),
+      )
+
+      renderPanel()
+
+      await waitFor(() =>
+        expect(screen.getByTestId('base-refresh-outcome').textContent).toBe(
+          'Base branch: up to date',
+        ),
+      )
+      expect(screen.queryByTestId('base-refresh-warning')).toBeNull()
+    })
+
+    it('renders the git sync summary as before when the worker reports no baseRefresh', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText(/0 skipped \(dirty\)/)).toBeTruthy())
+      expect(screen.queryByTestId('base-refresh-outcome')).toBeNull()
+      expect(screen.queryByTestId('base-refresh-warning')).toBeNull()
     })
   })
 
@@ -380,6 +623,56 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing: rebased
       expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted: skipped
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
+    })
+
+    describe('base branch row', () => {
+      const healthyBase: BranchHealthEntry = {
+        dirName: 'main',
+        kind: 'healthy',
+        isBaseBranch: true,
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+        },
+      }
+
+      beforeEach(() => {
+        mockClient.admin.branchHealth.mockResolvedValue(
+          mockSuccess({
+            entries: [healthyBase, editingWithRebaseFailure],
+            generatedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        )
+      })
+
+      it('carries the base refresh warning, with its detail in the tooltip', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync(dirtyBaseRefresh)))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        const icon = await screen.findByTestId('base-refresh-warning-main')
+
+        expect(screen.queryByTestId('base-refresh-warning-feature-a')).toBeNull()
+        await userEvent.hover(icon)
+        // Scoped to the tooltip: the Overview panel stays mounted and repeats the text.
+        expect((await screen.findByRole('tooltip')).textContent).toMatch(
+          /Uncommitted: content\/home\.md/,
+        )
+      })
+
+      it('carries no warning when the worker reports no baseRefresh', async () => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(makeStatusWithSync()))
+
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
+
+        expect(screen.queryByTestId('base-refresh-warning-main')).toBeNull()
+      })
     })
 
     it('shows the recorded syncFailureReason in the sync-failed tooltip', async () => {

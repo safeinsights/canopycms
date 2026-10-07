@@ -118,7 +118,7 @@ describe('ReferenceResolver', () => {
         'name',
         undefined,
         undefined,
-        (relativePath) => !relativePath.includes('bob'),
+        (logicalPath) => logicalPath !== 'content/authors/bob',
       )
 
       // Only the allowed candidate (alice) comes back...
@@ -126,7 +126,9 @@ describe('ReferenceResolver', () => {
       expect(options[0].label).toBe('Alice')
       // ...and bob's path was never read.
       expect(readSpy).toHaveBeenCalledTimes(1)
-      expect(readSpy).toHaveBeenCalledWith(expect.anything(), 'alice')
+      expect(readSpy).toHaveBeenCalledWith(expect.anything(), 'alice', {
+        resolveReferences: false,
+      })
     })
 
     it('reads every candidate when no canAccess predicate is given (back-compat)', async () => {

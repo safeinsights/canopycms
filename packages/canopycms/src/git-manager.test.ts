@@ -11,6 +11,7 @@ import {
   GitManager,
   GitConflictError,
   GitRemoteRefMissingError,
+  RemoteNotReadyError,
   gitChildEnv,
   gitNetworkChildEnv,
   GITHUB_TRACKING_REF_PREFIX,
@@ -769,6 +770,43 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
+  it('initializeWorkspace throws RemoteNotReadyError in prod mode until the worker creates remote.git', async () => {
+    const workspaceRoot = path.join(tmpDir, 'booting-workspace')
+    await fs.mkdir(workspaceRoot, { recursive: true })
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const err = await GitManager.initializeWorkspace({
+        workspacePath: path.join(tmpDir, 'clone-target'),
+        branchName: 'main',
+        mode: 'prod',
+        baseBranch: 'main',
+        branchType: 'content',
+        gitBotAuthorName: 'Bot',
+        gitBotAuthorEmail: 'bot@example.com',
+      }).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(RemoteNotReadyError)
+      expect((err as RemoteNotReadyError).expectedRemotePath).toBe(
+        path.join(workspaceRoot, 'remote.git'),
+      )
+      expect((err as RemoteNotReadyError).message).toContain('CANOPYCMS_REMOTE_URL')
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
   it('explicit remoteUrl takes priority over auto-detected remote.git in prod mode', async () => {
     // Setup: create remote.git at workspace root
     const workspaceRoot = path.join(tmpDir, 'workspace')
@@ -1308,6 +1346,91 @@ describe('GitManager branch name argument safety (SEC-H2)', () => {
     await expect(manager.push('--sentinel-marker')).rejects.toThrow(
       /src refspec .* does not match any/i,
     )
+  })
+})
+
+describe('GitManager.hasUnpushedCommits', () => {
+  let tmpDir: string
+  let remotePath: string
+  let localPath: string
+  let localGit: ReturnType<typeof simpleGit>
+  let manager: GitManager
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+    remotePath = path.join(tmpDir, 'remote.git')
+    await fs.mkdir(remotePath, { recursive: true })
+    const bareGit = openBareRepo(remotePath)
+    await bareGit.init(true)
+    await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+    localPath = path.join(tmpDir, 'local')
+    await fs.mkdir(localPath, { recursive: true })
+    localGit = await initTestRepo(localPath)
+    await localGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await commitFile('a.txt', 'a')
+    await localGit.addRemote('origin', remotePath)
+    await localGit.push('origin', 'main')
+    await localGit.checkoutLocalBranch('feature')
+    await commitFile('b.txt', 'b')
+    await localGit.push('origin', 'feature')
+
+    manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  async function commitFile(name: string, content: string): Promise<string> {
+    await fs.writeFile(path.join(localPath, name), content, 'utf8')
+    await localGit.add([name])
+    await localGit.commit(`add ${name}`)
+    return (await localGit.revparse(['HEAD'])).trim()
+  }
+
+  it('is false for a clean branch whose tip is on the remote', async () => {
+    expect(await manager.hasUnpushedCommits('feature')).toBe(false)
+  })
+
+  it('is false for a clean, pushed HEAD when no branch is passed', async () => {
+    expect(await manager.hasUnpushedCommits()).toBe(false)
+  })
+
+  it('is true for a pushed branch with a local commit the remote lacks', async () => {
+    await commitFile('c.txt', 'c')
+    expect(await manager.hasUnpushedCommits('feature')).toBe(true)
+  })
+
+  it('is true for a pushed, ahead HEAD when no branch is passed', async () => {
+    await commitFile('c.txt', 'c')
+    expect(await manager.hasUnpushedCommits()).toBe(true)
+  })
+
+  it('is false when only the remote has moved ahead', async () => {
+    await commitFile('c.txt', 'c')
+    await localGit.push('origin', 'feature')
+    await localGit.raw(['reset', '--hard', 'HEAD~1'])
+    expect(await manager.hasUnpushedCommits('feature')).toBe(false)
+  })
+
+  it('is true for a branch that has never been pushed', async () => {
+    await localGit.checkoutLocalBranch('fresh')
+    expect(await manager.hasUnpushedCommits('fresh')).toBe(true)
+  })
+
+  it('resolves a branch name starting with "-" as a ref, not a rev-parse option', async () => {
+    // `git branch` refuses a leading `-`, but a ref of that name is still
+    // legal; unguarded, `git rev-parse --verify -dash` fails with "Needed a
+    // single revision".
+    const pushedSha = (await localGit.revparse(['HEAD'])).trim()
+    await localGit.raw(['update-ref', 'refs/heads/-dash', pushedSha])
+    await localGit.raw(['push', 'origin', 'refs/heads/-dash:refs/heads/-dash'])
+    expect(await manager.hasUnpushedCommits('-dash')).toBe(false)
+
+    const aheadSha = await commitFile('c.txt', 'c')
+    await localGit.raw(['update-ref', 'refs/heads/-dash', aheadSha])
+    expect(await manager.hasUnpushedCommits('-dash')).toBe(true)
   })
 })
 
@@ -1878,7 +2001,25 @@ describe('GitManager.pullCurrentBranch (single-branch clone on an orphan setting
     await expect(manager.pullCurrentBranch()).rejects.toBeInstanceOf(GitRemoteRefMissingError)
   })
 
-  // The counterpart to the test above, and the one that carries the weight:
+  it('refuses to push from a detached HEAD', async () => {
+    const { manager, settingsRoot } = await setupSettingsWorkspace()
+    await simpleGit({ baseDir: settingsRoot }).raw(['checkout', '--detach'])
+
+    await expect(manager.push()).rejects.toThrow(/detached HEAD/)
+  })
+
+  it('pulls the settings branch, not a tag of the same name', async () => {
+    const { manager, settingsRoot, remotePath } = await setupSettingsWorkspace()
+    await advanceRemoteSettingsBranch(remotePath)
+    await openBareRepo(remotePath).raw(['tag', SETTINGS_BRANCH, 'main'])
+
+    await manager.pullCurrentBranch()
+
+    const groups = await fs.readFile(path.join(settingsRoot, 'groups.json'), 'utf8')
+    expect(JSON.parse(groups)).toEqual({ groups: ['from-other-host'] })
+  })
+
+  // The counterpart to the never-pushed test above, and the one that carries the weight:
   // an UNREACHABLE remote is not "nothing to pull". Classifying it as
   // GitRemoteRefMissingError made commitToSettingsBranch log it as normal for
   // a first commit and proceed, which is the failure shape the type's own

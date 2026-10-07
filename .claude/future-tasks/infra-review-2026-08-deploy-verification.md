@@ -1,4 +1,8 @@
-# [P2] Post-deploy checklist for the 2026-08 infra-review fixes
+# [P1] Post-deploy checklist for the 2026-08 infra-review fixes
+
+**Priority: P1 [BOTH], one session, then close.** A real deployed stack exists now, and two of the
+checks below fail silently (the auth-cache symlink shows editors raw Clerk ids, and Clerk-organization
+ACLs deny).
 
 Filed 2026-08-21 by the `epic/infra-review-2026-08` epic, at JP's request
 ("there will be deploys soon, make sure we remember to check what we need to
@@ -17,7 +21,7 @@ symlink with an ABSOLUTE target, meaningless across the worker's and Lambda's
 different EFS mount paths, so the Lambda served a permanently empty auth cache
 on every prod deploy with Clerk.
 
-- [ ] On the worker (SSM session): `ls -l /mnt/efs/workspace/.cache/current` —
+- [ ] On the worker (SSM session): `ls -l /mnt/efs/.cache/current` —
       the target must be a **bare `snapshot-<ts>`**, not an absolute path.
 - [ ] In the editor UI: an editor renders with their **name and avatar**, not a
       raw `user_...` Clerk id. This is the end-to-end proof.
@@ -79,7 +83,7 @@ faked `send`, so what they prove is the logic, not the integration.
 
 - [ ] Rotate `canopycms/github-token` on a live deployment. Within ~5 minutes (up to ~10
       when core's floor shifts the provider's —
-      [core-floor-shifts-provider-floor-phase.md](core-floor-shifts-provider-floor-phase.md))
+      [core-floor-shifts-provider-floor-phase.md](resolved/core-floor-shifts-provider-floor-phase.md))
       the worker log shows `Secret arn:… changed since boot` and the next push
       succeeds — **with no instance replacement**.
 - [ ] Rotate it again, this time storing the new token **before** revoking the

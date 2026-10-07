@@ -1,5 +1,6 @@
 import type { CanopyBinaryResponse, CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse, isCanopyBinaryResponse } from './types'
+import { workerNotReadyResponse } from './worker-not-ready'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
@@ -11,12 +12,18 @@ import { BranchMetadataCorruptError } from '../branch-metadata'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
+import { isSettingsBranchName } from '../paths/branch-name'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 // canopyLogError, not console.error: this is shared code and not guaranteed to
 // stay out of the worker's runtime import closure, so new log lines here go
 // through the indirection (utils/logger.ts).
 import { canopyLogError } from '../utils/logger'
+import {
+  runWithRequestTiming,
+  setRequestTimingRoute,
+  timeRequestPhase,
+} from '../utils/request-timing'
 
 /** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
@@ -34,9 +41,8 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const operatingMode = services.config.mode
-  // Derive from the strategy, which resolves deploymentName; a literal here
-  // would not match a deployment-namespaced settings branch (say
-  // canopycms-settings-acme), so getBranchContext could never auto-create it.
+  // Derived from the strategy, which resolves deploymentName; a literal here
+  // would miss a deployment-namespaced settings branch (say canopycms-settings-acme).
   const settingsBranch = operatingStrategy(operatingMode).getSettingsBranchName(services.config)
 
   const getBranchContext =
@@ -65,7 +71,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
-        (branch === baseBranch || branch === activeBranch || branch === settingsBranch)
+        (branch === baseBranch || branch === activeBranch)
 
       if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
@@ -94,7 +100,15 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   return {
     services,
     assetStore: options.assetStore,
-    getBranchContext,
+    // The settings branch lives only in the settings workspace. Resolving it as a
+    // content branch would let any request clone a content-history copy that a
+    // submit pushes under the settings name, which settings provisioning then refuses,
+    // leaving settings unavailable.
+    // Not found, like any branch the caller cannot resolve, even a workspace left on disk.
+    getBranchContext: (branch, opts) =>
+      isSettingsBranchName(branch, settingsBranch)
+        ? Promise.resolve(null)
+        : timeRequestPhase('branchContext', () => getBranchContext(branch, opts)),
     authPlugin: options.authPlugin,
   }
 }
@@ -157,13 +171,14 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     if (!match) {
       return jsonResponse({ ok: false, status: 404, error: 'Not found' }, 404)
     }
+    setRequestTimingRoute(match.pattern.join('/') || '(malformed path)')
 
-    const apiCtx = await getContext()
+    const apiCtx = await timeRequestPhase('context', getContext)
 
     // In dev mode, re-check if the developer switched git branches
-    await apiCtx.services.refreshActiveBranch()
+    await timeRequestPhase('refreshBranch', () => apiCtx.services.refreshActiveBranch())
 
-    const authResult = await options.authPlugin.authenticate(req)
+    const authResult = await timeRequestPhase('auth', () => options.authPlugin.authenticate(req))
 
     // API routes require authentication. Anonymous callers are rejected BEFORE
     // any workspace provisioning below, so they can neither trigger expensive
@@ -199,6 +214,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
+        const notReady = workerNotReadyResponse(err)
+        if (notReady) return notReady
         return jsonResponse(
           {
             ok: false,
@@ -219,16 +236,24 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // a silent authorization change.
     let user
     try {
-      user = await resolveCanopyUser(authResult, {
-        getSettingsBranchRoot: apiCtx.services.getSettingsBranchRoot,
-        mode: apiCtx.services.config.mode,
-        bootstrapAdminIds: apiCtx.services.bootstrapAdminIds,
-      })
+      user = await timeRequestPhase('user', () =>
+        resolveCanopyUser(authResult, {
+          getSettingsBranchRoot: apiCtx.services.getSettingsBranchRoot,
+          mode: apiCtx.services.config.mode,
+          bootstrapAdminIds: apiCtx.services.bootstrapAdminIds,
+        }),
+      )
     } catch (err) {
       const message = getErrorMessage(err)
       canopyLogError(
         `CanopyCMS: Failed to resolve internal groups from the settings workspace: ${redactCredentials(message)}`,
       )
+
+      // No remote means no settings workspace, so /admin cannot load either:
+      // the worker has not created the remote yet, so every caller gets the
+      // not-ready 503, bootstrap admins included.
+      const notReady = workerNotReadyResponse(err)
+      if (notReady) return notReady
 
       // Same trade as the base-branch degradation above: /admin is the recovery
       // surface for exactly this failure (a renamed settings branch trips
@@ -311,7 +336,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         handlerArgs.push(validationResult.body)
       }
 
-      const result = await match.handler(...handlerArgs)
+      const result = await timeRequestPhase('route', () => match.handler(...handlerArgs))
       // Binary routes carry their own status and headers and MUST reach the
       // adapter untouched: jsonResponse would serialize raw bytes and drop
       // contentType/contentDisposition.
@@ -320,10 +345,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     } else {
       // Every route should use defineEndpoint; this is the safety net for one
       // that carries no validate function.
-      const result = await match.handler(
-        apiCtx as unknown,
-        apiReq as unknown,
-        mergedParams as unknown,
+      const result = await timeRequestPhase('route', () =>
+        match.handler(apiCtx as unknown, apiReq as unknown, mergedParams as unknown),
       )
       if (isCanopyBinaryResponse(result)) return result
       return jsonResponse(result, result.status)
@@ -335,11 +358,17 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     pathSegments: string[],
   ): Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse> => {
     try {
-      return await handleRequest(req, pathSegments)
+      return await runWithRequestTiming(
+        req.method,
+        () => handleRequest(req, pathSegments),
+        (response) => response.status,
+      )
     } catch (err) {
       // Last-resort boundary (API-C1): see handleRequest's doc comment above.
       const message = getErrorMessage(err)
       console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      const notReady = workerNotReadyResponse(err)
+      if (notReady) return notReady
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }

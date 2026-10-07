@@ -16,6 +16,7 @@ import { parseAspectRatio } from '../media/crop-math'
 import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
 import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 interface ImageFieldErrors {
   src?: string
@@ -26,6 +27,7 @@ interface ImageFieldErrors {
 export interface ImageFieldProps {
   id?: string
   label?: string
+  description?: string
   value: ImageFieldValue | undefined
   onChange: (value: ImageFieldValue | undefined) => void
   /** "W:H" aspect ratio - when set, picking/uploading a new image opens the crop step before the value commits, and a "Crop" button appears on the filled state. */
@@ -44,6 +46,7 @@ const PREVIEW_WIDTH = 320
 export const ImageField: React.FC<ImageFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   aspect,
@@ -152,12 +155,14 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       gap={4}
       data-canopy-field={dataCanopyField}
       data-testid={`image-field-${dataCanopyField}`}
+      {...groupDescriptionProps(inputId, description)}
     >
       {label && (
         <Text size="sm" fw={500}>
           {label}
         </Text>
       )}
+      <FieldDescription baseId={inputId} description={description} />
 
       {!hasValue ? (
         <Stack gap="xs">

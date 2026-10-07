@@ -51,7 +51,197 @@ no `### <version>` section, and lint-staged runs it on every commit touching a M
 cannot tell you _which_ entries belong to that release — that is still a read of `git log` — but it
 will not let a shipped version go unlisted.
 
-### Clerk sign-in no longer hangs behind CloudFront OAC
+### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
+
+**What changed.** With `CANOPYCMS_WORKSPACE_ROOT` unset, prod mode keeps its branches, settings, task queue and auth cache under `/mnt/efs` instead of `/mnt/efs/workspace` (`DEFAULT_PROD_WORKSPACE`). `CanopyCmsService` sets the variable to `/mnt/efs` in the Lambda and the worker, so CDK deployments are unaffected.
+
+**To adopt.** If you run prod without the CDK and without `CANOPYCMS_WORKSPACE_ROOT`, set it to `/mnt/efs/workspace` to keep your existing workspace, or move that directory's contents up to `/mnt/efs`.
+
+### A root entry previews its own page — **behaviour change for root entries**
+
+**What changed.** The preview pane loads each entry's `urlPath`: `content/about` previews `/about`, not `/`. A `previewBase` value of `false` marks an entry with no page, and the pane says so.
+
+**To adopt.** Key an entry without a page `false` (`'content/settings': false`). A root entry served at `/` without an `index` slug needs `'content/<slug>': '/'`, or re-model it as a root index.
+
+**Now deletable.** `previewBase` keys that restate a root entry's own URL.
+
+### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS on purpose**
+
+**What changed.** `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
+adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distribution you already
+own: OAC, the Lambda's timeout as the origin-read timeout, no caching, `x-forwarded-host`, and a
+response headers policy. `CanopyCmsDistribution` now sends the same headers:
+`frame-ancestors 'self'`, `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`.
+Unless your app sends its own framing headers, no other origin can frame the editor or any page the
+CMS domain serves, and those pages are marked `noindex`. The editor's default preview is same-origin
+and unaffected. See
+[Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
+
+**To adopt.** If you wired the Function URL into your own distribution by hand, delete those
+behaviors and call `attachTo`, passing your CMS build's `assetPrefix` as `editorAssetPrefix` and a
+path `editor.previewPrefix` as `previewPrefix`; synth
+fails while a hand-wired `/edit*`, `/api/*` or asset-prefix behavior still sits ahead of it. Take the editor routes out of any HTTP Basic-auth gate, and read the synth warning if your
+distribution has custom error responses.
+
+**Now deletable.** Hand-wired `/edit*`, API, preview and asset-prefix behaviors, the origin, OAC and `x-forwarded-host`
+function made for them, and any response-headers policy added only to stop framing.
+
+### Static-export sites can preview a branch through `createPreviewPage`
+
+**What changed.** The context's `createPreviewPage({ views })` serves a `[[...path]]` route at `editor.previewPrefix`, rendering `?branch=` through `views[entryType]`. `canopycms-next/client` adds `withCanopyPreview` and `CanopyPreviewViewProps`. `previewView({ view, load })` feeds a view server-read `extras`.
+
+**To adopt.** Wrap views with `withCanopyPreview` in a `'use client'` module, add `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (README "Live Preview").
+
+**Now deletable.** A hand-built branch-preview route.
+
+### Preview URLs take one prefix and follow `trailingSlash` — **breaking (env): `CANOPY_API_TRAILING_SLASH` is renamed `CANOPY_TRAILING_SLASH`**
+
+**What changed.** `editor.previewPrefix` (a path or `https://` URL) goes in front of every preview URL, site-relative `previewBase` routes included, so a static-export site can preview through routes its CMS build renders. Preview URLs follow `trailingSlash`, so they draw no 308, and the preview bridge matches a page with or without a trailing slash.
+
+**To adopt.** Set `editor: { previewPrefix: '/preview' }` once that route exists, and drop the prefix from any `previewBase` value that spells it. Rename a `CANOPY_API_TRAILING_SLASH` you set yourself.
+
+**Now deletable.** `previewBase` keys that only added a shared prefix.
+
+### A reference the reader may not read resolves to title + URL — **security fix; breaking (types) for `resolvedSchema` references**
+
+**What changed.** Resolution applied no path rule to the referenced entry, so a reader of A saw
+B's data through A's reference even when denied B. A denied target now resolves to
+`{ id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }`, so a
+`resolvedSchema` reference infers as `Target | RestrictedReference | null`. Static builds are
+unchanged. A schema may no longer declare a top-level field named `unavailable`.
+
+**To adopt.** Narrow before reading the target's own fields:
+`if (ref?.unavailable) return <a href={ref.urlPath}>{ref.title}</a>`. Rename any `unavailable`
+field.
+
+**Now deletable.** Nothing.
+
+### Settings saves no longer queue a failing PR task — **breaking (config): `autoCreateSettingsPR` is removed**
+
+**What changed.** The orphan settings branch can never get a PR, so each groups or permissions save
+left a failed task in System health. Saves now only push the branch.
+
+**To adopt.** Delete `autoCreateSettingsPR` from `canopycms.config.ts`.
+
+**Now deletable.** Filters that hid the failed settings-PR tasks.
+
+### A list of objects can title each card after one of its fields
+
+**What changed.** An `object` field with `list: true` takes `itemTitleField`, naming a direct
+`string` or `number` child whose value titles each card (else `<label> #N`). Cards no longer repeat
+the label as an inner legend.
+
+**To adopt.** `{ type: 'object', list: true, itemTitleField: 'label', fields: [...] }`.
+
+**Now deletable.** Nothing.
+
+### `.canopy-meta/` must not be committed, and System health now says so
+
+**What changed.** The schema cache moved into each branch clone's `.git/canopycms/`. Sync, editor
+submits and `canopycms sync` ignore `.canopy-meta/`, and System health shows the base branch's
+refresh outcome and warns when your repo tracks `.canopy-meta/`.
+
+**To adopt.** If `git ls-files .canopy-meta` lists anything, run `git rm -r --cached .canopy-meta`,
+add `.canopy-meta/` to `.gitignore`, and commit. The base branch's workspace follows by itself; an
+editing branch whose copy of that state changed shows a rebase failure until its workspace is
+repaired or re-created.
+
+**Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit
+or a format check.
+
+### Path-permission rules now take effect below the content root — **security fix; breaking for rules written with on-disk names**
+
+**What changed.** Rules match an entry's logical path (`content/blog/my-post`). Enforcement checked
+the id-suffixed on-disk path, so collection and entry rules matched nothing; only a glob that also
+matched on-disk names, such as `content/**`, worked. Renaming also requires edit access at the new
+path.
+
+**To adopt.** Review your rules (Settings → Manage Permissions) before upgrading: collection rules
+that never took effect will start to. Rewrite any rule naming an id-suffixed directory or a file
+extension in logical form (`content/blog/**`, `content/about`).
+
+**Now deletable.** A content-root grant working around inert collection grants.
+
+### Submit commits and pull requests name the submitting user
+
+**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
+that re-submits replace, keeping human text.
+
+**To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
+([reference](../README.md#definecanopyconfig-options)).
+
+**Now deletable.** Nothing.
+
+### Reads never create a requested branch — **security fix; breaking for some direct `createContentReader` callers**
+
+**What changed.** `read()`/`readByUrlPath()` created a workspace for any `branch`, one per
+`?branch=` value. Now a branch other than the active one must exist and be readable by the user,
+or it reads as not found. `createContentReader` defaults `allowCreateBranch` to `false`.
+
+**To adopt.** Nothing via `getCanopy()`. A script creating a branch through `createContentReader`
+passes `allowCreateBranch: true`, never with a request's branch.
+
+**Now deletable.** Checks that allow-list `?branch=` before it reaches `read()`.
+
+### System health shows which build is running
+
+**What changed.** System health gains a Build section (canopycms version, source revision, worker
+version, media-storage state) and warns when API and worker versions differ.
+
+**To adopt.** Optional; without it the revision reads "not set". Copy the template changes
+(`init-deploy aws` overwrites whole files): `Dockerfile.cms` (runner-stage `ARG`/`ENV`/`LABEL` for `CANOPY_SOURCE_SHA`),
+`infrastructure/lib/cms-stack.ts` (`sourceRevision` prop, passed in `buildArgs`),
+`infrastructure/bin/app.ts`, and `.github/workflows/deploy-cms.yml`
+(`CANOPY_SOURCE_SHA: ${{ github.sha }}`).
+
+**Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
+
+### Every field type shows its `description`
+
+**What changed.** A field's `description` renders under its label for every type, not only inline
+groups; a list field shows it once, never per item. A block template's `description` still does not
+render.
+
+**To adopt.** Nothing. Read your existing descriptions, which editors now see.
+
+**Now deletable.** Editor hints worked into a field's `label` because `description` never showed.
+
+---
+
+<!--
+Template for each entry — copy, don't improvise:
+
+### <short title>
+
+**What changed.** One or two sentences.
+
+**To adopt.** Concrete steps, with the import path and the call shape.
+
+**Now deletable.** Describe the PATTERN of local code this supersedes ("a hand-rolled
+filename parser") so any adopter can recognise it in their own tree. Never name files,
+paths, branches, hosts or identifiers from a specific adopter's repo: this package is
+public and its adopters' repos generally are not. If nothing becomes deletable, say so
+explicitly — that is a real and useful answer.
+-->
+
+### Listings take a `branch`
+
+**What changed.** `listEntries()`/`buildContentTree()` accept `branch`, like `read()`.
+
+**To adopt.** Index pages pass `searchParams`' `branch` through, so editor previews list that
+branch.
+
+**Now deletable.** Nothing.
+
+---
+
+## Released
+
+### 0.0.67
+
+Every entry below shipped in `0.0.67`.
+
+#### Clerk sign-in no longer hangs behind CloudFront OAC
 
 **What changed.** `@clerk/nextjs`'s provider makes every `setActive` (sign-in, account or org
 switch) wait on a Server Action. Behind `CanopyCmsDistribution`'s OAC that action's POST 403s, so
@@ -67,7 +257,7 @@ Your own Server Actions in the CMS build still 403 behind OAC.
 **Now deletable.** Any local patch of `window.__internal_onBeforeSetActive` (or 6.x's
 `__unstable__onBeforeSetActive`), and any edge function added only to make Clerk sign-in finish.
 
-### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
+#### `canopycms init` scaffolds a passthrough `middleware.ts` for every auth mode
 
 **What changed.** `init --auth clerk` now writes the same passthrough `middleware.ts` as dev auth,
 with `clerkMiddleware` and its costs as a commented opt-in, instead of an active `clerkMiddleware`.
@@ -80,7 +270,7 @@ the commented snippet if you want to keep the edge check.
 **Now deletable.** A `clerkMiddleware` an earlier `init` wrote, if you never chose the edge check.
 The entry below says what it costs.
 
-### The editor handles signed-out users itself, so `clerkMiddleware` is optional
+#### The editor handles signed-out users itself, so `clerkMiddleware` is optional
 
 **What changed.** The editor treats a 401 from the CMS API as signed out. It shows the auth
 provider's sign-in screen instead of loading, or over the open editor when a session ends mid-edit,
@@ -98,7 +288,7 @@ custom auth provider adds `editor.SignInComponent`, which receives `EditorSignIn
   `CLERK_SECRET_KEY` in the deployed CMS runtime.
 - Reload-on-401 or "session expired" handling in your edit page.
 
-### A worker credential can be one field of a JSON secret
+#### A worker credential can be one field of a JSON secret
 
 **What changed.** The EC2 worker's Secrets Manager reads can pull a single field out of a secret
 whose value is a JSON document. Two env vars, read by the worker entrypoint:
@@ -150,7 +340,7 @@ into the worker's environment before starting it — a `jq` step in user-data, o
 around `canopy-worker`. If it also validated the field exists, the package now does that with a
 better message.
 
-### The worker can authenticate to GitHub as an App (the token still works, unchanged)
+#### The worker can authenticate to GitHub as an App (the token still works, unchanged)
 
 **What changed.** `CmsWorkerConfig` gained an optional `githubAppAuth`. Supply it _instead of_
 `githubToken` to have the worker act as a GitHub App installation. Exactly one of the two: both is
@@ -206,7 +396,7 @@ publish's whole retry budget instead of failing fast.
 
 **`GitHubService` is unaffected** and remains static-token-only.
 
-### The CDK worker can authenticate as a GitHub App (#45)
+#### The CDK worker can authenticate as a GitHub App (#45)
 
 **What changed.** `CanopyCmsServiceProps` gained `githubAppId`, `githubAppInstallationId`,
 `githubAppPrivateKeySecretArn` and `githubAppPrivateKeySecretJsonField`. Set the first three and the
@@ -240,7 +430,7 @@ worker's environment — a path that could not have worked for a multi-line key 
 
 See [deploying-to-aws.md](deploying-to-aws.md#authenticating-as-a-github-app) for the walkthrough.
 
-### `canopycms init-github-app` registers that App for you
+#### `canopycms init-github-app` registers that App for you
 
 **What changed.** A new CLI command, `canopycms init-github-app <create|verify>`. `create` registers
 the App from a manifest — so GitHub shows you the exact permission set before you click Create —
@@ -281,7 +471,7 @@ waits twice for a human and hanging in CI would leave a live App whose only key 
 upload it to the secret store" — the hop where a private key most often ends up in a downloads
 folder or a clipboard.
 
-### A rotated secret reaches the running worker, without an instance replacement
+#### A rotated secret reaches the running worker, without an instance replacement
 
 **What changed.** The worker read both of its Secrets Manager secrets once, at boot, and never
 again, so rotating the GitHub token or the Clerk secret key had no effect until the instance was
@@ -312,7 +502,7 @@ that costs one publish when a call lands in the minute before a rotation. A call
 after `taskTimeoutMs` is abandoned. `packages/canopycms-cdk/worker/credential-refresh.ts` is the
 worked example.
 
-### `assetUploadBehavior()` builds the upload route from a bucket alone
+#### `assetUploadBehavior()` builds the upload route from a bucket alone
 
 **What changed.** `canopycms-cdk` now exports a free function beside `AssetSupport`:
 
@@ -343,7 +533,7 @@ are attached to first: CDK puts them on that function's own execution role when 
 share an account, so removing the construct usually removes the whole footprint and leaves no
 bucket-policy statement behind.
 
-### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
+#### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
 
 **What changed.** Six changes to how the CMS editor image is built and deployed. They matter most if
 you ran `canopycms init-deploy aws` before them, or copied `Dockerfile.cms.template` by hand.
@@ -416,28 +606,6 @@ built](deploying-to-aws.md#where-the-image-is-built)).
   (`withCanopy()` adds its own and keeps yours), and a `turbopack: {}` added only to get past Next
   16's error about `withCanopy()`'s `webpack` function — as long as `withCanopy()` can read your
   Next version, which it cannot under Yarn PnP.
-
----
-
-<!--
-Template for each entry — copy, don't improvise:
-
-### <short title>
-
-**What changed.** One or two sentences.
-
-**To adopt.** Concrete steps, with the import path and the call shape.
-
-**Now deletable.** Describe the PATTERN of local code this supersedes ("a hand-rolled
-filename parser") so any adopter can recognise it in their own tree. Never name files,
-paths, branches, hosts or identifiers from a specific adopter's repo: this package is
-public and its adopters' repos generally are not. If nothing becomes deletable, say so
-explicitly — that is a real and useful answer.
--->
-
----
-
-## Released
 
 ### 0.0.66
 

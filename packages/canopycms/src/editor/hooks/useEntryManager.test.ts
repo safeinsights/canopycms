@@ -1,8 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager, listAllEntries } from './useEntryManager'
+import { useEntryManager, listAllEntries, SaveApiError } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import type { ContentId } from '../../paths/types'
 import { notifications } from '@mantine/notifications'
 import {
   setupMockApiClient,
@@ -146,6 +147,22 @@ describe('useEntryManager', () => {
     })
   })
 
+  /** saveEntry refuses an entry it holds no token for, so a save test reads the entry first. */
+  const LOADED_VERSION = 4242
+  const loadForSave = async (
+    result: { current: { loadEntry: (entry: EditorEntry) => Promise<unknown> } },
+    entry: EditorEntry = mockEntry,
+  ) => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'mdx', data: {}, body: '', version: LOADED_VERSION } as any,
+    })
+    await act(async () => {
+      await result.current.loadEntry(entry)
+    })
+  }
+
   it('handles load entry error', async () => {
     mockClient.content.read.mockResolvedValueOnce({
       ok: false,
@@ -157,6 +174,22 @@ describe('useEntryManager', () => {
     })
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toThrow('Load failed: 404')
+  })
+
+  it('appends the server error to the status when a load fails', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: 'CMS worker not ready',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await expect(result.current.loadEntry(mockEntry)).rejects.toThrow(
+      'Load failed: 503 — CMS worker not ready',
+    )
   })
 
   it('saves entry successfully', async () => {
@@ -172,6 +205,7 @@ describe('useEntryManager', () => {
       wrapper,
     })
 
+    await loadForSave(result)
     const saved = await result.current.saveEntry(mockEntry, mockValue)
 
     expect(saved).toEqual({ title: 'Updated Title', body: 'Updated Content' })
@@ -181,6 +215,7 @@ describe('useEntryManager', () => {
         format: 'mdx',
         data: { title: 'Updated Title' }, // body is extracted
         body: 'Updated Content',
+        expectedVersion: LOADED_VERSION,
       },
     )
   })
@@ -200,6 +235,7 @@ describe('useEntryManager', () => {
       wrapper,
     })
 
+    await loadForSave(result, entryWithType)
     await result.current.saveEntry(entryWithType, { siteName: 'Test' })
 
     expect(mockClient.content.write).toHaveBeenCalledWith(
@@ -223,6 +259,7 @@ describe('useEntryManager', () => {
     })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await loadForSave(result)
     await result.current.saveEntry(mockEntry, { title: 'Saved' })
 
     // Notifications collapse newlines, so issues must be '; '-joined (not '\n') to stay
@@ -252,6 +289,7 @@ describe('useEntryManager', () => {
     // Same permanent condition (e.g. an unknown schema key) fires on every
     // save. Without a stable `id`, Mantine appends a new toast each time --
     // five saves would leave five identical sticky notifications on screen.
+    await loadForSave(result)
     await result.current.saveEntry(mockEntry, { title: 'Saved' })
     await result.current.saveEntry(mockEntry, { title: 'Saved' })
     await result.current.saveEntry(mockEntry, { title: 'Saved' })
@@ -275,6 +313,7 @@ describe('useEntryManager', () => {
       wrapper,
     })
 
+    await loadForSave(result)
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
   })
 
@@ -810,27 +849,119 @@ describe('useEntryManager', () => {
       await result.current.loadEntry(mockEntry)
     })
 
-    // Set up write mock for the save after branch switch
-    mockClient.content.write.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      data: { format: 'json', data: { v: 2 } } as any,
-    })
-
     // Switch branch — should clear the version token
     await act(async () => {
       rerender({ ...defaultOptions, branchName: 'feature-branch' })
     })
 
-    // Save on the new branch — must NOT include the stale expectedVersion from 'main'
+    // Saving on the new branch before loading there must not borrow main's token: with no
+    // token of its own the save is refused and nothing is written.
+    await expect(result.current.saveEntry(mockEntry, { v: 2 })).rejects.toMatchObject({
+      status: 409,
+    })
+    expect(mockClient.content.write).not.toHaveBeenCalled()
+
+    // Once loaded on the new branch, the save carries that branch's token.
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { v: 1 }, version: 2000 } as any,
+    })
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { v: 2 } } as any,
+    })
     await act(async () => {
+      await result.current.loadEntry(mockEntry)
       await result.current.saveEntry(mockEntry, { v: 2 })
     })
 
     expect(mockClient.content.write).toHaveBeenCalledWith(
       expect.objectContaining({ branch: 'feature-branch' }),
-      expect.not.objectContaining({ expectedVersion: expect.anything() }),
+      expect.objectContaining({ expectedVersion: 2000 }),
     )
+  })
+
+  describe('OCC token on save', () => {
+    const PATH_ID1 = unsafeAsContentId('id1id1id1id1')
+    const PATH_ID2 = unsafeAsContentId('id2id2id2id2')
+    const listWith = (contentId: ContentId) => ({
+      ok: true as const,
+      status: 200,
+      data: {
+        entries: [{ ...mockCollectionItem, contentId }],
+        pagination: { hasMore: false, limit: 200 },
+      },
+    })
+    const readReturning = (version: number) =>
+      mockClient.content.read.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { format: 'mdx', data: {}, body: 'loaded', version } as any,
+      })
+
+    it('refuses to save an entry it never loaded, without sending a write', async () => {
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+      const saving = result.current.saveEntry(mockEntry, { body: 'edited' })
+
+      await expect(saving).rejects.toBeInstanceOf(SaveApiError)
+      await expect(saving).rejects.toMatchObject({ status: 409 })
+      expect(mockClient.content.write).not.toHaveBeenCalled()
+    })
+
+    it('never sends a version-less save after the path is deleted, recreated and refreshed', async () => {
+      // Editor 1 opens the entry at this path while it carries contentId id1.
+      mockClient.entries.list.mockResolvedValue(listWith(PATH_ID1))
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.entries[0]?.contentId).toBe(PATH_ID1))
+      const opened = result.current.entries[0]
+      readReturning(100)
+      await act(async () => {
+        await result.current.loadEntry(opened)
+      })
+
+      // Another editor deletes and recreates the same path (new contentId id2), and a refresh
+      // swaps editor 1's entry object for the recreated one.
+      mockClient.entries.list.mockResolvedValue(listWith(PATH_ID2))
+      await act(async () => {
+        await result.current.refreshEntries()
+      })
+      const showing = result.current.entries[0]
+      expect(showing.path).toBe(opened.path)
+      expect(showing.contentId).toBe(PATH_ID2)
+
+      // A save of the swapped-in entry holds no token for id2: refused, nothing written.
+      await expect(result.current.saveEntry(showing, { body: 'edited' })).rejects.toMatchObject({
+        status: 409,
+      })
+      expect(mockClient.content.write).not.toHaveBeenCalled()
+
+      // A save from the entry object editor 1 opened still carries the token it read, which
+      // the server compares against the recreated file.
+      mockClient.content.write.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { format: 'mdx', data: {}, body: 'edited', version: 300 } as any,
+      })
+      await act(async () => {
+        await result.current.saveEntry(opened, { body: 'edited' })
+      })
+      expect(mockClient.content.write.mock.calls[0][1]).toEqual(
+        expect.objectContaining({ expectedVersion: 100 }),
+      )
+
+      // Loading the recreated entry gives it its own token, and its save carries that.
+      readReturning(200)
+      await act(async () => {
+        await result.current.loadEntry(showing)
+        await result.current.saveEntry(showing, { body: 'edited' })
+      })
+      expect(mockClient.content.write.mock.calls[1][1]).toEqual(
+        expect.objectContaining({ expectedVersion: 200 }),
+      )
+    })
   })
 
   it('refreshEntries merges all pages into entries state', async () => {

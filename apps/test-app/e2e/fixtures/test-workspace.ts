@@ -53,6 +53,15 @@ export async function readRawContentFile(contentPath: string): Promise<string> {
 }
 
 /**
+ * Overwrite a JSON content file in the main branch, as an edit made outside the
+ * editor would. The editor sees it once it re-fetches the entry (e.g. on reload).
+ * @param contentPath - Relative path within content/
+ */
+export async function writeContentFile(contentPath: string, data: unknown): Promise<void> {
+  await fs.writeFile(getContentFilePath(contentPath), `${JSON.stringify(data, null, 2)}\n`, 'utf8')
+}
+
+/**
  * Find a content file in the main branch by a prefix pattern.
  * The prefix may include a subdirectory (e.g., 'posts.qrstuvwxyz12/post.post.').
  * Returns the relative content path from content/ root (e.g., 'posts.qrstuvwxyz12/post.post.abc123.json').

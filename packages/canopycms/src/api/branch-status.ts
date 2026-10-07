@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
-import type { BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItemResponse, type BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
@@ -12,6 +12,8 @@ import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
+import { ContentWriteLockBusyError } from '../utils/content-write-lock'
+import { submissionEditorFromUser } from '../submission-attribution'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -32,7 +34,7 @@ const submitBranchForMergeHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access). isProtectedBranch
@@ -77,9 +79,23 @@ const submitBranchForMergeHandler = async (
   }
 
   // Commit and push changes
+  const submitter = submissionEditorFromUser(req.user)
+  let changedPaths: string[]
   try {
-    await ctx.services.submitBranch({ context: branchContext })
+    ;({ changedPaths } = await ctx.services.submitBranch({ context: branchContext, submitter }))
   } catch (err) {
+    // Retriable either way: a resubmit commits nothing new and pushes only
+    // what has not reached the remote.
+    if (err instanceof ContentWriteLockBusyError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err.outcome === 'not-run'
+            ? `Could not submit "${branchContext.branch.name}" right now: it is being synced with its base branch, or a save is in flight. Nothing was submitted; try again in a moment.`
+            : `"${branchContext.branch.name}" was being synced while it was submitted, so the submit may not have completed. Try submitting again.`,
+      }
+    }
     const message = getErrorMessage(err)
     // Full path detail (including branchRoot, an absolute path) to server logs
     // only; the client only ever sees the sanitized form (API-H2). Credentials
@@ -93,8 +109,7 @@ const submitBranchForMergeHandler = async (
     // A non-fast-forward rejection means this branch and the deployment's
     // local repository have diverged. Retrying the identical push can never
     // succeed (see isNonFastForwardRejection), so surface 409 instead of the
-    // generic 500 below. Everything else (network, auth, lock contention)
-    // keeps the existing 500 path unchanged.
+    // generic 500 below. Everything else (network, auth) keeps the 500 path.
     //
     // This push targets the deployment's OWN local origin (remote.git), not
     // GitHub, so the message deliberately states only the observable fact and
@@ -125,7 +140,7 @@ const submitBranchForMergeHandler = async (
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, branchContext)
+  const prResult = await syncSubmitPr(ctx, branchContext, { submitter, changedPaths })
 
   // Update metadata with status and PR info
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
@@ -143,7 +158,11 @@ const submitBranchForMergeHandler = async (
     },
   })
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+  }
 }
 
 const getBranchStatus = defineEndpoint({
@@ -174,8 +193,8 @@ const submitBranchForMerge = defineEndpoint({
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

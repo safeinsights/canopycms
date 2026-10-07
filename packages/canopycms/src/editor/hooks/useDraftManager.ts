@@ -103,7 +103,7 @@ export interface UseDraftManagerOptions {
    * shown (useEntryManager's `getEntryVersion`). Stamps each draft with the
    * version it was based on, and detects at save time that the token has
    * since moved on. Optional: without it no base versions are recorded and
-   * conflict detection falls back entirely to the server's 409.
+   * conflict detection falls back entirely to saveEntry's token check.
    */
   getEntryVersion?: (contentId: string) => number | undefined
   setBusy: (busy: boolean) => void
@@ -419,7 +419,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (!currentId || drafts[currentId] === undefined) return 'ok'
     const currentVersion = options.getEntryVersion?.(currentId)
     // No server version known for this entry at all -- nothing to compare
-    // against, so this check has no opinion (the server's 409 still applies).
+    // against, so this check has no opinion: saveEntry refuses a save without
+    // a token, and the server refuses a version-less update.
     if (currentVersion === undefined) return 'ok'
     const base = draftBaseVersionsRef.current[currentId]
     if (base === undefined) return 'ok'

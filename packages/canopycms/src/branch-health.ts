@@ -8,6 +8,7 @@ import { ContentIdIndex, type DuplicateContentId } from './content-id-index'
 import { sanitizeBranchName } from './paths/branch-name'
 import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
 import { isRebaseInProgress } from './utils/git'
+import { branchProvisioningLockName } from './utils/provisioning-lock'
 
 /**
  * Admin-facing health classification of every directory under a branches root,
@@ -77,15 +78,14 @@ export interface BranchHealthEntry {
 }
 
 /**
- * The provisioning lock marker's path for a branch directory, matching what
- * `branch-workspace.ts`'s `ensureGitWorkspace()` passes exactly.
+ * The provisioning lock marker's path for a branch directory.
  *
  * `acquireProvisioningLock` passes the name as `lockfilePath`, overriding
  * proper-lockfile's default `${target}.lock`, so the marker (a mkdir-based
  * directory) sits at exactly this path — no extra `.lock` suffix.
  */
 function provisioningLockPath(baseRoot: string, dirName: string): string {
-  return path.join(baseRoot, `.${dirName}.init.lock`)
+  return path.join(baseRoot, branchProvisioningLockName(dirName))
 }
 
 /** Stat the provisioning lock marker, if present. Never throws. */

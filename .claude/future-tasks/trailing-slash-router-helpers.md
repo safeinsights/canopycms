@@ -1,48 +1,34 @@
 # Trailing-slash-safe router/href helpers for `deployedAs: 'static'`
 
-## Priority: P2 [BOTH]
+## Priority: P3 [BOTH]
 
-From the 2026-08-13/14 adopter site audits, triaged as part of the
-2026-08-14 go-live backlog re-baseline. No existing task file covered this.
+**Cluster note:** this file and [seo-trailing-slash-default-from-withcanopy.md](seo-trailing-slash-default-from-withcanopy.md),
+[preview-src-trailing-slash.md](resolved/preview-src-trailing-slash.md) and
+[trailing-slash-build-smoke.md](trailing-slash-build-smoke.md) are the follow-ups of PR #366, all
+applying the same `withTrailingSlash` rule to different surfaces.
 
-## Both sites solved this independently, at very different weight
+## What shipped
 
-A static export (`output: 'export'`, CanopyCMS's `deployedAs: 'static'`
-shape) typically needs every internal link to be trailing-slash-consistent
-with how the static host serves files (`/foo/index.html` wants `/foo/`, not
-`/foo`), and Next's own router doesn't guarantee this for you automatically
-in every navigation path.
+`withTrailingSlash(path)` (`utils/url-prefix.ts`, exported from `canopycms/server`) is the
+isomorphic primitive. It leaves a dotted last segment unslashed, because Next's own `trailingSlash`
+redirects treat that as a file; a site-link helper must follow the same rule. The editor's own API
+calls and preview URLs are covered: `withCanopy` sets `env.CANOPY_TRAILING_SLASH`, which both read
+through `readTrailingSlashEnv()` (`utils/url-prefix.ts`).
 
-- The knowledge base site built a whole subsystem: a path-helper module +
-  a wrapped router hook + a **custom ESLint rule** to catch raw
-  `<a href>`/`router.push` calls that skip the wrapper.
-- The marketing site built one function, equivalent to what CanopyCMS's own
-  `withTrailingSlash()` now provides.
+## What is left
 
-Neither is wrong, but the gap between "a whole enforced subsystem with a
-custom lint rule" and "one helper function" for the *same underlying need*
-suggests the primitive belongs in the package, with adopters choosing how
-strictly to enforce it.
+A static export (`output: 'export'`) needs every internal link trailing-slash-consistent with how
+the static host serves files (`/foo/index.html` wants `/foo/`), and Next's router does not
+guarantee it in every navigation path. Adopters currently hand-build the wrapper (one built a path
+helper module, a wrapped router hook and a custom ESLint rule; another a single function).
 
-## Proposed solution
-
-- Ship a `withTrailingSlash(path)` (or equivalent) URL helper in the
-  framework-agnostic path utilities, isomorphic (no `node:` imports — must
-  stay `pnpm lint:bundle`-clean since it's link-rendering code, inherently
-  client-reachable).
-- Consider a thin `useInternalHref`/router-wrapping helper for
-  `canopycms-next` that applies it automatically for internal links, so
-  adopters who want the KB's stricter guarantee don't have to hand-build
-  their own wrapped router hook — but keep the plain helper as the
-  baseline so the marketing site's lighter-weight usage stays simple.
-- The custom ESLint rule is a KB-specific enforcement choice, not necessarily
-  something to ship from the package — document the pattern (wrap all
-  internal navigation) as a recommendation instead.
+- A thin `useInternalHref` / router-wrapping helper in `canopycms-next` that applies
+  `withTrailingSlash` to internal links, so adopters wanting strict enforcement do not hand-build it.
+  The plain function stays the baseline.
+- The custom ESLint rule is an adopter enforcement choice; document the pattern (wrap all internal
+  navigation) as a recommendation rather than shipping it.
 
 ## Related
 
-- Trailing-slash routing is listed in the capabilities-both-sites-built table
-  from the go-live briefing alongside search index, sitemap+SEO, and heading
-  annotation — all independently-built-twice capabilities from the same
-  audit pass. See [toc-heading-id-contract.md](toc-heading-id-contract.md)
-  for the sibling case.
+- [toc-heading-id-contract.md](toc-heading-id-contract.md): sibling case of a capability adopters
+  built twice independently.

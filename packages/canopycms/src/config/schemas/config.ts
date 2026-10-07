@@ -9,6 +9,7 @@ import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
+import { previewPrefixSchema } from './url'
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
 const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
@@ -58,7 +59,8 @@ const editorConfigSchema = z.object({
   title: z.string().optional(),
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
-  previewBase: z.record(z.string()).optional(),
+  previewBase: z.record(z.union([z.string(), z.literal(false)])).optional(),
+  previewPrefix: previewPrefixSchema.optional(),
   // UI handler functions (runtime only, don't serialize)
   onAccountClick: z.function().returns(z.void()).optional(),
   onLogoutClick: z.function().returns(z.void()).optional(),
@@ -88,6 +90,9 @@ export const CanopyConfigSchema = z
     defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
     gitBotAuthorName: gitBotAuthorNameSchema,
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
+    // Unset reads as on for Edited-by and off for Co-authored-by (services.ts submitBranch).
+    gitEditedByTrailers: z.boolean().optional(),
+    gitCoAuthoredByTrailers: z.boolean().optional(),
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
     // Required by design (follow-up to SEC-C1): a prod deploy that omits `mode` must fail
     // validation loudly rather than silently running header-trusting dev auth semantics.
@@ -98,7 +103,6 @@ export const CanopyConfigSchema = z
     // Default false/unset — the standard AWS Lambda+worker topology must leave this unset.
     allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
-    autoCreateSettingsPR: z.boolean().optional(),
     // `.optional()`, NOT bare `deploymentNameSchema`: its own `.default('prod')` would make
     // `parse(undefined)` resolve to 'prod' instead of staying `undefined`, collapsing the
     // env > config > modeDefault precedence chain `resolveDeploymentName`
@@ -117,16 +121,10 @@ export const CanopyConfigSchema = z
   .strict()
 
 /**
- * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set).
- *
- * WARNING: this fallback assumes a worker-style ROOT mount of EFS at /mnt/efs.
- * The CanopyCmsService Lambda mounts EFS THROUGH an access point already rooted
- * at /workspace and therefore sets CANOPYCMS_WORKSPACE_ROOT=/mnt/efs explicitly;
- * if that env were ever unset on the Lambda this default would resolve to
- * /mnt/efs/workspace = EFS:/workspace/workspace (a wrong, nested dir). The CDK
- * always sets the env, so this only bites a hand-rolled misconfiguration.
+ * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set): where
+ * CanopyCmsService mounts the EFS `/workspace` access point in both the Lambda and the worker.
  */
-export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
+export const DEFAULT_PROD_WORKSPACE = '/mnt/efs'
 
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
 // operatingModeSchema.parse(undefined) would throw.

@@ -13,7 +13,7 @@ import { CanopyCMSProvider } from './theme'
 import type { MockApiClient } from '../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
 
-// Preload the chunk MarkdownField's React.lazy() imports (the 'markdown' and
+// Preload the chunks MarkdownField's React.lazy() imports (the 'markdown' and
 // 'mdx' cases both render MarkdownField). Without this the mount assertion
 // below also silently measures how long vitest takes to transform
 // @mdxeditor/editor, which made it fail under full-suite contention while
@@ -23,6 +23,7 @@ import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/tes
 // product. See fields/MarkdownField.test.tsx, which does the same for the
 // same reason.
 import '@mdxeditor/editor'
+import './fields/mdx-jsx-support'
 
 // ImageField (the 'image' field case) reads the API client via context DI -
 // mock the factory module so createApiClientWrapper's ApiClientProvider and
@@ -144,6 +145,94 @@ describe('FormRenderer', () => {
 
     state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
     expect(state.features).toHaveLength(0)
+  })
+
+  describe('object list item headings', () => {
+    const listFields = (itemTitleField?: string): FieldConfig[] => [
+      {
+        name: 'features',
+        type: 'object',
+        label: 'Features',
+        list: true,
+        ...(itemTitleField ? { itemTitleField } : {}),
+        fields: [
+          { name: 'title', type: 'string', label: 'Heading' },
+          { name: 'rank', type: 'number', label: 'Rank' },
+        ],
+      },
+    ]
+
+    it('shows the list label once, with numbered card headings and no nested legend', () => {
+      render(<StatefulForm fields={listFields()} initialValue={{ features: [{}, {}] }} />)
+
+      expect(screen.getAllByText('Features')).toHaveLength(1)
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Features #2')).toBeTruthy()
+    })
+
+    it('titles each card with its itemTitleField value, coercing numbers', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: 'Fast builds' }, { title: 7 }] }}
+        />,
+      )
+
+      expect(screen.getByText('Fast builds')).toBeTruthy()
+      expect(screen.getByText('7')).toBeTruthy()
+      expect(screen.queryByText('Features #1')).toBeNull()
+      expect(screen.getAllByText('Features')).toHaveLength(1)
+    })
+
+    it('falls back to the numbered heading when the title value is empty or not a primitive', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: '' }, { title: '   ' }, { title: { a: 1 } }, {}] }}
+        />,
+      )
+
+      for (const n of [1, 2, 3, 4]) {
+        expect(screen.getByText(`Features #${n}`)).toBeTruthy()
+      }
+    })
+
+    // YAML's `.nan` and `.inf` parse to non-finite numbers, which must not title a card.
+    it('falls back to the numbered heading for a non-finite number', () => {
+      render(
+        <StatefulForm
+          fields={listFields('rank')}
+          initialValue={{ features: [{ rank: Number.NaN }, { rank: Infinity }, { rank: 3 }] }}
+        />,
+      )
+
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      expect(screen.getByText('Features #2')).toBeTruthy()
+      expect(screen.getByText('3')).toBeTruthy()
+    })
+
+    it('updates the card heading as the title field is edited', async () => {
+      const user = userEvent.setup()
+      render(<StatefulForm fields={listFields('title')} initialValue={{ features: [{}] }} />)
+
+      expect(screen.getByText('Features #1')).toBeTruthy()
+      await user.type(screen.getByLabelText('Heading'), 'Typed')
+
+      expect(screen.getByText('Typed')).toBeTruthy()
+      expect(screen.queryByText('Features #1')).toBeNull()
+    })
+
+    it('gives each card an accessible name matching its heading', () => {
+      render(
+        <StatefulForm
+          fields={listFields('title')}
+          initialValue={{ features: [{ title: 'Fast builds' }, {}] }}
+        />,
+      )
+
+      expect(screen.getByRole('group', { name: 'Fast builds' })).toBeTruthy()
+      expect(screen.getByRole('group', { name: 'Features #2' })).toBeTruthy()
+    })
   })
 
   it('propagates block field changes with path-aware custom renderers', async () => {
@@ -718,6 +807,293 @@ describe('FormRenderer', () => {
         </CanopyCMSProvider>,
       )
       expect(screen.queryByText(/Unsupported field/)).toBeNull()
+    })
+  })
+
+  describe('field descriptions', () => {
+    const DESCRIPTION = 'Guidance for the editor'
+    let mockClient: MockApiClient
+    let wrapper: ReturnType<typeof createApiClientWrapper>
+
+    beforeEach(async () => {
+      mockClient = await setupMockApiClient()
+      wrapper = createApiClientWrapper(mockClient)
+    })
+
+    const renderFields = (fields: FieldConfig[], initialValue: FormValue = {}) => {
+      const Wrapper = wrapper
+      return render(
+        <Wrapper>
+          <StatefulForm fields={fields} initialValue={initialValue} />
+        </Wrapper>,
+      )
+    }
+
+    const describedBy = (id: string): HTMLElement[] =>
+      Array.from(document.querySelectorAll('[aria-describedby]')).filter((el) =>
+        (el.getAttribute('aria-describedby') ?? '').split(/\s+/).includes(id),
+      ) as HTMLElement[]
+
+    /**
+     * The description text is rendered once, has an id, and exactly one element points
+     * at that id through `aria-describedby`: the input itself for Mantine-native fields,
+     * the field's group container for custom ones.
+     */
+    const expectDescribed = (kind: 'input' | 'group', text: string = DESCRIPTION): HTMLElement => {
+      const node = screen.getByText(text)
+      expect(node.id).toMatch(/-description$/)
+      const owners = describedBy(node.id)
+      expect(owners).toHaveLength(1)
+      const owner = owners[0]
+      if (kind === 'input') {
+        expect(['INPUT', 'TEXTAREA']).toContain(owner.tagName)
+      } else {
+        expect(owner.getAttribute('role')).toBe('group')
+      }
+      return owner
+    }
+
+    const described = (field: FieldConfig): FieldConfig[] => [
+      { ...field, description: DESCRIPTION },
+    ]
+
+    it('string', () => {
+      renderFields(described({ name: 'title', type: 'string', label: 'Title' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Title'))
+    })
+
+    it('string list', () => {
+      renderFields(described({ name: 'tags', type: 'string', label: 'Tags', list: true }))
+      expectDescribed('input')
+    })
+
+    it('boolean', () => {
+      renderFields(described({ name: 'flag', type: 'boolean', label: 'Flag' }))
+      expect(expectDescribed('input')).toBe(screen.getByRole('switch', { name: 'Flag' }))
+    })
+
+    it('number', () => {
+      renderFields(described({ name: 'price', type: 'number', label: 'Price' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Price'))
+    })
+
+    it('number list', () => {
+      renderFields(described({ name: 'scores', type: 'number', label: 'Scores', list: true }))
+      expectDescribed('input')
+    })
+
+    it('datetime', () => {
+      renderFields(described({ name: 'publishedAt', type: 'datetime', label: 'Published At' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Published At'))
+    })
+
+    it('markdown', () => {
+      renderFields(described({ name: 'body', type: 'markdown', label: 'Body' }))
+      expectDescribed('group')
+    })
+
+    it('mdx', () => {
+      renderFields(described({ name: 'body', type: 'mdx', label: 'Body' }))
+      expectDescribed('group')
+    })
+
+    it('select', () => {
+      renderFields(described({ name: 'kind', type: 'select', label: 'Kind', options: ['a', 'b'] }))
+      expectDescribed('input')
+    })
+
+    it('select multi', () => {
+      renderFields(
+        described({
+          name: 'kinds',
+          type: 'select',
+          label: 'Kinds',
+          list: true,
+          options: ['a', 'b'],
+        }),
+      )
+      expectDescribed('input')
+    })
+
+    it('reference', () => {
+      renderFields(
+        described({
+          name: 'author',
+          type: 'reference',
+          label: 'Author',
+          options: [{ value: 'id1', label: 'Alice' }],
+        }),
+      )
+      expectDescribed('input')
+    })
+
+    it('reference while options load', () => {
+      mockClient.content.getReferenceOptions.mockReturnValue(new Promise(() => {}))
+      renderFields(
+        described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
+      )
+      expect(screen.getByTestId('reference-loading-author')).toBeTruthy()
+      expect(expectDescribed('group')).toBe(screen.getByTestId('reference-field-author'))
+    })
+
+    it('reference after options fail to load', async () => {
+      mockClient.content.getReferenceOptions.mockResolvedValue({
+        ok: false,
+        status: 500,
+        error: 'boom',
+      })
+      renderFields(
+        described({ name: 'author', type: 'reference', label: 'Author', collections: ['people'] }),
+      )
+      await screen.findByTestId('reference-error-author')
+      expect(expectDescribed('group')).toBe(screen.getByTestId('reference-field-author'))
+    })
+
+    it('image', () => {
+      renderFields(described({ name: 'hero', type: 'image', label: 'Hero image' }))
+      expect(expectDescribed('group')).toBe(screen.getByTestId('image-field-hero'))
+    })
+
+    it('block', () => {
+      renderFields(described({ name: 'blocks', type: 'block', label: 'Blocks', templates: [] }))
+      expectDescribed('group')
+    })
+
+    it('object', () => {
+      renderFields(
+        described({
+          name: 'meta',
+          type: 'object',
+          label: 'Meta',
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    it('object without a label still renders its description', () => {
+      renderFields(
+        described({
+          name: 'meta',
+          type: 'object',
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    it('object list', () => {
+      renderFields(
+        described({
+          name: 'features',
+          type: 'object',
+          label: 'Features',
+          list: true,
+          fields: [{ name: 'title', type: 'string', label: 'Heading' }],
+        }),
+        { features: [] },
+      )
+      expectDescribed('group')
+    })
+
+    it('object list renders its description once, not per item', () => {
+      renderFields(
+        described({
+          name: 'features',
+          type: 'object',
+          label: 'Features',
+          list: true,
+          itemTitleField: 'title',
+          fields: [{ name: 'title', type: 'string', label: 'Heading' }],
+        }),
+        { features: [{ title: 'First' }, { title: 'Second' }] },
+      )
+      expect(screen.getAllByText(DESCRIPTION)).toHaveLength(1)
+      const list = expectDescribed('group')
+      expect(list.contains(screen.getByRole('group', { name: 'First' }))).toBe(true)
+      expect(screen.getByRole('group', { name: 'First' }).hasAttribute('aria-describedby')).toBe(
+        false,
+      )
+    })
+
+    it('inline group', () => {
+      renderFields(
+        described({
+          name: 'seo',
+          type: 'group',
+          label: 'SEO',
+          fields: [{ name: 'metaTitle', type: 'string', label: 'Meta title' }],
+        }),
+      )
+      expectDescribed('group')
+    })
+
+    const captionChild: FieldConfig = {
+      name: 'caption',
+      type: 'string',
+      label: 'Caption',
+      description: DESCRIPTION,
+    }
+
+    it.each<[string, FieldConfig, FormValue]>([
+      [
+        'an object',
+        { name: 'meta', type: 'object', label: 'Meta', fields: [captionChild] },
+        { meta: {} },
+      ],
+      [
+        'an object-list card',
+        { name: 'items', type: 'object', label: 'Items', list: true, fields: [captionChild] },
+        { items: [{}] },
+      ],
+      [
+        'a block',
+        {
+          name: 'blocks',
+          type: 'block',
+          label: 'Blocks',
+          templates: [{ name: 'hero', label: 'Hero', fields: [captionChild] }],
+        },
+        { blocks: [{ template: 'hero', value: {} }] },
+      ],
+    ])('a child field inside %s renders its own description', (_, parent, initial) => {
+      renderFields([parent], initial)
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Caption'))
+    })
+
+    it('code', () => {
+      renderFields(described({ name: 'snippet', type: 'code', label: 'Snippet' }))
+      expect(expectDescribed('input')).toBe(screen.getByLabelText('Snippet'))
+    })
+
+    it.each([undefined, ''])('a string field with description %j renders no description', (d) => {
+      renderFields([{ name: 'title', type: 'string', label: 'Title', description: d }])
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(screen.getByLabelText('Title').hasAttribute('aria-describedby')).toBe(false)
+    })
+
+    it.each([undefined, ''])('an object field with description %j renders no description', (d) => {
+      renderFields(
+        [
+          {
+            name: 'meta',
+            type: 'object',
+            label: 'Meta',
+            description: d,
+            fields: [{ name: 'label', type: 'string', label: 'Label' }],
+          },
+        ],
+        { meta: {} },
+      )
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(document.querySelector('[aria-describedby]')).toBeNull()
+      expect(document.querySelector('[role="group"]')).toBeNull()
+    })
+
+    it('a markdown field without a description renders no description', () => {
+      renderFields([{ name: 'body', type: 'markdown', label: 'Body' }])
+      expect(document.querySelector('[id$="-description"]')).toBeNull()
+      expect(document.querySelector('[aria-describedby]')).toBeNull()
     })
   })
 })

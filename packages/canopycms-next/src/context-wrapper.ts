@@ -24,7 +24,13 @@ import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycm
 import { assertAuthPluginAllowedForMode } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import type { Metadata, MetadataRoute } from 'next'
+import type { ReactElement } from 'react'
 import { createCanopyCatchAllHandler } from './adapter'
+import {
+  createPreviewPageFor,
+  type CreatePreviewPageOptions,
+  type PreviewPageProps,
+} from './preview-page'
 import {
   collectStaticParams,
   entryToMetadata as entryToMetadataCore,
@@ -220,8 +226,8 @@ export interface NextCanopyContextResult {
    *
    * At build time this reads filesystem-direct; at request time it uses the branch-aware,
    * **ACL-enforced** runtime context, so entries the current user cannot read are omitted.
-   * Note it takes no `branch` option — see `CanopyContext['listEntries']` for the
-   * base-branch pinning caveat in prod.
+   * Pass the preview iframe's `?branch=` as `branch` on an index page so a content
+   * branch's entries show in preview — see `CanopyContext['listEntries']`.
    */
   listEntries: CanopyContext['listEntries']
   /**
@@ -253,6 +259,25 @@ export interface NextCanopyContextResult {
    * (see that function's doc); pass `fields`/`group` on a given call to override just that call.
    */
   entryToMetadata: (entryData: unknown, options?: EntryToMetadataOptions) => Metadata
+  /**
+   * The page for the preview route the editor's `previewPrefix` names, for a site whose public
+   * pages are a static export. Mount it as `app/<prefix>/[[...path]]/page.server.tsx`, so only the
+   * CMS build has it:
+   *
+   * ```tsx
+   * export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview } })
+   * ```
+   *
+   * Each view is made by `withCanopyPreview` (`canopycms-next/client`) in a `'use client'` module.
+   * It renders each entry from the `?branch=` the editor names, through `views[entryType]` with
+   * the live draft. Reads are request-scoped and ACL-checked, and an anonymous request or anything
+   * not readable is a 404.
+   * A view that needs more server reads is `previewView({ view, load })`: `load` runs after the
+   * entry is read and its result arrives as the view's `extras` prop.
+   */
+  createPreviewPage: (
+    options: CreatePreviewPageOptions,
+  ) => (props: PreviewPageProps) => Promise<ReactElement>
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -343,8 +368,12 @@ export async function createNextCanopyContext(
   //
   // No base-branch context resolution needed here: request-time content reads
   // (buildContentTree/listEntries/read) already provision the base/active branch via
-  // loadOrCreateBranchContext (see context.ts's resolveSchemaContext); build-time reads never
+  // loadOrCreateBranchContext (see context.ts's resolveListingSource); build-time reads never
   // provision, they read the checkout.
+  //
+  // Failures propagate to the page's error boundary and never degrade to a user: a
+  // RemoteNotReadyError (the worker has not created the remote yet) names the cause in the
+  // server log, and only an HTTP route can answer it with a 503.
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await authPlugin.authenticate(headersList)
@@ -464,6 +493,8 @@ export async function createNextCanopyContext(
     generateContentStaticParams,
     generateContentSitemap: boundGenerateContentSitemap,
     entryToMetadata: boundEntryToMetadata,
+    createPreviewPage: (previewOptions) =>
+      createPreviewPageFor(getCanopy, previewOptions, options.config.deployedAs),
     handler,
     services,
   }

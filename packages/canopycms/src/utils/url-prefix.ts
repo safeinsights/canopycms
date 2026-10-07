@@ -162,3 +162,65 @@ export function joinUrlPrefix(prefix: string | undefined, path: string): string 
 
   return `${normalizedPrefix}${normalizedPath}`
 }
+
+/**
+ * Append a trailing slash to a site-relative path, matching a site that serves `/contact/`.
+ *
+ * Leaves the root (`/`) and file-like paths (a last segment containing a dot, e.g.
+ * `/blog/rss.xml`) alone, and never doubles an existing slash. So it never produces a URL that
+ * Next's `trailingSlash: true` redirects (`next/dist/lib/load-custom-routes.js:489,502` in
+ * 15.5.21): Next adds a slash only to a last segment with no dot, and strips one from a segment
+ * ending `.ext`.
+ *
+ * A query string and/or fragment (`?page=2`, `#section`) is split off BEFORE the slash decision
+ * and placement, then reattached after — so `/blog?page=2` becomes `/blog/?page=2`, never
+ * `/blog?page=2/` (a literal trailing slash inside the query string, which is not what "serve
+ * with a trailing slash" means and breaks the URL).
+ */
+export function withTrailingSlash(path: string): string {
+  const splitIndex = path.search(/[?#]/)
+  const base = splitIndex === -1 ? path : path.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : path.slice(splitIndex)
+
+  const withLeading = base.startsWith('/') ? base : `/${base}`
+  if (withLeading === '/' || withLeading.endsWith('/')) return withLeading + suffix
+  const lastSegment = withLeading.slice(withLeading.lastIndexOf('/') + 1)
+  if (lastSegment.includes('.')) return withLeading + suffix
+  return `${withLeading}/${suffix}`
+}
+
+// Linear: `[^/?#]*` cannot overlap the literal `//` before it, so there is one way to match.
+// eslint-disable-next-line security/detect-unsafe-regex
+const URL_ORIGIN = /^(?:[a-z][a-z0-9+.-]*:)?\/\/[^/?#]*/i
+
+/**
+ * Give a URL's path the trailing-slash form a Next host serves, so loading it draws no 308:
+ * `withTrailingSlash`'s rule when `trailingSlash` is true, else no trailing slash on any path
+ * but the root (Next also redirects `<basePath>/` to `<basePath>`, `load-custom-routes.js:528`). An
+ * absolute URL's origin, and any query or fragment, are kept as they are.
+ */
+export function matchTrailingSlash(url: string, trailingSlash: boolean): string {
+  const origin = isAbsoluteUrl(url) ? (URL_ORIGIN.exec(url)?.[0] ?? '') : ''
+  const rest = url.slice(origin.length)
+  if (trailingSlash) return origin + withTrailingSlash(rest)
+  const splitIndex = rest.search(/[?#]/)
+  const base = splitIndex === -1 ? rest : rest.slice(0, splitIndex)
+  const suffix = splitIndex === -1 ? '' : rest.slice(splitIndex)
+  const trimmed = stripTrailingSlashes(base)
+  return origin + (trimmed || (origin ? '' : '/')) + suffix
+}
+
+/**
+ * Whether the host is built with Next's `trailingSlash: true`. `withCanopy` sets
+ * `CANOPY_TRAILING_SLASH` in Next's `env` config, which Next substitutes for this literal member
+ * expression in server and browser bundles (`getNextConfigEnv`, `next/dist/build/define-env.js:54`).
+ * The try/catch covers a host whose bundler neither substitutes it nor shims `process` in the
+ * browser.
+ */
+export function readTrailingSlashEnv(): boolean {
+  try {
+    return process.env.CANOPY_TRAILING_SLASH === 'true'
+  } catch {
+    return false
+  }
+}

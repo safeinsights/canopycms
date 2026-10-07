@@ -1528,7 +1528,9 @@ describe('SchemaOps', () => {
       const holder = withOccFileLock(schemaLockPath, async () => {
         resolveHolderAcquired()
         await proceed
-        await fs.rm(tempDir, { recursive: true, force: true })
+        // The queued attempt keeps creating lock directories under .canopy-meta while this
+        // removal runs, so a single pass can hit ENOTEMPTY; let rm retry.
+        await fs.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 })
       })
 
       await holderAcquired

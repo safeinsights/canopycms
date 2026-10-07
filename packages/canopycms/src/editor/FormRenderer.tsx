@@ -29,6 +29,7 @@ import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
+import { FieldDescription, groupDescriptionProps } from './fields/FieldDescription'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
@@ -50,6 +51,21 @@ export type CustomFieldRenderers = Record<
   string,
   (props: CustomFieldRenderProps) => React.ReactNode
 >
+
+/**
+ * Card heading for an object-list item: the value of its `itemTitleField` when that is a
+ * non-blank string or a number, otherwise `fallback`.
+ */
+const listItemTitle = (
+  item: Record<string, unknown>,
+  itemTitleField: string | undefined,
+  fallback: string,
+): string => {
+  const raw = itemTitleField ? item?.[itemTitleField] : undefined
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
+  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim()
+  return fallback
+}
 
 const normalizeOptions = (
   options: Array<string | { label: string; value: string }> | undefined,
@@ -230,6 +246,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               key={fieldKey(path)}
               id={fieldId}
               label={label}
+              description={field.description}
               value={Array.isArray(currentValue) ? (currentValue as string[]) : []}
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
@@ -241,6 +258,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={(currentValue as string) ?? ''}
             onChange={update}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -252,6 +270,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={Boolean(currentValue)}
             onChange={(v) => update(Boolean(v))}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -265,6 +284,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               key={fieldKey(path)}
               id={fieldId}
               label={label}
+              description={field.description}
               value={
                 Array.isArray(currentValue)
                   ? currentValue.filter((v): v is number => typeof v === 'number')
@@ -280,6 +300,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={typeof currentValue === 'number' ? currentValue : undefined}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -291,6 +312,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={typeof currentValue === 'string' ? currentValue : ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -303,6 +325,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={(currentValue as string) ?? ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
@@ -317,6 +340,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             options={options}
             value={
               isMulti
@@ -342,6 +366,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             options={staticOptions?.map((opt) => ({
               label: opt.label,
               value: opt.value,
@@ -370,6 +395,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={currentValue as ImageFieldValue | undefined}
             onChange={(next) => update(next)}
             aspect={imageField.aspect}
@@ -389,6 +415,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           <BlockField
             key={fieldKey(path)}
             label={label}
+            description={field.description}
             templates={blockField.templates}
             value={(Array.isArray(currentValue) ? currentValue : []) as BlockInstance[]}
             onChange={(next) => update(next)}
@@ -405,7 +432,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             ? (currentValue as Record<string, unknown>[])
             : []
           return wrapWithComments(
-            <Paper key={fieldKey(path)} withBorder radius="md" p="md" shadow="xs">
+            <Paper
+              key={fieldKey(path)}
+              withBorder
+              radius="md"
+              p="md"
+              shadow="xs"
+              {...groupDescriptionProps(fieldId, field.description)}
+            >
               <Stack gap="sm">
                 <Group justify="space-between">
                   <Text size="sm" fw={600}>
@@ -419,39 +453,54 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                     Add item
                   </Button>
                 </Group>
+                <FieldDescription baseId={fieldId} description={field.description} />
                 <Stack gap="sm">
-                  {items.map((item, idx) => (
-                    <Paper key={fieldKey([...path, idx])} withBorder radius="md" p="sm" shadow="xs">
-                      <Stack gap="xs">
-                        <Group justify="space-between">
-                          <Text size="xs" fw={700}>
-                            {label} #{idx + 1}
-                          </Text>
-                          <Button
-                            size="xs"
-                            variant="subtle"
-                            color="red"
-                            onClick={() => update(items.filter((_, i) => i !== idx))}
-                          >
-                            Remove
-                          </Button>
-                        </Group>
-                        <ObjectField
-                          label={objectField.label}
-                          fields={objectField.fields}
-                          value={item}
-                          onChange={(next) => {
-                            const nextItems = [...items]
-                            nextItems[idx] = next
-                            update(nextItems)
-                          }}
-                          renderField={renderField}
-                          path={[...path, idx]}
-                          dataCanopyField={normalizeCanopyPath([...path, idx])}
-                        />
-                      </Stack>
-                    </Paper>
-                  ))}
+                  {items.map((item, idx) => {
+                    const itemTitle = listItemTitle(
+                      item,
+                      objectField.itemTitleField,
+                      `${label} #${idx + 1}`,
+                    )
+                    return (
+                      <Paper
+                        key={fieldKey([...path, idx])}
+                        role="group"
+                        aria-label={itemTitle}
+                        withBorder
+                        radius="md"
+                        p="sm"
+                        shadow="xs"
+                      >
+                        <Stack gap="xs">
+                          <Group justify="space-between">
+                            <Text size="xs" fw={700}>
+                              {itemTitle}
+                            </Text>
+                            <Button
+                              size="xs"
+                              variant="subtle"
+                              color="red"
+                              onClick={() => update(items.filter((_, i) => i !== idx))}
+                            >
+                              Remove
+                            </Button>
+                          </Group>
+                          <ObjectField
+                            fields={objectField.fields}
+                            value={item}
+                            onChange={(next) => {
+                              const nextItems = [...items]
+                              nextItems[idx] = next
+                              update(nextItems)
+                            }}
+                            renderField={renderField}
+                            path={[...path, idx]}
+                            dataCanopyField={normalizeCanopyPath([...path, idx])}
+                          />
+                        </Stack>
+                      </Paper>
+                    )
+                  })}
                   {items.length === 0 && (
                     <Text size="xs" c="dimmed">
                       No items yet. Add one to get started.
@@ -478,6 +527,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           <ObjectField
             key={fieldKey(path)}
             label={label}
+            description={field.description}
             fields={objectField.fields}
             value={currentValue as Record<string, unknown> | undefined}
             onChange={(next) => update(next)}
@@ -494,6 +544,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             key={fieldKey(path)}
             id={fieldId}
             label={label}
+            description={field.description}
             value={typeof currentValue === 'string' ? currentValue : ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}

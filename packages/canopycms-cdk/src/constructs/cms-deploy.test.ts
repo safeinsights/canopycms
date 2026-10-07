@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { CfnElement, Duration, Fn, Stack, Token } from 'aws-cdk-lib'
-import { Template, Match } from 'aws-cdk-lib/assertions'
+import { Annotations, Template, Match } from 'aws-cdk-lib/assertions'
 import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import { Manifest } from 'aws-cdk-lib/cloud-assembly-schema'
 import { AssetManifestArtifact } from 'aws-cdk-lib/cx-api'
@@ -16,7 +16,12 @@ import {
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
 } from 'aws-cdk-lib'
-import { CanopyCmsService, DEFAULT_CMS_LAMBDA_TIMEOUT } from './cms-service'
+import {
+  CanopyCmsService,
+  DEFAULT_CMS_LAMBDA_TIMEOUT,
+  DEFAULT_CMS_RESERVED_CONCURRENCY,
+  MIN_CMS_RESERVED_CONCURRENCY,
+} from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
@@ -164,6 +169,77 @@ describe('CanopyCmsService deploy blockers', () => {
     const urls = template.findResources('AWS::Lambda::Url')
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).not.toBe('NONE')
+    }
+  })
+})
+
+describe('CanopyCmsService reserved concurrency', () => {
+  function synthStack(overrides: Partial<CanopyCmsServiceProps> = {}): Stack {
+    const app = newTestApp()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      ...overrides,
+    })
+    return stack
+  }
+  const LOW_CONCURRENCY_WARNING = Match.stringLikeRegexp('reservedConcurrency is \\d+')
+
+  it('defaults to a cap one cold editor load fits under, with room to spare', () => {
+    expect(DEFAULT_CMS_RESERVED_CONCURRENCY).toBeGreaterThanOrEqual(
+      2 * MIN_CMS_RESERVED_CONCURRENCY,
+    )
+    const stack = synthStack()
+    Template.fromStack(stack).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        PackageType: 'Image',
+        ReservedConcurrentExecutions: DEFAULT_CMS_RESERVED_CONCURRENCY,
+      }),
+    )
+    Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
+  })
+
+  it('passes an explicit value through', () => {
+    Template.fromStack(synthStack({ reservedConcurrency: 75 })).hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ PackageType: 'Image', ReservedConcurrentExecutions: 75 }),
+    )
+  })
+
+  it('warns at synth when the cap is below what one cold editor load fans out to', () => {
+    const stack = synthStack({ reservedConcurrency: MIN_CMS_RESERVED_CONCURRENCY - 1 })
+    Annotations.fromStack(stack).hasWarning(
+      '*',
+      Match.stringLikeRegexp(`reservedConcurrency is ${MIN_CMS_RESERVED_CONCURRENCY - 1}\\b`),
+    )
+  })
+
+  it('does not warn at the minimum', () => {
+    const stack = synthStack({ reservedConcurrency: MIN_CMS_RESERVED_CONCURRENCY })
+    Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
+  })
+
+  it('neither the scaffold template nor the example pins a cap below the minimum', () => {
+    const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+    const PINNED = /reservedConcurrency:\s*(\d+)/g
+    // Positive control: an absence of low values proves nothing if the pattern
+    // cannot see a pinned one at all.
+    expect([...'reservedConcurrency: 10,'.matchAll(PINNED)].map((m) => Number(m[1]))).toEqual([10])
+    for (const relative of [
+      'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
+      'examples/aws-deployment/infrastructure/lib/cms-stack.ts',
+    ]) {
+      const source = readFileSync(path.join(repoRoot, relative), 'utf-8')
+      for (const match of source.matchAll(PINNED)) {
+        expect(Number(match[1]), relative).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
+      }
     }
   })
 })
@@ -1215,48 +1291,107 @@ describe('CanopyCmsService: Lambda architecture and image platform', () => {
   })
 })
 
-describe('CanopyCmsService B1: Lambda and worker resolve the same EFS directory', () => {
-  it('sets the Lambda workspace root and auth cache path under the access-point-relative /mnt/efs', () => {
+/**
+ * The worker's user-data script as text, with each `{ Ref: X }` rendered as
+ * `<X>` so a line naming a resource can be matched whole.
+ */
+function workerUserDataScript(template: Template): string {
+  const render = (node: unknown): string => {
+    if (typeof node === 'string') return node
+    if (Array.isArray(node)) return node.map(render).join('')
+    if (node && typeof node === 'object') {
+      const obj = node as Record<string, unknown>
+      if (typeof obj.Ref === 'string') return `<${obj.Ref}>`
+      const join = obj['Fn::Join']
+      if (Array.isArray(join)) {
+        const [sep, parts] = join as [string, unknown[]]
+        return parts.map(render).join(sep)
+      }
+      if ('Fn::Base64' in obj) return render(obj['Fn::Base64'])
+    }
+    throw new Error(`workerUserDataScript: unhandled node ${JSON.stringify(node)}`)
+  }
+  const templates = Object.values(template.findResources('AWS::EC2::LaunchTemplate'))
+  expect(templates).toHaveLength(1)
+  const data = (templates[0].Properties as { LaunchTemplateData: { UserData: unknown } })
+    .LaunchTemplateData.UserData
+  return render(data)
+}
+
+describe('CanopyCmsService B1: Lambda and worker see the workspace at the same path', () => {
+  // Git writes absolute paths onto EFS (a workspace clone's `origin` is
+  // `<root>/remote.git`), so a shared directory reached at two different
+  // paths breaks whichever process did not write the path.
+  const accessPointId = (template: Template): string => {
+    const ids = Object.keys(template.findResources('AWS::EFS::AccessPoint'))
+    expect(ids).toHaveLength(1)
+    return ids[0]
+  }
+  const fileSystemId = (template: Template): string => {
+    const ids = Object.keys(template.findResources('AWS::EFS::FileSystem'))
+    expect(ids).toHaveLength(1)
+    return ids[0]
+  }
+
+  it('roots the shared access point at EFS:/workspace', () => {
+    synth().hasResourceProperties(
+      'AWS::EFS::AccessPoint',
+      Match.objectLike({ RootDirectory: Match.objectLike({ Path: '/workspace' }) }),
+    )
+  })
+
+  it('mounts the access point at /mnt/efs in the Lambda and roots its workspace there', () => {
     const template = synth()
-    template.hasResourceProperties(
-      'AWS::Lambda::Function',
-      Match.objectLike({
-        Environment: Match.objectLike({
-          Variables: Match.objectLike({
-            CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
-            CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+    const fns = Object.values(
+      template.findResources('AWS::Lambda::Function', {
+        Properties: Match.objectLike({
+          FileSystemConfigs: [{ Arn: Match.anyValue(), LocalMountPath: '/mnt/efs' }],
+          Environment: Match.objectLike({
+            Variables: Match.objectLike({
+              CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
+              CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+            }),
           }),
         }),
       }),
     )
+    expect(fns).toHaveLength(1)
+    // The ARN is synthesized as a Join around a Ref to the access point.
+    const { FileSystemConfigs } = fns[0].Properties as { FileSystemConfigs: [{ Arn: unknown }] }
+    expect(JSON.stringify(FileSystemConfigs[0].Arn)).toContain(
+      JSON.stringify({ Ref: accessPointId(template) }),
+    )
   })
 
-  it('lambda workspace root and worker workspace path resolve to the same EFS directory', () => {
+  it('mounts the same access point at /mnt/efs on the worker, now and after a reboot', () => {
     const template = synth()
-    // Lambda mounts EFS through the WorkspaceAP access point, which is
-    // already rooted at EFS:/workspace - so the Lambda's /mnt/efs IS
-    // EFS:/workspace.
-    template.hasResourceProperties(
-      'AWS::Lambda::Function',
-      Match.objectLike({
-        Environment: Match.objectLike({
-          Variables: Match.objectLike({ CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs' }),
-        }),
-      }),
+    const ap = accessPointId(template)
+    const fsId = fileSystemId(template)
+    const lines = workerUserDataScript(template).split('\n')
+
+    expect(lines).toContain(`mount -t efs -o tls,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
+    expect(lines).toContain(
+      `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
-    // The worker instead mounts the filesystem ROOT at /mnt/efs and reaches
-    // the same EFS:/workspace directory via /mnt/efs/workspace - assert its
-    // UserData actually references that mount-root + workspace path.
-    expect(workerUserDataBlobs(template)).toContain('/mnt/efs/workspace')
-    // Guard the other half of the split: the access point itself must be
-    // rooted at /workspace, or drift there (e.g. to /other) would silently
-    // desync from the Lambda/worker paths asserted above while still passing.
-    template.hasResourceProperties(
-      'AWS::EFS::AccessPoint',
-      Match.objectLike({
-        RootDirectory: Match.objectLike({ Path: '/workspace' }),
-      }),
-    )
+  })
+
+  it("roots the worker's workspace at /mnt/efs and never reaches for a nested path", () => {
+    const script = workerUserDataScript(synth())
+    expect(script.split('\n')).toContain('CANOPYCMS_WORKSPACE_ROOT=/mnt/efs')
+    // Under the access-point mount this would be EFS:/workspace/workspace.
+    expect(script).not.toContain('/mnt/efs/workspace')
+  })
+
+  it('accepts environment.CANOPYCMS_WORKSPACE_ROOT only when it names the shared mount', () => {
+    expect(() =>
+      synth(false, { environment: { CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs' } }),
+    ).not.toThrow()
+    for (const value of ['/mnt/efs/workspace', '/mnt/efs/', '/data']) {
+      expect(
+        () => synth(false, { environment: { CANOPYCMS_WORKSPACE_ROOT: value } }),
+        value,
+      ).toThrow(/invalid environment\.CANOPYCMS_WORKSPACE_ROOT/)
+    }
   })
 })
 
@@ -2057,6 +2192,9 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         'githubAppInstallationId: props.githubAppInstallationId,',
         'githubAppPrivateKeySecretArn: githubAppPrivateKey?.secretArn,',
         'githubAppPrivateKeySecretJsonField: props.githubAppPrivateKeySecretJsonField,',
+        // Source revision: an optional prop whose build arg is the only route to the image.
+        'sourceRevision?: string',
+        'CANOPY_SOURCE_SHA: props.sourceRevision',
       ],
     ],
     [
@@ -2079,6 +2217,8 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         // must be set" -- telling the adopter to restore the credential the
         // migration guide just told them to remove.
         'githubTokenSecretArn: usingGitHubApp',
+        // `|| undefined`, never `required()`: the revision is optional.
+        'sourceRevision: process.env.CANOPY_SOURCE_SHA || undefined,',
       ],
     ],
     [
@@ -2094,6 +2234,7 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
         'GITHUB_APP_ID: ${{ vars.CANOPY_GITHUB_APP_ID }}',
         'GITHUB_APP_INSTALLATION_ID: ${{ vars.CANOPY_GITHUB_APP_INSTALLATION_ID }}',
         'GITHUB_APP_PRIVATE_KEY_SECRET_ARN: ${{ secrets.CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN }}',
+        'CANOPY_SOURCE_SHA: ${{ github.sha }}',
       ],
     ],
   ]
@@ -2103,7 +2244,7 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
   for (const [exampleRelative, templatePath, required] of PAIRS) {
     const examplePath = examplePathFor(exampleRelative)
 
-    it(`${templatePath} carries the JSON-field wiring`, () => {
+    it(`${templatePath} carries the pinned wiring`, () => {
       const source = read(templatePath)
       for (const line of required) expect(source).toContain(line)
     })

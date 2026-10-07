@@ -388,20 +388,20 @@ Clean the temp directory up in `afterEach` (`fs.rm(tempDir, { recursive: true, f
 
 ### Settings Management (Permissions and Groups)
 
-Permissions and groups live in `permissions.json` and `groups.json` on an orphan branch named `canopycms-settings-{deploymentName}` — no shared history with content branches — in both modes. Dev clones that branch into `.canopy-dev/settings/`; prod additionally pushes it to GitHub with a PR.
+Permissions and groups live in `permissions.json` and `groups.json` on an orphan branch named `canopycms-settings-{deploymentName}` — no shared history with content branches — in both modes. Dev clones that branch into `.canopy-dev/settings/`; prod additionally pushes it to GitHub. It is never PR'd: an orphan branch has no history in common with the base, so GitHub rejects the PR.
 
 | Mode   | Where settings live                                  | Git behavior                             |
 | ------ | ---------------------------------------------------- | ---------------------------------------- |
-| `dev`  | Orphan branch, cloned into gitignored `.canopy-dev/` | Commits to the settings branch only      |
-| `prod` | Orphan branch on the configured workspace root       | Commits, then pushes to GitHub with a PR |
+| `dev`  | Orphan branch, cloned into gitignored `.canopy-dev/` | Commits, then pushes to the local remote |
+| `prod` | Orphan branch on the configured workspace root       | Commits, then pushes to GitHub           |
 
 In dev this lets you log in as different test users, put them in groups through the UI, and exercise permission scenarios without polluting git history or colliding with other developers. All of `.canopy-dev/` is gitignored via the `.canopy*` pattern (added by `npx canopycms init`), settings stay in the local bare remote, and changes survive a CMS restart. Verify with `git status` — `.canopy-dev/` should not appear; `git reset HEAD .canopy-dev/` if it ever gets staged.
 
 In prod:
 
 - Each deployment environment has its own independent settings branch, named from `deploymentName`.
-- `commitToSettingsBranch` in `services.ts` uses the same dual path as content branches (`api/github-sync.ts`): call `githubService.createOrUpdatePR()` directly when there is internet, otherwise enqueue a `push-and-create-or-update-pr` task for the worker. Settings PRs are idempotent — the action looks for an existing open PR first.
-- Changes take effect in the CMS immediately, read from the settings branch workspace. The PR is for persistence, not for gating.
+- `commitToSettingsBranch` in `services.ts` commits and pushes to the workspace remote, then, when there is no `githubService` (the Lambda has no internet), enqueues a `push-branch` task for the worker.
+- Changes take effect in the CMS immediately, read from the settings branch workspace; nothing gates them.
 - **Writes go through a mutate callback, not a `save*()` function.** `mutatePermissionsFile`/`mutateGroupsFile` (`authorization/`), built on `settings-file-store.ts`'s `mutateSettingsJsonFile`, run load → mutate → write inside the cross-host layered lock, which closes the load-compare-write TOCTOU window. The OCC `version` field is the single counter. **Your callback must be safe to call more than once** — it re-runs against freshly reloaded state on every OCC retry. Throw `SettingsVersionConflictError` from inside it when an app-level `expectedContentVersion` mismatches; the API turns that into a 409. See [docs/concurrency.md](docs/concurrency.md).
 - **Workspace provisioning has its own two locks**, separate from the per-file write lock above: an in-memory Promise lock against redundant calls inside one process, and a file-based `wx` lock (`O_CREAT|O_EXCL`) for atomic cross-process exclusion on EFS, with stale locks over 30s cleaned up.
 
@@ -418,21 +418,20 @@ const result = await services.commitToSettingsBranch({
   branchRoot: settingsRoot,
   files: 'permissions.json', // at the root of the orphan branch
   message: 'Update permissions',
-  createPR: true,
 })
-// result.syncStatus: 'synced' | 'pending-sync' | 'sync-failed'
+// result.syncStatus (prod): 'synced' | 'pending-sync' | 'sync-failed'
 ```
 
 ### Schema Mutations (`SchemaOps`)
 
-`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`). Every public mutator runs under one **non-reentrant, coarse per-branch lock** (`withSchemaLock`, keyed on `{branchRoot}/.canopy-meta/schema`). [docs/concurrency.md](docs/concurrency.md) explains why `.collection.json` deliberately carries no OCC `version` or lockfile of its own.
+`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`). Every public mutator runs under `withSchemaLock`: the branch's content-write lock, then a coarse per-branch surrogate keyed on `{branchRoot}/.canopy-meta/schema`. **Neither is reentrant.** [docs/concurrency.md](docs/concurrency.md) explains why `.collection.json` deliberately carries no OCC `version` or lockfile of its own.
 
-**Because the lock is non-reentrant, a public mutator must never call another public mutator from inside its critical section** — that deadlocks on a lock it already holds. Each public mutator has a private `*Inner` counterpart that does the work without acquiring the lock; call that instead:
+**So a public mutator must never call another public mutator from inside its critical section** — that fails busy on a lock it already holds. Each public mutator has a private `*Inner` counterpart that does the work without acquiring the lock; call that instead:
 
 ```typescript
 // Inside SchemaOps, already holding the lock via the public entrypoint:
 await this.updateCollectionInner(collectionPath, { order }) // safe
-// await this.updateCollection(collectionPath, { order })   // deadlocks
+// await this.updateCollection(collectionPath, { order })   // fails busy
 ```
 
 A new mutator follows the same shape: a thin public method wrapping the real logic in `withSchemaLock`, cache invalidation afterwards and outside the lock (per `withSchemaLock`'s doc comment), plus a private `*Inner` other mutators can call.
@@ -445,7 +444,7 @@ In dev, the editor and dev server read a branch clone under `.canopy-dev/content
 
 **There is intentionally no auto-push mode**, because it would clobber unsubmitted editor saves ([ARCHITECTURE.md](ARCHITECTURE.md#operating-modes)); reconcile with `canopycms sync push`.
 
-All the logic is in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); adapters call it once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`). It no-ops outside dev mode, under `'off'`, and when the working-tree content directory is absent. Each check re-resolves the active branch, so it follows git HEAD switches, and it dedupes across HMR reloads so a dev restart does not double-warn.
+The logic is in `src/dev-content-watcher.ts` (`startDevContentWatcher()`), which adapters call once at dev startup (see `packages/canopycms-next/src/context-wrapper.ts`); its comments carry the no-op and HMR-dedupe rules.
 
 ### Committing and Pushing: Toolchain Gotchas
 
@@ -453,6 +452,10 @@ Two things bite in a scratch worktree or any non-interactive shell, where `pnpm`
 
 - **The husky `pre-push` hook shells out to a bare `pnpm`, so `git push` fails with `pre-push script failed (code 127)`** — a `pnpm: command not found` inside the hook, not a push or auth error. Hooks see neither aliases nor shell functions, so the shim directory has to be exported on `PATH` in the _same_ command as the push. Same for `lint-staged` on `pre-commit`.
 - **`prettier --write` silently skips `.claude/future-tasks/*.md`** — they are prettier-ignored. Prettier reports only the files it formatted, so passing a task file and seeing no mention of it is a skip, not a no-op-because-clean. Match the surrounding style by hand.
+
+### Request Timing (`CANOPYCMS_DEBUG=true`)
+
+The API handler logs one `[CanopyCMS:timing]` line per request: route pattern, status, total, then phases. `a>b` is `b` nested in `a`, `(xN)` is a phase that ran N times, and `untimed` is the total minus the top-level phases. To time a new step on the request path, wrap it in `timeRequestPhase('<name>', () => ...)`; outside a request, or with debug off, it is a plain call. The rules are in the header comment of `utils/request-timing.ts`.
 
 ## Testing
 
@@ -534,6 +537,8 @@ pnpm exec playwright install chromium
 Read the required revision from `revision` for `chromium` in `node_modules/.pnpm/playwright-core@*/node_modules/playwright-core/browsers.json` rather than inferring it from the `package.json` range — the range floats, the resolved version pins the build.
 
 Specs live in `apps/test-app/e2e/tests/`, with fixtures alongside and a capability map in `apps/test-app/e2e/COVERAGE-MATRIX.md`.
+
+**Body-editor locators.** Until `MarkdownField`'s lazy chunk loads, the body sits in a read-only textarea that `getByText` also matches. Scope to `.canopy-mdx-content` (the rich editor) or the `mdx-jsx-tag` / `markdown-source-editor` testids.
 
 ### Integration Test Structure
 
@@ -692,6 +697,11 @@ vi.mock('../api/client', () => ({ createApiClient: vi.fn() }))
 ```
 
 Mocking `'../api'` will not intercept it. See `useReferenceResolution.test.ts`, `ReferenceField.test.tsx`, `client-reference-resolver.test.ts`.
+
+### Testing MarkdownField (Real MDXEditor in jsdom)
+
+- **Preload both chunks** its `React.lazy` loader imports, in every test file that renders `MarkdownField` (directly or via `FormRenderer`): `import '@mdxeditor/editor'` and `import './mdx-jsx-support'`. Rationale is in the comment in `MarkdownField.test.tsx`.
+- **Type with `@testing-library/user-event`** (`user.click(paragraph)`, `user.keyboard(...)`); `src/editor/test-setup.ts` stubs the `Range.prototype.getBoundingClientRect` this needs. Edits inside a JSX element's nested editor reach `onChange` only after focus leaves it, so click elsewhere before asserting.
 
 ### Testing with Real Git Operations
 

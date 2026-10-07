@@ -37,7 +37,7 @@ Two traps outside it:
 
 This whole directory is browser-reachable via `canopycms/client`, so:
 
-- **56 files carry `'use client'`.** A new component using hooks needs it.
+- A new component using hooks needs `'use client'`.
 - **Nothing here may reach a `node:` built-in**, directly or transitively.
   `pnpm lint:bundle` (dependency-cruiser) fails the build on it, so this is a check
   rather than a convention.

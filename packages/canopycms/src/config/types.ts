@@ -162,6 +162,11 @@ export interface BlockFieldConfig extends BaseFieldConfig {
 export interface ObjectFieldConfig extends BaseFieldConfig {
   type: 'object'
   fields: FieldConfig[]
+  /**
+   * On a `list: true` object, a direct `string` or `number` child whose value titles each
+   * item's card; a blank or non-finite value falls back to "<label> #N".
+   */
+  itemTitleField?: string
 }
 
 /**
@@ -299,15 +304,27 @@ export interface CanopyEditorConfig {
   subtitle?: string
   theme?: unknown
   /**
-   * Per-collection overrides for the preview pane's URL, keyed by collection path or name
-   * (e.g. `{ 'content/posts': '/blog' }`) for sites whose routes don't mirror their content tree.
+   * Preview-pane routes for sites whose routes don't mirror their content tree; otherwise an entry
+   * previews its own `urlPath`. Keyed by a root entry's path (the whole route), else collection
+   * path or name (plus the slug). `false` means no page, and the pane says so instead of framing one.
    *
-   * Values are **site-relative** and must NOT include the deployment `basePath` — that is applied
-   * on top of whatever this yields (see `CanopyConfig.basePath`), so including it here would
-   * prefix it twice. An absolute value (`https://…`) is passed through untouched instead, which
-   * is the escape hatch for previewing against a different origin entirely.
+   * Values are **site-relative**, without the deployment `basePath` (applied on top, so including
+   * it prefixes it twice), and get `previewPrefix` too. An absolute value (`https://…`) gets no
+   * prefix, only the slug (for a collection key) and `?branch=`: for previewing another origin.
    */
-  previewBase?: Record<string, string>
+  previewBase?: Record<string, string | false>
+  /**
+   * Where the host mounts the pages the preview pane loads, put in front of every entry's preview
+   * URL (`'/preview'` makes `/blog/hello` load `/preview/blog/hello`). Set it when the site's
+   * public pages are a static export, which cannot render a requested branch, so the preview
+   * must load a route the CMS server renders.
+   *
+   * A path starting with `/`, without the deployment `basePath` (applied on top, as for
+   * `previewBase`), or an absolute `http(s)://` URL, which skips the `basePath`. Pages on another
+   * origin accept drafts only with `useCanopyPreview({ editorOrigin })`. An absolute `previewBase`
+   * value skips this prefix.
+   */
+  previewPrefix?: string
   onAccountClick?: () => void
   onLogoutClick?: () => void
   AccountComponent?: React.ComponentType
@@ -402,6 +419,8 @@ export interface CanopyConfig {
   defaultRemoteUrl?: DefaultRemoteUrl
   gitBotAuthorName: GitBotAuthorName
   gitBotAuthorEmail: GitBotAuthorEmail
+  gitEditedByTrailers?: boolean
+  gitCoAuthoredByTrailers?: boolean
   githubTokenEnvVar?: GithubTokenEnvVar
   mode: CanopyOperatingMode
   /** How this build is deployed — see {@link CanopyConfigInput.deployedAs}. */
@@ -409,7 +428,6 @@ export interface CanopyConfig {
   /** Escape hatch for a prod host with real internet access — see {@link CanopyConfigInput.allowNetworkRemoteInProd}. */
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
-  autoCreateSettingsPR?: boolean
   deploymentName?: string
   contentRoot: ContentRoot
   sourceRoot?: SourceRoot
@@ -439,6 +457,10 @@ export interface CanopyConfigInput {
   defaultRemoteUrl?: string
   gitBotAuthorName: string
   gitBotAuthorEmail: string
+  /** Add `Edited-by: Name (user id)` for the submitter to submit commits. Default true. */
+  gitEditedByTrailers?: boolean
+  /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */
+  gitCoAuthoredByTrailers?: boolean
   githubTokenEnvVar?: string
   /**
    * Operating mode: 'prod' or 'dev'. Required — no default (SEC-C1). A prod deploy that
@@ -459,7 +481,6 @@ export interface CanopyConfigInput {
    */
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
-  autoCreateSettingsPR?: boolean
   deploymentName?: string
   contentRoot?: string
   sourceRoot?: string

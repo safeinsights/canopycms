@@ -41,6 +41,7 @@ import type { WorkerLiveness } from '../../api/admin'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
+import type { BaseRefreshReport } from '../../types'
 
 // ============================================================================
 // Small pure helpers
@@ -90,7 +91,9 @@ function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: 
   }
   return {
     disabled: lockFresh,
-    tooltip: lockFresh ? 'Provisioning may be in progress' : undefined,
+    tooltip: lockFresh
+      ? 'Provisioning, or the worker syncing this branch, may be in progress'
+      : undefined,
   }
 }
 
@@ -110,6 +113,37 @@ function workerLivenessBadge(
     default:
       return { color: 'red', label: 'Worker: absent' }
   }
+}
+
+const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
+  refreshed: 'fast-forwarded',
+  'up-to-date': 'up to date',
+  'skipped-dirty': 'refresh skipped (uncommitted changes)',
+  'skipped-locked': 'refresh skipped (workspace busy: provisioning or an admin action)',
+  'skipped-not-provisioned': 'not yet provisioned',
+  failed: 'refresh failed',
+}
+
+/**
+ * Why the base branch needs an operator, or null when its last refresh needs
+ * nothing. Shared by the overview and the base row's warning tooltip.
+ */
+function baseRefreshWarning(report: BaseRefreshReport | undefined): string | null {
+  if (!report) return null
+  const lines: string[] = []
+  if (report.outcome === 'skipped-dirty' || report.outcome === 'failed') {
+    lines.push(
+      `Base branch ${BASE_REFRESH_LABELS[report.outcome]}${report.message ? `: ${report.message}` : ''}`,
+    )
+    if (report.dirtyFiles?.length) lines.push(`Uncommitted: ${report.dirtyFiles.join(', ')}`)
+  }
+  if (report.trackedCanopyMeta?.length) {
+    lines.push(
+      `The site repo tracks canopycms state (${report.trackedCanopyMeta.join(', ')}). ` +
+        'Untrack it with `git rm -r --cached .canopy-meta`, add `.canopy-meta/` to .gitignore, and commit.',
+    )
+  }
+  return lines.length > 0 ? lines.join('\n') : null
 }
 
 // Mirrors BranchManager.tsx's statusColorMap -- kept local (not exported
@@ -214,6 +248,15 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const liveness = workerLivenessBadge(status.worker, status.mode)
   const lastFatalError = status.workerStatus?.lastFatalError
   const lastGitSync = status.workerStatus?.lastGitSync
+  const baseWarning = baseRefreshWarning(lastGitSync?.baseRefresh)
+  const { build } = status
+  // Absent for a worker that predates the field, which is not evidence of skew;
+  // nor is a stale or absent worker's leftover status file, which names no running build.
+  const workerVersion = status.workerStatus?.workerVersion || undefined
+  const versionSkew =
+    status.worker.state === 'alive' &&
+    workerVersion !== undefined &&
+    workerVersion !== build.canopycmsVersion
 
   return (
     <Stack gap="md">
@@ -243,6 +286,16 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
+      {status.settingsWorkspaceError && (
+        <Alert
+          color="red"
+          icon={<IconAlertCircle size={16} />}
+          title="Settings workspace unavailable: groups and path rules are not loading"
+        >
+          <Text size="sm">{status.settingsWorkspaceError}</Text>
+        </Alert>
+      )}
+
       {status.statusReadError && (
         <Text size="xs" c="orange">
           Warning: could not read worker status ({status.statusReadError})
@@ -258,6 +311,46 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
+      {versionSkew && (
+        <Alert
+          color="orange"
+          icon={<IconAlertCircle size={16} />}
+          title="API and worker versions differ"
+          data-testid="version-skew-warning"
+        >
+          <Text size="sm">
+            The API runs canopycms {build.canopycmsVersion} but the worker runs canopycms{' '}
+            {workerVersion}. They were deployed from different builds.
+          </Text>
+        </Alert>
+      )}
+
+      <Paper withBorder p="sm" radius="md">
+        <Text size="sm" fw={600}>
+          Build
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-api-version">
+          API: canopycms {build.canopycmsVersion}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-source-revision">
+          Source revision:{' '}
+          {build.sourceRevision ? (
+            <Tooltip label={build.sourceRevision}>
+              <Code>{build.sourceRevision.slice(0, 12)}</Code>
+            </Tooltip>
+          ) : (
+            'not set (pass the CANOPY_SOURCE_SHA build arg to the image build)'
+          )}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-worker-version">
+          Worker version: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
+        </Text>
+        <Text size="xs" c="dimmed" data-testid="build-media">
+          Media storage:{' '}
+          {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}
+        </Text>
+      </Paper>
+
       {lastGitSync && (
         <Paper withBorder p="sm" radius="md">
           <Text size="sm" fw={600}>
@@ -266,12 +359,28 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           <Text size="xs" c="dimmed">
             {status.workerStatus?.lastGitSyncAt ?? 'unknown time'} · {lastGitSync.durationMs}ms ·{' '}
             {lastGitSync.rebased.length} rebased · {lastGitSync.skippedDirty.length} skipped (dirty)
-            {/* [SYNC-C1] Optional: a worker predating the content-write lock
-                writes no such field, so only render it when present. */}
+            {/* Optional: a worker predating the field writes none, so only
+                render it when present. */}
             {lastGitSync.skippedLocked && lastGitSync.skippedLocked.length > 0
-              ? ` · ${lastGitSync.skippedLocked.length} skipped (content write in progress)`
+              ? ` · ${lastGitSync.skippedLocked.length} skipped (busy: a content write, provisioning or purge)`
               : ''}
           </Text>
+          {/* Optional: a worker predating the base-refresh report writes none. */}
+          {lastGitSync.baseRefresh && (
+            <Text size="xs" c="dimmed" data-testid="base-refresh-outcome">
+              Base branch: {BASE_REFRESH_LABELS[lastGitSync.baseRefresh.outcome]}
+            </Text>
+          )}
+          {baseWarning && (
+            <Text
+              size="xs"
+              c="orange"
+              style={{ whiteSpace: 'pre-line' }}
+              data-testid="base-refresh-warning"
+            >
+              {baseWarning}
+            </Text>
+          )}
           {lastGitSync.failed.length > 0 && (
             <Spoiler
               maxHeight={0}
@@ -494,6 +603,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
 function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const { branchHealth, branchHealthLoading } = health
   const entries = branchHealth?.entries ?? []
+  const baseWarning = baseRefreshWarning(health.status?.workerStatus?.lastGitSync?.baseRefresh)
 
   const handleMarkMergedClick = (branchName: string) => {
     modals.openConfirmModal({
@@ -563,6 +673,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
             <BranchHealthRow
               key={entry.dirName}
               entry={entry}
+              baseWarning={entry.isBaseBranch ? baseWarning : null}
               onMarkMerged={handleMarkMergedClick}
               onRepair={handleRepairClick}
               onPurge={handlePurgeClick}
@@ -576,11 +687,14 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
 
 function BranchHealthRow({
   entry,
+  baseWarning,
   onMarkMerged,
   onRepair,
   onPurge,
 }: {
   entry: BranchHealthEntry
+  /** The base branch's last refresh problem, from worker status; null on other rows. */
+  baseWarning: string | null
   onMarkMerged: (branchName: string) => void
   onRepair: (dirName: string) => void
   onPurge: (dirName: string) => void
@@ -674,6 +788,19 @@ function BranchHealthRow({
                   size="sm"
                   radius="xl"
                   data-testid={`rebase-failure-${entry.dirName}`}
+                >
+                  <IconAlertTriangle size={12} />
+                </ThemeIcon>
+              </Tooltip>
+            )}
+            {baseWarning && (
+              <Tooltip label={baseWarning} multiline maw={420} style={{ whiteSpace: 'pre-line' }}>
+                <ThemeIcon
+                  color="yellow"
+                  variant="light"
+                  size="sm"
+                  radius="xl"
+                  data-testid={`base-refresh-warning-${entry.dirName}`}
                 >
                   <IconAlertTriangle size={12} />
                 </ThemeIcon>

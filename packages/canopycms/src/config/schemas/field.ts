@@ -96,6 +96,7 @@ const blockFieldSchema = fieldBaseSchema.extend({
 const objectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('object'),
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
+  itemTitleField: z.string().min(1).optional(),
 })
 
 // Inline group field: visual grouping only, no data nesting

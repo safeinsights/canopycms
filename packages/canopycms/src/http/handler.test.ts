@@ -6,6 +6,8 @@ import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { RemoteNotReadyError } from '../git-manager'
+import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
@@ -497,6 +499,55 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(200)
   })
 
+  it('calls refreshActiveBranch as a method of services', async () => {
+    const services = createMockServices()
+    const refresh = vi.fn().mockResolvedValue(undefined)
+    services.refreshActiveBranch = refresh
+    const handler = createCanopyRequestHandler({
+      services: services as unknown as CanopyServices,
+      authPlugin: createMockAuthPlugin(),
+      getBranchContext: async () => null,
+    })
+
+    await handler(
+      createMockRequest({ method: 'GET', url: 'http://localhost:3000/api/canopycms/branches' }),
+      ['branches'],
+    )
+
+    expect(refresh.mock.contexts[0]).toBe(services)
+  })
+
+  it('logs one timing summary per request under CANOPYCMS_DEBUG, naming the route pattern', async () => {
+    const original = process.env.CANOPYCMS_DEBUG
+    process.env.CANOPYCMS_DEBUG = 'true'
+    const consoleSpy = mockConsole()
+    try {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async () => null,
+      })
+      await handler(
+        createMockRequest({
+          method: 'GET',
+          url: 'http://localhost:3000/api/canopycms/feature-secret/comments',
+        }),
+        ['feature-secret', 'comments'],
+      )
+
+      const lines = consoleSpy.all().log.filter((l) => l.includes('[CanopyCMS:timing]'))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toMatch(
+        / GET :branch\/comments \d+ \d+ms \| context=\d+ refreshBranch=\d+ auth=\d+ branchContext=\d+ user=\d+ user>groups=\d+ route=\d+ route>branchContext=\d+ untimed=\d+/,
+      )
+      expect(lines[0]).not.toContain('feature-secret')
+    } finally {
+      consoleSpy.restore()
+      if (original === undefined) delete process.env.CANOPYCMS_DEBUG
+      else process.env.CANOPYCMS_DEBUG = original
+    }
+  })
+
   it('returns a sanitized 500 envelope when no config or services provided (API-C1)', async () => {
     const authPlugin = createMockAuthPlugin()
 
@@ -517,6 +568,112 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(500)
     expect(response.body).toHaveProperty('ok', false)
     expect((response.body as { error?: string }).error).toContain('config or services is required')
+  })
+
+  describe('worker not ready (no remote yet)', () => {
+    const notReady = () => new RemoteNotReadyError('/mnt/efs/workspace/remote.git')
+
+    const expectFriendly503 = (response: {
+      status: number
+      body: unknown
+      headers?: Record<string, string>
+    }) => {
+      expect(response.status).toBe(503)
+      expect(response.body).toEqual({ ok: false, status: 503, error: WORKER_NOT_READY_MESSAGE })
+      expect(response.headers).toEqual({ 'Retry-After': '30' })
+    }
+
+    it('503s with the friendly body when base-branch provisioning hits it', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw notReady()
+          },
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+        // The detailed message still reaches the server log.
+        expect(consoleSpy).toHaveErrored(/CANOPYCMS_REMOTE_URL/)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s with the friendly body when resolving internal groups hits it', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.getSettingsBranchRoot = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('503s a bootstrap admin on /admin too rather than serving it degraded', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.bootstrapAdminIds = new Set(['test-user'])
+        services.getSettingsBranchRoot = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        const req = createMockRequest({ url: 'http://localhost:3000/api/canopycms/admin/status' })
+        expectFriendly503(await handler(req, ['admin', 'status']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('maps it to the same 503 when it surfaces from a route handler (backstop)', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const services: any = createMockServices()
+        services.refreshActiveBranch = vi.fn().mockRejectedValue(notReady())
+        const handler = createCanopyRequestHandler({
+          services,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => null,
+        })
+
+        expectFriendly503(await handler(createMockRequest(), ['branches']))
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('leaves a generic provisioning error on the existing message', async () => {
+      const consoleSpy = mockConsole()
+      try {
+        const handler = createCanopyRequestHandler({
+          services: createMockServices() as any,
+          authPlugin: createMockAuthPlugin(),
+          getBranchContext: async () => {
+            throw new Error('clone failed: remote branch not found')
+          },
+        })
+
+        const response = await handler(createMockRequest(), ['branches'])
+        expect(response.status).toBe(503)
+        expect((response.body as { error?: string }).error).toContain('provisioning failed')
+        expect(response.headers).toBeUndefined()
+      } finally {
+        consoleSpy.restore()
+      }
+    })
   })
 
   describe('unguarded error boundary (API-C1)', () => {
@@ -624,44 +781,69 @@ describe('createCanopyRequestHandler', () => {
   })
 })
 
-describe('buildContext auto-create: settingsBranch must match the resolved (deployment-namespaced) branch', () => {
-  // Regression test for a bug where buildContext computed `settingsBranch` as
-  // `services.config.settingsBranch ?? 'canopycms-settings'` — a THIRD,
-  // independent hardcoded default that never accounted for deploymentName. A
-  // request for a deployment-namespaced settings branch (e.g.
-  // 'canopycms-settings-acme') would then never match `branch === settingsBranch`
-  // in shouldAutoCreate, so getBranchContext() would return null for it (404)
-  // instead of auto-creating it, even though the SAME branch name is exactly
-  // what strategy.getSettingsBranchName() resolves elsewhere in the app.
-  //
-  // Deliberately does NOT override `getBranchContext` in CanopyHandlerOptions,
-  // so this exercises buildContext's own default closure (where the bug
-  // lived) rather than bypassing it like most other tests in this file do.
-  it('auto-creates a request for the deployment-namespaced settings branch, not just the hardcoded literal', async () => {
-    const { BranchWorkspaceManager } = await import('../branch-workspace')
+describe('buildContext: the settings branch is never a content branch', () => {
+  // Uses buildContext's own default getBranchContext (no override), where the
+  // auto-create lives.
+  const request = async (
+    branch: string,
+    configure?: (config: { deploymentName?: string; settingsBranch?: string }) => void,
+  ) => {
+    const { BranchWorkspaceManager, loadBranchContext } = await import('../branch-workspace')
     const services: any = createMockServices()
-    services.config.deploymentName = 'acme' // dev mode -> resolved settings branch: canopycms-settings-acme
-    const authPlugin = createMockAuthPlugin()
+    configure?.(services.config)
+    const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
+    vi.mocked(BranchWorkspaceManager).mockClear()
+    vi.mocked(loadBranchContext).mockClear()
+    const response = await handler(
+      createMockRequest({
+        method: 'GET',
+        url: `http://localhost:3000/api/canopycms/${branch}/status`,
+      }),
+      [branch, 'status'],
+    )
+    const created = vi
+      .mocked(BranchWorkspaceManager)
+      .mock.results.flatMap(
+        (r) =>
+          (r.value as { openOrCreateBranch: ReturnType<typeof vi.fn> }).openOrCreateBranch.mock
+            .calls,
+      )
+      .map(([opts]) => (opts as { branchName: string }).branchName)
+    const loaded = vi.mocked(loadBranchContext).mock.calls.map(([opts]) => opts.branchName)
+    return { response, created, loaded }
+  }
 
-    const handler = createCanopyRequestHandler({ services, authPlugin })
-
-    const req = createMockRequest({
-      method: 'GET',
-      url: 'http://localhost:3000/api/canopycms/canopycms-settings-acme/status',
+  it('answers 404 for the deployment-namespaced settings branch, provisioning and loading nothing', async () => {
+    const { response, created, loaded } = await request('canopycms-settings-acme', (config) => {
+      config.deploymentName = 'acme'
     })
-    const response = await handler(req, ['canopycms-settings-acme', 'status'])
 
-    // With the old hardcoded 'canopycms-settings' default, this branch name
-    // would never match and the branchAccess guard would 404 ("Branch not found").
-    expect(response.status).toBe(200)
-    expect((response.body as { data?: { branch?: { name: string } } }).data?.branch?.name).toBe(
-      'new-branch',
-    )
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('canopycms-settings-acme')
+    expect(loaded).not.toContain('canopycms-settings-acme')
+  })
 
-    const results = (BranchWorkspaceManager as unknown as ReturnType<typeof vi.fn>).mock.results
-    const lastInstance = results[results.length - 1]?.value
-    expect(lastInstance.openOrCreateBranch).toHaveBeenCalledWith(
-      expect.objectContaining({ branchName: 'canopycms-settings-acme' }),
-    )
+  it("answers 404 for an adopter's configured settings branch outside the reserved prefix", async () => {
+    const { response, created, loaded } = await request('site-settings', (config) => {
+      config.settingsBranch = 'site-settings'
+    })
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('site-settings')
+    expect(loaded).not.toContain('site-settings')
+  })
+
+  it("answers 404 for another deployment's settings branch", async () => {
+    const { response, created, loaded } = await request('canopycms-settings-other')
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain('canopycms-settings-other')
+    expect(loaded).not.toContain('canopycms-settings-other')
+  })
+
+  it('records the base branch it provisions on every request (so the spies above can see a call)', async () => {
+    const { created } = await request('main')
+
+    expect(created).toContain('main')
   })
 })

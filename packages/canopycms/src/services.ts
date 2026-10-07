@@ -36,8 +36,17 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
-import { detectHeadBranch } from './utils/git'
+import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
+import { timeRequestPhase } from './utils/request-timing'
+import { BRANCH_META_DIR } from './branch-metadata-file'
+import {
+  appendTrailers,
+  buildEditorTrailers,
+  type SubmissionEditor,
+} from './submission-attribution'
+import { getErrorMessage, redactCredentials } from './utils/error'
+import { withContentWriteLock } from './utils/content-write-lock'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -83,6 +92,11 @@ export const getBootstrapAdminIds = (): Set<string> => {
   )
 }
 
+export interface SubmitBranchResult {
+  /** Repo-relative paths the branch changes, excluding canopycms runtime metadata. */
+  changedPaths: string[]
+}
+
 export interface CanopyServices {
   config: CanopyConfig
   /**
@@ -118,24 +132,34 @@ export interface CanopyServices {
   githubService?: GitHubService
   /** Bootstrap admin user IDs that are always treated as Admins */
   bootstrapAdminIds: Set<string>
-  /** Commit files to git with automatic author handling */
+  /**
+   * Commit files to git with automatic author handling. Holds the branch's
+   * content-write lock; rejects with `ContentWriteLockBusyError` when busy.
+   */
   commitFiles: (options: {
     context: BranchContext
     files: string | string[]
     message: string
   }) => Promise<void>
-  /** Submit branch: commit all changes and push to remote */
-  submitBranch: (options: { context: BranchContext; message?: string }) => Promise<void>
-  /** Commit to settings branch (for permissions/groups), with optional PR creation */
+  /**
+   * Submit branch: commit all changes (with the submitter's trailers) and push
+   * to remote. Resolves with every path the branch changes against its base.
+   * Holds the branch's content-write lock; rejects with
+   * `ContentWriteLockBusyError` when busy.
+   */
+  submitBranch: (options: {
+    context: BranchContext
+    submitter?: SubmissionEditor
+    message?: string
+  }) => Promise<SubmitBranchResult>
+  /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
   commitToSettingsBranch: (options: {
     branchRoot: string
     files: string | string[]
     message: string
-    createPR?: boolean
   }) => Promise<{
     committed: boolean
     pushed: boolean
-    prUrl?: string
     error?: string
     syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }>
@@ -218,7 +242,7 @@ async function _createCanopyServicesInternal(
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
   // Content access loads permissions dynamically from the settings branch (orphan git branch)
-  const getSettingsBranchRoot =
+  const ensureSettingsBranchRoot =
     options.getSettingsBranchRoot ??
     (async (): Promise<string> => {
       const strategy = operatingStrategy(config.mode)
@@ -236,10 +260,12 @@ async function _createCanopyServicesInternal(
 
       return settingsRoot
     })
+  const getSettingsBranchRoot = () => timeRequestPhase('settingsRoot', ensureSettingsBranchRoot)
 
   const contentAccessDeps = {
     checkBranchAccess,
-    loadPathPermissions,
+    loadPathPermissions: (repoRoot: string, mode: CanopyConfig['mode']) =>
+      timeRequestPhase('permissions', () => loadPathPermissions(repoRoot, mode)),
     defaultPathAccess: config.defaultPathAccess ?? 'deny',
     mode: config.mode,
     getSettingsBranchRoot,
@@ -277,14 +303,20 @@ async function _createCanopyServicesInternal(
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
     })
-    await git.add(options.files)
-    await git.commit(options.message)
+    // [SYNC-C1] Unlocked, a commit made while a rebase is stopped on a conflict
+    // lands on its detached head with the rebase's half-resolved index, and the
+    // rebase's `--abort` discards it.
+    await withContentWriteLock(options.context.branchRoot, async () => {
+      await git.add(options.files)
+      await git.commit(options.message)
+    })
   }
 
   const submitBranch = async (options: {
     context: BranchContext
+    submitter?: SubmissionEditor
     message?: string
-  }): Promise<void> => {
+  }): Promise<SubmitBranchResult> => {
     // Defense-in-depth: refuse to push the base branch to itself even if the
     // 'submittableBranch' guard was somehow bypassed. Prefer the recorded fork
     // point (context.branch.baseBranch) over config.defaultBaseBranch — the
@@ -303,22 +335,57 @@ async function _createCanopyServicesInternal(
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
     })
-    await git.checkoutBranch(options.context.branch.name)
-    const status = await git.status()
-    // Commit and push answer two DIFFERENT questions. Committing cleans the
-    // working tree, so one combined "tree is dirty" gate makes a retry after a
-    // failed push a silent no-op: nothing left to commit, the block is skipped,
-    // and success is reported though the commit never reached the remote. Push
-    // whenever there is something new to send — we just committed, or the local
-    // branch already had unpushed commits from an earlier attempt.
-    let committed = false
-    if (status.files.length > 0) {
-      await git.add('.')
-      await git.commit(options.message ?? `Submit ${options.context.branch.name}`)
-      committed = true
+    // [SYNC-C1] Commits the whole working tree, so it holds the branch's
+    // content-write lock from checkout through push. Unlocked, its checkout
+    // succeeds while the worker's rebase is stopped on a conflict, the commit
+    // lands on the branch, and the rebase's `--abort` resets the branch past it
+    // after this reported success. The push stays inside so no rebase rewrites
+    // the commit between commit and push.
+    const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
+      await git.checkoutBranch(options.context.branch.name)
+      const status = await git.status()
+      // Commit and push answer two DIFFERENT questions. Committing cleans the
+      // working tree, so one combined "tree is dirty" gate makes a retry after a
+      // failed push a silent no-op: nothing left to commit, the block is skipped,
+      // and success is reported though the commit never reached the remote. Push
+      // whenever there is something new to send — we just committed, or the local
+      // branch already had unpushed commits from an earlier attempt.
+      // canopycms's own state under .canopy-meta/ is never content, so it neither
+      // makes a commit worth creating nor gets staged into one.
+      let committed = false
+      if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
+        await git.addAllExceptCanopyState()
+        const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
+          editedBy: config.gitEditedByTrailers ?? true,
+          coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+        })
+        await git.commit(
+          appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
+        )
+        committed = true
+      }
+      if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
+        await git.push(options.context.branch.name)
+      }
+      return status
+    })
+
+    // The list only feeds the PR body, so a failure to compute it falls back to
+    // this submit's own working-tree changes rather than failing a submit that
+    // has already been pushed.
+    let changedPaths: string[]
+    try {
+      changedPaths = await git.listChangedPathsSinceBase()
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
+          "the PR body lists only this submit's changes:",
+        redactCredentials(getErrorMessage(err)),
+      )
+      changedPaths = submitted.files.map((f) => f.path)
     }
-    if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
-      await git.push(options.context.branch.name)
+    return {
+      changedPaths: changedPaths.filter((p) => !p.startsWith(`${BRANCH_META_DIR}/`)),
     }
   }
 
@@ -343,11 +410,9 @@ async function _createCanopyServicesInternal(
     branchRoot: string
     files: string | string[]
     message: string
-    createPR?: boolean
   }): Promise<{
     committed: boolean
     pushed: boolean
-    prUrl?: string
     error?: string
     syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }> => {
@@ -397,58 +462,30 @@ async function _createCanopyServicesInternal(
         }
       }
 
-      // Create or update PR — dual-path like content branches (api/github-sync.ts)
-      if (options.createPR !== false) {
-        // Permissions and groups are read live from the settings workspace
-        // (getSettingsBranchRoot), never from this PR's base branch, so the
-        // change took effect when it was committed and pushed above, before
-        // this PR existed. Merging re-activates nothing; it only records the
-        // change on `base` for review and audit history.
-        const settingsPRBody =
-          'Automated PR for permission and group changes. These changes already took ' +
-          'effect in the CMS when they were saved — merging this PR does not change ' +
-          "what's live; it only records the change here for review and audit history."
-        // Direct path: githubService available (has internet)
-        if (githubService) {
-          let prUrl: string | undefined
-          try {
-            // Settings-branch PRs never pass markReadyIfDraft: a settings sync
-            // has no explicit "submit for review" step the way a content submit
-            // does, so an existing draft PR stays draft until an admin says so.
-            const result = await githubService.createOrUpdatePR({
-              head: settingsBranch,
-              base: config.defaultBaseBranch ?? 'main',
-              title: 'Update permissions and groups',
-              body: settingsPRBody,
-            })
-            prUrl = result.url
-          } catch (err) {
-            console.warn('Failed to create/update PR:', err)
-            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-          }
-          return { committed: true, pushed: true, prUrl, syncStatus: 'synced' }
-        }
-
-        // Async path: queue task for worker (prod Lambda has no internet)
-        const taskDir = getTaskQueueDir(config)
-        try {
-          await enqueueTask(taskDir, {
-            action: 'push-and-create-or-update-pr',
-            payload: {
-              branch: settingsBranch,
-              baseBranch: config.defaultBaseBranch ?? 'main',
-              title: 'Update permissions and groups',
-              body: settingsPRBody,
-            },
-          })
-          return { committed: true, pushed: true, syncStatus: 'pending-sync' }
-        } catch (err) {
-          console.warn('Failed to enqueue settings PR task:', err)
-          return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-        }
+      // The settings branch is an orphan: it shares no history with the base
+      // branch, so GitHub rejects a PR for it. The change took effect when it
+      // was committed and pushed above (permissions and groups are read live
+      // from the settings workspace); the only GitHub step is mirroring the
+      // branch, so there is never a PR.
+      if (!operatingStrategy(mode).supportsPullRequests()) {
+        return { committed: true, pushed: true }
       }
-
-      return { committed: true, pushed: true }
+      // With a githubService the push above already reached GitHub: both it and
+      // the workspace remote come from `defaultRemoteUrl`. Without one (prod
+      // Lambda has no internet) the worker pushes it.
+      if (githubService) {
+        return { committed: true, pushed: true, syncStatus: 'synced' }
+      }
+      try {
+        await enqueueTask(getTaskQueueDir(config), {
+          action: 'push-branch',
+          payload: { branch: settingsBranch },
+        })
+        return { committed: true, pushed: true, syncStatus: 'pending-sync' }
+      } catch (err) {
+        console.warn('Failed to enqueue settings push task:', err)
+        return { committed: true, pushed: true, syncStatus: 'sync-failed' }
+      }
     } catch (error) {
       return {
         committed: false,

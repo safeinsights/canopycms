@@ -7,6 +7,7 @@ import { RESERVED_GROUPS, isAdmin, isReviewer } from './authorization'
 import type { AuthenticationResult } from './auth/types'
 import type { InternalGroup } from './authorization'
 import { mockConsole } from './test-utils/console-spy'
+import { enqueueTask } from './task-queue/cms-task-queue'
 
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({})),
@@ -16,6 +17,12 @@ vi.mock('simple-git', () => ({
 vi.mock('./utils/git', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./utils/git')>()
   return { ...actual, detectHeadBranch: vi.fn(actual.detectHeadBranch) }
+})
+
+// The queue directory resolves to the real prod workspace; keep tests off it.
+vi.mock('./task-queue/cms-task-queue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./task-queue/cms-task-queue')>()
+  return { ...actual, enqueueTask: vi.fn().mockResolvedValue('task-id') }
 })
 
 /** Create a mock git instance with sensible defaults and optional overrides. */
@@ -702,7 +709,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings-prod')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/canopycms-settings-prod')
   })
 
   it('should pull from the correct settings branch', async () => {
@@ -723,7 +730,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'my-settings')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/my-settings')
   })
 
   it('should use configured settingsBranch value', async () => {
@@ -759,7 +766,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'refs/heads/custom-settings-branch')
     // push() now goes through raw(['push', ...]) to place --end-of-options
     // before the positional refspec (SEC-H2 guard).
     expect(rawMock).toHaveBeenCalledWith(expect.arrayContaining(['push', '--end-of-options']))
@@ -830,11 +837,101 @@ describe('commitToSettingsBranch', () => {
       branchRoot: '/tmp/repo',
       files: 'permissions.json',
       message: 'Update permissions',
-      createPR: false,
     })
 
     expect(result.committed).toBe(true)
     expect(mergeMock).not.toHaveBeenCalled()
     expect(consoleSpy.all().info.join('\n')).toMatch(/normal for the first settings commit/)
+  })
+
+  // The settings branch is an orphan: GitHub rejects a PR for it, so the only
+  // GitHub step is a plain push.
+  describe('GitHub step for the orphan settings branch', () => {
+    const originalToken = process.env.GITHUB_BOT_TOKEN
+
+    afterEach(() => {
+      if (originalToken === undefined) delete process.env.GITHUB_BOT_TOKEN
+      else process.env.GITHUB_BOT_TOKEN = originalToken
+    })
+
+    async function installSettingsGit() {
+      await installMockGit(
+        createMockGitInstance({
+          currentBranch: 'canopycms-settings-prod',
+          fetch: vi.fn().mockResolvedValue(undefined),
+          extra: {
+            addConfig: vi.fn().mockResolvedValue(undefined),
+            listConfig: vi.fn().mockResolvedValue({
+              all: {
+                'canopycms.managed': 'true',
+                'user.name': 'Test Bot',
+                'user.email': 'bot@test.com',
+              },
+            }),
+          },
+        }),
+      )
+    }
+
+    it('enqueues push-branch, never a PR task, when there is no githubService', async () => {
+      delete process.env.GITHUB_BOT_TOKEN
+      delete process.env.CANOPYCMS_GITHUB_TOKEN
+      await installSettingsGit()
+      const cfg = defineCanopyTestConfig({ schema: testSchema, mode: 'prod' })
+      const services = await createTestServices({ ...cfg, schema: testSchema })
+      expect(services.githubService).toBeUndefined()
+
+      const result = await services.commitToSettingsBranch({
+        branchRoot: '/tmp/repo',
+        files: 'permissions.json',
+        message: 'Update permissions',
+      })
+
+      expect(result).toEqual({ committed: true, pushed: true, syncStatus: 'pending-sync' })
+      const queued = vi.mocked(enqueueTask).mock.calls.map(([, task]) => task)
+      expect(queued).toEqual([
+        { action: 'push-branch', payload: { branch: 'canopycms-settings-prod' } },
+      ])
+    })
+
+    it('never calls createOrUpdatePR and enqueues nothing when a githubService exists', async () => {
+      process.env.GITHUB_BOT_TOKEN = 'test-token'
+      await installSettingsGit()
+      const cfg = defineCanopyTestConfig({
+        schema: testSchema,
+        mode: 'prod',
+        defaultRemoteUrl: 'https://github.com/example/site.git',
+        allowNetworkRemoteInProd: true,
+      })
+      const services = await createTestServices({ ...cfg, schema: testSchema })
+      const github = services.githubService
+      if (!github) throw new Error('expected a githubService')
+      const createOrUpdatePR = vi.spyOn(github, 'createOrUpdatePR')
+
+      const result = await services.commitToSettingsBranch({
+        branchRoot: '/tmp/repo',
+        files: 'permissions.json',
+        message: 'Update permissions',
+      })
+
+      expect(result).toEqual({ committed: true, pushed: true, syncStatus: 'synced' })
+      expect(createOrUpdatePR).not.toHaveBeenCalled()
+      expect(enqueueTask).not.toHaveBeenCalled()
+    })
+
+    it('enqueues nothing in dev mode, which has no GitHub', async () => {
+      await installSettingsGit()
+      const cfg = defineCanopyTestConfig({ schema: testSchema, mode: 'dev' })
+      const services = await createTestServices({ ...cfg, schema: testSchema })
+
+      const result = await services.commitToSettingsBranch({
+        branchRoot: '/tmp/repo',
+        files: 'permissions.json',
+        message: 'Update permissions',
+      })
+
+      expect(result).toEqual({ committed: true, pushed: true })
+      expect(enqueueTask).not.toHaveBeenCalled()
+    })
   })
 })

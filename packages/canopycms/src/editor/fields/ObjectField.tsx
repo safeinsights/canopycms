@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useId } from 'react'
 
 import { Button, Group, Paper, Stack, Text } from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
 import { formatCanopyPath } from '../canopy-path'
+import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
 export type RenderField = (
   field: FieldConfig,
@@ -14,6 +15,7 @@ export type RenderField = (
 
 export interface ObjectFieldProps {
   label?: string
+  description?: string
   fields: FieldConfig[]
   value: Record<string, unknown> | undefined
   onChange: (value: Record<string, unknown>) => void
@@ -32,6 +34,7 @@ export interface ObjectFieldProps {
 
 export const ObjectField: React.FC<ObjectFieldProps> = ({
   label,
+  description,
   fields,
   value,
   onChange,
@@ -41,6 +44,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
   onRemove,
 }) => {
   const current = value ?? {}
+  const descriptionBaseId = useId()
 
   return (
     <Paper
@@ -50,6 +54,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
       shadow="xs"
+      {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
         {(label || onRemove) && (
@@ -66,6 +71,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
             )}
           </Group>
         )}
+        <FieldDescription baseId={descriptionBaseId} description={description} />
         <Stack gap="sm">
           {fields.map((field) => {
             const fieldPath = [...path, field.name]

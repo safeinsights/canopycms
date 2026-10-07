@@ -59,6 +59,7 @@ import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
+import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
 import { AssetContextProvider, useApiClient } from './context'
@@ -121,7 +122,10 @@ export interface EditorProps {
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
   onCreateEntry?: (collectionPath: LogicalPath) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
-  previewBaseByCollection?: Record<string, string>
+  /** `editor.previewBase` from config (see `buildPreviewSrc`); `false` marks entries with no page. */
+  previewBaseByCollection?: Record<string, string | false>
+  /** `editor.previewPrefix` from config: put in front of every preview iframe `src` (see `buildPreviewSrc`). */
+  previewPrefix?: string
   currentUser?: string
   canResolveComments?: boolean
   /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
@@ -167,6 +171,7 @@ export const Editor: React.FC<EditorProps> = ({
   themeOptions,
   operatingMode,
   previewBaseByCollection,
+  previewPrefix,
   currentUser = 'current-user',
   canResolveComments = true,
   assetBaseUrl,
@@ -234,6 +239,7 @@ export const Editor: React.FC<EditorProps> = ({
     setBranchName,
     branchSummaries,
     currentBranch,
+    addCreatedBranch,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,
@@ -289,11 +295,11 @@ export const Editor: React.FC<EditorProps> = ({
     initialSelectedId,
     branchName: branchNameState,
     collections,
-    previewBaseByCollection,
     resolvePreviewSrc: (entry) =>
       buildPreviewSrc(entry, {
         branchName: branchNameState,
         previewBaseByCollection,
+        previewPrefix,
         contentRoot,
         basePath,
       }),
@@ -366,6 +372,7 @@ export const Editor: React.FC<EditorProps> = ({
     setBranchName,
     isAnyDirty,
     onReloadBranches: () => loadBranches(),
+    onBranchCreated: addCreatedBranch,
   })
 
   // 5. Comment system (depends on branchNameState)
@@ -482,9 +489,8 @@ export const Editor: React.FC<EditorProps> = ({
         // branch's content. Writing it would (a) show it as the new branch's
         // content and (b) satisfy the skip gate above, permanently suppressing
         // the new branch's own load -- which also leaves the new branch's OCC
-        // token unset, turning the next save into a blind overwrite that can
-        // never 409. Drop it instead; the new branch has its own load running
-        // under its own key.
+        // token unset, so saveEntry refuses every save of the entry. Drop it
+        // instead; the new branch has its own load running under its own key.
         if (currentBranchRef.current !== requestBranch) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
         // No draft is seeded here. `effectiveValue` is
@@ -952,7 +958,9 @@ export const Editor: React.FC<EditorProps> = ({
             ? 'Setting up your branch workspace…'
             : entriesInitializing
               ? 'Loading content…'
-              : 'Select an item to start editing.'}
+              : currentEntry && !currentEntry.previewSrc
+                ? 'No preview for this entry.'
+                : 'Select an item to start editing.'}
         </Text>
       </Paper>
     )
@@ -1056,9 +1064,7 @@ export const Editor: React.FC<EditorProps> = ({
                             : 'Select an item to start editing.'}
                       </CenteredMessage>
                     ) : currentEntry.canEdit === false ? (
-                      <CenteredMessage>
-                        You don&apos;t have permission to edit this content.
-                      </CenteredMessage>
+                      <NoEditPermissionNotice entryPath={currentEntry.path} />
                     ) : schema.length > 0 && effectiveValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <FormRenderer
@@ -1248,9 +1254,7 @@ export const Editor: React.FC<EditorProps> = ({
                   // Don't close branch manager if there was an error or user cancelled
                 }
               }}
-              onCreate={(branch) => {
-                handleCreateBranch(branch).catch((err) => console.error(err))
-              }}
+              onCreate={handleCreateBranch}
               onSubmit={(name) => {
                 handleSubmit(name).catch((err) => console.error(err))
               }}

@@ -68,6 +68,7 @@ const postSchema: FieldConfig[] = [
     type: 'object',
     label: 'Key features',
     list: true,
+    itemTitleField: 'title',
     fields: [
       { name: 'title', type: 'string' },
       { name: 'description', type: 'string' },

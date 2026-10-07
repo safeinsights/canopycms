@@ -1,6 +1,6 @@
 import React from 'react'
 import { notFound } from 'next/navigation'
-import DocView from '../../components/DocView'
+import { DocPreview } from '../../components/DocView'
 import type { DocContent } from '../../schemas'
 import { contentStaticParams, readByUrlPath } from '../../lib/canopy'
 
@@ -29,7 +29,7 @@ const DocPage = async ({ params }: { params: Promise<Params> }) => {
 
   if (!result) return notFound()
 
-  return <DocView data={result.data} />
+  return <DocPreview initialData={result.data} />
 }
 
 export default DocPage

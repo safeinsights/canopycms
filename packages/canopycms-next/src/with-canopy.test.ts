@@ -411,6 +411,33 @@ describe('withCanopy', () => {
     })
   })
 
+  describe('trailing slash (env.CANOPY_TRAILING_SLASH)', () => {
+    it('sets the value the API client and preview URLs read when trailingSlash is true', () => {
+      const config = withCanopy({ trailingSlash: true })
+      expect(config.env).toEqual({ CANOPY_TRAILING_SLASH: 'true' })
+    })
+
+    it.each([[{}], [{ trailingSlash: false }]])('adds no env for %j', (input: NextConfig) => {
+      expect(withCanopy(input)).not.toHaveProperty('env')
+    })
+
+    it("keeps the adopter's env, and leaves it untouched when trailingSlash is off", () => {
+      expect(withCanopy({ trailingSlash: true, env: { FOO: 'bar' } }).env).toEqual({
+        FOO: 'bar',
+        CANOPY_TRAILING_SLASH: 'true',
+      })
+      expect(withCanopy({ env: { FOO: 'bar' } }).env).toEqual({ FOO: 'bar' })
+    })
+
+    it("lets the adopter's own value for the key win", () => {
+      const config = withCanopy({
+        trailingSlash: true,
+        env: { CANOPY_TRAILING_SLASH: 'false' },
+      })
+      expect(config.env).toEqual({ CANOPY_TRAILING_SLASH: 'false' })
+    })
+  })
+
   describe('assets rewrite', () => {
     const ASSETS_REWRITE = {
       source: '/assets/:path*',

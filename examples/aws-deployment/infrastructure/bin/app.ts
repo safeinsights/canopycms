@@ -126,4 +126,8 @@ new CmsStack(app, 'CanopyCms', {
   // point your own existing distribution at it.
   domainName: process.env.CMS_DOMAIN_NAME || undefined,
   hostedZoneDomain: process.env.CMS_HOSTED_ZONE_DOMAIN || undefined,
+
+  // Optional, and NOT `required()`: the commit the CMS image is built from,
+  // shown in System health. Unset, System health reports it as "not set".
+  sourceRevision: process.env.CANOPY_SOURCE_SHA || undefined,
 })

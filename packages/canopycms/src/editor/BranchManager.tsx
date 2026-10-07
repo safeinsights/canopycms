@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 
 import {
   Badge,
@@ -163,7 +163,15 @@ export interface BranchManagerProps {
   /** Current user context for permission checks */
   user?: UserContext
   onSelect?: (name: string) => void
-  onCreate?: (branch: { name: string; title?: string; description?: string }) => void
+  /**
+   * Resolving `false` means the branch was not created, so the form stays open
+   * with the user's values; any other return (including none) closes it.
+   */
+  onCreate?: (branch: {
+    name: string
+    title?: string
+    description?: string
+  }) => Promise<boolean> | void
   onDelete?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
@@ -210,17 +218,29 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [newBranchTitle, setNewBranchTitle] = useState('')
   const [newBranchDescription, setNewBranchDescription] = useState('')
 
-  const handleCreate = () => {
-    if (!newBranchName.trim()) return
-    onCreate?.({
-      name: newBranchName.trim(),
-      title: newBranchTitle.trim() || undefined,
-      description: newBranchDescription.trim() || undefined,
-    })
-    setNewBranchName('')
-    setNewBranchTitle('')
-    setNewBranchDescription('')
-    setShowCreateForm(false)
+  const [creating, setCreating] = useState(false)
+  // Read synchronously: state would not yet show a first click to a second one in the same tick.
+  const creatingRef = useRef(false)
+
+  const handleCreate = async () => {
+    if (creatingRef.current || !newBranchName.trim()) return
+    creatingRef.current = true
+    setCreating(true)
+    try {
+      const created = await onCreate?.({
+        name: newBranchName.trim(),
+        title: newBranchTitle.trim() || undefined,
+        description: newBranchDescription.trim() || undefined,
+      })
+      if (created === false) return
+      setNewBranchName('')
+      setNewBranchTitle('')
+      setNewBranchDescription('')
+      setShowCreateForm(false)
+    } finally {
+      creatingRef.current = false
+      setCreating(false)
+    }
   }
 
   return (
@@ -251,6 +271,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             size="sm"
             fullWidth
             onClick={() => setShowCreateForm(!showCreateForm)}
+            disabled={creating}
             data-testid="create-branch-button"
           >
             {showCreateForm ? 'Cancel' : 'Create New Branch'}
@@ -265,6 +286,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required
+                  disabled={creating}
                   data-testid="branch-name-input"
                 />
                 <TextInput
@@ -272,6 +294,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   placeholder="Brief description"
                   value={newBranchTitle}
                   onChange={(e) => setNewBranchTitle(e.target.value)}
+                  disabled={creating}
                   data-testid="branch-title-input"
                 />
                 <Textarea
@@ -280,11 +303,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   value={newBranchDescription}
                   onChange={(e) => setNewBranchDescription(e.target.value)}
                   minRows={2}
+                  disabled={creating}
                   data-testid="branch-description-textarea"
                 />
                 <Button
                   onClick={handleCreate}
                   disabled={!newBranchName.trim()}
+                  loading={creating}
                   fullWidth
                   data-testid="create-branch-submit"
                 >

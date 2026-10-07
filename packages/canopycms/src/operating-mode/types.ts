@@ -61,7 +61,7 @@ export interface ClientSafeStrategy {
 export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   /**
    * The mode's workspace root; content-branches, settings and .cache all live
-   * under it. prod: CANOPYCMS_WORKSPACE_ROOT ?? /mnt/efs/workspace.
+   * under it. prod: CANOPYCMS_WORKSPACE_ROOT ?? /mnt/efs.
    * dev: {sourceRoot ?? cwd}/.canopy-dev.
    */
   getWorkspaceRoot(sourceRoot?: string): string
@@ -115,6 +115,4 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   usesSeparateSettingsBranch(): boolean
 
   validateConfig(config: Partial<CanopyConfig>): void
-
-  shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean
 }

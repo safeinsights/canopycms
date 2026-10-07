@@ -77,6 +77,8 @@ export interface CmsStackProps extends StackProps {
   domainName?: string
   /** Optional Route53 hosted zone domain, e.g. 'example.org'. */
   hostedZoneDomain?: string
+  /** Optional. Commit the CMS image is built from; shown in System health. */
+  sourceRevision?: string
 }
 
 export class CmsStack extends Stack {
@@ -128,6 +130,10 @@ export class CmsStack extends Stack {
           // auth. The image's own `next build` stays in dev mode either way --
           // see Dockerfile.cms.
           NEXT_PUBLIC_CANOPY_MODE: 'prod',
+          // CDK hashes build args into the asset, so every new commit rebuilds
+          // the image, even one changing only the dockerignored infrastructure/
+          // -- that is what keeps the revision the CMS reports honest.
+          ...(props.sourceRevision ? { CANOPY_SOURCE_SHA: props.sourceRevision } : {}),
         },
       }),
       // The one place the CMS image's CPU architecture is decided. CDK derives
@@ -186,7 +192,10 @@ export class CmsStack extends Stack {
       },
 
       memorySize: 2048,
-      reservedConcurrency: 10,
+      // A ceiling, free while idle. The editor's static chunks count against it
+      // until CloudFront caches them, and a cold editor load requests them
+      // together, so synth warns below 20. See the prop's doc comment.
+      reservedConcurrency: 50,
     })
 
     // Media support (uploads, on-demand image transforms). To enable it:

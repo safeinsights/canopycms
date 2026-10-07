@@ -1,5 +1,6 @@
 import {
   createNextCanopyContext,
+  previewView,
   type EntryToMetadataOptions,
   type GenerateContentSitemapOptions,
   type GenerateContentStaticParamsOptions,
@@ -43,6 +44,11 @@ export const readByUrlPath: NextCanopyContextResult['readByUrlPath'] = async <T 
 ) => {
   const context = await canopyContextPromise
   return context.readByUrlPath<T>(urlPath, options)
+}
+
+export const listEntries: NextCanopyContextResult['listEntries'] = async (options) => {
+  const context = await canopyContextPromise
+  return context.listEntries(options)
 }
 
 export const read: NextCanopyContextResult['read'] = async <T = unknown>(input: {
@@ -107,6 +113,18 @@ export const getCanopyForBuild = async () => {
   const context = await canopyContextPromise
   return context.getCanopyForBuild()
 }
+
+// The page for the editor's preview route, app/preview/[[...path]]/page.server.tsx: it renders an
+// entry from the `?branch=` the editor names, so a site whose public pages are a static export can
+// still preview a branch. See canopycms.config.ts's `editor.previewPrefix`.
+export const createPreviewPage: NextCanopyContextResult['createPreviewPage'] =
+  (options) => async (props) => {
+    const context = await canopyContextPromise
+    return context.createPreviewPage(options)(props)
+  }
+
+// Pairs a preview view with the server loader that feeds its `extras` prop; see page.server.tsx.
+export { previewView }
 
 // Export for API routes
 export const getHandler = async () => {

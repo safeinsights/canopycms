@@ -8,12 +8,13 @@ import type { EditorProps } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { EditorAuthGate } from './EditorAuthGate'
-import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-config'
+import { buildEditorCollections } from './editor-config'
 
 export interface CanopyEditorProps extends Omit<
   EditorProps,
   | 'collections'
   | 'previewBaseByCollection'
+  | 'previewPrefix'
   | 'title'
   | 'subtitle'
   | 'themeOptions'
@@ -36,13 +37,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   customRenderers,
 }) => {
   const collections = useMemo(() => buildEditorCollections(config.flatSchema), [config.flatSchema])
-  const previewBase = useMemo(
-    () => ({
-      ...buildPreviewBaseByCollection(config, config.flatSchema),
-      ...(config.editor?.previewBase ?? {}),
-    }),
-    [config],
-  )
   // Empty string = branchless start; useBranchManager adopts the server's
   // detected default branch on the first branches.list() load.
   const resolvedBranchName =
@@ -70,7 +64,8 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           collections={collections}
           contentRoot={config.contentRoot}
           entryLinkUrl={config.entryLinkUrl}
-          previewBaseByCollection={previewBase}
+          previewBaseByCollection={config.editor?.previewBase}
+          previewPrefix={config.editor?.previewPrefix}
           assetBaseUrl={config.assetBaseUrl}
           basePath={config.basePath}
           themeOptions={resolvedTheme}

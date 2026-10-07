@@ -171,7 +171,7 @@ describe('Operating Mode Strategies', () => {
         delete process.env.CANOPYCMS_WORKSPACE_ROOT
         const strategy = operatingStrategy(mode)
         const branchesRoot = strategy.getContentBranchesRoot()
-        expect(branchesRoot).toContain('/mnt/efs/workspace/content-branches')
+        expect(branchesRoot).toContain('/mnt/efs/content-branches')
       })
 
       it('should use env variable for content branches root', () => {
@@ -262,16 +262,6 @@ describe('Operating Mode Strategies', () => {
         }).not.toThrow()
       })
 
-      it('should create permissions PR by default', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({})).toBe(true)
-      })
-
-      it('should respect autoCreatePermissionsPR config', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({ autoCreateSettingsPR: false })).toBe(false)
-      })
-
       it('should return git exclude pattern', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
@@ -283,7 +273,7 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const config = strategy.getRemoteUrlConfig()
         expect(config.shouldAutoInitLocal).toBe(false)
-        expect(config.autoDetectRemotePath).toContain('/mnt/efs/workspace/remote.git')
+        expect(config.autoDetectRemotePath).toContain('/mnt/efs/remote.git')
       })
 
       it('should use custom workspace root in autoDetectRemotePath', () => {
@@ -338,11 +328,6 @@ describe('Operating Mode Strategies', () => {
       it('should use separate settings branch', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.usesSeparateSettingsBranch()).toBe(true)
-      })
-
-      it('should NOT create permissions PR', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({})).toBe(false)
       })
 
       it('should return git exclude pattern', () => {

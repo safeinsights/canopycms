@@ -5,6 +5,7 @@ import { TagsInput } from '@mantine/core'
 export interface NumberListFieldProps {
   id?: string
   label?: string
+  description?: string
   value: number[]
   onChange: (value: number[]) => void
   dataCanopyField?: string
@@ -39,6 +40,7 @@ const parseTag = (tag: string): number | undefined => {
 export const NumberListField: React.FC<NumberListFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -51,6 +53,7 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
     <TagsInput
       id={inputId}
       label={label}
+      description={description}
       value={value.map(String)}
       size="sm"
       error={

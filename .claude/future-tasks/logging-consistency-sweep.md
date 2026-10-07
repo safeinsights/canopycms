@@ -27,7 +27,7 @@ http/handler.ts is shared code"*, then `:241`, `:248` and `:400` use
 `console.error` while `:279` and `:302` use `canopyLogError`.
 
 Others on worker-reachable paths today, and so not covered by a list that says they
-are: `services.ts:353,399,456,476` (the settings-branch PR path),
+are: `services.ts` (the settings-branch push path),
 `api/github-sync.ts:45,73,111,158,195` (explicitly a worker task),
 `api/branch.ts:660,687,744`, `api/branch-merge.ts:65`, `api/branch-status.ts:99`,
 `reference-resolver.ts:67,156`, `content-store.ts:2114`,

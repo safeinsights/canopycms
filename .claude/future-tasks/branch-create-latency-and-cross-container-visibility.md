@@ -1,0 +1,43 @@
+# Branch create: slow POST, and a new branch other containers cannot see yet
+
+## Priority: P2 [BOTH]
+
+Reported from a deployed editor: after Create Branch, nothing changed for about a minute, so
+the user created again. The editor now inserts the created branch from the POST response and
+switches to it immediately, shows the form in flight, and keeps the inserted branch through
+stale listings for `CREATED_BRANCH_GRACE_MS` (`editor/hooks/useBranchManager.tsx`). Two
+server-side halves remain, both reasoned from code rather than measured on a deployment:
+
+1. **The POST provisions synchronously.** `createBranchHandler` (`api/branch.ts`) awaits
+   `BranchWorkspaceManager.openOrCreateBranch`, which clones the workspace onto EFS under the
+   provisioning lock before responding. The client switches only when that returns, so its
+   latency is the user's wait. Read the deployed `createBranch` / `ensureGitWorkspace`
+   `log.timed` spans (`CANOPYCMS_DEBUG`) first; if the clone dominates, decide between a
+   faster clone (shared objects or a reference clone from `remote.git`) and responding before
+   provisioning finishes, which would need a provisioning state on the branch the editor can
+   render.
+2. **Other containers can lag the new branch.** `GET /branches` served by a container other
+   than the creating one can omit the branch for the NFS attribute/dentry cache window
+   (docs/concurrency.md, window A). The registry carries no TTL of its own: `list()` compares
+   the snapshot's token to the live generation marker, so the lag is the filesystem's. The
+   client now covers the listing; it does not cover per-branch requests (entries, schema,
+   comments) for the new branch that land on a lagging container. Check whether
+   `getBranchContext` can miss a just-created branch there, and what the editor shows if so.
+3. **`loadBranches` responses can land out of order.** It fetches directly and writes the
+   cache with `mutate(..., { revalidate: false })`, so the last response to arrive wins
+   whenever its request started; SWR's own race handling covers only its revalidations. The
+   created-branch overlay hides this for a new branch inside the grace window, but any
+   branch's state (a submit's status, say) can be overwritten by an older listing. A
+   monotonic request sequence, as `useEntryManager.refreshEntries` uses, would close it.
+4. **Workflow actions on a just-created branch fail closed.** A successful submit, withdraw
+   or request-changes drops the branch's overlay, so a lagging listing hides the branch (editor
+   locked) until listings catch up. If the workflow endpoints returned the list-item shape, as
+   create now does, the editor could overlay the post-action copy instead. System health's
+   admin actions (`markMerged`, purge, repair in `editor/admin/useSystemHealth.tsx`) neither
+   forget the overlay nor reload the branch list, so for a branch created in the same session
+   less than `CREATED_BRANCH_GRACE_MS` earlier the overlay keeps its pre-action copy; the
+   server's write guards still apply.
+
+## Related
+
+- [editor-api-latency.md](editor-api-latency.md): the per-phase timing breakdown this needs

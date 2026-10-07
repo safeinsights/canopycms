@@ -76,10 +76,6 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
       throw new Error('gitBotAuthorName and gitBotAuthorEmail are required in prod mode')
     }
   }
-
-  shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean {
-    return config.autoCreateSettingsPR ?? true
-  }
 }
 
 class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy {
@@ -142,10 +138,6 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
 
   validateConfig(_config: Partial<CanopyConfig>): void {
     // No special validation for dev mode
-  }
-
-  shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
-    return false // No real GitHub in local dev mode
   }
 }
 

@@ -21,7 +21,7 @@ import { IconFileSymlink } from '@tabler/icons-react'
 import { useEntryLinkContext, type EntryLinkOption } from './EntryLinkContext'
 
 interface InsertEntryLinkProps {
-  /** MDXEditor's insertMarkdown function, obtained via usePublisher(insertMarkdown$) */
+  /** Inserts the link's markdown into the editor (MarkdownField's `handleInsert`). */
   onInsert: (markdown: string) => void
 }
 
@@ -56,8 +56,9 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
 
   const handleSelect = (entry: EntryLinkOption) => {
     const rawText = entry.label || entry.slug || 'Link'
-    // Escape backslashes first, then markdown-special characters in link text
-    const linkText = rawText.replace(/\\/g, '\\\\').replace(/([[\]()])/g, '\\$1')
+    // Escape backslashes first, then characters that end the link text or that
+    // the editor parses as MDX (`{` opens an expression, `<` a JSX tag).
+    const linkText = rawText.replace(/\\/g, '\\\\').replace(/([[\]()<>{}])/g, '\\$1')
     const markdown = `[${linkText}](entry:${entry.contentId})`
     onInsert(markdown)
     setOpened(false)

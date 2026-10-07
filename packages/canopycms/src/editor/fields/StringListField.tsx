@@ -5,6 +5,7 @@ import { TagsInput } from '@mantine/core'
 export interface StringListFieldProps {
   id?: string
   label?: string
+  description?: string
   value: string[]
   onChange: (value: string[]) => void
   dataCanopyField?: string
@@ -19,6 +20,7 @@ export interface StringListFieldProps {
 export const StringListField: React.FC<StringListFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -30,6 +32,7 @@ export const StringListField: React.FC<StringListFieldProps> = ({
     <TagsInput
       id={inputId}
       label={label}
+      description={description}
       value={value}
       size="sm"
       onChange={onChange}

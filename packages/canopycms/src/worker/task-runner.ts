@@ -10,10 +10,14 @@ import {
 import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { sanitizeBranchName } from '../paths/branch-name'
+import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
-import { isNonFastForwardRejection, isStaleLeaseRejection } from '../utils/git'
+import {
+  isNonFastForwardRejection,
+  isStaleLeaseRejection,
+  workflowPushRefusalFile,
+} from '../utils/git'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError } from './log'
@@ -133,6 +137,16 @@ function isRateLimitSignal403(err: unknown): boolean {
 }
 
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
+
+/**
+ * Whether `branch` carries the reserved settings-branch prefix. Matching on the prefix
+ * alone, never on a configured name, is what keeps a content branch out: branch creation
+ * rejects the prefix, while a configured name the worker and API disagree on could be a
+ * content branch's.
+ */
+function isSettingsBranch(branch: string) {
+  return branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+}
 
 function requireString(payload: Record<string, unknown>, key: string): string {
   const val = payload[key]
@@ -354,6 +368,13 @@ export async function executeTask(
           `Refusing to push-and-create-or-update-pr for "${branch}": it is the base branch -- submitting the base branch is never valid`,
         )
       }
+      // The settings branch is an orphan with no history in common with the
+      // base, so GitHub 422s a PR for it: push it and stop.
+      if (isSettingsBranch(branch)) {
+        await ctx.pushBranchToGitHub(branch)
+        workerLog(`Pushed settings branch ${branch}; settings branches never get a PR`)
+        return { pushed: true }
+      }
       await ctx.pushBranchToGitHub(branch)
 
       const result = await createOrUpdatePullRequest({
@@ -364,9 +385,9 @@ export async function executeTask(
         base,
         title: optionalString(payload, 'title', `Submit ${branch}`),
         body: optionalString(payload, 'body', ''),
-        // Content submits (api/github-sync.ts) set this; settings-branch
-        // syncs (services.ts) deliberately don't.
+        // Content submits (api/github-sync.ts) set both.
         markReadyIfDraft: payload.markReadyIfDraft === true,
+        mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
         signal,
       })
       workerLog(
@@ -507,6 +528,26 @@ async function updateBranchMetadataOnFailure(
     )
   }
 }
+
+/**
+ * Fail fast when GitHub refused the push for adding workflow content it does not already hold: the
+ * worker's credential deliberately lacks the workflows permission, so the identical push can never
+ * succeed. Rebasing onto a base that changed a workflow does not trigger it; a workflow edit made
+ * outside the editor, auto-merged by the rebase with a base change to the same file, does.
+ */
+function throwIfWorkflowRefusal(branch: string, message: string): void {
+  const file = workflowPushRefusalFile(message)
+  if (file === null) return
+  throw new PermanentTaskError(
+    `Push refused for branch "${branch}": it would put a version of ${file} on GitHub that ` +
+      `GitHub does not already have, and this deployment's GitHub credential is deliberately not ` +
+      `allowed to change workflow files. Such a change usually comes from outside the editor, ` +
+      `such as a direct push to this branch. Nothing was pushed, and ` +
+      `retrying will not help until a developer with permission to change workflow files ` +
+      `resolves it on GitHub.`,
+  )
+}
+
 export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string): Promise<void> {
   const git = simpleGit({
     baseDir: ctx.remoteGitPath,
@@ -566,6 +607,7 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
     }
   } catch (err) {
     const message = getErrorMessage(err)
+    throwIfWorkflowRefusal(branch, message)
 
     // A refused lease means GitHub is not at the commit we rewrote, so the
     // marker is stale -- routine, not exceptional: tasks are re-run after a
@@ -587,6 +629,7 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
         await git.push(githubUrl, branch)
       } catch (retryErr) {
         const retryMessage = getErrorMessage(retryErr)
+        throwIfWorkflowRefusal(branch, retryMessage)
         if (isNonFastForwardRejection(retryMessage)) {
           throw new PermanentTaskError(
             `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +

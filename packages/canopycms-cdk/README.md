@@ -14,6 +14,7 @@ AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 - Lambda Function URL (for CloudFront origin)
 - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount)
 - Security groups and IAM roles (least-privilege)
+- `attachTo(distribution)`: adds the editor's `/edit`, `/edit/*` and `/api/canopycms/*` behaviors (and, optionally, the CMS build's `assetPrefix` and the preview route) to a CloudFront distribution you already own
 
 **`CanopyCmsDistribution`** — CloudFront + DNS (optional):
 
@@ -21,8 +22,9 @@ AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 - CloudFront distribution with Lambda Function URL origin
 - Route53 A/AAAA alias records
 - Cache policies: no-cache for API/editor, long-cache for static assets
+- Response headers: framing protection (`frame-ancestors 'self'`), `nosniff`, HSTS, `X-Robots-Tag: noindex`
 
-Use `CanopyCmsDistribution` if you don't have existing CloudFront infrastructure. Otherwise, use the `functionUrl` output from `CanopyCmsService` and wire it into your own CloudFront setup.
+Use `CanopyCmsDistribution` when the CMS gets its own domain. To serve the editor from an existing distribution, call `cmsService.attachTo(distribution)` instead of wiring the `functionUrl` by hand; see [Serving the editor from a distribution you already own](../../docs/deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
 
 ### EC2 Worker
 

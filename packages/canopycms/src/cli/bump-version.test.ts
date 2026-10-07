@@ -43,6 +43,10 @@ const PACKAGES = [
   'packages/canopycms-cdk',
 ]
 
+/** The generated constant the script rewrites alongside the manifests. */
+const VERSION_FILE = (root: string): string =>
+  path.join(root, 'packages', 'canopycms', 'src', 'version.ts')
+
 describe('scripts/bump-version.mjs', () => {
   let tmpDir: string
 
@@ -60,6 +64,8 @@ describe('scripts/bump-version.mjs', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({ name: 'root', version }, null, 2) + '\n',
     )
+    await fs.mkdir(path.dirname(VERSION_FILE(tmpDir)), { recursive: true })
+    await fs.writeFile(VERSION_FILE(tmpDir), `export const CANOPYCMS_VERSION = '${version}'\n`)
   }
 
   /**
@@ -155,6 +161,30 @@ describe('scripts/bump-version.mjs', () => {
       const root = JSON.parse(await fs.readFile(path.join(tmpDir, 'package.json'), 'utf-8'))
       expect(root.version).toBe('0.0.71')
     })
+
+    it('rewrites the generated version constant to the new version', async () => {
+      await seed('0.0.63')
+      await run(['--min', '0.0.70'])
+      const source = await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')
+      expect(source).toContain("export const CANOPYCMS_VERSION = '0.0.71'")
+      expect(source).not.toContain('0.0.63')
+    })
+
+    it('generates the same file that is committed, differing only in the version', async () => {
+      await seed('0.0.63')
+      await run(['0.0.64'])
+      const committed = await fs.readFile(path.join(__dirname, '..', 'version.ts'), 'utf-8')
+      const generated = await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')
+      expect(generated).toBe(committed.replace(/'[^']*'/, "'0.0.64'"))
+    })
+
+    it('writes an explicit prerelease version into the constant', async () => {
+      await seed('0.0.63')
+      await run(['0.0.64-int.9'])
+      expect(await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')).toContain(
+        "export const CANOPYCMS_VERSION = '0.0.64-int.9'",
+      )
+    })
   })
 
   describe('argument validation', () => {
@@ -165,6 +195,7 @@ describe('scripts/bump-version.mjs', () => {
       for (const pkg of PACKAGES) {
         expect(await readVersion(pkg), `${pkg} must be untouched`).toBe('0.0.63')
       }
+      expect(await fs.readFile(VERSION_FILE(tmpDir), 'utf-8')).toContain("'0.0.63'")
     }
 
     it('rejects an unknown flag instead of writing it as the version', async () => {

@@ -61,11 +61,11 @@ describe('listEntries', () => {
       schema,
     })
 
-    // Mock loadPathPermissions to return rules that hide 'entry.hidden.xyz789abcDEF.json' from user 'u1'
+    // Mock loadPathPermissions to return rules that hide the 'hidden' entry from user 'u1'
     // Use 'read' access restriction to actually hide the file from listing
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.hidden.xyz789abcDEF.json'),
+        path: unsafeAsPermissionPath('content/posts/hidden'),
         read: { allowedUsers: ['other'] },
       },
     ]
@@ -546,10 +546,10 @@ describe('listEntries', () => {
       schema,
     })
 
-    // Mock loadPathPermissions: 'entry.readonly.defGHJkmn456.json' is read-only for user 'u1'
+    // Mock loadPathPermissions: the 'readonly' entry is read-only for user 'u1'
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.readonly.defGHJkmn456.json'),
+        path: unsafeAsPermissionPath('content/posts/readonly'),
         read: { allowedUsers: ['u1'] },
         edit: { allowedUsers: ['admin'] }, // u1 cannot edit
       },
@@ -978,7 +978,7 @@ describe('listEntries', () => {
 
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.denied.aaa111bbb222.json'),
+        path: unsafeAsPermissionPath('content/posts/denied'),
         read: { allowedUsers: ['other'] },
       },
     ]
@@ -1653,6 +1653,14 @@ describe('deleteEntry', () => {
   })
 
   it('still returns 200 when the order-cleanup update is rejected because the schema is busy', async () => {
+    await expectDeleteWithBusyOrderCleanup('not-run')
+  })
+
+  it('warns of nothing when the order update landed but its lock was lost afterwards', async () => {
+    await expectDeleteWithBusyOrderCleanup('unknown')
+  })
+
+  async function expectDeleteWithBusyOrderCleanup(outcome: 'not-run' | 'unknown') {
     // deleteEntryHandler's order-array cleanup is best-effort order hygiene
     // (see the comment above that call site): a busy surrogate schema lock
     // (another in-flight schema mutation on this branch) must not turn an
@@ -1727,9 +1735,14 @@ describe('deleteEntry', () => {
       },
     })
 
+    const realUpdateOrder = SchemaOps.prototype.updateOrder
     const updateOrderSpy = vi
       .spyOn(SchemaOps.prototype, 'updateOrder')
-      .mockRejectedValue(new SchemaStoreBusyError())
+      .mockImplementation(async function (this: SchemaOps, ...args) {
+        // 'unknown' is reported after the mutation completed, so it lands first.
+        if (outcome === 'unknown') await realUpdateOrder.apply(this, args)
+        throw new SchemaStoreBusyError('busy', outcome)
+      })
 
     const { deleteEntry } = await import('./entries')
 
@@ -1751,14 +1764,20 @@ describe('deleteEntry', () => {
     const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
     expect(files).not.toContain(`post.to-delete.${entryId}.json`)
 
-    // The order array still contains the deleted id (cleanup was skipped)
     const meta = JSON.parse(
       await fs.readFile(path.join(root, `content/posts.${postsId}/.collection.json`), 'utf8'),
     ) as { order?: string[] }
-    expect(meta.order).toEqual([entryId, otherEntryId])
+    if (outcome === 'not-run') {
+      // Cleanup was skipped: the order still lists the deleted id, and the response says so.
+      expect(meta.order).toEqual([entryId, otherEntryId])
+      expect(res.data?.warning).toMatch(/could not be updated/)
+    } else {
+      expect(meta.order).toEqual([otherEntryId])
+      expect(res.data?.warning).toBeUndefined()
+    }
 
     updateOrderSpy.mockRestore()
-  })
+  }
 
   // C6 (August 2026 baseline review): a NON-busy order-cleanup failure used
   // to rethrow past the busy-only guard and get caught by the outer catch,
@@ -1984,7 +2003,7 @@ describe('deleteEntry', () => {
     // Mock edit access denied
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath(`content/posts.${postsId}/post.protected.abc123def456.json`),
+        path: unsafeAsPermissionPath('content/posts/protected'),
         edit: { allowedUsers: ['admin'] },
       },
     ]

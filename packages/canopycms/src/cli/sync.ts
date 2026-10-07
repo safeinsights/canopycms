@@ -18,6 +18,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
 import { filePathExists } from '../utils/fs'
+import { isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
 import {
   assertWithinDir,
   copyDir,
@@ -27,6 +28,7 @@ import {
   SYNC_BASE_TAG,
 } from '../sync-core'
 import { invalidateBranchContentCaches } from '../content-index-generation'
+import { ContentWriteLockBusyError, withContentWriteLock } from '../utils/content-write-lock'
 import { ensureGitExcludePattern } from '../git-manager'
 import { operatingStrategy } from '../operating-mode'
 
@@ -50,6 +52,48 @@ class SyncError extends Error {
     super(message)
     this.name = 'SyncError'
   }
+}
+
+/**
+ * [SYNC-C1] Every sync step that rewrites a branch workspace (content replace, checkout, merge,
+ * merge abort) runs under the workspace's content-write lock, which the dev server's saves and
+ * the worker's rebase also take. Contention becomes a `SyncError`, so the CLI exits non-zero.
+ */
+function lockBusyAsSyncError(err: unknown, branchName: string): unknown {
+  if (!(err instanceof ContentWriteLockBusyError)) return err
+  return new SyncError(
+    err.outcome === 'not-run'
+      ? `Branch workspace "${branchName}" is busy (the worker is syncing it, or an editor save is in flight); nothing was changed. Try again in a moment.`
+      : `Branch workspace "${branchName}" was being synced during this run, so it may be partly updated. Check its state before running sync again.`,
+  )
+}
+
+async function withWorkspaceLock<T>(
+  branchPath: string,
+  branchName: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await withContentWriteLock(branchPath, fn)
+  } catch (err: unknown) {
+    throw lockBusyAsSyncError(err, branchName)
+  }
+}
+
+/**
+ * `git merge --abort` in a workspace left mid-merge, re-checking under the lock that it still is.
+ * Returns whether a merge was aborted.
+ */
+async function abortWorkspaceMerge(branchPath: string, branchName: string): Promise<boolean> {
+  return withWorkspaceLock(branchPath, branchName, async () => {
+    const wsGit = simpleGit({ baseDir: branchPath })
+    if ((await wsGit.status()).conflicted.length === 0) return false
+    await wsGit.merge(['--abort'])
+    // The abort rewrote the clone's working tree — tell ContentStore ID
+    // indexes (the dev server is a separate process; on-disk marker).
+    await invalidateBranchContentCaches(branchPath)
+    return true
+  })
 }
 
 /** Detect the current git branch name from the working tree. */
@@ -173,25 +217,24 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
         initialValue: false,
       })
       if (!p.isCancel(shouldAbort) && shouldAbort) {
-        await wsGit.merge(['--abort'])
-        // The abort rewrote the clone's working tree — tell ContentStore ID
-        // indexes (the dev server is a separate process; on-disk marker).
-        await invalidateBranchContentCaches(branchPath)
-        p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+        if (await abortWorkspaceMerge(branchPath, branchName)) {
+          p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+        }
       }
     }
     return { fileCount: 0 }
   }
 
-  if (status.files.length > 0 && !options.force) {
+  const editorChanges = status.files.filter((f) => !isCanopyInternalPath(f.path))
+  if (editorChanges.length > 0 && !options.force) {
     p.log.warn(
-      `Branch workspace has ${status.files.length} uncommitted change(s) that will be committed to history then overwritten:`,
+      `Branch workspace has ${editorChanges.length} uncommitted change(s) that will be committed to history then overwritten:`,
     )
-    for (const file of status.files.slice(0, 10)) {
+    for (const file of editorChanges.slice(0, 10)) {
       p.log.warn(`  ${file.path}`)
     }
-    if (status.files.length > 10) {
-      p.log.warn(`  ... and ${status.files.length - 10} more`)
+    if (editorChanges.length > 10) {
+      p.log.warn(`  ... and ${editorChanges.length - 10} more`)
     }
     const confirm = await p.confirm({
       message: 'Continue? Editor changes will be preserved in git history.',
@@ -203,22 +246,25 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     }
   }
 
-  // Auto-commit uncommitted workspace changes to preserve in history
-  if (status.files.length > 0) {
-    await wsGit.add('-A')
-    await wsGit.commit('sync: save editor state before push')
-    p.log.info('Committed editor changes to history before push')
-  }
-
   p.log.step(`Pushing content to branch workspace: ${branchName}`)
 
-  // Copy working-tree content → workspace content dir, commit, and tag the sync base.
-  const { fileCount } = await pushContentToWorkspace({
-    srcContentDir,
-    branchPath,
-    contentRoot,
-    baseTag: SYNC_BASE_TAG,
-  })
+  // Commit any editor changes (re-read under the lock, so a save landing after
+  // the listing above is preserved too), copy working-tree content → workspace
+  // content dir, commit, and tag the sync base.
+  let fileCount: number
+  try {
+    const result = await pushContentToWorkspace({
+      srcContentDir,
+      branchPath,
+      contentRoot,
+      baseTag: SYNC_BASE_TAG,
+      saveEditorStateMessage: 'sync: save editor state before push',
+    })
+    fileCount = result.fileCount
+    if (result.savedEditorState) p.log.info('Committed editor changes to history before push')
+  } catch (err: unknown) {
+    throw lockBusyAsSyncError(err, branchName)
+  }
 
   if (fileCount === 0) {
     p.log.info('Content is already up to date — nothing to push')
@@ -383,17 +429,31 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
         initialValue: false,
       })
       if (!p.isCancel(shouldAbort) && shouldAbort) {
-        await wsGit.merge(['--abort'])
-        await invalidateBranchContentCaches(branchPath)
-        p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+        if (await abortWorkspaceMerge(branchPath, branchName)) {
+          p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+        }
       }
     }
     return { pushed: 0, pulled: 0 }
   }
 
+  return withWorkspaceLock(branchPath, branchName, () =>
+    mergeIntoWorkspace(options, { branchName, branchPath, srcContentDir, contentRoot }),
+  )
+}
+
+/** The locked body of {@link syncBoth}: everything that rewrites the workspace. */
+async function mergeIntoWorkspace(
+  options: SyncOptions,
+  ws: { branchName: string; branchPath: string; srcContentDir: string; contentRoot: string },
+): Promise<{ pushed: number; pulled: number }> {
+  const { branchName, branchPath, srcContentDir, contentRoot } = ws
+  const wsGit = simpleGit({ baseDir: branchPath })
+  const status = await wsGit.status()
+
   // Auto-commit uncommitted workspace changes (preserves editor work for the merge)
-  if (status.files.length > 0) {
-    await wsGit.add('-A')
+  if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
+    await stageAllExceptCanopyState(wsGit)
     await wsGit.commit('sync: save editor state before merge')
     p.log.info('Committed editor changes before merge')
   }
@@ -431,10 +491,10 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
       throw err
     }
 
-    await wsGit.add('-A')
-    const incomingStatus = await wsGit.status()
+    await stageAllExceptCanopyState(wsGit)
+    const incomingFiles = (await wsGit.status()).files.filter((f) => !isCanopyInternalPath(f.path))
 
-    if (incomingStatus.files.length === 0) {
+    if (incomingFiles.length === 0) {
       await wsGit.checkout(currentBranch)
       await wsGit.raw(['branch', '-D', incomingBranch])
       p.log.info('No working-tree changes to merge — pulling editor changes only')
@@ -481,7 +541,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     p.log.success('Merged working-tree changes with editor changes')
 
     const pullResult = await syncPull({ ...options, branch: branchName, force: true })
-    return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
+    return { pushed: incomingFiles.length, pulled: pullResult.fileCount }
   } finally {
     await invalidateBranchContentCaches(branchPath)
   }
@@ -500,16 +560,12 @@ async function syncAbort(options: SyncOptions): Promise<void> {
 
   const branchPath = path.join(branchesDir, branchName)
   assertWithinDir(branchPath, branchesDir, '--branch')
-  const wsGit = simpleGit({ baseDir: branchPath })
 
-  const status = await wsGit.status()
-  if (status.conflicted.length === 0) {
+  if (!(await abortWorkspaceMerge(branchPath, branchName))) {
     p.log.info(`Branch workspace "${branchName}" is not in a merge state — nothing to abort.`)
     return
   }
 
-  await wsGit.merge(['--abort'])
-  await invalidateBranchContentCaches(branchPath)
   p.log.success(
     `Merge aborted in branch workspace "${branchName}". Workspace restored to pre-merge state.`,
   )

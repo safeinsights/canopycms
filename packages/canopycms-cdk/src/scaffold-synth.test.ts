@@ -77,6 +77,9 @@ const SYNTH_ENV = {
   // variable's own NAME as its value would have satisfied the assertion below.
   GITHUB_TOKEN_SECRET_JSON_FIELD: 'ghFieldProbe',
   CLERK_SECRET_KEY_SECRET_JSON_FIELD: 'clerkFieldProbe',
+  // Optional too. It travels bin/app.ts -> CmsStackProps -> lib/cms-stack.ts's `buildArgs`, and
+  // lands in the asset manifest rather than the template, so it is asserted from `imageBuildArgs`.
+  CANOPY_SOURCE_SHA: 'revisionProbe0a1b2c3d4e5f',
   // Cleared, not merely unset: the synth below spreads `process.env`, and a
   // developer with any one of these exported (plausible — they are the
   // variables this feature is configured with) would put the generated app in
@@ -134,6 +137,8 @@ let renderedTemplates: string
  * `beforeAll`.
  */
 let imagePlatforms: (string | undefined)[]
+/** The Docker build args of every Docker image asset, captured for the same reason as `imagePlatforms`. */
+let imageBuildArgs: (Record<string, string> | undefined)[]
 
 function readJsonField(value: unknown, field: string): unknown {
   return typeof value === 'object' && value !== null && field in value
@@ -226,9 +231,13 @@ beforeAll(async () => {
 
   // CDK records the image's platform in the asset manifest, not the template.
   imagePlatforms = []
+  imageBuildArgs = []
   for (const file of (await fs.readdir(outDir)).filter((f) => f.endsWith('.assets.json'))) {
     const dockerImages = Manifest.loadAssetManifest(path.join(outDir, file)).dockerImages ?? {}
-    for (const image of Object.values(dockerImages)) imagePlatforms.push(image.source.platform)
+    for (const image of Object.values(dockerImages)) {
+      imagePlatforms.push(image.source.platform)
+      imageBuildArgs.push(image.source.dockerBuildArgs)
+    }
   }
 }, TIMEOUT_MS)
 
@@ -386,6 +395,38 @@ describe('canopycms init-deploy aws produces a synthesizable CDK app', () => {
       )
       .map((fn) => readJsonField(readJsonField(fn, 'Properties'), 'Architectures'))
     expect(imageFunctionArchitectures).toEqual([['arm64']])
+  })
+
+  /**
+   * The source revision names the commit the IMAGE was built from, so it has to reach the image
+   * build as a build arg: a Lambda environment variable would name the infrastructure's commit
+   * instead. Build args live in the asset manifest, not the template, so only the manifest proves
+   * the value travelled.
+   */
+  it('passes CANOPY_SOURCE_SHA to the CMS image build and declares it in the runner stage', async () => {
+    expect(imageBuildArgs).toHaveLength(1)
+    expect(imageBuildArgs[0]?.CANOPY_SOURCE_SHA).toBe(SYNTH_ENV.CANOPY_SOURCE_SHA)
+
+    const dockerfile = await fs.readFile(path.join(scaffoldDir, 'Dockerfile.cms'), 'utf-8')
+    const runnerStart = dockerfile.indexOf('AS runner')
+    const arg = dockerfile.indexOf('ARG CANOPY_SOURCE_SHA')
+    // Explicit `> -1`: a position comparison alone passes when the string is absent.
+    expect(runnerStart).toBeGreaterThan(-1)
+    expect(arg).toBeGreaterThan(-1)
+    expect(arg).toBeGreaterThan(runnerStart)
+    expect(dockerfile).toContain('ENV CANOPY_SOURCE_SHA=$CANOPY_SOURCE_SHA')
+    expect(dockerfile).toContain('LABEL org.opencontainers.image.revision=$CANOPY_SOURCE_SHA')
+
+    // Not an env var of the Lambda either: the image carries it, the infrastructure does not.
+    expect(renderedTemplates).not.toContain(SYNTH_ENV.CANOPY_SOURCE_SHA)
+  })
+
+  it('passes CANOPY_SOURCE_SHA through the generated workflow from the commit being deployed', async () => {
+    const workflow = await fs.readFile(
+      path.join(scaffoldDir, '.github/workflows/deploy-cms.yml'),
+      'utf-8',
+    )
+    expect(workflow).toContain('CANOPY_SOURCE_SHA: ${{ github.sha }}')
   })
 
   /**

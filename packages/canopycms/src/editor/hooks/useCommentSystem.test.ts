@@ -550,6 +550,41 @@ describe('useCommentSystem', () => {
     document.body.removeChild(mockElement)
   })
 
+  it('runs its pending focus undo steps on unmount instead of leaving timers behind', () => {
+    vi.useFakeTimers()
+    const mockElement = document.createElement('div')
+    mockElement.setAttribute('data-canopy-field', 'title')
+    mockElement.scrollIntoView = vi.fn()
+    mockElement.style.boxShadow = 'none'
+    document.body.appendChild(mockElement)
+    try {
+      const { result, unmount } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'canopycms:preview:focus',
+              entryPath: 'preview-entry1',
+              fieldPath: 'title',
+            },
+            origin: window.location.origin,
+          }),
+        )
+      })
+      expect(result.current.focusedFieldPath).toBe('title')
+      expect(mockElement.style.boxShadow).not.toBe('none')
+      const timersBeforeUnmount = vi.getTimerCount()
+
+      unmount()
+
+      expect(mockElement.style.boxShadow).toBe('none')
+      expect(vi.getTimerCount()).toBe(timersBeforeUnmount - 2)
+    } finally {
+      vi.useRealTimers()
+      document.body.removeChild(mockElement)
+    }
+  })
+
   it('ignores preview frame message for wrong entry', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions), {
       wrapper,
@@ -576,6 +611,52 @@ describe('useCommentSystem', () => {
     expect(result.current.focusedFieldPath).toBeUndefined()
 
     document.body.removeChild(mockElement)
+  })
+
+  describe('preview focus across URL spellings of the same page', () => {
+    const focusFrom = async (previewSrc: string, entryPath: string) => {
+      const options = { ...defaultOptions, currentEntry: { ...mockEntry, previewSrc } }
+      const { result } = renderHook(() => useCommentSystem(options), { wrapper })
+      const element = document.createElement('div')
+      element.setAttribute('data-canopy-field', 'title')
+      element.scrollIntoView = vi.fn()
+      document.body.appendChild(element)
+      try {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'canopycms:preview:focus', entryPath, fieldPath: 'title' },
+              origin: window.location.origin,
+            }),
+          )
+        })
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return result.current.focusedFieldPath
+      } finally {
+        document.body.removeChild(element)
+      }
+    }
+
+    it('focuses when the framed page reports its redirected, slashed URL', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/x/?branch=b')).toBe('title')
+    })
+
+    it('focuses when the editor built an absolute src', async () => {
+      expect(
+        await focusFrom(
+          `${window.location.origin}/preview/blog/x/?branch=b`,
+          '/preview/blog/x/?branch=b',
+        ),
+      ).toBe('title')
+    })
+
+    it('ignores a different page from the preview origin', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/y?branch=b')).toBeUndefined()
+    })
+
+    it('ignores the same page on a different branch', async () => {
+      expect(await focusFrom('/blog/x?branch=b', '/blog/x?branch=other')).toBeUndefined()
+    })
   })
 
   it('updates state setters correctly', () => {

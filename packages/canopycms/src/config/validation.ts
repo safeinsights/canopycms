@@ -87,6 +87,41 @@ export const forEachReferenceField = (
 }
 
 /**
+ * Check that every `itemTitleField` sits on a `list: true` object and names a direct child
+ * of type `string` or `number`, the only values the card heading shows as typed (a reference
+ * would show its raw id, a select its stored value). Throws an error when it does not.
+ */
+export const ensureItemTitleFieldsExist = (fields: unknown): void => {
+  if (!Array.isArray(fields)) return
+  for (const field of fields) {
+    const f = field as Record<string, unknown>
+    if (f?.type === 'object') {
+      const children = Array.isArray(f.fields) ? (f.fields as Array<Record<string, unknown>>) : []
+      if (f.itemTitleField !== undefined) {
+        const label = `Object field "${(f.name as string) ?? 'unknown'}" has itemTitleField "${String(f.itemTitleField)}"`
+        if (f.list !== true) {
+          throw new Error(`${label}, but itemTitleField applies only to list: true objects`)
+        }
+        const child = children.find((c) => c?.name === f.itemTitleField)
+        if (typeof f.itemTitleField !== 'string' || !child) {
+          throw new Error(`${label}, which is not one of its child fields`)
+        }
+        if (child.type !== 'string' && child.type !== 'number') {
+          throw new Error(`${label}, which must name a string or number field`)
+        }
+      }
+      ensureItemTitleFieldsExist(children)
+    } else if (f?.type === 'group') {
+      ensureItemTitleFieldsExist(f.fields)
+    } else if (f?.type === 'block' && Array.isArray(f.templates)) {
+      for (const template of f.templates as Array<{ fields?: unknown }>) {
+        ensureItemTitleFieldsExist(template.fields)
+      }
+    }
+  }
+}
+
+/**
  * Validate that inline groups don't cause field name collisions within the same scope.
  * Because inline groups flatten their children into the parent scope, a field name used
  * in a group that also appears as a sibling field (or in another group) will silently

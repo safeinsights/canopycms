@@ -40,7 +40,6 @@ export interface UseEntryManagerOptions {
   initialSelectedId?: string
   branchName: string
   collections?: EditorCollection[]
-  previewBaseByCollection?: Record<string, string>
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
   setBusy: (busy: boolean) => void
 }
@@ -137,11 +136,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // case -- any first visit to a branch, for the whole duration of its fetch),
   // or a stale SWR slot. The editor then auto-selected one of those stale
   // entries (see the selection effect below), and a save could file its OCC
-  // token under one contentId and look it up under another, silently skipping
-  // conflict detection -- `content-store.ts` only compares mtimes when
-  // `expectedVersion !== undefined`, so the write became a blind overwrite.
-  // Deriving from a stamped record fixes that structurally instead of relying
-  // on every code path remembering to clear.
+  // token under one contentId and look it up under another. Deriving from a
+  // stamped record fixes that structurally instead of relying on every code
+  // path remembering to clear.
   const [view, setView] = useState<BranchView>(() => ({
     branch: options.branchName,
     entries: options.initialEntries,
@@ -177,6 +174,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // branch can repopulate the map after the branch-change clear() below and
   // poison the next save with the old branch's mtime — a deterministic 409
   // ("modified by another editor") on save-after-switch, proven by e2e trace.
+  // The contentId half matches how useDraftManager keys drafts and loaded
+  // values, so a form value and its token always belong to the same file even
+  // when a path is deleted and recreated; it also survives a rename.
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
   const versionKey = (branch: string, contentId: string) => `${branch}:${contentId}`
   // PER-BRANCH monotonic tokens guarding every commit of the fetched
@@ -293,7 +293,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       branch: requestBranch,
       path,
     })
-    if (!result.ok) throw new Error(`Load failed: ${result.status}`)
+    if (!result.ok)
+      throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
     // Capture OCC version token for next save
     if (entry.contentId && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
@@ -323,17 +324,25 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       path,
     }
     if (entry.entryType) writeParams.entryType = entry.entryType
-    const expectedVersion = entry.contentId
-      ? entryVersionsRef.current.get(versionKey(requestBranch, entry.contentId))
-      : undefined
+    const expectedVersion = entryVersionsRef.current.get(versionKey(requestBranch, entry.contentId))
+    // Every entry saved here already exists (creates go through handleCreateModalSubmit), so
+    // no token means this entry was never successfully read on this branch and nothing could check the save
+    // against other editors' work. Refused as a conflict; the server refuses it too.
+    if (expectedVersion === undefined) {
+      throw new SaveApiError(
+        409,
+        'This entry has not been loaded from the server, so the save cannot be checked ' +
+          "against other editors' changes. Reload it and try again.",
+      )
+    }
     const writeBody: WriteContentBody = {
       ...(payload as unknown as WriteContentBody),
-      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+      expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
     if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
     // Update stored version token from write response
-    if (entry.contentId && typeof result.data?.version === 'number') {
+    if (typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)
     }
     // Warning-level issues from the adopter's validateEntry hook: saved, but surface them

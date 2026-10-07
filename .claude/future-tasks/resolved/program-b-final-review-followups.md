@@ -223,7 +223,7 @@ pass against the unfixed hook.
 One related hazard is deliberately **not** closed here: the version map is keyed
 by contentId, so any other path that swaps an entry object's contentId between
 load and save still yields a version-less write. Tracked in
-[occ-version-key-contentid-swap.md](../occ-version-key-contentid-swap.md).
+[occ-version-key-contentid-swap.md](occ-version-key-contentid-swap.md).
 
 ### Three corrections to PR #196's own description
 

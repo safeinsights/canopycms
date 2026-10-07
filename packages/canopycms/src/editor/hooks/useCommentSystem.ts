@@ -6,6 +6,7 @@ import type { EditorEntry } from '../Editor'
 import { normalizeCanopyPath } from '../canopy-path'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
+import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
 
 export interface UseCommentSystemOptions {
@@ -179,6 +180,16 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
   // Listen for field focus messages from preview frame
   useEffect(() => {
+    // Delayed undo steps (highlight restore, focus clear). Cleanup runs them early rather than
+    // dropping them, so an entry switch never leaves a field highlighted or focused.
+    const pending = new Map<number, () => void>()
+    const later = (undo: () => void, ms: number) => {
+      const id = window.setTimeout(() => {
+        pending.delete(id)
+        undo()
+      }, ms)
+      pending.set(id, undo)
+    }
     const handleFocus = (event: MessageEvent) => {
       // Only accept messages from the preview's origin (same-origin when previewSrc is
       // relative). Origin-only by design: this hook has no handle on the preview iframe
@@ -190,9 +201,12 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         fieldPath?: string
       }
       if (msg?.type !== 'canopycms:preview:focus') return
+      const currentPath = options.currentEntry?.previewSrc ?? options.currentEntry?.path
       if (
         msg.entryPath &&
-        msg.entryPath !== (options.currentEntry?.previewSrc ?? options.currentEntry?.path)
+        (typeof msg.entryPath !== 'string' ||
+          currentPath === undefined ||
+          !isSamePreviewPath(msg.entryPath, currentPath))
       )
         return
       const normalizedPath = msg.fieldPath ? normalizeCanopyPath(msg.fieldPath) : undefined
@@ -203,7 +217,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         target.scrollIntoView({ behavior: 'smooth', block: 'center' })
         const previous = target.style.boxShadow
         target.style.boxShadow = '0 0 0 3px rgba(79, 70, 229, 0.35)'
-        window.setTimeout(() => {
+        later(() => {
           target.style.boxShadow = previous
         }, 1200)
 
@@ -211,14 +225,19 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
         if (normalizedPath) {
           setFocusedFieldPath(normalizedPath)
           // Clear after brief delay to allow FieldWrapper to detect the change
-          window.setTimeout(() => {
-            setFocusedFieldPath(undefined)
-          }, 100)
+          later(() => setFocusedFieldPath(undefined), 100)
         }
       }
     }
     window.addEventListener('message', handleFocus)
-    return () => window.removeEventListener('message', handleFocus)
+    return () => {
+      window.removeEventListener('message', handleFocus)
+      for (const [id, undo] of pending) {
+        window.clearTimeout(id)
+        undo()
+      }
+      pending.clear()
+    }
   }, [options.currentEntry])
 
   const handleJumpToField = (entryPath: string, canopyPath: string, threadId: string) => {

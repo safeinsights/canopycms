@@ -27,7 +27,7 @@ test.describe('Preview Bridge', () => {
     })
 
     await test.step('wait for preview iframe to sync home content', async () => {
-      // The preview iframe loads /?branch=main; after preview bridge sync,
+      // The preview iframe loads /?branch=main (the config's previewBase); after preview bridge sync,
       // the title element (with data-canopy-path="title") should show content.
       const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
       const titleEl = previewFrame.locator('[data-canopy-path="title"]')
@@ -83,5 +83,15 @@ test.describe('Preview Bridge', () => {
     await test.step('verify save button is enabled (changes not yet saved)', async () => {
       await expect(editorPage.saveButton).toBeEnabled()
     })
+  })
+
+  test('an entry with no page shows no preview and frames nothing', async () => {
+    await editorPage.goto()
+    await editorPage.waitForReady()
+    await editorPage.openEntryNavigator()
+    await editorPage.selectEntry('Test Site')
+
+    await expect(editorPage.previewPane).toContainText('No preview for this entry.')
+    await expect(editorPage.previewPane.locator('iframe')).toHaveCount(0)
   })
 })

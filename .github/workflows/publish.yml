@@ -244,7 +244,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A '*/package.json' package.json
+          git add -A '*/package.json' package.json packages/canopycms/src/version.ts
           # [skip ci] is required: app-token pushes DO re-trigger workflows
           # (GITHUB_TOKEN pushes don't), so without it this push would re-run
           # publish.yml and loop forever bumping the version.

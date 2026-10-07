@@ -228,7 +228,9 @@ describe('Editor integration', () => {
         )
       }
       if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
-        return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
+        )
       }
       if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
@@ -296,6 +298,7 @@ describe('Editor integration', () => {
     expect(body).toMatchObject({
       format: 'json',
       data: { title: 'Modified title' },
+      expectedVersion: 100,
     })
   })
 
@@ -442,6 +445,134 @@ describe('Editor integration', () => {
     // ...and the editor agrees there is nothing modified.
     const saveButton = await screen.findByRole('button', { name: /save file/i })
     expect(saveButton.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('names the entry path and whom to ask, and renders no form, for an entry the user cannot edit', async () => {
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+      canEdit: false,
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                  canEdit: false,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    const notice = await screen.findByTestId('no-edit-permission-notice')
+    expect(notice.textContent).toBe(
+      'You don\'t have edit access to "content/posts/hello". Ask a CanopyCMS admin to grant it in Manage Permissions.',
+    )
+    expect(screen.queryByRole('textbox', { name: /title/i })).toBeNull()
   })
 
   it('a branch switch during an in-flight entry load shows the NEW branch content and saves with its OCC token', async () => {
@@ -1041,6 +1172,180 @@ describe('Editor integration', () => {
       })
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
+    }
+  })
+
+  it('never sends a save for an entry whose load failed, even with a restored draft on screen', async () => {
+    // A restored draft renders without a successful load, so the editor holds no OCC token for
+    // the entry. A save from that state could not be checked against other editors' changes,
+    // so it must be refused as a conflict rather than sent version-less.
+    const consoleSpy = mockConsole()
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({
+        v: 2,
+        drafts: { def456ABC123: { title: 'Draft title from localStorage' } },
+        baseVersions: { def456ABC123: 100 },
+      }),
+    )
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        // A real, unlocked branch -- NOT the 404 "no branch endpoint"
+        // shorthand this test used before Change 1. `currentBranch` failing
+        // to resolve (which a 404 always produces, since branches stays [])
+        // now fails CLOSED (locks Save), and this test's point is the plain
+        // load/save flow, not branch-lock behavior, so it needs a real,
+        // unlocked branch to resolve against.
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'user-1',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: false,
+                  readOnly: false,
+                  writeBlocked: false,
+                  submitBlocked: false,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(okJson({ ok: false, status: 500, error: 'read failed' }, 500))
+      }
+      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
+        const body = JSON.parse(init.body as string)
+        return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+    const isPut = ([url, init]: Parameters<typeof fetchMock>) =>
+      String(url).startsWith(entryApiPath) && init?.method === 'PUT'
+
+    try {
+      renderWithProviders(
+        <Editor
+          entries={[entry]}
+          title="Test Editor"
+          branchName="main"
+          operatingMode="dev"
+          themeOptions={{}}
+        />,
+      )
+      const { notifications } = await import('@mantine/notifications')
+      await waitFor(() =>
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'Failed to load entry' }),
+        ),
+      )
+      let saveButton!: HTMLElement
+      await waitFor(() => {
+        const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+        expect(el?.value).toBe('Draft title from localStorage')
+        saveButton = screen.getByRole('button', { name: /save file/i })
+        expect(saveButton.hasAttribute('disabled')).toBe(false)
+      })
+
+      fireEvent.click(saveButton)
+
+      await waitFor(() =>
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Content was modified by another editor. Reload to see the latest changes.',
+          }),
+        ),
+      )
+      expect(fetchMock.mock.calls.some(isPut)).toBe(false)
+      expect(consoleSpy).toHaveErrored(/Load failed: 500/)
+      expect(consoleSpy).toHaveErrored(/has not been loaded from the server/)
+    } finally {
+      window.localStorage.removeItem('canopycms:drafts:main')
+      consoleSpy.restore()
     }
   })
 
@@ -1787,5 +2092,146 @@ describe('branches-fetch failure recovery', () => {
     // The failure was reported, not swallowed silently.
     expect(consoleSpy).toHaveErrored(/Failed to load branches/)
     consoleSpy.restore()
+  })
+})
+
+describe('preview pane', () => {
+  // The editor mirrors its selection into `?entry=`, which would otherwise outlive a test.
+  afterEach(() => window.history.replaceState({}, '', '/'))
+
+  const rootEntry = (slug: string, contentId: string): EditorEntry => ({
+    path: unsafeAsLogicalPath(`content/${slug}`),
+    contentId: unsafeAsContentId(contentId),
+    label: slug,
+    status: 'entry',
+    schema: [{ name: 'title', type: 'string' }],
+    collectionPath: unsafeAsLogicalPath('content'),
+    collectionName: 'content',
+    slug,
+    format: 'json',
+    type: 'entry',
+  })
+  const about = rootEntry('about', 'abtAAAAAAAAA')
+  const settings = rootEntry('settings', 'setAAAAAAAAA')
+
+  const stubApi = () =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        if (url.endsWith('/api/canopycms/branches')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                branches: [
+                  {
+                    name: 'main',
+                    status: 'editing',
+                    access: {},
+                    createdBy: 'user-1',
+                    createdAt: '2024-01-01',
+                    updatedAt: '2024-01-01',
+                    isProtected: false,
+                    readOnly: false,
+                    writeBlocked: false,
+                    submitBlocked: false,
+                  },
+                ],
+                defaultBranch: 'main',
+              },
+            }),
+          )
+        }
+        if (url.includes('/schema') && !url.includes('/schema/')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                schema: {},
+                flatSchema: [
+                  {
+                    type: 'entry-type',
+                    logicalPath: 'content/page',
+                    name: 'page',
+                    parentPath: 'content',
+                    format: 'json',
+                    schemaRef: 'pageSchema',
+                  },
+                ],
+                entrySchemas: { pageSchema: [{ name: 'title', type: 'string' }] },
+              },
+            }),
+          )
+        }
+        if (url.includes('/entries')) {
+          return Promise.resolve(
+            okJson({
+              ok: true,
+              status: 200,
+              data: {
+                collections: [],
+                entries: [about, settings].map((e) => ({
+                  logicalPath: e.path,
+                  contentId: e.contentId,
+                  collectionPath: e.collectionPath,
+                  collectionName: e.collectionName,
+                  slug: e.slug,
+                  format: e.format,
+                  entryType: 'page',
+                  physicalPath: `/content/page.${e.slug}.${e.contentId}.json`,
+                  exists: true,
+                })),
+                pagination: { hasMore: false, limit: 50 },
+              },
+            }),
+          )
+        }
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded', version: 1 } }),
+        )
+      }),
+    )
+
+  const renderSelected = (entry: EditorEntry) =>
+    renderWithProviders(
+      <Editor
+        entries={[about, settings]}
+        initialSelectedId={entry.path}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+        contentRoot="content"
+        previewPrefix="/edit/preview"
+        previewBaseByCollection={{ 'content/settings': false }}
+      />,
+    )
+
+  it("frames a root entry's own page, not the site root", async () => {
+    stubApi()
+    const { container } = renderSelected(about)
+
+    await waitFor(() =>
+      expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/edit/preview/about?branch=main',
+      ),
+    )
+  })
+
+  it('says an entry with no page has no preview, and frames nothing', async () => {
+    stubApi()
+    const { container } = renderSelected(settings)
+
+    await waitFor(() =>
+      expect(
+        (screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null)?.value,
+      ).toBe('Loaded'),
+    )
+    expect(screen.getByText('No preview for this entry.')).toBeTruthy()
+    expect(container.querySelector('iframe')).toBeNull()
   })
 })

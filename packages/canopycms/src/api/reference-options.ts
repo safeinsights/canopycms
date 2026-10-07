@@ -105,7 +105,7 @@ const getReferenceOptionsHandler = async (
     displayField,
     search,
     entryTypes,
-    (relativePath) => checkAccess(relativePath, 'read').allowed,
+    (logicalPath) => checkAccess(logicalPath, 'read').allowed,
   )
 
   return {

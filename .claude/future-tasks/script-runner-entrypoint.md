@@ -1,52 +1,40 @@
-# A supported script-runner entrypoint
+# A supported script write path (and the scripting-entrypoint cluster)
 
-## Priority: P2 [BOTH]
+## Priority: P3 [BOTH]
 
-From the 2026-08-13/14 adopter site audits, triaged as part of the
-2026-08-14 go-live backlog re-baseline. No existing task file covered this.
+The read half of scripting ships: `createBuildCanopy(config, { entrySchemaRegistry })`
+(`build-canopy.ts`, exported from `canopycms/server`) boots a read context for a standalone
+`tsx`/`node` script as the synthetic admin user, bypassing ACLs. `generateId` (`id.ts`) is also
+exported from `canopycms/server`, so an ingest script no longer needs to copy the Base58 alphabet.
 
-## Problem
+## What is left: a write path
 
-There is no blessed way to run a standalone script (a migration, a bulk
-ingest, a content-validation pass, an ad hoc report) with CanopyCMS loaded
-and configured the normal way. Both sites carry repeated `@ts-ignore`
-comments for `.ts` import specifiers in their scripts directories, working
-around the lack of a real entrypoint rather than using one that doesn't
-exist.
+An adopter's dataset-ingestion script writes entry YAML with raw `writeFileSync`, outside
+CanopyCMS's write path. Bulk-ingested content therefore:
 
-This is the shared prerequisite underneath several other items filed in this
-same re-baseline: the boot-block duplication noted in
-[search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md)
-(`createCanopyServices` + `createCanopyContext` + `STATIC_DEPLOY_USER`, byte-
-similar in both sites' scripts), and the programmatic content-authoring gap in
-[content-authoring-api-id-generator.md](content-authoring-api-id-generator.md)
-(one adopter site's own dataset-ingestion script). Both sites keep
-re-solving "how do I get a working Canopy context outside of a Next.js
-request" from scratch, and the `@ts-ignore` scars are the visible symptom.
+- **Bypasses schema validation.** Nothing checks the YAML against the entry type's schema the way
+  `ContentStore.write()` does via `validation/entry-validator.ts`, so a malformed import is
+  invisible until something downstream trips on it.
+- **Bypasses the ID index.** `ContentStore`'s content-ID index (`content-index-generation.ts`) is
+  maintained by the package's own write and scan paths; hand-dropped files are not registered, so
+  reference resolution and ID lookups can miss them until a rescan.
 
-## Proposed solution
+There is no documented, supported way to author content from a script that gets the validation and
+indexing guarantees the editor save path gets.
 
-A documented, supported script-runner pattern — likely a small CLI helper or
-a documented boot function (reusing the CLI's existing config-loading
-machinery, which already loads adopter config via `jiti` per
-`cli-sync-migrate-ignore-adopter-content-root.md`'s notes on the CLI's
-loader) that:
-
-- Resolves and loads the adopter's `canopycms.config.ts` the same way the CLI
-  already does.
-- Produces a working `services`/context object suitable for scripting (read,
-  and per
-  [content-authoring-api-id-generator.md](content-authoring-api-id-generator.md),
-  write).
-- Removes the need for `@ts-ignore`d `.ts` import specifiers by being a real,
-  typed entrypoint rather than an ad hoc script importing internal source
-  paths.
+**Direction:** a server-side function that performs the same write as the editor save path (schema
+validation, ID assignment, index update), documented as the scripting write entrypoint and reachable
+from `createBuildCanopy`'s context. It must not bypass the content-write lock
+(see [content-write-lock-coverage-gaps.md](resolved/content-write-lock-coverage-gaps.md)).
 
 ## Related
 
-- [content-authoring-api-id-generator.md](content-authoring-api-id-generator.md)
-  — the concrete first consumer of this.
-- [search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md)
-  — documents the boot-block pattern this would formalize.
-- `cli-sync-migrate-ignore-adopter-content-root.md` — the CLI's existing
-  config-loading path this should reuse rather than duplicate.
+- [build-canopy-scripts-outside-next-build.md](build-canopy-scripts-outside-next-build.md): the
+  open decision on where `createBuildCanopy` and `generate-ai-content` read content from outside
+  `next build`.
+- [content-validation-gate.md](content-validation-gate.md): a validating write path still would not
+  catch a render-exploding MDX body; the two are complementary.
+- [search-document-extraction-primitives.md](resolved/search-document-extraction-primitives.md):
+  documents the boot-block pattern `createBuildCanopy` formalizes.
+- [cli-sync-migrate-ignore-adopter-content-root.md](cli-sync-migrate-ignore-adopter-content-root.md):
+  the CLI's config-loading path a script runner should reuse.

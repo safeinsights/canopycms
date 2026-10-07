@@ -39,6 +39,7 @@ vi.mock('../authorization', async (importOriginal) => {
 })
 
 import { WORKFLOW_ROUTES } from './branch-status'
+import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import {
   createMockApiContext,
   createMockBranchContext,
@@ -102,6 +103,11 @@ describe('branch status api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
+    expect(res.data?.branch).toMatchObject({
+      status: 'submitted',
+      writeBlocked: true,
+      submitBlocked: true,
+    })
   })
 
   it('rejects submit on the base branch (protected -- submittableBranch guard, prod)', async () => {
@@ -264,6 +270,46 @@ describe('branch status api', () => {
     consoleSpy.restore()
   })
 
+  it('returns a retriable 409 when the branch content-write lock is busy, without stamping it submitted', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    mockMetadataUpdate.mockClear()
+    ctx.services.submitBranch = vi.fn().mockRejectedValue(new ContentWriteLockBusyError())
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
+    expect(res.error).toContain('feature/x')
+    expect(res.error).toMatch(/nothing was submitted/i)
+    expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    consoleSpy.restore()
+  })
+
+  it('says the outcome is unknown when the lock was lost during the submit', async () => {
+    const consoleSpy = mockConsole()
+    const ctx = makeCtx(true)
+    mockMetadataUpdate.mockClear()
+    ctx.services.submitBranch = vi
+      .fn()
+      .mockRejectedValue(new ContentWriteLockBusyError('lost', 'unknown'))
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.status).toBe(409)
+    expect(res.error).toMatch(/may not have completed/i)
+    expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    consoleSpy.restore()
+  })
+
   it('keeps the existing 500 path for an unrelated (non-rejection) push failure', async () => {
     const consoleSpy = mockConsole()
     const ctx = makeCtx(true)
@@ -317,7 +363,7 @@ describe('branch status api', () => {
           config: { defaultBranchAccess: 'allow' } as any,
         },
       })
-      ctx.services.submitBranch = vi.fn()
+      ctx.services.submitBranch = vi.fn().mockResolvedValue({ changedPaths: [] })
       return { ctx, mockGit }
     }
 
@@ -381,6 +427,50 @@ describe('branch status api', () => {
 
       expect(res.ok).toBe(true)
       expect(ctx.services.submitBranch).toHaveBeenCalled()
+    })
+  })
+  describe('records the submitting user', () => {
+    it('passes the authenticated user to submitBranch and the changed paths into the PR body', async () => {
+      const createOrUpdatePR = vi.fn().mockResolvedValue({ number: 5, url: 'https://pr/5' })
+      const ctx = createMockApiContext({
+        branchContext: baseContext,
+        allowBranchAccess: true,
+        services: {
+          config: {
+            defaultBranchAccess: 'allow',
+            mode: 'prod',
+            defaultBaseBranch: 'main',
+          } as any,
+          githubService: { createOrUpdatePR } as any,
+        },
+      })
+      ctx.services.submitBranch = vi
+        .fn()
+        .mockResolvedValue({ changedPaths: ['content/pages/home.md'] })
+
+      const res = await submitBranchForMerge(
+        ctx,
+        {
+          user: {
+            type: 'authenticated',
+            userId: 'u1',
+            groups: [],
+            name: 'Jane Doe',
+            email: 'jane@example.com',
+          },
+        },
+        { branch: 'feature/x' as BranchName },
+      )
+
+      expect(res.ok).toBe(true)
+      expect(ctx.services.submitBranch).toHaveBeenCalledWith({
+        context: baseContext,
+        submitter: { userId: 'u1', name: 'Jane Doe', email: 'jane@example.com' },
+      })
+      const body: string = createOrUpdatePR.mock.calls[0]?.[0].body
+      expect(body).toContain('Submitted by `Jane Doe` (`u1`) via CanopyCMS.')
+      expect(body).toContain('- `content/pages/home.md`')
+      expect(body).not.toContain('jane@example.com')
     })
   })
 })

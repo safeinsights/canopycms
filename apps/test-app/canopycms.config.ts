@@ -17,5 +17,7 @@ export default defineCanopyConfig({
         neutral: '#0f172a',
       },
     },
+    // `app/page.tsx` serves the home singleton at `/`; settings has no page.
+    previewBase: { 'content/home': '/', 'content/settings': false },
   },
 })

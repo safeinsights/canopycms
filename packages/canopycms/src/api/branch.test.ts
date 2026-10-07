@@ -83,6 +83,8 @@ import { createMockApiContext, createMockBranchContext, createMockRegistry } fro
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
 import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
+import type { BranchRegistry } from '../branch-registry'
+import type { CanopyConfig } from '../config'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -247,6 +249,22 @@ describe('branch api', () => {
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch.name).toBe('feature/test')
+  })
+
+  it('returns the created branch as a list item carrying the server-computed flags', async () => {
+    const res = await createBranch(
+      baseCtx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/test') },
+    )
+    expect(res.ok).toBe(true)
+    expect(res.data?.branch).toMatchObject({
+      name: 'feature/test',
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+      submitBlocked: false,
+    })
   })
 
   it('rejects branch creation when user has no path access', async () => {
@@ -753,6 +771,31 @@ describe('branch api', () => {
     const main = res.data?.branches.find((b) => b.name === 'main')
     expect(main?.isProtected).toBe(true)
     expect(main?.readOnly).toBe(true)
+  })
+
+  it('hides a settings-branch workspace left on disk, even from admins', async () => {
+    const registry = createMockRegistry(
+      ['main', 'feature/x', 'canopycms-settings-other', 'site-settings'].map((branchName) =>
+        createMockBranchContext({ branchName, createdBy: 'canopycms-system' }),
+      ),
+    )
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        registry: registry as unknown as BranchRegistry,
+        config: {
+          defaultBaseBranch: 'main',
+          mode: 'prod',
+          settingsBranch: 'site-settings',
+        } as unknown as CanopyConfig,
+      },
+    })
+
+    const res = await listBranches(ctx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+
+    expect(res.data?.branches.map((b) => b.name)).toEqual(['main', 'feature/x'])
   })
 
   it('reports the effective default branch for all users', async () => {

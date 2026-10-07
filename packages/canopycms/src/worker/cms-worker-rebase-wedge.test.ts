@@ -84,7 +84,7 @@ async function createSetup(
   branchName: string,
   opts: { branchDeletesEntry: boolean; baseDeletesEntry?: boolean },
 ): Promise<Setup> {
-  const remotePath = path.join(tmpDir, 'remote')
+  const remotePath = path.join(tmpDir, 'remote.git')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 

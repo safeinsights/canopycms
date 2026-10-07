@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -121,6 +121,61 @@ const showDeleteConfirmation = (
   })
 }
 
+/**
+ * How long a branch this session created stays overlaid on listings. Each warm
+ * server container caches the shared filesystem separately, so for its
+ * attribute/dentry cache window (~60s, see docs/concurrency.md window A) a
+ * listing can lack the branch even after another container's listing showed
+ * it. Twice that absorbs request latency; past it, listings alone decide.
+ * @internal Exported only for the test that pins it.
+ */
+export const CREATED_BRANCH_GRACE_MS = 120_000
+
+/** A branch this session created: the create response's copy, then the last copy a listing showed. */
+interface PendingBranch {
+  branch: BranchListItem
+  addedAt: number
+}
+
+/** The server listing plus any pending branches it lacks; the server's copy always wins. */
+function mergePendingBranches(
+  listed: BranchListItem[],
+  pending: PendingBranch[],
+): BranchListItem[] {
+  const listedNames = new Set(listed.map((b) => b.name))
+  const missing = pending.filter((p) => !listedNames.has(p.branch.name))
+  return missing.length === 0 ? listed : [...listed, ...missing.map((p) => p.branch)]
+}
+
+/**
+ * Applies one received listing to the pending branches: drops those it arrived
+ * past the grace window for, and takes the listing's copy of the rest. Written
+ * so a listing with no arrival time (NaN) drops nothing.
+ */
+function reconcilePendingBranches(
+  pending: PendingBranch[],
+  listed: BranchListItem[],
+  receivedAt: number,
+): PendingBranch[] {
+  const listedByName = new Map(listed.map((b) => [b.name, b]))
+  let changed = false
+  const next: PendingBranch[] = []
+  for (const p of pending) {
+    if (receivedAt - p.addedAt > CREATED_BRANCH_GRACE_MS) {
+      changed = true
+      continue
+    }
+    const listedCopy = listedByName.get(p.branch.name)
+    if (listedCopy && listedCopy !== p.branch) {
+      changed = true
+      next.push({ branch: listedCopy, addedAt: p.addedAt })
+    } else {
+      next.push(p)
+    }
+  }
+  return changed ? next : pending
+}
+
 interface BranchSummary {
   name: string
   status: string
@@ -182,6 +237,8 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** Shows a branch the server just created before any listing includes it. */
+  addCreatedBranch: (branch: BranchListItem) => void
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
@@ -202,7 +259,50 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     error: branchesError,
     isValidating: branchesIsValidating,
   } = useBranchesData(apiClient)
-  const branches = useMemo(() => branchesData?.branches ?? [], [branchesData])
+  const [pendingBranches, setPendingBranches] = useState<PendingBranch[]>([])
+  const branches = useMemo(
+    () => mergePendingBranches(branchesData?.branches ?? [], pendingBranches),
+    [branchesData, pendingBranches],
+  )
+
+  const addCreatedBranch = useCallback((branch: BranchListItem) => {
+    setPendingBranches((prev) => [
+      ...prev.filter((p) => p.branch.name !== branch.name),
+      { branch, addedAt: Date.now() },
+    ])
+  }, [])
+
+  const forgetCreatedBranch = (name: string) => {
+    setPendingBranches((prev) => {
+      const kept = prev.filter((p) => p.branch.name !== name)
+      return kept.length === prev.length ? prev : kept
+    })
+  }
+
+  // After a workflow action, a pending branch's overlaid copy is stale. The
+  // server's returned copy replaces it, so a listing that still lacks the
+  // branch shows its new status instead of hiding it; without one, forgetting
+  // it fails closed rather than showing the pre-action state.
+  const updateCreatedBranch = (name: string, branch: BranchListItem | undefined) => {
+    if (!branch) {
+      forgetCreatedBranch(name)
+      return
+    }
+    setPendingBranches((prev) =>
+      prev.some((p) => p.branch.name === name)
+        ? prev.map((p) => (p.branch.name === name ? { ...p, branch } : p))
+        : prev,
+    )
+  }
+
+  // Each received listing is a new `branchesData` (see `BranchesData.receivedAt`);
+  // the grace window is measured to its arrival.
+  useEffect(() => {
+    if (!branchesData) return
+    setPendingBranches((prev) =>
+      reconcilePendingBranches(prev, branchesData.branches, branchesData.receivedAt),
+    )
+  }, [branchesData])
 
   // Adopt the server's default branch once data arrives, if nothing pinned one.
   useEffect(() => {
@@ -335,6 +435,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               message: 'Branch submitted for review',
               color: 'green',
             })
+            updateCreatedBranch(branchNameToSubmit, result.data?.branch)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -369,6 +470,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to withdraw branch')
             }
             notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+            updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
             await loadBranches()
             resolve()
           } catch (err) {
@@ -392,6 +494,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         throw new Error(result.error || 'Failed to request changes')
       }
       notifications.show({ message: 'Changes requested', color: 'orange' })
+      updateCreatedBranch(branchNameForChanges, result.data?.branch)
       await loadBranches()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to request changes'
@@ -415,6 +518,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               throw new Error(result.error || 'Failed to delete branch')
             }
             notifications.show({ message: 'Branch deleted', color: 'green' })
+            forgetCreatedBranch(branchNameToDelete)
             await loadBranches()
           } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to delete branch'
@@ -453,6 +557,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    addCreatedBranch,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,

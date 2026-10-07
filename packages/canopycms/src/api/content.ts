@@ -23,7 +23,7 @@ import {
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import { parseSlug, type Slug, type PhysicalPath } from '../paths'
+import { entryLogicalPath, parseSlug, type Slug } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
@@ -86,11 +86,12 @@ export interface WriteContentBody {
   data?: Record<string, unknown>
   body?: string
   /**
-   * OCC / create-intent token. Omit for a blind write (no opinion). A number
-   * from a prior read/write response rejects the write with 409 if the file
-   * has changed since. `null` means "this entry must not already exist" —
-   * the create path uses this so a create against an existing slug is
-   * rejected with 409 instead of silently overwriting it.
+   * OCC token. A number from a prior read/write response makes this an update,
+   * rejected with 409 if the file's mtime no longer matches (a file deleted
+   * since is written anew). `null` or omitted makes it
+   * a create, rejected with 409 if the entry already exists. There is no blind
+   * write: without a token, "no conflict detection" would be indistinguishable
+   * from "lost the token", so an update has to prove which version it read.
    */
   expectedVersion?: number | null
 }
@@ -141,7 +142,7 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: boundedContentDataSchema.optional(),
   body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
-  // null = create-intent ("must not already exist"); see WriteContentBody.
+  // null or omitted = create ("must not already exist"); see WriteContentBody.
   expectedVersion: z.number().nullish(),
 })
 
@@ -181,31 +182,32 @@ const readContentHandler = async (
 
   let schemaItem: FlatSchemaItem
   let slug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
-  const access = await ctx.services.checkContentAccess(
+  // One checker for the entry and every reference target it resolves, so a reference cannot
+  // carry a target's data past the rules that would refuse a direct read of it.
+  const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
     req.user,
-    'read',
   )
-  if (!access.allowed) {
+  if (!checkAccess(entryLogicalPath(schemaItem.logicalPath, slug), 'read').allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
   try {
-    const doc = await store.read(schemaItem.logicalPath, slug)
+    const doc = await store.read(schemaItem.logicalPath, slug, {
+      referenceAccess: (targetPath) => checkAccess(targetPath, 'read').allowed,
+    })
     return { ok: true, status: 200, data: doc }
   } catch (err: unknown) {
     if (isNotFoundError(err)) {
@@ -233,13 +235,12 @@ const writeContentHandler = async (
 
   let schemaItem: FlatSchemaItem
   let slug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -248,7 +249,7 @@ const writeContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
     'edit',
   )
@@ -321,22 +322,24 @@ const writeContentHandler = async (
 
   const data = body.data ?? {}
   const isDataOnly = isDataOnlyFormat(body.format)
+  // The store's own `undefined` (blind write) is never reachable from here: an omitted token is
+  // a create, so an update that lost its token 409s instead of overwriting unchecked.
+  const expectedVersion = body.expectedVersion ?? null
+  const createConflictError =
+    body.expectedVersion === null
+      ? `An entry with slug "${slug}" already exists`
+      : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
-    // Create-intent guard: a create request (expectedVersion === null) against a slug that
-    // already has content must never silently overwrite it — short-circuit with 409 before field
-    // validation runs, so the error names the real problem instead of "field is required" or a
-    // bare conflict. store.write() re-enforces this itself inside its per-entry lock against a
-    // fresh stat (the race-safe authoritative check); this is just a cheaper fast path for the
-    // common case.
-    if (body.expectedVersion === null && exists) {
-      return {
-        ok: false,
-        status: 409,
-        error: `An entry with slug "${slug}" already exists`,
-      }
+    // Create guard: a create against a slug that already has content must never silently
+    // overwrite it — short-circuit with 409 before field validation runs, so the error names the
+    // real problem instead of "field is required" or a bare conflict. store.write() re-enforces
+    // this itself inside its per-entry lock against a fresh stat (the race-safe authoritative
+    // check); this is just a cheaper fast path for the common case.
+    if (expectedVersion === null && exists) {
+      return { ok: false, status: 409, error: createConflictError }
     }
 
     // [SLUG] Create-only routability check: `writeContentParamsSchema.path`'s `parseLogicalPath`
@@ -505,13 +508,13 @@ const writeContentHandler = async (
       ? {
           format: body.format as 'json' | 'yaml',
           data: normalizedData ?? {},
-          expectedVersion: body.expectedVersion,
+          expectedVersion,
         }
       : {
           format: body.format as 'md' | 'mdx',
           data: normalizedData,
           body: body.body ?? '',
-          expectedVersion: body.expectedVersion,
+          expectedVersion,
         }
 
     // Pass the resolved entryTypeName (not the raw, possibly-omitted
@@ -559,12 +562,8 @@ const writeContentHandler = async (
       }
       // Race-safe fallback: the early `exists` check above catches the common case; this covers a
       // collision that lands between that check and store.write()'s in-lock stat.
-      if (body.expectedVersion === null) {
-        return {
-          ok: false,
-          status: 409,
-          error: `An entry with slug "${slug}" already exists`,
-        }
+      if (expectedVersion === null) {
+        return { ok: false, status: 409, error: createConflictError }
       }
       return {
         ok: false,
@@ -599,13 +598,13 @@ const validateReferencesHandler = async (
   const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   let schemaItem: FlatSchemaItem
-  let relativePath: PhysicalPath
+  let slug: Slug
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
-    const slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
-    relativePath = pathResult.relativePath
+    slug = resolved.slug
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, slug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -614,7 +613,7 @@ const validateReferencesHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, slug),
     req.user,
     'read',
   )
@@ -686,13 +685,12 @@ const renameEntryHandler = async (
 
   let schemaItem: FlatSchemaItem
   let currentSlug: Slug
-  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     currentSlug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, currentSlug)
-    relativePath = pathResult.relativePath
+    // Runs the store's slug and traversal checks before the permission check.
+    await store.resolveDocumentPath(schemaItem.logicalPath, currentSlug)
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
@@ -701,11 +699,22 @@ const renameEntryHandler = async (
   const access = await ctx.services.checkContentAccess(
     branchContext,
     branchContext.branchRoot,
-    relativePath,
+    entryLogicalPath(schemaItem.logicalPath, currentSlug),
     req.user,
     'edit',
   )
   if (!access.allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
+  // A rename creates the entry at its new path, so that path needs edit access too.
+  const destinationAccess = await ctx.services.checkContentAccess(
+    branchContext,
+    branchContext.branchRoot,
+    entryLogicalPath(schemaItem.logicalPath, body.newSlug),
+    req.user,
+    'edit',
+  )
+  if (!destinationAccess.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 

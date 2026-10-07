@@ -1,8 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import lockfile from 'proper-lockfile'
+
+import { tryAcquireContentWriteLock } from './content-write-lock'
 import { acquireProvisioningLock, tryAcquireProvisioningLock } from './provisioning-lock'
 import { isNodeError } from './error'
 import { mockConsole } from '../test-utils/console-spy'
@@ -99,5 +102,52 @@ describe('provisioning lock', () => {
     await releaseB()
     const reacquired = await tryAcquireProvisioningLock(branchesRoot, '.branch-b.init.lock')
     await reacquired()
+  })
+
+  describe('staleness thresholds', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    /** A marker as a holder leaves it, last refreshed `ageMs` ago. */
+    async function markerAged(dir: string, name: string, ageMs: number): Promise<string> {
+      const marker = path.join(dir, name)
+      await fs.mkdir(marker, { recursive: true })
+      const then = new Date(Date.now() - ageMs)
+      await fs.utimes(marker, then, then)
+      return marker
+    }
+
+    it('every provisioning acquirer judges by the one 90s threshold, and every holder refreshes at 15s', async () => {
+      const lockSpy = vi.spyOn(lockfile, 'lock')
+      const releasePatient = await acquireProvisioningLock(branchesRoot, '.a.init.lock')
+      const releaseTry = await tryAcquireProvisioningLock(branchesRoot, '.b.init.lock')
+      const releaseContent = await tryAcquireContentWriteLock(path.join(tmpRoot, 'branch'))
+      await Promise.all([releasePatient(), releaseTry(), releaseContent()])
+
+      const options = lockSpy.mock.calls.map((call) => call[1])
+      expect(options.map((o) => [o?.stale, o?.update])).toEqual([
+        [90_000, 15_000],
+        [90_000, 15_000],
+        [30_000, 15_000],
+      ])
+    })
+
+    it('leaves a provisioning marker that looks 40s old, which a live holder can through the NFS cache', async () => {
+      const marker = await markerAged(branchesRoot, '.c.init.lock', 40_000)
+
+      await expect(tryAcquireProvisioningLock(branchesRoot, '.c.init.lock')).rejects.toMatchObject({
+        code: 'ELOCKED',
+      })
+      await expect(fs.stat(marker)).resolves.toBeTruthy()
+    })
+
+    it('still lets the content-write lock reap a 40s-old marker', async () => {
+      const branchRoot = path.join(tmpRoot, 'branch')
+      await markerAged(path.join(branchRoot, '.canopy-meta'), 'content-write.lock', 40_000)
+
+      const release = await tryAcquireContentWriteLock(branchRoot)
+      await release()
+    })
   })
 })

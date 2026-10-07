@@ -35,7 +35,7 @@ On the shipped AWS deployment this path is already inert:
 
 ## Who it actually bites
 
-A non-AWS, internet-having, App-only adopter running **no worker**. Their settings PRs sit
+A non-AWS, internet-having, App-only adopter running **no worker**. Their settings push tasks sit
 at `syncStatus: 'pending-sync'` indefinitely, with only a `canopyLogWarn` as signal.
 
 **This is pre-existing, not opened by #45** — the identical thing happens today to any

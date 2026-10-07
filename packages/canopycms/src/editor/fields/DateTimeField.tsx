@@ -5,6 +5,7 @@ import { Input } from '@mantine/core'
 export interface DateTimeFieldProps {
   id?: string
   label?: string
+  description?: string
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
@@ -60,6 +61,7 @@ export function datetimeLocalValueToIso(local: string): string {
 export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   id,
   label,
+  description,
   value,
   onChange,
   dataCanopyField,
@@ -68,7 +70,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   const inputId = id ?? generatedId
 
   return (
-    <Input.Wrapper id={inputId} label={label} size="sm">
+    <Input.Wrapper id={inputId} label={label} description={description} size="sm">
       <Input
         type="datetime-local"
         step={1}
