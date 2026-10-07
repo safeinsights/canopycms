@@ -1,7 +1,7 @@
 # The lazy transform Lambda's create-only writes depend on the Lambda runtime's AWS SDK
 
 **Status:** Open. **Priority: P2.** Filed 2026-10-07 from the adopting site's review of the
-[materialize release hardening](materialize-release-hardening.md) epic.
+[materialize release hardening](resolved/materialize-release-hardening.md) epic.
 
 ## State
 
