@@ -1789,7 +1789,7 @@ For CanopyCMS:
 ```env
 CANOPY_AUTH_MODE=dev                           # Auth provider: "dev" (default) or "clerk"
 CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456   # Comma-separated user IDs that get auto-admin access
-CANOPY_AUTH_CACHE_PATH=/mnt/efs/workspace/.cache  # Override auth cache location (prod mode only)
+CANOPY_AUTH_CACHE_PATH=/mnt/efs/.cache            # Override auth cache location (prod mode only)
 CANOPY_BUILD_ID=fd91b36c                       # Identifies the build artifact (see below)
 ```
 

@@ -140,6 +140,11 @@ describe('branch withdraw api', () => {
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
+    expect(res.data?.branch).toMatchObject({
+      status: 'editing',
+      writeBlocked: false,
+      submitBlocked: false,
+    })
   })
 
   it('converts PR to draft if github service available', async () => {

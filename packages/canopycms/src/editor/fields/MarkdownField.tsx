@@ -235,6 +235,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const lastRejectedSource = useRef<string | null>(null)
   const apiClient = useApiClient()
   const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
+  const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
+  const [editorGeneration, setEditorGeneration] = useState(0)
 
   // Drives both MDXEditor's drag/drop/paste upload and the custom image
   // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
@@ -259,6 +261,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const emitChange = useCallback(
     (newValue: string) => {
       lastExternalValue.current = newValue
+      setRejectedInsert(null)
       onChange(newValue)
     },
     [onChange],
@@ -277,13 +280,22 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   )
 
   // MDXEditor can report the error while rendering (it imports as it is
-  // created), hence the microtask. The rejected document is this render's
+  // created), hence the microtask. A document it rejects is this render's
   // `value`: MDXEditor is created from it, and gets this handler again before
-  // the sync effect hands it a later value.
+  // the sync effect hands it a later value. Any other `source` is an insert.
+  // Either way MDXEditor emits no further edits until an import succeeds, so a
+  // rejected insert remounts it from the unchanged document.
   const handleEditorError = useCallback(
     ({ error, source }: { error: string; source: string }) => {
       lastRejectedSource.current = source
-      queueMicrotask(() => setMode({ kind: 'source', reason: error, failedValue: value }))
+      queueMicrotask(() => {
+        if (source === value) {
+          setMode({ kind: 'source', reason: error, failedValue: value })
+        } else {
+          setRejectedInsert(error)
+          setEditorGeneration((n) => n + 1)
+        }
+      })
     },
     [value],
   )
@@ -356,8 +368,26 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
         </>
       ) : (
         <div style={editorWrapperStyle}>
+          {rejectedInsert !== null && (
+            <Alert
+              color="yellow"
+              variant="light"
+              mb="xs"
+              withCloseButton
+              onClose={() => setRejectedInsert(null)}
+              data-testid="markdown-insert-rejected"
+            >
+              <Text size="sm">
+                The rich-text editor can&apos;t show what was inserted, so nothing was added.
+              </Text>
+              <Text size="xs" c="dimmed" mt={4}>
+                {rejectedInsert}
+              </Text>
+            </Alert>
+          )}
           <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
             <MDXEditorLazy
+              key={editorGeneration}
               markdown={value}
               onChange={handleEditorChange}
               onError={handleEditorError}

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
-import type { BranchResponse } from './branch'
+import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
@@ -13,7 +13,7 @@ const withdrawBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-): Promise<BranchResponse> => {
+): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access). On the
@@ -81,7 +81,11 @@ const withdrawBranchHandler = async (
     },
   })
 
-  return { ok: true, status: 200, data: { branch: updated.branch } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branch: toBranchListItem(ctx.services.config, updated.branch) },
+  }
 }
 
 /**
@@ -99,8 +103,8 @@ export const withdrawBranch = defineEndpoint({
   method: 'POST',
   path: '/:branch/withdraw',
   params: branchParamSchema,
-  responseType: 'BranchResponse',
-  response: {} as BranchResponse,
+  responseType: 'BranchListItemResponse',
+  response: {} as BranchListItemResponse,
   defaultMockData: {
     branch: {
       name: 'test-branch',

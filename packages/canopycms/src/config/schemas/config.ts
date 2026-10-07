@@ -121,16 +121,10 @@ export const CanopyConfigSchema = z
   .strict()
 
 /**
- * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set).
- *
- * WARNING: this fallback assumes a ROOT mount of EFS at /mnt/efs. CanopyCmsService
- * mounts EFS in both the Lambda and the worker THROUGH an access point already
- * rooted at /workspace and therefore sets CANOPYCMS_WORKSPACE_ROOT=/mnt/efs
- * explicitly; if that env were ever unset this default would resolve to
- * /mnt/efs/workspace = EFS:/workspace/workspace (a wrong, nested dir). The CDK
- * always sets the env, so this only bites a hand-rolled misconfiguration.
+ * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set): where
+ * CanopyCmsService mounts the EFS `/workspace` access point in both the Lambda and the worker.
  */
-export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
+export const DEFAULT_PROD_WORKSPACE = '/mnt/efs'
 
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
 // operatingModeSchema.parse(undefined) would throw.
