@@ -7,6 +7,7 @@ import type { AssetRecord } from '../../api'
 import type { ImageFieldValue } from '../../config'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
 import { CanopyCMSProvider } from '../theme'
+import { AssetContextProvider } from '../context'
 import { ImageField, type ImageFieldProps } from './ImageField'
 import type { CropRect } from '../../assets/transform-directives'
 
@@ -162,7 +163,10 @@ describe('ImageField', () => {
     expect(cropStep).toBeTruthy()
     // Value has not committed yet.
     expect(JSON.parse(screen.getByTestId('field-value').textContent ?? 'null')).toBeNull()
-    expect(screen.getByTestId('mock-crop-step-image-src').textContent).toBe(catAsset.src)
+    // The crop source loads through the authenticated route; the stored src stays root-relative.
+    expect(screen.getByTestId('mock-crop-step-image-src').textContent).toBe(
+      `/api/canopycms/assets/raw${catAsset.src}`,
+    )
 
     fireEvent.click(screen.getByTestId('mock-crop-confirm'))
 
@@ -207,6 +211,31 @@ describe('ImageField', () => {
     expect(screen.getByTestId('image-field-replace-hero')).toBeTruthy()
     expect(screen.getByTestId('image-field-remove-hero')).toBeTruthy()
     expect(screen.getByTestId('image-field-crop-hero')).toBeTruthy()
+  })
+
+  it('loads the cropped preview through the authenticated route under the basePath', () => {
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <AssetContextProvider basePath="/p">
+            <StatefulImageField
+              value={{
+                src: catAsset.src,
+                alt: 'A cat',
+                width: 400,
+                height: 300,
+                crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.25 },
+              }}
+            />
+          </AssetContextProvider>
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+
+    expect(screen.getByAltText('A cat').getAttribute('src')).toBe(
+      `/p/api/canopycms/assets/raw/assets/t/c=0.1000:0.2000:0.5000:0.2500,w=320/${catAsset.hash32}/cat.png`,
+    )
   })
 
   it('omits the Crop button when the field has no aspect configured', () => {

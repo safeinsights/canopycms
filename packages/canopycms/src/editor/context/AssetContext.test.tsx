@@ -2,43 +2,38 @@ import React from 'react'
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { AssetContextProvider, useAssetContext } from './AssetContext'
+import { assetUrl } from '../../assets/asset-url'
+import { AssetContextProvider, authenticatedAssetBase, useAssetContext } from './AssetContext'
 
-/**
- * The editor's asset mount point has two possible sources and they are ALTERNATIVES:
- * `media.publicBaseUrl` (absolute-only, another origin serving /assets at its own root) and the
- * deployment `basePath` (a same-origin path prefix). Without the `basePath` fallback the editor's
- * own thumbnails/previews stay root-relative on a basePath deployment where Next serves /assets,
- * and no config value can fix it — `publicBaseUrl` is Zod-validated as an absolute URL, so it
- * structurally cannot hold `/preview-123`.
- */
-const Read: React.FC<{ onValue: (value: string | undefined) => void }> = ({ onValue }) => {
+const Read: React.FC<{ onValue: (value: string) => void }> = ({ onValue }) => {
   onValue(useAssetContext().baseUrl)
   return null
 }
 
-describe('AssetContextProvider — mount point precedence', () => {
-  const readBaseUrl = (props: { baseUrl?: string; basePath?: string }): string | undefined => {
-    let value: string | undefined
-    render(
-      <AssetContextProvider {...props}>
-        <Read onValue={(v) => (value = v)} />
-      </AssetContextProvider>,
-    )
-    return value
-  }
+const readBaseUrl = (provider: { basePath?: string } | null): string => {
+  let value = ''
+  const reader = <Read onValue={(v) => (value = v)} />
+  render(provider ? <AssetContextProvider {...provider}>{reader}</AssetContextProvider> : reader)
+  return value
+}
 
-  it('falls back to basePath when no publicBaseUrl is configured', () => {
-    expect(readBaseUrl({ basePath: '/preview-123' })).toBe('/preview-123')
+describe('AssetContextProvider - the editor loads assets through the authenticated raw route', () => {
+  it('mounts the raw route at the origin root without a basePath', () => {
+    expect(readBaseUrl({})).toBe('/api/canopycms/assets/raw')
   })
 
-  it('prefers publicBaseUrl over basePath — they are alternatives, never composed', () => {
-    expect(readBaseUrl({ baseUrl: 'https://assets.example.com', basePath: '/preview-123' })).toBe(
-      'https://assets.example.com',
-    )
+  it('puts the raw route under the deployment basePath', () => {
+    expect(readBaseUrl({ basePath: '/preview-123' })).toBe('/preview-123/api/canopycms/assets/raw')
   })
 
-  it('is undefined when neither is set (root-relative, the common case)', () => {
-    expect(readBaseUrl({})).toBeUndefined()
+  it('uses the authenticated route outside a provider too', () => {
+    expect(readBaseUrl(null)).toBe('/api/canopycms/assets/raw')
+  })
+
+  it('builds URLs whose key is the stored src, which is what the raw route reads', () => {
+    const src = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
+    expect(assetUrl({ src }, { width: 160, baseUrl: authenticatedAssetBase('/p') })).toBe(
+      `/p/api/canopycms/assets/raw/assets/t/w=160/${'a'.repeat(32)}/photo.png`,
+    )
   })
 })

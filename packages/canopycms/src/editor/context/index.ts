@@ -8,6 +8,7 @@ export {
 
 export {
   AssetContextProvider,
+  authenticatedAssetBase,
   useAssetContext,
   type AssetContextValue,
   type AssetContextProviderProps,

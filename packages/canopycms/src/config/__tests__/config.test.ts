@@ -1195,6 +1195,15 @@ describe('defineCanopyConfig().client()', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor, editor: { previewPrefix: '/preview' } })
     expect(client().editor?.previewPrefix).toBe('/preview')
   })
+
+  it('exposes nothing of media to the editor, publicBaseUrl included', () => {
+    // The editor loads assets through the authenticated raw route (editor/context/AssetContext).
+    const { client } = defineCanopyConfig({
+      ...gitAuthor,
+      media: { adapter: 'local', publicBaseUrl: 'https://assets.example.com' },
+    })
+    expect(JSON.stringify(client())).not.toContain('assets.example.com')
+  })
 })
 
 describe('editor.previewPrefix validation', () => {

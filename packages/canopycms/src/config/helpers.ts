@@ -53,7 +53,6 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         editor,
         mode,
         entryLinkUrl,
-        media,
         basePath,
       } = validated
       // flatSchema is loaded dynamically by the editor via API (from .collection.json files)
@@ -64,7 +63,6 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         editor,
         mode,
         entryLinkUrl,
-        assetBaseUrl: media?.publicBaseUrl,
         basePath,
         flatSchema: [],
       }

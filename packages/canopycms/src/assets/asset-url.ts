@@ -1,9 +1,8 @@
 /**
  * Build/adjust transform URLs for `<img>`/srcset without pulling in the
- * server-only transform engine. Isomorphic - depends only on
- * transform-directives.ts, the plain `ASSET_PREFIXES` constant, and
- * utils/url-prefix.ts, none of which import node builtins, so this is safe to
- * import from client (editor) code as well as during static builds.
+ * server-only transform engine. Isomorphic - none of its imports reach a node
+ * builtin, so this is safe to import from client (editor) code as well as during
+ * static builds.
  */
 
 import {
@@ -12,6 +11,7 @@ import {
   sanitizeUnprefixedPath,
   stripTrailingSlashes,
 } from '../utils/url-prefix'
+import { getPreviewAssetBase } from '../editor/preview-asset-base'
 import { ASSET_PREFIXES } from './asset-prefixes'
 import {
   formatDirectives,
@@ -92,6 +92,10 @@ function mergeDirectives(
  * in `ref.src` (see `mergeDirectives` for precedence). For static srcs (svg/pdf under
  * `/assets/{hash}/...`, or any src that isn't one of our own transform URLs) the src is
  * returned unchanged and every directive is ignored - there is nothing to transform.
+ *
+ * In a live preview, a transform URL goes behind the editor's authenticated route
+ * (`editor/preview-asset-base.ts`) instead of `opts.baseUrl`: a draft's crop or width may exist
+ * nowhere a build put it. Static srcs keep `opts.baseUrl`, since finalize wrote them.
  */
 export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const { src } = ref
@@ -111,12 +115,13 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
     return joinUrlPrefix(opts.baseUrl, src)
   }
 
+  const base = getPreviewAssetBase() ?? opts.baseUrl
   const rest = src.slice(TRANSFORM_URL_PREFIX.length)
   const parsed = parseTransformPath(rest.split('/'))
   if (!parsed.ok) {
     // Malformed src (shouldn't happen for a src canopycms itself wrote) -
     // nothing sensible to merge onto, so return it unchanged rather than throw.
-    return joinUrlPrefix(opts.baseUrl, src)
+    return joinUrlPrefix(base, src)
   }
 
   const merged = mergeDirectives(parsed.directives, ref.crop, opts)
@@ -126,7 +131,7 @@ export function assetUrl(ref: AssetRef, opts: AssetUrlOptions = {}): string {
   const ext = !merged.identity && merged.format !== undefined ? merged.format : parsed.ext
 
   const newSrc = `${TRANSFORM_URL_PREFIX}${formatDirectives(merged)}/${parsed.hash32}/${parsed.slug}.${ext}`
-  return joinUrlPrefix(opts.baseUrl, newSrc)
+  return joinUrlPrefix(base, newSrc)
 }
 
 /**

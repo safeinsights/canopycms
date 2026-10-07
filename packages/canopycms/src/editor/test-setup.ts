@@ -7,6 +7,8 @@
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
+import { setPreviewAssetBase } from './preview-asset-base'
+
 // React Testing Library only self-registers its automatic cleanup when a
 // GLOBAL `afterEach` exists -- see the `typeof afterEach === 'function'` check
 // at the top of @testing-library/react's entry point. This project runs vitest
@@ -25,6 +27,8 @@ import { cleanup } from '@testing-library/react'
 // Importing `afterEach` explicitly is what makes the registration real here.
 afterEach(() => {
   cleanup()
+  // Module state: a preview test's override would otherwise rewrite every later test's URLs.
+  setPreviewAssetBase(undefined)
 })
 
 if (typeof window !== 'undefined') {

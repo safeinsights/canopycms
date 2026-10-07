@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ImageFieldValue } from '../config/types'
+import { setPreviewAssetBase } from '../editor/preview-asset-base'
 import { assetSrcSet, assetUrl } from './asset-url'
 
 const HASH32 = 'a'.repeat(32)
@@ -16,17 +17,28 @@ describe('module purity', () => {
   // static/seo.ts is what stopped assetUrl carrying a weaker copy of the absolute-URL and
   // prefix-shape rules (see utils/url-prefix.ts's header). url-prefix.ts imports only
   // utils/sanitize-href.ts, whose sole dependency is the global URL, so nothing node: becomes
-  // reachable. `pnpm lint:bundle` is the real enforcement — this guard just fails faster.
-  it('imports nothing beyond asset-prefixes, transform-directives and utils/url-prefix (no node:/sharp reachable from here)', () => {
+  // reachable. It also admits ../editor/preview-asset-base, which imports nothing (pinned below).
+  // `pnpm lint:bundle` is the real enforcement — this guard just fails faster.
+  it('imports nothing beyond asset-prefixes, transform-directives, utils/url-prefix and editor/preview-asset-base (no node:/sharp reachable from here)', () => {
     const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'asset-url.ts')
     const source = readFileSync(filePath, 'utf-8')
     const specifiers = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
     expect(specifiers.length).toBeGreaterThan(0)
     for (const specifier of specifiers) {
       expect(specifier).toMatch(
-        /^(\.\/(asset-prefixes|transform-directives)|\.\.\/utils\/url-prefix)$/,
+        /^(\.\/(asset-prefixes|transform-directives)|\.\.\/utils\/url-prefix|\.\.\/editor\/preview-asset-base)$/,
       )
     }
+  })
+
+  it('the preview asset base module imports nothing', () => {
+    const filePath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      'editor',
+      'preview-asset-base.ts',
+    )
+    expect(readFileSync(filePath, 'utf-8')).not.toMatch(/\bfrom '|\bimport\(|\brequire\(/)
   })
 
   it('the shared join module is itself pure (its only import is sanitize-href)', () => {
@@ -42,6 +54,20 @@ describe('module purity', () => {
     for (const specifier of specifiers) {
       expect(specifier).toBe('./sanitize-href')
     }
+  })
+})
+
+describe('assetUrl - the preview asset base on the server', () => {
+  afterEach(() => setPreviewAssetBase(undefined))
+
+  it('is ignored where there is no window (server render, static build)', () => {
+    const src = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
+    setPreviewAssetBase('/api/canopycms/assets/raw')
+
+    expect(typeof window).toBe('undefined')
+    expect(assetUrl({ src }, { width: 320, baseUrl: 'https://cdn.example.com' })).toBe(
+      `https://cdn.example.com/assets/t/w=320/${'a'.repeat(32)}/photo.png`,
+    )
   })
 })
 

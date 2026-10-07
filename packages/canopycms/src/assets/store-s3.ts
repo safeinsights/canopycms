@@ -223,10 +223,7 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  /**
-   * HEADs first because a presign is pure computation: it signs a URL for any key, present or
-   * not, and the route has to know which case it is in to fall through to a transform.
-   */
+  /** HEADs first: signing is local and succeeds for a missing key too. */
   async presignPublicObjectRead(key: string): Promise<string | null> {
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))

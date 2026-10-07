@@ -67,11 +67,7 @@ export interface AssetStore {
     cacheControl?: string
   }): Promise<void>
   readPublicObject(key: string): Promise<PublicObject | null>
-  /**
-   * A short-lived URL a browser can GET the public object at `key` from directly, so its bytes
-   * never pass through this process; `null` when nothing is stored at `key`. Implemented only by
-   * stores whose objects sit behind such a URL (S3). The raw route streams bytes from the rest.
-   */
+  /** A short-lived URL a browser can GET `key` from directly, or `null` if absent. S3 only. */
   presignPublicObjectRead?(key: string): Promise<string | null>
   putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'>
   getMeta(hash32: string): Promise<AssetMeta | null>

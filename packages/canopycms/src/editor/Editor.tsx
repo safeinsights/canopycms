@@ -62,7 +62,7 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
-import { AssetContextProvider, useApiClient } from './context'
+import { AssetContextProvider, authenticatedAssetBase, useApiClient } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
 
@@ -128,8 +128,6 @@ export interface EditorProps {
   previewPrefix?: string
   currentUser?: string
   canResolveComments?: boolean
-  /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
-  assetBaseUrl?: string
   /**
    * `CanopyClientConfig.basePath` - the deployment prefix the host Next.js app is served under
    * (e.g. `/preview-123`). Prefixed onto every preview iframe `src` this component builds via
@@ -174,7 +172,6 @@ export const Editor: React.FC<EditorProps> = ({
   previewPrefix,
   currentUser = 'current-user',
   canResolveComments = true,
-  assetBaseUrl,
   basePath,
   AccountComponent,
   onAccountClick,
@@ -939,6 +936,7 @@ export const Editor: React.FC<EditorProps> = ({
           }}
           highlightEnabled={highlightEnabled}
           onPreviewError={setPreviewError}
+          assetBase={authenticatedAssetBase(basePath)}
         />
       </Box>
     ) : (
@@ -976,8 +974,7 @@ export const Editor: React.FC<EditorProps> = ({
 
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
-      {/* Precedence (baseUrl wins, basePath is the fallback) lives in AssetContextProvider. */}
-      <AssetContextProvider baseUrl={assetBaseUrl} basePath={basePath}>
+      <AssetContextProvider basePath={basePath}>
         <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
           <EditorHeader
             ref={headerRef}
