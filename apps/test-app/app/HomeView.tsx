@@ -13,10 +13,22 @@ interface HomeData {
 /** One distinct transform per width, so the preview requests 24 derivatives at once. */
 const HERO_WIDTHS = Array.from({ length: 24 }, (_, i) => 160 * (i + 1))
 
+const STORED_RASTER_SRC = /^\/assets\/t\/orig\/([0-9a-f]{32})\/([a-z0-9-]+)\.([a-z0-9]+)$/
+
+/**
+ * Draft data arrives by postMessage, so the hero's src is rebuilt from its validated parts rather
+ * than rendered as given, and anything but a stored raster src renders nothing.
+ */
+function heroRef(value: HomeData['heroImage']): HomeData['heroImage'] {
+  const match = value && STORED_RASTER_SRC.exec(value.src)
+  if (!value || !match) return undefined
+  const [hash32, slug, ext] = match.slice(1).map(encodeURIComponent)
+  return { src: `/assets/t/orig/${hash32}/${slug}.${ext}`, crop: value.crop, alt: value.alt }
+}
+
 export default function HomeView({ initialData = {} }: { initialData?: HomeData }) {
   const { data, fieldProps } = useCanopyPreview<HomeData>({ initialData })
-  // Draft data arrives by postMessage, so only canopy's own transform srcs reach an <img>.
-  const hero = data?.heroImage?.src?.startsWith('/assets/t/') ? data.heroImage : undefined
+  const hero = heroRef(data?.heroImage)
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8">
