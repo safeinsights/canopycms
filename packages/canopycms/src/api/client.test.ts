@@ -301,6 +301,36 @@ describe('CanopyApiClient', () => {
       await pending
     })
 
+    it('waits at least its own delay when Retry-After is shorter', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled({ 'Retry-After': '0' }))
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+      await vi.advanceTimersByTimeAsync(249)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      await pending
+    })
+
+    it('spreads resends after a Retry-After the same way as its own delays', async () => {
+      vi.mocked(Math.random).mockReturnValue(1)
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce(throttled({ 'Retry-After': '2' }))
+        .mockResolvedValueOnce(succeeded())
+      const pending = new CanopyApiClient({ fetch: mockFetch }).branches.list()
+
+      // Up to half the 250 ms base delay on top of the 2 s asked for.
+      await vi.advanceTimersByTimeAsync(2124)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      await pending
+    })
+
     it('falls back to its own delay for a blank or date-valued Retry-After', async () => {
       for (const retryAfter of ['', 'Wed, 21 Oct 2026 07:28:00 GMT']) {
         const mockFetch = vi

@@ -19,6 +19,9 @@ Filed 2026-10-05, out of scope for the `createPreviewPage` PR (`feat/preview-pag
 4. **A `load` can reach `canopy.services`, which skips ACLs.** `PreviewLoadContext.canopy` is the
    request-scoped context, whose read helpers are ACL-checked, but its `services` field is the raw
    escape hatch. A loader is a new, inviting place to reach for it.
+5. **Links in a preview leave the branch.** Nothing intercepts navigation inside the preview
+   iframe, so any same-origin link (a CTA, a markdown link, example1's home post list) loads the
+   published page. On a static-export site that page shows the base branch.
 
 ## Proposed solution
 
@@ -31,6 +34,9 @@ Filed 2026-10-05, out of scope for the `createPreviewPage` PR (`feat/preview-pag
    proxy carrying `$$typeof === Symbol.for('react.client.reference')`. Measure how that proxy
    answers `in` and `typeof` under webpack and Turbopack before relying on it.
 4. Hand `load` a `CanopyContext` without `services` (an `Omit`), unless a real loader needs it.
+5. Have the preview bridge catch same-origin link clicks and either rewrite them to
+   `<previewPrefix><urlPath>?branch=<branch>` or ask the editor to open the matching entry, so
+   every adopter gets it rather than each building preview-aware hrefs.
 
 ## Related
 

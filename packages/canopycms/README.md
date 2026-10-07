@@ -45,7 +45,7 @@ you misunderstood, which is why it is worth resolving the ref rather than guessi
 
 ## Branch roots
 
-- Workspaces resolve per mode: `prod` uses `$CANOPYCMS_WORKSPACE_ROOT/content-branches` (default: `/mnt/efs/workspace/content-branches`), `dev` uses `.canopy-dev/content-branches/<branch>`.
+- Workspaces resolve per mode: `prod` uses `$CANOPYCMS_WORKSPACE_ROOT/content-branches` (default: `/mnt/efs/content-branches`), `dev` uses `.canopy-dev/content-branches/<branch>`.
 - For `prod` mode, you must set `defaultRemoteUrl`. For `dev`, `defaultRemoteUrl` is **optional** - if omitted, a local remote is auto-created at `.canopy-dev/remote.git`.
 - Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (default: `main`).
 - Git author identity is required for `prod` mode: set `gitBotAuthorName` and `gitBotAuthorEmail` so bot commits can be created reliably.
@@ -504,7 +504,7 @@ The `isLoading` object mirrors your data structure:
   - **Auto-initialization**: If no `defaultRemoteUrl` is configured, CanopyCMS automatically creates a local remote at `.canopy-dev/remote.git` and seeds it with your current `baseBranch` (e.g., `main`). This allows fully local testing of branching and submission workflows without requiring an external GitHub remote.
   - **Manual remote**: You can still provide an explicit `defaultRemoteUrl` to use a real remote or custom local path.
   - Use `npx canopycms sync push` / `npx canopycms sync pull` to sync content between your working tree and the CMS.
-- **`prod`**: EFS-backed roots under `$CANOPYCMS_WORKSPACE_ROOT` (default: `/mnt/efs/workspace`). Requires `defaultRemoteUrl`.
+- **`prod`**: EFS-backed roots under `$CANOPYCMS_WORKSPACE_ROOT` (default: `/mnt/efs`). Requires `defaultRemoteUrl`.
 
 Branch metadata lives in `.canopy-meta/branch.json`; registry in `branches.json` at the branches root. Content APIs resolve the workspace root from branch state + mode instead of relying on `process.cwd()`.
 
