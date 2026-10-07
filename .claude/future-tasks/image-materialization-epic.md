@@ -64,8 +64,8 @@ output is the only place a final URL exists. That creates an adopter contract: e
 
 | # | PR scope | Status |
 |---|---|---|
-| 0 | Hardening that stands alone (below) | open |
-| 1 | Authenticated route carries editor and preview traffic | open |
+| 0 | Hardening that stands alone (below) | merged #406 |
+| 1 | Authenticated route carries editor and preview traffic | PR open (`feat/authenticated-editor-assets`) |
 | 2 | `collect-asset-refs` and `materialize-assets` CLIs | open |
 | 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
@@ -96,7 +96,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
   - Transform only on a miss.
 - **Editor.** `AssetContext` always uses the authenticated prefix, built from the origin
   plus `basePath`. That covers previews, thumbnails and the crop source, and it resolves
-  [editor-asset-mount-topology.md](editor-asset-mount-topology.md).
+  [editor-asset-mount-topology.md](resolved/editor-asset-mount-topology.md).
 - **Preview override.**
   - The editor sends the authenticated prefix in the draft message.
   - A module owned by the preview bridge stores it, and `assetUrl` reads it through an

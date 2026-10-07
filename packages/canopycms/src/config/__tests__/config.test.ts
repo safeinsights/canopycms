@@ -1126,8 +1126,6 @@ describe('mediaSchema', () => {
   })
 
   describe('publicBaseUrl', () => {
-    // The relaxation asked for by .claude/future-tasks/editor-asset-mount-topology.md's
-    // option 1: the old z.string().url() could not express a bare path at all.
     it('accepts a site-relative mount point', () => {
       expect(mediaSchema.parse({ adapter: 'local', publicBaseUrl: '/preview-123' })).toEqual({
         adapter: 'local',

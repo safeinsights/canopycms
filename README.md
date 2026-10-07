@@ -1128,13 +1128,12 @@ media: {
   adapter: 's3',
   bucket: 'my-site-assets',
   region: 'us-east-1',
-  publicBaseUrl: 'https://assets.example.com',   // optional
   uploadUrl: process.env.CANOPY_UPLOAD_URL,      // optional
   maxUploadBytes: 52_428_800,                    // optional, default 50 MiB
 }
 ```
 
-`publicBaseUrl` is the base URL of the origin serving `/assets` **for the editor's own image previews** — set it when the editor cannot reach assets at its own root (a dedicated asset host, or an editor on a different origin than the site). An absolute URL or a site-relative path; omit for same-origin. It is editor display only and is never stored in content; "Where `/assets` is mounted" below is the public site's side of the same question. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
+The editor needs no asset mount point: it loads every image through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `publicBaseUrl` is accepted but no longer read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
 
 For local development, omit `media` entirely (uploads go to `.canopy-dev/assets/` via the built-in local adapter), point it at `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket to test the S3 path.
 
@@ -1199,7 +1198,9 @@ Stored asset URLs are always root-relative (`/assets/…`), deliberately: the st
 - Assets on CloudFront via `canopycms-cdk`'s `AssetSupport` — omit it; a `basePath` does not move them
 - Assets on a separate host or CDN origin — that origin, e.g. `'https://assets.example.com'`
 
-`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option rather than a config key precisely because the editor and the public site can legitimately have different answers — which is what `media.publicBaseUrl` is, the editor's answer. The prefix is applied at render time only and is **never** written into content.
+`baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option rather than a config key because different renderers see the `/assets` space at different places. The prefix is applied at render time only and is **never** written into content.
+
+In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the editor's signed-in route instead of `baseUrl`, so drafts can show crops and widths no build produced. Only a same-origin framed page is affected, never a server render or static build.
 
 ### Deploying under a `basePath`
 
