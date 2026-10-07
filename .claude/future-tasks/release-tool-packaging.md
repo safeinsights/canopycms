@@ -1,7 +1,7 @@
 # Make a bundled materialize release tool smaller and testable
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from the adopting site's review of the
-[materialize release hardening](materialize-release-hardening.md) epic. **Item 1 needs JP's approval**
+[materialize release hardening](resolved/materialize-release-hardening.md) epic. **Item 1 needs JP's approval**
 (a new package entry point).
 
 ## State
