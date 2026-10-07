@@ -17,8 +17,9 @@ Apply the assets epic's Phase 2 wiring to docs-site-proto (this was PR 8 of
    (including `http://localhost:3000` while the editor runs only under `next dev`),
    replication scope for the new prefixes, CMS-Lambda IAM scoped to the prefixes.
 2. **Behaviors** on `secure-distribution.ts` AND `preview-stack.ts`: second
-   no-originPath origin for the same bucket + `/assets/*` (static) and `/assets/t/*`
-   (origin group [S3 → transform Lambda], failover on 403+404) behaviors. Note the
+   no-originPath origin for the same bucket + the `/assets/*` and `/assets/t/*`
+   behaviors (S3-only by default, plus the release-time collect and materialize steps in
+   [docs/deploying-to-aws.md](../../docs/deploying-to-aws.md)). Note the
    existing infra uses OAI; the AssetSupport construct uses OAC — verified compatible
    choices per the canary, but pick one deliberately here.
    - **CRITICAL (final-review finding #5)**: in BYO-bucket mode the AssetSupport
@@ -26,8 +27,7 @@ Apply the assets epic's Phase 2 wiring to docs-site-proto (this was PR 8 of
      **cannot** add the OAC `s3:GetObject` grant to an *imported* `IBucket`'s policy.
      This wiring MUST add that bucket-policy statement to the real content bucket
      explicitly (the CloudFront distribution's OAC principal, conditioned on the
-     distribution ARN) — otherwise `/assets/*` 403s and `/assets/t/*` permanently fails
-     over to the Lambda (never S3-cached). Standalone mode (the canary) got this for
+     distribution ARN) — otherwise both behaviors 403. Standalone mode (the canary) got this for
      free because CDK owns the bucket; BYO does not.
 3. **CRITICAL bug fix that MUST land in the same change**:
    `infrastructure/scripts/lib/aws.ts` `updateDistributionOriginPath` stamps

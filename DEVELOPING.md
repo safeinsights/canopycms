@@ -329,9 +329,9 @@ The transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is split
 - `assets/transform-directives.ts` — pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). It imports nothing, not even a sibling, so it is safe for client bundles. `canonicalizeTransformPath`, `parseTransformPath` and `isAllowedTransformWidth` take a required width policy, `'any'` (1..8192) or `'allowlist'` (the lazy Lambda); a new caller must choose one deliberately.
 - `assets/transform.ts` — the sharp-based `applyTransform` pipeline. Server-only.
 
-`storeTransform` (`canopycms/server`) is the shared entry point: the authenticated raw route, the build-time materializer (`canopycms materialize-assets`) and the lazy-mode Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`) all call it, and the dev `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) uses the same two files. **Never reimplement directive parsing or the sharp pipeline in one place only.**
+`storeTransform` (`canopycms/server`) is the shared entry point: the authenticated raw route (`rawAssetHandler` in `packages/canopycms/src/api/assets.ts`), the build-time materializer (`canopycms materialize-assets`) and the lazy-mode Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`) all call it. Locally, `withCanopy()` rewrites `/assets/*` to that raw route, so a dev `/assets/t/*` URL is computed on first request and no collect or materialize step is needed. **Never reimplement directive parsing or the sharp pipeline in one place only.**
 
-Every path surfaces a `TransformRejection` carrying a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure). **Forward `transformed.status` verbatim** rather than flattening every rejection to one code: reporting a client-input error as a server error, or the reverse, is a bug, and `handler.test.ts` plus `assets.test.ts` both assert the pass-through.
+Every caller gets a rejection carrying a real HTTP status (`400` unsupported input, `404` missing meta or original, `413` output too large, `422` decode failure). **Forward `transformed.status` verbatim** rather than flattening every rejection to one code: reporting a client-input error as a server error, or the reverse, is a bug, and `handler.test.ts` plus `assets.test.ts` both assert the pass-through.
 
 ### Finalize Decode Validation: Open on No Decoder, Closed on a Real Rejection
 
@@ -960,6 +960,8 @@ Read the file in full before extending it, or before writing another "shell out 
 - **Fail fast on child-process exit instead of polling out the timeout.** `waitForServer()` listens for the child's `exit` event and throws immediately, surfacing the captured server log, rather than polling a server that is already gone.
 - **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`: the dev branch-workspace machinery clones the whole app directory — the test file included — into `.canopy-dev/content-branches/<branch>/` on the first request-time read, and Vitest would pick that clone up as a second, broken test file with no `node_modules` of its own.
 
+**Test a collector against what the renderer emits, not hand-written HTML.** The static export includes `app/images/`, whose pages call `assetUrl`/`assetSrcSet`; `record-asset-urls.ts` installs the test-only listener `assets/asset-url.ts` reads off `globalThis` and logs every URL emitted, and the test asserts `canopycms collect-asset-refs` collects exactly those keys. When `assetUrl` gains a URL shape, render it on that page.
+
 **Local-run gotcha:** the live-server test's request-time read resolves against the last git commit, not uncommitted working-tree edits. Running it locally against WIP changes can make the cms server's `/` return a non-200 until you commit (or `canopycms sync push`) — expected dev-mode behavior, not a build-shape regression. The assertion message says so inline; read it before assuming a regression.
 
 ### `apps/example1` Build Verification (`example1-build` CI Gate)
@@ -1096,7 +1098,7 @@ The `sharp` version is read from `packages/canopycms`'s own `dependencies.sharp`
 pnpm --filter canopycms-cdk run build:lambda
 ```
 
-Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fromAsset()` points. `AssetSupport` checks the `.deployable` marker only when `lazyPublicTransforms` is set, so `build:lambda` matters only there; without it lazy-mode `cdk synth` throws the missing-marker error.
+Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fromAsset()` points; without its `.deployable` marker, lazy-mode `cdk synth` throws.
 
 ### CDK Asset Verification: the Canary Stack
 

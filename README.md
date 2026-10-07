@@ -1121,7 +1121,7 @@ For URL-driven pages, [`readByUrlPath()`](#load-content-by-url-path) is usually 
 
 ### Media Configuration
 
-CanopyCMS stores uploaded images and PDFs in a content-addressed asset store and serves images through an on-demand transform layer — see [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for how those work. Configure it with `media`:
+CanopyCMS stores uploaded images and PDFs in a content-addressed asset store and serves resized derivatives of the images — see [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for how those work. Configure it with `media`:
 
 ```typescript
 media: {
@@ -1158,7 +1158,7 @@ import { assetUrl, assetSrcSet } from 'canopycms'
 
 > **The asset store is site-wide, not branch-scoped.** Because assets are content-addressed and shared (which is what lets a branch merge avoid moving files), branch and path ACLs do **not** apply to them: any authenticated editor can list and fetch every asset in the site, including images uploaded on branches they cannot otherwise access. Asset URLs are unguessable, but the library listing is open to every signed-in user, so treat "uploaded to CanopyCMS" as visible to your whole editorial team — confidential material does not belong in the asset store.
 
-**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to an existing one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` transforms misses in a Lambda instead. Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order (CloudFront takes the first matching pattern). For a distribution built outside `CanopyCmsDistribution`, `assetBehaviors()` and `attachTo(distribution)` remain available, and a hand-wired `additionalBehaviors` that gets the order wrong fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+**Infrastructure** — `canopycms-cdk` ships an `AssetSupport` construct that provisions the bucket (or attaches to one) and serves `/assets/*` from S3 alone, failing over to an optional `replicaBucket` on a 5xx; an unmaterialized URL is a 403. `lazyPublicTransforms: true` instead transforms misses in a Lambda, for releases without [the two steps below](#storing-a-builds-images-before-it-is-released). Pass it to `CanopyCmsDistribution`'s `assetSupport` prop and it attaches both CloudFront read behaviors (`/assets/*` and `/assets/t/*`) in the only safe order (CloudFront takes the first matching pattern). For a distribution built outside `CanopyCmsDistribution`, `assetBehaviors()` and `attachTo(distribution)` are available, and a hand-wired `additionalBehaviors` that gets the order wrong fails `cdk synth`. `uploadBehavior()` is the opt-in write path and belongs on its own distribution, below. See [the AWS guide](docs/deploying-to-aws.md#media-the-public-image-path) and [migration entry](docs/adopter-migration.md#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking).
 
 **Routing uploads through your own CDN**
 
@@ -1177,7 +1177,7 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 // media.uploadUrl = `https://${uploads.distributionDomainName}/`
 ```
 
-Both entry points build the route through one shared internal function, so they cannot drift; the difference is that `AssetSupport` also builds the read behaviors. Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
+Both entry points share one route builder; `AssetSupport` also builds the read behaviors. Either way, no custom domain or certificate is needed and no bucket CORS rule is written: the edge supplies `Access-Control-Allow-Origin` for this route alone and answers the CORS preflight itself. `allowedOrigins` narrows the wildcard default, matching origins exactly, so a `*.subdomain` pattern is refused at synth rather than passing the policy and failing the preflight. `editorOrigins` — which exists only to write that bucket rule — becomes optional, though standalone mode refuses to synth with neither.
 
 Wiring the route by hand instead, five things are easy to get wrong:
 
@@ -1796,7 +1796,7 @@ Install the CDK dependencies it needs — the CLI warns if any are missing, and 
 npm install --save-dev canopycms canopycms-cdk aws-cdk-lib constructs tsx aws-cdk
 ```
 
-Like `init`, this never overwrites an existing file without asking (`--non-interactive` skips them, `--force` regenerates them). The full walkthrough — secrets and variables, filling in the stack, troubleshooting — is in [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
+Like `init`, this never overwrites an existing file without asking (`--non-interactive` skips them, `--force` regenerates them). The full walkthrough — secrets and variables, filling in the stack, troubleshooting — is in [docs/deploying-to-aws.md](docs/deploying-to-aws.md). Releases with `AssetSupport` also run the [two image steps](#storing-a-builds-images-before-it-is-released).
 
 ## Environment Variables
 
