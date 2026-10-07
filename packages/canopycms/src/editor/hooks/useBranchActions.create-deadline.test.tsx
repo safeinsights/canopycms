@@ -49,7 +49,7 @@ describe('useBranchActions create past the deadline', () => {
   }
 
   beforeEach(async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ now: Date.parse(listedBranch.createdAt) })
     mockClient = await setupMockApiClient()
     setupMockLocation()
     setupMockHistory()
