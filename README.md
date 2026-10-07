@@ -473,7 +473,7 @@ npx canopycms sync pull --branch update-homepage   # target one workspace
 
 **Push** copies your working-tree content into a branch workspace and commits it, targeting the workspace matching your current git branch by default and creating it if needed. **Pull** copies content back so you can review, commit and push it yourself. Both accept `--branch`, and prompt you to choose when several workspaces exist and none is named. **Both** merges the two sides with a 3-way git merge and pulls the result back; **abort** restores the workspace to its pre-merge state.
 
-> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
+> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `materialize-assets`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
 
 ### Migrating Existing Content
 
@@ -1201,6 +1201,21 @@ Stored asset URLs are always root-relative (`/assets/…`), deliberately: the st
 `baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. It is a per-render option rather than a config key because different renderers see the `/assets` space at different places. The prefix is applied at render time only and is **never** written into content.
 
 In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the editor's signed-in route instead of `baseUrl`, so drafts can show crops and widths no build produced. Only a same-origin framed page is affected, never a server render or static build.
+
+### Storing a build's images before it is released
+
+Two CLI steps store every image a static build references before the build is served:
+
+```bash
+npx canopycms collect-asset-refs out           # after `next build`, before any manifest step
+npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report materialize.json
+```
+
+`collect-asset-refs` writes the `/assets/…` keys in the output's text files, whatever prefix precedes them, to `out/canopy-asset-refs.json`, and fails on a non-canonical or malformed URL. `materialize-assets` transforms only the keys the store lacks and checks svg/pdf keys exist. It exits non-zero on any failure, naming the pages; `--allow-failures` tolerates references to assets the store cannot produce, never store errors.
+
+**The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too.
+
+`materialize-assets` reads `media` from `canopycms.config.ts`, and on S3 needs `s3:GetObject` (which also authorizes HEAD) on `asset-originals/*`, `asset-meta/*` and `assets/*`, `s3:PutObject` on `assets/t/*`, and `s3:ListBucket` for those prefixes. Without `ListBucket`, a missing key is a 403: a store failure.
 
 ### Deploying under a `basePath`
 

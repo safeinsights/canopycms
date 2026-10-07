@@ -4,12 +4,12 @@
  * in `../../src/constructs/asset-support.ts`) whenever the primary S3 origin
  * misses (403/404 - the canonical transform output doesn't exist yet).
  *
- * Reuses the SAME transform engine as the dev-mode `/assets/t/*` emulation
- * (`packages/canopycms/src/api/assets.ts`'s `serveLazyTransform`) via
+ * Reuses the SAME transform engine as the authenticated raw route and `materialize-assets`
+ * (`packages/canopycms/src/assets/materialize.ts`'s `storeTransform`) via
  * `canopycms/server`'s `canonicalizeTransformPath`/`applyTransform` re-exports
  * - this file must NEVER reimplement directive parsing or the sharp pipeline,
  * only the S3/Lambda-specific plumbing around them. See
- * `serveLazyTransform` for the shared flow's rationale.
+ * `storeTransform` for the shared flow's rationale.
  *
  * Three orderings here are prod-specific and load-bearing:
  *
@@ -218,7 +218,7 @@ async function handleTransformRequest(
   // When the URL omits an explicit `f=` format, the transform preserves the
   // source format, so the URL's `{ext}` must match the source's real ext
   // exactly - the parser alone can't check this (it doesn't know the source
-  // format until this meta lookup). Mirrors serveLazyTransform's dev-mode check.
+  // format until this meta lookup). Mirrors `storeTransform`'s check.
   const requestedFormat = parsed.directives.identity ? undefined : parsed.directives.format
   if (requestedFormat === undefined && parsed.ext !== meta.ext) {
     return errorResponse(400, 'Extension does not match the source format')

@@ -35,6 +35,7 @@ function makeStore(overrides: Partial<AssetStore> = {}): AssetStore {
     readOriginal: vi.fn(),
     putPublicObject: vi.fn().mockResolvedValue(undefined),
     readPublicObject: vi.fn(),
+    hasPublicObject: vi.fn().mockResolvedValue(false),
     putMetaIfAbsent: vi.fn().mockResolvedValue('created'),
     getMeta: vi.fn().mockResolvedValue(null),
     listMeta: vi.fn(),

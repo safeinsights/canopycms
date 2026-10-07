@@ -12,7 +12,13 @@ import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 
-import { GetObjectCommand, HeadObjectCommand, NotFound, S3Client } from '@aws-sdk/client-s3'
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  NotFound,
+  S3Client,
+} from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { mockClient } from 'aws-sdk-client-mock'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -180,6 +186,76 @@ describe('S3AssetStore.presignPublicObjectRead', () => {
     const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
 
     await expect(store.presignPublicObjectRead(KEY)).rejects.toThrow('AccessDenied')
+  })
+})
+
+describe('S3AssetStore missing key vs missing bucket', () => {
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  const awsError = (name: string) =>
+    Object.assign(new Error(name), { name, $metadata: { httpStatusCode: 404 } })
+
+  it('reads a missing key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchKey'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    expect(await store.getMeta('a'.repeat(32))).toBeNull()
+  })
+
+  it('throws for a missing bucket rather than reading every key as absent', async () => {
+    s3Mock.on(GetObjectCommand).rejects(awsError('NoSuchBucket'))
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+    await expect(store.getMeta('a'.repeat(32))).rejects.toThrow('NoSuchBucket')
+  })
+})
+
+describe('S3AssetStore.listPublicObjectKeys', () => {
+  // Created per test, not per describe: a second describe-level mockClient(S3Client) would
+  // replace the stub the presign suite above installed at collection time.
+  let s3Mock: ReturnType<typeof mockClient>
+
+  beforeEach(() => {
+    s3Mock = mockClient(S3Client)
+  })
+
+  afterEach(() => {
+    s3Mock.restore()
+  })
+
+  it('follows continuation tokens and yields every key under the prefix', async () => {
+    s3Mock
+      .on(ListObjectsV2Command)
+      .resolvesOnce({
+        Contents: [{ Key: 'assets/t/w=320/a/x.png' }, { Key: 'assets/t/w=320/b/y.png' }],
+        IsTruncated: true,
+        NextContinuationToken: 'next',
+      })
+      .resolvesOnce({ Contents: [{ Key: 'assets/t/w=320/c/z.png' }], IsTruncated: false })
+    const store = new S3AssetStore({ bucket: BUCKET, region: REGION })
+
+    const keys: string[] = []
+    for await (const key of store.listPublicObjectKeys('assets/t/w=320/')) keys.push(key)
+
+    expect(keys).toEqual([
+      'assets/t/w=320/a/x.png',
+      'assets/t/w=320/b/y.png',
+      'assets/t/w=320/c/z.png',
+    ])
+    // The paginator reuses one input object across pages, so only the last state is observable.
+    const calls = s3Mock.commandCalls(ListObjectsV2Command)
+    expect(calls).toHaveLength(2)
+    expect(calls[1].args[0].input).toMatchObject({
+      Bucket: BUCKET,
+      Prefix: 'assets/t/w=320/',
+      ContinuationToken: 'next',
+    })
   })
 })
 

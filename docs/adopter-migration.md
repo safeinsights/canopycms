@@ -216,6 +216,14 @@ render.
 
 **Now deletable.** Editor hints worked into a field's `label` because `description` never showed.
 
+### `collect-asset-refs` and `materialize-assets` store a build's images before release
+
+**What changed.** `canopycms collect-asset-refs <outDir>` writes the image keys a static build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>` transforms and stores whichever of them the configured store lacks. Nothing yet depends on them: the public `/assets/t/` path still transforms on a miss.
+
+**To adopt.** Optional until the public path stops transforming. Run `collect-asset-refs` right after the static build and before any step that lists the output's files. Run `materialize-assets` from the project before the release is served, with the S3 grants listed in the README's "Storing a build's images before it is released". Check that every `/assets/t/` URL your pages can request appears as text in the build output: compute widths at render time, not on a client-side interaction.
+
+**Now deletable.** A pre-release warm-up step that requests image URLs to get them transformed.
+
 ---
 
 <!--

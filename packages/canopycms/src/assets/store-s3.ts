@@ -13,6 +13,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  paginateListObjectsV2,
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -71,7 +72,13 @@ function matchesAwsError(err: unknown, name: string, httpStatusCode: number): bo
 const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
-const isNoSuchKey = (err: unknown): boolean => matchesAwsError(err, 'NoSuchKey', 404)
+/**
+ * A missing key, never a missing bucket: S3 answers both with 404, and only a GET's error code names
+ * which. A HEAD's 404 has no body, so `hasPublicObject` reads either as absent; a caller that must
+ * tell them apart follows with a GET (assets/materialize.ts does).
+ */
+const isNoSuchKey = (err: unknown): boolean =>
+  matchesAwsError(err, 'NoSuchKey', 404) && (err as AwsServiceErrorShape).name !== 'NoSuchBucket'
 
 export class S3AssetStore implements AssetStore {
   readonly capabilities = { directUpload: true }
@@ -223,14 +230,35 @@ export class S3AssetStore implements AssetStore {
     }
   }
 
-  /** HEADs first: signing is local and succeeds for a missing key too. */
-  async presignPublicObjectRead(key: string): Promise<string | null> {
+  /**
+   * A HEAD. S3 answers a missing key with 403, not 404, unless the caller may `s3:ListBucket`,
+   * so a role without it sees an error here rather than `false`.
+   */
+  async hasPublicObject(key: string): Promise<boolean> {
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))
+      return true
     } catch (err: unknown) {
-      if (isNoSuchKey(err)) return null
+      if (isNoSuchKey(err)) return false
       throw err
     }
+  }
+
+  async *listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+    const pages = paginateListObjectsV2(
+      { client: this.client },
+      { Bucket: this.bucket, Prefix: prefix },
+    )
+    for await (const page of pages) {
+      for (const object of page.Contents ?? []) {
+        if (object.Key) yield object.Key
+      }
+    }
+  }
+
+  /** HEADs first: signing is local and succeeds for a missing key too. */
+  async presignPublicObjectRead(key: string): Promise<string | null> {
+    if (!(await this.hasPublicObject(key))) return null
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
       expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
     })

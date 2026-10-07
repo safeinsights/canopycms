@@ -65,8 +65,8 @@ output is the only place a final URL exists. That creates an adopter contract: e
 | # | PR scope | Status |
 |---|---|---|
 | 0 | Hardening that stands alone (below) | merged #406 |
-| 1 | Authenticated route carries editor and preview traffic | open #409 |
-| 2 | `collect-asset-refs` and `materialize-assets` CLIs | open |
+| 1 | Authenticated route carries editor and preview traffic | merged #409 |
+| 2 | `collect-asset-refs` and `materialize-assets` CLIs | open (PR pending) |
 | 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
 | 5 | Docs, bookkeeping, and the final Fable full-diff review | open |
@@ -127,7 +127,8 @@ output is the only place a final URL exists. That creates an adopter contract: e
     failure). The report names the page so it can be fixed.
   - It exits non-zero on any failure. `--allow-failures` (off by default) lets a release
     proceed, loudly, with only those URLs missing.
-  - IAM: Get on `asset-originals/` and `asset-meta/`, Put on `assets/t/`.
+  - IAM: `GetObject` on `asset-originals/`, `asset-meta/` and `assets/` (HEAD included),
+    `PutObject` on `assets/t/`, and `ListBucket` for those prefixes, without which a miss is a 403.
 
 ### Phase 3: the CDK public path and width policy
 

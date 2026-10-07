@@ -13,6 +13,7 @@ import { Readable } from 'node:stream'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   type ListObjectsV2CommandInput,
   PutObjectCommand,
@@ -92,6 +93,11 @@ function installS3Fake() {
       ContentDisposition: obj.contentDisposition,
       CacheControl: obj.cacheControl,
     }
+  })
+
+  s3Mock.on(HeadObjectCommand).callsFake((input) => {
+    if (!objects.has(input.Key as string)) throw makeAwsError('NotFound', 404, 'Not Found')
+    return {}
   })
 
   s3Mock.on(DeleteObjectCommand).callsFake((input) => {
@@ -230,6 +236,19 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
 
     it('returns null for readPublicObject of a missing key', async () => {
       expect(await harness.store.readPublicObject('assets/missing/none.png')).toBeNull()
+    })
+
+    it('hasPublicObject reports exactly the keys putPublicObject wrote', async () => {
+      const { store } = harness
+      const key = `assets/t/w=320/${hash32For(7)}/photo.png`
+      expect(await store.hasPublicObject(key)).toBe(false)
+      await store.putPublicObject({
+        key,
+        data: new TextEncoder().encode('derivative'),
+        contentType: 'image/png',
+      })
+      expect(await store.hasPublicObject(key)).toBe(true)
+      expect(await store.hasPublicObject(`assets/t/w=320/${hash32For(7)}`)).toBe(false)
     })
 
     it('paginates listMeta to exhaustion with no duplicates', async () => {

@@ -264,7 +264,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `generate-ai-content.ts` — the AI static-content generation command
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
-`generate-ai-content`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
+`generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
 [README.md](README.md#quick-start) and [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## CDK Package (canopycms-cdk)
@@ -356,6 +356,7 @@ types should `import type` from `types.ts`.
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
 - `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
+- `materialize.ts` — `storeTransform`, `materializeAssets`: writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
 Transform URL shape, the stored-versus-rendered split, and which `baseUrl` is correct per topology
@@ -827,6 +828,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 [AGENTS.md](packages/canopycms/src/build/AGENTS.md):
 
 - `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content to disk and prunes what a previous run produced
+- `asset-refs.ts` — `collectAssetRefs()`, the asset URLs a build references
 - `index.ts` — module exports
 
 ## HTTP Module

@@ -94,6 +94,7 @@ const makeAssetStore = (): AssetStore => ({
   readOriginal: async () => null,
   putPublicObject: async () => {},
   readPublicObject: async () => null,
+  hasPublicObject: async () => false,
   putMetaIfAbsent: async () => 'created',
   getMeta: async () => null,
   listMeta: async () => ({ items: [sampleMeta] }),

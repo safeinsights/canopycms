@@ -7,7 +7,7 @@ where those rules live.
 
 ## Overview
 
-CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
+CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
 `cli.ts`'s `KNOWN_AUTH_MODES`/`KnownAuthMode`/`isKnownAuthMode(value)` are exported so `worker run-once`'s auth-mode dispatch is independently testable — the dispatch below only recognizes `'clerk'`/`'dev'` and its surrounding `catch` fires solely on an import FAILURE, so before this guard a typo'd `CANOPY_AUTH_MODE` (e.g. `Clerk`) selected no plugin, silently skipped the auth-cache refresh, and still exited 0
 
