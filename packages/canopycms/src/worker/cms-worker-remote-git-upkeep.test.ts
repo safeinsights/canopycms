@@ -180,6 +180,15 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
 
   it('repacks loose objects, keeping unreachable objects and clones made before the repack', async () => {
     await initRemoteGit()
+    // Housekeeping off but the default unpackLimit, so pushes stay loose: git 2.55's post-push
+    // `maintenance run --auto` would otherwise pack some before the worker's repack runs.
+    for (const [key, value] of [
+      ['gc.auto', '0'],
+      ['receive.autogc', 'false'],
+      ['maintenance.auto', 'false'],
+    ]) {
+      await bare(remoteGitPath, ['config', key, value])
+    }
     const work = await workingClone(remoteGitPath, 'pusher')
     await pushCommits(work, 'loose', 20)
 
