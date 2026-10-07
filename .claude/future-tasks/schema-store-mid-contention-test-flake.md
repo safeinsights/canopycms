@@ -12,9 +12,9 @@ once the branch directory disappears mid-contention", expected `SchemaStoreBusyE
 `Error: Collection meta not found: posts`.
 
 The test assumes the queued `addEntryType` is still retrying the schema lock when the holder
-removes the branch root, so its next attempt hits ENOENT. Under full-suite load it can instead
-take the lock after the removal (lock acquisition recreates `.canopy-meta/`), then fail reading
-the collection meta that went with the branch root.
+removes the branch root, so its next attempt hits ENOENT. The error suggests that under
+full-suite load the attempt instead got past the lock after the removal and then failed reading
+the collection meta that went with the branch root. That ordering is unconfirmed.
 
 ## Proposed solution
 

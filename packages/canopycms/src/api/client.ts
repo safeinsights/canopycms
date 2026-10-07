@@ -472,7 +472,7 @@ export class CanopyApiClient {
  */
 const THROTTLE_RETRY_DELAYS_MS = [250, 1000, 3000]
 
-/** The longest `Retry-After` waited; a throttle asking for longer is reported, not resent. */
+/** The longest `Retry-After` honoured; a throttle asking for longer is reported, not resent. */
 const MAX_RETRY_AFTER_MS = 5000
 
 /**

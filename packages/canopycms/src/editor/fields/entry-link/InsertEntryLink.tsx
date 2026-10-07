@@ -21,7 +21,7 @@ import { IconFileSymlink } from '@tabler/icons-react'
 import { useEntryLinkContext, type EntryLinkOption } from './EntryLinkContext'
 
 interface InsertEntryLinkProps {
-  /** MDXEditor's insertMarkdown function, obtained via usePublisher(insertMarkdown$) */
+  /** Inserts the link's markdown into the editor (MarkdownField's `handleInsert`). */
   onInsert: (markdown: string) => void
 }
 

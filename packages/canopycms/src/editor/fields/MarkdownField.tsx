@@ -277,8 +277,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   // Dropped: MDXEditor's re-serialization of the document it was mounted with
   // (flagged `initialMarkdownNormalize`; it would mark an unedited entry
-  // modified), and inserted markdown it rejected, which it reports as the
-  // whole document.
+  // modified), and inserted markdown it rejected, which it emits as if that
+  // snippet were the whole document.
   const handleEditorChange = useCallback(
     (newValue: string, initialMarkdownNormalize: boolean) => {
       if (initialMarkdownNormalize || newValue === lastRejectedSource.current) return
@@ -287,7 +287,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     [emitChange],
   )
 
-  // MDXEditor rejects an insert synchronously, inside insertMarkdown.
+  // MDXEditor reports a rejected insert synchronously, inside insertMarkdown
+  // (with no selection it imports nothing, and reports nothing).
   const handleInsert = useCallback((insert: () => void, markdown: string) => {
     pendingInsert.current = markdown
     try {
@@ -298,11 +299,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   }, [])
 
   // MDXEditor can report the error while rendering (it imports as it is
-  // created), hence the microtask. A rejected document is this render's
-  // `value`: MDXEditor is created from it, and gets this handler again before
-  // the sync effect hands it a later value. Either way MDXEditor emits no
-  // further edits until an import succeeds, so a rejected insert remounts it
-  // from the unchanged document.
+  // created), hence the microtask. Any rejection outside an insert is the
+  // document, this render's `value`: MDXEditor is created from it, and gets
+  // this handler again before the sync effect hands it a later value. `source`
+  // can't identify it, because MDXEditor trims the document it mounts with.
+  // Either way MDXEditor emits no further edits until an import succeeds, so a
+  // rejected insert remounts it from the unchanged document.
   const handleEditorError = useCallback(
     ({ error, source }: { error: string; source: string }) => {
       lastRejectedSource.current = source
