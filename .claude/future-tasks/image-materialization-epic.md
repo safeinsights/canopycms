@@ -66,7 +66,7 @@ output is the only place a final URL exists. That creates an adopter contract: e
 |---|---|---|
 | 0 | Hardening that stands alone (below) | merged #406 |
 | 1 | Authenticated route carries editor and preview traffic | merged #409 |
-| 2 | `collect-asset-refs` and `materialize-assets` CLIs | open (PR pending) |
+| 2 | `collect-asset-refs` and `materialize-assets` CLIs | merged #412 |
 | 3 | `AssetSupport` S3-only public path, replica, lazy opt-in, width policy, `MAX_INPUT_PIXELS` | open |
 | 4 | Adopter requests entry (sent to the adopter repo, not landed here) | open |
 | 5 | Docs, bookkeeping, and the final Fable full-diff review | open |
