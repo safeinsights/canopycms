@@ -54,9 +54,16 @@ const MDXEditorLazy = React.lazy(async () => {
       saveImage$,
       closeImageDialog$,
       imageDialogState$,
+      activeEditor$,
+      $isImageNode,
     },
     { mdxJsxPlugins },
-  ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
+    { $getNodeByKey },
+  ] = await Promise.all([
+    import('@mdxeditor/editor'),
+    import('./mdx-jsx-support'),
+    import('lexical'),
+  ])
 
   const EntryLinkToolbarButton: React.FC = () => {
     const insertMarkdown = usePublisher(insertMarkdown$)
@@ -70,10 +77,23 @@ const MDXEditorLazy = React.lazy(async () => {
    * `EntryLinkToolbarButton` above.
    */
   const MdxImageDialogBridge: React.FC = () => {
-    const [state] = useCellValues(imageDialogState$)
+    const [state, editor] = useCellValues(imageDialogState$, activeEditor$)
     const saveImage = usePublisher(saveImage$)
     const closeImageDialog = usePublisher(closeImageDialog$)
-    return <MdxImageDialog state={state} onSave={saveImage} onClose={closeImageDialog} />
+    // With an `imagePreviewHandler`, MDXEditor seeds an edit dialog with the src the node was
+    // first rendered with, not its current one, so saving after a src change would revert it.
+    // Read the node's live src from the same editor `saveImage$` writes through.
+    const liveState = React.useMemo(() => {
+      if (state.type !== 'editing' || !editor) return state
+      const src = editor.getEditorState().read(() => {
+        const node = $getNodeByKey(state.nodeKey)
+        return $isImageNode(node) ? node.getSrc() : undefined
+      })
+      return src === undefined
+        ? state
+        : { ...state, initialValues: { ...state.initialValues, src } }
+    }, [state, editor])
+    return <MdxImageDialog state={liveState} onSave={saveImage} onClose={closeImageDialog} />
   }
 
   const WrappedEditor: React.FC<{

@@ -1,7 +1,7 @@
 import React from 'react'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
@@ -140,6 +140,71 @@ describe('MarkdownField', () => {
     if (typeof value !== 'string') throw new Error('onChange was never called with a string')
     return value
   }
+
+  describe('body images', () => {
+    const OLD_SRC = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
+    const NEW_SRC = `/assets/t/orig/${'b'.repeat(32)}/other.png`
+    const RAW_ROUTE = '/api/canopycms/assets/raw'
+
+    // jsdom never loads an image, and MDXEditor renders an image node only once its preload
+    // `Image` fires onload/onerror. This stub fires onload on the first `src` set.
+    const realImage = globalThis.Image
+    beforeAll(() => {
+      class LoadedImage {
+        onload: null | (() => void) = null
+        onerror: null | (() => void) = null
+        set src(_value: string) {
+          setTimeout(() => this.onload?.(), 0)
+        }
+      }
+      globalThis.Image = LoadedImage as unknown as typeof Image
+    })
+    afterAll(() => {
+      globalThis.Image = realImage
+    })
+
+    const urlInput = () => screen.getByTestId<HTMLInputElement>('mdx-image-dialog-url')
+
+    /** Opens the edit dialog for the body's one image and waits for its URL field. */
+    async function openEditDialog(): Promise<HTMLInputElement> {
+      fireEvent.click(await screen.findByTitle('Edit image'))
+      await screen.findByTestId('mdx-image-dialog-url')
+      await waitFor(() => expect(urlInput().value).not.toBe(''))
+      return urlInput()
+    }
+
+    it('are displayed through the authenticated asset route', async () => {
+      renderField(`![alt](${OLD_SRC})`)
+      await richEditor()
+
+      const img = await screen.findByAltText('alt')
+      expect(img.getAttribute('src')).toBe(`${RAW_ROUTE}${OLD_SRC}`)
+    })
+
+    it('keep a changed src through a second edit, stored root-relative', async () => {
+      const onChange = vi.fn()
+      renderField(`![alt](${OLD_SRC})`, onChange)
+      await richEditor()
+      await screen.findByAltText('alt')
+
+      expect((await openEditDialog()).value).toBe(OLD_SRC)
+      fireEvent.change(urlInput(), { target: { value: NEW_SRC } })
+      fireEvent.click(screen.getByTestId('mdx-image-dialog-url-submit'))
+      await waitFor(() => expect(lastValue(onChange)).toContain(NEW_SRC))
+
+      // The second dialog must show the src the node now has, not the one it was rendered with.
+      expect((await openEditDialog()).value).toBe(NEW_SRC)
+      const calls = onChange.mock.calls.length
+      fireEvent.change(screen.getByTestId('mdx-image-dialog-alt'), { target: { value: 'fixed' } })
+      fireEvent.click(screen.getByTestId('mdx-image-dialog-url-submit'))
+      await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(calls))
+
+      await waitFor(() => expect(lastValue(onChange)).toBe(`![fixed](${NEW_SRC})`))
+      for (const [value] of onChange.mock.calls) {
+        expect(value).not.toContain(RAW_ROUTE)
+      }
+    })
+  })
 
   const JSX_BODY = [
     'Intro paragraph.',
