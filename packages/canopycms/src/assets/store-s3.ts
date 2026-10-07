@@ -213,7 +213,10 @@ export class S3AssetStore implements AssetStore {
     cacheControl?: string
     tags?: Readonly<Record<string, string>>
   }): Promise<void> {
-    const tagging = input.tags ? new URLSearchParams(input.tags).toString() : ''
+    // `encodeURIComponent`, not URLSearchParams, whose `+` for a space S3 may read literally.
+    const tagging = Object.entries(input.tags ?? {})
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&')
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,

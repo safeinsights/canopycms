@@ -410,6 +410,24 @@ describe('AssetSupport - bounding the anonymous transform path', () => {
     ])
   })
 
+  it('expires noncurrent versions too, so a versioned bucket frees what each rule expires', () => {
+    const stack = makeStack()
+    new AssetSupport(stack, 'Assets', { ...LAZY_PROPS, versioned: true })
+    const [bucket] = Object.values(Template.fromStack(stack).findResources('AWS::S3::Bucket'))
+    expect(bucket.Properties.VersioningConfiguration).toEqual({ Status: 'Enabled' })
+    const rules = bucket.Properties.LifecycleConfiguration.Rules as {
+      Id: string
+      NoncurrentVersionExpiration?: { NoncurrentDays: number }
+    }[]
+    expect(rules.map((r) => r.Id).sort()).toEqual([
+      'expire-asset-staging',
+      'expire-transform-outputs',
+    ])
+    for (const rule of rules) {
+      expect(rule.NoncurrentVersionExpiration).toEqual({ NoncurrentDays: 1 })
+    }
+  })
+
   it("grants the Lambda's role s3:PutObjectTagging on assets/*, which a tagged PutObject needs", () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', { ...LAZY_PROPS })

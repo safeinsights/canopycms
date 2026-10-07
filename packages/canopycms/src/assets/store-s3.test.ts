@@ -299,10 +299,10 @@ describe('S3AssetStore.putPublicObject tags', () => {
     })
 
   it('sends tags as the URL-encoded Tagging header', async () => {
-    await put({ 'canopy-transform': 'lazy', k: 'a&b' })
+    await put({ 'canopy-transform': 'lazy', k: 'a&b c' })
     const calls = s3Mock.commandCalls(PutObjectCommand)
     expect(calls).toHaveLength(1)
-    expect(calls[0].args[0].input.Tagging).toBe('canopy-transform=lazy&k=a%26b')
+    expect(calls[0].args[0].input.Tagging).toBe('canopy-transform=lazy&k=a%26b%20c')
   })
 
   it.each([undefined, {}])('sends no Tagging header for tags %j', async (tags) => {

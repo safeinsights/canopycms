@@ -987,13 +987,16 @@ export class AssetSupport extends Construct {
         removalPolicy: props.removalPolicy ?? RemovalPolicy.RETAIN,
         autoDeleteObjects: props.autoDeleteObjects ?? false,
         // Everything else is content-addressed and kept forever, materialized
-        // derivatives included; only the Lambda's tagged outputs expire.
+        // derivatives included; only the Lambda's tagged outputs expire. On a
+        // versioned bucket an expiry only adds a delete marker, so each rule
+        // also expires noncurrent versions or it would free nothing.
         lifecycleRules: [
           {
             id: 'expire-asset-staging',
             enabled: true,
             prefix: `${PREFIXES.staging}/`,
             expiration: Duration.days(1),
+            noncurrentVersionExpiration: Duration.days(1),
           },
           ...(lazy
             ? [
@@ -1003,6 +1006,7 @@ export class AssetSupport extends Construct {
                   prefix: `${PREFIXES.transform}/`,
                   tagFilters: { [LAZY_TRANSFORM_TAG.key]: LAZY_TRANSFORM_TAG.value },
                   expiration: props.transformOutputRetention ?? TRANSFORM_OUTPUT_RETENTION,
+                  noncurrentVersionExpiration: Duration.days(1),
                 },
               ]
             : []),
