@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
+import type { ImageFieldValue } from '../config/types'
+import { setPreviewAssetBase } from '../editor/preview-asset-base'
 import { assetSrcSet, assetUrl } from './asset-url'
 
 const HASH32 = 'a'.repeat(32)
@@ -15,17 +17,28 @@ describe('module purity', () => {
   // static/seo.ts is what stopped assetUrl carrying a weaker copy of the absolute-URL and
   // prefix-shape rules (see utils/url-prefix.ts's header). url-prefix.ts imports only
   // utils/sanitize-href.ts, whose sole dependency is the global URL, so nothing node: becomes
-  // reachable. `pnpm lint:bundle` is the real enforcement — this guard just fails faster.
-  it('imports nothing beyond asset-prefixes, transform-directives and utils/url-prefix (no node:/sharp reachable from here)', () => {
+  // reachable. It also admits ../editor/preview-asset-base, which imports nothing (pinned below).
+  // `pnpm lint:bundle` is the real enforcement — this guard just fails faster.
+  it('imports nothing beyond asset-prefixes, transform-directives, utils/url-prefix and editor/preview-asset-base (no node:/sharp reachable from here)', () => {
     const filePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'asset-url.ts')
     const source = readFileSync(filePath, 'utf-8')
     const specifiers = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1])
     expect(specifiers.length).toBeGreaterThan(0)
     for (const specifier of specifiers) {
       expect(specifier).toMatch(
-        /^(\.\/(asset-prefixes|transform-directives)|\.\.\/utils\/url-prefix)$/,
+        /^(\.\/(asset-prefixes|transform-directives)|\.\.\/utils\/url-prefix|\.\.\/editor\/preview-asset-base)$/,
       )
     }
+  })
+
+  it('the preview asset base module imports nothing', () => {
+    const filePath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+      'editor',
+      'preview-asset-base.ts',
+    )
+    expect(readFileSync(filePath, 'utf-8')).not.toMatch(/\bfrom '|\bimport\(|\brequire\(/)
   })
 
   it('the shared join module is itself pure (its only import is sanitize-href)', () => {
@@ -41,6 +54,20 @@ describe('module purity', () => {
     for (const specifier of specifiers) {
       expect(specifier).toBe('./sanitize-href')
     }
+  })
+})
+
+describe('assetUrl - the preview asset base on the server', () => {
+  afterEach(() => setPreviewAssetBase(undefined))
+
+  it('is ignored where there is no window (server render, static build)', () => {
+    const src = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
+    setPreviewAssetBase('/api/canopycms/assets/raw')
+
+    expect(typeof window).toBe('undefined')
+    expect(assetUrl({ src }, { width: 320, baseUrl: 'https://cdn.example.com' })).toBe(
+      `https://cdn.example.com/assets/t/w=320/${'a'.repeat(32)}/photo.png`,
+    )
   })
 })
 
@@ -98,6 +125,49 @@ describe('assetUrl - transform srcs', () => {
   it('returns a malformed transform-looking src unchanged rather than throwing', () => {
     const malformed = `/assets/t/nonsense/${HASH32}/photo.png`
     expect(assetUrl({ src: malformed }, { width: 320 })).toBe(malformed)
+  })
+})
+
+describe('assetUrl - the ref carries a crop', () => {
+  const crop = { x: 0.1, y: 0.2, w: 0.5, h: 0.25 }
+  const cropDirective = 'c=0.1000:0.2000:0.5000:0.2500'
+
+  it('applies ref.crop by default, so an image field value renders its crop', () => {
+    const value: ImageFieldValue = { src: identitySrc, alt: '', crop }
+    expect(assetUrl(value, { width: 320 })).toBe(
+      `/assets/t/${cropDirective},w=320/${HASH32}/photo.png`,
+    )
+  })
+
+  it('opts.crop overrides ref.crop', () => {
+    const url = assetUrl({ src: identitySrc, crop }, { crop: { x: 0, y: 0, w: 1, h: 0.5 } })
+    expect(url).toBe(`/assets/t/c=0.0000:0.0000:1.0000:0.5000/${HASH32}/photo.png`)
+  })
+
+  it('ref.crop overrides a crop already in src, and other src directives still merge', () => {
+    const src = `/assets/t/c=0.0000:0.0000:1.0000:1.0000,q=80/${HASH32}/photo.png`
+    expect(assetUrl({ src, crop }, { width: 640 })).toBe(
+      `/assets/t/${cropDirective},q=80,w=640/${HASH32}/photo.png`,
+    )
+  })
+
+  it('keeps the crop already in src when the ref carries none', () => {
+    const src = `/assets/t/${cropDirective}/${HASH32}/photo.png`
+    expect(assetUrl({ src }, { width: 640 })).toBe(
+      `/assets/t/${cropDirective},w=640/${HASH32}/photo.png`,
+    )
+  })
+
+  it('applies ref.crop to every srcset entry', () => {
+    expect(assetSrcSet({ src: identitySrc, crop }, [320, 640])).toBe(
+      `/assets/t/${cropDirective},w=320/${HASH32}/photo.png 320w, ` +
+        `/assets/t/${cropDirective},w=640/${HASH32}/photo.png 640w`,
+    )
+  })
+
+  it('emits a crop the parser accepts even when rounding would overflow the frame', () => {
+    const url = assetUrl({ src: identitySrc, crop: { x: 0.66665, y: 0, w: 0.33335, h: 1 } })
+    expect(url).toBe(`/assets/t/c=0.6667:0.0000:0.3333:1.0000/${HASH32}/photo.png`)
   })
 })
 
@@ -253,8 +323,15 @@ describe('assetSrcSet', () => {
     expect(srcset).toBe(`https://cms.example.com/assets/t/w=320/${HASH32}/photo.png 320w`)
   })
 
-  it('throws on a width not in the allowlist', () => {
-    expect(() => assetSrcSet({ src: identitySrc }, [321])).toThrow()
-    expect(() => assetSrcSet({ src: identitySrc }, [320, 4160])).toThrow()
+  it('accepts any integer width in [1, 8192]', () => {
+    expect(assetSrcSet({ src: identitySrc }, [1, 100, 8192])).toBe(
+      [1, 100, 8192].map((w) => `/assets/t/w=${w}/${HASH32}/photo.png ${w}w`).join(', '),
+    )
+  })
+
+  it('throws on a width outside [1, 8192] or not an integer', () => {
+    expect(() => assetSrcSet({ src: identitySrc }, [0])).toThrow()
+    expect(() => assetSrcSet({ src: identitySrc }, [320, 8193])).toThrow()
+    expect(() => assetSrcSet({ src: identitySrc }, [320.5])).toThrow()
   })
 })

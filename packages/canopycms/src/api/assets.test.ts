@@ -15,6 +15,7 @@ import { createMockApiContext, mockConsole } from '../test-utils'
 import { createCanopyRequestHandler } from '../http/handler'
 import type { CanopyRequest } from '../http/types'
 import type { AuthPlugin } from '../auth/plugin'
+import type { CanopyServices } from '../services'
 import * as transformModule from '../assets/transform'
 
 // Real request-handling test below (bodyFormat bypass) needs a full
@@ -93,6 +94,7 @@ const makeAssetStore = (): AssetStore => ({
   readOriginal: async () => null,
   putPublicObject: async () => {},
   readPublicObject: async () => null,
+  hasPublicObject: async () => false,
   putMetaIfAbsent: async () => 'created',
   getMeta: async () => null,
   listMeta: async () => ({ items: [sampleMeta] }),
@@ -646,8 +648,16 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(cached).not.toBeNull()
   })
 
+  it('transforms a width off the lazy-path allowlist (the any policy)', async () => {
+    const key = `assets/t/w=100/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    if (!('body' in res)) return
+    expect(imageSize(Buffer.from(res.body as Uint8Array)).width).toBe(100)
+  })
+
   it('rejects a slug that is not the asset’s own, without transforming or caching', async () => {
-    // Parity with the prod transform Lambda (canopycms-cdk's handler.ts): the
+    // The check lives in storeTransform, shared with the lazy transform Lambda: the
     // slug is load-bearing in the stored key, and `[a-z0-9-]+` is all the
     // parser can enforce, so every distinct string would otherwise alias the
     // same image into a new cache entry and a new transform.
@@ -669,6 +679,16 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
     expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
   })
 
+  it('stores the transform it computes untagged, so the lazy expiry never deletes it', async () => {
+    const put = vi.spyOn(store, 'putPublicObject')
+    const key = `assets/t/w=160/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    expect(put).toHaveBeenCalledTimes(1)
+    expect(put.mock.calls[0][0]).toMatchObject({ key })
+    expect(put.mock.calls[0][0].tags).toBeUndefined()
+  })
+
   it('caches a non-canonically-ordered directive request under its canonical key only', async () => {
     const nonCanonicalKey = `assets/t/w=160,q=80/${rasterHash32}/photo.png`
     const canonicalKey = `assets/t/q=80,w=160/${rasterHash32}/photo.png`
@@ -678,6 +698,50 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
 
     expect(await store.readPublicObject(canonicalKey)).not.toBeNull()
     expect(await store.readPublicObject(nonCanonicalKey)).toBeNull()
+  })
+
+  it('serves a non-canonical request the bytes already stored under its canonical key, without redirecting or transforming', async () => {
+    const canonicalKey = `assets/t/q=80,w=160/${rasterHash32}/photo.png`
+    const stored = new Uint8Array([1, 2, 3, 4])
+    await store.putPublicObject({ key: canonicalKey, data: stored, contentType: 'image/png' })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/w=160,q=80/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    if (!('body' in res)) throw new Error('expected a binary response')
+    expect(Buffer.from(res.body as Uint8Array).equals(Buffer.from(stored))).toBe(true)
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('transforms an over-precision crop with its rounded directives and stores it under the rounded key', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/c=0.123456:0:0.5:0.25/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+    expect(transformModule.applyTransform).toHaveBeenCalledWith(expect.anything(), {
+      identity: false,
+      crop: { x: 0.1235, y: 0, w: 0.5, h: 0.25 },
+      format: undefined,
+      quality: undefined,
+      width: undefined,
+    })
+    expect(
+      await store.readPublicObject(
+        `assets/t/c=0.1235:0.0000:0.5000:0.2500/${rasterHash32}/photo.png`,
+      ),
+    ).not.toBeNull()
+  })
+
+  it('returns 400 for a crop that rounds to zero extent, without transforming', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/c=0:0:0.00001:1/${rasterHash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
   })
 
   it('returns 400 on a directive parse failure', async () => {
@@ -769,46 +833,258 @@ describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{s
   })
 })
 
-describe('full request pipeline - bodyFormat: multipart bypass (regression for the core handler change)', () => {
-  const createMockAuthPlugin = (): AuthPlugin => ({
-    authenticate: async () => ({
-      success: true,
-      user: { userId: 'u1', externalGroups: [] },
-    }),
-    searchUsers: async () => [],
-    getUserMetadata: async () => null,
-    getGroupMetadata: async () => null,
-    listGroups: async () => [],
+const createMockAuthPlugin = (): AuthPlugin => ({
+  authenticate: async () => ({
+    success: true,
+    user: { userId: 'u1', externalGroups: [] },
+  }),
+  searchUsers: async () => [],
+  getUserMetadata: async () => null,
+  getGroupMetadata: async () => null,
+  listGroups: async () => [],
+})
+
+const createMockServices = () => ({
+  config: {
+    schema: [],
+    contentRoot: 'content',
+    gitBotAuthorName: 'Test Bot',
+    gitBotAuthorEmail: 'bot@test.com',
+    mode: 'dev' as const,
+  },
+  checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: '' }),
+  checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+  pathPermissions: [],
+  createGitManagerFor: vi.fn(),
+  registry: { get: vi.fn().mockResolvedValue(null), list: vi.fn().mockResolvedValue([]) },
+  bootstrapAdminIds: new Set<string>(),
+  refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+  // Internal groups are resolved via resolveCanopyUser -> getSettingsBranchRoot
+  // (see resolve-canopy-user.ts). The path doesn't need to exist: groups.json
+  // just won't be found there, which loadInternalGroups treats as "no custom
+  // groups" (fine here - this suite tests multipart upload routing, not groups).
+  getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/assets-test-mock-settings'),
+})
+
+describe('assetRawRoute - redirects, on a store that presigns reads and on one that does not', () => {
+  const PRESIGNED_ORIGIN = 'https://bucket.s3.example.com'
+  const hash32 = '1'.repeat(32)
+  const transformKey = `assets/t/w=160/${hash32}/photo.png`
+  const oversized = () => new Uint8Array(4 * 1024 * 1024 + 1)
+
+  let tmpDir: string
+  let local: LocalAssetStore
+
+  /** The local store plus S3's presign capability, answering from the same files. */
+  const presigningStore = (): AssetStore => {
+    const store: AssetStore = Object.create(local)
+    store.presignPublicObjectRead = async (key) =>
+      (await local.readPublicObject(key)) ? `${PRESIGNED_ORIGIN}/${key}?X-Amz-Signature=sig` : null
+    return store
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-redirect-test-'))
+    local = new LocalAssetStore({ root: tmpDir })
+    const png = await sharp({
+      create: { width: 320, height: 160, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .png()
+      .toBuffer()
+    await local.putOriginal({
+      hash32,
+      ext: 'png',
+      data: new Uint8Array(png),
+      contentType: 'image/png',
+    })
+    await local.putMetaIfAbsent(hash32, {
+      hash32,
+      filename: 'photo.png',
+      slug: 'photo',
+      ext: 'png',
+      mime: 'image/png',
+      size: png.byteLength,
+      kind: 'raster',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    })
   })
 
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('redirects a stored transform to a no-store presigned GET without reading its bytes', async () => {
+    await local.putPublicObject({ key: transformKey, data: oversized(), contentType: 'image/png' })
+    const store = presigningStore()
+    const readSpy = vi.spyOn(store, 'readPublicObject')
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key: transformKey })
+
+    expect(res).toEqual({
+      kind: 'binary',
+      status: 302,
+      body: new Uint8Array(),
+      headers: {
+        location: `${PRESIGNED_ORIGIN}/${transformKey}?X-Amz-Signature=sig`,
+        cacheControl: 'no-store',
+      },
+    })
+    expect(readSpy).not.toHaveBeenCalled()
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('redirects a stored static object (svg/pdf) the same way', async () => {
+    const key = `assets/${hash32}/doc.pdf`
+    await local.putPublicObject({ key, data: oversized(), contentType: 'application/pdf' })
+
+    const res = await assetRawRoute.handler(ctxWith(presigningStore()), authedReq(), { key })
+
+    expect(res).toMatchObject({
+      status: 302,
+      headers: { location: `${PRESIGNED_ORIGIN}/${key}?X-Amz-Signature=sig` },
+    })
+  })
+
+  it('redirects a non-canonical spelling to the presigned canonical key', async () => {
+    const canonicalKey = `assets/t/q=80,w=160/${hash32}/photo.png`
+    await local.putPublicObject({
+      key: canonicalKey,
+      data: new Uint8Array([1]),
+      contentType: 'image/png',
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(presigningStore()), authedReq(), {
+      key: `assets/t/w=160,q=80/${hash32}/photo.png`,
+    })
+
+    expect(res).toMatchObject({
+      status: 302,
+      headers: { location: `${PRESIGNED_ORIGIN}/${canonicalKey}?X-Amz-Signature=sig` },
+    })
+  })
+
+  it('transforms a miss and returns a small result inline, even on a store that presigns', async () => {
+    const res = await assetRawRoute.handler(ctxWith(presigningStore()), authedReq(), {
+      key: transformKey,
+    })
+
+    expect(res).toMatchObject({
+      kind: 'binary',
+      status: 200,
+      headers: { contentType: 'image/png' },
+    })
+    expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+    expect(await local.readPublicObject(transformKey)).not.toBeNull()
+  })
+
+  it('stores a transformed miss over 4 MiB, then redirects to its presigned GET', async () => {
+    vi.mocked(transformModule.applyTransform).mockResolvedValueOnce({
+      ok: true,
+      data: oversized(),
+      contentType: 'image/png',
+      ext: 'png',
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(presigningStore()), authedReq(), {
+      key: transformKey,
+    })
+
+    expect(res).toMatchObject({
+      status: 302,
+      body: new Uint8Array(),
+      headers: {
+        location: `${PRESIGNED_ORIGIN}/${transformKey}?X-Amz-Signature=sig`,
+        cacheControl: 'no-store',
+      },
+    })
+    expect((await local.readPublicObject(transformKey))?.data.byteLength).toBe(4 * 1024 * 1024 + 1)
+  })
+
+  it('returns a transformed miss of exactly 4 MiB inline', async () => {
+    vi.mocked(transformModule.applyTransform).mockResolvedValueOnce({
+      ok: true,
+      data: new Uint8Array(4 * 1024 * 1024),
+      contentType: 'image/png',
+      ext: 'png',
+    })
+
+    const res = await assetRawRoute.handler(ctxWith(presigningStore()), authedReq(), {
+      key: transformKey,
+    })
+
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+  })
+
+  it('streams bytes from a store that cannot presign, hit or oversized miss alike', async () => {
+    vi.mocked(transformModule.applyTransform).mockResolvedValueOnce({
+      ok: true,
+      data: oversized(),
+      contentType: 'image/png',
+      ext: 'png',
+    })
+
+    const miss = await assetRawRoute.handler(ctxWith(local), authedReq(), { key: transformKey })
+    const hit = await assetRawRoute.handler(ctxWith(local), authedReq(), { key: transformKey })
+
+    for (const res of [miss, hit]) {
+      expect(res).toMatchObject({ kind: 'binary', status: 200 })
+      if (!('body' in res)) throw new Error('expected a binary response')
+      expect((res.body as Uint8Array).byteLength).toBe(4 * 1024 * 1024 + 1)
+    }
+  })
+
+  /**
+   * The loop: `withCanopy` rewrites `/assets/:path*` onto this route, so a redirect to a
+   * same-origin `/assets/...` URL comes straight back here. Driven through the real router and
+   * handler at the rewrite's destination path, for both stores, hit and miss.
+   */
+  describe('never redirects back onto a same-origin path (withCanopy rewrite)', () => {
+    /** What Next hands the catch-all route for `GET /assets/t/w=160/{hash}/photo.png`. */
+    const rewrittenRequest = (): CanopyRequest => ({
+      method: 'GET',
+      url: `http://localhost/api/canopycms/assets/raw/${transformKey}`,
+      header: () => null,
+      json: async () => undefined,
+    })
+
+    const viaRewrite = async (store: AssetStore) => {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        assetStore: store,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async () => null,
+      })
+      return handler(rewrittenRequest(), ['assets', 'raw', ...transformKey.split('/')])
+    }
+
+    it.each([
+      ['a store that presigns', presigningStore],
+      ['a store that streams', () => local],
+    ])('on %s, for a miss and then a hit', async (_label, makeStore) => {
+      for (const attempt of ['miss', 'hit']) {
+        const res = await viaRewrite(makeStore())
+        expect(res, attempt).toHaveProperty('kind', 'binary')
+        if (!('kind' in res)) throw new Error('expected a binary response')
+        const location = res.headers.location
+        if (location !== undefined) {
+          expect(new URL(location).origin, attempt).toBe(PRESIGNED_ORIGIN)
+        } else {
+          expect(res.status, attempt).toBe(200)
+        }
+      }
+    })
+  })
+})
+
+describe('full request pipeline - bodyFormat: multipart bypass (regression for the core handler change)', () => {
   const createRejectingAuthPlugin = (): AuthPlugin => ({
     authenticate: async () => ({ success: false, error: 'No token' }),
     searchUsers: async () => [],
     getUserMetadata: async () => null,
     getGroupMetadata: async () => null,
     listGroups: async () => [],
-  })
-
-  const createMockServices = () => ({
-    config: {
-      schema: [],
-      contentRoot: 'content',
-      gitBotAuthorName: 'Test Bot',
-      gitBotAuthorEmail: 'bot@test.com',
-      mode: 'dev' as const,
-    },
-    checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: '' }),
-    checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
-    pathPermissions: [],
-    createGitManagerFor: vi.fn(),
-    registry: { get: vi.fn().mockResolvedValue(null), list: vi.fn().mockResolvedValue([]) },
-    bootstrapAdminIds: new Set<string>(),
-    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
-    // Internal groups are resolved via resolveCanopyUser -> getSettingsBranchRoot
-    // (see resolve-canopy-user.ts). The path doesn't need to exist: groups.json
-    // just won't be found there, which loadInternalGroups treats as "no custom
-    // groups" (fine here - this suite tests multipart upload routing, not groups).
-    getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/assets-test-mock-settings'),
   })
 
   let tmpDir: string

@@ -10,7 +10,7 @@ import { assetUrl } from '../../assets/asset-url'
 
 export interface AssetCardProps {
   asset: AssetRecord
-  /** `media.publicBaseUrl` - see AssetContext. */
+  /** `useAssetContext().baseUrl`, the authenticated raw route - see AssetContext. */
   baseUrl?: string
   /** Present in picker mode - clicking the card selects the asset. */
   onSelect?: (asset: AssetRecord) => void

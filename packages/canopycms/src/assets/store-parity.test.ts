@@ -13,6 +13,7 @@ import { Readable } from 'node:stream'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   type ListObjectsV2CommandInput,
   PutObjectCommand,
@@ -92,6 +93,11 @@ function installS3Fake() {
       ContentDisposition: obj.contentDisposition,
       CacheControl: obj.cacheControl,
     }
+  })
+
+  s3Mock.on(HeadObjectCommand).callsFake((input) => {
+    if (!objects.has(input.Key as string)) throw makeAwsError('NotFound', 404, 'Not Found')
+    return {}
   })
 
   s3Mock.on(DeleteObjectCommand).callsFake((input) => {
@@ -178,6 +184,23 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
       expect(result?.contentType).toBe('image/png')
     })
 
+    it('reads an original by its expected ext, and finds it under another ext on a miss', async () => {
+      const { store } = harness
+      const hash32 = hash32For(43)
+      await store.putOriginal({
+        hash32,
+        ext: 'jpg',
+        data: new TextEncoder().encode('jpg-bytes'),
+        contentType: 'image/jpeg',
+      })
+      for (const hint of ['jpg', 'jpeg']) {
+        const result = await store.readOriginal(hash32, hint)
+        expect(result && textOf(result.data)).toBe('jpg-bytes')
+        expect(result?.ext).toBe('jpg')
+      }
+      expect(await store.readOriginal(hash32For(998), 'png')).toBeNull()
+    })
+
     it('returns null for readOriginal of a missing hash', async () => {
       expect(await harness.store.readOriginal(hash32For(999))).toBeNull()
     })
@@ -230,6 +253,19 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
 
     it('returns null for readPublicObject of a missing key', async () => {
       expect(await harness.store.readPublicObject('assets/missing/none.png')).toBeNull()
+    })
+
+    it('hasPublicObject reports exactly the keys putPublicObject wrote', async () => {
+      const { store } = harness
+      const key = `assets/t/w=320/${hash32For(7)}/photo.png`
+      expect(await store.hasPublicObject(key)).toBe(false)
+      await store.putPublicObject({
+        key,
+        data: new TextEncoder().encode('derivative'),
+        contentType: 'image/png',
+      })
+      expect(await store.hasPublicObject(key)).toBe(true)
+      expect(await store.hasPublicObject(`assets/t/w=320/${hash32For(7)}`)).toBe(false)
     })
 
     it('paginates listMeta to exhaustion with no duplicates', async () => {

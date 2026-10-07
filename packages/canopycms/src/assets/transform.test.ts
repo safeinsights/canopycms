@@ -252,10 +252,9 @@ describe('applyTransform - input rejection', () => {
 
 describe('applyTransform - decompression-bomb input cap', () => {
   it('rejects a raster whose pixel count exceeds the input cap (limitInputPixels), a decompression-bomb defense', async () => {
-    // Just over MAX_INPUT_PIXELS (4096 x 4096 = 16,777,216) - large enough to
-    // trip sharp's limitInputPixels option at decode time, small enough
-    // (solid color) to stay a fast fixture to generate.
-    const data = await makePng(4100, 4100, [10, 10, 10])
+    // One row over MAX_INPUT_PIXELS (6000 x 4000): trips sharp's limitInputPixels at decode
+    // time, and solid colour keeps the fixture fast to generate.
+    const data = await makePng(6000, 4001, [10, 10, 10])
     const result = await applyTransform({ data, ext: 'png' }, IDENTITY)
     expect(result.ok).toBe(false)
     if (result.ok) return
@@ -329,15 +328,27 @@ describe('applyTransform - C3: q= is honoured even without f=', () => {
 })
 
 describe('applyTransform - output size cap', () => {
-  it('rejects an encoded output that exceeds the 10 MiB cap', async () => {
+  it('rejects a resize whose encoded output exceeds the 10 MiB cap', async () => {
+    const data = await makePng(20, 20, [1, 1, 1])
+    const spy = vi
+      .spyOn(sharp.prototype, 'toBuffer')
+      .mockResolvedValueOnce(Buffer.alloc(11 * 1024 * 1024))
+    const result = await applyTransform({ data, ext: 'png' }, resize({ width: 10 }))
+    spy.mockRestore()
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.status).toBe(413)
+  })
+
+  it('stores an identity re-encode over the cap: one per asset, bounded by the upload caps', async () => {
     const data = await makePng(20, 20, [1, 1, 1])
     const spy = vi
       .spyOn(sharp.prototype, 'toBuffer')
       .mockResolvedValueOnce(Buffer.alloc(11 * 1024 * 1024))
     const result = await applyTransform({ data, ext: 'png' }, IDENTITY)
     spy.mockRestore()
-    expect(result.ok).toBe(false)
-    if (result.ok) return
-    expect(result.status).toBe(413)
+    expect(result).toMatchObject({ ok: true, contentType: 'image/png' })
+    if (!result.ok) return
+    expect(result.data.byteLength).toBe(11 * 1024 * 1024)
   })
 })

@@ -12,11 +12,9 @@
  * this file only ever deploys to the one sandbox canary account, unlike every
  * other construct in this package.
  *
- * Build the transform Lambda's asset first - `AssetSupport` points
- * `lambda.Code.fromAsset()` at a directory that must already exist, and
- * `cdk synth`/`deploy` fails with "Cannot find asset" otherwise. Run the build
- * with NO flags: `pnpm test` leaves a fixture-only `--skip-native` bundle
- * behind, and `AssetSupport` refuses to synth one.
+ * Build the transform Lambda's asset first, with NO flags: `AssetSupport`
+ * refuses to synth in lazy mode without the `.deployable` marker a full build
+ * writes, and `pnpm test` leaves a marker-less `--skip-native` bundle behind.
  *
  *   pnpm --filter canopycms-cdk run build:lambda
  *   cd packages/canopycms-cdk/canary
@@ -44,6 +42,8 @@ const stack = new Stack(app, 'canopy-assets-canary', {
 
 const assetSupport = new AssetSupport(stack, 'Assets', {
   editorOrigins: ['http://localhost:3000'],
+  // This canary exists to exercise the transform Lambda and its failover.
+  lazyPublicTransforms: true,
   // Ephemeral by design - this stack exists only to be verified and torn down.
   removalPolicy: RemovalPolicy.DESTROY,
   autoDeleteObjects: true,
@@ -53,8 +53,7 @@ const behaviors = assetSupport.assetBehaviors()
 
 new cloudfront.Distribution(stack, 'Distribution', {
   // Default behavior: the plain S3 origin. Any path other than
-  // `/assets/t/*` (including `/`) just 404s from S3 - nothing else is
-  // served by this canary.
+  // `/assets/t/*` (including `/`) is a 403 from S3 unless the key exists.
   defaultBehavior: behaviors.assets,
   additionalBehaviors: {
     '/assets/t/*': behaviors.assetsTransform,

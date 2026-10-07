@@ -44,6 +44,7 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     workerStatus: null,
     build: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
     assetStore: { configured: true },
+    imageProcessing: { available: true },
     ...overrides,
   }
 }
@@ -271,6 +272,33 @@ describe('SystemHealthPanel', () => {
         expect(screen.getByTestId('build-media').textContent).toContain(
           'not configured — uploads are disabled',
         )
+      })
+
+      it('shows image processing as available', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus()))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-image-processing')).toBeTruthy())
+        expect(screen.getByTestId('build-image-processing').textContent).toBe(
+          'Image processing: available',
+        )
+      })
+
+      it('shows image processing as unavailable with the error text', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess(
+            makeStatus({ imageProcessing: { available: false, error: 'libvips missing' } }),
+          ),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-image-processing')).toBeTruthy())
+        const text = screen.getByTestId('build-image-processing').textContent
+        expect(text).toContain('unavailable')
+        expect(text).toContain('libvips missing')
+        expect(text).not.toContain('Image processing: available')
       })
     })
 

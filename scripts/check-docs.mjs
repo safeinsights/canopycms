@@ -31,6 +31,8 @@ const EXCLUDED = [
   '.claude/future-tasks',
   'node_modules',
   '.git',
+  // Other sessions' checkouts (git-ignored), each a full copy of the repo.
+  '.claude/worktrees',
   'dist',
   'BACKLOG.md',
 ]

@@ -9,11 +9,14 @@ import { randomUUID } from 'node:crypto'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  paginateListObjectsV2,
 } from '@aws-sdk/client-s3'
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
 import { isHttpUrlOrSameOriginPath } from '../utils/sanitize-href'
 import { ASSET_PREFIXES, createKeyBuilders, type AssetPrefixes } from './keys'
@@ -46,6 +49,8 @@ export interface S3AssetStoreOptions {
 
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const PRESIGN_EXPIRY_SECONDS = 15 * 60
+/** A presigned read is followed by the browser at once; it is never stored or cached. */
+const PRESIGNED_READ_EXPIRY_SECONDS = 5 * 60
 
 /**
  * Shape of the fields an AWS SDK v3 service exception carries, narrowed from
@@ -67,7 +72,13 @@ function matchesAwsError(err: unknown, name: string, httpStatusCode: number): bo
 const isPreconditionFailed = (err: unknown): boolean =>
   matchesAwsError(err, 'PreconditionFailed', 412)
 
-const isNoSuchKey = (err: unknown): boolean => matchesAwsError(err, 'NoSuchKey', 404)
+/**
+ * A missing key, never a missing bucket: S3 answers both with 404, and only a GET's error code names
+ * which. A HEAD's 404 has no body, so `hasPublicObject` reads either as absent; a caller that must
+ * tell them apart follows with a GET (assets/materialize.ts does).
+ */
+const isNoSuchKey = (err: unknown): boolean =>
+  matchesAwsError(err, 'NoSuchKey', 404) && (err as AwsServiceErrorShape).name !== 'NoSuchBucket'
 
 export class S3AssetStore implements AssetStore {
   readonly capabilities = { directUpload: true }
@@ -172,7 +183,14 @@ export class S3AssetStore implements AssetStore {
 
   async readOriginal(
     hash32: string,
+    ext?: string,
   ): Promise<{ data: Uint8Array; ext: string; contentType?: string } | null> {
+    if (ext !== undefined) {
+      const direct = await this.getObject(this.keys.originalKey(hash32, ext))
+      const data = await direct?.Body?.transformToByteArray()
+      if (data) return { data, ext, contentType: direct?.ContentType }
+    }
+
     const prefix = this.keys.originalPrefix(hash32)
     const listed = await this.client.send(
       new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, MaxKeys: 1 }),
@@ -193,7 +211,13 @@ export class S3AssetStore implements AssetStore {
     contentType: string
     contentDisposition?: string
     cacheControl?: string
+    tags?: Readonly<Record<string, string>>
   }): Promise<void> {
+    // `encodeURIComponent` writes a space as `%20`, which reads the same to any decoder;
+    // URLSearchParams writes `+`.
+    const tagging = Object.entries(input.tags ?? {})
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&')
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
@@ -202,6 +226,7 @@ export class S3AssetStore implements AssetStore {
         ContentType: input.contentType,
         ContentDisposition: input.contentDisposition,
         CacheControl: input.cacheControl,
+        Tagging: tagging || undefined,
       }),
     )
   }
@@ -217,6 +242,40 @@ export class S3AssetStore implements AssetStore {
       contentDisposition: result.ContentDisposition,
       cacheControl: result.CacheControl,
     }
+  }
+
+  /**
+   * A HEAD. S3 answers a missing key with 403, not 404, unless the caller may `s3:ListBucket`,
+   * so a role without it sees an error here rather than `false`.
+   */
+  async hasPublicObject(key: string): Promise<boolean> {
+    try {
+      await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }))
+      return true
+    } catch (err: unknown) {
+      if (isNoSuchKey(err)) return false
+      throw err
+    }
+  }
+
+  async *listPublicObjectKeys(prefix: string): AsyncIterable<string> {
+    const pages = paginateListObjectsV2(
+      { client: this.client },
+      { Bucket: this.bucket, Prefix: prefix },
+    )
+    for await (const page of pages) {
+      for (const object of page.Contents ?? []) {
+        if (object.Key) yield object.Key
+      }
+    }
+  }
+
+  /** HEADs first: signing is local and succeeds for a missing key too. */
+  async presignPublicObjectRead(key: string): Promise<string | null> {
+    if (!(await this.hasPublicObject(key))) return null
+    return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
+      expiresIn: PRESIGNED_READ_EXPIRY_SECONDS,
+    })
   }
 
   async putMetaIfAbsent(hash32: string, meta: AssetMeta): Promise<'created' | 'already-exists'> {

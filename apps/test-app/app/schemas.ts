@@ -44,6 +44,8 @@ export const homeSchema = defineEntrySchema([
     displayField: 'title',
   },
   seoGroup,
+  // `aspect` opens the crop step; HomeView renders this at many widths for the asset e2e.
+  { name: 'heroImage', type: 'image', label: 'Hero Image', aspect: '16:9' },
 ] as const)
 
 export const settingsSchema = defineEntrySchema([

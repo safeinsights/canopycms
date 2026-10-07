@@ -19,7 +19,7 @@ Key characteristics:
 - **canopycms** (core): content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset store plus its image-transform engine. Entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/ai`, `canopycms/build`, and the bare `canopycms` entry (config helpers, plus the isomorphic `assetUrl`/`assetSrcSet` builders host apps use).
 - **canopycms-next**: Next.js adapter — user extraction, `React cache()` per-request memoization, and the `withCanopy()` config wrapper (see [Framework Adapters](#framework-adapters)).
 - **canopycms-auth-clerk** / **canopycms-auth-dev**: auth plugins. The dev plugin provides a mock flow with configurable test users and is never valid in prod (see [Authentication](#authentication)).
-- **canopycms-cdk**: AWS CDK constructs (not imported by the CMS runtime) — the CMS service (Lambda + EFS), the CloudFront distribution, the `AssetSupport` construct, and the `CmsWorker` daemon. Its transform Lambda reuses the core transform engine verbatim, so the deployed CDN and dev mode apply identical transformations.
+- **canopycms-cdk**: AWS CDK constructs (not imported by the CMS runtime) — the CMS service (Lambda + EFS), the CloudFront distribution, the `AssetSupport` construct, and the `CmsWorker` daemon. Its opt-in transform Lambda and `canopycms materialize-assets` both call the core transform engine, so every mode produces identical derivatives.
 
 All business logic stays in core so the core is framework-agnostic and adapters handle only framework-specific concerns. Auth and framework support are separate packages for the same reason: adopters install only what they need, and the core can be tested with neither Next.js nor Clerk installed, so a new framework or provider is additive rather than a core change.
 
@@ -171,7 +171,7 @@ Each endpoint's preconditions are therefore visible at a glance in its own defin
 
 Content flows in one direction: the git repository is the source of truth, a branch gives an isolated workspace, edits stay in that branch until submitted, and review, merge and deploy all happen outside CanopyCMS — so editors never interact with git or GitHub directly. [Content Workflow](#content-workflow) covers each step.
 
-Opening a branch either resolves its existing workspace or creates a new git clone for it. A clone is built under a staging name and renamed into place complete, so a crash never leaves a half-made branch; a content branch's clone checks out only the content root, `.canopy-meta` and root-level files (branch-provisioning.ts, branch-sparse.ts). Each branch has its own working directory, so several users can edit different branches with no interference, and a crash or bad edit on one cannot affect another.
+Opening a branch resolves its workspace or creates a git clone for it, built under a staging name and renamed into place complete, so a crash never leaves a half-made branch; a content branch's clone checks out only the content root, `.canopy-meta` and root-level files (branch-provisioning.ts, branch-sparse.ts). Each branch has its own working directory, so users on different branches never interfere, and a crash or bad edit on one cannot affect another.
 
 A branch's lifecycle states are **editing** (the only status from which content can be written or the branch submitted), **submitted** (locked for review, awaiting merge), **approved** (ready to merge), and **archived** (merged, preserved for audit). There is deliberately no separate `locked` state: `submitted` already means locked for review.
 
@@ -282,7 +282,7 @@ One server with direct internet access: the auth plugin calls the provider API, 
 
 Two components share an EFS filesystem, and the split is driven by one constraint: **the Lambda has no internet access**, because a NAT Gateway costs more per month than the rest of the deployment combined. The Lambda sits in isolated subnets behind a Function URL, fronted by CloudFront for a stable domain and TLS. Its OAC signs origin requests but never hashes a body, so a body needs a client-computed hash. CanopyCMS's API client sends one for JSON bodies and Next.js Server Actions do not, so **Server Actions don't work in the CMS build** ([details](docs/deploying-to-aws.md#cloudfront-oac-and-request-body-signing)).
 
-**Lambda** runs the CMS app (editor, preview, API). It authenticates with networkless JWT verification plus a file-based metadata cache, performs git operations against a local bare repo on EFS over a `file://` URL — local git is fast, so those run synchronously in the request rather than through a job queue — queues anything needing the internet as a task file on EFS, and reaches S3 for asset presign and finalize through a gateway VPC endpoint. It holds no sensitive secrets: only public keys and configuration.
+**Lambda** runs the CMS app (editor, preview, API). It authenticates with networkless JWT verification plus a file-based metadata cache, performs git operations against a local bare repo on EFS over a `file://` URL — local git is fast, so those run synchronously in the request rather than through a job queue — queues anything needing the internet as a task file on EFS, and reaches S3 for assets through a gateway VPC endpoint. It holds no sensitive secrets: only public keys and configuration.
 
 **EC2 worker** is a tiny daemon on a t4g.nano spot instance (~$1.50/month) with outbound HTTPS. It does everything that needs the internet or a whole-repository view: processing queued tasks (pushing branches to GitHub, creating and updating PRs), syncing `remote.git` with GitHub, pushing this deployment's own settings branch each cycle as a backstop, rebasing active branch workspaces onto the updated base branch, and refreshing the auth metadata cache.
 
@@ -644,7 +644,7 @@ The editor's admin-only **System Health panel** is a thin view over the [Admin O
 
 ## Asset & Media System
 
-CanopyCMS manages binary media (images and PDFs) outside of git. Content references an asset by immutable, content-addressed key; the bytes live in a separate object store; and images are resized and reformatted on demand at delivery time rather than at upload. [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) maps the module, and the design record at `.claude/future-tasks/resolved/assets-media-system.md` holds the rejected upload-time-width-ladder alternative.
+CanopyCMS manages binary media (images and PDFs) outside of git. Content references an asset by immutable, content-addressed key; the bytes live in a separate object store; and images are resized and reformatted by URL directives, materialized when a build is released rather than at upload. [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) maps the module, and the design record at `.claude/future-tasks/resolved/assets-media-system.md` holds the rejected upload-time-width-ladder alternative.
 
 ### Content-Addressed Storage
 
@@ -654,7 +654,7 @@ Assets live in a single bucket — in prod, new prefixes inside each site's exis
 - `asset-staging/` — short-lived presigned-upload target, expired by a lifecycle rule
 - `asset-meta/` — private per-asset sidecar (original filename, uploader, date, dimensions, mime)
 - `assets/` — public static delivery, for sanitized SVGs and PDFs only
-- `assets/t/` — transform outputs, where the URL path _is_ the S3 key
+- `assets/t/` — transform outputs, where the URL path _is_ the S3 key, kept forever by default
 
 Keys are **immutable, content-addressed and unguessable**. Nothing is overwritten or eagerly deleted, and identical bytes deduplicate. That is what gives assets **branch-awareness without git storage**: a draft branch's newly uploaded image is fetchable-but-unguessable immediately, so drafts and PR previews render it before the referencing content is published; publishing needs no asset-promotion step, because the reference already points at the final key; and rollback always resolves, because old keys are never deleted.
 
@@ -668,23 +668,21 @@ Once the upload lands in staging, the editor calls a **finalize** step that runs
 
 ### On-Demand Image Transforms
 
-Raster images are **always** served through the transform layer, never as raw originals, which guarantees EXIF stripping and bounds the set of derivatives. A transform URL encodes an imgix-style directive set — allowlisted width, format, quality, and a normalized crop rectangle — as a path segment: `assets/t/{directives}/{hash}/{slug}`. Because the URL path is the S3 key, outputs are cacheable static objects once produced.
+Raster images are **always** served through the transform layer, never as raw originals, which guarantees EXIF stripping and bounds the set of derivatives. A transform URL encodes an imgix-style directive set — width, format, quality, and a normalized crop rectangle — as a path segment: `assets/t/{directives}/{hash}/{slug}`. Because the URL path is the S3 key, a derivative is a cacheable static object.
 
-Delivery uses a **CloudFront origin group with failover**: the signed S3 origin is tried first; on a 403/404 miss CloudFront fails over to a transform Lambda behind an OAC-locked Function URL, which reads the original, applies the directives, strips EXIF, **writes the canonical output key to S3 first** and then serves the bytes, so the next request for that URL hits the S3 object directly and the Lambda is a fill-on-miss path rather than a per-request resizer. For outputs too large for the Function URL's buffered response cap, and for the transform-failure fallback, it returns a `302` to the now-satisfiable S3 URL with `Cache-Control: no-store` — load-bearing, because caching the redirect instead of the image is a known trap.
+**The public path computes nothing.** `/assets/*` and `/assets/t/*` are served from S3 alone through CloudFront, read-only over OAC, with an optional replica bucket that takes over on 5xx only. A miss is a 403 and never fails over, since the replica holds only what the primary has. Derivatives therefore exist before release: after the site build, one step scans the build output for every asset reference and its directives, and a second computes only the keys still missing and writes them to S3. They are kept forever, and a preview build needs the same two steps. With no anonymous compute there is no amplifier to bound; a viewer can fetch only what a build or a signed-in editor's raw-route request already wrote.
 
-**One transform engine, two runtimes.** The directive parser and the sharp-based transform live in the core package; the prod transform Lambda imports that engine verbatim, and dev mode emulates `/assets/t/*` with the same engine on the fly. Identical URLs resolve in every mode, and there is exactly one implementation of what a directive does to an image.
+**One transform engine, several callers.** The directive parser and the sharp-based transform live in the core package, and one shared store step writes each result under its canonical key. The authenticated raw route, the materializer and the lazy-mode Lambda all call it, so identical URLs resolve in every mode and there is exactly one implementation of what a directive does to an image.
 
-**Bounding the anonymous-reachable path.** `/assets/t/*` needs no authentication — any anonymous viewer reaches it through CloudFront, and the hash in the URL is not a secret, since it appears in every published page's `<img src>`. What that exposes is not access to private content but an _amplifier_: each distinct URL that misses both CloudFront and S3 costs a sharp transform on a large Lambda plus a stored object. The blast radius is capped three ways. Width and quality are **allowlisted**, bounding how many distinct URLs one asset can have. The transform Lambda carries a **reserved concurrency**, capping how much of the account's concurrency pool it can draw and costing nothing when idle. And a request's slug is **validated against the asset's recorded slug**, in both the prod Lambda and the dev emulation, which removes the aliasing multiplier outright: otherwise any `[a-z0-9-]+` string mints a fresh cache key, invocation and stored object for one and the same image. Generated derivatives also carry a lifecycle expiry rather than living forever — they regenerate from the original on the next request, so expiry is self-healing, while unbounded retention lets anything minted this way accumulate permanently.
+**Width policy follows who chooses the URL.** Wherever site code or a signed-in editor does — the raw route, `assetUrl`/`assetSrcSet`, the collector, the materializer — any integer width from 1 to 8192 is accepted, so responsive `srcset`s are not boxed into a ladder. Only the anonymous lazy Lambda restricts width to an allowlist (multiples of 160 up to 4096, plus a few small sizes). Quality is allowlisted everywhere.
 
-Cost and unbounded storage are the real exposure here; the reservation is not there to stop the CMS Lambda being starved of concurrency, which has its own reservation and was never at risk. The one unbounded dimension left is the crop rectangle, whose key space no allowlist bounds; capping it needs signed directives and is tracked separately.
-
-The Function URL is locked to CloudFront (OAC / IAM) so the transform Lambda cannot be invoked directly to stuff the cache with arbitrary variants, and both behaviors are attached to the PR-preview distribution as well, so previews of draft branches resolve newly uploaded images.
+**Lazy mode** is an opt-in fill-on-miss alternative. The origin group fails over from S3 on 403/404 to a transform Lambda behind an OAC-locked Function URL, which **writes the canonical output key to S3 first** and then serves the bytes, so later requests hit S3. Outputs too large to return through the Function URL's buffered response get a `302` to the now-satisfiable S3 URL with `Cache-Control: no-store` — load-bearing, because caching the redirect instead of the image is a known trap — and the cache policy honors the origin's TTLs for the same reason. Because anyone can then mint a transform of a public asset, the cost is bounded by the width allowlist, a reserved concurrency that costs nothing when idle, validating a request's slug against the asset's recorded slug (otherwise any `[a-z0-9-]+` mints a fresh key for one image), and a 180-day expiry of the objects it wrote (tagged, so what `materialize-assets` writes is never expired), which regenerate from the original. A bucket the construct did not create must name its own retention, since the construct cannot write that expiry. The crop rectangle stays unbounded, and `/assets/t/*` gets no replica, since that group's one fallback slot is the Lambda.
 
 ### Stored vs Rendered Asset URLs
 
 A stored asset reference is **always root-relative** (`/assets/…`), and this is structural rather than conventional: both write paths — finalize and the editor's own field writes — store the raw computed src, and nothing that writes content may bake a prefix into it. The reason is that content moves: the same entry is read from a draft branch workspace, a PR preview, a staging deployment and production, so a stored value naming an origin or a deployment prefix would be correct in exactly one of those and quietly wrong in the rest.
 
-A stored src therefore names only the asset's **position in the `/assets` URL space**. Putting a mount point in front of that space is strictly a **render-time** concern, applied in exactly one place — the `baseUrl` option on `assetUrl`/`assetSrcSet` — and never written back. `media.publicBaseUrl` is one _source_ of that value, the editor's own answer for when it is served from a different origin than the site; it is display configuration, not a property of the asset. See [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
+A stored src therefore names only the asset's **position in the `/assets` URL space**. Putting a mount point in front of that space is strictly a **render-time** concern, applied in exactly one place — the `baseUrl` option on `assetUrl`/`assetSrcSet` — and never written back. See [Routes and Assets Are Two URL Spaces](#routes-and-assets-are-two-url-spaces).
 
 ### Structured Image Field
 
@@ -694,7 +692,11 @@ The schema has a first-class `image` field whose value is `{ src, alt, width, he
 
 ### Editor Media UI
 
-One **MediaLibrary** component serves both a manage drawer and a picker modal, as a cursor-paginated grid over the meta prefix. Thumbnail URLs come from a configured public base URL, since the editor may be served from a different origin than the site, and the MDX body editor wires the same dialog into its image plugin so images in prose flow through the same store and transform layer as structured image fields.
+One **MediaLibrary** component serves both a manage drawer and a picker modal, as a cursor-paginated grid over the meta prefix. The MDX body editor wires the same dialog into its image plugin so images in prose flow through the same store and transform layer as structured image fields.
+
+**The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a `no-store` 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
+
+The live preview follows suit: drafts carry the route prefix to a same-origin preview, and `assetUrl` puts `/assets/t/…` srcs behind it ahead of `baseUrl`, in a browser only (`editor/preview-asset-base.ts`).
 
 **Guards mirror the server exactly**: uploading and listing are open to any authenticated user; deleting is allowed to an admin, or to the asset's recorded uploader, and an asset with no recorded uploader is admin-only. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
 
@@ -702,7 +704,7 @@ One **MediaLibrary** component serves both a manage drawer and a picker modal, a
 
 The store contract supports both direct-signed and proxied upload modes and lets a store own its own key and URL resolution. CanopyCMS ships S3 and local-filesystem implementations, and the contract is deliberately broad enough for a git-backed or third-party adapter later **without changing content references**, which stay vendor-neutral: a key plus directives.
 
-The delivery side is packaged as the `AssetSupport` CDK construct, so each site provisions its own asset stack rather than depending on an org-wide shared deployment — the construct is the unit of reuse, so the common case needs no cross-account IAM at all (where a bucket genuinely lives in another account, see [Why do the CMS and transform Lambdas accept a caller-supplied execution role?](#why-do-the-cms-and-transform-lambdas-accept-a-caller-supplied-execution-role)). It supports a standalone or bring-your-own bucket, attaches the two CloudFront behaviors **anchored at the distribution root**, and deploys the transform Lambda bundled with sharp's platform-specific binaries, no Docker required.
+The delivery side is packaged as the `AssetSupport` CDK construct, so each site provisions its own asset stack rather than depending on an org-wide shared deployment — the construct is the unit of reuse, so the common case needs no cross-account IAM at all (where a bucket genuinely lives in another account, see [Why do the CMS and transform Lambdas accept a caller-supplied execution role?](#why-do-the-cms-and-transform-lambdas-accept-a-caller-supplied-execution-role)). It supports a standalone or bring-your-own bucket, attaches the two CloudFront behaviors **anchored at the distribution root**, and deploys the transform Lambda (bundled with sharp's platform-specific binaries, no Docker required) only in lazy mode.
 
 ## AI Content Generation
 
@@ -790,12 +792,12 @@ The primitive is deliberately pure and dependency-free, because asset URL buildi
 
 A deployment prefix always moves the **route** space. Whether it also moves the **asset** space is a property of the deployment topology, not of the prefix:
 
-- **On a CloudFront deployment** (the `AssetSupport` construct), the app moves under the prefix but the asset space does **not**: the CDN's `/assets/*` and `/assets/t/*` behaviors are anchored at the distribution root, and the transform function rejects any request outside the transform prefix. Deriving the asset mount point from the deployment prefix here breaks URLs that were working.
+- **On a CloudFront deployment** (the `AssetSupport` construct), the app moves under the prefix but the asset space does **not**: the CDN's `/assets/*` and `/assets/t/*` behaviors are anchored at the distribution root, and the lazy-mode transform function rejects any request outside the transform prefix. Deriving the asset mount point from the deployment prefix here breaks URLs that were working.
 - **Where the framework itself serves `/assets`** — the local/LFS store adapter, `next dev`, or S3 with no distribution in front — the `/assets` rewrite belongs to `withCanopy()`, so Next.js auto-prefixes it and the deployment prefix _does_ apply.
 
-Two consequences follow. Adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. And the asset mount point is a **per-render option rather than a config field**, because the editor and the public site can legitimately have different answers: the editor's is `media.publicBaseUrl`, the public site's comes from the table.
+Two consequences follow. Adopter guidance is a **mount table keyed on where assets are served**, not a rule keyed on whether a deployment prefix is set. And the asset mount point is a **per-render option rather than a config field**, because different renderers see the asset space at different places. The editor needs none: it loads through the authenticated raw route ([Editor Media UI](#editor-media-ui)).
 
-`media.uploadUrl` is **not** a third answer, despite sitting beside `publicBaseUrl` on the same config object: it names the endpoint the browser POSTs a presigned upload to, a transport detail of the write path, and is never joined onto a stored `/assets/…` value, never rendered, and never written into content. The two fields are neighbours, not variants, which is why one is a prefix and the other replaces a URL outright.
+`media.uploadUrl` is **not** a mount point either: it names where the browser POSTs a presigned upload, and is never joined onto a stored `/assets/…` value, never rendered, and never written into content.
 
 ### The Deployment Prefix (`basePath`)
 
@@ -846,9 +848,11 @@ The config accepts a `validateEntry` hook for adopter-defined server-side valida
 
 Git history is append-only, so every replaced image version would live forever, and the clone-per-branch-on-EFS model would multiply that weight into every branch provision. Content-addressed keys in a separate store sidestep both and give branch-awareness for free (see [Asset & Media System](#asset--media-system)). References stay vendor-neutral — a key plus directives — so a git-backed adapter remains possible for tiny adopters.
 
-### Why transform images on demand instead of a fixed width ladder at upload?
+### Why transform by URL directive and materialize at release?
 
-An upload-time ladder was simpler to build but aged badly: sharp in the CMS request path, per-field width hints for odd sizes, derived assets for cropping, and worker back-fill jobs whenever the ladder or quality changed. On-demand transforms put all of that behind a deterministic URL — any size available, crop a re-editable rectangle, a pipeline change just a cache-key change — for one Lambda per site and a sub-second first hit per variant.
+An upload-time width ladder put sharp in the request path and needed derived crops and back-fills on every change; a directive URL gives any size and a re-editable crop.
+
+Materializing at release means anonymous traffic computes nothing. Signing was rejected: widths are picked at render time, so every URL minter, live preview included, would hold the secret, and signing adds no failover. Collecting from content was rejected: widths live in site code, and only build output holds final URLs. Hence the contract: every `/assets/t/` URL a site requests appears as text in its build output.
 
 ### Why do the CMS and transform Lambdas accept a caller-supplied execution role?
 

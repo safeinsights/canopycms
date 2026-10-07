@@ -54,6 +54,14 @@ recovers a create that timed out instead of reporting an HTTP 504.
 **Now deletable.** Manual EFS cleanup of provisioning locks or half-made branch directories, and
 `remote.git` gc scripts.
 
+### The editor and its live preview load images through the signed-in asset route
+
+**What changed.** The editor loads every image from `GET /api/canopycms/assets/raw/…` under your `basePath`, which transforms on demand and, on S3, answers with a short-lived redirect to a presigned S3 read. `CanopyClientConfig.assetBaseUrl` is gone. Inside a same-origin live preview, `assetUrl` puts `/assets/t/…` URLs behind that route instead of your `baseUrl`.
+
+**To adopt.** Usually nothing. The `<img>` requests authenticate with the editor's session cookie, so the editor and its preview must share an origin with `/api/canopycms`. A Content-Security-Policy on those pages must allow `img-src` from your bucket's S3 endpoint, and a bucket policy denying requests that bypass CloudFront blocks the presigned reads. An off-origin preview gets no route prefix, so under `AssetSupport`'s S3-only default it shows only stored derivatives; serve it same-origin or set `lazyPublicTransforms: true`.
+
+**Now deletable.** Code passing `assetBaseUrl` into the editor.
+
 ### The prod workspace defaults to `/mnt/efs` — **behaviour change if you run prod without `CANOPYCMS_WORKSPACE_ROOT`**
 
 **What changed.** With `CANOPYCMS_WORKSPACE_ROOT` unset, prod mode keeps its branches, settings, task queue and auth cache under `/mnt/efs` instead of `/mnt/efs/workspace` (`DEFAULT_PROD_WORKSPACE`). `CanopyCmsService` sets the variable to `/mnt/efs` in the Lambda and the worker, so CDK deployments are unaffected.
@@ -199,6 +207,14 @@ version, media-storage state) and warns when API and worker versions differ.
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
 
+### `assetUrl` applies an image value's crop — **behaviour change for cropped images**
+
+**What changed.** `assetUrl`/`assetSrcSet` apply an `image` value's `crop`; `opts.crop` overrides.
+
+**To adopt.** Scale `<img>` `width`/`height` by `crop.w`/`crop.h`.
+
+**Now deletable.** Copying `value.crop` into `opts.crop`.
+
 ### Every field type shows its `description`
 
 **What changed.** A field's `description` renders under its label for every type, not only inline
@@ -208,6 +224,49 @@ render.
 **To adopt.** Nothing. Read your existing descriptions, which editors now see.
 
 **Now deletable.** Editor hints worked into a field's `label` because `description` never showed.
+
+### `collect-asset-refs` and `materialize-assets` store a build's images before release
+
+**What changed.** `canopycms collect-asset-refs <outDir>` writes the image keys a static build references to `<outDir>/canopy-asset-refs.json`. `canopycms materialize-assets --refs <file>` transforms and stores whichever of them the configured store lacks.
+
+**To adopt.** Run `collect-asset-refs` after the static build, before any step that lists its files. Run `materialize-assets` before the release is served, with the S3 grants the README lists. Every `/assets/t/` URL a page can request must appear as text in the build output.
+
+**Now deletable.** A pre-release warm-up step that requests image URLs to get them transformed.
+
+### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
+
+**What changed.** `/assets/*` and `/assets/t/*` come from the bucket alone, with an optional
+`replicaBucket` for 5xx failover. An unmaterialized URL is a 403; no transform Lambda or
+`assets/t/` expiry exists, `transformFunction`/`transformLogGroup`/`transformFunctionUrl` are
+`undefined`. `transformRole`, `transformReservedConcurrency`, `transformOutputRetention`,
+`transformLogGroupName` and `transformLogRetention` now throw: drop them, or set
+`lazyPublicTransforms: true`.
+
+**To adopt.** Until your pipeline runs both steps above, set `lazyPublicTransforms: true`. Only
+the Lambda's writes expire, tagged `canopy-transform=lazy`; older ones never do. On a
+bucket you pass in, also pass `transformOutputRetention` and filter your expiry rule on that tag;
+cross-account, grant the transform role `s3:PutObjectTagging`. Then remove the opt-in and those
+props, and pass `replicaBucket` if you replicate `assets/`.
+
+**Now deletable.** Your `assets/t/` expiry rule, before leaving lazy mode.
+
+### Wider image limits
+
+**What changed.** Uploads up to 24 MP (6000×4000), up from 16.7 MP. Widths are any integer up to
+8192 everywhere but the lazy Lambda, whose allowlist gains 32, 48, 64, 96 and 128 and which now has
+2048 MB. An `orig` over 10 MiB is no longer refused.
+
+**To adopt.** Nothing.
+
+**Now deletable.** Rounding widths to a multiple of 160.
+
+### `media.publicBaseUrl` is removed — **breaking (config)**
+
+**What changed.** Nothing read it, and the strict `media` schema now fails a config that sets it.
+
+**To adopt.** Delete it. Pass `baseUrl` to `assetUrl`/`assetSrcSet` to prefix public asset URLs.
+
+**Now deletable.** Anything that only fed it.
 
 ---
 
@@ -643,24 +702,6 @@ site-relative value only works where that path routes to the bucket, so it 404s 
 With `canopycms-cdk`'s `AssetSupport` in standalone mode, `editorOrigins` becomes inert at the same
 moment; it stays a required prop, since a cross-origin editor is still the default shape.
 
-#### `media.publicBaseUrl` accepts a site-relative path, and rejects non-http(s) schemes
-
-**What changed.** `publicBaseUrl` was `z.string().url()`. It now accepts an absolute `http(s)` URL,
-a protocol-relative `//host` URL, **or** a site-relative path such as `/preview-123`, so you can
-state the asset mount point directly in every topology instead of relying on the deployment
-`basePath` inference. That inference is kept, so nothing breaks on upgrade.
-
-**To adopt.** Nothing required.
-
-**Watch out — this is also a tightening.** `z.string().url()` accepted anything `new URL()` parses,
-including `mailto:` and `javascript:`. Those now fail validation; a value of that shape never
-worked, so this converts a silent misconfiguration into a startup error.
-
-Four narrower shapes are also rejected, because the browser rewrites them so the stored value stops
-describing what is requested: a literal space (use `%20`); a backslash anywhere (`/asset\upload/` is
-sent as `/asset/upload/`); `.` or `..` segments in any spelling, percent-encoded included; and a
-scheme with no `//` (`https:cdn.example.com`), which resolves as a relative reference.
-
 #### `media` config now rejects unknown keys
 
 **What changed.** Each branch of `mediaSchema` is `.strict()`. `CanopyConfigSchema`'s own
@@ -1022,7 +1063,7 @@ Every entry below shipped in `0.0.64`.
 
 #### `basePath` deployments are supported, and `assetUrl`'s `baseUrl` is now safe for path prefixes (#24)
 
-**What changed.** Three things, all pointing at the same failure — deploying under a Next.js
+**What changed.** Two things, both pointing at the same failure — deploying under a Next.js
 `basePath`, where Next auto-prefixes only its own `Image`/`Link`/`Script` and leaves every raw
 string URL resolving at the origin root.
 
@@ -1035,8 +1076,6 @@ string URL resolving at the origin root.
 2. A new top-level `basePath` config key makes the **editor** work under a `basePath`. Its API route
    base and preview pane were hardcoded to the origin root, so the editor loaded no API response at
    all on such a deployment.
-3. `media.publicBaseUrl` is documented for what it actually is: the editor's own answer to "where is
-   `/assets` mounted", editor-display-only.
 
 **To adopt.** Nothing if you deploy at the origin root. If you deploy under a `basePath`, state it
 in your Canopy config as well as `next.config` (CanopyCMS cannot read `next.config`):

@@ -597,9 +597,9 @@ export default defineCanopyConfig({
 
 ## Assets and media
 
-Uploaded images and PDFs go into a content-addressed asset store, and images are served
-through an on-demand transform layer. Both the **local** adapter (for development) and the
-**S3** adapter ship today.
+Uploaded images and PDFs go into a content-addressed asset store, and images are served as
+resized derivatives stored before each release. Both the **local** adapter (for development)
+and the **S3** adapter ship today.
 
 ```typescript
 // canopycms.config.ts — production
@@ -617,8 +617,10 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   immutable and deduplicated. A draft branch references its images immediately; publishing
   needs no separate asset step.
 - **Delivery** — images are served from `/assets/t/{directives}/…` URLs that resize, crop and
-  convert to WebP on first request, then cache immutably. Build responsive markup with the
-  exported helpers, which are client-safe:
+  convert, written before release by `canopycms collect-asset-refs <outDir>` then
+  `canopycms materialize-assets --refs <file>`, and cached immutably. Every `/assets/t/` URL a
+  page can request must appear as text in the build output. Build responsive markup with the
+  exported helpers, which are client-safe and take any width from 1 to 8192:
 
   ```typescript
   import { assetUrl, assetSrcSet } from 'canopycms'
@@ -633,7 +635,9 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   />
   ```
 
-  SVGs and PDFs are served statically, with no transform.
+  Passing an `image` field value applies its stored crop (`opts.crop` overrides it). Its `width`
+  and `height` are the uncropped original's, so scale them by `crop.w` and `crop.h` for a cropped
+  value. SVGs and PDFs are served statically, with no transform.
 
 - **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets
   stored in content and content moves between branches and environments. If your renderer sees
@@ -670,8 +674,10 @@ to enable the interactive crop step, or `altOptional: true` for decorative image
 > CanopyCMS" as visible to your whole editorial team.
 
 For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct that provisions
-the bucket, the transform Lambda and the CloudFront behaviors. Fuller documentation — every
-config option, the transform directive syntax, and the AWS wiring — is in the project README's
-`#media-configuration` section and in `docs/deploying-to-aws.md`. Read both at the ref this
+the bucket and serves `/assets/*` from S3 only: an unmaterialized URL is a 403, and
+`lazyPublicTransforms: true` transforms misses in a Lambda instead. Fuller documentation — every
+config option, the release steps and their IAM grants, and the AWS wiring — is in the project
+README's `#media-configuration` section, `docs/deploying-to-aws.md` and
+`docs/adopter-migration.md`. Read them at the ref this
 build came from, not at `main` — see
 [Which documentation matches this build](#which-documentation-matches-this-build).

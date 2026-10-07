@@ -3,7 +3,9 @@
 import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { toSameOriginPath } from '../utils/url-prefix'
 import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
+import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
 
 export const __CANOPY_PREVIEW_CLIENT__ = true
@@ -19,7 +21,15 @@ export interface DraftUpdateMessage {
   path: string
   data?: unknown
   isLoading?: unknown
+  /** The editor's authenticated asset route; see `PreviewFrame`'s `assetBase`. */
+  assetBase?: unknown
 }
+
+/** `assetBase` from a draft, only if it is a same-origin path: nothing else may steer `<img>`s. */
+const readAssetBase = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.startsWith('/') && toSameOriginPath(value) === value
+    ? value
+    : undefined
 
 /**
  * Resolve a (possibly relative) URL to an origin for postMessage targeting.
@@ -166,6 +176,8 @@ export const usePreviewData = <T,>(
       const msg = event.data as DraftUpdateMessage
       if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE) return
       if (typeof msg.path !== 'string' || !isSamePreviewPath(msg.path, path)) return
+      // Before setData, so the render the draft triggers already reads it.
+      setPreviewAssetBase(readAssetBase(msg.assetBase))
       setData(msg.data as T)
       if (msg.isLoading !== undefined) {
         setIsLoading(msg.isLoading as Record<string, boolean>)
@@ -264,6 +276,7 @@ export const PreviewFrame = ({
   style,
   highlightEnabled,
   onPreviewError,
+  assetBase,
 }: {
   src: string
   path: string
@@ -272,6 +285,11 @@ export const PreviewFrame = ({
   className?: string
   style?: CSSProperties
   highlightEnabled?: boolean
+  /**
+   * The editor's authenticated asset route, a same-origin path, so it is sent with drafts only to
+   * a same-origin preview: another origin would resolve it against itself.
+   */
+  assetBase?: string
   /** Called when the preview reports a draft compile/render error; null clears it. */
   onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
 }) => {
@@ -303,6 +321,7 @@ export const PreviewFrame = ({
 
   const post = () => {
     if (data === undefined) return
+    const sameOrigin = previewOrigin === window.location.origin
     sendDraftUpdate(
       iframeRef.current,
       {
@@ -310,6 +329,7 @@ export const PreviewFrame = ({
         path,
         data,
         isLoading,
+        ...(assetBase !== undefined && sameOrigin ? { assetBase } : {}),
       },
       previewOrigin,
     )

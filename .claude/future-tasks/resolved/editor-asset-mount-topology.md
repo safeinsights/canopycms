@@ -1,6 +1,9 @@
 # The editor's asset mount point is inferred, and the inference is wrong on CloudFront
 
-**Status:** Open. **Priority: P3.** Found 2026-08-21 by the second independent review pass on
+**Status:** Resolved 2026-10-06 by the image-materialization epic's Phase 1 (branch
+`feat/authenticated-editor-assets`): the editor no longer has an asset mount point to infer. It
+loads every image through the authenticated raw route under `basePath`, and neither
+`publicBaseUrl` nor the `basePath` fallback is consulted. **Was: P3.** Found 2026-08-21 by the second independent review pass on
 PR #261, which shipped the inference being questioned here. Not a 404 and not a correctness bug —
 a silent cost/latency regression on one topology — but it contradicts the model that same PR
 documents, so it should be settled deliberately rather than left as a guess.

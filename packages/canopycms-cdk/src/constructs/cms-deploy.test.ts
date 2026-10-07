@@ -24,7 +24,12 @@ import {
 } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
-import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
+import {
+  AssetSupport,
+  ASSETS_PATH_PATTERN,
+  ASSETS_TRANSFORM_PATH_PATTERN,
+  type AssetSupportProps,
+} from './asset-support'
 // Test-only imports across the package boundary, deliberately: the constructs
 // in this directory do not import `canopycms` (see isValidDeploymentName's doc
 // comment in cms-service.ts for the real reason, and for why the older "the
@@ -494,7 +499,7 @@ describe('CanopyCmsDistribution: additionalBehaviors', () => {
 
 describe('CanopyCmsDistribution: assetSupport prop', () => {
   /** Builds a stack with a CanopyCmsService and an AssetSupport, ready to pass to CanopyCmsDistribution. */
-  function buildServiceAndAssets(stackId: string) {
+  function buildServiceAndAssets(stackId: string, assetProps: Partial<AssetSupportProps> = {}) {
     const app = newTestApp()
     const stack = new Stack(app, stackId, {
       env: { account: '123456789012', region: 'us-east-1' },
@@ -511,6 +516,7 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
       // See asset-support.test.ts's BASE_PROPS doc comment - this suite
       // synths against the cheap --skip-native fixture bundle.
       requireDeployableBundle: false,
+      ...assetProps,
     })
     return { stack, service, assetSupport }
   }
@@ -532,31 +538,40 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     }
   }
 
-  it('attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/*', () => {
-    const { stack, service, assetSupport } = buildServiceAndAssets('AssetPropStack')
-    new CanopyCmsDistribution(stack, 'Dist', {
-      ...distributionCommonProps(stack, service.functionUrl),
-      assetSupport,
-    })
+  it.each([
+    ['materialized', {}],
+    ['lazy', { lazyPublicTransforms: true }],
+  ])(
+    'attaches both AssetSupport behaviors in the right order, alongside the construct’s own /_next/static/* (%s)',
+    (mode, assetProps) => {
+      const { stack, service, assetSupport } = buildServiceAndAssets(
+        `AssetPropStack-${mode}`,
+        assetProps,
+      )
+      new CanopyCmsDistribution(stack, 'Dist', {
+        ...distributionCommonProps(stack, service.functionUrl),
+        assetSupport,
+      })
 
-    const dist = Object.values(
-      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
-    )[0]
-    const patterns = (
-      dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
-    ).map((b) => b.PathPattern)
+      const dist = Object.values(
+        Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+      )[0]
+      const patterns = (
+        dist.Properties.DistributionConfig.CacheBehaviors as { PathPattern: string }[]
+      ).map((b) => b.PathPattern)
 
-    expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
-    expect(patterns).toContain(ASSETS_PATH_PATTERN)
-    expect(patterns).toContain('/_next/static/*')
-    // The whole point: the more specific transform pattern must precede the
-    // broader static one, or CloudFront's first-match-wins ordering serves
-    // every transform request off the S3-only behavior and never fails over
-    // to the transform Lambda.
-    expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
-      patterns.indexOf(ASSETS_PATH_PATTERN),
-    )
-  })
+      expect(patterns).toContain(ASSETS_TRANSFORM_PATH_PATTERN)
+      expect(patterns).toContain(ASSETS_PATH_PATTERN)
+      expect(patterns).toContain('/_next/static/*')
+      // The more specific transform pattern must precede the broader one: in
+      // lazy mode, CloudFront's first-match-wins ordering would otherwise serve
+      // every transform request off `/assets/*`, never failing over to the
+      // transform Lambda. Materialized mode keeps the same order.
+      expect(patterns.indexOf(ASSETS_TRANSFORM_PATH_PATTERN)).toBeLessThan(
+        patterns.indexOf(ASSETS_PATH_PATTERN),
+      )
+    },
+  )
 
   it('throws at construction when a hand-written additionalBehaviors lists /assets/* before /assets/t/*', () => {
     const { stack, service } = buildServiceAndAssets('WrongOrderStack')
@@ -764,7 +779,9 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     // behavior must still target an origin GROUP after overrides are merged,
     // since that group is the 403/404 failover to the transform Lambda. It
     // goes red if buildBehaviors ever stops using one.
-    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack')
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachOriginGuardStack', {
+      lazyPublicTransforms: true,
+    })
     const dist = new CanopyCmsDistribution(stack, 'Dist', {
       ...distributionCommonProps(stack, service.functionUrl),
     })
@@ -783,6 +800,41 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     expect(groupIds).toContain(transform?.TargetOriginId)
   })
 
+  it('keeps both materialized behaviors on the one replica origin group when overrides are passed', () => {
+    const { stack, service, assetSupport } = buildServiceAndAssets('AttachReplicaGroupStack')
+    // Rebuilt with a replica: buildServiceAndAssets' instance has none.
+    const withReplica = new AssetSupport(stack, 'ReplicatedAssets', {
+      editorOrigins: ['http://localhost:3000'],
+      requireDeployableBundle: false,
+      replicaBucket: s3.Bucket.fromBucketAttributes(stack, 'Replica', {
+        bucketName: 'replica-bucket',
+        region: 'us-west-2',
+      }),
+    })
+    expect(assetSupport.transformFunction).toBeUndefined()
+    const dist = new CanopyCmsDistribution(stack, 'Dist', {
+      ...distributionCommonProps(stack, service.functionUrl),
+    })
+    withReplica.attachTo(dist.distribution, { compress: false })
+
+    const config = Object.values(
+      Template.fromStack(stack).findResources('AWS::CloudFront::Distribution'),
+    )[0].Properties.DistributionConfig
+    const groups = (config.OriginGroups?.Items ?? []) as Array<{
+      Id: string
+      FailoverCriteria: { StatusCodes: { Items: number[] } }
+    }>
+    expect(groups).toHaveLength(1)
+    expect([...groups[0].FailoverCriteria.StatusCodes.Items].sort()).toEqual([500, 502, 503, 504])
+    const behaviors = config.CacheBehaviors as Array<{
+      PathPattern: string
+      TargetOriginId: string
+    }>
+    for (const pattern of [ASSETS_TRANSFORM_PATH_PATTERN, ASSETS_PATH_PATTERN]) {
+      expect(behaviors.find((b) => b.PathPattern === pattern)?.TargetOriginId).toBe(groups[0].Id)
+    }
+  })
+
   it('ignores explicitly-undefined override keys rather than falling back to CDK defaults', () => {
     // A spread copies keys whose value is undefined, so `{ cachePolicy: undefined }`
     // used to DELETE the construct's choice and let CDK substitute its own --
@@ -792,13 +844,14 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
     // viewerProtocolPolicy went from redirect-to-https to allow-all on BOTH
     // behaviors, serving assets over plain HTTP. Not contrived: it is what
     // forwarding an unset optional prop produces.
-    const bare = buildServiceAndAssets('OverrideUndefBareStack')
+    // Lazy mode: its custom transform cache policy is the choice a dropped key would lose.
+    const bare = buildServiceAndAssets('OverrideUndefBareStack', { lazyPublicTransforms: true })
     const bareDist = new CanopyCmsDistribution(bare.stack, 'Dist', {
       ...distributionCommonProps(bare.stack, bare.service.functionUrl),
     })
     bare.assetSupport.attachTo(bareDist.distribution)
 
-    const undef = buildServiceAndAssets('OverrideUndefStack')
+    const undef = buildServiceAndAssets('OverrideUndefStack', { lazyPublicTransforms: true })
     const undefDist = new CanopyCmsDistribution(undef.stack, 'Dist', {
       ...distributionCommonProps(undef.stack, undef.service.functionUrl),
     })
@@ -823,6 +876,9 @@ describe('CanopyCmsDistribution: assetSupport prop', () => {
 
     const baseline = transformOf(bare.stack)
     const withUndef = transformOf(undef.stack)
+    expect(baseline.CachePolicyId).toEqual({
+      Ref: expect.stringMatching(/AssetsTransformCachePolicy/),
+    })
     expect(withUndef.CachePolicyId).toEqual(baseline.CachePolicyId)
     expect(withUndef.ViewerProtocolPolicy).toBe(baseline.ViewerProtocolPolicy)
     expect(withUndef.ViewerProtocolPolicy).toBe('redirect-to-https')

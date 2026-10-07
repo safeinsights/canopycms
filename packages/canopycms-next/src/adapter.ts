@@ -53,6 +53,7 @@ function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit 
   if (headers.contentDisposition) result['Content-Disposition'] = headers.contentDisposition
   if (headers.cacheControl) result['Cache-Control'] = headers.cacheControl
   if (headers.etag) result['ETag'] = headers.etag
+  if (headers.location) result['Location'] = headers.location
   return result
 }
 

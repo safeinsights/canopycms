@@ -322,16 +322,16 @@ The editor's live preview must show full referenced content, not IDs, while rend
 
 The asset system (upload, storage, on-demand transforms) lives under `src/assets/`; see [assets/AGENTS.md](packages/canopycms/src/assets/AGENTS.md) for its invariants and [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system) for the design. It brings dependencies you will meet here and nowhere else: `sharp` (transforms), `file-type` + `image-size` (finalize sniffing), `sanitize-html` (SVG), `content-disposition`, the S3 SDK plus `@aws-sdk/s3-presigned-post`, and on the editor side `@mantine/dropzone` (pinned to the Mantine core version in use) and `react-easy-crop`.
 
-### Transform Engine: Shared Between Dev and Prod
+### Transform Engine: One Pipeline, Every Caller
 
-The on-demand transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is split in two so dev emulation and the prod Lambda reuse it unchanged:
+The transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is split in two:
 
-- `assets/transform-directives.ts` — pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). It imports nothing at all, not even a sibling, so it is safe for client bundles.
+- `assets/transform-directives.ts` — pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). It imports nothing, not even a sibling, so it is safe for client bundles. `canonicalizeTransformPath`, `parseTransformPath` and `isAllowedTransformWidth` take a required width policy, `'any'` (1..8192) or `'allowlist'` (the lazy Lambda); a new caller must choose one deliberately.
 - `assets/transform.ts` — the sharp-based `applyTransform` pipeline. Server-only.
 
-Both the dev `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, importing through the `canopycms/server` re-exports) call into those two files. **Never reimplement directive parsing or the sharp pipeline in one place only** — change it in these files and both paths pick it up.
+`storeTransform` (`canopycms/server`) is the shared entry point: the authenticated raw route (`rawAssetHandler` in `packages/canopycms/src/api/assets.ts`), the build-time materializer (`canopycms materialize-assets`) and the lazy-mode Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`) all call it. Locally, `withCanopy()` rewrites `/assets/*` to that raw route, so a dev `/assets/t/*` URL is computed on first request and no collect or materialize step is needed. **Never reimplement directive parsing or the sharp pipeline in one place only.**
 
-Both paths surface a `TransformRejection` carrying a real HTTP status (`400` unsupported input, `413` output too large, `422` decode failure). **Forward `transformed.status` verbatim** rather than flattening every rejection to one code: reporting a client-input error as a server error, or the reverse, is a bug, and `handler.test.ts` plus `assets.test.ts` both assert the pass-through.
+Every caller gets a rejection carrying a real HTTP status (`400` unsupported input, `404` missing meta or original, `413` output too large, `422` decode failure). **Forward `transformed.status` verbatim** rather than flattening every rejection to one code: reporting a client-input error as a server error, or the reverse, is a bug, and `handler.test.ts` plus `assets.test.ts` both assert the pass-through.
 
 ### Finalize Decode Validation: Open on No Decoder, Closed on a Real Rejection
 
@@ -340,9 +340,9 @@ Both paths surface a `TransformRejection` carrying a real HTTP status (`400` uns
 Two things to know before touching it:
 
 - **It `.resize()`s to a tiny throwaway output rather than calling `.metadata()`.** `metadata()` reads header fields — exactly the check that misses a corrupt IDAT. Only a real decode exercises libvips.
-- **`sharp` is loaded through `loadSharp()` (`assets/sharp-loader.ts`); no non-test module imports it statically.** A static import fails whatever imports that module graph when the native binary cannot load (wrong platform/arch, a missing libvips `.so` in a standalone image) — and because `transform.ts` sits under `canopycms/http`, under Turbopack that meant every route of an adopter's editor. `loadSharp()` instead rejects on first use and logs once per process, which lets `pipeline.ts` catch that specific failure and **fail open** (warn, skip validation, let the upload through) for "no decoder available" only. If sharp loads and its decoder rejects the bytes, that is a real fact about the file and the pipeline **fails closed** (422, a generic user-facing message, never the raw libvips string). `transform.ts` lets the same rejection propagate, so a transform failure there is a 500, never a 422. Keep those two branches distinct. `@typescript-eslint/no-restricted-imports` in `eslint.config.mjs` rejects a static value import of `sharp` under `packages/canopycms/src` outside tests.
+- **`sharp` is loaded through `loadSharp()` (`assets/sharp-loader.ts`); no non-test module imports it statically.** A static import fails whatever imports that module graph when the native binary cannot load (wrong platform/arch, a missing libvips `.so` in a standalone image), and `transform.ts` sits under `canopycms/http`, so under Turbopack every editor route fails. `loadSharp()` instead rejects on first use and logs once per process, which lets `pipeline.ts` catch that specific failure and **fail open** (warn, skip validation, let the upload through) for "no decoder available" only. If sharp loads and its decoder rejects the bytes, that is a real fact about the file and the pipeline **fails closed** (422, a generic user-facing message, never the raw libvips string). `transform.ts` lets the same rejection propagate, so a transform failure there is a 500, never a 422. Keep those two branches distinct. `@typescript-eslint/no-restricted-imports` in `eslint.config.mjs` rejects a static value import of `sharp` under `packages/canopycms/src` outside tests.
 
-Fixtures here must be genuinely sharp-decodable: build them with `sharp({ create: {...} })` (see `makePng` in `transform.test.ts`), because a header-only fixture is now correctly rejected by `rasterIsDecodable` and can no longer stand in for a valid raster. `pipeline.test.ts` keeps exactly one deliberately-corrupt fixture (`makeCorruptPng`, bytes flipped well past the fixed-offset header fields) for the rejection test; the fail-open path is covered separately in `pipeline.sharp-unavailable.test.ts`, which mocks the `sharp` module — kept out of `pipeline.test.ts` because that file's fixtures need the real thing.
+Fixtures must be genuinely sharp-decodable: build them with `sharp({ create: {...} })` (see `makePng` in `transform.test.ts`), because `rasterIsDecodable` rejects header-only fixtures. `pipeline.test.ts` keeps one deliberately-corrupt fixture (`makeCorruptPng`, bytes flipped past the header fields) for the rejection test; the fail-open path lives in `pipeline.sharp-unavailable.test.ts`, which mocks `sharp` and so stays out of `pipeline.test.ts`, whose fixtures need the real thing.
 
 ### Client-Bundle Safety for Assets
 
@@ -975,6 +975,8 @@ Read the file in full before extending it, or before writing another "shell out 
 - **Fail fast on child-process exit instead of polling out the timeout.** `waitForServer()` listens for the child's `exit` event and throws immediately, surfacing the captured server log, rather than polling a server that is already gone.
 - **Exclude dev-mode workspace clones from test discovery.** `vitest.config.ts` excludes `.canopy-dev/**`: the dev branch-workspace machinery clones the whole app directory — the test file included — into `.canopy-dev/content-branches/<branch>/` on the first request-time read, and Vitest would pick that clone up as a second, broken test file with no `node_modules` of its own.
 
+**Test a collector against what the renderer emits, not hand-written HTML.** The static export includes `app/images/`, whose pages call `assetUrl`/`assetSrcSet`; `record-asset-urls.ts` installs the test-only listener `assets/asset-url.ts` reads off `globalThis` and logs every URL emitted, and the test asserts `canopycms collect-asset-refs` collects exactly those keys. When `assetUrl` gains a URL shape, render it on that page.
+
 **Local-run gotcha:** the live-server test's request-time read resolves against the last git commit, not uncommitted working-tree edits. Running it locally against WIP changes can make the cms server's `/` return a non-200 until you commit (or `canopycms sync push`) — expected dev-mode behavior, not a build-shape regression. The assertion message says so inline; read it before assuming a regression.
 
 ### `apps/example1` Build Verification (`example1-build` CI Gate)
@@ -1103,19 +1105,19 @@ try {
 
 ### Building the Transform Lambda (No Docker)
 
-The prod transform Lambda needs `sharp`'s native binary for `linux/arm64`, and Docker-based bundling is not available here. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` bundles `handler.ts` with esbuild (leaving `sharp`/`@img/*` and `@aws-sdk/*` external, the latter already in the Node 22.x managed runtime), then runs `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` in the output directory. Since sharp >= 0.33 ships its binary as a platform-specific optional dependency, those npm overrides fetch the linux/arm64 build whatever the host OS is — which is what makes Docker unnecessary, even from macOS.
+By default `AssetSupport` serves `/assets/*` and `/assets/t/*` from S3 only, with no Lambda; derivatives come from `canopycms collect-asset-refs` + `canopycms materialize-assets`. Only `lazyPublicTransforms: true` adds the transform Lambda, which needs `sharp`'s `linux/arm64` binary. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` bundles `handler.ts` with esbuild (`sharp`/`@img/*` and `@aws-sdk/*` external, the latter in the Node 22.x managed runtime), then runs `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` in the output directory. Since sharp >= 0.33 ships its binary as a platform-specific optional dependency, that fetches the arm64 build from any host OS, so no Docker is needed, even on macOS.
 
-The `sharp` version is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda's binary cannot drift from the version `assets/transform.ts` is written against. **Never hardcode a version in `build.mjs`.**
+The `sharp` version is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda cannot drift from `assets/transform.ts`. **Never hardcode a version in `build.mjs`.**
 
 ```bash
 pnpm --filter canopycms-cdk run build:lambda
 ```
 
-Output lands in gitignored `lambda/asset-transform/dist/`, where the construct's `lambda.Code.fromAsset()` points, so `cdk synth`/`deploy` fails with "Cannot find asset" if you skip this.
+Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fromAsset()` points; without its `.deployable` marker, lazy-mode `cdk synth` throws.
 
 ### CDK Asset Verification: the Canary Stack
 
-`packages/canopycms-cdk/canary/` is a small CDK app (not a separate package — it imports `../../src` directly) that deploys a throwaway `canopy-assets-canary` stack to a sandbox account, bootstrap qualifier `canopy`, to check `AssetSupport`'s CloudFront wiring and the transform Lambda against real infrastructure: origin-group failover, a real bucket, a real Lambda invocation. It is for manual verification by contributors working on the assets deployment path, and is in no CI job or automated suite.
+`packages/canopycms-cdk/canary/` is a small CDK app (not a separate package — it imports `../../src` directly) that deploys a throwaway `canopy-assets-canary` stack to a sandbox account, bootstrap qualifier `canopy`, to check `AssetSupport`'s CloudFront wiring against real infrastructure. It sets `lazyPublicTransforms: true` because it exists to exercise the transform Lambda: origin-group failover, a real bucket, a real invocation. It is manual verification for contributors working on the assets deployment path, in no CI job.
 
 ```bash
 pnpm --filter canopycms-cdk run build:lambda   # the Lambda asset must exist before synth
@@ -1180,7 +1182,7 @@ stories, `.storybook/`, the config barrel and the groups barrel are the entries.
 
 ### Client-Bundle Boundary Check
 
-The editor reaches browsers through `canopycms/client` and `canopycms-next/client`. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build.
+The editor reaches browsers through `canopycms/client` and `canopycms-next/client`, and the bare `canopycms` entry (`assetUrl`) through adopters' client components. Anything reachable from those entries, at any depth, must stay free of node built-ins, or an adopter's production `next build` dies with `Module not found: Can't resolve 'fs'`. `next dev` tolerates the violation, so without this check the mistake only surfaces in a production build.
 
 ```bash
 pnpm lint:bundle

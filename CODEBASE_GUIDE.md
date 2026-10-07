@@ -45,7 +45,7 @@ Core modules, each with its own `AGENTS.md` where one exists — the invariants 
 - `packages/canopycms/src/assets/` — asset store, finalize pipeline, image-transform engine — [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 - `packages/canopycms/src/auth/` — authentication plugin interface and cache system
 - `packages/canopycms/src/authorization/` — branch and path access control, groups — [AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)
-- `packages/canopycms/src/build/` — static build output and pruning of prior runs — [AGENTS.md](packages/canopycms/src/build/AGENTS.md)
+- `packages/canopycms/src/build/` — static build output, pruning of prior runs, a build's asset URLs — [AGENTS.md](packages/canopycms/src/build/AGENTS.md)
 - `packages/canopycms/src/cli/` — CLI commands and scaffolding templates — [AGENTS.md](packages/canopycms/src/cli/AGENTS.md)
 - `packages/canopycms/src/config/` — configuration types, Zod schemas, validation
 - `packages/canopycms/src/editor/` — React editor UI — [AGENTS.md](packages/canopycms/src/editor/AGENTS.md)
@@ -113,7 +113,7 @@ Route handlers, one file per endpoint namespace:
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
-- `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route
+- `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route (on-demand transforms, presigned S3 redirects)
 - `comments.ts` — `/comments`: comment CRUD
 - `groups.ts` — `/groups`: internal group management
 - `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list
@@ -121,7 +121,7 @@ Route handlers, one file per endpoint namespace:
 - `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview, through `ContentStore.resolveReferenceTarget` and the request's path ACLs
 - `user.ts` — `/user`: current user info
 - `schema.ts` — `/schema`: collection, entry-type and ordering CRUD, admin only
-- `admin.ts` — admin status and task-queue endpoints, and the single `ADMIN_ROUTES` export
+- `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair-metadata endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
 
@@ -264,9 +264,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
+- `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
-`generate-ai-content`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
+`generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
 [README.md](README.md#quick-start) and [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## CDK Package (canopycms-cdk)
@@ -276,11 +277,11 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG, worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
-- `src/constructs/asset-support.ts` — `AssetSupport`: asset bucket, transform Lambda, CloudFront behaviors, upload route
+- `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only read behaviors with optional `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
 - `src/worker.ts` — re-exports `CmsWorker` from core for convenience
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
-- `lambda/asset-transform/handler.ts` — the prod on-demand transform Lambda behind `/assets/t/*`
+- `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
 - `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, starts `CmsWorker`
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
@@ -338,13 +339,11 @@ for why a single file cannot switch between them, and
 **Location**: `packages/canopycms/src/assets/` —
 [AGENTS.md](packages/canopycms/src/assets/AGENTS.md)
 
-Three files are import-chain-pure so client bundles and static builds can reach them:
-`asset-prefixes.ts` and `transform-directives.ts` have zero imports, and `asset-url.ts` imports only
-those two plus `utils/url-prefix.ts`. Everything else here is server-only (`node:fs`, `node:crypto`,
-`sharp`, the S3 SDK) and must never be imported from client or editor code; client code needing only
-types should `import type` from `types.ts`.
+`asset-prefixes.ts`, `transform-directives.ts` and `asset-url.ts` are import-chain-pure, reachable
+from client bundles and static builds; everything else here is server-only (`node:fs`,
+`node:crypto`, `sharp`, the S3 SDK), so client code takes only types, from `types.ts`.
 
-- `types.ts` — `AssetStore`, `AssetMeta`, `StagedUploadTarget` contracts; type-only, no runtime imports
+- `types.ts` — `AssetStore` (incl. public-object existence, listing, presigned reads), `AssetMeta`, `StagedUploadTarget`; type-only, no runtime imports
 - `asset-prefixes.ts` — `ASSET_PREFIXES`, the five bucket-prefix strings
 - `keys.ts` — key, hash and slug helpers: `hashBytes`, `slugifyFilename`, `createKeyBuilders`, the per-prefix key builders
 - `store-local.ts` — `LocalAssetStore`, filesystem-backed adapter mirroring the S3 prefix layout
@@ -354,19 +353,18 @@ types should `import type` from `types.ts`.
 - `finalize.ts` — `finalizeAsset` / `finalizeStagedUpload`, store orchestration around the pipeline
 - `svg-sanitizer.ts` — `sanitizeSvg` via `sanitize-html`
 - `asset-src.ts` — `assetSrc(meta)`, the always-root-relative URL that gets stored in content
-- `transform-directives.ts` — pure parser and formatter for transform URLs, plus the allowed-width rule
+- `transform-directives.ts` — transform-URL parser/formatter, `TransformWidthPolicy` (`allowlist` | `any`), `MAX_INPUT_PIXELS`, `roundCropRect`, `canonicalizeTransformPath`
 - `sharp-loader.ts` — `loadSharp()`, the package's only runtime load of `sharp`, memoized
 - `transform.ts` — `applyTransform`: resize, crop, reformat, EXIF-strip
-- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `opts.baseUrl` is applied at render time only
+- `asset-url.ts` — `assetUrl` / `assetSrcSet`, isomorphic; `baseUrl` applies at render time only; `AssetRef.crop` honored
+- `materialize.ts` — `storeTransform`, `materializeAssets`: writing transform outputs
 - `index.ts` — internal server-side barrel, not a package entrypoint
 
-Transform URL shape, the stored-versus-rendered split, and which `baseUrl` is correct per topology
-are in [ARCHITECTURE.md](ARCHITECTURE.md#asset--media-system), specifically [On-Demand Image
-Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs Rendered Asset
-URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls). Adopter configuration is in
+Design: [On-Demand Image Transforms](ARCHITECTURE.md#on-demand-image-transforms) and [Stored vs
+Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter configuration:
 [README.md](README.md#media-configuration).
 
-`assetUrl`, `assetSrcSet` and the transform types are re-exported from the package's main entry.
+`assetUrl`, `assetSrcSet` and the transform types are re-exported from the main entry; `canonicalizeTransformPath` from `canopycms/server`.
 
 ## Content Store
 
@@ -428,7 +426,7 @@ see [README.md](README.md#listing-entries) and
 - `schemas/collection.ts` — Zod schemas for collections and entry types
 - `schemas/permissions.ts` — Zod schemas for permissions
 - `schemas/media.ts` — Zod schema for media config; each branch is `.strict()`, since the outer `.strict()` does not recurse
-- `schemas/url.ts` — `uploadTargetUrlSchema` and `assetMountUrlSchema` over `isHttpUrlOrSameOriginPath`
+- `schemas/url.ts` — `uploadTargetUrlSchema` and `previewPrefixSchema` over `isHttpUrlOrSameOriginPath`
 - `flatten.ts` — schema flattening for O(1) lookups
 - `validation.ts` — `ensureReferenceFieldsHaveScope`, `ensureNoGroupsInsideComplexFields`, `forEachReferenceField`
 - `helpers.ts` — `defineCanopyConfig`, `composeCanopyConfig`, and the `.client()` projection
@@ -477,6 +475,7 @@ Top-level components and helpers:
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
+- `preview-asset-base.ts` — the draft's asset-route prefix `assetUrl` reads
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
@@ -490,7 +489,7 @@ Context providers, in `editor/context/`:
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
-- `AssetContext.tsx` — asset base URL for rendered asset URLs
+- `AssetContext.tsx` — `authenticatedAssetBase`, the editor's asset-URL prefix
 - `index.ts` — context exports
 
 Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
@@ -551,6 +550,7 @@ Media UI, in `editor/media/`:
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
+- `editor-image-src.ts` — body-image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
 - `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
 - `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
@@ -822,6 +822,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 [AGENTS.md](packages/canopycms/src/build/AGENTS.md):
 
 - `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content to disk and prunes what a previous run produced
+- `asset-refs.ts` — `collectAssetRefs()`, the asset URLs a build references
 - `index.ts` — module exports
 
 ## HTTP Module

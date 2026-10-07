@@ -205,17 +205,16 @@ export type FieldConfig =
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
-  | { adapter: 'local'; publicBaseUrl?: string; directory?: string }
+  | { adapter: 'local'; directory?: string }
   | {
       adapter: 's3'
       bucket: string
       region: string
-      publicBaseUrl?: string
       /** POST target for presigned direct uploads; see mediaSchema's s3 branch. */
       uploadUrl?: string
       maxUploadBytes?: number
     }
-  | { adapter: 'lfs'; publicBaseUrl?: string }
+  | { adapter: 'lfs' }
 
 /**
  * Field definitions for one entry type — the array of FieldConfig that
@@ -566,14 +565,6 @@ export type CanopyClientConfig = Pick<
   | 'basePath'
 > & {
   flatSchema: FlatSchemaItem[]
-  /**
-   * `media.publicBaseUrl`, when configured - the only part of `media` safe/
-   * useful to expose client-side (the editor may be served from a different
-   * origin than the site; the rest of `MediaConfig` - bucket, region, etc -
-   * has no business in a browser bundle). Threaded through to `Editor`'s
-   * `assetBaseUrl` prop. Undefined means root-relative asset URLs.
-   */
-  assetBaseUrl?: string
 }
 
 // Client-only fields that can be provided as overrides (e.g., from auth providers)

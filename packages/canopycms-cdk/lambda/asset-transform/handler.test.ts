@@ -1,20 +1,8 @@
 /**
- * Handler unit tests. Mocks `@aws-sdk/client-s3` the same way
- * packages/canopycms/src/assets/store-parity.test.ts does (aws-sdk-client-mock
- * backed by a tiny in-memory object map) - this file's `handler.ts` and that
- * package's `S3AssetStore` both talk to S3 directly, so the mocking shape is
- * intentionally the same.
- *
- * `applyTransform`/`parseTransformPath`/`formatDirectives` run for REAL here
- * (imported transitively from `canopycms/server`, which resolves `sharp`
- * against packages/canopycms's own node_modules - this works precisely
- * because Node resolves bare imports relative to the file that makes them,
- * not the caller) - the "oversized output" tests and the status-pass-through
- * tests spy on `applyTransform` instead: the former to avoid needing a
- * multi-megabyte fixture image, the latter because provoking each of
- * `applyTransform`'s real 400/413/422 outcomes from raw bytes would need a
- * different bespoke fixture per status when the thing actually under test
- * here is only "does the handler forward `transformed.status` verbatim".
+ * Handler unit tests. The handler's `S3AssetStore` talks to an aws-sdk-client-mock S3 backed by an
+ * in-memory object map, and `storeTransform` and sharp run for real (sharp resolves from
+ * packages/canopycms's own node_modules). Only the 413 and oversized-output cases stub
+ * `storeTransform`: reaching either for real needs a multi-megabyte fixture.
  */
 
 import { Readable } from 'node:stream'
@@ -41,6 +29,7 @@ const HASH32 = 'a'.repeat(32)
 const BUCKET = 'test-asset-bucket'
 
 process.env.ASSET_BUCKET = BUCKET
+process.env.AWS_REGION ??= 'us-east-1'
 
 const s3Mock = mockClient(S3Client)
 
@@ -61,6 +50,7 @@ function makeMeta(overrides: Partial<AssetMeta> = {}): AssetMeta {
 interface FakeObject {
   body: Uint8Array
   contentType?: string
+  tagging?: string
 }
 
 function makeAwsError(name: string, httpStatusCode: number): Error {
@@ -89,7 +79,11 @@ function seedS3Fake(objects: Map<string, FakeObject>): void {
       body instanceof Uint8Array
         ? body
         : new TextEncoder().encode(typeof body === 'string' ? body : '')
-    objects.set(input.Key as string, { body: bytes, contentType: input.ContentType })
+    objects.set(input.Key as string, {
+      body: bytes,
+      contentType: input.ContentType,
+      tagging: input.Tagging,
+    })
     return {}
   })
 }
@@ -131,6 +125,8 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  // A failed assertion skips a test's own mockRestore, which would leak its spy into the next.
+  vi.restoreAllMocks()
   s3Mock.reset()
   objects = new Map()
   seedS3Fake(objects)
@@ -157,20 +153,81 @@ describe('asset-transform handler', () => {
     const written = objects.get(canonicalKey)
     expect(written).toBeDefined()
     expect(written?.contentType).toBe('image/png')
+    const { key, value } = canopyServer.LAZY_TRANSFORM_TAG
+    expect(written?.tagging).toBe(`${key}=${value}`)
 
     const bodyBytes = Buffer.from(res.body ?? '', 'base64')
     expect(bodyBytes.equals(Buffer.from(written!.body))).toBe(true)
   })
 
-  it('caches a non-canonically-ordered directive request under its canonical key', async () => {
-    // formatDirectives' fixed order is c, f, q, w - a request with `w` before
-    // `f` is valid (the parser doesn't care about order) but non-canonical.
-    const res = await handler(makeEvent(`/assets/t/w=160,f=webp/${HASH32}/photo.webp`))
+  it('transforms without listing the bucket, so a role without s3:ListBucket still works', async () => {
+    s3Mock.on(ListObjectsV2Command).rejects(makeAwsError('AccessDenied', 403))
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.png`))
 
     expect(res.statusCode).toBe(200)
-    const canonicalKey = `assets/t/f=webp,w=160/${HASH32}/photo.webp`
-    expect(objects.has(canonicalKey)).toBe(true)
-    expect(objects.has(`assets/t/w=160,f=webp/${HASH32}/photo.webp`)).toBe(false)
+    expect(s3Mock.commandCalls(ListObjectsV2Command)).toHaveLength(0)
+  })
+
+  it('301s a non-canonically-ordered directive request to the canonical path without touching S3', async () => {
+    // formatDirectives' fixed order is c, f, q, w - `w` before `f` parses but is not canonical.
+    const res = await handler(makeEvent(`/assets/t/w=160,f=webp/${HASH32}/photo.webp`))
+
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(`/assets/t/f=webp,w=160/${HASH32}/photo.webp`)
+    expect(res.headers?.['cache-control']).toBe('public, max-age=31536000, immutable')
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('301s a crop with more than CROP_PRECISION decimals to the rounded canonical path', async () => {
+    const res = await handler(makeEvent(`/assets/t/c=0.123456:0:0.5:0.25/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(
+      `/assets/t/c=0.1235:0.0000:0.5000:0.2500/${HASH32}/photo.png`,
+    )
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('301s a crop whose rounded extent would overflow the frame to one shrunk to fit', async () => {
+    // 0.66665 and 0.33335 round to 0.6667 and 0.3334, whose sum 1.0001 the parser would refuse.
+    const res = await handler(makeEvent(`/assets/t/c=0.66665:0:0.33335:1/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(301)
+    expect(res.headers?.location).toBe(
+      `/assets/t/c=0.6667:0.0000:0.3333:1.0000/${HASH32}/photo.png`,
+    )
+  })
+
+  it('400s a crop that rounds to zero extent, without touching S3', async () => {
+    const res = await handler(makeEvent(`/assets/t/c=0:0:0.00001:1/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(400)
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('serves a canonical crop path, transforming with exactly the directives in its key', async () => {
+    const spy = vi.spyOn(canopyServer, 'storeTransform')
+    const canonical = `c=0.1235:0.0000:0.5000:0.2500`
+    const res = await handler(makeEvent(`/assets/t/${canonical}/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(200)
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        directives: {
+          identity: false,
+          crop: { x: 0.1235, y: 0, w: 0.5, h: 0.25 },
+          format: undefined,
+          quality: undefined,
+          width: undefined,
+        },
+      }),
+      `assets/t/${canonical}/${HASH32}/photo.png`,
+      expect.anything(),
+    )
+    expect(objects.has(`assets/t/${canonical}/${HASH32}/photo.png`)).toBe(true)
+
+    spy.mockRestore()
   })
 
   it('returns 400 JSON on a parse failure', async () => {
@@ -181,12 +238,35 @@ describe('asset-transform handler', () => {
     expect(JSON.parse(res.body ?? '{}')).toHaveProperty('error')
   })
 
-  it('returns 404 JSON when meta is missing', async () => {
+  it('refuses a width off the allowlist with 400, without touching S3', async () => {
+    const res = await handler(makeEvent(`/assets/t/w=100/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(400)
+    expect(s3Mock.calls()).toHaveLength(0)
+  })
+
+  it('transforms a small allowlist rung', async () => {
+    const res = await handler(makeEvent(`/assets/t/w=64/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(200)
+    expect(objects.has(`assets/t/w=64/${HASH32}/photo.png`)).toBe(true)
+  })
+
+  it('returns a generic 404 when meta is missing, never the hash storeTransform names', async () => {
     const missingHash = 'b'.repeat(32)
     const res = await handler(makeEvent(`/assets/t/orig/${missingHash}/photo.png`))
 
     expect(res.statusCode).toBe(404)
-    expect(JSON.parse(res.body ?? '{}')).toHaveProperty('error')
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ error: 'Not found' })
+  })
+
+  it('returns a generic 404 when the original is missing, writing nothing', async () => {
+    objects.delete(`asset-originals/${HASH32}.png`)
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.png`))
+
+    expect(res.statusCode).toBe(404)
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ error: 'Not found' })
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0)
   })
 
   it('rejects a slug that does not match the asset, without writing anything to S3', async () => {
@@ -197,6 +277,8 @@ describe('asset-transform handler', () => {
     const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/any-slug-at-all.png`))
 
     expect(res.statusCode).toBe(404)
+    // storeTransform's own message names the real slug, which would undo the pinning.
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ error: 'Not found' })
     expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0)
   })
 
@@ -216,14 +298,21 @@ describe('asset-transform handler', () => {
     const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.svg`))
 
     expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body ?? '{}').error).toMatch(/Not a raster asset/)
+  })
+
+  it('returns 400 when the URL ext does not match the source format and no f= is given', async () => {
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.jpg`))
+
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body ?? '{}').error).toMatch(/Extension does not match/)
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0)
   })
 
   it('passes a transform rejection status through unflattened - 400 (unsupported input format)', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
-      ok: false,
-      status: 400,
-      error: "Unsupported input format for transform: 'bmp'",
-    })
+    // The original's real extension, found by prefix, is one sharp is not given.
+    objects.set(`asset-originals/${HASH32}.bmp`, objects.get(`asset-originals/${HASH32}.png`)!)
+    objects.delete(`asset-originals/${HASH32}.png`)
 
     const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.png`))
 
@@ -231,12 +320,10 @@ describe('asset-transform handler', () => {
     expect(JSON.parse(res.body ?? '{}')).toEqual({
       error: "Unsupported input format for transform: 'bmp'",
     })
-
-    spy.mockRestore()
   })
 
   it('passes a transform rejection status through unflattened - 413 (output too large)', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+    const spy = vi.spyOn(canopyServer, 'storeTransform').mockResolvedValue({
       ok: false,
       status: 413,
       error: 'Transformed output exceeds the byte cap',
@@ -253,28 +340,22 @@ describe('asset-transform handler', () => {
   })
 
   it('passes a transform rejection status through unflattened - 422 (undecodable input)', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
-      ok: false,
-      status: 422,
-      error: 'Transform failed: vipspng: libpng read error',
+    objects.set(`asset-originals/${HASH32}.png`, {
+      body: new TextEncoder().encode('not a png at all'),
     })
 
-    const res = await handler(makeEvent(`/assets/t/orig/${HASH32}/photo.png`))
+    const res = await handler(makeEvent(`/assets/t/w=160/${HASH32}/photo.png`))
 
     expect(res.statusCode).toBe(422)
-    expect(JSON.parse(res.body ?? '{}')).toEqual({
-      error: 'Transform failed: vipspng: libpng read error',
-    })
-
-    spy.mockRestore()
+    expect(JSON.parse(res.body ?? '{}').error).toMatch(/^Transform failed: /)
+    expect(s3Mock.commandCalls(PutObjectCommand)).toHaveLength(0)
   })
 
-  it('returns a 302 redirect with Cache-Control: no-store when the transform output exceeds the inline size cap, after writing it to S3 first', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+  it('returns a 302 redirect with Cache-Control: no-store to the key it stored when the output exceeds the inline size cap', async () => {
+    const spy = vi.spyOn(canopyServer, 'storeTransform').mockResolvedValue({
       ok: true,
       data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
       contentType: 'image/png',
-      ext: 'png',
     })
 
     const rawPath = `/assets/t/orig/${HASH32}/photo.png`
@@ -283,31 +364,21 @@ describe('asset-transform handler', () => {
     expect(res.statusCode).toBe(302)
     expect(res.headers?.location).toBe(rawPath)
     expect(res.headers?.['cache-control']).toBe('no-store')
-    expect(objects.has(`assets/t/orig/${HASH32}/photo.png`)).toBe(true)
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      rawPath.slice(1),
+      expect.anything(),
+    )
 
     spy.mockRestore()
   })
 
-  it('redirects an oversized-output, non-canonically-ordered request to the CANONICAL path, not rawPath - a mismatch would make CloudFront miss forever and re-invoke this Lambda on every hit', async () => {
-    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
-      ok: true,
-      data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
-      contentType: 'image/webp',
-      ext: 'webp',
-    })
+  it('answers a path outside /assets/t/ with 400 and touches nothing', async () => {
+    const res = await handler(makeEvent(`/assets/${HASH32}/photo.png`))
 
-    // formatDirectives' fixed order is c, f, q, w - `w` before `f` is valid
-    // but non-canonical, so rawPath and the canonical key differ.
-    const rawPath = `/assets/t/w=160,f=webp/${HASH32}/photo.webp`
-    const canonicalPath = `/assets/t/f=webp,w=160/${HASH32}/photo.webp`
-    const res = await handler(makeEvent(rawPath))
-
-    expect(res.statusCode).toBe(302)
-    expect(res.headers?.location).toBe(canonicalPath)
-    expect(res.headers?.['cache-control']).toBe('no-store')
-    // The canonical key (what the redirect points at) was actually written.
-    expect(objects.has(canonicalPath.slice(1))).toBe(true)
-
-    spy.mockRestore()
+    expect(res.statusCode).toBe(400)
+    expect(JSON.parse(res.body ?? '{}').error).toMatch(/Expected a path under \/assets\/t\//)
+    expect(s3Mock.calls()).toHaveLength(0)
   })
 })

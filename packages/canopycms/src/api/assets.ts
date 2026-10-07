@@ -9,8 +9,8 @@ import { ASSET_PREFIXES } from '../assets/keys'
 import { ALLOWED_UPLOAD_CONTENT_TYPES } from '../assets/pipeline'
 import { finalizeStagedUpload } from '../assets/finalize'
 import { assetSrc } from '../assets/asset-src'
-import { formatDirectives, parseTransformPath } from '../assets/transform-directives'
-import { applyTransform } from '../assets/transform'
+import { canonicalizeTransformPath, type ParsedTransformPath } from '../assets/transform-directives'
+import { storeTransform, TRANSFORM_CACHE_CONTROL } from '../assets/materialize'
 import { isAdmin } from '../authorization/helpers'
 
 /** An asset's persisted meta plus its computed, root-relative public URL. */
@@ -295,76 +295,47 @@ const deleteAssetHandler = async (
   return { ok: true, status: 200, data: { deleted: true } }
 }
 
-/** Cache-Control applied to every transform output this route writes/serves - matches finalize.ts's PUBLIC_CACHE_CONTROL for static public objects. */
-const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+/**
+ * The largest body this route returns inline. The CMS Lambda's Function URL buffers its response
+ * and caps it at 6 MiB after base64 encoding, which inflates by 4/3, so 4 MiB leaves headroom.
+ * Same bound and reasoning as the transform Lambda's `INLINE_BODY_LIMIT_BYTES`.
+ */
+const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
 
 /**
- * Lazy dev-mode emulation of the prod transform Lambda (reuses `parseTransformPath`/
- * `formatDirectives`/`applyTransform` unchanged): parse, load the original, transform, write the
- * result back under its CANONICAL key (so a non-canonically-ordered directive string still
- * dedupes with any equivalent request), then serve the bytes just computed.
- *
- * `key` here already starts with `assets/t/` and already missed `rawAssetHandler`'s cache-hit
- * `readPublicObject` check.
+ * A 302 to a presigned store URL. `no-store` because the URL expires: a cached redirect would
+ * outlive it, and a browser revisiting the page would follow it to a 403.
+ */
+function presignedRedirect(url: string): CanopyBinaryResponse {
+  return {
+    kind: 'binary',
+    status: 302,
+    body: new Uint8Array(),
+    headers: { location: url, cacheControl: 'no-store' },
+  }
+}
+
+/**
+ * This route's own lazy transform: `storeTransform` computes and stores the output, then this
+ * serves the bytes just computed. `parsed` is the canonical parse from `canonicalizeTransformPath`,
+ * and `canonicalKey` already missed `rawAssetHandler`'s cache check.
  */
 async function serveLazyTransform(
   assetStore: AssetStore,
-  key: string,
+  parsed: ParsedTransformPath,
+  canonicalKey: string,
 ): Promise<CanopyBinaryResponse | ApiResponse<never>> {
-  const rest = key.slice(ASSET_PREFIXES.transform.length + 1)
-  const parsed = parseTransformPath(rest.split('/'))
-  if (!parsed.ok) {
-    return { ok: false, status: 400, error: parsed.error }
-  }
-
-  const meta = await assetStore.getMeta(parsed.hash32)
-  if (!meta) {
-    return { ok: false, status: 404, error: 'Not found' }
-  }
-  if (meta.kind !== 'raster') {
-    return { ok: false, status: 400, error: 'Not a raster asset - svg/pdf are served statically' }
-  }
-
-  // The slug is decorative in the URL but load-bearing in the stored key, so it must equal the
-  // asset's real slug — the parser only enforces `[a-z0-9-]+`, and any other string that passes
-  // it aliases the same image into a new cache key. Mirrors the prod transform Lambda's check
-  // (assets/asset-url.ts); the two paths must agree, or dev accepts URLs prod 404s.
-  if (parsed.slug !== meta.slug) {
-    return { ok: false, status: 404, error: 'Not found' }
-  }
-
-  // When the URL omits an explicit `f=` format, the transform preserves the
-  // source format, so the URL's `{ext}` must match the source's real ext
-  // exactly - the parser alone can't check this (it doesn't know the source
-  // format until this meta lookup).
-  const requestedFormat = parsed.directives.identity ? undefined : parsed.directives.format
-  if (requestedFormat === undefined && parsed.ext !== meta.ext) {
-    return { ok: false, status: 400, error: 'Extension does not match the source format' }
-  }
-
-  const original = await assetStore.readOriginal(parsed.hash32)
-  if (!original) {
-    return { ok: false, status: 404, error: 'Not found' }
-  }
-
-  const transformed = await applyTransform(
-    { data: original.data, ext: original.ext },
-    parsed.directives,
-  )
+  const transformed = await storeTransform(assetStore, parsed, canonicalKey)
   if (!transformed.ok) {
-    // Pass the real status through instead of flattening every rejection to 502:
-    // `applyTransform` already distinguishes client-input errors (400/413) from a genuine decode
-    // failure (422), none of which are "this server failed." Mirrors the prod transform Lambda.
-    return { ok: false, status: transformed.status, error: transformed.error }
+    // The real status, not a flat 502: none of these rejections is "this server failed".
+    const error = transformed.status === 404 ? 'Not found' : transformed.error
+    return { ok: false, status: transformed.status, error }
   }
 
-  const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`
-  await assetStore.putPublicObject({
-    key: canonicalKey,
-    data: transformed.data,
-    contentType: transformed.contentType,
-    cacheControl: TRANSFORM_CACHE_CONTROL,
-  })
+  if (transformed.data.byteLength > INLINE_BODY_LIMIT_BYTES && assetStore.presignPublicObjectRead) {
+    const url = await assetStore.presignPublicObjectRead(canonicalKey)
+    if (url) return presignedRedirect(url)
+  }
 
   return {
     kind: 'binary',
@@ -374,16 +345,50 @@ async function serveLazyTransform(
   }
 }
 
+/** A redirect to, or the bytes of, the public object stored at `key`; `null` when there is none. */
+async function serveStoredObject(
+  assetStore: AssetStore,
+  key: string,
+): Promise<CanopyBinaryResponse | null> {
+  if (assetStore.presignPublicObjectRead) {
+    const url = await assetStore.presignPublicObjectRead(key)
+    return url ? presignedRedirect(url) : null
+  }
+  const object = await assetStore.readPublicObject(key)
+  if (!object) return null
+  return {
+    kind: 'binary',
+    status: 200,
+    body: object.data,
+    headers: {
+      contentType: object.contentType,
+      contentDisposition: object.contentDisposition,
+      cacheControl: object.cacheControl,
+    },
+  }
+}
+
 /**
  * Serve a public asset object (sanitized svg/pdf finalize wrote, or a cached transform output)
- * for dev-mode `/assets/*` rewrites. Hand-built (not `defineEndpoint`), not registered in
- * `ASSET_ROUTES`/the client generator: this returns raw bytes (`CanopyBinaryResponse`), not a
- * JSON envelope, so a generated `response.json()` client method would be wrong. Consumers hit
- * this route directly (`<img>`/`<a>` src, or a framework rewrite), never through `client.ts`.
+ * to the editor, the live preview, and `withCanopy`'s `/assets/*` rewrite. Hand-built (not
+ * `defineEndpoint`), not registered in `ASSET_ROUTES`/the client generator: this returns raw bytes
+ * (`CanopyBinaryResponse`), not a JSON envelope, so a generated `response.json()` client method
+ * would be wrong. Consumers hit this route directly (`<img>`/`<a>` src, or a framework rewrite),
+ * never through `client.ts`.
  *
- * Transform outputs (`assets/t/...`) are cache-checked like any other public object first — only
- * a MISS under `assets/t/` falls through to `serveLazyTransform`. Mirrors prod (CloudFront
- * origin-group -> S3 -> Lambda on miss).
+ * A transform key (`assets/t/...`) is resolved to its canonical key first, and that key is what is
+ * cache-checked and, on a miss, computed by `serveLazyTransform`. Mirrors `AssetSupport`'s lazy
+ * mode (CloudFront origin-group -> S3 -> Lambda on miss), except that a non-canonical spelling is
+ * served the canonical bytes rather than the Lambda's 301: this route is authenticated, and
+ * redirecting to `/assets/t/...` would bounce the request onto the public path.
+ *
+ * A stored object on a store that can presign (S3) is answered with a 302 to a presigned GET, so
+ * its bytes never pass through this process: the CMS Lambda is concurrency-capped and uncached,
+ * the live preview asks for every image on a page at once, and its Function URL cannot return a
+ * body over about 6 MiB. The redirect never targets the public `/assets/...` URL, because whether
+ * that URL reaches this route again is topology: `withCanopy` rewrites `/assets/:path*` here, so
+ * on any deployment where Next serves `/assets` the redirect would loop. Other stores stream the
+ * bytes, as does a fresh transform no larger than `INLINE_BODY_LIMIT_BYTES`.
  */
 const rawAssetHandler = async (
   ctx: ApiContext,
@@ -403,25 +408,23 @@ const rawAssetHandler = async (
     return { ok: false, status: 404, error: 'Not found' }
   }
 
-  const object = await ctx.assetStore.readPublicObject(key)
-  if (object) {
-    return {
-      kind: 'binary',
-      status: 200,
-      body: object.data,
-      headers: {
-        contentType: object.contentType,
-        contentDisposition: object.contentDisposition,
-        cacheControl: object.cacheControl,
-      },
-    }
+  let readKey = key
+  let transform: ParsedTransformPath | undefined
+  if (key.startsWith(transformPrefix)) {
+    const canonical = canonicalizeTransformPath(key.slice(transformPrefix.length).split('/'), 'any')
+    if (!canonical.ok) return { ok: false, status: 400, error: canonical.error }
+    readKey = `${transformPrefix}${canonical.canonicalPath}`
+    transform = canonical
   }
 
-  if (!key.startsWith(transformPrefix)) {
+  const stored = await serveStoredObject(ctx.assetStore, readKey)
+  if (stored) return stored
+
+  if (!transform) {
     return { ok: false, status: 404, error: 'Not found' }
   }
 
-  return serveLazyTransform(ctx.assetStore, key)
+  return serveLazyTransform(ctx.assetStore, transform, readKey)
 }
 
 // Deliberately no 'writableBranch' guard on any endpoint below: none take a

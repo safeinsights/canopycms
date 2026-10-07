@@ -59,15 +59,17 @@ passed EC2 health checks forever, and did nothing.
 - [ ] In the distribution config, the Function URL origin shows
       `OriginReadTimeout: 60`.
 
-## 4. Transform Lambda limits
+## 4. Public image path
 
-- [ ] The transform function shows a **reserved concurrency** of 10.
-- [ ] `GET /assets/t/w=160/<real-hash32>/wrong-slug.webp` returns **404** and
-      writes **no** new object under `assets/t/`.
-- [ ] The same URL with the asset's real slug still returns the image.
-- [ ] The bucket carries the `expire-transform-outputs` lifecycle rule on
-      `assets/t/` (180 days), and NO rule touching `asset-originals/` or
-      `asset-meta/`.
+`AssetSupport` serves `/assets/t/*` from S3 only unless `lazyPublicTransforms` is set.
+
+- [ ] Default mode: `GET /assets/t/w=160/<real-hash32>/<real-slug>.webp` for a
+      URL no build referenced returns **403** and writes **no** new object under
+      `assets/t/`; a materialized key returns the image.
+- [ ] Lazy mode only: the transform function shows a **reserved concurrency** of
+      10; a wrong slug returns **404** and writes nothing; the bucket carries the
+      tag-filtered `assets/t/` expiry (180 days) and NO rule touching
+      `asset-originals/` or `asset-meta/`.
 
 ## 5. IAM secrets
 

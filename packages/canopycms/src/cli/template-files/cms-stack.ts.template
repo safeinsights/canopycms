@@ -198,19 +198,15 @@ export class CmsStack extends Stack {
       reservedConcurrency: 50,
     })
 
-    // Media support (uploads, on-demand image transforms). To enable it:
+    // Media support (uploads and image derivatives). To enable it:
     //
     //   1. add `AssetSupport` to the `canopycms-cdk` import at the top;
     //   2. uncomment the block below, moving it ABOVE `cmsService` (it has to
     //      exist before you can pass its bucket);
     //   3. pass `assetBucket: assetSupport.bucket` to CanopyCmsService;
     //   4. pass `assetSupport` to CanopyCmsDistribution below - it attaches
-    //      both CloudFront behaviors in the only order that is safe
-    //      (`/assets/t/*` before `/assets/*`; CloudFront matches path
-    //      patterns in order, so the general pattern would otherwise
-    //      swallow the transform one). `cdk synth` fails loudly if a
-    //      hand-written `additionalBehaviors` ever gets that order wrong
-    //      instead.
+    //      `/assets/t/*` before `/assets/*`, the order CloudFront needs, and
+    //      `cdk synth` fails if a hand-written `additionalBehaviors` does not.
     //
     // `editorOrigins` is the S3 CORS allowlist for the editor's presigned
     // uploads, so it must list the origin the editor is served from. Include
@@ -220,11 +216,17 @@ export class CmsStack extends Stack {
     // CloudFront edge instead); with neither, a construct-created bucket
     // refuses to synth.
     //
-    // Run `pnpm --filter canopycms-cdk run build:lambda` before deploying --
-    // the transform Lambda needs its native sharp binary, and the construct
-    // refuses to synth without it.
+    // `/assets/*` and `/assets/t/*` serve only what is in the bucket and
+    // compute nothing: an image derivative no one wrote is a 403. Write every
+    // derivative a site build references before releasing that build, with
+    // `canopycms collect-asset-refs <outDir>` after the build and then
+    // `canopycms materialize-assets --refs <outDir>/canopy-asset-refs.json`.
+    // To compute missing derivatives on request instead, pass
+    // `lazyPublicTransforms: true`; that deploys a transform Lambda, so inside
+    // this monorepo run `pnpm --filter canopycms-cdk run build:lambda` first
+    // (the published package ships it built).
     //
-    // See the assets section of docs/deploying-to-aws.md.
+    // See "Media: the public image path" in docs/deploying-to-aws.md.
     //
     // const assetSupport = new AssetSupport(this, 'Assets', {
     //   editorOrigins: [`https://${props.domainName}`],
