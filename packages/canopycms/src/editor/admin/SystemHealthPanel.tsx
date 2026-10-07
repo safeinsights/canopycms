@@ -357,7 +357,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           Image processing:{' '}
           {status.imageProcessing.available
             ? 'available'
-            : `unavailable — editor images fail and uploads skip decode validation${
+            : `unavailable — new editor image sizes and crops fail, and uploads skip decode validation${
                 status.imageProcessing.error ? ` (${status.imageProcessing.error})` : ''
               }`}
         </Text>

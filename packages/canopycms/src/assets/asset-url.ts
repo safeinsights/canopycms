@@ -44,16 +44,14 @@ export interface AssetUrlOptions {
    * option beside it. Two shapes are legitimate, and they are alternatives, never composed:
    *
    * - An absolute origin (`https://assets.example.com`) — assets served from another origin.
-   *   `media.publicBaseUrl` is one source of this, and is the source the editor uses; it is
-   *   validated as an absolute URL, so it structurally cannot carry the second shape.
    * - A same-origin path prefix (`/preview-123`) — the site is deployed under a Next `basePath`
    *   AND its assets are served by Next (`withCanopy`'s `/assets/:path*` rewrite, which Next
    *   auto-prefixes). NOT the right value on a CloudFront/CDK deployment, where the asset
    *   behaviors are anchored at the distribution root and a `basePath` does not move them —
    *   there the correct value is none at all. See the README's asset-mount table.
    *
-   * It is a per-render option rather than a config field precisely because the editor and the
-   * public site can legitimately have different answers.
+   * It is a per-render option rather than a config field because different renderers see the
+   * `/assets` space at different places.
    *
    * **Render-time only — never stored.** A stored `src` is always root-relative (see
    * `assets/asset-src.ts`), because content moves between branches and environments. Nothing

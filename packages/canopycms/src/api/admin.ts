@@ -168,9 +168,9 @@ export interface AdminStatusData {
   /** Whether `media` is configured; without it every upload returns 501. */
   assetStore: { configured: boolean }
   /**
-   * Whether THIS API process can load sharp. When false, editor images (thumbnails, crops and
-   * previews, which are transformed on demand here) fail and raster uploads are accepted without
-   * decode validation. Speaks only for the process that answers the status request.
+   * Whether THIS API process can load sharp. When false, any editor image not yet stored (a new
+   * crop, thumbnail or preview size, transformed on demand here) fails, and raster uploads are
+   * accepted without decode validation. Speaks only for the process that answers the request.
    */
   imageProcessing: { available: boolean; error?: string }
 }

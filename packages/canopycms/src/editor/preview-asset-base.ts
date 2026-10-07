@@ -1,6 +1,6 @@
 /**
  * The asset prefix a framing editor hands its live preview, held for `assets/asset-url.ts`. Its
- * only writer is `usePreviewData`, on a trusted draft message; the read is gated on `window` too,
+ * only writer outside tests is `usePreviewData`, on a trusted draft message; the read is gated on `window` too,
  * because `assetUrl` also runs in server renders and static builds. Imports nothing.
  */
 

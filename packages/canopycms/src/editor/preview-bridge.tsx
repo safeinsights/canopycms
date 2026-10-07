@@ -286,8 +286,8 @@ export const PreviewFrame = ({
   style?: CSSProperties
   highlightEnabled?: boolean
   /**
-   * The editor's authenticated asset route, sent with drafts only to a same-origin preview:
-   * another origin resolves the path against itself, and its `<img>`s carry no editor session.
+   * The editor's authenticated asset route, a same-origin path, so it is sent with drafts only to
+   * a same-origin preview: another origin would resolve it against itself.
    */
   assetBase?: string
   /** Called when the preview reports a draft compile/render error; null clears it. */
