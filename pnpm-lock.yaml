@@ -312,9 +312,6 @@ importers:
       jiti:
         specifier: ^2.6.1
         version: 2.6.1
-      lexical:
-        specifier: ^0.35.0
-        version: 0.35.0
       minimatch:
         specifier: ^9.0.7
         version: 9.0.9

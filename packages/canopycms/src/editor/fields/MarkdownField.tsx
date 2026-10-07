@@ -56,14 +56,12 @@ const MDXEditorLazy = React.lazy(async () => {
       imageDialogState$,
       activeEditor$,
       $isImageNode,
+      // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
+      // a separately resolved copy would throw inside this editor's `read()`.
+      lexical: { $getNodeByKey },
     },
     { mdxJsxPlugins },
-    { $getNodeByKey },
-  ] = await Promise.all([
-    import('@mdxeditor/editor'),
-    import('./mdx-jsx-support'),
-    import('lexical'),
-  ])
+  ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
 
   const EntryLinkToolbarButton: React.FC = () => {
     const insertMarkdown = usePublisher(insertMarkdown$)
