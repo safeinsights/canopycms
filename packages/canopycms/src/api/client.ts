@@ -452,7 +452,7 @@ export class CanopyApiClient {
       response = await this.fetchFn(url, init)
       parsed = await response.json().catch(() => undefined)
     }
-    // The body's status is the signal: `unauthenticatedStatus` may send it under HTTP 403.
+    // The body's status is the signal: `unauthenticatedStatus` may send it under HTTP 419.
     if (response.status === 401 || (isApiResponseBody(parsed) && parsed.status === 401)) {
       this.onUnauthorized?.()
       return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T

@@ -408,7 +408,7 @@ describe('createCanopyRequestHandler', () => {
 
   it('answers unauthenticated requests with unauthenticatedStatus, keeping the body status 401', async () => {
     const services: any = createMockServices()
-    services.config.unauthenticatedStatus = 403
+    services.config.unauthenticatedStatus = 419
 
     const handler = createCanopyRequestHandler({
       services,
@@ -418,7 +418,7 @@ describe('createCanopyRequestHandler', () => {
 
     const response = await handler(createMockRequest(), ['branches'])
 
-    expect(response.status).toBe(403)
+    expect(response.status).toBe(419)
     expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
   })
 

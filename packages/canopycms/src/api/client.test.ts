@@ -66,10 +66,10 @@ describe('CanopyApiClient', () => {
       expect(onUnauthorized).not.toHaveBeenCalled()
     })
 
-    it('is called on a 403 whose handler body says 401, as unauthenticatedStatus sends', async () => {
+    it('is called on a 419 whose handler body says 401, as unauthenticatedStatus sends', async () => {
       const onUnauthorized = vi.fn()
       const body = { ok: false, status: 401, error: 'Unauthorized' }
-      const client = new CanopyApiClient({ fetch: respond(403, async () => body), onUnauthorized })
+      const client = new CanopyApiClient({ fetch: respond(419, async () => body), onUnauthorized })
 
       expect(await client.branches.list()).toEqual(body)
       expect(onUnauthorized).toHaveBeenCalledTimes(1)

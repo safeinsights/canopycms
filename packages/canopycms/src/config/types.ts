@@ -433,7 +433,7 @@ export interface CanopyConfig {
   /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
   basePath?: string
   /** HTTP status of an unauthenticated API response — see {@link CanopyConfigInput.unauthenticatedStatus}. */
-  unauthenticatedStatus?: 401 | 403
+  unauthenticatedStatus?: 401 | 419
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links — see {@link CanopyConfigInput.entryLinkUrl}. */
@@ -503,14 +503,16 @@ export interface CanopyConfigInput {
   /**
    * HTTP status of an API response to a request with no accepted session. Default 401.
    *
-   * Set 403 when the site's own pages sit behind HTTP Basic auth on the same origin as the
+   * Set 419 when the site's own pages sit behind HTTP Basic auth on the same origin as the
    * editor. The browser sends the cached Basic credential with the editor's API requests too, and
    * reads any 401 to them as that credential rejected: it drops the credential, and the next
-   * gated request, such as a preview image, waits on a fresh Basic prompt.
+   * gated request, such as a preview image, waits on a fresh Basic prompt. 419 rather than 403
+   * because a CloudFront custom error response cannot match 419, and one mapping 403 to an error
+   * page would replace the body below.
    *
    * The body says `status: 401` either way, and that is what the editor detects sign-out from.
    */
-  unauthenticatedStatus?: 401 | 403
+  unauthenticatedStatus?: 401 | 419
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */

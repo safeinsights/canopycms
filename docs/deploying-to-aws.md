@@ -383,7 +383,7 @@ editor its own `CanopyCmsDistribution`.
 **No HTTP Basic auth on editor routes.** Keep `/edit`, `/edit/*`, `/api/canopycms/*`
 and the asset prefix out of any Basic-auth gate; Clerk authenticates them. The cost is
 that the tier's published assets are readable without the site's password. If the
-site's pages stay behind Basic on that origin, also set `unauthenticatedStatus: 403`:
+site's pages stay behind Basic on that origin, also set `unauthenticatedStatus: 419`:
 a 401 from the API makes the browser drop its cached Basic credential.
 
 ### Media: the public image path

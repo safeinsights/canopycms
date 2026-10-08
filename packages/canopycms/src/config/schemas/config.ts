@@ -112,7 +112,7 @@ export const CanopyConfigSchema = z
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     basePath: basePathSchema,
-    unauthenticatedStatus: z.union([z.literal(401), z.literal(403)]).optional(),
+    unauthenticatedStatus: z.union([z.literal(401), z.literal(419)]).optional(),
     editor: editorConfigSchema.optional(),
     authPlugin: z.custom<AuthPlugin>().optional(),
     entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
