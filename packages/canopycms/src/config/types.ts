@@ -432,6 +432,8 @@ export interface CanopyConfig {
   sourceRoot?: SourceRoot
   /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
   basePath?: string
+  /** HTTP status of an unauthenticated API response — see {@link CanopyConfigInput.unauthenticatedStatus}. */
+  unauthenticatedStatus?: 401 | 403
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links — see {@link CanopyConfigInput.entryLinkUrl}. */
@@ -498,6 +500,17 @@ export interface CanopyConfigInput {
    * silently filter out every entry (zero static params, a build that goes green with no pages).
    */
   basePath?: string
+  /**
+   * HTTP status of an API response to a request with no accepted session. Default 401.
+   *
+   * Set 403 when the site's own pages sit behind HTTP Basic auth on the same origin as the
+   * editor. The browser sends the cached Basic credential with the editor's API requests too, and
+   * reads any 401 to them as that credential rejected: it drops the credential, and the next
+   * gated request, such as a preview image, waits on a fresh Basic prompt.
+   *
+   * The body says `status: 401` either way, and that is what the editor detects sign-out from.
+   */
+  unauthenticatedStatus?: 401 | 403
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */

@@ -39,7 +39,8 @@ export interface ApiClientOptions {
   trailingSlash?: boolean
 
   /**
-   * Called whenever a response comes back 401: the credential is no longer accepted. A
+   * Called whenever a response says the credential is no longer accepted: HTTP 401, or a
+   * handler's body with `status: 401` under the HTTP status `unauthenticatedStatus` chose. A
    * notification, not a retry; the editor's auth gate uses it to show sign-in.
    */
   onUnauthorized?: () => void
@@ -451,7 +452,8 @@ export class CanopyApiClient {
       response = await this.fetchFn(url, init)
       parsed = await response.json().catch(() => undefined)
     }
-    if (response.status === 401) {
+    // The body's status is the signal: `unauthenticatedStatus` may send it under HTTP 403.
+    if (response.status === 401 || (isApiResponseBody(parsed) && parsed.status === 401)) {
       this.onUnauthorized?.()
       return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
     }

@@ -403,7 +403,23 @@ describe('createCanopyRequestHandler', () => {
     const response = await handler(req, ['branches'])
 
     expect(response.status).toBe(401)
-    expect(response.body).toHaveProperty('error', 'No token')
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
+  })
+
+  it('answers unauthenticated requests with unauthenticatedStatus, keeping the body status 401', async () => {
+    const services: any = createMockServices()
+    services.config.unauthenticatedStatus = 403
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin: createRejectingAuthPlugin('No token'),
+      getBranchContext: async () => null,
+    })
+
+    const response = await handler(createMockRequest(), ['branches'])
+
+    expect(response.status).toBe(403)
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
   })
 
   it('handles POST requests with empty body gracefully', async () => {

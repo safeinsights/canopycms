@@ -2,6 +2,10 @@
 
 ## Priority: P3 [BOTH]
 
+**RESOLVED 2026-10-08** on `fix/unauthenticated-status` (adopter request #60), as suggested below:
+`unauthenticatedStatus: 401 | 403`, with the client also firing `onUnauthorized` on a handler
+body saying `status: 401`.
+
 ## The gap
 
 `http/handler.ts` answers an API request it cannot authenticate with `401` and no

@@ -51,6 +51,11 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
 
+### `unauthenticatedStatus`: answer signed-out API calls with 403
+
+**To adopt.** Set `unauthenticatedStatus: 403` if your pages sit behind HTTP Basic auth on the
+editor's origin; the editor still detects sign-out. Otherwise nothing.
+
 ### Preview hooks move to `/preview` entries — **breaking (imports)**
 
 **What changed.** `withCanopyPreview` and its types moved to `canopycms-next/preview`, and preview hooks like `useCanopyPreview` to `canopycms/preview`. The `/client` entries are the editor: they put Mantine's unlayered CSS over the site's styles in the preview, and shipped the editor to public pages.

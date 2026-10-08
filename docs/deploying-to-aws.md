@@ -381,10 +381,10 @@ server". `attachTo` warns about them at synth; a site that needs them should giv
 editor its own `CanopyCmsDistribution`.
 
 **No HTTP Basic auth on editor routes.** Keep `/edit`, `/edit/*`, `/api/canopycms/*`
-and the asset prefix out of any Basic-auth gate. The API's 401s carry no
-`WWW-Authenticate`, and a browser that gets a 401 drops its cached Basic credential,
-so editors are prompted again mid-session. Clerk already authenticates them; the cost
-is that the tier's published assets are readable without the site's password.
+and the asset prefix out of any Basic-auth gate; Clerk authenticates them. The cost is
+that the tier's published assets are readable without the site's password. If the
+site's pages stay behind Basic on that origin, also set `unauthenticatedStatus: 403`:
+a 401 from the API makes the browser drop its cached Basic credential.
 
 ### Media: the public image path
 
