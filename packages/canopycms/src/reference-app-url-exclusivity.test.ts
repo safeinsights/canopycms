@@ -134,6 +134,7 @@ describe('apps/example1 resolves exactly the URLs it publishes', () => {
     expect(report.duplicates).toEqual([])
     expect(report.unresolved).toEqual([])
     expect(report.mismatched).toEqual([])
+    expect(report.misreported).toEqual([])
     expect(report.phantoms).toEqual([])
   })
 })

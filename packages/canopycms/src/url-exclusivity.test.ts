@@ -135,6 +135,7 @@ describe('readByUrlPath resolves exactly the URLs listEntries publishes', () => 
     // The invariant itself.
     expect(report.unresolved).toEqual([])
     expect(report.mismatched).toEqual([])
+    expect(report.misreported).toEqual([])
     expect(report.phantoms).toEqual([])
   }
 
@@ -182,6 +183,39 @@ describe('readByUrlPath resolves exactly the URLs listEntries publishes', () => 
         '/blog/blogIndex/hello',
       ],
     })
+  })
+
+  it("reports each read's slug and urlPath exactly as listEntries reports them", async () => {
+    const schema: RootCollectionConfig = {
+      entries: [entryType('home', { default: true }), entryType('page')],
+      collections: [
+        {
+          name: 'blog',
+          path: 'blog',
+          entries: [entryType('blogIndex'), entryType('article', { default: true })],
+        },
+      ],
+    }
+    const content = path.join(root, 'content')
+    await writeEntry(content, 'home', 'index', { title: 'Home' })
+    await writeEntry(content, 'page', 'about', { title: 'About' })
+    await writeEntry(path.join(content, 'blog'), 'blogIndex', 'index', { title: 'Blog' })
+    await writeEntry(path.join(content, 'blog'), 'article', 'hello', { title: 'Hello' })
+    const ctx = await createContext(schema)
+
+    const listed = (await ctx.listEntries()).map(({ slug, urlPath }) => ({ slug, urlPath }))
+    expect(listed).toHaveLength(4)
+    for (const item of listed) {
+      const read = await ctx.readByUrlPath(item.urlPath)
+      expect({ slug: read?.meta.slug, urlPath: read?.meta.urlPath }).toEqual(item)
+    }
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        { slug: 'index', urlPath: '/' },
+        { slug: 'index', urlPath: '/blog' },
+        { slug: 'hello', urlPath: '/blog/hello' },
+      ]),
+    )
   })
 
   it('a collection literally named "index" still resolves, and is not re-shadowed', async () => {
