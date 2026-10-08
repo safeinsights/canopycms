@@ -238,6 +238,90 @@ describe('FormRenderer field crash containment', () => {
     expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
   })
 
+  describe('object-list item keys', () => {
+    const listFields: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        label: 'Items',
+        list: true,
+        fields: [{ name: 'settings', type: 'code', label: 'Settings' }],
+      },
+    ]
+    const mounts = { count: 0 }
+    const Counted: React.FC = () => {
+      React.useEffect(() => {
+        mounts.count += 1
+      }, [])
+      return null
+    }
+    const List: React.FC<{ initial: FormValue }> = ({ initial }) => {
+      const [value, setValue] = useState<FormValue>(initial)
+      return (
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={listFields}
+            value={value}
+            onChange={setValue}
+            customRenderers={{
+              code: ({ value: v, onChange }) => (
+                <>
+                  <Counted />
+                  <button
+                    type="button"
+                    data-testid={`edit-${String(v)}`}
+                    onClick={() => onChange(`${String(v)}!`)}
+                  >
+                    {String(v)}
+                  </button>
+                </>
+              ),
+            }}
+          />
+          <button type="button" onClick={() => setValue(JSON.parse(JSON.stringify(value)))}>
+            replace with saved copy
+          </button>
+          <pre data-testid="form-state">{JSON.stringify(value)}</pre>
+        </CanopyCMSProvider>
+      )
+    }
+
+    beforeEach(() => {
+      mounts.count = 0
+    })
+
+    it('keeps items mounted when the list is replaced by an equal copy, as after Save', async () => {
+      render(<List initial={{ items: [{ settings: 'a' }, { settings: 'b' }] }} />)
+      expect(mounts.count).toBe(2)
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'replace with saved copy' }))
+
+      expect(mounts.count).toBe(2)
+    })
+
+    it('keeps the existing items mounted when an item is added', async () => {
+      render(<List initial={{ items: [{ settings: 'a' }, { settings: 'b' }] }} />)
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add item' }))
+
+      expect(formState().items).toHaveLength(3)
+      expect(mounts.count).toBe(3)
+    })
+
+    it('gives the same object listed twice two keys, through an edit of the second', async () => {
+      const shared = { settings: 'a' }
+      render(<List initial={{ items: [shared, shared] }} />)
+      const user = userEvent.setup()
+
+      await user.click(screen.getAllByTestId('edit-a')[0])
+      await user.click(screen.getByTestId('edit-a'))
+
+      expect(formState()).toEqual({ items: [{ settings: 'a!' }, { settings: 'a!' }] })
+      expect(mounts.count).toBe(2)
+      expect(consoleSpy.all().error.some((m) => m.includes('same key'))).toBe(false)
+    })
+  })
+
   it('shows a crashed markdown field holding a non-string value read-only', () => {
     const Markdown: React.FC = () => (
       <CanopyCMSProvider>

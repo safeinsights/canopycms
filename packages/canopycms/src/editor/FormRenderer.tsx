@@ -176,26 +176,31 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
 
-  // Object-list items keep a key through their edits, so an item's fields, and their error
-  // boundaries, go with it when an earlier item is removed rather than staying at its index.
+  // Object-list item keys. An item keeps the key it was first shown with, so an append remounts
+  // no item and a removal never hands a crashed item's boundary to the next one. A list whose
+  // length is unchanged (an edited item, the saved copy of the same items) keeps keys by position.
   const listItemKeys = useRef(new WeakMap<object, string>())
+  const lastListKeys = useRef(new Map<string, string[]>())
   const nextListItemKey = useRef(0)
-  const listItemKey = (item: unknown): string | undefined => {
-    if (typeof item !== 'object' || item === null) return undefined
-    let key = listItemKeys.current.get(item)
-    if (key === undefined) {
-      nextListItemKey.current += 1
-      key = `item-${nextListItemKey.current}`
-      listItemKeys.current.set(item, key)
-    }
-    return key
-  }
-  const keepListItemKey = <T,>(previous: unknown, next: T): T => {
-    const key = listItemKey(previous)
-    if (key !== undefined && typeof next === 'object' && next !== null) {
-      listItemKeys.current.set(next, key)
-    }
-    return next
+  const keysForList = (items: unknown[], listPath: string): string[] => {
+    const previous = lastListKeys.current.get(listPath)
+    const used = new Set<string>()
+    const keys = items.map((item, idx) => {
+      const isObject = typeof item === 'object' && item !== null
+      let key = isObject ? listItemKeys.current.get(item) : undefined
+      if (key === undefined && previous?.length === items.length) key = previous[idx]
+      // The same object twice in one list: the second takes its position's key.
+      if (key !== undefined && used.has(key)) key = previous?.[idx]
+      if (key === undefined || used.has(key)) {
+        nextListItemKey.current += 1
+        key = `item-${nextListItemKey.current}`
+      }
+      if (isObject && !listItemKeys.current.has(item)) listItemKeys.current.set(item, key)
+      used.add(key)
+      return key
+    })
+    lastListKeys.current.set(listPath, keys)
+    return keys
   }
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
@@ -508,6 +513,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           const items = Array.isArray(currentValue)
             ? (currentValue as Record<string, unknown>[])
             : []
+          const itemKeys = keysForList(items, fieldKey(path))
           return wrapWithComments(
             <Paper
               key={fieldKey(path)}
@@ -533,12 +539,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                 <FieldDescription baseId={fieldId} description={field.description} />
                 <Stack gap="sm">
                   {items.map((item, idx) => {
-                    const stableKey = listItemKey(item)
-                    // The same object twice in one list would share a key; fall back to the index.
-                    const itemKey =
-                      stableKey !== undefined && items.indexOf(item) === idx
-                        ? stableKey
-                        : fieldKey([...path, idx])
                     const itemTitle = listItemTitle(
                       item,
                       objectField.itemTitleField,
@@ -546,7 +546,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                     )
                     return (
                       <Paper
-                        key={itemKey}
+                        key={itemKeys[idx]}
                         role="group"
                         aria-label={itemTitle}
                         withBorder
@@ -573,7 +573,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                             value={item}
                             onChange={(next) => {
                               const nextItems = [...items]
-                              nextItems[idx] = keepListItemKey(item, next)
+                              nextItems[idx] = next
                               update(nextItems)
                             }}
                             renderField={renderField}
