@@ -481,7 +481,11 @@ function extractBody(raw: string): string | undefined {
   }
 }
 
-/** Whether `matter.stringify` writes a frontmatter block for `data` (it skips an empty one). */
+/**
+ * Whether `data` has a value to write. Without one, gray-matter's YAML engine writes no frontmatter
+ * block (it skips `{}`); the reconcile engine can still write a comment-only block, under which a
+ * flush body is also read back intact.
+ */
 function writesFrontmatter(data: Record<string, unknown>): boolean {
   return Object.values(data).some((value) => value !== undefined)
 }
@@ -490,8 +494,8 @@ function writesFrontmatter(data: Record<string, unknown>): boolean {
  * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
  * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
  * gray-matter leaves that blank line in the body, and the editor's body does not carry it, so it
- * is restored here even when the splice falls back. A file that had no frontmatter or no body yet
- * gets one blank line, the common markdown formatters' style.
+ * is restored here even when the splice falls back. A body under frontmatter the file did not
+ * have, or under frontmatter with no body yet, gets one blank line, Prettier's style.
  *
  * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
  * the one newline that stops a body starting with `---` (after any BOM, which gray-matter skips)

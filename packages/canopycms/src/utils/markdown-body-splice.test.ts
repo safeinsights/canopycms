@@ -340,7 +340,8 @@ describe('serializeFrontmatter body preservation', () => {
   })
 
   it('writes a Prettier-clean file when the editor writes in its configured style', async () => {
-    // The style MARKDOWN_EXPORT_OPTIONS gives the editor (editor/fields/markdown-export-options.ts).
+    // New blocks in the style MARKDOWN_EXPORT_OPTIONS gives the editor
+    // (editor/fields/markdown-export-options.ts); a new item in an existing list takes its marker.
     const updated = `${edit(EXPORT, '* Third item', '* Third item\n* New _item_')}\n\n- An appended list\n\n---\n\nNew **closing**.`
     const out = serializeFrontmatter(updated, { title: 'Hello' }, FILE, 'md')
     expect(await format(out, { parser: 'markdown' })).toBe(out)

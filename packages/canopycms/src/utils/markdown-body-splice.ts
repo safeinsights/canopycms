@@ -8,15 +8,16 @@
  *
  * - Top-level blocks are aligned by a position-free canonical form of their mdast, so a block
  *   matches only when it parses to the same tree. A matched block is written from disk.
- * - A changed block paired with an original of the same kind is spliced one level down when it
- *   is a list (by item) or a list item (by child block), so editing one item leaves its siblings
- *   alone. New items take the original list's marker and numbering.
- * - Whitespace between two blocks that were adjacent on disk is the disk's; around new text it is
- *   the editor's, re-indented into the original's nesting.
+ * - A changed block paired with an original of the same kind is spliced by its children when it
+ *   is a list (by item) or a list item (by child block), at any depth, so editing one item leaves
+ *   its siblings alone. New items take the original list's marker and numbering.
+ * - Whitespace between two output blocks that stand for adjacent on-disk blocks (an edited block
+ *   stands for the original it is paired with) is the disk's; elsewhere it is the editor's,
+ *   re-indented into the original's nesting and written in its line endings.
  *
  * The result is kept only if it parses to exactly the tree the editor's body parses to. A splice
  * that fails that check is retried without descending into lists, and failing that the editor's
- * body is written as sent, so the worst case is today's re-serialised body, never different
+ * body is written as sent: the worst case is the editor's own serialisation, never different
  * content.
  */
 
@@ -80,7 +81,7 @@ function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
  * the parser fills it only with derived information (an MDX expression's estree, which carries
  * its own offsets) and never with content. Line endings inside values are normalised, so a CRLF
  * file's blocks match the editor's LF ones. A bare URL and `[url](url)` share a tree, which keeps
- * a bare URL on disk when the editor (whose autolinking exports every URL as a link) sends it back.
+ * a bare URL on disk when the editor (whose `linkPlugin()` autolinks, in `MarkdownField.tsx`) sends it back as a link.
  */
 function canonical(node: MdNode): string {
   return JSON.stringify(node, (key, value: unknown) => {
@@ -237,8 +238,8 @@ class Splicer {
     const oKeys = oNodes.map(canonical)
     const nKeys = nNodes.map(canonical)
     const pairs = matchSequences(oKeys, nKeys)
-    // Originals the alignment left unmatched, by meaning: a block that MOVED is matched by the
-    // alignment on one side of its siblings only, and is written from here instead.
+    // Originals the alignment left unmatched, by meaning: an in-order alignment cannot match a
+    // block that MOVED, so a new block equal to one of these is written from its source here.
     const unmatched = new Map<string, number[]>()
     const matched = new Set(pairs.map(([oi]) => oi))
     oKeys.forEach((key, index) => {
