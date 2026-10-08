@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import matter from 'gray-matter'
-import { stringify as yamlStringify } from 'yaml'
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 
 import { serializeFrontmatter, serializeYaml } from './content-serialize'
 
@@ -550,5 +550,284 @@ Body text here.
     expect(first).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Post metadata. Keep `draft` first')
+  })
+})
+
+/**
+ * Hand-written the way an author's editor leaves a file: folded and plain scalars wrapped at
+ * uneven widths (some past 80 columns, some well short), comments at several levels, and a
+ * CanopyCMS-style block list of `{ template, value }` items.
+ */
+const HAND_FOLDED = `# Synthetic landing page used by the source-preservation tests.
+# Folded by hand at uneven widths, the way an author's editor leaves it.
+
+title: Field notes from the observatory
+description: >-
+  A long folded description that the author wrapped by hand at a width
+  well past eighty columns, because their editor was configured that way and nobody minded it.
+summary: >-
+  Short lines
+  here.
+tagline: This plain scalar is long enough that the yaml library would fold it at eighty columns if it were re-emitted
+quoted: "A double-quoted scalar that is also long enough to be folded by the library when it is re-emitted"
+# Literal block, kept as-is.
+notice: |
+  Line one of a literal block.
+  Line two, which is longer than the others and keeps going past the usual eighty-column limit.
+
+hero:
+  # Hero copy is reviewed by the comms team.
+  heading: Look up
+  body: >-
+    Nested folded text wrapped narrowly
+    at about forty
+    columns.
+sections:
+  # Blocks render in this order.
+  - template: callout
+    value:
+      tone: info # one of info | warn
+      text: >-
+        The first callout explains something at length, folded by hand at a width somewhat
+        wider than the default.
+
+  # Keep this block: the footer links to it.
+  - template: gallery
+    value:
+      caption: A narrow caption
+        that the author wrapped early.
+      images:
+        - src: /a.png
+          alt: First
+        - src: /b.png
+          alt: Second
+  - template: callout
+    value:
+      tone: warn
+      text: Plain text on one line.
+# Trailing file comment.
+`
+
+const FIRST_CALLOUT = `  - template: callout
+    value:
+      tone: info # one of info | warn
+      text: >-
+        The first callout explains something at length, folded by hand at a width somewhat
+        wider than the default.
+`
+const GALLERY = `
+  # Keep this block: the footer links to it.
+  - template: gallery
+    value:
+      caption: A narrow caption
+        that the author wrapped early.
+      images:
+        - src: /a.png
+          alt: First
+        - src: /b.png
+          alt: Second
+`
+
+/** Replace the one occurrence of `from`; a fixture typo fails loudly instead of matching nothing. */
+function replaceOnce(source: string, from: string, to: string): string {
+  const at = source.indexOf(from)
+  expect(at, `fixture text not found: ${JSON.stringify(from)}`).toBeGreaterThanOrEqual(0)
+  expect(source.indexOf(from, at + 1), `fixture text not unique: ${JSON.stringify(from)}`).toBe(-1)
+  return source.slice(0, at) + to + source.slice(at + from.length)
+}
+
+interface HandFoldedData {
+  description: string
+  summary: string
+  notice: string
+  title: string | number
+  hero: { heading?: string; body: string }
+  sections: Array<{ template?: string; value: Record<string, unknown> }>
+  [key: string]: unknown
+}
+
+function handFoldedData(): HandFoldedData {
+  return yamlParse(HAND_FOLDED) as HandFoldedData
+}
+
+describe('serializeYaml keeps the source text of everything it did not change', () => {
+  it('returns the file byte-for-byte on a save that changes nothing', () => {
+    expect(serializeYaml(handFoldedData(), HAND_FOLDED)).toBe(HAND_FOLDED)
+  })
+
+  it('changes only the edited value, which keeps its `>-` style', () => {
+    const data = handFoldedData()
+    data.description = 'An edited description.'
+    const expected = replaceOnce(
+      HAND_FOLDED,
+      `  A long folded description that the author wrapped by hand at a width
+  well past eighty columns, because their editor was configured that way and nobody minded it.
+`,
+      '  An edited description.\n',
+    )
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(expected)
+  })
+
+  it('keeps a `|` literal a literal when it is edited', () => {
+    const data = handFoldedData()
+    data.notice = 'First line.\nSecond line.\n'
+    const out = serializeYaml(data, HAND_FOLDED)
+    expect(out).toContain('notice: |\n  First line.\n  Second line.\n\nhero:')
+    expect(yamlParse(out)).toEqual(data)
+  })
+
+  it('edits a value deep inside a nested block list without touching its neighbours', () => {
+    const data = handFoldedData()
+    ;(data.sections[1].value.images as Array<{ alt: string }>)[0].alt = 'Primary'
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, 'alt: First', 'alt: Primary'),
+    )
+  })
+
+  it('removes a dropped key and only its lines', () => {
+    const data = handFoldedData()
+    delete data.hero.heading
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, '  heading: Look up\n', ''),
+    )
+  })
+
+  it('removes a dropped multi-line value with all of its lines', () => {
+    const { summary: _summary, ...data } = handFoldedData()
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(HAND_FOLDED, 'summary: >-\n  Short lines\n  here.\n', ''),
+    )
+  })
+
+  it('appends an added key and leaves every existing line alone', () => {
+    const data = { ...handFoldedData(), added: 'new value' }
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        '# Trailing file comment.\n',
+        'added: new value\n# Trailing file comment.\n',
+      ),
+    )
+  })
+
+  it('removes a list item together with the comment written above it', () => {
+    const data = handFoldedData()
+    data.sections.splice(1, 1)
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(replaceOnce(HAND_FOLDED, GALLERY, ''))
+  })
+
+  it('removes the first list item and keeps the comment that heads the list', () => {
+    const data = handFoldedData()
+    data.sections.splice(0, 1)
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(replaceOnce(HAND_FOLDED, FIRST_CALLOUT, ''))
+  })
+
+  it('reorders list items by moving their source text, comments and folding included', () => {
+    const data = handFoldedData()
+    data.sections = [data.sections[1], data.sections[0], data.sections[2]]
+    // The gallery's chunk carries its blank line and comment along with it.
+    const expected = replaceOnce(
+      replaceOnce(HAND_FOLDED, FIRST_CALLOUT, ''),
+      GALLERY,
+      `${GALLERY}${FIRST_CALLOUT}`,
+    )
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(expected)
+  })
+
+  it('inserts a new list item between untouched ones', () => {
+    const data = handFoldedData()
+    data.sections.splice(1, 0, { template: 'hero', value: { heading: 'New' } })
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        FIRST_CALLOUT,
+        `${FIRST_CALLOUT}  - template: hero\n    value:\n      heading: New\n`,
+      ),
+    )
+  })
+
+  it('drops the key that shares the `- ` line and keeps the rest of that item as written', () => {
+    const data = handFoldedData()
+    delete data.sections[0].template
+    expect(serializeYaml(data, HAND_FOLDED)).toBe(
+      replaceOnce(
+        HAND_FOLDED,
+        '  - template: callout\n    value:\n      tone: info',
+        '  - value:\n      tone: info',
+      ),
+    )
+  })
+
+  it('keeps CRLF line endings, and touches only the edited line', () => {
+    const crlf = HAND_FOLDED.replace(/\n/g, '\r\n')
+    const data = handFoldedData()
+    data.title = 'Edited title'
+    expect(serializeYaml(handFoldedData(), crlf)).toBe(crlf)
+    expect(serializeYaml(data, crlf)).toBe(
+      replaceOnce(crlf, 'title: Field notes from the observatory', 'title: Edited title'),
+    )
+  })
+
+  it('writes a new CRLF list item with CRLF line endings', () => {
+    const crlf = HAND_FOLDED.replace(/\n/g, '\r\n')
+    const data = handFoldedData()
+    data.sections.push({ template: 'hero', value: { heading: 'New' } })
+    const out = serializeYaml(data, crlf)
+    expect(out).toBe(
+      replaceOnce(
+        crlf,
+        '      text: Plain text on one line.\r\n',
+        '      text: Plain text on one line.\r\n  - template: hero\r\n    value:\r\n      heading: New\r\n',
+      ),
+    )
+  })
+
+  it('falls back to a whole re-serialisation, with correct data, for a file using anchors', () => {
+    const anchored = `base: &shared
+  x: 1
+copy: *shared
+long: >-
+  folded by hand at
+  an odd width
+other: keep
+`
+    const out = serializeYaml(
+      { base: { x: 1 }, copy: { x: 1 }, long: 'folded by hand at an odd width', other: 'edited' },
+      anchored,
+    )
+    expect(yamlParse(out)).toEqual({
+      base: { x: 1 },
+      copy: { x: 1 },
+      long: 'folded by hand at an odd width',
+      other: 'edited',
+    })
+    // The untouched `long` value was re-folded: the fallback, not the source splice, wrote it.
+    expect(out).toContain('long: >-\n  folded by hand at an odd width\n')
+  })
+
+  it('falls back, with correct data, for a layout it does not splice (an explicit `?` key)', () => {
+    const explicit = '? a\n: 1\nb: >-\n  hand\n  folded\n'
+    const out = serializeYaml({ a: 1, b: 'edited' }, explicit)
+    expect(yamlParse(out)).toEqual({ a: 1, b: 'edited' })
+  })
+})
+
+describe('serializeFrontmatter keeps the source text of everything it did not change', () => {
+  const POST = `---\n${HAND_FOLDED}---\n\nBody text.\n`
+
+  it('returns the file byte-for-byte on a save that changes nothing', () => {
+    expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST)).toBe(POST)
+  })
+
+  it('changes only the edited value, which keeps its `>-` style', () => {
+    const data = handFoldedData()
+    data.hero.body = 'Edited body.'
+    expect(serializeFrontmatter('\nBody text.\n', data, POST)).toBe(
+      replaceOnce(
+        POST,
+        '    Nested folded text wrapped narrowly\n    at about forty\n    columns.\n',
+        '    Edited body.\n',
+      ),
+    )
   })
 })
