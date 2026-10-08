@@ -64,6 +64,11 @@ the first edit.
 **Now deletable.** A formatter pass or `.prettierignore` entry over content that only undoes the
 editor's restyling of untouched markdown.
 
+### `unauthenticatedStatus`: answer signed-out API calls with 419
+
+**To adopt.** Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on the
+editor's origin; the editor still detects sign-out. Otherwise nothing.
+
 ### A read reports the entry's `slug` and `urlPath`
 
 **What changed.** `read()`/`readByUrlPath()` return `meta.slug` and `meta.urlPath`, and a preview

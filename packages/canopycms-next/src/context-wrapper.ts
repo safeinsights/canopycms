@@ -73,7 +73,7 @@ export function mergeSeoFieldLocation(
 let warnedStaticMode = false
 
 /**
- * Returns unauthenticated for all requests — API routes will return 401.
+ * Returns unauthenticated for all requests, so every API route rejects the request.
  *
  * `verifiesCredentials: true` is set here even though this plugin verifies nothing: it is an
  * always-deny stub (authenticate() unconditionally fails), so it trivially satisfies the prod
@@ -308,7 +308,7 @@ export async function createNextCanopyContext(
   // Warn when running in static deployment mode so it is not accidentally set in a server build
   if (options.config.deployedAs === 'static' && !warnedStaticMode) {
     console.warn(
-      'CanopyCMS: running in static deployment mode — all CMS API requests will return 401. ' +
+      'CanopyCMS: running in static deployment mode — all CMS API requests are rejected as unauthenticated. ' +
         'Do not set deployedAs: "static" in a server deployment.',
     )
     warnedStaticMode = true
@@ -317,7 +317,7 @@ export async function createNextCanopyContext(
   // Auto-wrap with CachingAuthPlugin + FileBasedAuthCache in prod/dev when the plugin implements
   // verifyTokenOnly(), so auth stays networkless (required for Lambda in prod, consistent in dev)
   // without exposing caching internals to adopters; the cache is populated by the worker daemon.
-  // Static deployments use the stub above, which always returns 401.
+  // Static deployments use the stub above, which rejects every request.
   const { mode } = options.config
   const authPlugin: AuthPlugin = (() => {
     if (!options.authPlugin) return staticDeployAuthPlugin

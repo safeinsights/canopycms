@@ -125,6 +125,19 @@ const parseQueryParams = (url: string): Record<string, string> => {
 }
 
 /**
+ * The answer to a request with no accepted session. The body's `status: 401` is what the client
+ * detects sign-out from, so it stays 401 whatever HTTP status `unauthenticatedStatus` picks.
+ */
+const unauthenticatedResponse = (
+  config: CanopyConfig,
+  error: string | undefined,
+): CanopyResponse<ApiResponse> =>
+  jsonResponse(
+    { ok: false, status: 401, error: error ?? 'Unauthorized' },
+    config.unauthenticatedStatus ?? 401,
+  )
+
+/**
  * Includes `CanopyBinaryResponse` so byte-streaming routes (asset serving) flow
  * through untouched alongside JSON ones — see `isCanopyBinaryResponse` below.
  */
@@ -186,10 +199,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // any workspace provisioning below, so they can neither trigger expensive
     // git operations nor read provisioning error details.
     if (!authResult.success || !authResult.user) {
-      return jsonResponse(
-        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
-        401,
-      )
+      return unauthenticatedResponse(apiCtx.services.config, authResult.error)
     }
 
     // Provision the base/active branch workspace on first request, so the many
@@ -299,10 +309,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     }
 
     if (user.type === 'anonymous') {
-      return jsonResponse(
-        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
-        401,
-      )
+      return unauthenticatedResponse(apiCtx.services.config, authResult.error)
     }
 
     const queryParams = parseQueryParams(req.url)
