@@ -7,8 +7,7 @@
 The editor has no error boundary below Next's root. One field that throws while rendering
 replaces the whole editor with "Application error: a client-side exception has occurred".
 The MDX JSX crash in [turbopack-import-cycle-double-evaluation.md](turbopack-import-cycle-double-evaluation.md)
-did exactly that, and every unsaved draft on screen went with it, though drafts persist to
-localStorage.
+did exactly that. The whole form went with it; unsaved drafts survive only in localStorage.
 
 ## Trade-off
 

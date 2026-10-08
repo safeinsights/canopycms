@@ -23,7 +23,7 @@ export interface MarkdownFieldProps {
 }
 
 const MDXEditorLazy = React.lazy(async () => {
-  // The only runtime import of MDXEditor: everything else receives this module (see mdx-jsx-support).
+  // MDXEditor's only code import (theme.tsx loads its CSS); see mdx-jsx-support for why.
   const mdx = await import('@mdxeditor/editor')
   const {
     MDXEditor,

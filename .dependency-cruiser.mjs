@@ -105,7 +105,7 @@ export default {
       name: 'mdxeditor-entered-only-by-markdown-field',
       severity: 'error',
       comment:
-        "Only editor/fields/MarkdownField.tsx value-imports @mdxeditor/editor; other modules receive that module from it (see editor/fields/mdx-jsx-support.tsx for why a second importer crashes the editor). Type imports are erased and stay legal, as does the package's stylesheet. Evaluated by `pnpm lint:cycles`.",
+        "Only editor/fields/MarkdownField.tsx imports @mdxeditor/editor's code; other modules are handed the module, so MDXEditor has one entry point (see editor/fields/mdx-jsx-support.tsx). ESLint's no-restricted-imports forbids a static value import of it in any file; this rule also catches a dynamic or require import outside MarkdownField. Type imports are erased and stay legal, as does the package's stylesheet. Evaluated by `pnpm lint:cycles`.",
       from: {
         path: OWN_SRC,
         pathNot: `^packages/canopycms/src/editor/fields/MarkdownField\\.tsx$|${TEST_FILES}`,

@@ -4,10 +4,10 @@
  * MarkdownField's MDXEditor plugins: a catch-all JSX editor, and a guard that
  * turns what MDXEditor would lose without an error into `onError`.
  *
- * MDXEditor is passed in from MarkdownField's import of the package entry. A
- * named import here would let Turbopack enter MDXEditor's import cycle in the
- * jsx plugin mid-cycle and evaluate it twice: two `LexicalJsxNode` classes and
- * nested-editor contexts, and the editor crashes on its first export.
+ * MDXEditor is passed in from MarkdownField's import of the package entry. A named
+ * import here enters the jsx plugin's import cycle mid-cycle; where Turbopack merged
+ * the cycle's modules under several ids, it evaluates them twice (two `LexicalJsxNode`
+ * classes and nested-editor contexts), and the first markdown export throws.
  */
 
 import React from 'react'
@@ -96,7 +96,7 @@ const ESM_NODE_TYPE: string = 'mdxjsEsm'
 /** Node types inside a table, imported by its cell editors rather than by visitors. */
 const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
 
-/** Builds the plugin list from MDXEditor's exports, once per load of MDXEditor. */
+/** Creates the JSX plugins from MDXEditor's exports; call once per load of MDXEditor. */
 export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.RealmPlugin[] {
   const {
     NestedLexicalEditor,

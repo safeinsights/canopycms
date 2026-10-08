@@ -14,23 +14,26 @@ cycle's members, among them `LexicalJsxNode`, `LexicalJsxVisitor`, the mdast vis
 `core/NestedLexicalEditor`, into one factory registered under nine module ids. It left
 `jsx/index.js` outside. The runtime caches per id. `mdx-jsx-support` imported `NestedLexicalEditor`
 by name, which Turbopack resolved to one of the nine ids. When that module evaluated before the
-package entry, the merged factory started, required `jsx/index.js`, and `jsx/index.js` required
-another of the nine ids before the first run had registered it, so the factory ran again. The
+package entry, the merged factory started, registered four of its ids, then required
+`jsx/index.js`. `jsx/index.js` required a fifth id, `MdastMdxJsEsmVisitor`'s, which the first
+run had not registered yet, so the factory ran again. The
 page was left with two `LexicalJsxNode` classes and two nested-editor contexts. A live probe
 that counted factory calls per id showed it.
 
-The same build is fine when the package entry evaluates first, and a smaller app's graph never
-formed the merged group. That is why only one adopter hit it, and only intermittently, except on
+Through the package entry the cycle is reached at `jsx/index.js` first: `dist/index.js` imports
+it at line 17 and `NestedLexicalEditor` at line 55, so the group is evaluated once. A smaller
+app's graph never formed the merged group. That is why only one adopter hit it, and only intermittently, except on
 an in-app navigation to the page's first markdown body.
 
 ## Done in canopycms
 
 `mdx-jsx-support` takes MDXEditor from `MarkdownField`'s import of the package entry and imports
-only types. The `mdxeditor-entered-only-by-markdown-field` dependency-cruiser rule keeps every other
-module from importing MDXEditor's runtime.
+only types. ESLint's `no-restricted-imports` forbids a static value import of the package in any
+file, and the `mdxeditor-entered-only-by-markdown-field` dependency-cruiser rule also catches a
+dynamic import outside `MarkdownField`.
 
 ## Left
 
 Build a minimal repro: a package whose two modules import each other, merged by scope hoisting,
 plus an importer that names a member module first. Report it to vercel/next.js. Retire the
-dependency-cruiser rule only once a fixed Turbopack is the floor every adopter builds with.
+two lint rules only once a fixed Turbopack is the floor every adopter builds with.

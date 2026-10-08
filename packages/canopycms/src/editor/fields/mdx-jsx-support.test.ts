@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 
-// Evaluating the package here at all is the failure: see this module's header.
+// Evaluating the package here at all is the failure: see mdx-jsx-support.tsx's header.
 vi.mock('@mdxeditor/editor', () => {
   throw new Error('mdx-jsx-support loaded @mdxeditor/editor itself')
 })
