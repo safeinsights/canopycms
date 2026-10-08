@@ -21,7 +21,8 @@ export const entriesUrl = (href: string): string => {
 
 /**
  * The last resort when the editor itself throws while rendering. It brings its own theme
- * provider, the editor's having gone with the crash; drafts survive in browser storage.
+ * provider, the editor's having gone with the crash. Edits made before the crash are in the
+ * browser's draft store, so a reload offers them; the edit whose render crashed is not.
  */
 export const EditorCrashBoundary: React.FC<{
   themeOptions?: CanopyThemeOptions

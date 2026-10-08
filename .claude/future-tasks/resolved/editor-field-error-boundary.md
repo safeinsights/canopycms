@@ -33,14 +33,16 @@ Yes, with the guard the trade-off asked for:
 
 - Every field `FormRenderer` renders, nested ones included, has its own boundary. A field
   that throws shows its label, a plain-language message, its value read-only and "Copy error
-  details". Its `onChange` is blocked until the boundary resets on an entry or branch change,
-  so nothing it scheduled before crashing can write a value the author no longer sees.
+  details". Every edit callback it was rendered with before the crash is dead for good, so
+  nothing it scheduled can write a value the author no longer sees, even after the boundary
+  resets on an entry or branch change (`FieldBoundary` in `editor/FormRenderer.tsx`).
 - A crashed field does **not** block Save. Its value is unchanged and on screen, so Save writes
   it back as it is; blocking Save would trap the author's other edits, which is the failure
   the boundary exists to prevent.
 - A markdown or mdx field falls back to its raw source, which the author can edit and save.
   MDXEditor rejecting a body and MDXEditor crashing on it are one mechanism, keyed by the text
-  and remembered in memory for the session (`editor/fields/rich-text-failures.ts`).
+  and remembered in memory for the session (`editor/fields/rich-text-failures.ts`); text edited
+  from the fallback stays in source in that field only.
 - Each caught error is logged through `reportEditorError` (`editor/utils/editor-errors.ts`),
   the single choke point an adopter error hook would call. A crash inside the editor's own
   shell shows a crash screen with Reload, Back to entries and Copy error details. Back to

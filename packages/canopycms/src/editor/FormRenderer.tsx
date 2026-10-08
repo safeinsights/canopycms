@@ -176,9 +176,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
 
-  // Object-list item keys. An item keeps the key it was first shown with, so an append remounts
-  // no item and a removal never hands a crashed item's boundary to the next one. A list whose
-  // length is unchanged (an edited item, the saved copy of the same items) keeps keys by position.
+  // Object-list item keys. An object listed once keeps the key it was first shown with, so an
+  // append remounts no item and a removal never hands a crashed item's boundary to the next one.
+  // A list whose length is unchanged (an edited item, the saved copy of the same items) keeps
+  // keys by position.
   const listItemKeys = useRef(new WeakMap<object, string>())
   const lastListKeys = useRef(new Map<string, string[]>())
   const nextListItemKey = useRef(0)
@@ -196,7 +197,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     const claimed = new Set<string>()
     const keys = items.map((item) => {
       const own = single(item) ? listItemKeys.current.get(item) : undefined
-      // Two objects can hold one key when an edit inherited it from one still around elsewhere.
+      // Two objects can hold one key, an edited copy having inherited its original's.
       if (own === undefined || claimed.has(own)) return undefined
       claimed.add(own)
       return own

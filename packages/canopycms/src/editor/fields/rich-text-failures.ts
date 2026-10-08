@@ -1,6 +1,7 @@
 /**
- * Markdown the rich-text editor failed to open this page session, keyed by text because the
- * text is what fails, with the reason to show. Memory only: a reload tries rich text again.
+ * Markdown the rich-text editor failed to open this page session, keyed by text so the same text
+ * shown again opens straight to source, with the reason to show. Memory only: a reload tries
+ * rich text again.
  */
 const failures = new Map<string, string>()
 

@@ -121,15 +121,15 @@ const EMPTY_COLLECTIONS: EditorCollection[] = []
 const EMPTY_SCHEMAS: string[] = []
 
 /**
- * Custom hook for managing editor entries (CRUD operations).
- */
-/**
  * The URL's `entry`: a path; `''` for no entry and the navigator open (the crash screen's escape
  * from an entry that crashes the editor); null opens the first entry.
  */
 const readUrlEntry = (): string | null =>
   typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('entry')
 
+/**
+ * Custom hook for managing editor entries (CRUD operations).
+ */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const apiClient = useApiClient()
   const { mutate: globalMutate } = useSWRConfig()
@@ -254,7 +254,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   if (initialUrlEntry.current === undefined) {
     initialUrlEntry.current = readUrlEntry()
   }
-  // Honoured until the author opens an entry; after that a lost selection opens the first again.
+  // Honoured until any entry is selected; after that a lost selection opens the first again.
   const noEntryRequested = useRef(initialUrlEntry.current === '')
 
   const collectionByPath = useMemo(() => {

@@ -520,7 +520,7 @@ On a `string` field, `list: true` renders a tag input: type a value and press En
 
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
-A field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
+A non-markdown field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
 
 #### Rendering `markdown` / `mdx` content on your site
 

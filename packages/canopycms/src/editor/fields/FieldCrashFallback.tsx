@@ -31,7 +31,8 @@ export interface FieldCrashFallbackProps {
 
 /**
  * What a field that threw while rendering shows: its value read-only, so Save writes back
- * exactly what is on screen, or for markdown and mdx the raw text, still editable.
+ * exactly what is on screen, or, for a markdown or mdx field holding text, that text, still
+ * editable.
  */
 export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
   label,
