@@ -105,6 +105,7 @@ describe('createContentReader', () => {
       user: ANONYMOUS_USER,
     })
     expect(home.path).toBe('/pages/home?branch=main')
+    expect(home.meta).toMatchObject({ slug: 'home', urlPath: '/pages/home' })
     expect(home.data.hero.title).toBe('Hi')
 
     // An index entry's `path` is its COLLECTION's path. Without the collapse this handed back
@@ -117,6 +118,7 @@ describe('createContentReader', () => {
       user: ANONYMOUS_USER,
     })
     expect(index.path).toBe('/pages?branch=main')
+    expect(index.meta).toMatchObject({ slug: 'index', urlPath: '/pages' })
 
     await expect(
       reader.read({
@@ -767,6 +769,8 @@ describe('createContentReader', () => {
       })
       expect(result.data.title).toBe('Home')
       expect(result.meta.entryType).toBe('home')
+      // The slug and URL of the file resolved in the parent collection, not of the entry type.
+      expect(result.meta).toMatchObject({ slug: 'home', urlPath: '/home' })
     })
 
     it('rejects a file whose on-disk type token the collection does not declare', async () => {

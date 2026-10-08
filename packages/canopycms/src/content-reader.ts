@@ -9,7 +9,7 @@ import {
   type Slug,
 } from './paths'
 import { trimSlashes } from './paths/normalize'
-import { isIndexSlug } from './utils/entry-url'
+import { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -102,6 +102,10 @@ export interface ContentReadMeta {
    * `{type}.{slug}.{id}.{ext}`) -- see the `entryType` caveat above for what that implies.
    */
   entryId?: ContentId
+  /** The entry's slug within its collection, equal to its `listEntries` item's `slug`. */
+  slug: Slug
+  /** The entry's URL path with no query, equal to its `listEntries` item's `urlPath`. */
+  urlPath: string
 }
 
 export interface ContentReader {
@@ -110,6 +114,10 @@ export interface ContentReader {
     message?: string,
   ) => Promise<{
     data: T
+    /**
+     * The entry's URL path, percent-encoded, with `?branch=<name>` appended: a link that stays on
+     * the branch read. Not a key to compare entries by; `meta.urlPath` and `meta.slug` are.
+     */
     path: string
     meta: ContentReadMeta
   }>
@@ -274,6 +282,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // key by them without a separate listEntries lookup or filename parse.
     let entryType: string
     let entryId: ContentId | undefined
+    let urlPath: string
+    let resolvedSlug: Slug
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       logicalPath = resolved.logicalPath
@@ -283,6 +293,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       // absent, for legacy entry files without an embedded ID (see ContentReadMeta).
       entryType = resolved.entryTypeName
       entryId = resolved.id as ContentId | undefined
+      resolvedSlug = resolved.slug
+      urlPath = computeEntryUrl(resolved.collectionPath, resolved.slug, contentRoot)
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
@@ -335,7 +347,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         resolveReferences: input.resolveReferences ?? true,
         referenceAccess,
       })
-      return { doc, store, physicalPath, entryType, entryId }
+      return { doc, store, physicalPath, entryType, entryId, slug: resolvedSlug, urlPath }
     } catch (err: unknown) {
       if (isNotFoundError(err)) return null
       throw err
@@ -352,7 +364,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
-    const { doc, store, physicalPath, entryType, entryId } = result
+    const { doc, store, physicalPath, entryType, entryId, slug: entrySlug, urlPath } = result
 
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
@@ -372,7 +384,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       slug,
       branch: branchName,
     })
-    return { data, path, meta: { physicalPath, entryType, entryId } }
+    return { data, path, meta: { physicalPath, entryType, entryId, slug: entrySlug, urlPath } }
   }
 
   return { read }

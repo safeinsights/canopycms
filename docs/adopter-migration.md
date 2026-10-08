@@ -51,6 +51,13 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
 
+### A read reports the entry's `slug` and `urlPath`
+
+**What changed.** `read()`/`readByUrlPath()` return `meta.slug` and `meta.urlPath`, and a preview
+`load` gets `entry.slug` and `entry.urlPath`, each equal to the entry's `listEntries` item's.
+
+**Now deletable.** Code parsing a slug or URL back out of `path` or `entry.path`.
+
 ### Preview hooks move to `/preview` entries — **breaking (imports)**
 
 **What changed.** `withCanopyPreview` and its types moved to `canopycms-next/preview`, and preview hooks like `useCanopyPreview` to `canopycms/preview`. The `/client` entries are the editor: they put Mantine's unlayered CSS over the site's styles in the preview, and shipped the editor to public pages.

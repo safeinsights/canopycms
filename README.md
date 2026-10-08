@@ -1588,7 +1588,7 @@ post: previewView({
 }),
 ```
 
-`load` runs after the entry and view are found, with the same ACL-checked `canopy`. Its result is the view's `extras` prop: a request snapshot (only `data` is live) that must be RSC-serializable. Server-rendered elements are fine, so non-live sections can reuse server components. Have the public page pass the same `extras`, so previews show nothing the site lacks.
+`load` runs after the entry and view are found, with the same ACL-checked `canopy`. `entry.slug` and `entry.urlPath` equal the entry's `listEntries` item's, so a loader can exclude the current entry from a listing. Its result is the view's `extras` prop: a request snapshot (only `data` is live) that must be RSC-serializable. Server-rendered elements are fine, so non-live sections can reuse server components. Have the public page pass the same `extras`, so previews show nothing the site lacks.
 
 ## AI-Ready Content
 
