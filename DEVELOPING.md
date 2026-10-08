@@ -1207,7 +1207,7 @@ Import the dependency-free sibling the rule's `comment` names, or make the impor
 pnpm lint:cycles
 ```
 
-Runs every rule in [.dependency-cruiser.mjs](.dependency-cruiser.mjs) over both packages' `src/`: `no-circular`, plus the module-boundary rules `http-reaches-api-only-via-routes`, `api-never-imports-worker`, `editor-imports-api-only-client-index-constants`, `mdxeditor-entered-only-by-markdown-field`, `markdown-field-imports-mdxeditor-only-dynamically` and `core-no-github-app-auth`. Each rule's `comment` states the rule and its fix. CI and the pre-commit hook run it alongside `lint:bundle`.
+Runs every rule in [.dependency-cruiser.mjs](.dependency-cruiser.mjs) over both packages' `src/`: `no-circular`, plus the module-boundary rules `http-reaches-api-only-via-routes`, `api-never-imports-worker`, `editor-imports-api-only-client-index-constants`, `mdxeditor-entered-only-by-markdown-field` and `core-no-github-app-auth`. Each rule's `comment` states the rule and its fix. CI and the pre-commit hook run it alongside `lint:bundle`.
 
 Both packages are at **zero cycles**, so any violation is one you just introduced. Cycles bite hardest when splitting a class whose methods called each other: hoist the shared piece into a third module (`worker/history-rewrite.ts`) or pass the collaborator in through a context object (`worker/worker-context.ts`).
 
