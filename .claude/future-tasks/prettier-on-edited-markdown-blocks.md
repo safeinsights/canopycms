@@ -8,7 +8,8 @@ A markdown body save now keeps every untouched block's text (`utils/markdown-bod
 the editor writes new text with Prettier's markers (`editor/fields/markdown-export-options.ts`).
 An EDITED block is still the editor's serialisation, which a `prettier --check` can reject:
 MDXEditor escapes characters Prettier leaves bare (`a\_b`), and a table it re-serialises is not
-column-padded the way Prettier pads it. The adopter that reported 85 has no tables and said this is
+column-padded the way Prettier pads it. With `_` emphasis, intraword emphasis (`foo*bar*baz`) comes
+out as character references (`fo&#x6F;_&#x62;a&#x72;_&#x62;az`), where Prettier would switch to `*`. The adopter that reported 85 has no tables and said this is
 not needed for them.
 
 ## Proposal

@@ -1,3 +1,4 @@
+import matter from 'gray-matter'
 import { format } from 'prettier'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -217,6 +218,38 @@ describe('preserveMarkdownSource', () => {
     )
   })
 
+  it('keeps zero-padded ordered markers padded', () => {
+    expect(preserveMarkdownSource('\n01. a\n02. b\n', '1. a\n2. b\n3. c', 'md')).toBe(
+      '\n01. a\n02. b\n03. c\n',
+    )
+  })
+
+  it.each([
+    [
+      'links a bare URL',
+      '\nSee www.example.com today.\n',
+      'See [www.example.com](http://www.example.com) today.',
+    ],
+    [
+      'unlinks a URL',
+      '\nSee [https://example.com](https://example.com).\n',
+      'See https://example.com.',
+    ],
+    [
+      'turns an autolink into a link',
+      '\nSee <https://example.com>.\n',
+      'See [https://example.com](https://example.com).',
+    ],
+  ])('writes an edit that %s, which GFM parses to the same tree', (_case, body, updated) => {
+    expect(preserveMarkdownSource(body, updated, 'md')).toBe(`\n${updated}\n`)
+  })
+
+  it('writes the edit as sent, not an error, for a body too deep to compare', () => {
+    const body = `\n${'> '.repeat(3000)}x\n`
+    const updated = `${'> '.repeat(3000)}x edited`
+    expect(preserveMarkdownSource(body, updated, 'md')).toBe(updated)
+  })
+
   describe('mdx', () => {
     const MDX_BODY = `
 # Title
@@ -291,6 +324,23 @@ describe('serializeFrontmatter body preservation', () => {
     const file = '---\ntitle: Hello\n---\nOne.\n'
     expect(serializeFrontmatter('Two.', { title: 'Hello' }, file, 'md')).toBe(
       '---\ntitle: Hello\n---\nTwo.\n',
+    )
+  })
+
+  it.each([
+    ['a file whose body sits flush', { t: 1 }, '---\nt: 1\n---\nIntro\n\nfoo\n'],
+    ['a new file without frontmatter', {}, undefined],
+    ['a file without frontmatter', {}, 'Intro\n\nfoo\n'],
+  ])('keeps a body that starts with a thematic break, in %s', (_case, data, existing) => {
+    const out = serializeFrontmatter('---\n\nfoo', data, existing, 'md')
+    const read = matter(out, {})
+    expect(read.content.trim()).toBe('---\n\nfoo')
+    expect(read.data).toEqual(data)
+  })
+
+  it('writes no leading blank line when the entry no longer has frontmatter', () => {
+    expect(serializeFrontmatter('# T edited', {}, '---\na: 1\n---\n\n# T\n', 'md')).toBe(
+      '# T edited\n',
     )
   })
 

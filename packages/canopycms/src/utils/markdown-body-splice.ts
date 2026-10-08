@@ -79,13 +79,20 @@ function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
  * A node's meaning as a string: its tree without source positions. `data` goes too, because
  * the parser fills it only with derived information (an MDX expression's estree, which carries
  * its own offsets) and never with content. Line endings inside values are normalised, so a CRLF
- * file's blocks match the editor's LF ones.
+ * file's blocks match the editor's LF ones. A link keeps its source form (`[`, `<` or a bare
+ * URL), which GFM parses to the same tree but the editor does not: linking a bare URL is an edit.
  */
-function canonical(node: MdNode): string {
+function canonical(node: MdNode, text: string): string {
   return JSON.stringify(node, (key, value: unknown) => {
     if (key === 'position' || key === 'data') return undefined
-    return typeof value === 'string' ? value.replace(/\r\n?/g, '\n') : value
+    if (typeof value === 'string') return value.replace(/\r\n?/g, '\n')
+    if (isLink(value)) return { ...value, form: text[startOf(value) ?? -1] ?? '' }
+    return value
   })
+}
+
+function isLink(value: unknown): value is MdNode {
+  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'link'
 }
 
 /** What a changed block must share with an original to be paired with it. */
@@ -126,7 +133,19 @@ function reindent(text: string, from: string, to: string): string {
  * Index pairs of a longest common subsequence of `a` and `b`, in order. Common prefix and suffix
  * are matched first, which is the whole answer for the usual one-region edit.
  */
-function matchSequences(a: readonly string[], b: readonly string[]): Array<[number, number]> {
+function matchSequences(
+  keysA: readonly string[],
+  keysB: readonly string[],
+): Array<[number, number]> {
+  // Compared as small integers: the DP compares O(n * m) pairs, and keys are whole serialised trees.
+  const ids = new Map<string, number>()
+  const intern = (key: string): number => {
+    const id = ids.get(key) ?? ids.size
+    ids.set(key, id)
+    return id
+  }
+  const a = keysA.map(intern)
+  const b = keysB.map(intern)
   const pairs: Array<[number, number]> = []
   let head = 0
   while (head < a.length && head < b.length && a[head] === b[head]) {
@@ -184,12 +203,17 @@ function leadWidth(text: string, offset: number): number | undefined {
 }
 
 class Splicer {
+  /** The original's line ending when it is consistently CRLF, else LF. */
+  private readonly eol: string
+
   constructor(
     private readonly original: string,
     private readonly updated: string,
     /** Whether a changed list or list item may be spliced by its children. */
     private readonly deep: boolean,
-  ) {}
+  ) {
+    this.eol = withSourceLineEndings('\n', original)
+  }
 
   /** The whole body, or undefined when either side has nothing to align. */
   body(before: MdNode, after: MdNode): string | undefined {
@@ -215,8 +239,8 @@ class Splicer {
     n: Side,
     nNodes: readonly MdNode[],
   ): Piece[] | undefined {
-    const oKeys = oNodes.map(canonical)
-    const nKeys = nNodes.map(canonical)
+    const oKeys = oNodes.map((node) => canonical(node, o.text))
+    const nKeys = nNodes.map((node) => canonical(node, n.text))
     const pairs = matchSequences(oKeys, nKeys)
     // Originals the alignment left unmatched, by meaning: a block that MOVED is matched by the
     // alignment on one side of its siblings only, and is written from here instead.
@@ -284,7 +308,8 @@ class Splicer {
   }
 
   private ownEndings(text: string): string {
-    return withSourceLineEndings(text, this.original)
+    const lf = text.replace(/\r\n?/g, '\n')
+    return this.eol === '\n' ? lf : lf.replace(/\n/g, this.eol)
   }
 
   /** A changed node spliced by its children, or undefined to write the editor's text. */
@@ -400,12 +425,14 @@ function listMarkers(
   if (first === null) return undefined
   const start = Number(first[1])
   const delimiter = first[2] ?? '.'
+  // `01.`, `02.`: zero-padded to the first marker's width.
+  const padTo = first[1]?.startsWith('0') ? first[1].length : 0
   const second = items.length > 1 ? numberAt(startOf(items[1])) : null
   const step = second !== null && Number(second[1]) === start ? 0 : 1
   return (itemText, index) => {
     const current = /^\d{1,9}[.)]/.exec(itemText)
     if (current === null) return undefined
-    const marker = `${start + step * index}${delimiter}`
+    const marker = `${String(start + step * index).padStart(padTo, '0')}${delimiter}`
     if (marker.length !== current[0].length && itemText.includes('\n')) return undefined
     return marker + itemText.slice(current[0].length)
   }
@@ -421,23 +448,27 @@ export function preserveMarkdownSource(
   format: MarkdownBodyFormat,
 ): string {
   if (original === updated) return original
+  try {
+    return splice(original, updated, format) ?? updated
+  } catch (err: unknown) {
+    // A deep enough body overflows the stack in parsing or serialising; a save must not fail.
+    log.debug('markdown-body-splice', 'splice failed', { error: getErrorMessage(err) })
+    return updated
+  }
+}
+
+function splice(original: string, updated: string, format: MarkdownBodyFormat): string | undefined {
   const before = parse(original, format)
   const after = parse(updated, format)
-  if (before === undefined || after === undefined) return updated
-  const target = canonical(after)
+  if (before === undefined || after === undefined) return undefined
+  const target = canonical(after, updated)
 
   for (const deep of [true, false]) {
-    let candidate: string | undefined
-    try {
-      candidate = new Splicer(original, updated, deep).body(before, after)
-    } catch (err: unknown) {
-      log.debug('markdown-body-splice', 'splice failed', { error: getErrorMessage(err) })
-      candidate = undefined
-    }
+    const candidate = new Splicer(original, updated, deep).body(before, after)
     if (candidate === undefined) continue
     const reparsed = parse(candidate, format)
-    if (reparsed !== undefined && canonical(reparsed) === target) return candidate
+    if (reparsed !== undefined && canonical(reparsed, candidate) === target) return candidate
     log.debug('markdown-body-splice', 'splice does not read back as the edit', { deep })
   }
-  return updated
+  return undefined
 }

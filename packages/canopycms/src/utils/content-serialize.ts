@@ -481,12 +481,20 @@ function extractBody(raw: string): string | undefined {
   }
 }
 
+/** Whether `matter.stringify` writes a frontmatter block for `data` (it skips an empty one). */
+function writesFrontmatter(data: Record<string, unknown>): boolean {
+  return Object.values(data).some((value) => value !== undefined)
+}
+
 /**
  * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
  * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
- * gray-matter leaves that blank line in the body, and the editor's body never has it, so it is
- * restored here even when the splice falls back. A file that had no frontmatter or no body yet
+ * gray-matter leaves that blank line in the body, and the editor's body does not carry it, so it
+ * is restored here even when the splice falls back. A file that had no frontmatter or no body yet
  * gets one blank line, the common markdown formatters' style.
+ *
+ * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
+ * the one newline that stops a body starting with `---` reading back as frontmatter.
  */
 function bodyToWrite(
   body: string,
@@ -496,8 +504,11 @@ function bodyToWrite(
 ): string {
   const priorBody = existingRaw === undefined ? undefined : extractBody(existingRaw)
   const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
+  if (!writesFrontmatter(data)) {
+    const flush = spliced.replace(/^(?:\r?\n)+/, '')
+    return flush.startsWith('---') ? `\n${flush}` : flush
+  }
   if (/^\r?\n/.test(spliced) || !/\S/.test(spliced)) return spliced
-  if (!Object.values(data).some((value) => value !== undefined)) return spliced
 
   const priorKeptBody =
     priorBody !== undefined &&
@@ -521,16 +532,18 @@ export function serializeFrontmatter(
   existingRaw: string | undefined,
   format: MarkdownBodyFormat,
 ): string {
-  const body = bodyToWrite(editorBody, data, format, existingRaw)
-  if (existingRaw === undefined) return matter.stringify(body, data)
+  // An object, never the body string: `matter.stringify` re-parses a string as a whole file, so a
+  // body starting with `---` would be read as frontmatter and dropped.
+  const file = { content: bodyToWrite(editorBody, data, format, existingRaw) }
+  if (existingRaw === undefined) return matter.stringify(file, data)
 
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
-  if (existingFrontmatter === undefined) return matter.stringify(body, data)
+  if (existingFrontmatter === undefined) return matter.stringify(file, data)
 
   const reconciled = reconcileYamlSource(existingFrontmatter, data, true)
-  if (reconciled === undefined) return matter.stringify(body, data)
+  if (reconciled === undefined) return matter.stringify(file, data)
 
-  return matter.stringify(body, data, {
+  return matter.stringify(file, data, {
     engines: {
       yaml: {
         parse: () => ({}),
