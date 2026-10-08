@@ -835,7 +835,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
 - `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
-- `handler.ts` — the request handler factory; rejects anonymous callers 401 before base-branch provisioning
+- `handler.ts` — the request handler factory; answers anonymous callers `unauthenticatedStatus` before base-branch provisioning
 - `worker-not-ready.ts` — `workerNotReadyResponse`: the retriable 503 for worker-not-ready and provisioning-busy errors
 - `index.ts` — module exports
 

@@ -66,6 +66,26 @@ describe('CanopyApiClient', () => {
       expect(onUnauthorized).not.toHaveBeenCalled()
     })
 
+    it('is called on a 419 whose handler body says 401, as unauthenticatedStatus sends', async () => {
+      const onUnauthorized = vi.fn()
+      const body = { ok: false, status: 401, error: 'Unauthorized' }
+      const client = new CanopyApiClient({ fetch: respond(419, async () => body), onUnauthorized })
+
+      expect(await client.branches.list()).toEqual(body)
+      expect(onUnauthorized).toHaveBeenCalledTimes(1)
+    })
+
+    it('is not called on a 403 whose body is not an ApiResponse, even one naming 401', async () => {
+      const onUnauthorized = vi.fn()
+      const client = new CanopyApiClient({
+        fetch: respond(403, async () => ({ status: 401, error: 'from a proxy' })),
+        onUnauthorized,
+      })
+
+      expect(await client.branches.list()).toMatchObject({ ok: false, status: 403 })
+      expect(onUnauthorized).not.toHaveBeenCalled()
+    })
+
     it('returns a non-JSON 401 as a 401 ApiResponse instead of throwing, and reports it', async () => {
       const onUnauthorized = vi.fn()
       const client = new CanopyApiClient({

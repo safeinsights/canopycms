@@ -81,7 +81,8 @@ export function ApiClientProvider({ children, client, basePath }: ApiClientProvi
 }
 
 /**
- * Subscribe to every 401 the provider's client receives, from any request. `listener` should be
+ * Subscribe to every unauthenticated response (`ApiClientOptions.onUnauthorized`) the provider's
+ * client receives, from any request. `listener` should be
  * stable (e.g. from `useCallback`): a new function re-subscribes. No-op outside a provider.
  */
 export function useOnUnauthorized(listener: () => void): void {

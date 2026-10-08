@@ -51,6 +51,11 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
 
+### `unauthenticatedStatus`: answer signed-out API calls with 419
+
+**To adopt.** Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on the
+editor's origin; the editor still detects sign-out. Otherwise nothing.
+
 ### A read reports the entry's `slug` and `urlPath`
 
 **What changed.** `read()`/`readByUrlPath()` return `meta.slug` and `meta.urlPath`, and a preview
