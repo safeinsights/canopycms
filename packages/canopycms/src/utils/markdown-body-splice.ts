@@ -79,20 +79,15 @@ function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
  * A node's meaning as a string: its tree without source positions. `data` goes too, because
  * the parser fills it only with derived information (an MDX expression's estree, which carries
  * its own offsets) and never with content. Line endings inside values are normalised, so a CRLF
- * file's blocks match the editor's LF ones. A link keeps its source form (`[`, `<` or a bare
- * URL), which GFM parses to the same tree but the editor does not: linking a bare URL is an edit.
+ * file's blocks match the editor's LF ones. A bare URL and `[url](url)` share a tree, which keeps
+ * a bare URL on disk when the editor (whose autolinking exports every URL as a link) sends it back.
  */
-function canonical(node: MdNode, text: string): string {
+function canonical(node: MdNode): string {
   return JSON.stringify(node, (key, value: unknown) => {
     if (key === 'position' || key === 'data') return undefined
     if (typeof value === 'string') return value.replace(/\r\n?/g, '\n')
-    if (isLink(value)) return { ...value, form: text[startOf(value) ?? -1] ?? '' }
     return value
   })
-}
-
-function isLink(value: unknown): value is MdNode {
-  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'link'
 }
 
 /** What a changed block must share with an original to be paired with it. */
@@ -239,8 +234,8 @@ class Splicer {
     n: Side,
     nNodes: readonly MdNode[],
   ): Piece[] | undefined {
-    const oKeys = oNodes.map((node) => canonical(node, o.text))
-    const nKeys = nNodes.map((node) => canonical(node, n.text))
+    const oKeys = oNodes.map(canonical)
+    const nKeys = nNodes.map(canonical)
     const pairs = matchSequences(oKeys, nKeys)
     // Originals the alignment left unmatched, by meaning: a block that MOVED is matched by the
     // alignment on one side of its siblings only, and is written from here instead.
@@ -461,13 +456,13 @@ function splice(original: string, updated: string, format: MarkdownBodyFormat): 
   const before = parse(original, format)
   const after = parse(updated, format)
   if (before === undefined || after === undefined) return undefined
-  const target = canonical(after, updated)
+  const target = canonical(after)
 
   for (const deep of [true, false]) {
     const candidate = new Splicer(original, updated, deep).body(before, after)
     if (candidate === undefined) continue
     const reparsed = parse(candidate, format)
-    if (reparsed !== undefined && canonical(reparsed, candidate) === target) return candidate
+    if (reparsed !== undefined && canonical(reparsed) === target) return candidate
     log.debug('markdown-body-splice', 'splice does not read back as the edit', { deep })
   }
   return undefined

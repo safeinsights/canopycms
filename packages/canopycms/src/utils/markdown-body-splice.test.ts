@@ -224,24 +224,12 @@ describe('preserveMarkdownSource', () => {
     )
   })
 
-  it.each([
-    [
-      'links a bare URL',
-      '\nSee www.example.com today.\n',
-      'See [www.example.com](http://www.example.com) today.',
-    ],
-    [
-      'unlinks a URL',
-      '\nSee [https://example.com](https://example.com).\n',
-      'See https://example.com.',
-    ],
-    [
-      'turns an autolink into a link',
-      '\nSee <https://example.com>.\n',
-      'See [https://example.com](https://example.com).',
-    ],
-  ])('writes an edit that %s, which GFM parses to the same tree', (_case, body, updated) => {
-    expect(preserveMarkdownSource(body, updated, 'md')).toBe(`\n${updated}\n`)
+  it('keeps bare URLs the editor sends back as links in untouched blocks', () => {
+    const body =
+      '\nFirst.\n\nSee https://example.com and a@b.co.\n\n- item at https://x.org\n- other\n'
+    const updated =
+      'First, edited.\n\nSee [https://example.com](https://example.com) and [a@b.co](mailto:a@b.co).\n\n- item at [https://x.org](https://x.org)\n- other'
+    expect(preserveMarkdownSource(body, updated, 'md')).toBe(edit(body, 'First.', 'First, edited.'))
   })
 
   it('writes the edit as sent, not an error, for a body too deep to compare', () => {
@@ -331,10 +319,11 @@ describe('serializeFrontmatter body preservation', () => {
     ['a file whose body sits flush', { t: 1 }, '---\nt: 1\n---\nIntro\n\nfoo\n'],
     ['a new file without frontmatter', {}, undefined],
     ['a file without frontmatter', {}, 'Intro\n\nfoo\n'],
-  ])('keeps a body that starts with a thematic break, in %s', (_case, data, existing) => {
-    const out = serializeFrontmatter('---\n\nfoo', data, existing, 'md')
+    ['a BOM-led body without frontmatter', {}, undefined, '\uFEFF'],
+  ])('keeps a body that starts with a thematic break, in %s', (_case, data, existing, bom = '') => {
+    const out = serializeFrontmatter(`${bom}---\n\nfoo`, data, existing, 'md')
     const read = matter(out, {})
-    expect(read.content.trim()).toBe('---\n\nfoo')
+    expect(read.content.replace(/^\uFEFF/, '').trim()).toBe('---\n\nfoo')
     expect(read.data).toEqual(data)
   })
 

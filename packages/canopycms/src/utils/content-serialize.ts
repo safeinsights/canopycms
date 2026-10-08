@@ -494,7 +494,8 @@ function writesFrontmatter(data: Record<string, unknown>): boolean {
  * gets one blank line, the common markdown formatters' style.
  *
  * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
- * the one newline that stops a body starting with `---` reading back as frontmatter.
+ * the one newline that stops a body starting with `---` (after any BOM, which gray-matter skips)
+ * reading back as frontmatter.
  */
 function bodyToWrite(
   body: string,
@@ -506,7 +507,7 @@ function bodyToWrite(
   const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
   if (!writesFrontmatter(data)) {
     const flush = spliced.replace(/^(?:\r?\n)+/, '')
-    return flush.startsWith('---') ? `\n${flush}` : flush
+    return /^\uFEFF?---/.test(flush) ? `\n${flush}` : flush
   }
   if (/^\r?\n/.test(spliced) || !/\S/.test(spliced)) return spliced
 
