@@ -507,17 +507,22 @@ Body text here.
   const MD_DATA = { draft: false, title: 'Hello', tags: ['guides', 'release'] }
 
   it('is byte-identical to gray-matter when there is no existing file', () => {
-    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA)).toBe(
+    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, undefined, 'md')).toBe(
       matter.stringify('\nBody text here.\n', MD_DATA),
     )
   })
 
   it('round-trips unchanged frontmatter with every comment intact', () => {
-    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, MD)).toBe(MD)
+    expect(serializeFrontmatter('\nBody text here.\n', MD_DATA, MD, 'md')).toBe(MD)
   })
 
   it('keeps frontmatter comments when a field and the body both change', () => {
-    const out = serializeFrontmatter('\nRewritten body.\n', { ...MD_DATA, title: 'Goodbye' }, MD)
+    const out = serializeFrontmatter(
+      '\nRewritten body.\n',
+      { ...MD_DATA, title: 'Goodbye' },
+      MD,
+      'md',
+    )
     expect(out).toContain('# Post metadata. Keep `draft` first')
     expect(out).toContain('# Order matters: the first tag is the primary category.')
     expect(out).toContain('title: Goodbye # displayed in the card')
@@ -529,13 +534,13 @@ Body text here.
 
   it('falls back to gray-matter when the frontmatter on disk does not parse', () => {
     const malformed = '---\na: [1, 2\nb: 3\n---\n\nBody.\n'
-    expect(serializeFrontmatter('\nBody.\n', MD_DATA, malformed)).toBe(
+    expect(serializeFrontmatter('\nBody.\n', MD_DATA, malformed, 'md')).toBe(
       matter.stringify('\nBody.\n', MD_DATA),
     )
   })
 
   it('falls back to gray-matter for a file with no frontmatter at all', () => {
-    expect(serializeFrontmatter('\nBody.\n', MD_DATA, 'Just a body, no delimiters.\n')).toBe(
+    expect(serializeFrontmatter('\nBody.\n', MD_DATA, 'Just a body, no delimiters.\n', 'md')).toBe(
       matter.stringify('\nBody.\n', MD_DATA),
     )
   })
@@ -545,8 +550,8 @@ Body text here.
     // content-keyed cache, and the object it returns on a cache HIT has lost `.matter`. Splitting
     // through that path preserved comments on the first save of a file and silently dropped them
     // on every save after — including across different entries that happen to share bytes.
-    const first = serializeFrontmatter('\nOne.\n', MD_DATA, MD)
-    const second = serializeFrontmatter('\nTwo.\n', MD_DATA, MD)
+    const first = serializeFrontmatter('\nOne.\n', MD_DATA, MD, 'md')
+    const second = serializeFrontmatter('\nTwo.\n', MD_DATA, MD, 'md')
     expect(first).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Post metadata. Keep `draft` first')
@@ -1017,12 +1022,12 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
   const POST = `---\n${HAND_FOLDED}---\n\nBody text.\n`
 
   it('returns the file byte-for-byte on a save that changes nothing', () => {
-    expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST)).toBe(POST)
+    expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST, 'md')).toBe(POST)
   })
 
   it('finishes a save that drops the first key when a comment sits above it', () => {
     const post = '---\n# about title\ntitle: A\nb: 1\n---\nbody\n'
-    expect(serializeFrontmatter('body\n', { b: 1 }, post)).toBe('---\nb: 1\n---\nbody\n')
+    expect(serializeFrontmatter('body\n', { b: 1 }, post, 'md')).toBe('---\nb: 1\n---\nbody\n')
   })
 
   it('keeps frontmatter readable when its keys are indented', () => {
@@ -1031,7 +1036,7 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
       { title: 'A', b: 1 },
       { title: 'B', b: 1 },
     ]) {
-      const out = serializeFrontmatter('body\n', data, indented)
+      const out = serializeFrontmatter('body\n', data, indented, 'md')
       expect(matter(out, {}).data).toEqual(data)
     }
   })
@@ -1039,7 +1044,7 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
   it('changes only the edited value, which keeps its `>-` style', () => {
     const data = handFoldedData()
     data.hero.body = 'Edited body.'
-    expect(serializeFrontmatter('\nBody text.\n', data, POST)).toBe(
+    expect(serializeFrontmatter('\nBody text.\n', data, POST, 'md')).toBe(
       replaceOnce(
         POST,
         '    Nested folded text wrapped narrowly\n    at about forty\n    columns.\n',

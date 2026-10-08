@@ -38,6 +38,7 @@ import {
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
 import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'ContentSerialize' })
@@ -471,26 +472,83 @@ function extractRawFrontmatter(raw: string): string | undefined {
   return frontmatter
 }
 
+/** The body of a file as gray-matter splits it, or undefined when it cannot split it. */
+function extractBody(raw: string): string | undefined {
+  try {
+    return matter(raw, {}).content
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter through. The
- * reconciled YAML goes back through `matter.stringify` via a custom stringify engine rather than
- * being spliced between hand-written `---` lines, so delimiters, blank lines and the trailing
- * newline stay exactly what gray-matter would have produced.
+ * Whether `data` has a value to write. Without one, gray-matter's YAML engine writes no frontmatter
+ * block (it skips `{}`); the reconcile engine can still write a comment-only block, under which a
+ * flush body is also read back intact.
  */
-export function serializeFrontmatter(
+function writesFrontmatter(data: Record<string, unknown>): boolean {
+  return Object.values(data).some((value) => value !== undefined)
+}
+
+/**
+ * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
+ * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
+ * gray-matter leaves that blank line in the body, and the editor's body does not carry it, so it
+ * is restored here even when the splice falls back. A body under frontmatter the file did not
+ * have, or under frontmatter with no body yet, gets one blank line, Prettier's style.
+ *
+ * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
+ * the one newline that stops a body starting with `---` (after any BOM, which gray-matter skips)
+ * reading back as frontmatter.
+ */
+function bodyToWrite(
   body: string,
   data: Record<string, unknown>,
-  existingRaw?: string,
+  format: MarkdownBodyFormat,
+  existingRaw: string | undefined,
 ): string {
-  if (existingRaw === undefined) return matter.stringify(body, data)
+  const priorBody = existingRaw === undefined ? undefined : extractBody(existingRaw)
+  const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
+  if (!writesFrontmatter(data)) {
+    const flush = spliced.replace(/^(?:\r?\n)+/, '')
+    return /^\uFEFF?---/.test(flush) ? `\n${flush}` : flush
+  }
+  if (/^\r?\n/.test(spliced) || !/\S/.test(spliced)) return spliced
+
+  const priorKeptBody =
+    priorBody !== undefined &&
+    /\S/.test(priorBody) &&
+    existingRaw !== undefined &&
+    extractRawFrontmatter(existingRaw) !== undefined
+  const lead = priorKeptBody ? (/^(?:\r?\n)*/.exec(priorBody)?.[0] ?? '') : '\n'
+  return lead + spliced
+}
+
+/**
+ * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter and the source
+ * text of its unchanged body blocks through. The reconciled YAML goes back through
+ * `matter.stringify` via a custom stringify engine rather than being spliced between
+ * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
+ * would have produced.
+ */
+export function serializeFrontmatter(
+  editorBody: string,
+  data: Record<string, unknown>,
+  existingRaw: string | undefined,
+  format: MarkdownBodyFormat,
+): string {
+  // An object, never the body string: `matter.stringify` re-parses a string as a whole file, so a
+  // body starting with `---` would be read as frontmatter and dropped.
+  const file = { content: bodyToWrite(editorBody, data, format, existingRaw) }
+  if (existingRaw === undefined) return matter.stringify(file, data)
 
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
-  if (existingFrontmatter === undefined) return matter.stringify(body, data)
+  if (existingFrontmatter === undefined) return matter.stringify(file, data)
 
   const reconciled = reconcileYamlSource(existingFrontmatter, data, true)
-  if (reconciled === undefined) return matter.stringify(body, data)
+  if (reconciled === undefined) return matter.stringify(file, data)
 
-  return matter.stringify(body, data, {
+  return matter.stringify(file, data, {
     engines: {
       yaml: {
         parse: () => ({}),
