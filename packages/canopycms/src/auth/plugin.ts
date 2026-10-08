@@ -16,7 +16,7 @@ export interface AuthPlugin {
    * groups; core applies bootstrap admins.
    *
    * CREDENTIAL failures (missing, invalid or expired token) RESOLVE to
-   * `{ success: false }` and map to a 401. CONFIGURATION errors (an absent
+   * `{ success: false }` and map to `unauthenticatedStatus` (default 401). CONFIGURATION errors (an absent
    * CLERK_SECRET_KEY, say) may THROW instead: they are operator mistakes, and
    * belong in a loud 500 rather than a quiet auth denial. A custom adapter
    * calling this directly must be ready for that rejection.

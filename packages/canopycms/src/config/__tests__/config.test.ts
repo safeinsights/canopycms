@@ -181,6 +181,20 @@ describe('config validation', () => {
     expect(withoutFlag.allowNetworkRemoteInProd).toBeUndefined()
   })
 
+  it('accepts unauthenticatedStatus 401 or 419 only', () => {
+    const base = { ...gitAuthor, mode: 'prod' as const }
+    expect(
+      validateCanopyConfig({ ...base, unauthenticatedStatus: 419 }).unauthenticatedStatus,
+    ).toBe(419)
+    expect(
+      validateCanopyConfig({ ...base, unauthenticatedStatus: 401 }).unauthenticatedStatus,
+    ).toBe(401)
+    expect(validateCanopyConfig(base).unauthenticatedStatus).toBeUndefined()
+    expect(() =>
+      validateCanopyConfig({ ...base, unauthenticatedStatus: 403 as unknown as 419 }),
+    ).toThrow()
+  })
+
   it('lets a later fragment override an earlier fragment field-by-field', () => {
     const first: CanopyConfigFragment = {
       ...gitAuthor,

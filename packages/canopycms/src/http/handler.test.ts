@@ -9,6 +9,8 @@ import { BranchMetadataCorruptError } from '../branch-metadata'
 import { RemoteNotReadyError } from '../git-manager'
 import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
+import { resolveCanopyUser } from '../resolve-canopy-user'
+import { ANONYMOUS_USER } from '../user'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => {
@@ -36,6 +38,11 @@ vi.mock('../branch-workspace', () => {
 })
 
 // Mock the permissions loader to avoid file system operations
+vi.mock('../resolve-canopy-user', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../resolve-canopy-user')>()
+  return { ...actual, resolveCanopyUser: vi.fn(actual.resolveCanopyUser) }
+})
+
 vi.mock('../authorization/permissions', () => ({
   loadPathPermissions: vi.fn().mockResolvedValue([]),
 }))
@@ -403,7 +410,40 @@ describe('createCanopyRequestHandler', () => {
     const response = await handler(req, ['branches'])
 
     expect(response.status).toBe(401)
-    expect(response.body).toHaveProperty('error', 'No token')
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
+  })
+
+  it('answers unauthenticated requests with unauthenticatedStatus, keeping the body status 401', async () => {
+    const services: any = createMockServices()
+    services.config.unauthenticatedStatus = 419
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin: createRejectingAuthPlugin('No token'),
+      getBranchContext: async () => null,
+    })
+
+    const response = await handler(createMockRequest(), ['branches'])
+
+    expect(response.status).toBe(419)
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'No token' })
+  })
+
+  it('answers an authenticated caller who resolves anonymous with unauthenticatedStatus', async () => {
+    const services: any = createMockServices()
+    services.config.unauthenticatedStatus = 419
+    vi.mocked(resolveCanopyUser).mockResolvedValueOnce(ANONYMOUS_USER)
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin: createMockAuthPlugin(),
+      getBranchContext: async () => null,
+    })
+
+    const response = await handler(createMockRequest(), ['branches'])
+
+    expect(response.status).toBe(419)
+    expect(response.body).toEqual({ ok: false, status: 401, error: 'Unauthorized' })
   })
 
   it('handles POST requests with empty body gracefully', async () => {

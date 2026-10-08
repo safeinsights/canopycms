@@ -213,8 +213,8 @@ export interface CanopyCmsAttachOptions {
    *
    * It must set `x-forwarded-host` from the viewer's Host, or sign-in
    * redirects point at the Function URL and 403. It must not gate on HTTP
-   * Basic auth: the API answers 401 without `WWW-Authenticate`, and a browser
-   * that sees that drops its cached Basic credential and prompts again.
+   * Basic auth; the CMS authenticates these routes itself. A Basic-gated site sets
+   * the CMS config's `unauthenticatedStatus: 419` (see docs/deploying-to-aws.md).
    *
    * @default - a function that sets `x-forwarded-host` and nothing else
    */
