@@ -433,7 +433,7 @@ The hook receives `{ entryPath, branch, entryType?, format, data, body }` for ev
 
 ### Comments in Content Files Survive Editing
 
-Content files can carry YAML comments — including notes that code elsewhere refers to by name — and a CMS save keeps them: writes re-serialise onto the file's own parsed document, so a value the editor did not change keeps its comments, quoting and block style. This covers `.yaml` entries and `md`/`mdx` frontmatter; JSON has no comment syntax. The content itself is still fully determined by the save — a field the editor cleared is cleared in the file — and only comments carry across from what was on disk.
+Content files can carry YAML comments — including notes that code elsewhere refers to by name — and a CMS save keeps them: a save rewrites only lines whose values changed, so a value the editor did not change keeps its comments, quoting, folding and block style (a file using YAML anchors or aliases is re-serialised whole). This covers `.yaml` entries and `md`/`mdx` frontmatter; JSON has no comment syntax. The content itself is fully determined by the save: a field the editor cleared is cleared in the file.
 
 Four limits:
 

@@ -40,6 +40,17 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### A save rewrites only the lines whose values changed
+
+**What changed.** A save no longer re-folds the file. In YAML entries and md/mdx frontmatter,
+untouched values, comments, blank lines and CRLF line endings stay as written, and an edited `>-`,
+`|` or quoted value keeps that style; the first save used to re-wrap every long value at 80
+columns. A file using anchors or aliases is still re-serialised whole.
+
+**To adopt.** Nothing.
+
+**Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
+
 ### Preview hooks move to `/preview` entries — **breaking (imports)**
 
 **What changed.** `withCanopyPreview` and its prop types moved from `canopycms-next/client` to `canopycms-next/preview`; `useCanopyPreview` and the other preview hooks from `canopycms/client` to `canopycms/preview`. The `/client` entries are the editor: importing them loaded Mantine's unlayered CSS, which beat the site's own styles in the preview, and shipped the editor to public pages.

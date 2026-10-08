@@ -6,8 +6,9 @@ span files.
 
 ## Where each rule lives
 
-- `content-serialize.ts` (module header, `looksLikeSameItem`): the comment-preserving write
-  path `ContentStore.write` uses; its evidence search reads `validation/block-structural-keys.ts`.
+- `content-serialize.ts` (module header, `looksLikeSameItem`): `ContentStore.write`'s
+  comment-preserving write path, printed by `yaml-source-splice.ts`; evidence search reads
+  `validation/block-structural-keys.ts`.
 - `content-write-lock.ts` (module header): [SYNC-C1]; taken by `ContentStore.write`/`delete`/
   `renameEntry` (mapped to `BranchSyncingError`) and by `rebaseActiveBranches`; reads never take
   it. Layering: [docs/concurrency.md](../../../../docs/concurrency.md).
