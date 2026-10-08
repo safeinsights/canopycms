@@ -123,6 +123,13 @@ const EMPTY_SCHEMAS: string[] = []
 /**
  * Custom hook for managing editor entries (CRUD operations).
  */
+/**
+ * The URL's `entry`: a path; `''` for no entry and the navigator open (the crash screen's escape
+ * from an entry that crashes the editor); null opens the first entry.
+ */
+const readUrlEntry = (): string | null =>
+  typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('entry')
+
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const apiClient = useApiClient()
   const { mutate: globalMutate } = useSWRConfig()
@@ -166,7 +173,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
-  const [navigatorOpen, setNavigatorOpen] = useState(false)
+  const [navigatorOpen, setNavigatorOpen] = useState(() => readUrlEntry() === '')
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
   // OCC version tokens — captured on load, sent on save. Keyed by
@@ -243,11 +250,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [createModalCreating, setCreateModalCreating] = useState(false)
 
   // Store the URL entry param on mount (before any effects change the URL)
-  const initialUrlEntry = useRef<string | null>(null)
-  if (typeof window !== 'undefined' && initialUrlEntry.current === null) {
-    const params = new URLSearchParams(window.location.search)
-    initialUrlEntry.current = params.get('entry')
+  const initialUrlEntry = useRef<string | null | undefined>(undefined)
+  if (initialUrlEntry.current === undefined) {
+    initialUrlEntry.current = readUrlEntry()
   }
+  const noEntryRequested = initialUrlEntry.current === ''
 
   const collectionByPath = useMemo(() => {
     const map = new Map<LogicalPath, EditorCollection>()
@@ -677,9 +684,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // If the selected entry exists, keep it
     if (entriesState.find((e) => e.path === selectedPath)) return
 
+    if (selectedPath === '' && noEntryRequested) return
+
     // Fall back to first entry
     setSelectedPath(entriesState[0]?.path ?? '')
-  }, [entriesState, selectedPath])
+  }, [entriesState, selectedPath, noEntryRequested])
 
   // Update URL when selection changes (skip until URL sync has happened)
   useEffect(() => {
@@ -689,11 +698,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const url = new URL(window.location.href)
     if (selectedPath) {
       url.searchParams.set('entry', selectedPath)
+    } else if (noEntryRequested) {
+      // Kept, so a reload still opens no entry.
+      url.searchParams.set('entry', '')
     } else {
       url.searchParams.delete('entry')
     }
     window.history.replaceState({}, '', url.toString())
-  }, [selectedPath])
+  }, [selectedPath, noEntryRequested])
 
   return {
     selectedPath,

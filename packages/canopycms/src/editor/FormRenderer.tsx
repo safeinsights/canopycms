@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
 import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
@@ -36,6 +36,8 @@ import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
+import { EditorErrorBoundary } from './components/EditorErrorBoundary'
+import { FieldCrashFallback } from './fields/FieldCrashFallback'
 
 export type FormValue = Record<string, unknown>
 
@@ -75,6 +77,9 @@ const normalizeOptions = (
 }
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
+
+/** Builds the control inside the field's boundary: a custom renderer is called, not mounted. */
+const FieldControl: React.FC<{ build: () => React.ReactNode }> = ({ build }) => <>{build()}</>
 
 export interface FormRendererProps {
   fields: EntrySchema
@@ -136,21 +141,53 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     onLoadingStateChange,
   })
 
-  // Wraps the rendered control with an inline validation message when this
-  // field has an active error (keyed by canonical canopy path, so errors land
-  // on nested object/block fields too). Passed down to BlockField/ObjectField
-  // so nested fields get the same decoration.
+  const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
+  // Canopy path -> reset key it crashed under. A crashed field emits no edits until its boundary
+  // resets (entry or branch change), so it cannot change a value the author no longer sees.
+  const crashedFields = useRef(new Map<string, string>())
+  useEffect(() => {
+    for (const [path, key] of crashedFields.current) {
+      if (key !== boundaryResetKey) crashedFields.current.delete(path)
+    }
+  }, [boundaryResetKey])
+
+  // Wraps the rendered control in an error boundary, and with an inline validation message
+  // when this field has an active error (keyed by canonical canopy path, so errors land on
+  // nested object/block fields too). Passed down to BlockField/ObjectField so nested fields
+  // get the same decoration.
   const renderField = (
     field: FieldConfig,
     currentValue: unknown,
     update: (v: unknown) => void,
     path: Array<string | number>,
   ) => {
-    const control = renderFieldControl(field, currentValue, update, path)
-    const error = fieldErrors?.[normalizeCanopyPath(path)]
+    const canopyPath = normalizeCanopyPath(path)
+    const guardedUpdate = (next: unknown) => {
+      if (crashedFields.current.get(canopyPath) === boundaryResetKey) return
+      update(next)
+    }
+    const error = fieldErrors?.[canopyPath]
     return (
       <Stack key={fieldKey(path)} gap={4}>
-        {control}
+        <EditorErrorBoundary
+          context={{ boundary: 'field', fieldPath: canopyPath }}
+          resetKey={boundaryResetKey}
+          onCaught={() => crashedFields.current.set(canopyPath, boundaryResetKey)}
+          fallback={(caught) => (
+            <FieldCrashFallback
+              label={field.label ?? field.name}
+              fieldType={field.type}
+              value={currentValue}
+              onChange={update}
+              caught={caught}
+              dataCanopyField={canopyPath}
+            />
+          )}
+        >
+          <FieldControl
+            build={() => renderFieldControl(field, currentValue, guardedUpdate, path)}
+          />
+        </EditorErrorBoundary>
         {error && (
           <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
             {error}

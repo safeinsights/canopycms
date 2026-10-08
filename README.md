@@ -458,7 +458,7 @@ Neither rejects a save or fails a build, and neither strips anything: an unrecog
 
 ### Local Development Sync
 
-In `dev` mode your content lives in two places: your repo's working tree, and the branch workspaces under `.canopy-dev/content-branches/` that the editor reads. Editing the working tree directly (or pulling from GitHub) while the dev server serves a branch clone lets the two drift — the classic "builds fine, but the dev editor shows stale content" trap. The split runs the other way for `next build`, which reads only the working tree, so an editor's saved changes are not part of a build until `canopycms sync pull` copies them out.
+In `dev` mode your content lives in two places: your repo's working tree, and the branch workspaces under `.canopy-dev/content-branches/` that the editor reads. Editing the working tree (or pulling from GitHub) while the dev server serves a branch clone lets the two drift, so the dev editor shows stale content. The split runs the other way for `next build`, which reads only the working tree, so an editor's saved changes are not part of a build until `canopycms sync pull` copies them out.
 
 **Automatic divergence detection.** `dev.contentSync` controls reporting (dev mode only, ignored when `mode !== 'dev'`): `'warn'`, the default, logs a warning at startup and on `content/**` changes naming the files that diverge from the branch clone; `'off'` installs no watcher.
 
@@ -495,7 +495,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; unsupported bodies open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; unsupported or crashing bodies open as source
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
@@ -512,7 +512,7 @@ Common options on any field:
   description: 'Hint',    // Optional: help text shown under the label in the editor
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
-  isTitle: true,          // Optional: use as the display title in the editor sidebar
+  isTitle: true,          // Optional: the entry's title in the editor sidebar
 }
 ```
 
@@ -520,9 +520,11 @@ On a `string` field, `list: true` renders a tag input: type a value and press En
 
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
+A field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
+
 #### Rendering `markdown` / `mdx` content on your site
 
-CanopyCMS stores and edits markdown and deliberately does **not** ship a renderer: two sites render the same markdown differently on purpose — different component mappings, different sanitization needs — so the presentation layer is yours. One trap is worth knowing, because it fails confusingly:
+CanopyCMS stores and edits markdown and deliberately does **not** ship a renderer: sites render markdown differently on purpose, so the presentation layer is yours. One confusing trap:
 
 > **`react-markdown` does not work in a React Server Component.** Rendering its default export from a server component crashes a static prerender with `Element type is invalid … got: undefined`, while the same code resolves fine once it is in the client bundle. The fix is `'use client'` on your own wrapper component.
 

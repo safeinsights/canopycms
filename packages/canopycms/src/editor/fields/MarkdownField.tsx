@@ -1,6 +1,6 @@
 'use client'
 
-import React, { Suspense, useId, useRef, useCallback, useEffect, useState } from 'react'
+import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, useState } from 'react'
 
 import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 
@@ -12,6 +12,13 @@ import { useApiClient, useAssetContext } from '../context'
 import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { EditorErrorBoundary, type CaughtEditorError } from '../components/EditorErrorBoundary'
+import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
+import {
+  forgetRichTextFailure,
+  recallRichTextFailure,
+  rememberRichTextFailure,
+} from './rich-text-failures'
 
 export interface MarkdownFieldProps {
   id?: string
@@ -251,14 +258,37 @@ const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>>
   />
 )
 
-/**
- * `source` is a textarea over the value, chosen by the user (`reason: null`) or
- * forced because MDXEditor rejected the value and would emit no edits to it.
- */
-type EditorMode =
-  | { kind: 'rich' }
-  | { kind: 'source'; reason: null }
-  | { kind: 'source'; reason: string; failedValue: string }
+/** The textarea over a markdown value; `failure` is why the rich-text editor could not open it. */
+export const MarkdownSourceEditor: React.FC<{
+  label?: string
+  value: string
+  onChange: (value: string) => void
+  failure?: string
+}> = ({ label, value, onChange, failure }) => (
+  <>
+    {failure !== undefined && (
+      <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
+        <Text size="sm">
+          This content couldn&apos;t be opened in the visual editor. You can still edit the text and
+          save.
+        </Text>
+        <Text size="xs" c="dimmed" mt={4}>
+          {failure}
+        </Text>
+      </Alert>
+    )}
+    <Textarea
+      value={value}
+      onChange={(e) => onChange(e.currentTarget.value)}
+      aria-label={label ? `${label} (source)` : 'Markdown source'}
+      data-testid="markdown-source-editor"
+      autosize
+      minRows={10}
+      size="sm"
+      styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+    />
+  </>
+)
 
 export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   id,
@@ -275,7 +305,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const lastRejectedSource = useRef<string | null>(null)
   const pendingInsert = useRef<string | null>(null)
   const apiClient = useApiClient()
-  const [mode, setMode] = useState<EditorMode>({ kind: 'rich' })
+  const [sourceChosen, setSourceChosen] = useState(false)
+  const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
   const [editorGeneration, setEditorGeneration] = useState(0)
 
@@ -338,6 +369,11 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     }
   }, [])
 
+  // A value the rich-text editor failed on opens as source, whether MDXEditor rejected it or
+  // crashed rendering it; rich-text-failures.ts holds the record for the session.
+  const failure = recallRichTextFailure(value)
+  const showSource = sourceChosen || failure !== undefined
+
   // MDXEditor can report the error while rendering (it imports as it is
   // created), hence the microtask. Any rejection outside an insert is the
   // document, this render's `value`: MDXEditor is created from it, and gets
@@ -354,28 +390,38 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           setRejectedInsert(error)
           setEditorGeneration((n) => n + 1)
         } else {
-          setMode({ kind: 'source', reason: error, failedValue: value })
+          rememberRichTextFailure(value, error)
+          rerender()
         }
       })
     },
     [value],
   )
 
-  // Edits in the fallback stay in it: the edited text is no more likely to load.
-  const handleSourceChange = useCallback(
-    (newValue: string) => {
-      setMode((current) =>
-        current.kind === 'source' && current.reason !== null
-          ? { ...current, failedValue: newValue }
-          : current,
-      )
-      emitChange(newValue)
+  const handleEditorCrash = useCallback(
+    ({ error }: CaughtEditorError) => {
+      rememberRichTextFailure(value, sanitizeErrorMessage(getErrorMessage(error)))
+      rerender()
     },
-    [emitChange],
+    [value],
   )
 
-  // A fallback holds only for the value MDXEditor rejected.
-  const showSource = mode.kind === 'source' && (mode.reason === null || mode.failedValue === value)
+  // Edits in the fallback stay in it: the edited text is no more likely to load.
+  const handleSourceChange = (newValue: string) => {
+    if (failure !== undefined) rememberRichTextFailure(newValue, failure)
+    emitChange(newValue)
+  }
+
+  const toggleMode = () => {
+    if (!showSource) {
+      setSourceChosen(true)
+      return
+    }
+    // Asking for rich text tries the editor again on a value it failed on.
+    forgetRichTextFailure(value)
+    setSourceChosen(false)
+    rerender()
+  }
 
   return (
     <div
@@ -396,7 +442,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           variant="subtle"
           size="compact-xs"
           data-testid="markdown-mode-toggle"
-          onClick={() => setMode(showSource ? { kind: 'rich' } : { kind: 'source', reason: null })}
+          onClick={toggleMode}
         >
           {showSource ? 'Rich text' : 'Edit source'}
         </Button>
@@ -404,29 +450,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
       {showSource ? (
-        <>
-          {mode.kind === 'source' && mode.reason !== null && (
-            <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
-              <Text size="sm">
-                The rich-text editor can&apos;t show this content, so it is open as source. Your
-                edits here are saved as usual.
-              </Text>
-              <Text size="xs" c="dimmed" mt={4}>
-                {mode.reason}
-              </Text>
-            </Alert>
-          )}
-          <Textarea
-            value={value}
-            onChange={(e) => handleSourceChange(e.currentTarget.value)}
-            aria-label={label ? `${label} (source)` : 'Markdown source'}
-            data-testid="markdown-source-editor"
-            autosize
-            minRows={10}
-            size="sm"
-            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
-          />
-        </>
+        <MarkdownSourceEditor
+          label={label}
+          value={value}
+          onChange={handleSourceChange}
+          failure={failure}
+        />
       ) : (
         <div style={editorWrapperStyle}>
           {rejectedInsert !== null && (
@@ -446,18 +475,24 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
               </Text>
             </Alert>
           )}
-          <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
-            <MDXEditorLazy
-              key={editorGeneration}
-              markdown={value}
-              onChange={handleEditorChange}
-              onError={handleEditorError}
-              onInsert={handleInsert}
-              editorRef={editorRef}
-              imageUploadHandler={imageUploadHandler}
-              imagePreviewHandler={imagePreviewHandler}
-            />
-          </Suspense>
+          <EditorErrorBoundary
+            context={{ boundary: 'rich-text', fieldPath: dataCanopyField }}
+            fallback={() => null}
+            onCaught={handleEditorCrash}
+          >
+            <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
+              <MDXEditorLazy
+                key={editorGeneration}
+                markdown={value}
+                onChange={handleEditorChange}
+                onError={handleEditorError}
+                onInsert={handleInsert}
+                editorRef={editorRef}
+                imageUploadHandler={imageUploadHandler}
+                imagePreviewHandler={imagePreviewHandler}
+              />
+            </Suspense>
+          </EditorErrorBoundary>
         </div>
       )}
     </div>

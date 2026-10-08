@@ -881,6 +881,8 @@ it('logs error when something fails', () => {
 
 `toHaveErrored`, `toHaveWarned` and `toHaveLogged` match `console.error`/`warn`/`log`, taking a substring or a RegExp; `consoleSpy.all()` dumps everything captured, by method, when an assertion is not matching. Other packages import `mockConsole()` from `canopycms/test-utils`; a plain `vi.spyOn(console, 'warn').mockImplementation(() => {})`, asserted and `mockRestore()`d in a `finally`, works too.
 
+**A jsdom test that expects an error boundary to catch** also needs `silenceReportedRenderErrors()` from `src/test-utils/render-errors.ts`: React's development build re-raises each caught render error as a window `error` event, and jsdom prints it straight to stderr where no console spy reaches. Call it in `beforeEach` and run the function it returns in `afterEach`. `mockConsole()` still captures React's own `console.error` and the editor's `[canopycms] editor error caught` log.
+
 **Keep the reporter "all dots"**: `vitest.shared.ts` names it explicitly, and its comment says why an unnamed reporter blinds the guard. When CI fails with this error, swallow and assert the output, or remove the stray log; do **not** silence the guard.
 
 **Provisioning step lines** (`[canopy] provision …`) print unconditionally, so `src/test-utils/quiet-provision-log.ts`, a `node`-project `setupFile`, silences them before every test. A test asserting on them installs its own `setProvisionLogSink(...)`.
