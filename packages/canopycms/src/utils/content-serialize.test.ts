@@ -925,6 +925,73 @@ describe('serializeYaml keeps comments with the items yaml gives them to', () =>
     )
   })
 
+  it('leaves a zero-indented list as written when a key is appended after it', () => {
+    // `# about c` is c's leading comment: no line of the run reaches into the item above.
+    const raw = 'mark: >-\n  folded by\n  hand\nitems:\n- a: 1\n  b: 2\n# about c\n- c: 3\n'
+    const data = { ...(yamlParse(raw) as Record<string, unknown>), extra: 1 }
+    expect(serializeYaml(data, raw)).toBe(`${raw}extra: 1\n`)
+  })
+
+  it('leaves a comment run alone when more of the item follows it', () => {
+    // Only the run that ENDS the item can head its neighbour; `# about other` is other's.
+    const raw =
+      'hero:\n  sub:\n    deep: 1\n    # pinned mid\n  # about other\n  other: 2\nfoot: z\n'
+    expect(serializeYaml({ hero: { sub: { deep: 1 }, other: 2 } }, raw)).toBe(
+      replaceOnce(raw, 'foot: z\n', ''),
+    )
+  })
+
+  it('stays local when the value holding a pinned comment run is dropped with its neighbour', () => {
+    const raw =
+      'mark: >-\n  folded by\n  hand\nhero:\n  title: x\n  sub:\n    deep: 1\n    # deep tail\n# about cta\ncta:\n  label: y\nfoot: z\n'
+    expect(serializeYaml({ mark: 'folded by hand', hero: { title: 'x' }, foot: 'z' }, raw)).toBe(
+      'mark: >-\n  folded by\n  hand\nhero:\n  title: x\nfoot: z\n',
+    )
+  })
+
+  it("indents a pinned comment run to its deepest line, not to the item's last deeper line", () => {
+    const raw = `mark: >-
+  folded by
+  hand
+sections:
+  - template: hero
+    value:
+      title: Hero
+  # Keep this CTA
+    # note at 4
+  - template: cta
+    label: Go
+  - template: faq
+    q: Why
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 1)
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(
+        raw,
+        '  # Keep this CTA\n    # note at 4\n  - template: cta\n    label: Go\n',
+        '    # Keep this CTA\n    # note at 4\n',
+      ),
+    )
+  })
+
+  it("indents a pinned comment that sits between the dash and the item's keys", () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+   # Keep this CTA
+  - template: cta
+    label: Go
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 0, { template: 'x' })
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(raw, '   # Keep this CTA\n', '      # Keep this CTA\n  - template: x\n'),
+    )
+  })
+
   it("keeps a list local when a block's nested value ends in a comment", () => {
     const raw = `sections:
   - template: hero

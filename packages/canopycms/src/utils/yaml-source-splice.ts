@@ -224,7 +224,7 @@ class SourceSplicer {
       if (inner !== undefined) {
         const next = map.items[map.items.indexOf(item) + 1] ?? END
         if ((i + 1 < snap.length ? snap[i + 1].item : END) !== next) {
-          edits.push(...this.outdentedCommentEdits(g, col))
+          edits.push(...uncovered(this.outdentedCommentEdits(g, col), inner))
         }
         edits.push(...inner)
         continue
@@ -266,7 +266,7 @@ class SourceSplicer {
           inner !== undefined
             ? this.applyEdits(start, geometry[j].end, [
                 ...inner,
-                ...(moved ? this.outdentedCommentEdits(geometry[j], col) : []),
+                ...(moved ? uncovered(this.outdentedCommentEdits(geometry[j], col), inner) : []),
               ])
             : this.raw.slice(start, geometry[j].lineStart) +
               withoutLeadingComment(item, () => this.render(seqOf(item), col, false))
@@ -340,28 +340,30 @@ class SourceSplicer {
   }
 
   /**
-   * A comment line inside an item at or left of the item's own column, which `yaml` reads as the
-   * item's because it follows a deeper line, reads to a person as being about whatever comes next.
-   * Once the item's neighbour below changes, indent such lines to the deeper line above them —
-   * where `toString()` draws them — so they do not head content they were never about.
+   * The run of comment lines that ends an item's region reads to a person as being about what
+   * comes next, but `yaml` keeps it with the item when any line of it is right of the item's
+   * column (its `pop()` pins a trailing run to the nested collection it reaches into). While the
+   * neighbour below is unchanged that is harmless; once it changes, indent the run's shallower
+   * lines to its deepest comment — where `toString()` draws a pinned run — so they do not head
+   * content they were never about. A run at or left of the item's column is the next item's
+   * already, and is left alone.
    */
   private outdentedCommentEdits(g: ItemGeometry, col: number): Edit[] {
-    const edits: Edit[] = []
-    let deeper: number | undefined
+    let run: Array<{ start: number; indent: number }> = []
     let at = this.raw.indexOf('\n', g.content) + 1
     while (at > 0 && at < g.end) {
       const lineEnd = this.raw.indexOf('\n', at)
       const line = this.raw.slice(at, lineEnd === -1 ? g.end : lineEnd)
       const indent = line.length - line.trimStart().length
-      if (line.trim() !== '') {
-        if (indent > col) deeper = indent
-        else if (line.trimStart().startsWith('#') && deeper !== undefined) {
-          edits.push({ start: at, end: at + indent, text: ' '.repeat(deeper) })
-        }
-      }
+      if (line.trimStart().startsWith('#')) run.push({ start: at, indent })
+      else if (line.trim() !== '') run = []
       at = lineEnd === -1 ? g.end : lineEnd + 1
     }
-    return edits
+    const pin = Math.max(-1, ...run.map((line) => line.indent))
+    if (pin <= col) return []
+    return run
+      .filter((line) => line.indent < pin)
+      .map((line) => ({ start: line.start, end: line.start + line.indent, text: ' '.repeat(pin) }))
   }
 
   /** Where item `i`'s chunk begins: its own line for the first item, else the previous item's end. */
@@ -470,6 +472,16 @@ class SourceSplicer {
       .map((line) => line + this.eol)
       .join('')
   }
+}
+
+/**
+ * The edits in `extra` that no edit in `edits` already rewrites. A run of comment lines inside
+ * a value that is being deleted or re-rendered goes, or is re-drawn, with that value.
+ */
+function uncovered(extra: readonly Edit[], edits: readonly Edit[]): Edit[] {
+  return extra.filter(
+    (e) => !edits.some((x) => x.end > x.start && x.start <= e.start && e.end <= x.end),
+  )
 }
 
 function mapOf(pairs: readonly Pair<unknown, unknown>[]): YAMLMap<unknown, unknown> {
