@@ -8,7 +8,7 @@ import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/te
 import { CanopyCMSProvider } from '../theme'
 import { MarkdownField } from './MarkdownField'
 
-// Preload the chunks MarkdownField's React.lazy() imports.
+// Preload the chunk MarkdownField's React.lazy() imports.
 //
 // The mount assertion below is about WHETHER the real editor mounts, not how
 // fast: without this it also silently measures how long vitest takes to
@@ -23,7 +23,6 @@ import { MarkdownField } from './MarkdownField'
 // the product. Same specifier as MarkdownField.tsx uses, deliberately -- a
 // different one would warm nothing.
 import '@mdxeditor/editor'
-import './mdx-jsx-support'
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual('../../api')

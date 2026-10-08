@@ -8,6 +8,7 @@ import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
 import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
 import { MdxImageDialog } from './MdxImageDialog'
+import { createMdxJsxPlugins } from './mdx-jsx-support'
 import { useApiClient, useAssetContext } from '../context'
 import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
@@ -23,46 +24,46 @@ export interface MarkdownFieldProps {
 }
 
 const MDXEditorLazy = React.lazy(async () => {
-  const [
-    {
-      MDXEditor,
-      headingsPlugin,
-      listsPlugin,
-      quotePlugin,
-      thematicBreakPlugin,
-      markdownShortcutPlugin,
-      linkPlugin,
-      linkDialogPlugin,
-      imagePlugin,
-      tablePlugin,
-      toolbarPlugin,
-      codeBlockPlugin,
-      codeMirrorPlugin,
-      BoldItalicUnderlineToggles,
-      BlockTypeSelect,
-      ListsToggle,
-      CreateLink,
-      InsertImage,
-      InsertTable,
-      InsertThematicBreak,
-      CodeToggle,
-      InsertCodeBlock,
-      UndoRedo,
-      Separator,
-      insertMarkdown$,
-      usePublisher,
-      useCellValues,
-      saveImage$,
-      closeImageDialog$,
-      imageDialogState$,
-      activeEditor$,
-      $isImageNode,
-      // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
-      // a separately resolved copy would throw inside this editor's `read()`.
-      lexical: { $getNodeByKey },
-    },
-    { mdxJsxPlugins },
-  ] = await Promise.all([import('@mdxeditor/editor'), import('./mdx-jsx-support')])
+  // MDXEditor's only code import (theme.tsx loads its CSS); see mdx-jsx-support for why.
+  const mdx = await import('@mdxeditor/editor')
+  const {
+    MDXEditor,
+    headingsPlugin,
+    listsPlugin,
+    quotePlugin,
+    thematicBreakPlugin,
+    markdownShortcutPlugin,
+    linkPlugin,
+    linkDialogPlugin,
+    imagePlugin,
+    tablePlugin,
+    toolbarPlugin,
+    codeBlockPlugin,
+    codeMirrorPlugin,
+    BoldItalicUnderlineToggles,
+    BlockTypeSelect,
+    ListsToggle,
+    CreateLink,
+    InsertImage,
+    InsertTable,
+    InsertThematicBreak,
+    CodeToggle,
+    InsertCodeBlock,
+    UndoRedo,
+    Separator,
+    insertMarkdown$,
+    usePublisher,
+    useCellValues,
+    saveImage$,
+    closeImageDialog$,
+    imageDialogState$,
+    activeEditor$,
+    $isImageNode,
+    // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
+    // a separately resolved copy would throw inside this editor's `read()`.
+    lexical: { $getNodeByKey },
+  } = mdx
+  const mdxJsxPlugins = createMdxJsxPlugins(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
     onInsert: (insert: () => void, markdown: string) => void

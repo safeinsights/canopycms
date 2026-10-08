@@ -16,8 +16,7 @@ vi.mock('../../api', async () => ({
   ...(await vi.importActual('../../api')),
   createApiClient: vi.fn(),
 }))
-// The entry-link button is MarkdownField's caller of MDXEditor's insertMarkdown; this stand-in
-// inserts whatever a test puts in `insertion`.
+// Stands in for the entry-link button, MDXEditor's insertMarkdown caller, inserting `insertion`.
 const insertion = { markdown: '' }
 vi.mock('./entry-link', () => ({
   InsertEntryLink: ({ onInsert }: { onInsert: (markdown: string) => void }) => (

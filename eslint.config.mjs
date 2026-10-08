@@ -265,6 +265,12 @@ const eslintConfig = [
               message:
                 'Load sharp only through loadSharp() in canopycms/src/assets/sharp-loader.ts, and use `import type` for its types. A static import loads libvips whenever this module graph is imported, so a missing native binary fails every route that imports it instead of only the image operation that needs it.',
             },
+            {
+              name: '@mdxeditor/editor',
+              allowTypeImports: true,
+              message:
+                "Reach MDXEditor only through MarkdownField.tsx's lazy import('@mdxeditor/editor'), passing the module to whatever needs it, and use `import type` for its types. A named import can enter MDXEditor's jsx import cycle mid-cycle, which Turbopack can evaluate twice (see editor/fields/mdx-jsx-support.tsx).",
+            },
           ],
         },
       ],
