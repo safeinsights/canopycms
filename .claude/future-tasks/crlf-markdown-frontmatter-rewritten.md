@@ -20,5 +20,5 @@ the first save. No adopter content is known to be CRLF.
 
 Detect a consistently CRLF file in `serializeFrontmatter`, splice the frontmatter with its
 trailing `\r` stripped, and write the delimiters with the file's own line ending, instead of
-handing the framing to `matter.stringify`. Decide first whether the body (which the editor
-submits LF-normalised) should be converted to match.
+handing the framing to `matter.stringify`. The body keeps its CRLF wherever the body splice
+(`utils/markdown-body-splice.ts`) succeeds: it writes new text in the body's own line endings.
