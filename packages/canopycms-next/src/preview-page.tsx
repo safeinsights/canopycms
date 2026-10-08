@@ -12,9 +12,9 @@ type ReadEntry = NonNullable<Awaited<ReturnType<CanopyContext['readByUrlPath']>>
  */
 export interface PreviewEntry {
   data: unknown
-  /** The entry's slug within its collection, as `listEntries` reports it (`index` for an index entry). */
+  /** The entry's slug within its collection, as `listEntries` computes it (`index` for an index entry). */
   slug: ReadEntry['meta']['slug']
-  /** The entry's URL path with no query, as `listEntries` reports it (`/docs` for an index entry). */
+  /** The entry's URL path with no query, as `listEntries` computes it (`/docs` for an index entry). */
   urlPath: string
   /** A link back to this entry on the branch read: the percent-encoded URL path plus `?branch=`. */
   path: string

@@ -29,7 +29,8 @@ const entry = (
   at: { slug: string; urlPath: string } = { slug: 'hello', urlPath: '/posts/hello' },
 ) => ({
   data,
-  path: `${at.urlPath}?branch=feature%2Fx`,
+  // Not derived from urlPath, so a page that parsed urlPath out of path would fail.
+  path: '/link?branch=feature%2Fx',
   meta: { entryType, entryId: 'abc', physicalPath: '/srv/workspace/secret/post.md', ...at },
 })
 
@@ -171,7 +172,7 @@ describe('createPreviewPageFor with a loader', () => {
         data: found.data,
         slug: 'hello',
         urlPath: '/posts/hello',
-        path: '/posts/hello?branch=feature%2Fx',
+        path: '/link?branch=feature%2Fx',
         entryType: 'post',
         entryId: 'abc',
       },

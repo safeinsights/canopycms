@@ -102,9 +102,9 @@ export interface ContentReadMeta {
    * `{type}.{slug}.{id}.{ext}`) -- see the `entryType` caveat above for what that implies.
    */
   entryId?: ContentId
-  /** The entry's slug within its collection, equal to its `listEntries` item's `slug`. */
+  /** The entry's slug within its collection, by the rule `listEntries` uses. */
   slug: Slug
-  /** The entry's URL path with no query, equal to its `listEntries` item's `urlPath`. */
+  /** The entry's URL path with no query, by the rule `listEntries` uses. */
   urlPath: string
 }
 
@@ -115,8 +115,9 @@ export interface ContentReader {
   ) => Promise<{
     data: T
     /**
-     * The entry's URL path, percent-encoded, with `?branch=<name>` appended: a link that stays on
-     * the branch read. Not a key to compare entries by; `meta.urlPath` and `meta.slug` are.
+     * The requested `entryPath` and slug as a percent-encoded URL path, plus `?branch=<name>`.
+     * Through an entry-type `entryPath` it is not the entry's URL. Compare entries by
+     * `meta.urlPath`.
      */
     path: string
     meta: ContentReadMeta

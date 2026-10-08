@@ -54,7 +54,7 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 ### A read reports the entry's `slug` and `urlPath`
 
 **What changed.** `read()`/`readByUrlPath()` return `meta.slug` and `meta.urlPath`, and a preview
-`load` gets `entry.slug` and `entry.urlPath`, each equal to the entry's `listEntries` item's.
+`load` gets `entry.slug` and `entry.urlPath`, each computed as `listEntries` computes them.
 
 **Now deletable.** Code parsing a slug or URL back out of `path` or `entry.path`.
 

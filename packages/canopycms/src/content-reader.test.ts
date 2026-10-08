@@ -769,8 +769,26 @@ describe('createContentReader', () => {
       })
       expect(result.data.title).toBe('Home')
       expect(result.meta.entryType).toBe('home')
-      // The slug and URL of the file resolved in the parent collection, not of the entry type.
+      // Delegated to the parent collection, the slug defaults to the entry type's name.
       expect(result.meta).toMatchObject({ slug: 'home', urlPath: '/home' })
+    })
+
+    it("reports an entry-type read's URL in the parent collection", async () => {
+      const root = await tmpDir()
+      await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+      await fs.writeFile(
+        path.join(root, 'content/posts/post.hello.abc123def456.md'),
+        '---\ntitle: Hello\n---\nBody',
+        'utf8',
+      )
+      const reader = await readerFor(root, singletonSchema)
+
+      const result = await reader.read({
+        entryPath: unsafeAsLogicalPath('content/posts/post'),
+        slug: unsafeAsSlug('hello'),
+        user: ANONYMOUS_USER,
+      })
+      expect(result.meta).toMatchObject({ slug: 'hello', urlPath: '/posts/hello' })
     })
 
     it('rejects a file whose on-disk type token the collection does not declare', async () => {
