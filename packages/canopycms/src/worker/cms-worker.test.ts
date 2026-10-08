@@ -2402,7 +2402,7 @@ describe('CmsWorker delete-remote-branch', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  const runDelete = async (deleteRef: ReturnType<typeof vi.fn>) => {
+  const runDelete = async (deleteRef: ReturnType<typeof vi.fn>, branch = 'feature-x') => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
@@ -2418,7 +2418,7 @@ describe('CmsWorker delete-remote-branch', () => {
     internals.octokit = { git: { deleteRef } }
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
-      payload: { branch: 'feature-x' },
+      payload: { branch },
     })
     await worker.processTaskQueue()
     return getTask(taskDir, id)
@@ -2466,5 +2466,31 @@ describe('CmsWorker delete-remote-branch', () => {
     await runDelete(vi.fn().mockResolvedValue({ data: {} }))
 
     expect(await BranchMetadataFileManager.loadOnly(reused)).toBeNull()
+  })
+
+  it('leaves GitHub alone when a live branch has reused the name', async () => {
+    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    await fs.mkdir(reused, { recursive: true })
+    await getBranchMetadataFileManager(reused, path.join(tmpDir, 'content-branches')).save({
+      branch: { name: 'feature-x' },
+    })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef)
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.status).toBe('completed')
+    expect(task?.result).toEqual({ deleted: false, skipped: 'name-reused' })
+  })
+
+  it('refuses the base branch without calling GitHub', async () => {
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'main')
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.status).toBe('failed')
+    expect(task?.retryCount ?? 0).toBe(0)
+    expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 })

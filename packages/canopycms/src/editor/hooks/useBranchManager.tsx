@@ -460,6 +460,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, branches, branchesData })
   latest.current = { branchName, branches, branchesData }
 
+  // A legacy deep link can carry the raw form of a listed name; the actions key, look up and
+  // send the listed name, resolved the way `currentBranch` resolves it.
+  const listedName = (name: string): string =>
+    latest.current.branches.some((b) => b.name === name) ? name : sanitizeBranchName(name)
+
   const pullRequestOf = (name: string): BranchPullRequest => {
     const b = latest.current.branches.find((x) => x.name === name)
     return { pullRequestNumber: b?.pullRequestNumber, pullRequestState: b?.pullRequestState }
@@ -489,8 +494,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
-  const handleSubmit = (branchNameToSubmit: string) =>
-    singleFlight(
+  const handleSubmit = (requested: string) => {
+    const branchNameToSubmit = listedName(requested)
+    return singleFlight(
       'submit',
       branchNameToSubmit,
       () =>
@@ -538,9 +544,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           )
         }),
     )
+  }
 
-  const handleWithdraw = (branchNameToWithdraw: string) =>
-    singleFlight(
+  const handleWithdraw = (requested: string) => {
+    const branchNameToWithdraw = listedName(requested)
+    return singleFlight(
       'withdraw',
       branchNameToWithdraw,
       () =>
@@ -573,6 +581,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           )
         }),
     )
+  }
 
   const handleRequestChanges = async (branchNameForChanges: string) => {
     options.setBusy(true)
@@ -592,8 +601,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
-  const handleDelete = (branchNameToDelete: string) =>
-    singleFlight(
+  const handleDelete = (requested: string) => {
+    const branchNameToDelete = listedName(requested)
+    return singleFlight(
       'delete',
       branchNameToDelete,
       () =>
@@ -648,6 +658,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           )
         }),
     )
+  }
 
   const handleReloadBranchData = async () => {
     await loadBranches()

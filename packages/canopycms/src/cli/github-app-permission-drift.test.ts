@@ -175,6 +175,9 @@ function taskContext(octokit: Octokit): TaskRunnerContext {
     githubOwner: 'an-org',
     githubRepo: 'a-content-site',
     baseBranch: 'main',
+    sanitizedBaseBranch: 'main',
+    // No workspace exists there, so `delete-remote-branch` goes on to call GitHub.
+    branchWorkspacePath: (branch: string) => `/nonexistent/content-branches/${branch}`,
     octokit: () => octokit,
     // Git-over-HTTPS is covered by `contents: write` and is not an Octokit
     // call, so the push itself is stubbed out — this harness is about the REST

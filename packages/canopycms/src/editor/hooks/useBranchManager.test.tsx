@@ -1339,6 +1339,38 @@ describe('useBranchManager', () => {
       expect(mockClient.workflow.submit).not.toHaveBeenCalled()
     })
 
+    it('treats the raw form of a listed name as that branch', async () => {
+      const opened = await holdConfirms()
+      mockClient.workflow.submit.mockResolvedValue({ ok: true, status: 200 })
+      const featureX: BranchMetadata = {
+        ...editingFeature[1],
+        name: 'feature-x',
+        pullRequestNumber: 7,
+        pullRequestState: 'open',
+      }
+      const { result } = await renderLoaded([mockBranches[0], featureX])
+
+      let first!: Promise<void>
+      act(() => {
+        first = result.current.handleSubmit('feature/x')
+      })
+      await act(async () => {
+        await result.current.handleSubmit('feature-x')
+      })
+      expect(opened).toHaveLength(1)
+      await act(async () => {
+        confirm(opened[0])
+        await first
+      })
+      expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature-x' })
+
+      act(() => {
+        void result.current.handleWithdraw('feature/x')
+      })
+      expect(opened[1].children?.props.children).toContain('Convert pull request #7 to a draft')
+      act(() => opened[1].onClose?.())
+    })
+
     describe('withdraw copy', () => {
       const withPr = (pr: Partial<BranchMetadata>): BranchMetadata[] => [
         mockBranches[0],

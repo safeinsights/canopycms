@@ -429,6 +429,21 @@ export async function executeTask(
     }
     case 'delete-remote-branch': {
       const branch = requireString(payload, 'branch')
+      // Defense-in-depth behind the delete handler's own refusal.
+      if (sanitizeBranchName(branch) === ctx.sanitizedBaseBranch || isSettingsBranch(branch)) {
+        throw new PermanentTaskError(
+          `Refusing to delete "${branch}" on GitHub: the base and settings branches are never deleted`,
+        )
+      }
+      // A live branch under the name reused it after this task was queued (a requeued task can
+      // run long after), so the GitHub branch is the newer branch's own.
+      const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch)).catch(
+        () => null,
+      )
+      if (live) {
+        workerLog(`Not deleting GitHub branch ${branch}: a newer branch now uses the name`)
+        return { deleted: false, skipped: 'name-reused' }
+      }
       try {
         await ctx.octokit().git.deleteRef({
           owner: ctx.githubOwner,
