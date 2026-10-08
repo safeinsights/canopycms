@@ -110,7 +110,19 @@ export default {
         path: OWN_SRC,
         pathNot: `^packages/canopycms/src/editor/fields/MarkdownField\\.tsx$|${TEST_FILES}`,
       },
-      to: { path: '(^|/)@mdxeditor/editor/', pathNot: '\\.css$' },
+      to: { path: '(^|/)@mdxeditor/editor(/|$)', pathNot: '\\.css$' },
+    },
+    {
+      name: 'markdown-field-imports-mdxeditor-only-dynamically',
+      severity: 'error',
+      comment:
+        "MarkdownField.tsx reaches @mdxeditor/editor only through its lazy loader's `import('@mdxeditor/editor')`. A static value import would load MDXEditor in the first chunk and could enter it by a named module (see editor/fields/mdx-jsx-support.tsx). Evaluated by `pnpm lint:cycles`.",
+      from: { path: '^packages/canopycms/src/editor/fields/MarkdownField\\.tsx$' },
+      to: {
+        path: '(^|/)@mdxeditor/editor(/|$)',
+        pathNot: '\\.css$',
+        dependencyTypesNot: ['dynamic-import'],
+      },
     },
     {
       name: 'no-circular',
