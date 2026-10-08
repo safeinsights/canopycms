@@ -310,6 +310,7 @@ with the in-flight ACL chips.
 | [build-mode-env-at-runtime-disables-acls.md](build-mode-env-at-runtime-disables-acls.md) | New 2026-10-05. `CANOPY_BUILD_MODE=true` in a serving process's env resolves every request to `STATIC_DEPLOY_USER` with ACLs off, so every read, including the preview route, shows any branch. Needs a misconfiguration; the generated Dockerfile sets it in the builder stage only. Fail loudly at runtime, and optionally 404 `STATIC_DEPLOY_USER` on the preview route [BOTH] |
 | [github-sync-mode-split-behind-strategy.md](github-sync-mode-split-behind-strategy.md) | New 2026-10-07. `syncSubmitPr`, `syncConvertToDraft` and `syncDeleteRemoteBranch` in `api/github-sync.ts` each repeat the "githubService if present, else enqueue for the worker" split and each turn failures into a different shape. Decide whether that choice belongs behind the operating-mode strategy [BOTH] |
 | [deleted-branch-drafts-survive.md](deleted-branch-drafts-survive.md) | New 2026-10-07. A deleted branch's `localStorage` drafts are never removed, so a later branch with the same name restores them, though the delete dialog says unsaved changes are discarded [BOTH] |
+| [delete-remote-branch-residual-windows.md](delete-remote-branch-residual-windows.md) | New 2026-10-07. Deleting a branch on GitHub leaves two narrow windows. A double fault (a newer same-named branch whose PR number was never recorded) lets a stale delete close that branch's PR. A failed or late delete lets git-sync recreate the deleted branch's local head from the tracking ref [BOTH] |
 
 ---
 

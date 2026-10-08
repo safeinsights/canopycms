@@ -2525,6 +2525,29 @@ describe('CmsWorker delete-remote-branch', () => {
     expect(task?.result).toEqual({ deleted: false, skipped: 'metadata-unreadable' })
   })
 
+  it('leaves GitHub alone when the metadata under the name has no branch record', async () => {
+    await seedReused('{"version":1}')
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.result).toEqual({ deleted: false, skipped: 'metadata-unreadable' })
+  })
+
+  it('retries, without calling GitHub, when the metadata under the name cannot be read', async () => {
+    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    await fs.mkdir(path.join(reused, '.canopy-meta', 'branch.json'), { recursive: true })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.status).toBe('pending')
+    expect(task?.retryCount).toBe(1)
+    expect(consoleSpy).toHaveLogged('Will retry')
+  })
+
   it.each(['main', 'canopycms-settings-prod'])(
     'refuses %s without calling GitHub',
     async (branch) => {

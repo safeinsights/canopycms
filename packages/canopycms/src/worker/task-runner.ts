@@ -445,17 +445,24 @@ export async function executeTask(
       // branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
-      let livePr: number | undefined
+      let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
+      let unreadable = false
       try {
-        livePr = (await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch)))?.branch
-          .pullRequestNumber
+        live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
       } catch (err) {
         if (!(err instanceof BranchMetadataCorruptError)) throw err
+        unreadable = true
+      }
+      if (
+        unreadable ||
+        (live !== null && (typeof live.branch !== 'object' || live.branch === null))
+      ) {
         workerLog(
           `Not deleting GitHub branch ${branch}: the branch now under that name is unreadable`,
         )
         return { deleted: false, skipped: 'metadata-unreadable' }
       }
+      const livePr = live?.branch.pullRequestNumber
       if (livePr !== undefined && livePr !== deletedPr) {
         workerLog(`Not deleting GitHub branch ${branch}: a newer branch's PR #${livePr} uses it`)
         return { deleted: false, skipped: 'name-reused' }
