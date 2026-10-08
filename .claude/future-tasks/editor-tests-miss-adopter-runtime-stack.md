@@ -23,3 +23,7 @@ page's first render, never through an in-app navigation that lazily loads the ed
 - Or move the e2e app to Next 16 and add that navigation to `mdx-jsx-body.spec.ts`.
 - Decide whether the unit tests should also run against the newest versions in the dependency
   ranges.
+- A real-browser corpus pass in that job: open every markdown and MDX entry of the sample sites in
+  `/edit` and fail on any page error. It's slow (seconds per entry), so run it nightly or per
+  release, not per PR. The fast headless corpus test covers parse and export only, and can't see
+  bundling bugs like this one. An adopter-contributed corpus of real bodies would widen it.

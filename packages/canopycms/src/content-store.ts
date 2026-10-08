@@ -1251,7 +1251,7 @@ export class ContentStore {
           } else if (input.format === 'yaml') {
             content = serializeYaml(input.data ?? {}, existingRaw)
           } else {
-            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw)
+            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw, input.format)
           }
 
           await atomicWriteFile(absolutePath, content)

@@ -51,6 +51,19 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
 
+### A markdown body save rewrites only the blocks that changed
+
+**What changed.** An md/mdx body save keeps every block the edit left alone verbatim (markers,
+escapes, JSX, blank lines, CRLF), so `prettier --check` no longer fails on untouched lines. New and
+edited blocks use Prettier's markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a
+blank line. Blocks the editor cannot round-trip (a hard break, an ordered list's start, a bare URL
+before punctuation) still change on the first edit.
+
+**To adopt.** Nothing.
+
+**Now deletable.** A formatter pass or `.prettierignore` entry undoing the editor's restyling of
+untouched markdown.
+
 ### `unauthenticatedStatus`: answer signed-out API calls with 419
 
 **To adopt.** Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on the
