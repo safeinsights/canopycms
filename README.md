@@ -1722,7 +1722,7 @@ How the CanopyCMS editor works from a content editor's perspective.
 
 Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on.
 
-> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "Create a branch" in the banner, or use the branch selector, to start editing. See [Submitting for Review](#submitting-for-review).
+> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "Create a branch" in the banner to start editing. See [Submitting for Review](#submitting-for-review).
 
 ### Working with Branches
 
@@ -1732,7 +1732,9 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 >
 > Seven names are reserved because they collide with a static top-level API route: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one is rejected with a 400 explaining the collision. Matching is exact and case-sensitive, so `Admin` and `admin-docs` are unaffected.
 
-**Switching branches:** click the branch selector and choose from the available branches. The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The selector and Branches panel also show `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`, so anyone can tell at a glance when a branch's git clone needs attention.
+**Switching branches:** click the branch selector and choose from the available branches. The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The selector and Branches panel also show `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
+
+**Deleting a branch** also deletes its GitHub branch if it has a pull request, which closes that PR if open.
 
 ### Editing Content
 

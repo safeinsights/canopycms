@@ -124,7 +124,7 @@ Route handlers, one file per endpoint namespace:
 - `schema.ts` — `/schema`: collection, entry-type and ordering CRUD, admin only
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair-metadata endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
-- `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
+- `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
 
 Support files:
 
@@ -628,7 +628,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
-- `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, the rate-limit retry predicates
+- `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized submitter identity: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
@@ -675,8 +675,8 @@ Resolution](ARCHITECTURE.md#deployment-name-resolution).
 
 **Location**: `packages/canopycms/src/api/github-sync.ts`
 
-`syncSubmitPr()` and `syncConvertToDraft()` pick the path: with a `githubService` they call GitHub
-immediately; without one they enqueue a task for the EC2 worker and the branch gets `syncStatus:
+`syncSubmitPr()`, `syncConvertToDraft()` and `syncDeleteRemoteBranch()` pick the path: with a `githubService` they call GitHub
+immediately; without one they enqueue a task for the worker; a submit marks the branch `syncStatus:
 'pending-sync'`. See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 ### Git Operations (Service Methods)

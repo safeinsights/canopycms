@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -10,7 +10,7 @@ import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
-import { BRANCHES_KEY, fetchBranches, useBranchesData } from './useBranchesData'
+import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from './useBranchesData'
 // branch-name, NOT branch or the '../../paths' barrel: both of those pull
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
 // which breaks adopters' production `next build` of the editor bundle.
@@ -69,16 +69,42 @@ const showSubmitConfirmation = (
   })
 }
 
+/** What the withdraw and delete dialogs say about the branch's pull request. */
+type BranchPullRequest = Pick<BranchListItem, 'pullRequestNumber' | 'pullRequestState'>
+
+/**
+ * The withdraw dialog's pull-request bullet, matching what api/branch-withdraw.ts does: an open
+ * PR becomes a draft; a closed one is left alone and its number dropped from the branch, so a
+ * resubmit opens a new one. A merged PR archives its branch, which withdraw refuses, so that
+ * bullet is only seen on a listing that lags.
+ * @internal Exported for tests.
+ */
+export function withdrawPullRequestBullet(pr: BranchPullRequest): string | undefined {
+  if (!pr.pullRequestNumber) return undefined
+  const label = `pull request #${pr.pullRequestNumber}`
+  if (pr.pullRequestState === 'closed') {
+    return `Leave the closed ${label} as it is; submitting again opens a new one`
+  }
+  if (pr.pullRequestState === 'merged') return `Leave the merged ${label} as it is`
+  return `Convert ${label} to a draft`
+}
+
 const showWithdrawConfirmation = (
   branchName: string,
+  pr: BranchPullRequest,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
+  const bullets = [
+    withdrawPullRequestBullet(pr),
+    'Change the branch status back to "editing"',
+    'Remove from review queue',
+  ].filter((b): b is string => b !== undefined)
   modals.openConfirmModal({
     title: 'Withdraw Branch from Review',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Are you sure you want to withdraw "${branchName}" from review?\n\nThis will:\n• Convert the pull request to a draft\n• Change the branch status back to "editing"\n• Remove from review queue`}
+        {`Are you sure you want to withdraw "${branchName}" from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
       </Text>
     ),
     labels: { confirm: 'Withdraw Branch', cancel: 'Cancel' },
@@ -88,26 +114,31 @@ const showWithdrawConfirmation = (
 }
 
 /**
- * Unlike submit/withdraw (both reversible), delete is irreversible -- it
- * unlinks branch.json, removes the clone, and removes the branch head from
- * the local git mirror. Before this, `handleDelete` below called
- * `apiClient.branches.delete` immediately on click with no confirmation
- * anywhere in the chain (BranchManager.tsx's delete button calls `onDelete`
- * directly), while submit and withdraw -- both reversible -- each went
- * through this same `modals.openConfirmModal` pattern. This closes that gap;
- * `color: 'red'` marks it as the destructive one, matching the button's own
- * color in BranchManager.tsx.
+ * Delete is the one irreversible branch action: it unlinks branch.json and removes the clone,
+ * the local mirror's head and, for a branch with a PR, the GitHub branch. BranchManager.tsx's
+ * delete button calls `onDelete` directly, so this dialog is the only confirmation; `color:
+ * 'red'` matches that button.
  */
 const showDeleteConfirmation = (
   branchName: string,
+  pr: BranchPullRequest,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
+  // The server deletes the GitHub branch only for a branch with a PR (api/github-sync.ts's
+  // syncDeleteRemoteBranch); GitHub closes a PR whose branch is deleted.
+  const bullets = [
+    'Permanently remove the branch and its clone',
+    pr.pullRequestNumber
+      ? `Delete its branch on GitHub too, which closes pull request #${pr.pullRequestNumber} if it is still open`
+      : undefined,
+    'Discard any unsaved or unmerged changes',
+  ].filter((b): b is string => b !== undefined)
   modals.openConfirmModal({
     title: 'Delete Branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Are you sure you want to delete "${branchName}"?\n\nThis will:\n• Permanently remove the branch and its clone\n• Discard any unsaved or unmerged changes\n\nThis cannot be undone.`}
+        {`Are you sure you want to delete "${branchName}"?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
       </Text>
     ),
     labels: { confirm: 'Delete Branch', cancel: 'Cancel' },
@@ -399,11 +430,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   // bound hook (and anything else reading BRANCHES_KEY) picks it up.
   // Side effects (default-branch adoption, error/success notifications) are
   // driven by the effects above, which react to that same cache write.
-  const loadBranches = async () => {
+  // Resolves to the fresh listing, or undefined when the fetch failed.
+  const reloadBranches = async (): Promise<BranchesData | undefined> => {
     options.setBusy(true)
     try {
       const fresh = await fetchBranches(apiClient)
       await globalMutate(BRANCHES_KEY, fresh, { revalidate: false })
+      return fresh
     } catch (err) {
       console.error(err)
       const message = err instanceof Error ? err.message : 'Failed to load branches'
@@ -413,77 +446,142 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         color: 'red',
         autoClose: false,
       })
+      return undefined
     } finally {
       options.setBusy(false)
     }
   }
 
-  const handleSubmit = async (branchNameToSubmit: string) => {
-    return new Promise<void>((resolve, reject) => {
-      showSubmitConfirmation(
-        branchNameToSubmit,
-        async () => {
-          options.setBusy(true)
-          try {
-            const result = await apiClient.workflow.submit({
-              branch: branchNameToSubmit,
-            })
-            if (!result.ok) {
-              throw new Error(result.error || 'Failed to submit branch')
-            }
-            notifications.show({
-              message: 'Branch submitted for review',
-              color: 'green',
-            })
-            updateCreatedBranch(branchNameToSubmit, result.data?.branch)
-            await loadBranches()
-            resolve()
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to submit branch'
-            notifications.show({ message, color: 'red' })
-            reject(err)
-          } finally {
-            options.setBusy(false)
-          }
-        },
-        // Dismissal is not an error. Rejecting here meant clicking Cancel
-        // logged a console error at the only call site (Editor.tsx catches
-        // these into console.error), which is both noise and a trip hazard
-        // for the CI=1 stray-console gate. Settled once, by onCancel OR
-        // onClose, so an Escape/overlay dismissal can't leave this pending.
-        () => resolve(),
-      )
-    })
+  const loadBranches = async () => {
+    await reloadBranches()
   }
 
-  const handleWithdraw = async (branchNameToWithdraw: string) => {
-    return new Promise<void>((resolve, reject) => {
-      showWithdrawConfirmation(
-        branchNameToWithdraw,
-        async () => {
-          options.setBusy(true)
-          try {
-            const result = await apiClient.workflow.withdraw({
-              branch: branchNameToWithdraw,
-            })
-            if (!result.ok) {
-              throw new Error(result.error || 'Failed to withdraw branch')
-            }
-            notifications.show({ message: 'Branch withdrawn', color: 'blue' })
-            updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
-            await loadBranches()
-            resolve()
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
-            notifications.show({ message, color: 'red' })
-            reject(err)
-          } finally {
-            options.setBusy(false)
-          }
-        },
-        () => resolve(),
-      )
-    })
+  // The confirm dialogs' handlers run long after the render that opened them, so they read
+  // these at confirm time rather than from that render's closure.
+  const latest = useRef({ branchName, branches, branchesData })
+  latest.current = { branchName, branches, branchesData }
+
+  // A legacy deep link can carry the raw form of a listed name; the actions key, look up and
+  // send the listed name, resolved the way `currentBranch` resolves it.
+  const listedName = (name: string): string =>
+    latest.current.branches.some((b) => b.name === name) ? name : sanitizeBranchName(name)
+
+  const pullRequestOf = (name: string): BranchPullRequest => {
+    const b = latest.current.branches.find((x) => x.name === name)
+    return { pullRequestNumber: b?.pullRequestNumber, pullRequestState: b?.pullRequestState }
+  }
+
+  // Keys of the actions whose confirm is open or whose work is in flight.
+  const actionsInFlight = useRef(new Set<string>())
+
+  /**
+   * Runs `run` unless the same action on the same branch already has its confirm open or its
+   * work in flight; then this request opens nothing and resolves at once. Mantine closes only
+   * the confirm that was confirmed, so a second one opened by a repeated click would stay up
+   * after the action succeeded.
+   */
+  const singleFlight = async (
+    action: 'submit' | 'withdraw' | 'delete',
+    branch: string,
+    run: () => Promise<void>,
+  ): Promise<void> => {
+    const key = JSON.stringify([action, branch])
+    if (actionsInFlight.current.has(key)) return
+    actionsInFlight.current.add(key)
+    try {
+      await run()
+    } finally {
+      actionsInFlight.current.delete(key)
+    }
+  }
+
+  const handleSubmit = (requested: string) => {
+    const branchNameToSubmit = listedName(requested)
+    return singleFlight(
+      'submit',
+      branchNameToSubmit,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          showSubmitConfirmation(
+            branchNameToSubmit,
+            async () => {
+              // A listing that arrived while the dialog was open may show the branch already
+              // submitted; submitting it again would only fail.
+              const listed = latest.current.branches.find((b) => b.name === branchNameToSubmit)
+              if (listed?.status === 'submitted') {
+                notifications.show({
+                  message: 'Branch is already submitted for review',
+                  color: 'blue',
+                })
+                resolve()
+                return
+              }
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.submit({
+                  branch: branchNameToSubmit,
+                })
+                if (!result.ok) {
+                  throw new Error(result.error || 'Failed to submit branch')
+                }
+                notifications.show({
+                  message: 'Branch submitted for review',
+                  color: 'green',
+                })
+                updateCreatedBranch(branchNameToSubmit, result.data?.branch)
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Failed to submit branch'
+                notifications.show({ message, color: 'red' })
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            // Dismissal is not an error: the call sites log rejections to the console. Settled
+            // once, by onCancel OR onClose, so an Escape/overlay dismissal can't leave this pending.
+            () => resolve(),
+          )
+        }),
+    )
+  }
+
+  const handleWithdraw = (requested: string) => {
+    const branchNameToWithdraw = listedName(requested)
+    return singleFlight(
+      'withdraw',
+      branchNameToWithdraw,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          showWithdrawConfirmation(
+            branchNameToWithdraw,
+            pullRequestOf(branchNameToWithdraw),
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.withdraw({
+                  branch: branchNameToWithdraw,
+                })
+                if (!result.ok) {
+                  throw new Error(result.error || 'Failed to withdraw branch')
+                }
+                notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+                updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
+                notifications.show({ message, color: 'red' })
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
   }
 
   const handleRequestChanges = async (branchNameForChanges: string) => {
@@ -504,36 +602,63 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
-  const handleDelete = async (branchNameToDelete: string) => {
-    return new Promise<void>((resolve) => {
-      showDeleteConfirmation(
-        branchNameToDelete,
-        async () => {
-          options.setBusy(true)
-          try {
-            const result = await apiClient.branches.delete({
-              branch: branchNameToDelete,
-            })
-            if (!result.ok) {
-              throw new Error(result.error || 'Failed to delete branch')
-            }
-            notifications.show({ message: 'Branch deleted', color: 'green' })
-            forgetCreatedBranch(branchNameToDelete)
-            await loadBranches()
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to delete branch'
-            notifications.show({ message, color: 'red' })
-          } finally {
-            options.setBusy(false)
-            // Resolve regardless of API success/failure, matching the
-            // pre-confirmation behavior (errors were shown as a toast, not
-            // rethrown). Cancellation resolves too -- see below.
-            resolve()
-          }
-        },
-        () => resolve(),
-      )
-    })
+  const handleDelete = (requested: string) => {
+    const branchNameToDelete = listedName(requested)
+    return singleFlight(
+      'delete',
+      branchNameToDelete,
+      () =>
+        new Promise<void>((resolve) => {
+          showDeleteConfirmation(
+            branchNameToDelete,
+            pullRequestOf(branchNameToDelete),
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.branches.delete({
+                  branch: branchNameToDelete,
+                })
+                if (!result.ok) {
+                  throw new Error(result.error || 'Failed to delete branch')
+                }
+                const cleanupWarning = result.data?.cleanupWarning
+                notifications.show(
+                  cleanupWarning
+                    ? {
+                        message: `Branch deleted, with a warning: ${cleanupWarning}`,
+                        color: 'yellow',
+                        autoClose: false,
+                      }
+                    : { message: 'Branch deleted', color: 'green' },
+                )
+                forgetCreatedBranch(branchNameToDelete)
+                const fresh = await reloadBranches()
+                // Matched the way `currentBranch` resolves a name, since the deleted branch is
+                // no longer listed to resolve against.
+                const open = latest.current.branchName
+                if (
+                  open === branchNameToDelete ||
+                  sanitizeBranchName(open) === branchNameToDelete
+                ) {
+                  // Nothing is left to keep, so no unsaved-changes prompt. With no default known
+                  // yet, the empty name lets the default-branch adoption effect pick it.
+                  setBranchName(
+                    fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '',
+                  )
+                }
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Failed to delete branch'
+                notifications.show({ message, color: 'red' })
+              } finally {
+                options.setBusy(false)
+                // Failures surface as the toast above, never as a rejection; cancelling resolves too.
+                resolve()
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
   }
 
   const handleReloadBranchData = async () => {

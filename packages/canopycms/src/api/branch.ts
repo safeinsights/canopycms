@@ -27,6 +27,7 @@ import {
   isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
+import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
@@ -770,6 +771,12 @@ export const deleteBranchHandler = async (
         `CanopyCMS: failed to remove deleted branch's mirror head (branch ${sanitizedDeleted}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
       )
     }
+  }
+
+  // `branchContext` was read before the delete, so it still carries the PR number this gates on.
+  if (deletableHead) {
+    const warning = await syncDeleteRemoteBranch(ctx, branchContext)
+    if (warning) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
   }
 
   // Invalidate registry cache so next list() will regenerate without this branch

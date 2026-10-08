@@ -31,7 +31,7 @@ vi.mock('../task-queue/task-queue-config', () => ({
   getTaskQueueDir: vi.fn().mockReturnValue('/mock/.tasks'),
 }))
 
-import { syncSubmitPr } from './github-sync'
+import { syncDeleteRemoteBranch, syncSubmitPr } from './github-sync'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
 
 const noSubmission = { changedPaths: [] }
@@ -430,5 +430,30 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(consoleSpy).toHaveErrored('Failed to enqueue task')
       consoleSpy.restore()
     })
+  })
+})
+
+describe('syncDeleteRemoteBranch', () => {
+  const withPr = createMockBranchContext({ branchName: 'feature-x', pullRequestNumber: 9 })
+
+  it('queues nothing when there is no githubService and the mode has no PRs', async () => {
+    const ctx = createMockApiContext({
+      services: { config: { ...baseConfig, mode: 'dev' }, githubService: undefined },
+    })
+
+    await expect(syncDeleteRemoteBranch(ctx, withPr)).resolves.toBeUndefined()
+    expect(mockEnqueueTask).not.toHaveBeenCalled()
+  })
+
+  it('treats a 404 from GitHub as already deleted', async () => {
+    const githubService = makeGitHubService({
+      deleteBranch: vi
+        .fn()
+        .mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 })),
+    })
+    const ctx = createMockApiContext({ services: { config: baseConfig, githubService } })
+
+    await expect(syncDeleteRemoteBranch(ctx, withPr)).resolves.toBeUndefined()
+    expect(githubService.deleteBranch).toHaveBeenCalledWith('feature-x')
   })
 })

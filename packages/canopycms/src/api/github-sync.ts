@@ -7,6 +7,7 @@ import { clientOperatingStrategy } from '../operating-mode'
 import { getErrorMessage } from '../utils/error'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submission-attribution'
+import { isRefAlreadyGoneError } from '../github-service'
 
 /**
  * The caller uses this to update branch metadata.
@@ -186,6 +187,49 @@ export async function syncConvertToDraft(ctx: ApiContext, context: BranchContext
       },
     })
   }
+}
+
+/**
+ * Used by delete, after the local delete succeeded. Deletes the branch on GitHub when the CMS
+ * put it there: a content branch reaches GitHub only through submit, which always opens a PR,
+ * so a recorded PR number is the proof. Without one, a same-named GitHub branch is someone
+ * else's (the create-time collision check is best-effort) and is never touched.
+ *
+ * Returns a client-facing warning when the delete could not be done or queued; never throws.
+ */
+export async function syncDeleteRemoteBranch(
+  ctx: ApiContext,
+  context: BranchContext,
+): Promise<string | undefined> {
+  if (!context.branch.pullRequestNumber) return undefined
+
+  const { githubService } = ctx.services
+  const branch = context.branch.name
+
+  if (githubService) {
+    try {
+      await githubService.deleteBranch(branch)
+    } catch (err) {
+      if (isRefAlreadyGoneError(err)) return undefined
+      console.error(
+        `CanopyCMS: Failed to delete GitHub branch for ${branch}:`,
+        getErrorMessage(err),
+      )
+      return 'The branch could not be deleted on GitHub; delete it there by hand'
+    }
+    return undefined
+  }
+
+  const mode = ctx.services.config.mode
+  if (!clientOperatingStrategy(mode).supportsPullRequests()) return undefined
+
+  const result = await enqueueGitHubTask(ctx, context, {
+    action: 'delete-remote-branch',
+    payload: { branch, pullRequestNumber: context.branch.pullRequestNumber },
+  })
+  return result.syncStatus === 'sync-failed'
+    ? 'Deleting the branch on GitHub could not be queued; delete it there by hand'
+    : undefined
 }
 
 async function enqueueGitHubTask(

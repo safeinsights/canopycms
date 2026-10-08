@@ -251,6 +251,19 @@ export async function createOrUpdatePullRequest(
   return { number: pr.data.number, url: pr.data.html_url, created: true }
 }
 
+/**
+ * Whether a `git.deleteRef` failure means the branch is already gone from GitHub, so the delete
+ * has nothing left to do. A missing ref is a 422 "Reference does not exist"; the message check
+ * matters because a 422 also refuses deleting the default branch. A 404 counts too, though it
+ * can also mean the repo is not visible to the credential.
+ */
+export function isRefAlreadyGoneError(err: unknown): boolean {
+  if (!(err instanceof Error) || !('status' in err)) return false
+  const { status } = err as { status: unknown }
+  if (status === 404) return true
+  return status === 422 && /reference does not exist/i.test(err.message)
+}
+
 export class GitHubService {
   private octokit: Octokit
   private owner: string
