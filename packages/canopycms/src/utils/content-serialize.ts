@@ -38,6 +38,7 @@ import {
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
 import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'ContentSerialize' })
@@ -471,17 +472,56 @@ function extractRawFrontmatter(raw: string): string | undefined {
   return frontmatter
 }
 
+/** The body of a file as gray-matter splits it, or undefined when it cannot split it. */
+function extractBody(raw: string): string | undefined {
+  try {
+    return matter(raw, {}).content
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter through. The
- * reconciled YAML goes back through `matter.stringify` via a custom stringify engine rather than
- * being spliced between hand-written `---` lines, so delimiters, blank lines and the trailing
- * newline stay exactly what gray-matter would have produced.
+ * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
+ * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
+ * gray-matter leaves that blank line in the body, and the editor's body never has it, so it is
+ * restored here even when the splice falls back. A file that had no frontmatter or no body yet
+ * gets one blank line, the common markdown formatters' style.
  */
-export function serializeFrontmatter(
+function bodyToWrite(
   body: string,
   data: Record<string, unknown>,
-  existingRaw?: string,
+  format: MarkdownBodyFormat,
+  existingRaw: string | undefined,
 ): string {
+  const priorBody = existingRaw === undefined ? undefined : extractBody(existingRaw)
+  const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
+  if (/^\r?\n/.test(spliced) || !/\S/.test(spliced)) return spliced
+  if (!Object.values(data).some((value) => value !== undefined)) return spliced
+
+  const priorKeptBody =
+    priorBody !== undefined &&
+    /\S/.test(priorBody) &&
+    existingRaw !== undefined &&
+    extractRawFrontmatter(existingRaw) !== undefined
+  const lead = priorKeptBody ? (/^(?:\r?\n)*/.exec(priorBody)?.[0] ?? '') : '\n'
+  return lead + spliced
+}
+
+/**
+ * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter and the source
+ * text of its unchanged body blocks through. The reconciled YAML goes back through
+ * `matter.stringify` via a custom stringify engine rather than being spliced between
+ * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
+ * would have produced.
+ */
+export function serializeFrontmatter(
+  editorBody: string,
+  data: Record<string, unknown>,
+  existingRaw: string | undefined,
+  format: MarkdownBodyFormat,
+): string {
+  const body = bodyToWrite(editorBody, data, format, existingRaw)
   if (existingRaw === undefined) return matter.stringify(body, data)
 
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
