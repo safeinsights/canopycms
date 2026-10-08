@@ -184,23 +184,38 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   const nextListItemKey = useRef(0)
   const keysForList = (items: unknown[], listPath: string): string[] => {
     const previous = lastListKeys.current.get(listPath)
-    const used = new Set<string>()
-    const keys = items.map((item, idx) => {
-      const isObject = typeof item === 'object' && item !== null
-      let key = isObject ? listItemKeys.current.get(item) : undefined
-      if (key === undefined && previous?.length === items.length) key = previous[idx]
-      // The same object twice in one list: the second takes its position's key.
-      if (key !== undefined && used.has(key)) key = previous?.[idx]
-      if (key === undefined || used.has(key)) {
-        nextListItemKey.current += 1
-        key = `item-${nextListItemKey.current}`
+    const occurrences = new Map<object, number>()
+    for (const item of items) {
+      if (typeof item === 'object' && item !== null) {
+        occurrences.set(item, (occurrences.get(item) ?? 0) + 1)
       }
-      if (isObject && !listItemKeys.current.has(item)) listItemKeys.current.set(item, key)
-      used.add(key)
-      return key
+    }
+    // Only an object listed once has an identity; a repeated one is keyed by position.
+    const single = (item: unknown): item is object =>
+      typeof item === 'object' && item !== null && occurrences.get(item) === 1
+    const claimed = new Set<string>()
+    const keys = items.map((item) => {
+      const own = single(item) ? listItemKeys.current.get(item) : undefined
+      // Two objects can hold one key when an edit inherited it from one still around elsewhere.
+      if (own === undefined || claimed.has(own)) return undefined
+      claimed.add(own)
+      return own
     })
-    lastListKeys.current.set(listPath, keys)
-    return keys
+    // The rest inherit their position's key, never one an object present here holds.
+    const resolved = keys.map((key, idx) => {
+      if (key !== undefined) return key
+      let next = previous?.length === items.length ? previous[idx] : undefined
+      if (next === undefined || claimed.has(next)) {
+        nextListItemKey.current += 1
+        next = `item-${nextListItemKey.current}`
+      }
+      claimed.add(next)
+      const item = items[idx]
+      if (single(item)) listItemKeys.current.set(item, next)
+      return next
+    })
+    lastListKeys.current.set(listPath, resolved)
+    return resolved
   }
 
   // Wraps the rendered control in an error boundary, and with an inline validation message

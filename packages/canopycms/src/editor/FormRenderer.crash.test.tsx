@@ -255,7 +255,7 @@ describe('FormRenderer field crash containment', () => {
       }, [])
       return null
     }
-    const List: React.FC<{ initial: FormValue }> = ({ initial }) => {
+    const List: React.FC<{ initial: FormValue; crashOn?: string }> = ({ initial, crashOn }) => {
       const [value, setValue] = useState<FormValue>(initial)
       return (
         <CanopyCMSProvider>
@@ -264,22 +264,34 @@ describe('FormRenderer field crash containment', () => {
             value={value}
             onChange={setValue}
             customRenderers={{
-              code: ({ value: v, onChange }) => (
-                <>
-                  <Counted />
-                  <button
-                    type="button"
-                    data-testid={`edit-${String(v)}`}
-                    onClick={() => onChange(`${String(v)}!`)}
-                  >
-                    {String(v)}
-                  </button>
-                </>
-              ),
+              code: ({ value: v, onChange }) => {
+                if (crashOn !== undefined && v === crashOn) throw new Error('item exploded')
+                return (
+                  <>
+                    <Counted />
+                    <button
+                      type="button"
+                      data-testid={`edit-${String(v)}`}
+                      onClick={() => onChange(`${String(v)}!`)}
+                    >
+                      {String(v)}
+                    </button>
+                  </>
+                )
+              },
             }}
           />
           <button type="button" onClick={() => setValue(JSON.parse(JSON.stringify(value)))}>
             replace with saved copy
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const items = value.items as FormValue[]
+              setValue({ items: [items[1], { settings: 'c' }] })
+            }}
+          >
+            shift left
           </button>
           <pre data-testid="form-state">{JSON.stringify(value)}</pre>
         </CanopyCMSProvider>
@@ -297,6 +309,27 @@ describe('FormRenderer field crash containment', () => {
       await userEvent.setup().click(screen.getByRole('button', { name: 'replace with saved copy' }))
 
       expect(mounts.count).toBe(2)
+    })
+
+    it("never hands a removed crashed item's boundary to a repeated object", async () => {
+      const shared = { settings: 'a' }
+      render(<List initial={{ items: [shared, { settings: 'boom' }, shared] }} crashOn="boom" />)
+      expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
+
+      await userEvent.setup().click(screen.getAllByRole('button', { name: 'Remove' })[1])
+
+      expect(screen.queryByTestId('field-crash-fallback')).toBeNull()
+      expect(screen.getAllByTestId('edit-a')).toHaveLength(2)
+    })
+
+    it('never gives a new item the key of an item still in the list', async () => {
+      render(<List initial={{ items: [{ settings: 'a' }, { settings: 'b' }] }} />)
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'shift left' }))
+
+      expect(formState()).toEqual({ items: [{ settings: 'b' }, { settings: 'c' }] })
+      expect(screen.getByTestId('edit-c')).toBeTruthy()
+      expect(consoleSpy.all().error.some((m) => m.includes('same key'))).toBe(false)
     })
 
     it('keeps the existing items mounted when an item is added', async () => {
