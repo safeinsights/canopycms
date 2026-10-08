@@ -53,11 +53,11 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 ### Preview hooks move to `/preview` entries — **breaking (imports)**
 
-**What changed.** `withCanopyPreview` and its prop types moved from `canopycms-next/client` to `canopycms-next/preview`; `useCanopyPreview` and the other preview hooks from `canopycms/client` to `canopycms/preview`. The `/client` entries are the editor: importing them loaded Mantine's unlayered CSS, which beat the site's own styles in the preview, and shipped the editor to public pages.
+**What changed.** `withCanopyPreview` and its types moved to `canopycms-next/preview`, and preview hooks like `useCanopyPreview` to `canopycms/preview`. The `/client` entries are the editor: they put Mantine's unlayered CSS over the site's styles in the preview, and shipped the editor to public pages.
 
-**To adopt.** Import them from the `/preview` entries.
+**To adopt.** Import them, and point their test mocks, at the `/preview` entries. A `vi.mock('canopycms-next/client', …)` silently stops applying.
 
-**Now deletable.** Any CSS layer or specificity workaround added to keep site styles ahead of Mantine's in the preview.
+**Now deletable.** CSS layer or specificity workarounds that kept site styles ahead of Mantine's in the preview.
 
 ### Fast, crash-safe branch creation — **behaviour change: branch clones hold only the content root**
 
