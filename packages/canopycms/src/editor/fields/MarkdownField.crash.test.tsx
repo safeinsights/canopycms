@@ -27,8 +27,10 @@ vi.mock('@mantine/modals', () => ({
 const mdxEditorRenders = vi.fn()
 vi.mock('@mdxeditor/editor', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@mdxeditor/editor')>()),
-  MDXEditor: () => {
+  // An empty document renders, so a test can hold one field in rich text.
+  MDXEditor: ({ markdown }: { markdown: string }) => {
     mdxEditorRenders()
+    if (markdown === '') return <div data-testid="rich-text-editor" />
     throw new Error('useNestedEditor must be used within a NestedEditorsProvider')
   },
 }))
@@ -133,6 +135,29 @@ describe('MarkdownField when the rich-text editor throws while rendering', () =>
 
     expect(mdxEditorRenders).not.toHaveBeenCalled()
     expect(screen.getAllByTestId('markdown-source-fallback')).toHaveLength(2)
+  })
+
+  it('marks no other field when a field in source is cleared', async () => {
+    const Wrapper = createApiClientWrapper(mockClient)
+    const Two: React.FC = () => {
+      const [a, setA] = React.useState('Broken body.')
+      return (
+        <CanopyCMSProvider>
+          <Wrapper>
+            <MarkdownField label="A" value={a} onChange={setA} />
+            <MarkdownField label="B" value="" onChange={() => {}} />
+          </Wrapper>
+        </CanopyCMSProvider>
+      )
+    }
+    render(<Two />)
+    expect(await screen.findByTestId('rich-text-editor')).toBeTruthy()
+    await screen.findByTestId('markdown-source-fallback')
+
+    await userEvent.setup().clear(screen.getByRole('textbox', { name: 'A (source)' }))
+
+    expect(screen.getAllByTestId('markdown-source-fallback')).toHaveLength(1)
+    expect(screen.getByTestId('rich-text-editor')).toBeTruthy()
   })
 
   it('tries the rich-text editor again when asked', async () => {

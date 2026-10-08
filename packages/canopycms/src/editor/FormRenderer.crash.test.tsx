@@ -92,6 +92,70 @@ describe('FormRenderer field crash containment', () => {
     expect(formState()).toEqual({ title: 'Hello!', settings: 'kept' })
   })
 
+  it('drops an edit the crashed render scheduled, even once the author has moved to another entry', async () => {
+    crash.now = true
+    const initialValue = { title: 'Hello', settings: 'kept' }
+    const { rerender } = render(<Form initialValue={initialValue} />)
+    const heldFromCrash = crash.onChange
+    await userEvent.setup().type(screen.getByRole('textbox', { name: 'Title' }), '!')
+
+    crash.now = false
+    rerender(<Form initialValue={initialValue} entry="content/b" />)
+    act(() => heldFromCrash('late'))
+
+    expect(formState()).toEqual({ title: 'Hello!', settings: 'kept' })
+  })
+
+  it('keeps a healthy list item editable after the crashed item before it is removed', async () => {
+    const listFields: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        label: 'Items',
+        list: true,
+        fields: [{ name: 'settings', type: 'code', label: 'Settings' }],
+      },
+    ]
+    const List: React.FC = () => {
+      const [value, setValue] = useState<FormValue>({
+        items: [{ settings: 'boom' }, { settings: 'b' }, { settings: 'c' }],
+      })
+      return (
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={listFields}
+            value={value}
+            onChange={setValue}
+            customRenderers={{
+              code: ({ value: v, onChange }) => {
+                if (v === 'boom') throw new Error('item exploded')
+                return (
+                  <button
+                    type="button"
+                    data-testid={`edit-${String(v)}`}
+                    onClick={() => onChange(`${String(v)}!`)}
+                  >
+                    {String(v)}
+                  </button>
+                )
+              },
+            }}
+          />
+          <pre data-testid="form-state">{JSON.stringify(value)}</pre>
+        </CanopyCMSProvider>
+      )
+    }
+    render(<List />)
+    expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
+
+    const user = userEvent.setup()
+    await user.click(screen.getAllByRole('button', { name: 'Remove' })[0])
+    expect(screen.queryByTestId('field-crash-fallback')).toBeNull()
+    await user.click(screen.getByTestId('edit-b'))
+
+    expect(formState()).toEqual({ items: [{ settings: 'b!' }, { settings: 'c' }] })
+  })
+
   it.each([
     ['entry', { entry: 'content/b' }],
     ['branch', { branch: 'feature' }],
@@ -172,6 +236,27 @@ describe('FormRenderer field crash containment', () => {
     const blocks = formState().blocks as Array<{ value: { settings: string } }>
     expect(blocks.map((b) => b.value.settings)).toEqual(['edited', 'boom'])
     expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
+  })
+
+  it('shows a crashed markdown field holding a non-string value read-only', () => {
+    const Markdown: React.FC = () => (
+      <CanopyCMSProvider>
+        <FormRenderer
+          fields={[{ name: 'body', type: 'markdown', label: 'Body' }]}
+          value={{ body: { not: 'text' } }}
+          onChange={() => {}}
+          customRenderers={{
+            markdown: () => {
+              throw new Error('markdown exploded')
+            },
+          }}
+        />
+      </CanopyCMSProvider>
+    )
+    render(<Markdown />)
+
+    expect(screen.getByTestId('field-crash-value').textContent).toContain('"not": "text"')
+    expect(screen.queryByTestId('markdown-source-editor')).toBeNull()
   })
 
   it('opens a crashed markdown field as editable source', async () => {

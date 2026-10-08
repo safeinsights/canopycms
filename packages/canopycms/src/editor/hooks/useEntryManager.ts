@@ -669,6 +669,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Validate selected entry when entries change
   useEffect(() => {
+    if (selectedPath) noEntryRequested.current = false
     // Skip validation if entries haven't loaded yet
     if (entriesState.length === 0) return
 
@@ -698,7 +699,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!hasSyncedFromUrl.current) return
     const url = new URL(window.location.href)
     if (selectedPath) {
-      noEntryRequested.current = false
       url.searchParams.set('entry', selectedPath)
     } else if (noEntryRequested.current) {
       // Kept, so a reload still opens no entry.

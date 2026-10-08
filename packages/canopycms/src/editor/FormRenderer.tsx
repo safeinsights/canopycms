@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef } from 'react'
+import React, { useRef, useState } from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
 import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
@@ -82,9 +82,10 @@ const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path
 const FieldControl: React.FC<{ build: () => React.ReactNode }> = ({ build }) => <>{build()}</>
 
 /**
- * One field's error boundary. Once its field crashes it drops the field's edits until it
- * resets (entry or branch change), so the field cannot change a value the author no longer
- * sees. The flag belongs to this instance, which follows its field when blocks are reordered.
+ * One field's error boundary. Every edit callback a field was rendered with before it crashed
+ * is dead for good, so nothing it scheduled can land later, even on another entry's draft.
+ * Callbacks from renders after the crash, which happen once the boundary resets on an entry or
+ * branch change, work.
  */
 const FieldBoundary: React.FC<{
   canopyPath: string
@@ -93,19 +94,18 @@ const FieldBoundary: React.FC<{
   build: (update: (v: unknown) => void) => React.ReactNode
   fallback: (caught: CaughtEditorError) => React.ReactNode
 }> = ({ canopyPath, resetKey, update, build, fallback }) => {
-  const crashedUnder = useRef<string | null>(null)
-  useEffect(() => {
-    if (crashedUnder.current !== resetKey) crashedUnder.current = null
-  }, [resetKey])
+  const [generation, setGeneration] = useState(0)
+  const liveGeneration = useRef(0)
   const guardedUpdate = (next: unknown) => {
-    if (crashedUnder.current !== resetKey) update(next)
+    if (liveGeneration.current === generation) update(next)
   }
   return (
     <EditorErrorBoundary
       context={{ boundary: 'field', fieldPath: canopyPath }}
       resetKey={resetKey}
       onCaught={() => {
-        crashedUnder.current = resetKey
+        liveGeneration.current += 1
+        setGeneration(liveGeneration.current)
       }}
       fallback={fallback}
     >
@@ -175,6 +175,28 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   })
 
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
+
+  // Object-list items keep a key through their edits, so an item's fields, and their error
+  // boundaries, go with it when an earlier item is removed rather than staying at its index.
+  const listItemKeys = useRef(new WeakMap<object, string>())
+  const nextListItemKey = useRef(0)
+  const listItemKey = (item: unknown): string | undefined => {
+    if (typeof item !== 'object' || item === null) return undefined
+    let key = listItemKeys.current.get(item)
+    if (key === undefined) {
+      nextListItemKey.current += 1
+      key = `item-${nextListItemKey.current}`
+      listItemKeys.current.set(item, key)
+    }
+    return key
+  }
+  const keepListItemKey = <T,>(previous: unknown, next: T): T => {
+    const key = listItemKey(previous)
+    if (key !== undefined && typeof next === 'object' && next !== null) {
+      listItemKeys.current.set(next, key)
+    }
+    return next
+  }
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
   // when this field has an active error (keyed by canonical canopy path, so errors land on
@@ -511,6 +533,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                 <FieldDescription baseId={fieldId} description={field.description} />
                 <Stack gap="sm">
                   {items.map((item, idx) => {
+                    const stableKey = listItemKey(item)
+                    // The same object twice in one list would share a key; fall back to the index.
+                    const itemKey =
+                      stableKey !== undefined && items.indexOf(item) === idx
+                        ? stableKey
+                        : fieldKey([...path, idx])
                     const itemTitle = listItemTitle(
                       item,
                       objectField.itemTitleField,
@@ -518,7 +546,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                     )
                     return (
                       <Paper
-                        key={fieldKey([...path, idx])}
+                        key={itemKey}
                         role="group"
                         aria-label={itemTitle}
                         withBorder
@@ -545,7 +573,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                             value={item}
                             onChange={(next) => {
                               const nextItems = [...items]
-                              nextItems[idx] = next
+                              nextItems[idx] = keepListItemKey(item, next)
                               update(nextItems)
                             }}
                             renderField={renderField}

@@ -123,6 +123,34 @@ describe('useEntryManager', () => {
     await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
   })
 
+  it('stops honouring an empty entry param once an entry is chosen before any have loaded', async () => {
+    setupMockLocation({ href: 'http://localhost/edit?entry=', search: '?entry=' })
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [], pagination: { hasMore: false, limit: 100 } },
+    })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, initialEntries: [] }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    act(() => result.current.setSelectedPath('entry1'))
+
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
+    })
+    await act(async () => {
+      await result.current.refreshEntries()
+    })
+    await waitFor(() => expect(result.current.entries).toHaveLength(1))
+    act(() => result.current.setSelectedPath(''))
+
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+  })
+
   it('uses initialSelectedId when provided', () => {
     const { result } = renderHook(
       () => useEntryManager({ ...defaultOptions, initialSelectedId: 'entry1' }),

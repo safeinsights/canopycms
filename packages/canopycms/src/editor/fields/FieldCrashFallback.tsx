@@ -41,7 +41,10 @@ export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
   caught,
   dataCanopyField,
 }) => {
-  const isMarkdown = fieldType === 'markdown' || fieldType === 'mdx'
+  // Only text is editable as source; any other value would show as an empty box to type over.
+  const editableSource =
+    (fieldType === 'markdown' || fieldType === 'mdx') &&
+    (typeof value === 'string' || value === undefined || value === null)
   return (
     <Paper
       withBorder
@@ -54,7 +57,7 @@ export const FieldCrashFallback: React.FC<FieldCrashFallbackProps> = ({
         <Text size="sm" fw={500}>
           {label}
         </Text>
-        {isMarkdown ? (
+        {editableSource ? (
           <MarkdownSourceEditor
             label={label}
             value={typeof value === 'string' ? value : ''}

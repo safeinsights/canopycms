@@ -308,6 +308,10 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const pendingInsert = useRef<string | null>(null)
   const apiClient = useApiClient()
   const [sourceChosen, setSourceChosen] = useState(false)
+  // Text this field's author edited in the fallback, which stays in source with the reason.
+  const [editedFallback, setEditedFallback] = useState<{ value: string; reason: string } | null>(
+    null,
+  )
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
   const [editorGeneration, setEditorGeneration] = useState(0)
@@ -372,8 +376,11 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   }, [])
 
   // A value the rich-text editor failed on opens as source, whether MDXEditor rejected it or
-  // crashed rendering it; rich-text-failures.ts holds the record for the session.
-  const failure = recallRichTextFailure(value)
+  // crashed rendering it; rich-text-failures.ts holds the record for the session. Text edited
+  // from there stays in source in this field only, so it marks no other field.
+  const failure =
+    recallRichTextFailure(value) ??
+    (editedFallback?.value === value ? editedFallback.reason : undefined)
   const showSource = sourceChosen || failure !== undefined
 
   // MDXEditor can report the error while rendering (it imports as it is
@@ -410,11 +417,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   // Edits in the fallback stay in it: the edited text is no more likely to load.
   const handleSourceChange = (newValue: string) => {
-    if (failure !== undefined) {
-      // Moved, not added: a field holds one record, so typing evicts no other field's.
-      forgetRichTextFailure(value)
-      rememberRichTextFailure(newValue, failure)
-    }
+    if (failure !== undefined) setEditedFallback({ value: newValue, reason: failure })
     emitChange(newValue)
   }
 
@@ -425,6 +428,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
     }
     // Asking for rich text tries the editor again on a value it failed on.
     forgetRichTextFailure(value)
+    setEditedFallback(null)
     setSourceChosen(false)
     rerender()
   }
