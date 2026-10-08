@@ -129,16 +129,16 @@ function unsupportedJsx(node: MdastNode): string | null {
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
 
-/** Node types the table visitor imports itself, so they have no visitor of their own. */
+/** Node types inside a table, imported by its cell editors rather than by visitors. */
 const CONSUMED_BY_PARENT_VISITOR = new Set(['tableRow', 'tableCell'])
 
 /**
- * Reports through `onError`, at import, what MDXEditor would otherwise lose
- * silently: `import`/`export` lines (its visitor for them is a no-op), elements
- * `unsupportedJsx` rejects, and content with no visitor inside a JSX element or
- * table, whose children nested editors import later, only logging a failure and
- * writing partial children back on edit. It throws an error class MDXEditor's
- * import reports; any other error would crash the editor.
+ * Reports through `onError`, at import, what MDXEditor would otherwise lose or
+ * break on without reporting it: `import`/`export` lines (its visitor for them
+ * is a no-op), elements `unsupportedJsx` rejects, and content with no visitor
+ * inside a JSX element or table, whose children nested editors import later,
+ * only logging a failure and writing partial children back on edit. It throws
+ * an error class MDXEditor's import reports; any other error crashes the editor.
  */
 const roundTripGuardPlugin = realmPlugin({
   init(realm) {
