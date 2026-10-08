@@ -343,10 +343,10 @@ class SourceSplicer {
   /**
    * The run of comment lines that ends an item's region reads to a person as being about what
    * comes next, but it is the item's: `yaml`'s parser (`pop()`) keeps a trailing run with the
-   * nested collection it ends when any line of it is at or right of that collection's indent.
-   * While the neighbour below is unchanged that is harmless; once it changes, indent the run's
-   * shallower lines to its deepest comment, so they read as the item's and do not head content
-   * they were never about. Where that lands a line in a deeper scalar's comment or content
+   * nested collection it ends when that collection is not at column 0 and any line of the run is
+   * at or right of its indent. While the neighbour below is unchanged that is harmless; once it
+   * changes, indent the run's shallower lines to its deepest comment, so they read as the item's
+   * and do not head content they were never about. Where that lands a line in a deeper scalar's comment or content
    * instead, {@link printsAs} refuses the splice. A run at or left of the item's own column is a
    * zero-indented list's tail, and is left alone.
    */
