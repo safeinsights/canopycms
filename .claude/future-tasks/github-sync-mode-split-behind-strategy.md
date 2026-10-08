@@ -20,7 +20,7 @@ Should "how does this deployment reach GitHub" move behind the operating-mode st
 strategy picks direct call or queue? Things to weigh:
 
 - whether `githubService` presence or the mode is the right discriminator: `createGitHubService`
-  returns null when the mode has no PRs (`github-service.ts:458`), so they differ only when a
+  (`github-service.ts`) returns null when the mode has no PRs, so they differ only when a
   PR mode lacks a token or remote URL and the queue is used even with internet;
 - that the direct path and the worker path run different code for the same action
   (`GitHubService` methods vs `worker/task-runner.ts`'s `executeTask` cases), so "already gone"
