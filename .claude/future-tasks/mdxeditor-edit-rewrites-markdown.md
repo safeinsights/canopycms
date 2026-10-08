@@ -14,6 +14,11 @@ MarkdownField saves MDXEditor's serialization of the whole body after any edit. 
 | `<span style={…}><span style="…">x</span></span>` | Inner style only | the inner `addStyle` overwrites the outer one |
 | `1. item\n\n   <Callout …>x</Callout>` (a flow JSX element in a list item) | `1. item<Callout …>x</Callout>`: the element joins the item's text | not yet traced. An adopter measured it headless on 3.55 with MarkdownField's plugin set; no live content has it yet |
 
+A save now keeps the on-disk text of every block whose meaning the export keeps
+(`utils/markdown-body-splice.ts`), so marker and escape restyling no longer reaches disk. These rows
+still do, untouched or not: each changes the block's meaning, and the save follows the editor's
+meaning. Fixing them at the export is what removes them.
+
 Already safe: content MDXEditor would lose outright, corrupt, or crash on opens in MarkdownField's
 source editor instead (see the round-trip guard in `editor/fields/mdx-jsx-support.tsx`). These five
 are subtler: they round-trip into valid but different markdown, so no error fires. The list-item

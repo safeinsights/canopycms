@@ -51,6 +51,19 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **Now deletable.** A formatter pass over CMS-written content that only undoes the re-fold.
 
+### A markdown body save rewrites only the blocks that changed
+
+**What changed.** An md/mdx body save keeps the exact text of every block the edit left alone
+(list and emphasis markers, escapes, JSX, blank lines, CRLF), so `prettier --check` no longer fails
+on untouched lines. New and edited blocks use Prettier's markers (`-`, `_emphasis_`, `---`), and a
+new entry's body starts after a blank line. Hard breaks and an ordered list's start still change on
+the first edit.
+
+**To adopt.** Nothing.
+
+**Now deletable.** A formatter pass or `.prettierignore` entry over content that only undoes the
+editor's restyling of untouched markdown.
+
 ### A read reports the entry's `slug` and `urlPath`
 
 **What changed.** `read()`/`readByUrlPath()` return `meta.slug` and `meta.urlPath`, and a preview
