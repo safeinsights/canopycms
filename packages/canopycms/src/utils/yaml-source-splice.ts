@@ -44,6 +44,10 @@ import {
   type Pair,
 } from 'yaml'
 
+/** Successor markers: the end of a collection, and an item with no source counterpart. */
+const END = Symbol('end')
+const FRESH = Symbol('fresh')
+
 /** `yaml`'s default `lineWidth`, which `Document.toString()` folds at. */
 const LINE_WIDTH = 80
 
@@ -211,9 +215,17 @@ class SourceSplicer {
         continue
       }
       const now = item.value
-      if (now === before && !this.isDirty(now)) continue
-      const inner = now === before && isCollection(now) ? this.collectionEdits(now) : undefined
+      const clean = now === before && !this.isDirty(now)
+      const inner = clean
+        ? []
+        : now === before && isCollection(now)
+          ? this.collectionEdits(now)
+          : undefined
       if (inner !== undefined) {
+        const next = map.items[map.items.indexOf(item) + 1] ?? END
+        if ((i + 1 < snap.length ? snap[i + 1].item : END) !== next) {
+          edits.push(...this.outdentedCommentEdits(g, col))
+        }
         edits.push(...inner)
         continue
       }
@@ -240,15 +252,22 @@ class SourceSplicer {
     const oldIndex = new Map<unknown, number>(snap.map((s, i) => [s.item, i]))
     const parts: string[] = []
 
-    for (const item of seq.items) {
+    const sourceOf = (item: unknown): unknown =>
+      oldIndex.has(item) ? item : isNode(item) ? this.replaced.get(item) : undefined
+    for (const [k, item] of seq.items.entries()) {
       const j = oldIndex.get(item)
       let part: string
       if (j !== undefined) {
         const start = this.chunkStart(geometry, j)
         const inner = isCollection(item) && this.isDirty(item) ? this.collectionEdits(item) : []
+        const next = k + 1 < seq.items.length ? sourceOf(seq.items[k + 1]) : END
+        const moved = (j + 1 < snap.length ? snap[j + 1].item : END) !== (next ?? FRESH)
         part =
           inner !== undefined
-            ? this.applyEdits(start, geometry[j].end, inner)
+            ? this.applyEdits(start, geometry[j].end, [
+                ...inner,
+                ...(moved ? this.outdentedCommentEdits(geometry[j], col) : []),
+              ])
             : this.raw.slice(start, geometry[j].lineStart) +
               withoutLeadingComment(item, () => this.render(seqOf(item), col, false))
       } else {
@@ -313,10 +332,36 @@ class SourceSplicer {
     let at = start
     while (at > 0) {
       const previous = this.lineStart(at - 1)
+      if (previous >= at) break
       if (!/^[ \t]*(#.*)?\r?\n?$/.test(this.raw.slice(previous, at))) break
       at = previous
     }
     return at
+  }
+
+  /**
+   * A comment line inside an item at or left of the item's own column, which `yaml` reads as the
+   * item's because it follows a deeper line, reads to a person as being about whatever comes next.
+   * Once the item's neighbour below changes, indent such lines to the deeper line above them —
+   * where `toString()` draws them — so they do not head content they were never about.
+   */
+  private outdentedCommentEdits(g: ItemGeometry, col: number): Edit[] {
+    const edits: Edit[] = []
+    let deeper: number | undefined
+    let at = this.raw.indexOf('\n', g.content) + 1
+    while (at > 0 && at < g.end) {
+      const lineEnd = this.raw.indexOf('\n', at)
+      const line = this.raw.slice(at, lineEnd === -1 ? g.end : lineEnd)
+      const indent = line.length - line.trimStart().length
+      if (line.trim() !== '') {
+        if (indent > col) deeper = indent
+        else if (line.trimStart().startsWith('#') && deeper !== undefined) {
+          edits.push({ start: at, end: at + indent, text: ' '.repeat(deeper) })
+        }
+      }
+      at = lineEnd === -1 ? g.end : lineEnd + 1
+    }
+    return edits
   }
 
   /** Where item `i`'s chunk begins: its own line for the first item, else the previous item's end. */
@@ -383,7 +428,8 @@ class SourceSplicer {
   }
 
   private lineStart(offset: number): number {
-    return this.raw.lastIndexOf('\n', offset - 1) + 1
+    // `lastIndexOf` clamps a negative index to 0, which would find a newline AT offset 0.
+    return offset <= 0 ? 0 : this.raw.lastIndexOf('\n', offset - 1) + 1
   }
 
   private column(offset: number): number {
@@ -415,7 +461,7 @@ class SourceSplicer {
     // is this.eol's to write.
     const text = fragment
       .toString({ lineWidth: Math.max(MIN_LINE_WIDTH, LINE_WIDTH - col) })
-      .replace(/\r/g, '')
+      .replace(/\r\n?/g, '\n')
     const indent = ' '.repeat(col)
     const lines = text.split('\n')
     if (lines[lines.length - 1] === '') lines.pop()
@@ -481,7 +527,7 @@ function lineEndingOf(raw: string): string | undefined {
  * whole-file re-print does not leave the file with mixed line endings.
  */
 export function withSourceLineEndings(printed: string, raw: string): string {
-  const text = printed.replace(/\r/g, '')
+  const text = printed.replace(/\r\n?/g, '\n')
   return lineEndingOf(raw) === '\r\n' ? text.replace(/\n/g, '\r\n') : text
 }
 

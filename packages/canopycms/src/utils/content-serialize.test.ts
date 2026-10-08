@@ -805,6 +805,16 @@ describe('serializeYaml keeps the source text of everything it did not change', 
     )
   })
 
+  it('finishes a save that drops a commented first key from a file starting with a blank line', () => {
+    expect(serializeYaml({ b: 2 }, '\n# about a\na: 1\nb: 2\n')).toBe('b: 2\n')
+  })
+
+  it('keeps a comment split by a lone carriage return as two comment lines', () => {
+    const out = serializeYaml({ a: 1, b: 3 }, '# c\rmore\na: 1\nb: 2\n')
+    expect(yamlParse(out)).toEqual({ a: 1, b: 3 })
+    expect(out).toContain('# c\n#more\n')
+  })
+
   it('falls back to a whole re-serialisation, with correct data, for a file using anchors', () => {
     const anchored = `base: &shared
   x: 1
@@ -859,10 +869,10 @@ describe('serializeYaml never trades data for style', () => {
 })
 
 describe('serializeYaml keeps comments with the items yaml gives them to', () => {
-  it('copies an outdented comment as written when the item below it is removed', () => {
-    // yaml reads `# Keep this CTA` as hero's (it follows a deeper comment), and with cta gone it
-    // reads the FAQ comment as hero's too. No text reads back otherwise, so the lines stay as
-    // the author wrote them rather than being re-indented under hero.
+  it('indents an outdented comment under its owner once the item below it is removed', () => {
+    // yaml reads `# Keep this CTA` as hero's: it follows a deeper comment. Left at the item
+    // column it would head faq, so it is drawn under hero, where `toString()` puts it; every
+    // other line stays as written.
     const raw = `sections:
   - template: hero
     title: Hero
@@ -878,7 +888,40 @@ describe('serializeYaml keeps comments with the items yaml gives them to', () =>
     const data = yamlParse(raw) as { sections: unknown[] }
     data.sections.splice(1, 1)
     expect(serializeYaml(data, raw)).toBe(
-      replaceOnce(raw, '  - template: cta\n    label: Go\n', ''),
+      replaceOnce(
+        raw,
+        '  # Keep this CTA, legal requires it\n  - template: cta\n    label: Go\n',
+        '    # Keep this CTA, legal requires it\n',
+      ),
+    )
+  })
+
+  it('does not let an outdented comment head a block inserted after its owner', () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+  # Keep this CTA, legal
+  - template: cta
+    value:
+      label: Go
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 0, { template: 'x', value: { a: 1 } })
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(
+        raw,
+        '  # Keep this CTA, legal\n',
+        '      # Keep this CTA, legal\n  - template: x\n    value:\n      a: 1\n',
+      ),
+    )
+  })
+
+  it('does not let an outdented comment head the key after a deleted one', () => {
+    const raw = 'hero:\n  title: x\n  # deep tail\n# about cta\ncta:\n  label: y\nfoot: z\n'
+    expect(serializeYaml({ hero: { title: 'x' }, foot: 'z' }, raw)).toBe(
+      'hero:\n  title: x\n  # deep tail\n  # about cta\nfoot: z\n',
     )
   })
 
@@ -908,6 +951,11 @@ describe('serializeFrontmatter keeps the source text of everything it did not ch
 
   it('returns the file byte-for-byte on a save that changes nothing', () => {
     expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST)).toBe(POST)
+  })
+
+  it('finishes a save that drops the first key when a comment sits above it', () => {
+    const post = '---\n# about title\ntitle: A\nb: 1\n---\nbody\n'
+    expect(serializeFrontmatter('body\n', { b: 1 }, post)).toBe('---\nb: 1\n---\nbody\n')
   })
 
   it('keeps frontmatter readable when its keys are indented', () => {
