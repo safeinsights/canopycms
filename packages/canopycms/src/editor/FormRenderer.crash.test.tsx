@@ -119,6 +119,61 @@ describe('FormRenderer field crash containment', () => {
     expect(formState().settings).toBe('edited back where it crashed')
   })
 
+  it("keeps a healthy block editable after it moves into a crashed block's place", async () => {
+    const blockFields: FieldConfig[] = [
+      {
+        name: 'blocks',
+        type: 'block',
+        label: 'Blocks',
+        templates: [
+          { name: 'panel', label: 'Panel', fields: [{ name: 'settings', type: 'code' }] },
+        ],
+      },
+    ]
+    const Blocks: React.FC = () => {
+      const [value, setValue] = useState<FormValue>({
+        blocks: [
+          { template: 'panel', value: { settings: 'boom' } },
+          { template: 'panel', value: { settings: 'healthy' } },
+        ],
+      })
+      return (
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={blockFields}
+            value={value}
+            onChange={setValue}
+            customRenderers={{
+              code: ({ value: v, onChange }) => {
+                if (v === 'boom') throw new Error('panel exploded')
+                return (
+                  <button
+                    type="button"
+                    data-testid="edit-settings"
+                    onClick={() => onChange('edited')}
+                  >
+                    {String(v)}
+                  </button>
+                )
+              },
+            }}
+          />
+          <pre data-testid="form-state">{JSON.stringify(value)}</pre>
+        </CanopyCMSProvider>
+      )
+    }
+    render(<Blocks />)
+    expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
+
+    const user = userEvent.setup()
+    await user.click(screen.getAllByRole('button', { name: 'Move block up' })[1])
+    await user.click(screen.getByTestId('edit-settings'))
+
+    const blocks = formState().blocks as Array<{ value: { settings: string } }>
+    expect(blocks.map((b) => b.value.settings)).toEqual(['edited', 'boom'])
+    expect(screen.getByTestId('field-crash-fallback')).toBeTruthy()
+  })
+
   it('opens a crashed markdown field as editable source', async () => {
     const markdownFields: FieldConfig[] = [{ name: 'body', type: 'markdown', label: 'Body' }]
     const Markdown: React.FC = () => {

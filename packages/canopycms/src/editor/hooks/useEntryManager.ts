@@ -254,7 +254,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   if (initialUrlEntry.current === undefined) {
     initialUrlEntry.current = readUrlEntry()
   }
-  const noEntryRequested = initialUrlEntry.current === ''
+  // Honoured until the author opens an entry; after that a lost selection opens the first again.
+  const noEntryRequested = useRef(initialUrlEntry.current === '')
 
   const collectionByPath = useMemo(() => {
     const map = new Map<LogicalPath, EditorCollection>()
@@ -684,11 +685,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // If the selected entry exists, keep it
     if (entriesState.find((e) => e.path === selectedPath)) return
 
-    if (selectedPath === '' && noEntryRequested) return
+    if (selectedPath === '' && noEntryRequested.current) return
 
     // Fall back to first entry
     setSelectedPath(entriesState[0]?.path ?? '')
-  }, [entriesState, selectedPath, noEntryRequested])
+  }, [entriesState, selectedPath])
 
   // Update URL when selection changes (skip until URL sync has happened)
   useEffect(() => {
@@ -697,15 +698,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!hasSyncedFromUrl.current) return
     const url = new URL(window.location.href)
     if (selectedPath) {
+      noEntryRequested.current = false
       url.searchParams.set('entry', selectedPath)
-    } else if (noEntryRequested) {
+    } else if (noEntryRequested.current) {
       // Kept, so a reload still opens no entry.
       url.searchParams.set('entry', '')
     } else {
       url.searchParams.delete('entry')
     }
     window.history.replaceState({}, '', url.toString())
-  }, [selectedPath, noEntryRequested])
+  }, [selectedPath])
 
   return {
     selectedPath,

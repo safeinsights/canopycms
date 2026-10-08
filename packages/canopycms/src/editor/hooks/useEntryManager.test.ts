@@ -103,6 +103,26 @@ describe('useEntryManager', () => {
     expect(result.current.currentEntry).toEqual(mockEntry)
   })
 
+  it('opens no entry, with the navigator open, for an empty entry param, until one is chosen', async () => {
+    setupMockLocation({ href: 'http://localhost/edit?entry=', search: '?entry=' })
+    mockClient.entries.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
+    })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    expect(result.current.entries.map((e) => e.path)).toEqual(['entry1'])
+    expect(result.current.selectedPath).toBe('')
+    expect(result.current.navigatorOpen).toBe(true)
+
+    // Once the author has opened an entry, losing the selection opens the first entry again.
+    act(() => result.current.setSelectedPath('entry1'))
+    act(() => result.current.setSelectedPath(''))
+    await waitFor(() => expect(result.current.selectedPath).toBe('entry1'))
+  })
+
   it('uses initialSelectedId when provided', () => {
     const { result } = renderHook(
       () => useEntryManager({ ...defaultOptions, initialSelectedId: 'entry1' }),

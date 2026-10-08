@@ -410,7 +410,11 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   // Edits in the fallback stay in it: the edited text is no more likely to load.
   const handleSourceChange = (newValue: string) => {
-    if (failure !== undefined) rememberRichTextFailure(newValue, failure)
+    if (failure !== undefined) {
+      // Moved, not added: a field holds one record, so typing evicts no other field's.
+      forgetRichTextFailure(value)
+      rememberRichTextFailure(newValue, failure)
+    }
     emitChange(newValue)
   }
 

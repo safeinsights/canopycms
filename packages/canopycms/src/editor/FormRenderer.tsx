@@ -36,7 +36,7 @@ import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
-import { EditorErrorBoundary } from './components/EditorErrorBoundary'
+import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 
 export type FormValue = Record<string, unknown>
@@ -80,6 +80,39 @@ const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path
 
 /** Builds the control inside the field's boundary: a custom renderer is called, not mounted. */
 const FieldControl: React.FC<{ build: () => React.ReactNode }> = ({ build }) => <>{build()}</>
+
+/**
+ * One field's error boundary. Once its field crashes it drops the field's edits until it
+ * resets (entry or branch change), so the field cannot change a value the author no longer
+ * sees. The flag belongs to this instance, which follows its field when blocks are reordered.
+ */
+const FieldBoundary: React.FC<{
+  canopyPath: string
+  resetKey: string
+  update: (v: unknown) => void
+  build: (update: (v: unknown) => void) => React.ReactNode
+  fallback: (caught: CaughtEditorError) => React.ReactNode
+}> = ({ canopyPath, resetKey, update, build, fallback }) => {
+  const crashedUnder = useRef<string | null>(null)
+  useEffect(() => {
+    if (crashedUnder.current !== resetKey) crashedUnder.current = null
+  }, [resetKey])
+  const guardedUpdate = (next: unknown) => {
+    if (crashedUnder.current !== resetKey) update(next)
+  }
+  return (
+    <EditorErrorBoundary
+      context={{ boundary: 'field', fieldPath: canopyPath }}
+      resetKey={resetKey}
+      onCaught={() => {
+        crashedUnder.current = resetKey
+      }}
+      fallback={fallback}
+    >
+      <FieldControl build={() => build(guardedUpdate)} />
+    </EditorErrorBoundary>
+  )
+}
 
 export interface FormRendererProps {
   fields: EntrySchema
@@ -142,14 +175,6 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   })
 
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
-  // Canopy path -> reset key it crashed under. A crashed field emits no edits until its boundary
-  // resets (entry or branch change), so it cannot change a value the author no longer sees.
-  const crashedFields = useRef(new Map<string, string>())
-  useEffect(() => {
-    for (const [path, key] of crashedFields.current) {
-      if (key !== boundaryResetKey) crashedFields.current.delete(path)
-    }
-  }, [boundaryResetKey])
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
   // when this field has an active error (keyed by canonical canopy path, so errors land on
@@ -162,17 +187,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     path: Array<string | number>,
   ) => {
     const canopyPath = normalizeCanopyPath(path)
-    const guardedUpdate = (next: unknown) => {
-      if (crashedFields.current.get(canopyPath) === boundaryResetKey) return
-      update(next)
-    }
     const error = fieldErrors?.[canopyPath]
     return (
       <Stack key={fieldKey(path)} gap={4}>
-        <EditorErrorBoundary
-          context={{ boundary: 'field', fieldPath: canopyPath }}
+        <FieldBoundary
+          canopyPath={canopyPath}
           resetKey={boundaryResetKey}
-          onCaught={() => crashedFields.current.set(canopyPath, boundaryResetKey)}
+          update={update}
+          build={(guardedUpdate) => renderFieldControl(field, currentValue, guardedUpdate, path)}
           fallback={(caught) => (
             <FieldCrashFallback
               label={field.label ?? field.name}
@@ -183,11 +205,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               dataCanopyField={canopyPath}
             />
           )}
-        >
-          <FieldControl
-            build={() => renderFieldControl(field, currentValue, guardedUpdate, path)}
-          />
-        </EditorErrorBoundary>
+        />
         {error && (
           <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
             {error}

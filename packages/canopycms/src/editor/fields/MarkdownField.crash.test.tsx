@@ -110,6 +110,31 @@ describe('MarkdownField when the rich-text editor throws while rendering', () =>
     expect(mdxEditorRenders).not.toHaveBeenCalled()
   })
 
+  it("keeps every field in source while one field's source is edited at length", async () => {
+    const Wrapper = createApiClientWrapper(mockClient)
+    const Two: React.FC = () => {
+      const [a, setA] = React.useState('First body.')
+      return (
+        <CanopyCMSProvider>
+          <Wrapper>
+            <MarkdownField label="A" value={a} onChange={setA} />
+            <MarkdownField label="B" value="Second body." onChange={() => {}} />
+          </Wrapper>
+        </CanopyCMSProvider>
+      )
+    }
+    render(<Two />)
+    await waitFor(() => expect(screen.getAllByTestId('markdown-source-fallback')).toHaveLength(2))
+    mdxEditorRenders.mockClear()
+
+    await userEvent
+      .setup()
+      .type(screen.getByRole('textbox', { name: 'A (source)' }), ' and twenty-five more chars')
+
+    expect(mdxEditorRenders).not.toHaveBeenCalled()
+    expect(screen.getAllByTestId('markdown-source-fallback')).toHaveLength(2)
+  })
+
   it('tries the rich-text editor again when asked', async () => {
     renderField('Body text.')
     await screen.findByTestId('markdown-source-fallback')
