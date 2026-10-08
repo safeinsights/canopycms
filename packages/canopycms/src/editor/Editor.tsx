@@ -1031,8 +1031,12 @@ export const Editor: React.FC<EditorProps> = ({
             }}
             onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
             onSave={handleSave}
-            onSubmit={() => branchNameState && handleSubmit(branchNameState)}
-            onWithdraw={() => branchNameState && handleWithdraw(branchNameState)}
+            onSubmit={() => {
+              if (branchNameState) handleSubmit(branchNameState).catch(console.error)
+            }}
+            onWithdraw={() => {
+              if (branchNameState) handleWithdraw(branchNameState).catch(console.error)
+            }}
           />
 
           <Box

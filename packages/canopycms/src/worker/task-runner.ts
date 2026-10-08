@@ -8,7 +8,7 @@ import {
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import { createOrUpdatePullRequest } from '../github-service'
+import { createOrUpdatePullRequest, isRefAlreadyGoneError } from '../github-service'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { gitNetworkChildEnv } from '../git-manager'
@@ -429,17 +429,35 @@ export async function executeTask(
     }
     case 'delete-remote-branch': {
       const branch = requireString(payload, 'branch')
-      await ctx.octokit().git.deleteRef({
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        ref: `heads/${branch}`,
-        request: { signal },
-      })
+      try {
+        await ctx.octokit().git.deleteRef({
+          owner: ctx.githubOwner,
+          repo: ctx.githubRepo,
+          ref: `heads/${branch}`,
+          request: { signal },
+        })
+      } catch (err) {
+        // Already gone is the outcome this task wants; failing it would only retry or park it.
+        if (!isRefAlreadyGoneError(err)) throw err
+        workerLog(`GitHub branch ${branch} was already deleted`)
+        return { deleted: false, alreadyGone: true }
+      }
+      workerLog(`Deleted GitHub branch ${branch}`)
       return { deleted: true }
     }
     default:
       throw new PermanentTaskError(`Unknown task action: ${action}`)
   }
+}
+
+/**
+ * The branch whose metadata records a task's outcome, or null when none does. A
+ * delete-remote-branch task names a branch already deleted here, so a workspace under that
+ * name belongs to a newer branch that reused it.
+ */
+function metadataBranchOf(task: Task): string | null {
+  if (task.action === 'delete-remote-branch') return null
+  return typeof task.payload.branch === 'string' ? task.payload.branch : null
 }
 
 /**
@@ -450,7 +468,7 @@ export async function updateBranchMetadata(
   task: Task,
   result: Record<string, unknown>,
 ): Promise<void> {
-  const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
+  const branch = metadataBranchOf(task)
   if (!branch) return
 
   const branchPath = ctx.branchWorkspacePath(branch)
@@ -506,7 +524,7 @@ async function updateBranchMetadataOnFailure(
   task: Task,
   error: string,
 ): Promise<void> {
-  const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
+  const branch = metadataBranchOf(task)
   if (!branch) return
 
   const branchPath = ctx.branchWorkspacePath(branch)

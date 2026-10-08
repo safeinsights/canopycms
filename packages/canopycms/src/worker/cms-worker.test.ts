@@ -11,7 +11,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
-import { enqueueTask, dequeueTask } from '../task-queue/cms-task-queue'
+import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
@@ -2383,5 +2383,88 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     const remoteLog = await fixtureGit.raw(['log', 'canopycms-settings-acme', '--format=%s'])
     expect(remoteLog).toContain('foreign deployment settings')
     expect(remoteLog).not.toContain('seed settings')
+  })
+})
+
+describe('CmsWorker delete-remote-branch', () => {
+  let tmpDir: string
+  let taskDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-delete-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const runDelete = async (deleteRef: ReturnType<typeof vi.fn>) => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 2000,
+    })
+    const internals = worker as unknown as {
+      running: boolean
+      octokit: { git: { deleteRef: ReturnType<typeof vi.fn> } }
+    }
+    internals.running = true
+    internals.octokit = { git: { deleteRef } }
+    const id = await enqueueTask(taskDir, {
+      action: 'delete-remote-branch',
+      payload: { branch: 'feature-x' },
+    })
+    await worker.processTaskQueue()
+    return getTask(taskDir, id)
+  }
+
+  const ghError = (status: number, message: string) => Object.assign(new Error(message), { status })
+
+  it('deletes the branch on GitHub', async () => {
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef)
+
+    expect(deleteRef).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'test-owner', repo: 'test-repo', ref: 'heads/feature-x' }),
+    )
+    expect(task?.status).toBe('completed')
+    expect(task?.result).toEqual({ deleted: true })
+  })
+
+  it.each([
+    ['422 "Reference does not exist"', ghError(422, 'Reference does not exist')],
+    ['404', ghError(404, 'Not Found')],
+  ])('completes without a retry when GitHub answers %s', async (_label, err) => {
+    const deleteRef = vi.fn().mockRejectedValue(err)
+
+    const task = await runDelete(deleteRef)
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect(task?.status).toBe('completed')
+    expect(task?.retryCount ?? 0).toBe(0)
+    expect(task?.result).toEqual({ deleted: false, alreadyGone: true })
+  })
+
+  it('still fails a 422 that is not about a missing reference', async () => {
+    const task = await runDelete(vi.fn().mockRejectedValue(ghError(422, 'Validation Failed')))
+
+    expect(task?.status).toBe('failed')
+    expect(consoleSpy).toHaveErrored('Permanently failed')
+  })
+
+  it('records nothing on a branch that has since reused the name', async () => {
+    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    await fs.mkdir(reused, { recursive: true })
+
+    await runDelete(vi.fn().mockResolvedValue({ data: {} }))
+
+    expect(await BranchMetadataFileManager.loadOnly(reused)).toBeNull()
   })
 })

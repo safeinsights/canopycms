@@ -49,6 +49,11 @@ vi.mock('../utils/occ-json-write', async (importOriginal) => {
   }
 })
 
+const mockEnqueueTask = vi.fn()
+vi.mock('../task-queue/cms-task-queue', () => ({
+  enqueueTask: (...args: unknown[]) => mockEnqueueTask(...args),
+}))
+
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
     return {
@@ -88,6 +93,7 @@ import { unsafeAsBranchName } from '../paths/test-utils'
 import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
+import type { GitHubService } from '../github-service'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -1124,6 +1130,124 @@ describe('deleteBranch api', () => {
     )
     expect(res.ok).toBe(true)
     expect(res.data?.cleanupWarning).toBeUndefined()
+  })
+
+  describe('the branch on GitHub', () => {
+    const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+    const branch = { branch: unsafeAsBranchName('feature/x') }
+    const withPr = createMockBranchContext({
+      branchName: 'feature/x',
+      createdBy: 'u1',
+      status: 'editing',
+      pullRequestNumber: 42,
+    })
+    const ghError = (status: number, message: string) =>
+      Object.assign(new Error(message), { status })
+
+    beforeEach(() => {
+      mockEnqueueTask.mockReset()
+      mockEnqueueTask.mockResolvedValue('task-1')
+    })
+
+    const ctxWith = (
+      context: ReturnType<typeof createMockBranchContext>,
+      services: { githubService?: GitHubService; mode?: CanopyConfig['mode'] },
+    ) =>
+      createMockApiContext({
+        branchContext: context,
+        services: {
+          registry: mockRegistry as unknown as BranchRegistry,
+          githubService: services.githubService,
+          config: { mode: services.mode ?? 'dev' } as CanopyConfig,
+        },
+      })
+
+    it('is deleted directly when a githubService is available', async () => {
+      const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(deleteBranchMock).toHaveBeenCalledWith('feature/x')
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('is queued for the worker when there is no githubService and the mode has PRs', async () => {
+      const ctx = ctxWith(withPr, { mode: 'prod' })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(mockEnqueueTask).toHaveBeenCalledTimes(1)
+      expect(mockEnqueueTask).toHaveBeenCalledWith(expect.any(String), {
+        action: 'delete-remote-branch',
+        payload: { branch: 'feature/x' },
+      })
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('is never touched when the branch has no PR, so it is not one the CMS pushed', async () => {
+      const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
+      const noPr = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+
+      const direct = await deleteBranch(
+        ctxWith(noPr, {
+          githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+        }),
+        { user },
+        branch,
+      )
+      const queued = await deleteBranch(ctxWith(noPr, { mode: 'prod' }), { user }, branch)
+
+      expect(direct.ok).toBe(true)
+      expect(queued.ok).toBe(true)
+      expect(deleteBranchMock).not.toHaveBeenCalled()
+      expect(mockEnqueueTask).not.toHaveBeenCalled()
+    })
+
+    it('is a success when GitHub says the branch is already gone', async () => {
+      const deleteBranchMock = vi.fn().mockRejectedValue(ghError(422, 'Reference does not exist'))
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.cleanupWarning).toBeUndefined()
+    })
+
+    it('turns a GitHub failure into a cleanupWarning, never a failed delete', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const deleteBranchMock = vi.fn().mockRejectedValue(ghError(403, 'Resource not accessible'))
+      const ctx = ctxWith(withPr, {
+        githubService: { deleteBranch: deleteBranchMock } as unknown as GitHubService,
+      })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.deleted).toBe(true)
+      expect(res.data?.cleanupWarning).toContain('could not be deleted on GitHub')
+      expect(consoleErrorSpy).toHaveBeenCalled()
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('turns a failed enqueue into a cleanupWarning, never a failed delete', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockEnqueueTask.mockRejectedValue(new Error('disk full'))
+      const ctx = ctxWith(withPr, { mode: 'prod' })
+
+      const res = await deleteBranch(ctx, { user }, branch)
+
+      expect(res.ok).toBe(true)
+      expect(res.data?.cleanupWarning).toContain('could not be queued')
+      consoleErrorSpy.mockRestore()
+    })
   })
 })
 
