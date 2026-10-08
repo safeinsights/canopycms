@@ -5,7 +5,9 @@
  * deletes every comment in the file, because comments live in neither the object nor that round
  * trip. So these functions re-serialise onto the file's OWN parsed document: a node whose value
  * did not change is left untouched, and an untouched node keeps its attached comments and its
- * original quoting/block style. Only what actually changed is rewritten.
+ * original quoting/block style. Only what actually changed is rewritten, and
+ * `yaml-source-splice.ts` writes it into the file's own text, so untouched lines keep their bytes
+ * wherever it can vouch for the result.
  *
  * The file gets no authority over its own content. The reconciler makes the document's key set
  * match `data` exactly — a key the caller dropped disappears, a key the caller kept survives
@@ -15,6 +17,8 @@
  * (validation/entry-validator.ts) at the API boundary, not by a schema-blind serialiser.
  */
 
+import { isDeepStrictEqual } from 'node:util'
+
 import matter from 'gray-matter'
 import {
   isCollection,
@@ -23,6 +27,7 @@ import {
   isScalar,
   isSeq,
   parseDocument,
+  Scalar,
   stringify as yamlStringify,
   type Document,
   type Pair,
@@ -31,6 +36,20 @@ import {
 } from 'yaml'
 
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
+import { createDebugLogger } from './debug'
+import { getErrorMessage } from './error'
+import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
+
+const log = createDebugLogger({ prefix: 'ContentSerialize' })
+
+/** State one reconcile threads through: the document, and which node replaced which. */
+interface ReconcileContext {
+  readonly doc: Document
+  /** Each node created for an existing slot, mapped to the node it replaced. */
+  readonly replaced: WeakMap<object, unknown>
+  /** Fresh scalars given the replaced scalar's style, which a re-print may have to take back. */
+  readonly restyled: Scalar[]
+}
 
 /** The comment metadata every `yaml` node carries (see `NodeBase` in the `yaml` types). */
 interface CommentCarrier {
@@ -210,13 +229,13 @@ function looksLikeSameItem(node: unknown, value: unknown): boolean {
  * Reconcile one slot of the document against the value that must occupy it, returning the node to
  * put there. `existing` is the node in that slot, or null/undefined for a slot that did not exist.
  */
-function reconcileNode(doc: Document, existing: unknown, value: unknown): unknown {
+function reconcileNode(ctx: ReconcileContext, existing: unknown, value: unknown): unknown {
   if (isMap(existing) && isPlainRecord(value)) {
-    reconcileMap(doc, existing, value)
+    reconcileMap(ctx, existing, value)
     return existing
   }
   if (isSeq(existing) && Array.isArray(value)) {
-    reconcileSeq(doc, existing, value)
+    reconcileSeq(ctx, existing, value)
     return existing
   }
   // Unchanged scalar: return the node itself, untouched. This is the case that preserves comments
@@ -226,7 +245,15 @@ function reconcileNode(doc: Document, existing: unknown, value: unknown): unknow
   // Changed, or a shape change (scalar <-> collection). A fresh node rather than mutating
   // `scalar.value` in place, which would keep the old node's representation and emit `'42'` where
   // the number 42 was meant.
-  const fresh = doc.createNode(value)
+  const fresh = ctx.doc.createNode(value)
+  if (isNode(existing)) ctx.replaced.set(fresh, existing)
+  if (isScalar(existing) && isScalar(fresh) && typeof value === 'string') {
+    const style = carriedStyle(existing, value)
+    if (style !== undefined) {
+      fresh.type = style
+      ctx.restyled.push(fresh)
+    }
+  }
   // Comments move with a changed VALUE, but not off a replaced STRUCTURE. `yaml` attaches a
   // comment written above a collection's first entry to the collection node itself, so that
   // node's comments are about its innards; carrying them onto whatever replaces the collection
@@ -238,12 +265,33 @@ function reconcileNode(doc: Document, existing: unknown, value: unknown): unknow
 }
 
 /**
+ * The style a changed string inherits from the string it replaces: its quoting, or its block
+ * style (`>-`, `|`) unless the new value has no content or leads with whitespace, which `yaml`
+ * can print lossily in a block (`"   "` reads back as `""`). Never `PLAIN`: forcing it stops `yaml` choosing a
+ * block for a multi-line value, and some (`Requirements:\nBring a laptop`) then print as
+ * unparseable YAML. An unset style is plain where plain is safe.
+ */
+function carriedStyle(existing: Scalar, value: string): Scalar.Type | undefined {
+  if (typeof existing.value !== 'string') return undefined
+  switch (existing.type) {
+    case Scalar.QUOTE_DOUBLE:
+    case Scalar.QUOTE_SINGLE:
+      return existing.type
+    case Scalar.BLOCK_FOLDED:
+    case Scalar.BLOCK_LITERAL:
+      return /\S/.test(value) && !/^\s/.test(value) ? existing.type : undefined
+    default:
+      return undefined
+  }
+}
+
+/**
  * Make a map's key set match `value` exactly. Retained pairs are reconciled in place, so their key
  * order and the comments attached to their keys survive; keys new to `value` are appended in
  * `value` order, keeping a save's diff down to the lines that actually changed.
  */
 function reconcileMap(
-  doc: Document,
+  ctx: ReconcileContext,
   map: YAMLMap<unknown, unknown>,
   value: Record<string, unknown>,
 ): void {
@@ -261,14 +309,14 @@ function reconcileMap(
     // (malformed YAML can carry two pairs with the same key; a record holds one).
     if (key === undefined || !wanted.has(key) || seen.has(key)) continue
     seen.add(key)
-    pair.value = reconcileNode(doc, pair.value, value[key])
+    pair.value = reconcileNode(ctx, pair.value, value[key])
     retained.push(pair)
   }
   map.items = retained
 
   for (const key of Object.keys(value)) {
     if (seen.has(key) || !wanted.has(key)) continue
-    map.set(doc.createNode(key), doc.createNode(value[key]))
+    map.set(ctx.doc.createNode(key), ctx.doc.createNode(value[key]))
   }
 }
 
@@ -289,7 +337,11 @@ function reconcileMap(
  *    replacement lands on the index it replaced.
  * 3. **Otherwise a fresh node, with no comments.**
  */
-function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unknown[]): void {
+function reconcileSeq(
+  ctx: ReconcileContext,
+  seq: YAMLSeq<unknown>,
+  value: readonly unknown[],
+): void {
   const oldItems = seq.items
 
   // Old indices by identity, in order, so equal items are consumed first-come-first-served.
@@ -325,13 +377,57 @@ function reconcileSeq(doc: Document, seq: YAMLSeq<unknown>, value: readonly unkn
     const candidate = index < oldItems.length && !consumed.has(index) ? oldItems[index] : undefined
     const sameItem =
       candidate !== undefined && looksLikeSameItem(candidate, item) ? candidate : undefined
-    return reconcileNode(doc, sameItem, item)
+    return reconcileNode(ctx, sameItem, item)
   })
 }
 
-/** Apply `data` onto a parsed document, preserving every node the data did not change. */
-function applyDataToDocument(doc: Document, data: Record<string, unknown>): void {
-  doc.contents = reconcileNode(doc, doc.contents, data) as Document['contents']
+/**
+ * Re-serialise `data` onto the YAML text `raw`, or undefined when `raw` does not parse or the
+ * reconciled document cannot be printed so that it reads back as its own data.
+ *
+ * The reconciler decides WHAT changes; {@link spliceSource} then writes those changes into the
+ * source text, so untouched lines keep the author's own folding and spacing. When it cannot
+ * vouch for a splice, the result is the reconciled document's own `toString()`, which is itself
+ * kept only if it parses back to the same data: a carried style that `yaml` prints lossily is
+ * dropped and the document re-printed, and failing that the caller writes a plain stringify.
+ * The worst case is a re-folded file, or one without its comments; never different data.
+ * `rootAtColumnZero` refuses a splice whose first line is indented, for frontmatter, whose
+ * framing trims the first line's indentation.
+ */
+function reconcileYamlSource(
+  raw: string,
+  data: Record<string, unknown>,
+  rootAtColumnZero = false,
+): string | undefined {
+  const doc: Document = parseDocument(raw)
+  if (doc.errors.length > 0) return undefined
+  const snapshot = snapshotDocument(doc)
+  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [] }
+  doc.contents = reconcileNode(ctx, doc.contents, data) as Document['contents']
+  let reconciled = withSourceLineEndings(doc.toString(), raw)
+  if (!readsBackAs(reconciled, doc)) {
+    for (const scalar of ctx.restyled) scalar.type = undefined
+    reconciled = withSourceLineEndings(doc.toString(), raw)
+    if (!readsBackAs(reconciled, doc)) return undefined
+  }
+
+  try {
+    const spliced = spliceSource(raw, doc, snapshot, ctx.replaced, reconciled)
+    if (spliced !== undefined && !(rootAtColumnZero && /^\s*[ \t]\S/.test(spliced))) {
+      return spliced
+    }
+    log.debug('content-serialize', 'source splice not used; writing as yaml prints it')
+  } catch (err: unknown) {
+    log.debug('content-serialize', 'source splice failed; writing as yaml prints it', {
+      error: getErrorMessage(err),
+    })
+  }
+  return reconciled
+}
+
+function readsBackAs(text: string, doc: Document): boolean {
+  const reparsed = parseDocument(text)
+  return reparsed.errors.length === 0 && isDeepStrictEqual(reparsed.toJS(), doc.toJS())
 }
 
 /**
@@ -339,14 +435,12 @@ function applyDataToDocument(doc: Document, data: Record<string, unknown>): void
  *
  * Falls back to a plain stringify — byte-identical to serialising without preservation — when
  * there is nothing to preserve (a new file) or nothing trustworthy to preserve (the bytes on disk
- * do not parse). A save must not fail because the previous content was malformed.
+ * do not parse, or the reconciled document does not read back as its own data). A save must not
+ * fail because the previous content was malformed.
  */
 export function serializeYaml(data: Record<string, unknown>, existingRaw?: string): string {
   if (existingRaw === undefined) return yamlStringify(data)
-  const doc = parseDocument(existingRaw)
-  if (doc.errors.length > 0) return yamlStringify(data)
-  applyDataToDocument(doc, data)
-  return doc.toString()
+  return reconcileYamlSource(existingRaw, data) ?? yamlStringify(data)
 }
 
 /**
@@ -393,10 +487,8 @@ export function serializeFrontmatter(
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
   if (existingFrontmatter === undefined) return matter.stringify(body, data)
 
-  const doc = parseDocument(existingFrontmatter)
-  if (doc.errors.length > 0) return matter.stringify(body, data)
-  applyDataToDocument(doc, data)
-  const reconciled = doc.toString()
+  const reconciled = reconcileYamlSource(existingFrontmatter, data, true)
+  if (reconciled === undefined) return matter.stringify(body, data)
 
   return matter.stringify(body, data, {
     engines: {

@@ -779,6 +779,7 @@ in `server.ts` and `client.ts`. See
 - `format.ts` — content format helpers: `getFormatExtension`, `isDataOnlyFormat`
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, the comment-preserving content write path
+- `yaml-source-splice.ts` — `spliceSource`, writes reconciled YAML into its own source text
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
 - `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
