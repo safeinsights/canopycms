@@ -4,7 +4,8 @@
 
 **RESOLVED 2026-10-08** on `fix/unauthenticated-status` (adopter request #60), as suggested below:
 `unauthenticatedStatus: 401 | 419`, with the client also firing `onUnauthorized` on a handler
-body saying `status: 401`.
+body saying `status: 401`. Exempting the editor routes does not prevent the eviction; the switch
+does.
 
 ## The gap
 

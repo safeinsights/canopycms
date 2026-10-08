@@ -186,6 +186,9 @@ describe('config validation', () => {
     expect(
       validateCanopyConfig({ ...base, unauthenticatedStatus: 419 }).unauthenticatedStatus,
     ).toBe(419)
+    expect(
+      validateCanopyConfig({ ...base, unauthenticatedStatus: 401 }).unauthenticatedStatus,
+    ).toBe(401)
     expect(validateCanopyConfig(base).unauthenticatedStatus).toBeUndefined()
     expect(() =>
       validateCanopyConfig({ ...base, unauthenticatedStatus: 403 as unknown as 419 }),
