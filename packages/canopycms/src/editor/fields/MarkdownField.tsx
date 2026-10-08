@@ -6,6 +6,7 @@ import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 
 import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
+import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
 import { MdxImageDialog } from './MdxImageDialog'
 import { useApiClient, useAssetContext } from '../context'
 import { editorImageSrc } from '../media/editor-image-src'
@@ -123,6 +124,7 @@ const MDXEditorLazy = React.lazy(async () => {
         markdown={markdown}
         onChange={onChange}
         onError={onError}
+        toMarkdownOptions={MARKDOWN_EXPORT_OPTIONS}
         plugins={[
           headingsPlugin(),
           listsPlugin(),
