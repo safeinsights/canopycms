@@ -13,7 +13,7 @@ import { CanopyCMSProvider } from './theme'
 import type { MockApiClient } from '../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
 
-// Preload the chunks MarkdownField's React.lazy() imports (the 'markdown' and
+// Preload the chunk MarkdownField's React.lazy() imports (the 'markdown' and
 // 'mdx' cases both render MarkdownField). Without this the mount assertion
 // below also silently measures how long vitest takes to transform
 // @mdxeditor/editor, which made it fail under full-suite contention while
@@ -23,7 +23,6 @@ import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/tes
 // product. See fields/MarkdownField.test.tsx, which does the same for the
 // same reason.
 import '@mdxeditor/editor'
-import './fields/mdx-jsx-support'
 
 // ImageField (the 'image' field case) reads the API client via context DI -
 // mock the factory module so createApiClientWrapper's ApiClientProvider and
