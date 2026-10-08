@@ -135,6 +135,7 @@ describe('readByUrlPath resolves exactly the URLs listEntries publishes', () => 
     // The invariant itself.
     expect(report.unresolved).toEqual([])
     expect(report.mismatched).toEqual([])
+    expect(report.misreported).toEqual([])
     expect(report.phantoms).toEqual([])
   }
 
