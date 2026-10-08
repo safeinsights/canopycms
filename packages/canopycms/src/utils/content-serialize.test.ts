@@ -870,7 +870,7 @@ describe('serializeYaml never trades data for style', () => {
 
 describe('serializeYaml keeps comments with the items yaml gives them to', () => {
   it('indents an outdented comment under its owner once the item below it is removed', () => {
-    // yaml reads `# Keep this CTA` as hero's: it follows a deeper comment. Left at the item
+    // yaml reads `# Keep this CTA` as hero's: its run reaches into hero's map. Left at the item
     // column it would head faq, so it is drawn under hero, where `toString()` puts it; every
     // other line stays as written.
     const raw = `sections:

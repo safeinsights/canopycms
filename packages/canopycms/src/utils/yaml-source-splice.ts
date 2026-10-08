@@ -1,6 +1,6 @@
 /**
- * Print a reconciled YAML document by editing the source text it was parsed from, so every byte
- * the reconciler did not change stays exactly as the author wrote it.
+ * Print a reconciled YAML document by editing the source text it was parsed from, so the bytes
+ * the reconciler did not change stay as the author wrote them.
  *
  * `Document.toString()` re-emits every scalar from its VALUE: folded and long plain scalars are
  * re-wrapped at the library's line width, so the first CMS save of a hand-written file rewrites
@@ -16,13 +16,14 @@
  *
  * A chunk is an item's lines plus the comment and blank lines above it, which is where `yaml`
  * attaches those comments (the item's `commentBefore`), so a chunk moves and dies with exactly
- * the comments the reconciler moves and drops. Above the FIRST item they belong to the
- * collection instead, and stay put.
+ * the comments the reconciler moves and drops. Above a nested collection's FIRST item they
+ * belong to the collection instead, and stay put; above the root map's first key they are the
+ * key's (`ownLeadingLines`).
  *
  * Anything this does not handle returns `undefined` from that collection, and the parent
  * re-renders the whole slot instead; only at the root does that reach the caller, which falls
- * back to `toString()`. Every splice is also re-parsed and checked against the reconciled
- * document ({@link printsAs}) before it is returned, so a wrong splice costs formatting, never
+ * back to the reconciled document as `yaml` prints it. Every splice is also re-parsed and
+ * checked ({@link printsAs}) before it is returned, so a wrong splice costs formatting, never
  * data.
  */
 
@@ -341,12 +342,13 @@ class SourceSplicer {
 
   /**
    * The run of comment lines that ends an item's region reads to a person as being about what
-   * comes next, but `yaml` keeps it with the item when any line of it is right of the item's
-   * column (its `pop()` pins a trailing run to the nested collection it reaches into). While the
-   * neighbour below is unchanged that is harmless; once it changes, indent the run's shallower
-   * lines to its deepest comment — where `toString()` draws a pinned run — so they do not head
-   * content they were never about. A run at or left of the item's column is the next item's
-   * already, and is left alone.
+   * comes next, but it is the item's: `yaml`'s parser (`pop()`) keeps a trailing run with the
+   * nested collection it ends when any line of it is at or right of that collection's indent.
+   * While the neighbour below is unchanged that is harmless; once it changes, indent the run's
+   * shallower lines to its deepest comment, so they read as the item's and do not head content
+   * they were never about. Where that lands a line in a deeper scalar's comment or content
+   * instead, {@link printsAs} refuses the splice. A run at or left of the item's own column is a
+   * zero-indented list's tail, and is left alone.
    */
   private outdentedCommentEdits(g: ItemGeometry, col: number): Edit[] {
     let run: Array<{ start: number; indent: number }> = []
@@ -565,7 +567,8 @@ export function spliceSource(
 /**
  * Does `candidate` read back as the text it replaces, `printed`, would? It must parse cleanly,
  * hold the reconciled document's data, and print as `printed` re-parsed prints — the same keys
- * in the same order, the same comments on the same nodes.
+ * in the same order, the same comments where `yaml` draws them, which is by the node it gives
+ * each to.
  *
  * Re-parsed, not `printed` itself: where `yaml` cannot write the reconciled document so that it
  * reads back as itself — a comment following an outdented trailing comment is read as the

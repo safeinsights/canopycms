@@ -6,7 +6,8 @@
  * trip. So these functions re-serialise onto the file's OWN parsed document: a node whose value
  * did not change is left untouched, and an untouched node keeps its attached comments and its
  * original quoting/block style. Only what actually changed is rewritten, and
- * `yaml-source-splice.ts` writes it into the file's own text, so untouched lines keep their bytes.
+ * `yaml-source-splice.ts` writes it into the file's own text, so untouched lines keep their bytes
+ * wherever it can vouch for the result.
  *
  * The file gets no authority over its own content. The reconciler makes the document's key set
  * match `data` exactly — a key the caller dropped disappears, a key the caller kept survives
@@ -266,7 +267,7 @@ function reconcileNode(ctx: ReconcileContext, existing: unknown, value: unknown)
 /**
  * The style a changed string inherits from the string it replaces: its quoting, or its block
  * style (`>-`, `|`) unless the new value has no content or leads with whitespace, which `yaml`
- * cannot hold in a block without changing it. Never `PLAIN`: forcing it stops `yaml` choosing a
+ * can print lossily in a block (`"   "` reads back as `""`). Never `PLAIN`: forcing it stops `yaml` choosing a
  * block for a multi-line value, and some (`Requirements:\nBring a laptop`) then print as
  * unparseable YAML. An unset style is plain where plain is safe.
  */
@@ -382,15 +383,16 @@ function reconcileSeq(
 
 /**
  * Re-serialise `data` onto the YAML text `raw`, or undefined when `raw` does not parse or the
- * reconciled document cannot be printed so that it reads back as itself.
+ * reconciled document cannot be printed so that it reads back as its own data.
  *
  * The reconciler decides WHAT changes; {@link spliceSource} then writes those changes into the
- * source text, so every untouched line keeps the author's own folding and spacing. When it
- * cannot vouch for a splice, the result is the reconciled document's own `toString()`, which is
- * itself kept only if it parses back to the same data: a carried style that `yaml` prints
- * lossily is dropped and the document re-printed. The worst case is a re-folded file, never
- * different data. `rootAtColumnZero` refuses a splice whose first line is indented, for
- * frontmatter, whose framing trims the first line's indentation.
+ * source text, so untouched lines keep the author's own folding and spacing. When it cannot
+ * vouch for a splice, the result is the reconciled document's own `toString()`, which is itself
+ * kept only if it parses back to the same data: a carried style that `yaml` prints lossily is
+ * dropped and the document re-printed, and failing that the caller writes a plain stringify.
+ * The worst case is a re-folded file, or one without its comments; never different data.
+ * `rootAtColumnZero` refuses a splice whose first line is indented, for frontmatter, whose
+ * framing trims the first line's indentation.
  */
 function reconcileYamlSource(
   raw: string,
@@ -433,7 +435,8 @@ function readsBackAs(text: string, doc: Document): boolean {
  *
  * Falls back to a plain stringify — byte-identical to serialising without preservation — when
  * there is nothing to preserve (a new file) or nothing trustworthy to preserve (the bytes on disk
- * do not parse). A save must not fail because the previous content was malformed.
+ * do not parse, or the reconciled document does not read back as its own data). A save must not
+ * fail because the previous content was malformed.
  */
 export function serializeYaml(data: Record<string, unknown>, existingRaw?: string): string {
   if (existingRaw === undefined) return yamlStringify(data)

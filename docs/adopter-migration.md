@@ -42,10 +42,10 @@ which entries belong to it is still a read of `git log`.
 
 ### A save rewrites only the lines whose values changed
 
-**What changed.** A save no longer re-folds the file. In YAML entries and md/mdx frontmatter,
-untouched values, comments, blank lines and CRLF line endings stay as written, and an edited `>-`,
-`|` or quoted value keeps that style; the first save used to re-wrap every long value at 80
-columns. A file using anchors or aliases is still re-serialised whole.
+**What changed.** In YAML entries and md/mdx frontmatter, untouched values, comments, blank lines
+and (in `.yaml` files) CRLF line endings stay as written, and an edited `>-`, `|` or quoted value
+keeps that style where it can hold the new value; the first save re-wrapped long values at 80
+columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **To adopt.** Nothing.
 
