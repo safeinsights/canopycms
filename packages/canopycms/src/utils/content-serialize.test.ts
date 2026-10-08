@@ -812,11 +812,98 @@ other: keep
   })
 })
 
+describe('serializeYaml never trades data for style', () => {
+  it('writes a plain value that becomes multi-line as YAML that parses back to it', () => {
+    for (const summary of ['Requirements:\nBring a laptop', '?\nwhy', '-\nlist-like', 'a: b\nc']) {
+      const out = serializeYaml({ title: 'T', summary }, 'title: T\nsummary: A short summary\n')
+      expect(yamlParse(out)).toEqual({ title: 'T', summary })
+    }
+  })
+
+  it('drops a block style the new value cannot keep, rather than changing the value', () => {
+    const raw = 'desc: >-\n  Some text\nnote: |\n  literal\nb: 1\n'
+    const values = [
+      '   ',
+      ' \t',
+      '',
+      ' Leading space and a long sentence that runs well past eighty columns of width here.',
+    ]
+    for (const value of values) {
+      const data = { desc: value, note: value, b: 1 }
+      expect(yamlParse(serializeYaml(data, raw))).toEqual(data)
+    }
+  })
+})
+
+describe('serializeYaml keeps comments with the items yaml gives them to', () => {
+  it('does not leave an outdented comment above the item that follows a removed one', () => {
+    const raw = `sections:
+  - template: hero
+    title: Hero
+    # TODO: add image
+  # Keep this CTA, legal requires it
+  - template: cta
+    label: Go
+  - template: faq
+    q: Why
+`
+    const data = yamlParse(raw) as { sections: unknown[] }
+    data.sections.splice(1, 1)
+    const out = serializeYaml(data, raw)
+    expect(yamlParse(out)).toEqual(data)
+    // yaml gives the comment to hero (the item above it), so it stays indented under hero.
+    const lines = out.split('\n')
+    expect(lines[lines.indexOf('  - template: faq') - 1]).toBe(
+      '    # Keep this CTA, legal requires it',
+    )
+  })
+
+  it('does not put a key added to a nested map under a comment written for the next key', () => {
+    const raw = 'a:\n  x:\n    y: 1\n    # deep\n# about b\nb: 2\n'
+    const data = { a: { x: { y: 1 }, w: 3 }, b: 2 }
+    const out = serializeYaml(data, raw)
+    expect(yamlParse(out)).toEqual(data)
+    const lines = out.split('\n')
+    expect(lines[lines.indexOf('  w: 3') - 1]).toBe('    # about b')
+  })
+
+  it("keeps a list local when a block's nested value ends in a comment", () => {
+    const raw = `sections:
+  - template: hero
+    value:
+      title: Hero
+      # note about hero
+  - template: cta
+    value:
+      body: >-
+        hand folded text
+        that is short
+  - template: faq
+    value:
+      q: Why
+`
+    const data = yamlParse(raw) as { sections: Array<{ value: Record<string, unknown> }> }
+    data.sections[2].value.q = 'How'
+    expect(serializeYaml(data, raw)).toBe(replaceOnce(raw, 'q: Why', 'q: How'))
+  })
+})
+
 describe('serializeFrontmatter keeps the source text of everything it did not change', () => {
   const POST = `---\n${HAND_FOLDED}---\n\nBody text.\n`
 
   it('returns the file byte-for-byte on a save that changes nothing', () => {
     expect(serializeFrontmatter('\nBody text.\n', handFoldedData(), POST)).toBe(POST)
+  })
+
+  it('keeps frontmatter readable when its keys are indented', () => {
+    const indented = '---\n  title: A\n  b: 1\n---\nbody\n'
+    for (const data of [
+      { title: 'A', b: 1 },
+      { title: 'B', b: 1 },
+    ]) {
+      const out = serializeFrontmatter('body\n', data, indented)
+      expect(matter(out, {}).data).toEqual(data)
+    }
   })
 
   it('changes only the edited value, which keeps its `>-` style', () => {

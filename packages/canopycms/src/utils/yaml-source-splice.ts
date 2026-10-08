@@ -172,7 +172,37 @@ class SourceSplicer {
       geometry.push(g)
     }
     if (!this.isBlockLayout(geometry)) return undefined
+    // A comment at or left of the items' column that `yaml` gave to the item ABOVE it reads as
+    // being about the item below. Copied verbatim, it would end up above whatever follows once
+    // items are added, removed or moved, so that is left to `yaml`, which indents it under its
+    // owner.
+    if (this.isRestructured(node, snap) && geometry.some((g) => this.hasOutdentedComment(g))) {
+      return undefined
+    }
     return isMap(node) ? this.mapEdits(node, snap, geometry) : this.seqEdits(node, snap, geometry)
+  }
+
+  /** Were items added, removed or reordered, rather than only edited in their places? */
+  private isRestructured(node: Collection, snap: readonly SnapshotItem[]): boolean {
+    if (node.items.length !== snap.length) return true
+    return node.items.some((item: unknown, i) => {
+      const before = snap[i].item
+      return item !== before && (isPair(item) || this.replaced.get(item as object) !== before)
+    })
+  }
+
+  /** Does a comment line inside the item sit at or left of the item's own column? */
+  private hasOutdentedComment(g: ItemGeometry): boolean {
+    const col = this.column(g.content)
+    const firstLineEnd = this.raw.indexOf('\n', g.content)
+    if (firstLineEnd === -1 || firstLineEnd + 1 >= g.end) return false
+    return this.raw
+      .slice(firstLineEnd + 1, g.end)
+      .split('\n')
+      .some((line) => {
+        const indent = line.length - line.trimStart().length
+        return line.trimStart().startsWith('#') && indent <= col
+      })
   }
 
   private mapEdits(
@@ -337,9 +367,15 @@ class SourceSplicer {
 
   /**
    * Trailing blank lines are not the item's — `yaml` gives them to whatever follows — unless they
-   * are inside the value itself, as a keep-chomped (`|+`) block scalar's are.
+   * are inside the value itself, as a keep-chomped (`|+`) block scalar's are. A node that ends in
+   * a comment can end inside the NEXT line's indentation; that line is not the item's either.
    */
   private geometry(content: number, valueEnd: number, nodeEnd: number): ItemGeometry {
+    const nodeEndLine = this.lineStart(nodeEnd)
+    if (nodeEndLine > content && /^[ \t]*$/.test(this.raw.slice(nodeEndLine, nodeEnd))) {
+      nodeEnd = nodeEndLine
+      valueEnd = Math.min(valueEnd, nodeEnd)
+    }
     let last = Math.max(content, nodeEnd - 1)
     while (last > content && last >= valueEnd && ' \t\r\n'.includes(this.raw[last])) last--
     const newline = this.raw.indexOf('\n', last)
