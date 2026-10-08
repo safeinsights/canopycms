@@ -676,7 +676,7 @@ Resolution](ARCHITECTURE.md#deployment-name-resolution).
 **Location**: `packages/canopycms/src/api/github-sync.ts`
 
 `syncSubmitPr()`, `syncConvertToDraft()` and `syncDeleteRemoteBranch()` pick the path: with a `githubService` they call GitHub
-immediately; without one they enqueue a task for the EC2 worker and the branch gets `syncStatus:
+immediately; without one they enqueue a task for the worker; a submit marks the branch `syncStatus:
 'pending-sync'`. See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 
 ### Git Operations (Service Methods)

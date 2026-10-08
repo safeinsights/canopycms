@@ -2463,7 +2463,7 @@ describe('CmsWorker delete-remote-branch', () => {
     expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 
-  it('records nothing on a branch that has since reused the name', async () => {
+  it('writes no metadata into a workspace left under the deleted name', async () => {
     const reused = path.join(tmpDir, 'content-branches', 'feature-x')
     await fs.mkdir(reused, { recursive: true })
 

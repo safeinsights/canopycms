@@ -253,8 +253,9 @@ export async function createOrUpdatePullRequest(
 
 /**
  * Whether a `git.deleteRef` failure means the branch is already gone from GitHub, so the delete
- * has nothing left to do. GitHub answers 422 "Reference does not exist" for a missing ref, and
- * sometimes 404. Usually the repo's delete-on-merge setting got there first.
+ * has nothing left to do. A missing ref is a 422 "Reference does not exist"; the message check
+ * matters because a 422 also refuses deleting the default branch. A 404 counts too, though it
+ * can also mean the repo is not visible to the credential.
  */
 export function isRefAlreadyGoneError(err: unknown): boolean {
   if (!(err instanceof Error) || !('status' in err)) return false

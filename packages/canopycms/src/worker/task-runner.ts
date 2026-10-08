@@ -440,9 +440,10 @@ export async function executeTask(
         )
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
-      // after) owns the GitHub branch once its own submit recorded a different PR. Until then
-      // the ref there is still the deleted branch's. Unparseable metadata keeps the GitHub
-      // branch; other read errors retry.
+      // after) owns the GitHub branch once its own submit recorded a different PR. Without one,
+      // the ref is taken to be the deleted branch's, which is wrong only if that submit pushed
+      // and then lost its PR number. Unparseable metadata keeps the GitHub branch; other read
+      // errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
       let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
@@ -475,7 +476,7 @@ export async function executeTask(
           request: { signal },
         })
       } catch (err) {
-        // Already gone is the outcome this task wants; failing it would only retry or park it.
+        // Already gone is the outcome this task wants; failing it would only park it in failed/.
         if (!isRefAlreadyGoneError(err)) throw err
         workerLog(`GitHub branch ${branch} was already deleted`)
         return { deleted: false, alreadyGone: true }
@@ -491,7 +492,7 @@ export async function executeTask(
 /**
  * The branch whose metadata records a task's outcome, or null when none does. A
  * delete-remote-branch task names a branch already deleted here, so a workspace under that
- * name belongs to a newer branch that reused it.
+ * name is leftover or a newer branch's that reused the name.
  */
 function metadataBranchOf(task: Task): string | null {
   if (task.action === 'delete-remote-branch') return null

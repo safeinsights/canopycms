@@ -73,9 +73,10 @@ const showSubmitConfirmation = (
 type BranchPullRequest = Pick<BranchListItem, 'pullRequestNumber' | 'pullRequestState'>
 
 /**
- * The withdraw dialog's pull-request bullet, matching what the server's withdraw does: an open
- * PR becomes a draft, a closed one is left alone and dropped from the branch (a resubmit opens a
- * new one), and a merged one is left alone.
+ * The withdraw dialog's pull-request bullet, matching what api/branch-withdraw.ts does: an open
+ * PR becomes a draft; a closed one is left alone and its number dropped from the branch, so a
+ * resubmit opens a new one. A merged PR archives its branch, which withdraw refuses, so that
+ * bullet is only seen on a listing that lags.
  * @internal Exported for tests.
  */
 export function withdrawPullRequestBullet(pr: BranchPullRequest): string | undefined {
