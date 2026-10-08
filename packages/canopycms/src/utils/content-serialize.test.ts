@@ -782,6 +782,29 @@ describe('serializeYaml keeps the source text of everything it did not change', 
     )
   })
 
+  it('writes a re-rendered value under a multi-line CRLF comment without stray carriage returns', () => {
+    const crlf = 'a: 1\r\n  # t1\r\n  # t2\r\nb: 2\r\n'
+    const out = serializeYaml({ a: 2, b: 2 }, crlf)
+    expect(out).toBe(replaceOnce(crlf, 'a: 1', 'a: 2'))
+    expect(serializeYaml({ a: 2, b: 2 }, out)).toBe(out)
+  })
+
+  it("writes a whole-file fallback with the CRLF file's own line endings", () => {
+    const crlf = 'x: &a 1\r\ny: *a\r\n# c1\r\n# c2\r\nz: >-\r\n  hand\r\n  folded\r\n'
+    const data = { x: 1, y: 1, z: 'edited' }
+    const out = serializeYaml(data, crlf)
+    expect(yamlParse(out)).toEqual(data)
+    expect(out).toContain('\r\n')
+    expect(out).not.toMatch(/\r(?!\n)|(?<!\r)\n/)
+  })
+
+  it("drops the comment above the root map's first key with that key, as the reconciler does", () => {
+    const raw = '# about a\na: 1\n# about b\nb: 2\nzz: >-\n  hand\n  folded\n'
+    expect(serializeYaml({ b: 2, zz: 'hand folded' }, raw)).toBe(
+      replaceOnce(raw, '# about a\na: 1\n', ''),
+    )
+  })
+
   it('falls back to a whole re-serialisation, with correct data, for a file using anchors', () => {
     const anchored = `base: &shared
   x: 1
@@ -836,7 +859,10 @@ describe('serializeYaml never trades data for style', () => {
 })
 
 describe('serializeYaml keeps comments with the items yaml gives them to', () => {
-  it('does not leave an outdented comment above the item that follows a removed one', () => {
+  it('copies an outdented comment as written when the item below it is removed', () => {
+    // yaml reads `# Keep this CTA` as hero's (it follows a deeper comment), and with cta gone it
+    // reads the FAQ comment as hero's too. No text reads back otherwise, so the lines stay as
+    // the author wrote them rather than being re-indented under hero.
     const raw = `sections:
   - template: hero
     title: Hero
@@ -844,27 +870,16 @@ describe('serializeYaml keeps comments with the items yaml gives them to', () =>
   # Keep this CTA, legal requires it
   - template: cta
     label: Go
+
+  # The FAQ block. Do not delete.
   - template: faq
     q: Why
 `
     const data = yamlParse(raw) as { sections: unknown[] }
     data.sections.splice(1, 1)
-    const out = serializeYaml(data, raw)
-    expect(yamlParse(out)).toEqual(data)
-    // yaml gives the comment to hero (the item above it), so it stays indented under hero.
-    const lines = out.split('\n')
-    expect(lines[lines.indexOf('  - template: faq') - 1]).toBe(
-      '    # Keep this CTA, legal requires it',
+    expect(serializeYaml(data, raw)).toBe(
+      replaceOnce(raw, '  - template: cta\n    label: Go\n', ''),
     )
-  })
-
-  it('does not put a key added to a nested map under a comment written for the next key', () => {
-    const raw = 'a:\n  x:\n    y: 1\n    # deep\n# about b\nb: 2\n'
-    const data = { a: { x: { y: 1 }, w: 3 }, b: 2 }
-    const out = serializeYaml(data, raw)
-    expect(yamlParse(out)).toEqual(data)
-    const lines = out.split('\n')
-    expect(lines[lines.indexOf('  w: 3') - 1]).toBe('    # about b')
   })
 
   it("keeps a list local when a block's nested value ends in a comment", () => {

@@ -172,37 +172,7 @@ class SourceSplicer {
       geometry.push(g)
     }
     if (!this.isBlockLayout(geometry)) return undefined
-    // A comment at or left of the items' column that `yaml` gave to the item ABOVE it reads as
-    // being about the item below. Copied verbatim, it would end up above whatever follows once
-    // items are added, removed or moved, so that is left to `yaml`, which indents it under its
-    // owner.
-    if (this.isRestructured(node, snap) && geometry.some((g) => this.hasOutdentedComment(g))) {
-      return undefined
-    }
     return isMap(node) ? this.mapEdits(node, snap, geometry) : this.seqEdits(node, snap, geometry)
-  }
-
-  /** Were items added, removed or reordered, rather than only edited in their places? */
-  private isRestructured(node: Collection, snap: readonly SnapshotItem[]): boolean {
-    if (node.items.length !== snap.length) return true
-    return node.items.some((item: unknown, i) => {
-      const before = snap[i].item
-      return item !== before && (isPair(item) || this.replaced.get(item as object) !== before)
-    })
-  }
-
-  /** Does a comment line inside the item sit at or left of the item's own column? */
-  private hasOutdentedComment(g: ItemGeometry): boolean {
-    const col = this.column(g.content)
-    const firstLineEnd = this.raw.indexOf('\n', g.content)
-    if (firstLineEnd === -1 || firstLineEnd + 1 >= g.end) return false
-    return this.raw
-      .slice(firstLineEnd + 1, g.end)
-      .split('\n')
-      .some((line) => {
-        const indent = line.length - line.trimStart().length
-        return line.trimStart().startsWith('#') && indent <= col
-      })
   }
 
   private mapEdits(
@@ -234,7 +204,9 @@ class SourceSplicer {
           edits.push({ start: g.content, end: layout[next].content, text: '' })
           i = next - 1
         } else {
-          edits.push({ start: this.chunkStart(layout, i), end: g.end, text: '' })
+          const start =
+            i === 0 ? this.ownLeadingLines(map, item, g.lineStart) : this.chunkStart(layout, i)
+          edits.push({ start, end: g.end, text: '' })
         }
         continue
       }
@@ -324,6 +296,27 @@ class SourceSplicer {
     const g = layout[next]
     layout[next] = { ...g, inline: true, lineStart: g.content }
     return next
+  }
+
+  /**
+   * Where a dropped FIRST pair's lines begin. The comment lines above a nested collection's first
+   * item are the collection's and stay, but above the root map's first key `yaml` gives them to
+   * the key, so the reconciler drops them with it and so must the splice.
+   */
+  private ownLeadingLines(
+    map: YAMLMap<unknown, unknown>,
+    pair: Pair<unknown, unknown>,
+    start: number,
+  ): number {
+    const key = pair.key as LeadingComment
+    if (map !== this.doc.contents || !key.commentBefore || this.doc.commentBefore) return start
+    let at = start
+    while (at > 0) {
+      const previous = this.lineStart(at - 1)
+      if (!/^[ \t]*(#.*)?\r?\n?$/.test(this.raw.slice(previous, at))) break
+      at = previous
+    }
+    return at
   }
 
   /** Where item `i`'s chunk begins: its own line for the first item, else the previous item's end. */
@@ -418,7 +411,11 @@ class SourceSplicer {
     const fragment = new Document()
     fragment.schema = this.doc.schema
     fragment.contents = container
-    const text = fragment.toString({ lineWidth: Math.max(MIN_LINE_WIDTH, LINE_WIDTH - col) })
+    // A comment parsed from a CRLF file keeps a `\r` on every line but its last; the line ending
+    // is this.eol's to write.
+    const text = fragment
+      .toString({ lineWidth: Math.max(MIN_LINE_WIDTH, LINE_WIDTH - col) })
+      .replace(/\r/g, '')
     const indent = ' '.repeat(col)
     const lines = text.split('\n')
     if (lines[lines.length - 1] === '') lines.pop()
@@ -479,6 +476,16 @@ function lineEndingOf(raw: string): string | undefined {
 }
 
 /**
+ * `printed` (a `toString()`) written with `raw`'s line endings: CRLF when `raw` is consistently
+ * CRLF, else LF. Either way without the stray `\r` that comments parsed from CRLF keep, so a
+ * whole-file re-print does not leave the file with mixed line endings.
+ */
+export function withSourceLineEndings(printed: string, raw: string): string {
+  const text = printed.replace(/\r/g, '')
+  return lineEndingOf(raw) === '\r\n' ? text.replace(/\n/g, '\r\n') : text
+}
+
+/**
  * The source text of `raw` with only the reconciler's changes applied, or undefined when the
  * document holds a construct this does not splice or the splice fails its self-check.
  * `replaced` maps each node the reconciler created for an existing slot back to the node it
@@ -498,21 +505,26 @@ export function spliceSource(
 }
 
 /**
- * Does `candidate` parse back to the reconciled document? It must parse cleanly, hold the same
- * data, and print as the reconciled document prints — the same keys in the same order, the same
- * comments in the same places.
+ * Does `candidate` read back as the text it replaces, `printed`, would? It must parse cleanly,
+ * hold the reconciled document's data, and print as `printed` re-parsed prints — the same keys
+ * in the same order, the same comments on the same nodes.
  *
- * Blank lines and trailing whitespace are left out of that comparison: they are formatting the
- * splice copies from the source, and `yaml` prints them inconsistently (a blank line inside an
- * indented block as the indent alone; a blank line before a list's first item doubled; a stray
- * `\r` kept in some comments parsed from a CRLF file).
+ * Re-parsed, not `printed` itself: where `yaml` cannot write the reconciled document so that it
+ * reads back as itself — a comment following an outdented trailing comment is read as the
+ * previous item's, whoever it belonged to — the splice need only be no worse than `printed`.
+ * Wherever it can, the two are the same comparison.
+ *
+ * Blank lines and trailing whitespace are left out: they are formatting the splice copies from
+ * the source, and `yaml` prints them inconsistently (a blank line inside an indented block as the
+ * indent alone; a blank line before a list's first item doubled; a stray `\r` kept in some
+ * comments parsed from a CRLF file).
  */
 function printsAs(candidate: string, reconciled: Document, printed: string): boolean {
   if (candidate === printed) return true
   const reparsed = parseDocument(candidate)
   if (reparsed.errors.length > 0) return false
-  if (layoutFree(reparsed.toString()) !== layoutFree(printed)) return false
-  return isDeepStrictEqual(reparsed.toJS(), reconciled.toJS())
+  if (!isDeepStrictEqual(reparsed.toJS(), reconciled.toJS())) return false
+  return layoutFree(reparsed.toString()) === layoutFree(parseDocument(printed).toString())
 }
 
 function layoutFree(text: string): string {

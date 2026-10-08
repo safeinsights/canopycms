@@ -37,7 +37,7 @@ import {
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
-import { snapshotDocument, spliceSource } from './yaml-source-splice'
+import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'ContentSerialize' })
 
@@ -402,10 +402,10 @@ function reconcileYamlSource(
   const snapshot = snapshotDocument(doc)
   const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [] }
   doc.contents = reconcileNode(ctx, doc.contents, data) as Document['contents']
-  let reconciled = doc.toString()
+  let reconciled = withSourceLineEndings(doc.toString(), raw)
   if (!readsBackAs(reconciled, doc)) {
     for (const scalar of ctx.restyled) scalar.type = undefined
-    reconciled = doc.toString()
+    reconciled = withSourceLineEndings(doc.toString(), raw)
     if (!readsBackAs(reconciled, doc)) return undefined
   }
 
