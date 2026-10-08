@@ -1185,7 +1185,7 @@ describe('deleteBranch api', () => {
       expect(mockEnqueueTask).toHaveBeenCalledTimes(1)
       expect(mockEnqueueTask).toHaveBeenCalledWith(expect.any(String), {
         action: 'delete-remote-branch',
-        payload: { branch: 'feature/x' },
+        payload: { branch: 'feature/x', pullRequestNumber: 42 },
       })
       expect(res.data?.cleanupWarning).toBeUndefined()
     })

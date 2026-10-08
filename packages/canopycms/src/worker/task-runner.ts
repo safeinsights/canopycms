@@ -9,7 +9,11 @@ import {
 } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
 import { createOrUpdatePullRequest, isRefAlreadyGoneError } from '../github-service'
-import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
+import {
+  BranchMetadataCorruptError,
+  BranchMetadataFileManager,
+  getBranchMetadataFileManager,
+} from '../branch-metadata'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
@@ -435,13 +439,25 @@ export async function executeTask(
           `Refusing to delete "${branch}" on GitHub: the base and settings branches are never deleted`,
         )
       }
-      // A live branch under the name reused it after this task was queued (a requeued task can
-      // run long after), so the GitHub branch is the newer branch's own.
-      const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch)).catch(
-        () => null,
-      )
-      if (live) {
-        workerLog(`Not deleting GitHub branch ${branch}: a newer branch now uses the name`)
+      // A branch that reused the name after this task was queued (a requeued task can run long
+      // after) owns the GitHub branch once its own submit recorded a different PR. Until then
+      // the ref there is still the deleted branch's. Unparseable metadata keeps the GitHub
+      // branch; other read errors retry.
+      const deletedPr =
+        typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
+      let livePr: number | undefined
+      try {
+        livePr = (await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch)))?.branch
+          .pullRequestNumber
+      } catch (err) {
+        if (!(err instanceof BranchMetadataCorruptError)) throw err
+        workerLog(
+          `Not deleting GitHub branch ${branch}: the branch now under that name is unreadable`,
+        )
+        return { deleted: false, skipped: 'metadata-unreadable' }
+      }
+      if (livePr !== undefined && livePr !== deletedPr) {
+        workerLog(`Not deleting GitHub branch ${branch}: a newer branch's PR #${livePr} uses it`)
         return { deleted: false, skipped: 'name-reused' }
       }
       try {

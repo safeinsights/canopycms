@@ -225,7 +225,7 @@ export async function syncDeleteRemoteBranch(
 
   const result = await enqueueGitHubTask(ctx, context, {
     action: 'delete-remote-branch',
-    payload: { branch },
+    payload: { branch, pullRequestNumber: context.branch.pullRequestNumber },
   })
   return result.syncStatus === 'sync-failed'
     ? 'Deleting the branch on GitHub could not be queued; delete it there by hand'

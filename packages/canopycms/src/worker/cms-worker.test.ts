@@ -2402,7 +2402,11 @@ describe('CmsWorker delete-remote-branch', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  const runDelete = async (deleteRef: ReturnType<typeof vi.fn>, branch = 'feature-x') => {
+  const runDelete = async (
+    deleteRef: ReturnType<typeof vi.fn>,
+    branch = 'feature-x',
+    pullRequestNumber?: number,
+  ) => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
@@ -2418,7 +2422,7 @@ describe('CmsWorker delete-remote-branch', () => {
     internals.octokit = { git: { deleteRef } }
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
-      payload: { branch },
+      payload: { branch, ...(pullRequestNumber !== undefined && { pullRequestNumber }) },
     })
     await worker.processTaskQueue()
     return getTask(taskDir, id)
@@ -2468,29 +2472,70 @@ describe('CmsWorker delete-remote-branch', () => {
     expect(await BranchMetadataFileManager.loadOnly(reused)).toBeNull()
   })
 
-  it('leaves GitHub alone when a live branch has reused the name', async () => {
+  const seedReused = async (branch: Record<string, unknown> | string) => {
     const reused = path.join(tmpDir, 'content-branches', 'feature-x')
-    await fs.mkdir(reused, { recursive: true })
-    await getBranchMetadataFileManager(reused, path.join(tmpDir, 'content-branches')).save({
-      branch: { name: 'feature-x' },
-    })
+    await fs.mkdir(path.join(reused, '.canopy-meta'), { recursive: true })
+    if (typeof branch === 'string') {
+      await fs.writeFile(path.join(reused, '.canopy-meta', 'branch.json'), branch)
+    } else {
+      await getBranchMetadataFileManager(reused, path.join(tmpDir, 'content-branches')).save({
+        branch: { name: 'feature-x', ...branch },
+      })
+    }
+  }
+
+  it('leaves GitHub alone when a branch that reused the name has its own PR', async () => {
+    await seedReused({ pullRequestNumber: 8 })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef)
+    const task = await runDelete(deleteRef, 'feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.status).toBe('completed')
     expect(task?.result).toEqual({ deleted: false, skipped: 'name-reused' })
   })
 
-  it('refuses the base branch without calling GitHub', async () => {
+  it('still deletes when the branch that reused the name has no PR yet', async () => {
+    await seedReused({})
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'main')
+    const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect(task?.result).toEqual({ deleted: true })
+  })
+
+  it('still deletes when the live metadata records the deleted PR itself', async () => {
+    await seedReused({ pullRequestNumber: 7 })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect(task?.result).toEqual({ deleted: true })
+  })
+
+  it('leaves GitHub alone when the metadata under the name is corrupt', async () => {
+    await seedReused('{ not json')
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
-    expect(task?.status).toBe('failed')
-    expect(task?.retryCount ?? 0).toBe(0)
-    expect(consoleSpy).toHaveErrored('Permanently failed')
+    expect(task?.result).toEqual({ deleted: false, skipped: 'metadata-unreadable' })
   })
+
+  it.each(['main', 'canopycms-settings-prod'])(
+    'refuses %s without calling GitHub',
+    async (branch) => {
+      const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+      const task = await runDelete(deleteRef, branch)
+
+      expect(deleteRef).not.toHaveBeenCalled()
+      expect(task?.status).toBe('failed')
+      expect(task?.retryCount ?? 0).toBe(0)
+      expect(task?.error).toContain('Refusing to delete')
+    },
+  )
 })
