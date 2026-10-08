@@ -102,6 +102,17 @@ export default {
       },
     },
     {
+      name: 'mdxeditor-entered-only-by-markdown-field',
+      severity: 'error',
+      comment:
+        "Only editor/fields/MarkdownField.tsx value-imports @mdxeditor/editor; other modules receive that module from it (see editor/fields/mdx-jsx-support.tsx for why a second importer crashes the editor). Type imports are erased and stay legal, as does the package's stylesheet. Evaluated by `pnpm lint:cycles`.",
+      from: {
+        path: OWN_SRC,
+        pathNot: `^packages/canopycms/src/editor/fields/MarkdownField\\.tsx$|${TEST_FILES}`,
+      },
+      to: { path: '(^|/)@mdxeditor/editor/', pathNot: '\\.css$' },
+    },
+    {
       name: 'no-circular',
       severity: 'error',
       comment:

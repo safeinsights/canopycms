@@ -700,7 +700,7 @@ Mocking `'../api'` will not intercept it. See `useReferenceResolution.test.ts`, 
 
 ### Testing MarkdownField (Real MDXEditor in jsdom)
 
-- **Preload both chunks** its `React.lazy` loader imports, in every test file that renders `MarkdownField` (directly or via `FormRenderer`): `import '@mdxeditor/editor'` and `import './mdx-jsx-support'`. Rationale is in the comment in `MarkdownField.test.tsx`.
+- **Preload the chunk** its `React.lazy` loader imports, in every test file that renders `MarkdownField` (directly or via `FormRenderer`): `import '@mdxeditor/editor'`. Rationale is in the comment in `MarkdownField.test.tsx`.
 - **Type with `@testing-library/user-event`** (`user.click(paragraph)`, `user.keyboard(...)`); `src/editor/test-setup.ts` stubs the `Range.prototype.getBoundingClientRect` this needs. Edits inside a JSX element's nested editor reach `onChange` only after focus leaves it, so click elsewhere before asserting.
 
 ### Testing with Real Git Operations
@@ -1207,7 +1207,7 @@ Import the dependency-free sibling the rule's `comment` names, or make the impor
 pnpm lint:cycles
 ```
 
-Runs every rule in [.dependency-cruiser.mjs](.dependency-cruiser.mjs) over both packages' `src/`: `no-circular`, plus the module-boundary rules `http-reaches-api-only-via-routes`, `api-never-imports-worker`, `editor-imports-api-only-client-index-constants` and `core-no-github-app-auth`. Each rule's `comment` states the rule and its fix. CI and the pre-commit hook run it alongside `lint:bundle`.
+Runs every rule in [.dependency-cruiser.mjs](.dependency-cruiser.mjs) over both packages' `src/`: `no-circular`, plus the module-boundary rules `http-reaches-api-only-via-routes`, `api-never-imports-worker`, `editor-imports-api-only-client-index-constants`, `mdxeditor-entered-only-by-markdown-field` and `core-no-github-app-auth`. Each rule's `comment` states the rule and its fix. CI and the pre-commit hook run it alongside `lint:bundle`.
 
 Both packages are at **zero cycles**, so any violation is one you just introduced. Cycles bite hardest when splitting a class whose methods called each other: hoist the shared piece into a third module (`worker/history-rewrite.ts`) or pass the collaborator in through a context object (`worker/worker-context.ts`).
 
