@@ -709,6 +709,10 @@ export class ContentStore {
     relativePath: PhysicalPath
     /** The entry's logical path, the form path-permission rules match (`entryLogicalPath`). */
     logicalPath: LogicalPath
+    /** The collection the entry file lives in: the parent, when an entry-type item delegated. */
+    collectionPath: LogicalPath
+    /** The entry's slug within that collection, lowercased as listings report it. */
+    slug: Slug
     id?: string
     /**
      * Always populated for a valid schema item: the collection branch below resolves a name
@@ -847,6 +851,8 @@ export class ContentStore {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved) as PhysicalPath,
         logicalPath: entryLogicalPath(schemaItem.logicalPath, safeSlug),
+        collectionPath: schemaItem.logicalPath,
+        slug: safeSlug as Slug,
         id,
         entryTypeName: finalEntryTypeName,
         existed,

@@ -23,10 +23,15 @@ const signedIn = { type: 'authenticated', userId: 'editor-1', groups: [] }
 const canopy = { readByUrlPath, user: signedIn } as unknown as CanopyContext
 const getCanopy = vi.fn(async () => canopy)
 
-const entry = (entryType: string, data: unknown = { title: 'Hello' }) => ({
+const entry = (
+  entryType: string,
+  data: unknown = { title: 'Hello' },
+  at: { slug: string; urlPath: string } = { slug: 'hello', urlPath: '/posts/hello' },
+) => ({
   data,
-  path: 'content/posts',
-  meta: { entryType, entryId: 'abc', physicalPath: '/srv/workspace/secret/post.md' },
+  // Not derived from urlPath, so a page that parsed urlPath out of path would fail.
+  path: '/link?branch=feature%2Fx',
+  meta: { entryType, entryId: 'abc', physicalPath: '/srv/workspace/secret/post.md', ...at },
 })
 
 const render = (path: string[] | undefined, query: Record<string, string | string[]> = {}) =>
@@ -163,7 +168,14 @@ describe('createPreviewPageFor with a loader', () => {
 
     expect(load).toHaveBeenCalledTimes(1)
     expect(load).toHaveBeenCalledWith({
-      entry: { data: found.data, path: found.path, entryType: 'post', entryId: 'abc' },
+      entry: {
+        data: found.data,
+        slug: 'hello',
+        urlPath: '/posts/hello',
+        path: '/link?branch=feature%2Fx',
+        entryType: 'post',
+        entryId: 'abc',
+      },
       canopy,
       branch: 'feature/x',
     })
@@ -173,6 +185,19 @@ describe('createPreviewPageFor with a loader', () => {
       editorOrigin: undefined,
       extras: { related: ['a', 'b'] },
     })
+  })
+
+  it("hands the loader an index entry's slug and its collection's URL path", async () => {
+    readByUrlPath.mockResolvedValue(entry('post', undefined, { slug: 'index', urlPath: '/posts' }))
+    const load = vi.fn(() => ({ related: [] }))
+
+    await pageWith(load)(props(['posts'], { branch: 'feature/x' }))
+
+    expect(load).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entry: expect.objectContaining({ slug: 'index', urlPath: '/posts' }),
+      }),
+    )
   })
 
   it('gives the loader no server-only meta, so returning the whole entry cannot leak it', async () => {
