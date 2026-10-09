@@ -17,7 +17,7 @@
  *   prop. React 18 renders a `javascript:` href as given.
  *
  * Markdown (`markdown` fields, the body of an `md` entry) renders braces and imports as text, and
- * tags too unless the site enables raw HTML, so only its URLs are checked. A field with
+ * runs no tag unless the site enables raw HTML, so only its URLs are checked. A field with
  * `executable: true` is not checked at all.
  *
  * A body is parsed with and without GFM, so a site's choice of `remark-gfm` cannot hide a
