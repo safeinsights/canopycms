@@ -29,6 +29,7 @@ import {
   parseDocument,
   Scalar,
   stringify as yamlStringify,
+  visit,
   type Document,
   type Pair,
   type YAMLMap,
@@ -50,6 +51,28 @@ interface ReconcileContext {
   readonly replaced: WeakMap<object, unknown>
   /** Fresh scalars given the replaced scalar's style, which a re-print may have to take back. */
   readonly restyled: Scalar[]
+  /** Strings the file's reader would not read back from plain text; written single-quoted. */
+  readonly quote?: (text: string, asKey: boolean) => boolean
+}
+
+/** A fresh node for `value`, its strings that `ctx.quote` names single-quoted. */
+function createNode(
+  ctx: ReconcileContext,
+  value: unknown,
+  asKey = false,
+): ReturnType<Document['createNode']> {
+  const node = ctx.doc.createNode(value)
+  const { quote } = ctx
+  if (quote !== undefined) {
+    visit(node, {
+      Scalar(key, scalar) {
+        if (typeof scalar.value === 'string' && quote(scalar.value, asKey || key === 'key')) {
+          scalar.type = Scalar.QUOTE_SINGLE
+        }
+      },
+    })
+  }
+  return node
 }
 
 /** The comment metadata every `yaml` node carries (see `NodeBase` in the `yaml` types). */
@@ -246,7 +269,7 @@ function reconcileNode(ctx: ReconcileContext, existing: unknown, value: unknown)
   // Changed, or a shape change (scalar <-> collection). A fresh node rather than mutating
   // `scalar.value` in place, which would keep the old node's representation and emit `'42'` where
   // the number 42 was meant.
-  const fresh = ctx.doc.createNode(value)
+  const fresh = createNode(ctx, value)
   if (isNode(existing)) ctx.replaced.set(fresh, existing)
   if (isScalar(existing) && isScalar(fresh) && typeof value === 'string') {
     const style = carriedStyle(existing, value)
@@ -317,7 +340,7 @@ function reconcileMap(
 
   for (const key of Object.keys(value)) {
     if (seen.has(key) || !wanted.has(key)) continue
-    map.set(ctx.doc.createNode(key), ctx.doc.createNode(value[key]))
+    map.set(createNode(ctx, key, true), createNode(ctx, value[key]))
   }
 }
 
@@ -398,12 +421,15 @@ function reconcileSeq(
 function reconcileYamlSource(
   raw: string,
   data: Record<string, unknown>,
-  rootAtColumnZero = false,
+  {
+    rootAtColumnZero = false,
+    quote,
+  }: Pick<ReconcileContext, 'quote'> & { rootAtColumnZero?: boolean } = {},
 ): string | undefined {
   const doc: Document = parseDocument(raw)
   if (doc.errors.length > 0) return undefined
   const snapshot = snapshotDocument(doc)
-  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [] }
+  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [], quote }
   doc.contents = reconcileNode(ctx, doc.contents, data) as Document['contents']
   let reconciled = withSourceLineEndings(doc.toString(), raw)
   if (!readsBackAs(reconciled, doc)) {
@@ -469,7 +495,8 @@ function extractRawFrontmatter(raw: string): string | undefined {
   }
   const frontmatter = (parsed as { matter?: unknown }).matter
   if (typeof frontmatter !== 'string' || frontmatter.trim() === '') return undefined
-  return frontmatter
+  // gray-matter ends the frontmatter at `\n---`, so a CRLF file's keeps the closing line's `\r`.
+  return frontmatter.replace(/\r$/, '')
 }
 
 /** The body of a file as gray-matter splits it, or undefined when it cannot split it. */
@@ -524,12 +551,87 @@ function bodyToWrite(
   return lead + spliced
 }
 
+/** `value` as JSON carries it, or undefined when it cannot be serialised. */
+function asJson(value: unknown): unknown {
+  const key = identityKey(value)
+  return key === undefined || key === 'undefined' ? undefined : (JSON.parse(key) as unknown)
+}
+
+/** Frontmatter data as the read path hands it over the API, or undefined when it cannot split. */
+function frontmatterAsRead(raw: string): unknown {
+  try {
+    return asJson(matter(raw, {}).data)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * `value` with every part it carries unchanged from `read` replaced by `disk`'s value for that
+ * part. The read path parses frontmatter with gray-matter's js-yaml, which reads YAML 1.1 (a bare
+ * date is a `Date`, sent back as a timestamp string; `014` is octal), and the reconciler compares
+ * against `yaml`'s YAML 1.2 reading; so a value the editor sent back as it read it would otherwise
+ * count as changed and rewrite its line.
+ */
+function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): unknown {
+  const sent = identityKey(value)
+  if (sent !== undefined && sent === identityKey(read)) return disk
+  if (isPlainRecord(value) && isPlainRecord(read) && isPlainRecord(disk)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        withUnchangedAsOnDisk(child, read[key], disk[key]),
+      ]),
+    )
+  }
+  if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
+    if (read.length !== disk.length) return value
+    // An item sent as read anywhere in the list, so an insert or a reorder keeps the rest as read.
+    const readKeys = read.map(identityKey)
+    const claimed = new Set<number>()
+    return value.map((child, i) => {
+      const key = identityKey(child)
+      const at = readKeys.findIndex((k, j) => k !== undefined && k === key && !claimed.has(j))
+      if (at >= 0) {
+        claimed.add(at)
+        return disk[at]
+      }
+      return i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
+    })
+  }
+  return value
+}
+
+/**
+ * Whether gray-matter, the read path's reader, reads `text` written plain as anything the API
+ * would not carry as that string: as a value, `1:30` is 90 and a bare date a `Date`, while a
+ * timestamp the editor's date field writes reads as a date the API carries as the same text, and
+ * stays plain; as a key, anything but the key itself.
+ */
+function readsAsAnotherValue(text: string, asKey: boolean): boolean {
+  if (/[\r\n]/.test(text)) return false
+  // `matter.stringify` trims the frontmatter it writes, so an edge character `trim` drops is lost.
+  if (text !== text.trim()) return true
+  try {
+    const { data } = matter(`---\n${asKey ? `${text}: v` : `v: ${text}`}\n---\n`, {})
+    if (!isPlainRecord(data)) return true
+    const keys = Object.keys(data)
+    if (asKey) return keys.length !== 1 || keys[0] !== text
+    return identityKey(data.v) !== identityKey(text)
+  } catch {
+    return true
+  }
+}
+
 /**
  * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter and the source
  * text of its unchanged body blocks through. The reconciled YAML goes back through
  * `matter.stringify` via a custom stringify engine rather than being spliced between
  * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
- * would have produced.
+ * would have produced. The result is kept only if the read path reads `data` back from it;
+ * otherwise gray-matter writes it, without the comments. A fresh string the read path would
+ * misread is quoted (`readsAsAnotherValue`), so this is left for a changed value meeting text the
+ * two parsers read differently, as 14 meets a file's `014`.
  */
 export function serializeFrontmatter(
   editorBody: string,
@@ -545,10 +647,19 @@ export function serializeFrontmatter(
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
   if (existingFrontmatter === undefined) return matter.stringify(file, data)
 
-  const reconciled = reconcileYamlSource(existingFrontmatter, data, true)
+  const onDisk = parseDocument(existingFrontmatter)
+  const toReconcile =
+    onDisk.errors.length === 0
+      ? withUnchangedAsOnDisk(data, frontmatterAsRead(existingRaw), onDisk.toJS())
+      : data
+  const reconciled = reconcileYamlSource(
+    existingFrontmatter,
+    isPlainRecord(toReconcile) ? toReconcile : data,
+    { rootAtColumnZero: true, quote: readsAsAnotherValue },
+  )
   if (reconciled === undefined) return matter.stringify(file, data)
 
-  return matter.stringify(file, data, {
+  const written = matter.stringify(file, data, {
     engines: {
       yaml: {
         parse: () => ({}),
@@ -556,4 +667,10 @@ export function serializeFrontmatter(
       },
     },
   })
+  if (isDeepStrictEqual(frontmatterAsRead(written), asJson(data))) return written
+  log.debug(
+    'content-serialize',
+    'reconciled frontmatter reads back differently; writing as gray-matter prints it',
+  )
+  return matter.stringify(file, data)
 }

@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, Paper, Stack } from '@mantine/core'
+import { ActionIcon, Menu, Paper, Stack, Tooltip } from '@mantine/core'
 import {
   IconUserCircle,
   IconLogout,
@@ -6,7 +6,7 @@ import {
   IconSettings,
   IconLayoutColumns,
   IconLayoutRows,
-  IconSquareDashed,
+  IconMarquee,
   IconActivity,
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
@@ -21,6 +21,9 @@ export interface EditorSidebarProps {
    * Whether field highlighting is enabled.
    */
   highlightEnabled: boolean
+
+  /** The preview reported marking no elements; unknown (an older bridge) is false. */
+  previewMarksNothing?: boolean
 
   /**
    * Width of the sidebar in pixels.
@@ -93,6 +96,7 @@ export interface EditorSidebarProps {
 export function EditorSidebar({
   layout,
   highlightEnabled,
+  previewMarksNothing = false,
   sidebarWidth,
   headerHeight,
   footerHeight,
@@ -136,17 +140,26 @@ export function EditorSidebar({
           {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
         </ActionIcon>
 
-        <ActionIcon
-          variant={highlightEnabled ? 'filled' : 'subtle'}
-          color={highlightEnabled ? 'brand' : 'gray'}
-          size="lg"
-          radius="md"
-          aria-pressed={highlightEnabled}
-          aria-label="Toggle highlights"
-          onClick={onHighlightToggle}
+        <Tooltip
+          label="This preview page marks no editable elements, so nothing can be highlighted or clicked to focus. The site's developer can mark them with fieldProps."
+          opened={highlightEnabled && previewMarksNothing}
+          position="left"
+          multiline
+          w={240}
+          withArrow
         >
-          <IconSquareDashed size={18} />
-        </ActionIcon>
+          <ActionIcon
+            variant={highlightEnabled ? 'filled' : 'subtle'}
+            color={highlightEnabled ? 'brand' : 'gray'}
+            size="lg"
+            radius="md"
+            aria-pressed={highlightEnabled}
+            aria-label="Toggle highlights"
+            onClick={onHighlightToggle}
+          >
+            <IconMarquee size={18} />
+          </ActionIcon>
+        </Tooltip>
       </Stack>
       <Stack gap="xs" align="center">
         <Menu shadow="md" width={200} position="left">

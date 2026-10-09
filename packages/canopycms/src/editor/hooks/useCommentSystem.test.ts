@@ -550,6 +550,83 @@ describe('useCommentSystem', () => {
     document.body.removeChild(mockElement)
   })
 
+  it('jumps to a comment field whose path no selector could spell', () => {
+    vi.useFakeTimers()
+    const element = document.createElement('div')
+    element.setAttribute('data-canopy-field', 'notes["x"]')
+    element.scrollIntoView = vi.fn()
+    document.body.appendChild(element)
+    try {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      act(() => {
+        result.current.handleJumpToField('entry1', 'notes["x"]', 'thread1')
+      })
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(element.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    } finally {
+      vi.useRealTimers()
+      element.remove()
+    }
+  })
+
+  describe('preview focus on a path with no field of its own', () => {
+    const focusOn = (fieldPath: string, fields: string[]) => {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      const elements = fields.map((field) => {
+        const element = document.createElement('div')
+        element.setAttribute('data-canopy-field', field)
+        element.scrollIntoView = vi.fn()
+        document.body.appendChild(element)
+        return element
+      })
+      try {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'canopycms:preview:focus', entryPath: 'preview-entry1', fieldPath },
+              origin: window.location.origin,
+            }),
+          )
+        })
+        return {
+          focused: result.current.focusedFieldPath,
+          scrolled: elements
+            .filter((element) => vi.mocked(element.scrollIntoView).mock.calls.length)
+            .map((element) => element.getAttribute('data-canopy-field')),
+        }
+      } finally {
+        for (const element of elements) element.remove()
+      }
+    }
+
+    it('focuses the list holding a list item', () => {
+      expect(focusOn('tags[1]', ['tags', 'title'])).toEqual({ focused: 'tags', scrolled: ['tags'] })
+    })
+
+    it('focuses the nearest marked ancestor, not the outermost', () => {
+      expect(focusOn('blocks[2].items[0]', ['blocks', 'blocks[2]'])).toEqual({
+        focused: 'blocks[2]',
+        scrolled: ['blocks[2]'],
+      })
+    })
+
+    it('prefers the exact field over its ancestors', () => {
+      expect(focusOn('blocks[2].title', ['blocks', 'blocks[2]', 'blocks[2].title'])).toEqual({
+        focused: 'blocks[2].title',
+        scrolled: ['blocks[2].title'],
+      })
+    })
+
+    it('focuses nothing when no ancestor is marked either', () => {
+      expect(focusOn('gallery[0].caption', ['title'])).toEqual({
+        focused: undefined,
+        scrolled: [],
+      })
+    })
+  })
+
   it('runs its pending focus undo steps on unmount instead of leaving timers behind', () => {
     vi.useFakeTimers()
     const mockElement = document.createElement('div')

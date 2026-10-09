@@ -12,10 +12,17 @@ const PREVIEW_URL = '/preview/home?branch=main'
 /** An HTML attribute holding a public `/assets/t/` URL, which the browser fetches while parsing. */
 const PUBLIC_TRANSFORM_ATTRIBUTE = /="\/assets\/t\//
 
+/**
+ * The page's HTML with its RSC flight chunks rejoined: Next splits the payload into
+ * `self.__next_f.push` scripts at arbitrary offsets, which can fall inside a URL.
+ */
+const joinFlightChunks = (html: string): string =>
+  html.replace(/"\]\)<\/script><script>self\.__next_f\.push\(\[1,"/g, '')
+
 const fetchAsAdmin = async (path: string): Promise<string> => {
   const response = await fetch(`${BASE_URL}${path}`, { headers: { 'X-Test-User': 'admin' } })
   expect(response.status).toBe(200)
-  return response.text()
+  return joinFlightChunks(await response.text())
 }
 
 /**
