@@ -1558,11 +1558,11 @@ Admins get a "System health" panel for observing the CMS's operational state, ri
 
 ### Live Preview
 
-The editor shows a live preview of your actual site pages in an iframe. Changes update immediately via postMessage, and clicking an element in the preview focuses the corresponding form field.
+The editor shows a live preview of your actual site pages in an iframe, updated as you type. Clicking a preview element focuses its form field, and the highlight toggle outlines them, for elements the view marks with its `fieldProps`: `fieldProps('title')`, `fieldProps(['blocks', i, 'body'])`. A list item or block focuses the field holding it.
 
 Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` from `canopycms-next/preview`, which carry no editor code or CSS, so pages preview in their own styles.
 
-**Security model.** Preview pages accept messages only when they are actually framed, and only from their direct parent window with a matching origin — same-origin by default, so a standalone page, including one opened via `window.open` from a hostile site, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. We also recommend serving your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows, since it severs `window.opener` handles entirely; the bridge is safe without it, but defense in depth is cheap.
+**Security model.** Preview pages accept messages only when framed, and only from their direct parent window with a matching origin (same-origin by default), so a standalone page, even one a hostile site opened with `window.open`, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. As defense in depth, serve your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows: it severs `window.opener` handles.
 
 **Reporting draft errors.** If your page compiles the draft body (MDX, say) and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
 
