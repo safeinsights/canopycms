@@ -55,8 +55,9 @@ import type { WorkerContext } from './worker-context'
  * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`,
  * which holds the base branch while schema-gate.ts says the serving editor lacks
  * a schema the incoming content names), push this deployment's own settings
- * branch, fast-forward the base branch's workspace, rebase every branch that is behind it (rebase.ts), then sweep old
- * tasks and expired trashed branch directories.
+ * branch, fast-forward the base branch's workspace, rebase every branch that is
+ * behind it (rebase.ts), then sweep old tasks and expired trashed branch
+ * directories.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
