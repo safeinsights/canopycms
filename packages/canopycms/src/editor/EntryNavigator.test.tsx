@@ -285,6 +285,85 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('unavailable entry types', () => {
+    const widgets = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('widgets'),
+      label: 'Widgets',
+      type: 'collection',
+      entries: [{ path: unsafeAsLogicalPath('widgets/first'), label: 'First' }],
+      ...extra,
+    })
+
+    it('shows the shared message once for a collection that has unavailable entry types', () => {
+      renderEntryNavigator({
+        collections: [widgets({ unavailableSchemaRefs: ['widgetSchema', 'gadgetSchema'] })],
+      })
+
+      const messages = screen.getAllByTestId('unavailable-type-message')
+      expect(messages).toHaveLength(1)
+      expect(messages[0].textContent).toBe(
+        "This section uses a content type this editor version doesn't know yet (widgetSchema, gadgetSchema). It usually appears after the editor finishes updating; reload in a few minutes.",
+      )
+    })
+
+    it('renders a collection without unavailable types with no message', () => {
+      renderEntryNavigator({
+        collections: [
+          widgets(),
+          widgets({ path: unsafeAsLogicalPath('other'), unavailableSchemaRefs: [] }),
+        ],
+      })
+
+      expect(screen.queryByTestId('unavailable-type-message')).toBeNull()
+    })
+
+    it('shows the message once above the tree when the hidden root collection has unavailable types', () => {
+      renderEntryNavigator({
+        collections: [widgets({ unavailableSchemaRefs: ['widgetSchema'] })],
+        hiddenRootPath: 'widgets',
+      })
+
+      // The root's own row is not rendered; its entries are the top level.
+      expect(screen.queryByTestId('entry-nav-item-widgets')).toBeNull()
+      const first = screen.getByTestId('entry-nav-item-first')
+      const messages = screen.getAllByTestId('unavailable-type-message')
+      expect(messages).toHaveLength(1)
+      expect(messages[0].textContent).toContain('widgetSchema')
+      expect(
+        messages[0].compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    })
+
+    it('shows no message for a hidden root collection whose types are all available', () => {
+      renderEntryNavigator({ collections: [widgets()], hiddenRootPath: 'widgets' })
+
+      expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy()
+      expect(screen.queryByTestId('unavailable-type-message')).toBeNull()
+    })
+
+    it('offers no entry menu for an unavailable entry, and still offers it for an available one', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        collections: [
+          widgets({
+            entries: [
+              { path: unsafeAsLogicalPath('widgets/first'), label: 'First', unavailable: true },
+              { path: unsafeAsLogicalPath('widgets/second'), label: 'Second' },
+            ],
+          }),
+        ],
+        onDeleteEntry: vi.fn(),
+        onRenameEntry: vi.fn(),
+      })
+
+      await user.click(screen.getByTestId('entry-nav-item-widgets'))
+      await waitFor(() => expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy())
+
+      expect(screen.getByTestId('entry-menu-second')).toBeTruthy()
+      expect(screen.queryByTestId('entry-menu-first')).toBeNull()
+    })
+  })
+
   describe('onAdd in menu', () => {
     it('shows Add Entry in collection menu when onAdd is provided', async () => {
       const user = userEvent.setup()

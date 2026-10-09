@@ -19,7 +19,7 @@ import type {
   EntryTypeConfig,
 } from '../config'
 import type { ContentId } from '../paths/types'
-import type { EntrySchemaRegistry } from './types'
+import type { EntrySchemaRegistry, SchemaIssue, UnknownSchemaPolicy } from './types'
 import { extractSlugFromFilename, extractIdFromFilename } from '../content-id-index'
 
 /**
@@ -204,18 +204,47 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
   return { root, collections }
 }
 
+/** Where a degraded resolve records what it left out; `issues` stays empty under 'throw'. */
+type Resolution = { policy: UnknownSchemaPolicy; issues: SchemaIssue[] }
+
 function resolveEntryTypes(
   entryTypes: EntryTypeMeta[],
   entrySchemaRegistry: EntrySchemaRegistry,
   contextName: string,
+  location: { collectionPath: string; metaFile: string },
+  resolution: Resolution,
 ): EntryTypeConfig[] {
   return entryTypes.map((entryType) => {
     const resolvedSchema = entrySchemaRegistry[entryType.schema]
     if (!resolvedSchema) {
-      throw new Error(
-        `Schema reference "${entryType.schema}" in entry type "${entryType.name}" (${contextName}) not found in registry. ` +
-          `Available schemas: ${Object.keys(entrySchemaRegistry).join(', ')}`,
-      )
+      const message = `Schema reference "${entryType.schema}" in entry type "${entryType.name}" (${contextName}) not found in registry.`
+      if (resolution.policy === 'throw') {
+        throw new Error(
+          `${message} Available schemas: ${Object.keys(entrySchemaRegistry).join(', ')}`,
+        )
+      }
+      resolution.issues.push({
+        kind: 'unknown-schema',
+        collectionPath: location.collectionPath,
+        entryType: entryType.name,
+        schemaRef: entryType.schema,
+        metaFile: location.metaFile,
+        message,
+      })
+      return {
+        name: entryType.name,
+        label: entryType.label,
+        format: entryType.format as ContentFormat,
+        schema: [],
+        schemaRef: entryType.schema,
+        default: entryType.default,
+        maxItems: entryType.maxItems,
+        unavailable: {
+          reason: 'unknown-schema',
+          schemaRef: entryType.schema,
+          metaFile: location.metaFile,
+        },
+      }
     }
 
     // Note: "body" field name validation for md/mdx formats is handled by the
@@ -238,10 +267,17 @@ function resolveCollectionMeta(
   meta: CollectionMeta & { path: string; contentId?: ContentId },
   entrySchemaRegistry: EntrySchemaRegistry,
   allCollections: Array<CollectionMeta & { path: string; contentId?: ContentId }>,
+  resolution: Resolution,
 ): CollectionConfig {
   const entries =
     meta.entries && meta.entries.length > 0
-      ? resolveEntryTypes(meta.entries, entrySchemaRegistry, `collection "${meta.name}"`)
+      ? resolveEntryTypes(
+          meta.entries,
+          entrySchemaRegistry,
+          `collection "${meta.name}"`,
+          { collectionPath: meta.path, metaFile: `${meta.path}/.collection.json` },
+          resolution,
+        )
       : undefined
 
   // Find nested collections (subfolders with .collection.json)
@@ -255,7 +291,7 @@ function resolveCollectionMeta(
   const collections =
     nestedCollections.length > 0
       ? nestedCollections.map((nestedMeta) =>
-          resolveCollectionMeta(nestedMeta, entrySchemaRegistry, allCollections),
+          resolveCollectionMeta(nestedMeta, entrySchemaRegistry, allCollections, resolution),
         )
       : undefined
 
@@ -270,6 +306,11 @@ function resolveCollectionMeta(
   }
 }
 
+type LoadedMetaFiles = {
+  root: RootCollectionMeta | null
+  collections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
+}
+
 /**
  * Resolve schema references for root collection and all collections.
  *
@@ -282,12 +323,23 @@ function resolveCollectionMeta(
  * @throws Error if any schema reference doesn't exist in registry (with helpful suggestions)
  */
 export function resolveCollectionReferences(
-  metaFiles: {
-    root: RootCollectionMeta | null
-    collections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
-  },
+  metaFiles: LoadedMetaFiles,
   entrySchemaRegistry: EntrySchemaRegistry,
 ): RootCollectionConfig {
+  return resolveCollectionMetaFiles(metaFiles, entrySchemaRegistry, 'throw').schema
+}
+
+/**
+ * {@link resolveCollectionReferences} under an explicit {@link UnknownSchemaPolicy}: 'degrade'
+ * marks an entry type naming an unregistered schema `unavailable` and reports it in `issues`
+ * instead of throwing, so the rest of the schema still resolves.
+ */
+export function resolveCollectionMetaFiles(
+  metaFiles: LoadedMetaFiles,
+  entrySchemaRegistry: EntrySchemaRegistry,
+  policy: UnknownSchemaPolicy,
+): { schema: RootCollectionConfig; issues: SchemaIssue[] } {
+  const resolution: Resolution = { policy, issues: [] }
   // Build result object dynamically to avoid readonly conflicts
   const result: Record<string, unknown> = {}
 
@@ -300,6 +352,8 @@ export function resolveCollectionReferences(
       metaFiles.root.entries,
       entrySchemaRegistry,
       'root collection',
+      { collectionPath: '', metaFile: '.collection.json' },
+      resolution,
     )
   }
 
@@ -312,11 +366,11 @@ export function resolveCollectionReferences(
 
   if (topLevelCollections.length > 0) {
     result.collections = topLevelCollections.map((meta) =>
-      resolveCollectionMeta(meta, entrySchemaRegistry, metaFiles.collections),
+      resolveCollectionMeta(meta, entrySchemaRegistry, metaFiles.collections, resolution),
     )
   }
 
-  return result as RootCollectionConfig
+  return { schema: result as RootCollectionConfig, issues: resolution.issues }
 }
 
 export function watchCollectionMetaFiles(contentRoot: string, onChange: () => void): () => void {

@@ -128,6 +128,7 @@ describe('ReferenceResolver', () => {
       expect(readSpy).toHaveBeenCalledTimes(1)
       expect(readSpy).toHaveBeenCalledWith(expect.anything(), 'alice', {
         resolveReferences: false,
+        allowUnavailableEntryType: true,
       })
     })
 

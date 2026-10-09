@@ -13,6 +13,7 @@ import {
 } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { ReferenceValidator } from '../validation/reference-validator'
 import {
   findUnknownKeys,
@@ -340,6 +341,11 @@ const writeContentHandler = async (
     }
     fields = entryTypeConfig?.schema ?? []
     maxItems = entryTypeConfig?.maxItems
+  }
+  // Refused before validation, which an empty `fields` would wave through; mapped to a 503.
+  const resolvedEntryType = schemaItem.type === 'entry-type' ? schemaItem : entryTypeConfig
+  if (resolvedEntryType?.unavailable) {
+    throw new SchemaUnavailableError(resolvedEntryType.name, resolvedEntryType.unavailable)
   }
 
   const data = body.data ?? {}

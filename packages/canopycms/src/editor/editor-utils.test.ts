@@ -846,6 +846,59 @@ describe('buildEntriesFromListResponse', () => {
   })
 })
 
+describe('buildEntriesFromListResponse: unavailable entry types', () => {
+  const unavailable = {
+    reason: 'unknown-schema' as const,
+    schemaRef: 'widgetSchema',
+    metaFile: 'content/widgets/.collection.json',
+  }
+  const flatSchema: FlatSchemaItem[] = [
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('widgets/widget'),
+      name: 'widget',
+      parentPath: unsafeAsLogicalPath('widgets'),
+      format: 'json',
+      schema: [],
+      unavailable,
+    },
+    {
+      type: 'entry-type',
+      logicalPath: unsafeAsLogicalPath('widgets/note'),
+      name: 'note',
+      parentPath: unsafeAsLogicalPath('widgets'),
+      format: 'md',
+      schema: [{ name: 'title', type: 'string' }],
+    },
+  ]
+  const entry = (slug: string, entryType: string): ListEntriesResponse['entries'][number] => ({
+    logicalPath: unsafeAsLogicalPath(`widgets/${slug}`),
+    contentId: unsafeAsContentId(`${slug}`.padEnd(12, 'x')),
+    slug: unsafeAsSlug(slug),
+    collectionPath: unsafeAsLogicalPath('widgets'),
+    collectionName: 'Widgets',
+    format: 'json',
+    entryType,
+    physicalPath: unsafeAsPhysicalPath(`content/widgets/${slug}.json`),
+    exists: true,
+  })
+
+  it('exposes unavailable on an entry of an unavailable type, and only on that one', () => {
+    const result = buildEntriesFromListResponse({
+      response: {
+        entries: [entry('first', 'widget'), entry('second', 'note')],
+        pagination: { hasMore: false, limit: 50 },
+      },
+      resolvePreviewSrc: () => undefined,
+      flatSchema,
+    })
+
+    expect(result[0].unavailable).toEqual(unavailable)
+    expect(result[0].schema).toEqual([])
+    expect(result[1]).not.toHaveProperty('unavailable')
+  })
+})
+
 describe('buildCollectionLabels', () => {
   it('returns empty map when no collections provided', () => {
     expect(buildCollectionLabels(undefined)).toEqual(new Map())

@@ -82,6 +82,7 @@ export class ReferenceResolver {
         // Only the label is read, so the candidate's own references stay unresolved.
         const doc = await this.store.read(location.collection, normalizedSlug as Slug, {
           resolveReferences: false,
+          allowUnavailableEntryType: true,
         })
         const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 

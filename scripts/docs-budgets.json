@@ -64,12 +64,12 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 23963
+      "words": 23977
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4133
+      "words": 4141
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -79,17 +79,17 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 15532
+      "words": 15549
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 9591,
-      "words": 15867
+      "words": 15933
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1280,
-      "words": 5486
+      "words": 5498
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,

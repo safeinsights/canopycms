@@ -374,7 +374,7 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -411,7 +411,7 @@ array then alphabetical; with it, the comparator replaces that and runs after `e
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`
 
 `ListEntriesItem` carries `pathSegments`, `urlPath`, `slug`, `entryPath`, `entryId`, `collectionId`,
 `updatedAt`, `data` and an optional `schema`. `ListEntriesOptions` takes `extract`, `filter`,
@@ -424,7 +424,7 @@ see [README.md](README.md#listing-entries) and
 
 **Location**: `packages/canopycms/src/config/`
 
-- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess`, `basePath` and `EditorSignInProps` for `editor.SignInComponent`
+- `types.ts` — every config type, including `ReferenceFieldConfig`, `InlineGroupFieldConfig`, `DevConfig`, `ValidateEntryHook`, `DefaultPathAccess`, `EntryTypeConfig.unavailable`, `basePath` and `EditorSignInProps` for `editor.SignInComponent`
 - `schemas/config.ts` — the Zod schema for `CanopyConfig`; `mode` has no default, so omitting it fails validation
 - `schemas/field.ts` — Zod schemas for field types
 - `schemas/collection.ts` — Zod schemas for collections and entry types
@@ -447,7 +447,9 @@ Every key, its default and its adopter-facing meaning are in
 **Location**: `packages/canopycms/src/schema/`
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
-- `resolver.ts` — `resolveSchema`, the high-level resolution API
+- `resolver.ts` — `resolveSchema`, the high-level resolution API (`unknownSchema` option)
+- `registry-fingerprint.ts` — `registryFingerprint`, a registry's content digest
+- `schema-unavailable-error.ts` — `SchemaUnavailableError`, thrown for an `unavailable` entry type
 - `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for other callers
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
@@ -476,6 +478,7 @@ Top-level components and helpers:
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
+- `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
@@ -632,7 +635,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
+- `branch-schema-cache.ts` — per-branch schema caching, always file-based; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
@@ -846,7 +849,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
 - `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
 - `handler.ts` — the request handler factory; answers anonymous callers `unauthenticatedStatus` before base-branch provisioning
-- `worker-not-ready.ts` — `workerNotReadyResponse`: the retriable 503 for worker-not-ready and provisioning-busy errors
+- `worker-not-ready.ts` — `workerNotReadyResponse`: the retriable 503 for worker-not-ready, provisioning-busy and `SchemaUnavailableError`
 - `index.ts` — module exports
 
 ## Test Utilities

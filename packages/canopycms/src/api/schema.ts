@@ -28,6 +28,7 @@ import {
 import type {
   CollectionConfig,
   EntryTypeConfig,
+  EntryTypeUnavailable,
   FlatSchemaItem,
   ContentFormat,
   EntrySchema,
@@ -44,6 +45,7 @@ interface WireEntryType {
   readonly label?: string
   readonly default?: boolean
   readonly maxItems?: number
+  readonly unavailable?: EntryTypeUnavailable
 }
 
 /** Collection in wire format (entry types carry schemaRef, not resolved schema) */
@@ -84,6 +86,7 @@ type WireFlatSchemaItem =
       schemaRef: string
       default?: boolean
       maxItems?: number
+      unavailable?: EntryTypeUnavailable
     }
 
 type Registry = Record<string, EntrySchema>
@@ -140,6 +143,7 @@ function toWireEntryType(et: EntryTypeConfig, registry: Registry): WireEntryType
     ...(et.label !== undefined && { label: et.label }),
     ...(et.default !== undefined && { default: et.default }),
     ...(et.maxItems !== undefined && { maxItems: et.maxItems }),
+    ...(et.unavailable && { unavailable: et.unavailable }),
   }
 }
 
@@ -184,6 +188,7 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
       schemaRef: resolveSchemaRef(item, registry),
       ...(item.default !== undefined && { default: item.default }),
       ...(item.maxItems !== undefined && { maxItems: item.maxItems }),
+      ...(item.unavailable && { unavailable: item.unavailable }),
     }
   })
 }

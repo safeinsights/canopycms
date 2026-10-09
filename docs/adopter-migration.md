@@ -40,6 +40,16 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### An unknown schema reference costs one entry type, not the editor — **behaviour change**
+
+**What changed.** When synced content names an entry schema the running code lacks, only that
+entry type goes unavailable: the editor says so, and its entries answer 503 with
+`code: 'SCHEMA_UNAVAILABLE'`. Builds, static deploys and `generate-ai-content` still fail. Public
+types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, optional
+`ApiResponse.code`, and a required `SchemaResolutionResult.issues`.
+
+**To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`.
+
 ### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
 
 **What changed.** The preview resolves references inside objects, object lists and blocks too. One

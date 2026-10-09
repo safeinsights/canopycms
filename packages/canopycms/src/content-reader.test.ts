@@ -129,6 +129,77 @@ describe('createContentReader', () => {
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
+  it('reads an entry of an unavailable type as not found', async () => {
+    const root = await tmpDir()
+    const peopleDir = path.join(root, 'content/people')
+    await fs.mkdir(peopleDir, { recursive: true })
+    await fs.writeFile(
+      path.join(peopleDir, 'staff.grace.grAcEgrAcE12.json'),
+      '{"name":"Grace"}',
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(peopleDir, 'contributor.ada.aDaaDaaDaa12.json'),
+      '{"name":"Ada"}',
+      'utf8',
+    )
+    const schema = {
+      collections: [
+        {
+          name: 'people',
+          path: 'people',
+          entries: [
+            {
+              name: 'staff',
+              format: 'json' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+            {
+              name: 'contributor',
+              format: 'json' as const,
+              schema: [],
+              unavailable: {
+                reason: 'unknown-schema' as const,
+                schemaRef: 'contributorSchema',
+                metaFile: 'people/.collection.json',
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const reader = createContentReader({
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
+      allowCreateBranch: false,
+      getBranchContext: async (branch) => (branch === 'main' ? buildBranchContext(root) : null),
+    })
+    const people = unsafeAsLogicalPath('content/people')
+
+    const grace = await reader.read<{ name: string }>({
+      entryPath: people,
+      slug: unsafeAsSlug('grace'),
+      branch: 'main',
+      user: ANONYMOUS_USER,
+    })
+    expect(grace.data.name).toBe('Grace')
+    const ada = reader.read({
+      entryPath: people,
+      slug: unsafeAsSlug('ada'),
+      branch: 'main',
+      user: ANONYMOUS_USER,
+    })
+    await expect(ada).rejects.toBeInstanceOf(ContentStoreError)
+    await expect(ada).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
   it('readDataOrThrow returns data and throws on missing content', async () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')

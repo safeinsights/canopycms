@@ -296,6 +296,30 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
+      {status.schemaIssues && status.schemaIssues.length > 0 && (
+        <Alert
+          color="yellow"
+          icon={<IconAlertTriangle size={16} />}
+          title="Content types this editor version doesn't know"
+          data-testid="schema-issues-alert"
+        >
+          <Stack gap={4}>
+            {status.schemaIssues.map((issue) => (
+              <Text size="sm" key={`${issue.kind}:${issue.message}`}>
+                {issue.kind === 'unknown-schema' ? (
+                  <>
+                    <Code>{issue.metaFile}</Code> names <Code>{issue.schemaRef}</Code>, so entry
+                    type <Code>{issue.entryType}</Code> is unavailable
+                  </>
+                ) : (
+                  issue.message
+                )}
+              </Text>
+            ))}
+          </Stack>
+        </Alert>
+      )}
+
       {status.statusReadError && (
         <Text size="xs" c="orange">
           Warning: could not read worker status ({status.statusReadError})

@@ -22,6 +22,7 @@ import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { BuildIdentity, WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
+import type { SchemaIssue } from '../schema/types'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
 import { getBuildIdentity } from '../build-identity'
@@ -123,6 +124,27 @@ async function readSettingsWorkspaceError(ctx: ApiContext): Promise<string | und
   }
 }
 
+/**
+ * What the base branch's schema leaves out under this process's registry (see
+ * `BranchSchemaCache`). Empty when the probe cannot resolve it: that failure reaches the
+ * editor through every schema-guarded route anyway.
+ */
+async function readBaseSchemaIssues(ctx: ApiContext): Promise<SchemaIssue[]> {
+  try {
+    const { config, branchSchemaCache, entrySchemaRegistry } = ctx.services
+    const base = await ctx.getBranchContext(config.defaultBaseBranch ?? 'main')
+    if (!base) return []
+    const { issues } = await branchSchemaCache.getSchema(
+      base.branchRoot,
+      entrySchemaRegistry,
+      config.contentRoot || 'content',
+    )
+    return issues
+  } catch {
+    return []
+  }
+}
+
 /** Age (ms) of the oldest file in pending/, or undefined if empty/missing. */
 async function getOldestPendingAgeMs(taskDir: string): Promise<number | undefined> {
   const pendingDir = path.join(taskDir, 'pending')
@@ -163,6 +185,8 @@ export interface AdminStatusData {
    * /admin.
    */
   settingsWorkspaceError?: string
+  /** What the base branch's schema leaves out under this process's code; absent when nothing. */
+  schemaIssues?: SchemaIssue[]
   /** Build of the API process answering this request. */
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */
@@ -256,6 +280,7 @@ const getAdminStatusHandler = async (
       { workerStatus, statusReadError },
       settingsWorkspaceError,
       imageProcessing,
+      schemaIssues,
     ] = await Promise.all([
       getQueueStats(taskDir),
       getOldestPendingAgeMs(taskDir),
@@ -263,6 +288,7 @@ const getAdminStatusHandler = async (
       readWorkerStatus(taskDir),
       readSettingsWorkspaceError(ctx),
       probeImageProcessing(),
+      readBaseSchemaIssues(ctx),
     ])
 
     return {
@@ -279,6 +305,7 @@ const getAdminStatusHandler = async (
         workerStatus,
         ...(statusReadError ? { statusReadError } : {}),
         ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
+        ...(schemaIssues.length > 0 ? { schemaIssues } : {}),
         build: getBuildIdentity(),
         assetStore: { configured: !!ctx.assetStore },
         imageProcessing,

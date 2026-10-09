@@ -295,7 +295,7 @@ async function collectEntries(
     if (config?.exclude?.entryTypes?.includes(entryTypeName)) continue
 
     const entryTypeConfig = findEntryType(collection, entryTypeName)
-    if (!entryTypeConfig) continue
+    if (!entryTypeConfig || entryTypeConfig.unavailable) continue
 
     try {
       const doc = await store.read(listEntry.collection, listEntry.slug, {

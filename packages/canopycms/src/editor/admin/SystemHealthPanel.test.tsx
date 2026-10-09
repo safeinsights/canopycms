@@ -365,6 +365,52 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: schema issues', () => {
+    it('lists each issue under a title naming the content types this editor does not know', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          makeStatus({
+            schemaIssues: [
+              {
+                kind: 'unknown-schema',
+                collectionPath: 'widgets',
+                entryType: 'widget',
+                schemaRef: 'widgetSchema',
+                metaFile: 'content/widgets/.collection.json',
+                message: 'unused for this kind',
+              },
+              {
+                kind: 'reference-entry-type',
+                message:
+                  'field "related" points at entry type "gadget", which no collection declares',
+              },
+            ],
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('schema-issues-alert')
+      expect(alert.textContent).toContain("Content types this editor version doesn't know")
+      expect(alert.textContent).toContain(
+        'content/widgets/.collection.json names widgetSchema, so entry type widget is unavailable',
+      )
+      expect(alert.textContent).toContain(
+        'field "related" points at entry type "gadget", which no collection declares',
+      )
+    })
+
+    it('shows no schema alert when the status reports no issues', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatus({ schemaIssues: [] })))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('schema-issues-alert')).toBeNull()
+    })
+  })
+
   describe('Overview tab: base branch refresh', () => {
     it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
       mockClient.admin.status.mockResolvedValueOnce(

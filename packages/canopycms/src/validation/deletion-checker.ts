@@ -9,6 +9,11 @@ export interface ReferenceScanEntry {
   entryId: ContentId
   schema?: EntrySchema
   data: Record<string, unknown>
+  /**
+   * The entry's type has no schema in the running code (`EntryTypeConfig.unavailable`), so
+   * which fields are references is unknown: any string equal to the target id counts as one.
+   */
+  schemaUnavailable?: boolean
 }
 
 export interface ReferencingEntry<E extends ReferenceScanEntry = ReferenceScanEntry> {
@@ -27,15 +32,35 @@ export function findReferencingEntries<E extends ReferenceScanEntry>(
   const found: ReferencingEntry<E>[] = []
   for (const entry of entries) {
     if (entry.entryId === targetId) continue
-    const fields = entry.schema
-      ? collectReferenceIds(entry.schema, entry.data)
-          .filter((occurrence) => occurrence.id === targetId)
-          .map((occurrence) => occurrence.path)
-      : []
+    const fields = entry.schemaUnavailable
+      ? findIdPaths(entry.data, '', targetId)
+      : entry.schema
+        ? collectReferenceIds(entry.schema, entry.data)
+            .filter((occurrence) => occurrence.id === targetId)
+            .map((occurrence) => occurrence.path)
+        : []
     const links = findLinkingPaths(entry.data, '', targetId)
     if (fields.length > 0 || links.length > 0) found.push({ entry, fields, links })
   }
   return found
+}
+
+/** Paths of every string in `value` equal to `targetId`; `seen` stops at a YAML alias cycle. */
+function findIdPaths(
+  value: unknown,
+  path: string,
+  targetId: string,
+  seen = new WeakSet<object>(),
+): string[] {
+  if (typeof value === 'string') return value === targetId ? [path] : []
+  if (value === null || typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => findIdPaths(item, `${path}[${index}]`, targetId, seen))
+  }
+  return Object.entries(value).flatMap(([key, item]) =>
+    findIdPaths(item, path ? `${path}.${key}` : key, targetId, seen),
+  )
 }
 
 /** Mirrors `resolveEntryLinksInData` (any string); `seen` stops at a YAML alias cycle. */

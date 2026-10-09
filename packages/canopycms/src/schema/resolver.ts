@@ -9,20 +9,27 @@
  */
 
 import type { RootCollectionConfig } from '../config'
-import type { EntrySchemaRegistry, SchemaResolutionResult, SchemaSourceInfo } from './types'
-import { loadCollectionMetaFiles, resolveCollectionReferences } from './meta-loader'
+import type {
+  EntrySchemaRegistry,
+  SchemaResolutionResult,
+  SchemaSourceInfo,
+  UnknownSchemaPolicy,
+} from './types'
+import { loadCollectionMetaFiles, resolveCollectionMetaFiles } from './meta-loader'
 
 /**
  * Resolve schema from .collection.json files.
  *
  * @param contentRoot - Path to the content directory
  * @param entrySchemaRegistry - Map of entry schema names to field definitions
+ * @param options.unknownSchema - 'throw' (the default) or 'degrade'; see `resolveCollectionMetaFiles`
  * @returns Resolved schema configuration
- * @throws Error if schema references cannot be resolved
+ * @throws Error if schema references cannot be resolved under the 'throw' policy
  */
 export async function resolveSchema(
   contentRoot: string,
   entrySchemaRegistry: EntrySchemaRegistry,
+  options: { unknownSchema?: UnknownSchemaPolicy } = {},
 ): Promise<SchemaResolutionResult> {
   const metaFiles = await loadCollectionMetaFiles(contentRoot)
 
@@ -45,9 +52,13 @@ export async function resolveSchema(
     })
   }
 
-  const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+  const { schema, issues } = resolveCollectionMetaFiles(
+    metaFiles,
+    entrySchemaRegistry,
+    options.unknownSchema ?? 'throw',
+  )
 
-  return { schema, sources }
+  return { schema, sources, issues }
 }
 
 /**

@@ -377,7 +377,7 @@ content/
 
 ### Schema Validation
 
-Schema references are validated at startup: a missing schema, or an invalid meta file, produces a clear error naming the collection and listing what is available (`Schema reference "post" in collection "posts" not found in registry. Available schemas: author, home, doc`).
+A missing schema or an invalid meta file fails a build or static deploy; a missing schema's error lists what is available (`Schema reference "post" in entry type "post" (collection "posts") not found in registry. Available schemas: author, home, doc`). In the editor, a missing schema marks only that entry type unavailable until code registering it is deployed, and System health lists it.
 
 ## Configuration Reference
 

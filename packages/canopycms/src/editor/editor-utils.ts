@@ -1,5 +1,5 @@
 import type { CollectionItem, ListEntriesResponse } from '../api/entries'
-import type { ContentFormat, EntrySchema, FlatSchemaItem } from '../config'
+import type { ContentFormat, EntrySchema, EntryTypeUnavailable, FlatSchemaItem } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -192,6 +192,7 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     // Resolve schema from flatSchema using parentPath + name
     let schema: EntrySchema = []
+    let unavailable: EntryTypeUnavailable | undefined
     if (entry.collectionPath && entry.entryType) {
       const entryTypeItem = flatSchema.find(
         (item) =>
@@ -201,6 +202,7 @@ export const buildEntriesFromListResponse = ({
       )
       if (entryTypeItem && entryTypeItem.type === 'entry-type') {
         schema = entryTypeItem.schema
+        unavailable = entryTypeItem.unavailable
       }
     }
 
@@ -218,6 +220,7 @@ export const buildEntriesFromListResponse = ({
       entryType: entry.entryType,
       type: 'entry' as const,
       canEdit: entry.canEdit,
+      ...(unavailable && { unavailable }),
     }
   })
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
+import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -10,6 +11,7 @@ import { isDataOnlyFormat } from '../../utils/format'
 import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
+import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
@@ -29,9 +31,21 @@ export class SaveApiError extends Error {
     public readonly status: number,
     serverMessage?: string,
     public readonly fieldErrors?: EntryFieldError[],
+    public readonly code?: ApiErrorCode,
   ) {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
+  }
+}
+
+/**
+ * Thrown by a read for editing when the API answers `SCHEMA_UNAVAILABLE`: the entry's type
+ * names a schema the running code lacks, so the entry cannot be opened until that changes.
+ */
+export class EntrySchemaUnavailableError extends Error {
+  constructor(serverMessage?: string) {
+    super(serverMessage || 'Entry type unavailable')
+    this.name = 'EntrySchemaUnavailableError'
   }
 }
 
@@ -300,8 +314,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       branch: requestBranch,
       path,
     })
-    if (!result.ok)
+    if (!result.ok) {
+      if (result.code === SCHEMA_UNAVAILABLE_CODE)
+        throw new EntrySchemaUnavailableError(result.error)
       throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
+    }
     return result.data
   }
 
@@ -361,7 +378,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
     // Update stored version token from write response
     if (typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)

@@ -1,6 +1,7 @@
 import type { CanopyBinaryResponse, CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse, isCanopyBinaryResponse } from './types'
 import { workerNotReadyResponse } from './worker-not-ready'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
@@ -375,7 +376,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     } catch (err) {
       // Last-resort boundary (API-C1): see handleRequest's doc comment above.
       const message = getErrorMessage(err)
-      console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      // Not per refused request: branch-schema-cache.ts logs each missing schema once per process.
+      if (!(err instanceof SchemaUnavailableError)) {
+        console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      }
       const notReady = workerNotReadyResponse(err)
       if (notReady) return notReady
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)

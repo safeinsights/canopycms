@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager, listAllEntries, SaveApiError } from './useEntryManager'
+import {
+  useEntryManager,
+  listAllEntries,
+  SaveApiError,
+  EntrySchemaUnavailableError,
+} from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
@@ -256,6 +261,23 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('throws EntrySchemaUnavailableError, not a generic load failure, on a SCHEMA_UNAVAILABLE refusal', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'Entry type widget is unavailable',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await expect(result.current.loadEntry(mockEntry)).rejects.toBeInstanceOf(
+      EntrySchemaUnavailableError,
+    )
+  })
+
   it('saves entry successfully', async () => {
     const mockValue = { title: 'Updated Title', body: 'Updated Content' }
     const mockResponse = { title: 'Updated Title', body: 'Updated Content' }
@@ -379,6 +401,26 @@ describe('useEntryManager', () => {
 
     await loadForSave(result)
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
+  })
+
+  it('carries the response code on a refused save', async () => {
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'not known yet',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await loadForSave(result)
+    await expect(result.current.saveEntry(mockEntry, {})).rejects.toMatchObject({
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      message: 'not known yet',
+    })
   })
 
   it('refreshes entries successfully', async () => {

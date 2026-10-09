@@ -242,6 +242,24 @@ export type EntryTypeConfig = {
   readonly description?: string
   readonly default?: boolean // Is this the default type for "Add" button?
   readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
+  /**
+   * Set when this entry type could not be resolved, and `schema` is then empty. Only a
+   * branch workspace's schema carries it (see `BranchSchemaCache`); reading, writing,
+   * creating, renaming or deleting an entry of this type is refused.
+   */
+  readonly unavailable?: EntryTypeUnavailable
+}
+
+/**
+ * Why an entry type has no schema: its `.collection.json` names an entry schema the running
+ * code's registry does not define, as when content synced ahead of the image that adds it.
+ */
+export type EntryTypeUnavailable = {
+  readonly reason: 'unknown-schema'
+  /** The registry key the meta file names. */
+  readonly schemaRef: string
+  /** The meta file naming it, relative to the content root. */
+  readonly metaFile: string
 }
 
 /**
@@ -570,6 +588,8 @@ export type FlatSchemaItem =
       schemaRef?: string
       default?: boolean
       maxItems?: number
+      /** See {@link EntryTypeConfig.unavailable}. */
+      unavailable?: EntryTypeUnavailable
     }
 
 /**

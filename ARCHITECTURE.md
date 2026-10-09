@@ -142,18 +142,18 @@ A meta file declares its collection's name and label, its entry type configurati
 Resolution runs during service initialization, in three steps:
 
 1. **Load** (`loadCollectionMetaFiles`): recursively scan for `.collection.json`, parse and validate each with Zod, and extract each collection's ContentId from its directory name.
-2. **Resolve** (`resolveCollectionReferences`): replace each string reference with the registry's real field definitions, validate that every referenced schema exists, build the nested hierarchy, and thread each ContentId into the resolved config.
+2. **Resolve** (`resolveCollectionReferences`): replace each string reference with the registry's real field definitions, check each against the registry, build the nested hierarchy, and thread each ContentId into the resolved config.
 3. **Flatten**: reduce the hierarchy to `Map<path, FlatSchemaItem>` for O(1) lookups. Items are a discriminated union of `collection` and `entry-type`, each carrying its full `logicalPath` as a branded type. The content root is included as a collection with `parentPath: undefined` and root-level collections have `parentPath: 'content'`, which is what eliminates every "is this root-level?" check; the root receives a sentinel `ROOT_COLLECTION_ID`, since its directory has no embedded ID.
 
-Every error is raised at initialization rather than request time: a missing referenced schema names the available registry keys, collection structure is validated during parse, and a content directory with no `.collection.json` at all throws. Resolution is async because it reads from disk, so `createCanopyServices()` is async and framework adapters create the context once at module load and cache the promise (see [Why async service initialization?](#why-async-service-initialization)).
+Collection structure is validated during parse, and a content directory with no `.collection.json` at all throws. A reference the registry lacks throws in a build or static deploy; in a branch workspace, which sync can fill before the matching image deploys, it only marks its entry type unavailable (`BranchSchemaCache` owns the split). Resolution is async because it reads from disk, so `createCanopyServices()` is async and framework adapters create the context once at module load and cache the promise (see [Why async service initialization?](#why-async-service-initialization)).
 
 In development `watchCollectionMetaFiles(contentRoot, onChange)` watches `**/.collection.json` through chokidar and fires on add/change/unlink. Auto-reload is not implemented yet: a server restart is still required after a meta file change.
 
 ### Schema Cache Invalidation
 
-The resolved schema is cached per branch so ordinary requests don't re-parse every `.collection.json`. Schema edits invalidate that cache the same way branch metadata and the content ID index do — by bumping a cross-process generation marker, never by mutating the cache in place — so every warm host sharing the workspace re-resolves at its next read.
+The resolved schema is cached per branch so ordinary requests don't re-parse every `.collection.json`. Schema edits invalidate that cache the same way branch metadata and the content ID index do — by bumping a cross-process generation marker, never by mutating the cache in place — so every warm host sharing the workspace re-resolves at its next read. Snapshots also carry a registry fingerprint: a deploy bumps no marker.
 
-Bulk working-tree operations (a rebase pulling in upstream `.collection.json` changes, a sync, a migration) bump the schema marker too, not just editor-driven schema edits. This is a deliberate backstop: a git operation that changes schema files on disk without passing through the schema API would otherwise leave every process serving a stale schema with no signal to refresh. See [docs/concurrency.md](docs/concurrency.md).
+Bulk working-tree operations (a rebase pulling in upstream `.collection.json` changes, a sync, a migration) bump the schema marker too, not just editor-driven schema edits. This backstop covers git operations that change schema files without passing through the schema API, which would otherwise leave every process stale. See [docs/concurrency.md](docs/concurrency.md).
 
 ### Content Store and API Surface
 
