@@ -210,15 +210,24 @@ export class EditorPage {
    */
   async selectReferenceOption(fieldName: string, optionLabel: string): Promise<void> {
     await this.waitForReferenceOptions(fieldName)
-    const field = this.getReferenceField(fieldName)
-    // Mantine Select renders a hidden value input alongside the visible search input
-    const input = field.locator('input:not([type="hidden"])')
-    await input.click()
-    // Scope to mantine-Select-option to avoid collisions with MultiSelect portals
-    // that may also be rendered in the DOM simultaneously
-    const option = this.page.locator('.mantine-Select-option', { hasText: optionLabel })
+    const options = await this.openReferenceOptions(fieldName)
+    const option = options.filter({ hasText: optionLabel })
     await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
     await option.click()
+  }
+
+  /**
+   * Open a reference field's dropdown and return the options in THAT dropdown. Every Select's
+   * options stay in the DOM, so an unscoped option locator matches the same post listed by
+   * another reference field.
+   */
+  async openReferenceOptions(fieldName: string): Promise<Locator> {
+    // Mantine renders a hidden value input alongside the visible search input
+    const input = this.getReferenceField(fieldName).locator('input:not([type="hidden"])')
+    await input.click()
+    await expect(input).toHaveAttribute('aria-controls', /.+/, { timeout: STANDARD_TIMEOUT })
+    const listboxId = await input.getAttribute('aria-controls')
+    return this.page.locator(`[id="${listboxId}"] [role="option"]`)
   }
 
   /**
@@ -228,12 +237,9 @@ export class EditorPage {
    */
   async selectMultiReferenceOptions(fieldName: string, optionLabels: string[]): Promise<void> {
     await this.waitForReferenceOptions(fieldName)
-    const field = this.getReferenceField(fieldName)
-    const input = field.locator('input:not([type="hidden"])')
     for (const label of optionLabels) {
-      await input.click()
-      // Scope to mantine-MultiSelect-option to avoid collisions with Select portals
-      const option = this.page.locator('.mantine-MultiSelect-option', { hasText: label })
+      const options = await this.openReferenceOptions(fieldName)
+      const option = options.filter({ hasText: label })
       await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await option.click()
     }

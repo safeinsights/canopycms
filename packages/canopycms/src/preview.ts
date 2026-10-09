@@ -25,5 +25,6 @@ export type {
   HighlightMessage,
   PreviewErrorMessage,
   PreviewFocusMessage,
+  PreviewLoadingState,
 } from './editor/preview-bridge'
 export type { CanopyPathSegment } from './editor/canopy-path'

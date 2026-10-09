@@ -49,6 +49,17 @@ fields: `EntryTypeConfig.unavailable`, `SchemaResolutionResult.issues` and `ApiR
 
 **To adopt.** Nothing; code that builds a `SchemaResolutionResult` must add `issues`.
 
+### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
+
+**What changed.** The preview resolves references inside objects, object lists and blocks too. One
+still resolving is `null`, even in an entry's first draft. `isLoading` mirrors the data at depth,
+typed `PreviewLoadingState<T>`, so a reference's entry is `boolean | undefined`. New: `isResolvedReference`.
+
+**To adopt.** Make a prop fed from `isLoading` optional if it was required.
+
+**Now deletable.** Hand-written reference narrowing (string id, `null`, `unavailable` checks), and
+top-level-only reference fields kept for the preview's sake.
+
 ### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
 
 **What changed.** A `reference` field renders as a link to its target, not the stored id: a

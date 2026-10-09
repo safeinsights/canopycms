@@ -592,6 +592,76 @@ describe('traverseFields onContainer', () => {
     expect(paths).toEqual([''])
   })
 
+  it('gives each container the data path that reaches it from the root', () => {
+    const nested: FieldConfig[] = [
+      ...schema,
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [
+          {
+            name: 'card',
+            type: 'object',
+            fields: [{ name: 'label', type: 'string', label: 'Label' }],
+          },
+        ],
+      } as FieldConfig,
+      {
+        name: 'sections',
+        type: 'block',
+        label: 'Sections',
+        templates: [
+          {
+            name: 'gallery',
+            fields: [
+              {
+                name: 'items',
+                type: 'object',
+                list: true,
+                fields: [{ name: 'caption', type: 'string', label: 'Caption' }],
+              },
+            ],
+          },
+        ],
+      } as FieldConfig,
+    ]
+    const root: Record<string, unknown> = {
+      ...data,
+      card: { label: 'In a group' },
+      sections: [
+        { template: 'gallery', value: { items: [{ caption: 'a' }, { caption: 'b' }] } },
+        { _type: 'gallery', items: [{ caption: 'inline' }] },
+      ],
+    }
+    const at = (path: readonly (string | number)[]): unknown =>
+      path.reduce<unknown>((node, key) => (node as Record<string | number, unknown>)[key], root)
+
+    const containers = traverseFields<{ data: unknown; dataPath: readonly (string | number)[] }>(
+      nested,
+      root,
+      () => [],
+      '',
+      ({ data: record, dataPath }) => [{ data: record, dataPath }],
+    )
+
+    expect(containers.map((c) => c.dataPath)).toEqual([
+      [],
+      ['hero'],
+      ['cards', 0],
+      ['cards', 1],
+      ['blocks', 0, 'value'],
+      ['card'],
+      ['sections', 0, 'value'],
+      ['sections', 0, 'value', 'items', 0],
+      ['sections', 0, 'value', 'items', 1],
+      ['sections', 1],
+      ['sections', 1, 'items', 0],
+    ])
+    for (const { data: record, dataPath } of containers) {
+      expect(at(dataPath)).toBe(record)
+    }
+  })
+
   it('is optional — existing callers are unaffected', () => {
     const visited = traverseFields<string>(schema, data, ({ path }) => [path])
     expect(visited).toContain('title')

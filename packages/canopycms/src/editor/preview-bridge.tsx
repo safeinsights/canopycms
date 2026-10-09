@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 
+import type { ResolvedReferenceMeta } from '../entry-schema'
 import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
 import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
@@ -18,6 +19,22 @@ export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
+
+/**
+ * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
+ * position, `true` while the editor is still resolving that reference, under the same keys and
+ * indexes as the data. A reference typed by `resolvedSchema` is recognized by its resolved or
+ * `unavailable` shape; any other non-object leaf may be an untyped reference, so it is a
+ * `boolean` too. Every key is optional because only reference positions are present, and nothing
+ * is before the first draft arrives.
+ */
+export type PreviewLoadingState<T> = T extends readonly (infer U)[]
+  ? PreviewLoadingState<NonNullable<U>>[]
+  : T extends ResolvedReferenceMeta | { unavailable: true }
+    ? boolean
+    : T extends object
+      ? { [K in keyof T]?: PreviewLoadingState<NonNullable<T[K]>> }
+      : boolean
 
 export interface DraftUpdateMessage {
   type: typeof CANOPY_PREVIEW_MESSAGE
@@ -148,9 +165,10 @@ export const usePreviewData = <T,>(
   path: string,
   initialData: T,
   opts?: { editorOrigin?: string },
-): { data: T; isLoading: Record<string, boolean> } => {
+): { data: T; isLoading: PreviewLoadingState<T> } => {
   const [data, setData] = useState<T>(initialData)
-  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
+  // Every key of the loading state is optional, so an empty object is a valid one.
+  const [isLoading, setIsLoading] = useState<PreviewLoadingState<T>>({} as PreviewLoadingState<T>)
   const editorOrigin = opts?.editorOrigin
 
   useEffect(() => {
@@ -166,7 +184,7 @@ export const usePreviewData = <T,>(
       setPreviewAssetBase(readAssetBase(msg.assetBase))
       setData(msg.data as T)
       if (msg.isLoading !== undefined) {
-        setIsLoading(msg.isLoading as Record<string, boolean>)
+        setIsLoading(msg.isLoading as PreviewLoadingState<T>)
       }
     }
     window.addEventListener('message', handler)

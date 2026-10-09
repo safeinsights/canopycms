@@ -2,7 +2,7 @@ import React, { memo } from 'react'
 import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it, onTestFinished, vi } from 'vitest'
 
 import {
   CANOPY_PREVIEW_ERROR,
@@ -14,7 +14,9 @@ import {
   resolveMessageOrigin,
   useCanopyPreview,
   usePreviewAssetBaseGate,
+  type PreviewLoadingState,
 } from './preview-bridge'
+import type { TypeFromEntrySchema } from '../entry-schema'
 import { PreviewFrame } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
 import { assetUrl } from '../assets/asset-url'
@@ -869,5 +871,43 @@ describe('opaque-origin (sandboxed embed) handling', () => {
     ;(parentWin.postMessage as ReturnType<typeof vi.fn>).mockClear() // ignore READY handshake attempts
     fireEvent.click(getByTestId('report'))
     expect(parentWin.postMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('PreviewLoadingState', () => {
+  it('puts a boolean at each reference position, at the data’s own path', () => {
+    type PersonFields = readonly [{ name: 'name'; type: 'string'; required: true }]
+    type Post = TypeFromEntrySchema<
+      readonly [
+        { name: 'title'; type: 'string' },
+        { name: 'author'; type: 'reference'; resolvedSchema: PersonFields },
+        { name: 'editors'; type: 'reference'; list: true; resolvedSchema: PersonFields },
+        {
+          name: 'byline'
+          type: 'object'
+          fields: readonly [{ name: 'person'; type: 'reference'; resolvedSchema: PersonFields }]
+        },
+        {
+          name: 'blocks'
+          type: 'block'
+          templates: readonly [
+            {
+              name: 'quote'
+              fields: readonly [
+                { name: 'speaker'; type: 'reference'; resolvedSchema: PersonFields },
+              ]
+            },
+          ]
+        },
+      ]
+    >
+    type Loading = PreviewLoadingState<Post>
+
+    expectTypeOf<Loading['author']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<Loading['editors']>().toEqualTypeOf<boolean[] | undefined>()
+    expectTypeOf<NonNullable<Loading['byline']>['person']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<
+      NonNullable<NonNullable<NonNullable<Loading['blocks']>[number]['value']>['speaker']>
+    >().toEqualTypeOf<boolean>()
   })
 })
