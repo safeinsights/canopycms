@@ -1,14 +1,15 @@
-import { assetUrl } from '../../assets/asset-url'
-import { ASSET_PREFIXES } from '../../assets/asset-prefixes'
-
-const ASSET_SPACE = `/${ASSET_PREFIXES.public}/`
+import { assetUrl, isAssetStoreSrc, type AssetUrlOptions } from '../../assets/asset-url'
 
 /**
- * The URL the editor displays a content image at. A src in canopycms's own `/assets` space is put
- * behind `baseUrl` (the authenticated raw route, see `AssetContext`); any other src - a site's own
- * static file, an off-site URL, a `data:` URI - is shown exactly as written, because the raw route
- * serves only the asset store.
+ * The URL the editor displays a content image at. An asset-store src goes behind `baseUrl` (the
+ * authenticated raw route, see `AssetContext`) with `opts` applied. Any other src keeps its own
+ * path, since the raw route serves only the asset store; `assetUrl` still neutralizes a spelling a
+ * browser would read as off-origin.
  */
-export function editorImageSrc(src: string, baseUrl: string): string {
-  return src.startsWith(ASSET_SPACE) ? assetUrl({ src }, { baseUrl }) : src
+export function editorImageSrc(
+  src: string,
+  baseUrl: string,
+  opts: Omit<AssetUrlOptions, 'baseUrl'> = {},
+): string {
+  return isAssetStoreSrc(src) ? assetUrl({ src }, { ...opts, baseUrl }) : assetUrl({ src })
 }

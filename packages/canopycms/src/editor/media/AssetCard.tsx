@@ -6,7 +6,7 @@ import { ActionIcon, Card, Text, Tooltip } from '@mantine/core'
 import { IconFileTypePdf, IconPhotoOff, IconTrash } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
-import { assetUrl } from '../../assets/asset-url'
+import { editorImageSrc } from './editor-image-src'
 
 export interface AssetCardProps {
   asset: AssetRecord
@@ -21,15 +21,12 @@ export interface AssetCardProps {
 const THUMBNAIL_WIDTH = 160
 
 /**
- * One thumbnail card in the MediaLibrary grid. Raster and svg assets both go
- * through `assetUrl()` unmodified - for svg (a static, non-transform src)
- * `assetUrl` ignores the `width` option and just applies `baseUrl`, which is
- * exactly the behavior wanted here. PDFs have no image to preview, so they
- * render a file-type icon instead.
+ * One thumbnail card in the MediaLibrary grid. PDFs have no image to preview, so they render a
+ * file-type icon instead.
  */
 export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, onDelete }) => {
   const uploadedDate = new Date(asset.uploadedAt).toLocaleDateString()
-  const thumbnailSrc = assetUrl(asset, { width: THUMBNAIL_WIDTH, baseUrl })
+  const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', { width: THUMBNAIL_WIDTH })
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   // Reset the error state if the underlying asset/src changes, so a
   // thumbnail that failed earlier gets another chance to load. Adjusting state

@@ -32,11 +32,16 @@ export function getErrorMessage(err: unknown): string {
  */
 export function sanitizeErrorMessage(message: string): string {
   let result = redactCredentials(message)
+  // `file://` URLs (ESM and dev-bundle stack frames) carry an absolute path the POSIX rule below
+  // skips, since it leaves URL slashes alone.
+  result = result.replace(/\bfile:\/\/[^\s'")]*/g, '<path>')
   // Paths under the project root become relative (split/join avoids regex-escaping issues with
   // arbitrary cwd values). The bare-cwd replacement is anchored to a token boundary so a sibling
   // directory that merely shares the cwd prefix (`${cwd}-other/…`) stays absolute and is fully
-  // redacted below instead of leaking a mangled remainder.
-  const cwd = process.cwd()
+  // redacted below instead of leaking a mangled remainder. The editor calls this in a browser,
+  // where `process.cwd` may not exist.
+  const cwd =
+    typeof process !== 'undefined' && typeof process.cwd === 'function' ? process.cwd() : '/'
   if (cwd !== '/') {
     result = result.split(`${cwd}/`).join('')
     const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

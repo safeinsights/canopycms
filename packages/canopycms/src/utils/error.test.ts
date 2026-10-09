@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   getErrorMessage,
   isNodeError,
@@ -164,6 +164,22 @@ describe('error utilities', () => {
     it('still keeps credential-free URL slashes untouched with the wider boundary', () => {
       const msg = 'cloning https://github.com/org/repo.git'
       expect(sanitizeErrorMessage(msg)).toBe(msg)
+    })
+
+    it('redacts file URLs, which carry an absolute path inside a URL', () => {
+      const msg = 'at render (file:///Users/bob/site/node_modules/x/index.js:12:3)'
+      expect(sanitizeErrorMessage(msg)).toBe('at render (<path>)')
+    })
+
+    it('redacts absolute paths when no process.cwd exists, as in a browser', () => {
+      vi.stubGlobal('process', { ...process, cwd: undefined })
+      try {
+        expect(sanitizeErrorMessage('cannot open /mnt/efs/workspace/main now')).toBe(
+          'cannot open <path> now',
+        )
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
 
     it('redacts bare GitHub token shapes outside URL userinfo', () => {
