@@ -141,9 +141,9 @@ keep it out of cross-request caches (`unstable_cache`, module memos).
 
 **What changed.** In YAML and JSON entries and md/mdx frontmatter, untouched values, comments,
 blank lines and (in `.yaml` and `.json` files) CRLF line endings stay as written, and an edited
-`>-`, `|` or quoted value keeps that style where it can hold the new value. The first save
-re-wrapped YAML, restyled JSON and rewrote frontmatter dates. Anchors, aliases and rare layouts
-still re-serialise the whole file.
+`>-`, `|` or quoted value keeps that style where it can. The first save re-wrapped YAML,
+restyled JSON and rewrote dates. Anchors, aliases and rare layouts still re-serialise the whole
+file.
 
 **To adopt.** Nothing.
 
