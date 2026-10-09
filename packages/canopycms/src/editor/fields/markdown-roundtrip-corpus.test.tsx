@@ -53,24 +53,9 @@ const CORPUS_ROOTS = [
   FIXTURES,
 ]
 
-const USERS_V1 =
-  'apps/example1/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN/v1.cz5H1nu9FEer/doc.users.7yidfX3DKTbR.json#body'
-const USERS_V2 =
-  'apps/example1/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN/v2.muwmyafM6mEJ/doc.users.ppqJw61uKkV5.json#body'
-
 /** Bodies that open as source: a fragment of the reason MarkdownField shows, and any task. */
 const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
   [`${FIXTURES}/component-with-import.mdx`]: { reason: 'import/export statements' },
-  [`${FIXTURES}/code-fence-language.md`]: {
-    reason: '{"type":"code"',
-    task: `${TASKS}/rich-text-code-fence-opens-source.md`,
-  },
-  [`${FIXTURES}/code-fence-meta.md`]: {
-    reason: '{"type":"code"',
-    task: `${TASKS}/rich-text-code-fence-opens-source.md`,
-  },
-  [USERS_V1]: { reason: '{"type":"code"', task: `${TASKS}/rich-text-code-fence-opens-source.md` },
-  [USERS_V2]: { reason: '{"type":"code"', task: `${TASKS}/rich-text-code-fence-opens-source.md` },
   [`${FIXTURES}/reference-link.md`]: {
     reason: '{"type":"linkReference"',
     task: `${TASKS}/rich-text-reference-links-open-source.md`,
@@ -80,11 +65,7 @@ const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
     task: `${TASKS}/rich-text-md-body-parsed-as-mdx.md`,
   },
   [`${FIXTURES}/list-item-paragraphs.md`]: {
-    reason: 'a list item with more than one paragraph',
-    task: `${TASKS}/rich-text-merges-block-paragraphs.md`,
-  },
-  [`${FIXTURES}/quote-paragraphs.md`]: {
-    reason: 'a quote with more than one paragraph or block',
+    reason: 'a list item with content after its nested list',
     task: `${TASKS}/rich-text-merges-block-paragraphs.md`,
   },
 }
@@ -93,7 +74,6 @@ const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
 const KNOWN_EXPORT_DIFFERENCES: Record<string, string> = {
   [`${FIXTURES}/adjacent-lists.md`]: `${TASKS}/rich-text-merges-adjacent-lists.md`,
   [`${FIXTURES}/ordered-list-start.md`]: `${TASKS}/rich-text-ordered-list-start-reset.md`,
-  [`${FIXTURES}/strikethrough-code.md`]: `${TASKS}/rich-text-inline-formatting-split.md`,
   [`${FIXTURES}/strong-link.md`]: `${TASKS}/rich-text-inline-formatting-split.md`,
   [`${FIXTURES}/code-span-url.md`]: `${TASKS}/rich-text-autolinks-code-spans.md`,
 }
@@ -291,28 +271,8 @@ for (const { name, body, format, file } of corpus) {
 const FENCE = '```'
 const TABLE = '| x |\n  | - |\n  | 1 |'
 
-/** List items and quotes MDXEditor merges or reorders, with a fragment of the reason. */
+/** List items MDXEditor merges or reorders, with a fragment of the reason. */
 const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
-  'two paragraphs in a list item': {
-    body: '- a\n\n  b\n',
-    reason: 'list item with more than one paragraph',
-  },
-  'two paragraphs in an ordered item': {
-    body: '1. a\n\n   b\n',
-    reason: 'list item with more than one paragraph',
-  },
-  'two paragraphs in a task item': {
-    body: '- [ ] a\n\n  b\n',
-    reason: 'list item with more than one paragraph',
-  },
-  'two paragraphs in a nested item': {
-    body: '- a\n  - b\n\n    c\n',
-    reason: 'list item with more than one paragraph',
-  },
-  'a paragraph, then a paragraph holding only an element.mdx': {
-    body: '1. a\n\n   <Badge>new</Badge>\n',
-    reason: 'list item with more than one paragraph',
-  },
   'a paragraph, a nested list, a paragraph': {
     body: '- a\n  - b\n\n  c\n',
     reason: 'list item with content after its nested list',
@@ -349,42 +309,10 @@ const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
     body: `- ${TABLE}\n\n  ${TABLE}\n`,
     reason: 'list item with a table followed by a table',
   },
-  'a quote with two paragraphs': {
-    body: '> a\n>\n> b\n',
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote with a paragraph and a list': {
-    body: '> a\n>\n> - b\n',
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote with a list and a paragraph': {
-    body: '> - a\n>\n> c\n',
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote with a code block and a paragraph': {
-    body: `> ${FENCE}\n> x\n> ${FENCE}\n>\n> c\n`,
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote with a paragraph and a horizontal rule': {
-    body: '> a\n>\n> ***\n',
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote in a quote, with two paragraphs': {
-    body: '> > a\n> >\n> > b\n',
-    reason: 'quote with more than one paragraph or block',
-  },
-  'a quote with two paragraphs in a list item': {
-    body: '- > a\n  >\n  > b\n',
-    reason: 'quote with more than one paragraph or block',
-  },
   // An element's nested editor writes its children back only once they are edited.
-  'a list item with two paragraphs inside an element.mdx': {
-    body: '<Callout>\n\n- a\n\n  b\n\n</Callout>\n',
-    reason: 'list item with more than one paragraph',
-  },
-  'a quote with two paragraphs inside an element.mdx': {
-    body: '<Callout>\n\n> a\n>\n> b\n\n</Callout>\n',
-    reason: 'quote with more than one paragraph or block',
+  'a nested list, then a paragraph, inside an element.mdx': {
+    body: '<Callout>\n\n- - a\n\n  c\n\n</Callout>\n',
+    reason: 'list item with content after its nested list',
   },
 }
 
@@ -421,6 +349,22 @@ const KEPT_SHAPES: Record<string, string> = {
   'an empty quote': '>\n',
   'a list inside an element.mdx': '<Callout>\n\n- a\n- b\n\n</Callout>\n',
   'a quote inside an element.mdx': '<Callout>\n\n> a\n\n</Callout>\n',
+  'two paragraphs in a list item': '- a\n\n  b\n',
+  'two paragraphs in an ordered item': '1. a\n\n   b\n',
+  'two paragraphs in a task item': '- [ ] a\n\n  b\n',
+  'two paragraphs in a nested item': '- a\n  - b\n\n    c\n',
+  'a paragraph, then a paragraph holding only an element.mdx': '1. a\n\n   <Badge>new</Badge>\n',
+  'a quote with two paragraphs': '> a\n>\n> b\n',
+  'a quote with a paragraph and a list': '> a\n>\n> - b\n',
+  'a quote with a list and a paragraph': '> - a\n>\n> c\n',
+  'a quote with a code block and a paragraph': `> ${FENCE}\n> x\n> ${FENCE}\n>\n> c\n`,
+  'a quote with a paragraph and a horizontal rule': '> a\n>\n> ***\n',
+  'a quote in a quote, with two paragraphs': '> > a\n> >\n> > b\n',
+  'a quote with two paragraphs in a list item': '- > a\n  >\n  > b\n',
+  // An edit inside these two elements is `MarkdownField.test.tsx`'s nested-edit test.
+  'a list item with two paragraphs inside an element.mdx':
+    '<Callout>\n\n- a\n\n  b\n\n</Callout>\n',
+  'a quote with two paragraphs inside an element.mdx': '<Callout>\n\n> a\n>\n> b\n\n</Callout>\n',
 }
 
 const formatOf = (name: string): MarkdownBodyFormat => (name.endsWith('.mdx') ? 'mdx' : 'md')

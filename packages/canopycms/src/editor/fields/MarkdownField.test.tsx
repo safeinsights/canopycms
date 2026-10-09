@@ -260,6 +260,31 @@ describe('MarkdownField', () => {
       )
     })
 
+    it("keeps a list item's and a quote's paragraphs through an edit inside the element", async () => {
+      const onChange = vi.fn()
+      renderField(
+        'Top.\n\n<Callout>\n\nLead.\n\n- a\n\n  b\n\n> c\n>\n> d\n\n</Callout>\n',
+        onChange,
+      )
+      const root = await richEditor()
+      const user = userEvent.setup()
+      const nested = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>(
+          'div.canopy-mdx-jsx [contenteditable="true"]',
+        )
+        if (!el) throw new Error('nested editor not mounted')
+        return el
+      })
+
+      await user.click(nested.querySelector('p') ?? nested)
+      await user.keyboard('inside')
+      await user.click(root.querySelector('p') ?? root)
+
+      await waitFor(() => expect(lastValue(onChange)).toContain('inside'))
+      expect(lastValue(onChange)).toContain('  - a\n\n    b\n')
+      expect(lastValue(onChange)).toContain('  > c\n  >\n  > d\n')
+    })
+
     it('shows each element tag and attributes, with its children editable', async () => {
       renderField(JSX_BODY)
       await richEditor()

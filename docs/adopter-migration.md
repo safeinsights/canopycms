@@ -40,6 +40,14 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### The markdown editor runs MDXEditor 4.3
+
+**What changed.** `@mdxeditor/editor` is `^4.3.2` (Lexical 0.48), up from `^3.52.4`. Two-paragraph
+list items, multi-block quotes and code fences in any language now edit in rich text.
+
+**To adopt.** Nothing, unless your app depends on `@mdxeditor/editor` or `lexical` directly: align
+those versions so one copy loads.
+
 ### `collect-asset-refs` reads a page's inline RSC payload whole
 
 **What changed.** A URL Next splits across inline scripts is no longer truncated into a random
@@ -78,7 +86,7 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 blank lines, CRLF), so `prettier --check` passes. New and edited blocks use Prettier's
 markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break, an
 ordered list's start or a bare URL before punctuation still changes on the first edit. A body
-with a multi-paragraph list item or quote opens as source.
+with text after a nested list in a list item opens as source.
 
 **To adopt.** Nothing.
 

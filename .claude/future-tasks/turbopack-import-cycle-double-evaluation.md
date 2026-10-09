@@ -32,6 +32,10 @@ only types. ESLint's `no-restricted-imports` forbids a static value import of th
 file, and the `mdxeditor-entered-only-by-markdown-field` dependency-cruiser rule also catches a
 dynamic import outside `MarkdownField`.
 
+MDXEditor 4.3.2 keeps the cycle (`plugins/jsx/LexicalJsxVisitor.js` still imports `./index.js`),
+and its `dist/index.js` still reaches `jsx/index.js` (line 17) before `NestedLexicalEditor` (line
+51), so the workaround and both rules still apply; both pass on 4.3.2.
+
 ## Left
 
 Build a minimal repro: a package whose two modules import each other, merged by scope hoisting,
