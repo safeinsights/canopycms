@@ -26,7 +26,6 @@ import {
   isNode,
   isScalar,
   isSeq,
-  parse as yamlParse,
   parseDocument,
   Scalar,
   stringify as yamlStringify,
@@ -53,17 +52,21 @@ interface ReconcileContext {
   /** Fresh scalars given the replaced scalar's style, which a re-print may have to take back. */
   readonly restyled: Scalar[]
   /** Strings the file's reader would not read back from plain text; written single-quoted. */
-  readonly quote?: (text: string) => boolean
+  readonly quote?: (text: string, asKey: boolean) => boolean
 }
 
 /** A fresh node for `value`, its strings that `ctx.quote` names single-quoted. */
-function createNode(ctx: ReconcileContext, value: unknown): ReturnType<Document['createNode']> {
+function createNode(
+  ctx: ReconcileContext,
+  value: unknown,
+  asKey = false,
+): ReturnType<Document['createNode']> {
   const node = ctx.doc.createNode(value)
   const { quote } = ctx
   if (quote !== undefined) {
     visit(node, {
-      Scalar(_key, scalar) {
-        if (typeof scalar.value === 'string' && quote(scalar.value)) {
+      Scalar(key, scalar) {
+        if (typeof scalar.value === 'string' && quote(scalar.value, asKey || key === 'key')) {
           scalar.type = Scalar.QUOTE_SINGLE
         }
       },
@@ -337,7 +340,7 @@ function reconcileMap(
 
   for (const key of Object.keys(value)) {
     if (seen.has(key) || !wanted.has(key)) continue
-    map.set(createNode(ctx, key), createNode(ctx, value[key]))
+    map.set(createNode(ctx, key, true), createNode(ctx, value[key]))
   }
 }
 
@@ -600,16 +603,19 @@ function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): un
 }
 
 /**
- * Whether js-yaml (YAML 1.1) reads `text`, written plain, as a value the API would not carry as
- * that string: `1:30` is 90 and a bare date a `Date`, while a timestamp the editor's date field
- * writes reads as a date the API carries as the same text, and stays plain. `yaml`'s YAML 1.1
- * schema stands in for js-yaml; it also takes `yes` and `no` for booleans, which only quotes them
- * needlessly.
+ * Whether gray-matter, the read path's reader, reads `text` written plain as anything the API
+ * would not carry as that string: as a value, `1:30` is 90 and a bare date a `Date`, while a
+ * timestamp the editor's date field writes reads as a date the API carries as the same text, and
+ * stays plain; as a key, anything but the key itself.
  */
-function readsAsAnotherValue(text: string): boolean {
-  if (text.includes('\n')) return false
+function readsAsAnotherValue(text: string, asKey: boolean): boolean {
+  if (/[\r\n]/.test(text)) return false
   try {
-    return identityKey(yamlParse(text, { version: '1.1' })) !== identityKey(text)
+    const { data } = matter(`---\n${asKey ? `${text}: v` : `v: ${text}`}\n---\n`, {})
+    if (!isPlainRecord(data)) return true
+    const keys = Object.keys(data)
+    if (asKey) return keys.length !== 1 || keys[0] !== text
+    return identityKey(data.v) !== identityKey(text)
   } catch {
     return true
   }

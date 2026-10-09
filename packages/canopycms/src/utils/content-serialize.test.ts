@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 
@@ -635,6 +635,29 @@ Body.
       expect(out).toContain(`title: '${text}' # shown in the card\ndate: 2024-01-15\n`)
     },
   )
+
+  it.each(['2024-01-01T10:00:00.', '2024-01-01T10:00:00+35', '!Important notice', '%x'])(
+    'quotes %s as js-yaml reads it, keeping comments and printing no warning',
+    (text) => {
+      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {})
+      try {
+        const data = { ...asRead(DATED), title: text }
+        const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+        expect(asRead(out)).toEqual(data)
+        expect(out).toContain(' # shown in the card\ndate: 2024-01-15\n')
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    },
+  )
+
+  it('quotes a new key js-yaml would read as a date, keeping comments', () => {
+    const data = { ...asRead(DATED), '2024-01-01T10:00:00.000Z': 'launch' }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # shown in the card\n')
+  })
 
   it('keeps unchanged list items as written when an item is inserted before them', () => {
     const blocks = `---
