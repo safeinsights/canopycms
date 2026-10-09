@@ -60,6 +60,8 @@ import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
+import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
+import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
@@ -213,6 +215,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
   const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
+  // Set once the server refuses a delete because other entries reference the entry.
+  const [deletingEntryReferencedBy, setDeletingEntryReferencedBy] =
+    useState<EntryReferencedBy | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
 
   // Preview data with resolved references for live preview
@@ -683,19 +688,32 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const handleDeleteEntry = (entryPath: LogicalPath) => {
     setDeletingEntryPath(entryPath)
+    setDeletingEntryReferencedBy(null)
     setDeleteEntryModalOpen(true)
+  }
+
+  const closeDeleteEntryModal = () => {
+    setDeleteEntryModalOpen(false)
+    setDeletingEntryPath(null)
+    setDeletingEntryReferencedBy(null)
   }
 
   const confirmDeleteEntry = async () => {
     if (!deletingEntryPath) return
     setDeleteInProgress(true)
     try {
-      const result = await deleteEntry(deletingEntryPath)
+      // The user has seen the referencing entries only once the server has named them.
+      const result = await deleteEntry(deletingEntryPath, {
+        confirmReferenced: deletingEntryReferencedBy !== null,
+      })
+      if (!result.ok && 'referencedBy' in result) {
+        setDeletingEntryReferencedBy(result.referencedBy)
+        return
+      }
       if (result.ok && selectedPath === deletingEntryPath) {
         setSelectedPath('')
       }
-      setDeleteEntryModalOpen(false)
-      setDeletingEntryPath(null)
+      closeDeleteEntryModal()
     } finally {
       setDeleteInProgress(false)
     }
@@ -1437,15 +1455,26 @@ const EditorContent: React.FC<EditorProps> = ({
           <ConfirmDeleteModal
             isOpen={deleteEntryModalOpen}
             title="Delete Entry"
-            message="Are you sure you want to delete this entry? This cannot be undone."
-            confirmLabel="Delete Entry"
+            message={
+              deletingEntryReferencedBy
+                ? referencedDeleteMessage(deletingEntryReferencedBy)
+                : 'Are you sure you want to delete this entry? This cannot be undone.'
+            }
+            confirmLabel={deletingEntryReferencedBy ? 'Delete anyway' : 'Delete Entry'}
             onConfirm={confirmDeleteEntry}
-            onClose={() => {
-              setDeleteEntryModalOpen(false)
-              setDeletingEntryPath(null)
-            }}
+            onClose={closeDeleteEntryModal}
             loading={deleteInProgress}
-          />
+          >
+            {deletingEntryReferencedBy && (
+              <ReferencedByList
+                referencedBy={deletingEntryReferencedBy}
+                onOpenEntry={(entryPath) => {
+                  closeDeleteEntryModal()
+                  setSelectedPath(entryPath)
+                }}
+              />
+            )}
+          </ConfirmDeleteModal>
         </Box>
       </AssetContextProvider>
     </CanopyCMSProvider>

@@ -1,200 +1,165 @@
-import { describe, it, expect, vi } from 'vitest'
-import { DeletionChecker } from '../deletion-checker'
-import type { ContentStore } from '../../content-store'
-import type { ContentIdIndex } from '../../content-id-index'
-import type { FieldConfig } from '../../config'
-import { unsafeAsLogicalPath, unsafeAsSlug, unsafeAsPhysicalPath } from '../../paths/test-utils'
+import { describe, it, expect } from 'vitest'
+import { findReferencingEntries, type ReferenceScanEntry } from '../deletion-checker'
+import type { ContentFormat, FieldConfig } from '../../config'
+import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
-// Minimal mocks — only what DeletionChecker actually uses
+const TARGET_ID = 'tgtTGTtgtTGT'
 
-function makeMocks(docsBySlug: Record<string, Record<string, unknown>>) {
-  const store = {
-    read: vi.fn(async (_col: unknown, slug: string) => ({
-      data: docsBySlug[slug] ?? {},
-    })),
-  } as unknown as ContentStore
-
-  const idIndex = {
-    getAllLocations: vi.fn(() =>
-      Object.keys(docsBySlug).map((slug) => ({
-        type: 'entry' as const,
-        collection: unsafeAsLogicalPath('posts'),
-        slug: unsafeAsSlug(slug),
-        relativePath: unsafeAsPhysicalPath(`content/posts/${slug}.json`),
-      })),
-    ),
-    findByPath: vi.fn(() => 'some-id'),
-  } as unknown as ContentIdIndex
-
-  return { store, idIndex }
+function entry(
+  slug: string,
+  schema: FieldConfig[] | undefined,
+  data: Record<string, unknown>,
+  options: { format?: ContentFormat; id?: string } = {},
+): ReferenceScanEntry {
+  return {
+    entryPath: unsafeAsLogicalPath(`content/posts/${slug}`),
+    entryId: unsafeAsContentId(options.id ?? `${slug}zzzzzzzzzzzz`.slice(0, 12)),
+    format: options.format ?? 'json',
+    schema,
+    data,
+  }
 }
 
-function makeChecker(schema: FieldConfig[], docsBySlug: Record<string, Record<string, unknown>>) {
-  const { store, idIndex } = makeMocks(docsBySlug)
-  const collections = new Map([[unsafeAsLogicalPath('posts'), { fields: schema }]])
-  return new DeletionChecker(store, idIndex, collections)
-}
+const authorSchema: FieldConfig[] = [
+  { name: 'author', type: 'reference', label: 'Author', collections: ['people'] },
+  { name: 'reviewers', type: 'reference', label: 'Reviewers', list: true, collections: ['people'] },
+]
 
-const TARGET_ID = 'target123'
-
-describe('DeletionChecker.findIdInData', () => {
-  it('finds a reference in a top-level reference field', async () => {
-    const schema: FieldConfig[] = [
-      { name: 'author', type: 'reference', label: 'Author', collections: ['authors'] },
-    ]
-    const checker = makeChecker(schema, { post1: { author: TARGET_ID } })
-    const result = await checker.canDelete(TARGET_ID)
-    expect(result.canDelete).toBe(false)
-    expect(result.referencedBy[0].fields).toContain('author')
+describe('findReferencingEntries', () => {
+  it('reports each referencing entry once, with every position that holds the id', () => {
+    const result = findReferencingEntries(
+      [
+        entry('a', authorSchema, { author: TARGET_ID, reviewers: [TARGET_ID, TARGET_ID] }),
+        entry('b', authorSchema, { author: 'otherOTHER12' }),
+      ],
+      TARGET_ID,
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0].entry.entryPath).toBe('content/posts/a')
+    expect(result[0].fields).toEqual(['author', 'reviewers[0]', 'reviewers[1]'])
+    expect(result[0].links).toEqual([])
   })
 
-  it('finds a reference inside a nested object field', async () => {
+  it('reads each entry by its own schema, so entry types sharing a collection are told apart', () => {
+    const otherSchema: FieldConfig[] = [{ name: 'author', type: 'string', label: 'Author name' }]
+    const result = findReferencingEntries(
+      [
+        entry('typed-a', authorSchema, { author: TARGET_ID }),
+        entry('typed-b', otherSchema, { author: TARGET_ID }),
+      ],
+      TARGET_ID,
+    )
+    expect(result.map((r) => r.entry.entryPath)).toEqual(['content/posts/typed-a'])
+  })
+
+  it('finds references nested in objects, object lists and real { template, value } blocks', () => {
     const schema: FieldConfig[] = [
       {
         name: 'meta',
         type: 'object',
         label: 'Meta',
-        fields: [
-          { name: 'reviewer', type: 'reference', label: 'Reviewer', collections: ['users'] },
-        ],
+        fields: [{ name: 'reviewer', type: 'reference', label: 'R', collections: ['people'] }],
       },
-    ]
-    const checker = makeChecker(schema, { post1: { meta: { reviewer: TARGET_ID } } })
-    const result = await checker.canDelete(TARGET_ID)
-    expect(result.canDelete).toBe(false)
-    expect(result.referencedBy[0].fields).toContain('meta.reviewer')
-  })
-
-  it('finds a reference inside a list:true object field (regression for missed bug)', async () => {
-    // This is the bug that was fixed in April 2026: DeletionChecker.findIdInData had
-    // !Array.isArray(value) guard for object fields, so list:true objects (arrays of objects)
-    // were silently skipped. References inside e.g. an "authors" list were never found,
-    // allowing deletion of a referenced entry.
-    const schema: FieldConfig[] = [
       {
-        name: 'authors',
+        name: 'credits',
         type: 'object',
-        label: 'Authors',
+        label: 'Credits',
         list: true,
-        fields: [
-          { name: 'profile', type: 'reference', label: 'Profile', collections: ['profiles'] },
-        ],
+        fields: [{ name: 'person', type: 'reference', label: 'P', collections: ['people'] }],
       },
-    ]
-    const checker = makeChecker(schema, {
-      post1: {
-        authors: [
-          { profile: 'other-id' },
-          { profile: TARGET_ID }, // ← this reference should block deletion
-        ],
-      },
-    })
-    const result = await checker.canDelete(TARGET_ID)
-    expect(result.canDelete).toBe(false)
-    expect(result.referencedBy[0].fields).toContain('authors[1].profile')
-  })
-
-  it('returns canDelete:true when no references exist', async () => {
-    const schema: FieldConfig[] = [
-      { name: 'author', type: 'reference', label: 'Author', collections: ['authors'] },
-    ]
-    const checker = makeChecker(schema, { post1: { author: 'different-id' } })
-    const result = await checker.canDelete(TARGET_ID)
-    expect(result.canDelete).toBe(true)
-    expect(result.referencedBy).toHaveLength(0)
-  })
-
-  it('finds a reference inside a block field', async () => {
-    const schema: FieldConfig[] = [
       {
-        name: 'content',
+        name: 'blocks',
         type: 'block',
-        label: 'Content',
+        label: 'Blocks',
         templates: [
           {
-            name: 'callout',
-            label: 'Callout',
-            fields: [{ name: 'link', type: 'reference', label: 'Link', collections: ['pages'] }],
+            name: 'hero',
+            label: 'Hero',
+            fields: [
+              {
+                name: 'cta',
+                type: 'object',
+                label: 'CTA',
+                fields: [{ name: 'target', type: 'reference', label: 'T', collections: ['pages'] }],
+              },
+            ],
           },
         ],
       },
     ]
-    const checker = makeChecker(schema, {
-      post1: { content: [{ _type: 'callout', link: TARGET_ID }] },
-    })
-    const result = await checker.canDelete(TARGET_ID)
-    expect(result.canDelete).toBe(false)
-    expect(result.referencedBy[0].fields).toContain('content[0].link')
+    const result = findReferencingEntries(
+      [
+        entry('nested', schema, {
+          meta: { reviewer: TARGET_ID },
+          credits: [{ person: 'otherOTHER12' }, { person: TARGET_ID }],
+          blocks: [{ template: 'hero', value: { cta: { target: TARGET_ID } } }],
+        }),
+      ],
+      TARGET_ID,
+    )
+    expect(result[0].fields).toEqual(['meta.reviewer', 'credits[1].person', 'blocks[0].cta.target'])
   })
 
-  describe('real { template, value } block shape (SCH-H-block / COMPOUND-3)', () => {
-    // Real block data as produced by the editor is { template, value } — the
-    // previous `_type` discriminator missed every real block, so an entry
-    // referenced only from inside a block could be deleted, leaving a
-    // dangling reference that breaks the build.
-    const schema: FieldConfig[] = [
-      {
-        name: 'content',
-        type: 'block',
-        label: 'Content',
-        templates: [
-          {
-            name: 'callout',
-            label: 'Callout',
-            fields: [{ name: 'link', type: 'reference', label: 'Link', collections: ['pages'] }],
-          },
-        ],
-      },
-    ]
+  it('never reports the target as referencing itself', () => {
+    const result = findReferencingEntries(
+      [entry('self', authorSchema, { author: TARGET_ID }, { id: TARGET_ID })],
+      TARGET_ID,
+    )
+    expect(result).toEqual([])
+  })
 
-    it('blocks deletion when the entry is referenced only inside a block', async () => {
-      const checker = makeChecker(schema, {
-        post1: { content: [{ template: 'callout', value: { link: TARGET_ID } }] },
-      })
-      const result = await checker.canDelete(TARGET_ID)
-      expect(result.canDelete).toBe(false)
-      expect(result.referencedBy[0].fields).toContain('content[0].link')
-    })
+  it('skips an entry with no resolvable schema', () => {
+    expect(
+      findReferencingEntries([entry('raw', undefined, { author: TARGET_ID })], TARGET_ID),
+    ).toEqual([])
+  })
 
-    it('blocks deletion for a reference nested in an object inside a block', async () => {
-      const nestedSchema: FieldConfig[] = [
-        {
-          name: 'content',
-          type: 'block',
-          label: 'Content',
-          templates: [
-            {
-              name: 'hero',
-              label: 'Hero',
-              fields: [
-                {
-                  name: 'cta',
-                  type: 'object',
-                  label: 'CTA',
-                  fields: [
-                    { name: 'target', type: 'reference', label: 'Target', collections: ['pages'] },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
+  describe('entry: links in markdown text', () => {
+    it('finds a link in a declared markdown field, and ignores one inside a code span', () => {
+      const schema: FieldConfig[] = [
+        { name: 'intro', type: 'markdown', label: 'Intro' },
+        { name: 'notes', type: 'markdown', label: 'Notes' },
       ]
-      const checker = makeChecker(nestedSchema, {
-        post1: { content: [{ template: 'hero', value: { cta: { target: TARGET_ID } } }] },
-      })
-      const result = await checker.canDelete(TARGET_ID)
-      expect(result.canDelete).toBe(false)
-      expect(result.referencedBy[0].fields).toContain('content[0].cta.target')
+      const result = findReferencingEntries(
+        [
+          entry('linker', schema, {
+            intro: `See [them](entry:${TARGET_ID}#bio).`,
+            notes: `Code: \`entry:${TARGET_ID}\``,
+          }),
+        ],
+        TARGET_ID,
+      )
+      expect(result[0].links).toEqual(['intro'])
+      expect(result[0].fields).toEqual([])
     })
 
-    it('still allows deletion when blocks reference other entries', async () => {
-      const checker = makeChecker(schema, {
-        post1: { content: [{ template: 'callout', value: { link: 'other-id-123' } }] },
-      })
-      const result = await checker.canDelete(TARGET_ID)
-      expect(result.canDelete).toBe(true)
-      expect(result.referencedBy).toHaveLength(0)
+    it("finds a link in an md file's body when the schema does not declare a body field", () => {
+      const schema: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+      const result = findReferencingEntries(
+        [entry('page', schema, { title: 'T', body: `[x](entry:${TARGET_ID})` }, { format: 'md' })],
+        TARGET_ID,
+      )
+      expect(result[0].links).toEqual(['body'])
+    })
+
+    it('reports a declared isBody field once, under its own name', () => {
+      const schema: FieldConfig[] = [
+        { name: 'content', type: 'mdx', label: 'Content', isBody: true },
+      ]
+      const result = findReferencingEntries(
+        [entry('page', schema, { content: `[x](entry:${TARGET_ID})` }, { format: 'mdx' })],
+        TARGET_ID,
+      )
+      expect(result[0].links).toEqual(['content'])
+    })
+
+    it('does not read a stray body key on a json entry', () => {
+      const schema: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+      const result = findReferencingEntries(
+        [entry('page', schema, { body: `[x](entry:${TARGET_ID})` })],
+        TARGET_ID,
+      )
+      expect(result).toEqual([])
     })
   })
 })

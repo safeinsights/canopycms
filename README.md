@@ -677,11 +677,11 @@ const schema = defineEntrySchema([
 ])
 ```
 
-Delete a referenced entry and you get validation errors on the entries pointing at it.
+Deleting a referenced entry asks first: the dialog names the entries pointing at it, and **Delete anyway** leaves them with validation errors.
 
 ### How References Work in the Editor
 
-The editor loads the available options from the configured scope and validates that a reference always points at a valid entry. Open the dropdown to see every matching entry, search by the display field's value, and select one — CanopyCMS stores the UUID while showing `displayField`.
+The editor loads options from the configured scope and validates that each reference points at a valid entry. Open the dropdown, search by the display field, and select one — CanopyCMS stores the entry's content id while showing `displayField`.
 
 ### Using References in Your Code
 

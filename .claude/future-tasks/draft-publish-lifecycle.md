@@ -28,8 +28,8 @@ is the KB's own docs and filters, owned by the KB's repo.
 
 - Timed reveal: the sites are statically built by CI, so nothing is visible until a build runs; a
   status field buys nothing.
-- Retirement: `validation/deletion-checker.ts` already blocks deleting a referenced entry, an
-  `archived` state would need the same guard, and `git revert` restores a deleted file byte for byte,
+- Retirement: the delete endpoint already refuses a referenced entry until the editor confirms
+  (`api/entries.ts`), an `archived` state would need the same guard, and `git revert` restores a deleted file byte for byte,
   content ID included.
 - Editor friction: hiding a page is the same branch flow as any edit.
 - Rejected sub-options: a reserved boolean `draft` (absent means published, so a half-written entry

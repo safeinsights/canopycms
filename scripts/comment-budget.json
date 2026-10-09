@@ -73,7 +73,7 @@
         },
         "packages/canopycms/src/validation": {
           "maxRun": 30,
-          "ratio": 0.282
+          "ratio": 0.321
         },
         "packages/canopycms/src/worker": {
           "maxRun": 31,

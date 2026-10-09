@@ -22,9 +22,11 @@ import { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants
 import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
+  listEntries as listContentEntries,
   sortByOrder,
   type CollectionListItem,
 } from '../content-listing'
+import { findReferencingEntries } from '../validation/deletion-checker'
 import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
@@ -310,10 +312,34 @@ export const listEntries = defineEndpoint({
   handler: listEntriesHandler,
 })
 
+/** A readable entry that references the entry a delete targets. */
+interface ReferencingEntrySummary {
+  entryPath: LogicalPath
+  contentId: ContentId
+  title: string
+  /** Reference fields holding the target's id, e.g. `author` or `blocks[0].cta.target`. */
+  fields: string[]
+  /** Markdown fields, the file body included, linking to the target with `entry:<id>`. */
+  links: string[]
+}
+
+/** Who references an entry, as far as the requesting user may know. */
+export interface EntryReferencedBy {
+  entries: ReferencingEntrySummary[]
+  /** Referencing entries the user may not read: counted, never described. */
+  hiddenCount: number
+}
+
 /** Response type for deleting an entry */
 export type DeleteEntryResponse = ApiResponse<{
   deleted: boolean
   contentId?: string
+  /**
+   * Set, with status 409 and `deleted: false`, when other entries reference this one and the
+   * request did not pass `confirmReferenced`. Its presence is what tells this 409 apart from
+   * an edit conflict. Re-sending with `confirmReferenced=true` deletes anyway.
+   */
+  referencedBy?: EntryReferencedBy
   /**
    * Set when the entry deleted successfully but the collection's order array couldn't be updated
    * afterward (C6: best-effort hygiene after the delete, so its failure must not present as a
@@ -326,10 +352,59 @@ export type DeleteEntryResponse = ApiResponse<{
 const deleteEntryParamsSchema = z.object({
   branch: branchNameSchema,
   entryPath: logicalPathSchema, // Format: collectionPath/slug
+  /** Delete even though other entries reference this one (query param). */
+  confirmReferenced: queryBooleanSchema.optional(),
 })
 
 /**
- * Delete an entry and update the collection's order array.
+ * Every entry on the branch that references `contentId`, split by whether `user` may read it.
+ * A full raw scan of the branch's content: references are stored only on the referencing
+ * side, so there is no index to ask. Null when nothing references it.
+ */
+const findReferencedBy = async (
+  branchContext: BranchContextWithSchema,
+  ctx: ApiContext,
+  req: ApiRequest,
+  contentId: ContentId,
+): Promise<EntryReferencedBy | null> => {
+  const { branchRoot, flatSchema } = branchContext
+  const entries = await listContentEntries(
+    branchRoot,
+    flatSchema,
+    ctx.services.config.contentRoot || 'content',
+  )
+  const referencing = findReferencingEntries(entries, contentId)
+  if (referencing.length === 0) return null
+
+  const canAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchRoot,
+    req.user,
+  )
+  const visible: ReferencingEntrySummary[] = []
+  for (const { entry, fields, links } of referencing) {
+    if (!canAccess(entry.entryPath, 'read').allowed) continue
+    const collection = flatSchema.find(
+      (item) => item.type === 'collection' && item.logicalPath === entry.collectionPath,
+    )
+    const entryType =
+      collection?.type === 'collection'
+        ? collection.entries?.find((e) => e.name === entry.entryType)
+        : undefined
+    visible.push({
+      entryPath: entry.entryPath,
+      contentId: entry.entryId,
+      title: extractTitle(entry.data, entryType, entry.slug),
+      fields,
+      links,
+    })
+  }
+  return { entries: visible, hiddenCount: referencing.length - visible.length }
+}
+
+/**
+ * Delete an entry and update the collection's order array. An entry other entries reference
+ * is deleted only with `confirmReferenced`; without it the response is a 409 naming them.
  * DELETE /:branch/entries/...entryPath
  * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
  */
@@ -434,6 +509,20 @@ const deleteEntryHandler = async (
   try {
     // Get the entry's content ID before deleting (for order update)
     const contentId = await contentStore.getIdForEntry(collectionLogicalPath, entrySlug)
+
+    // Advisory: a reference saved between this scan and the delete below still dangles.
+    if (contentId && !params.confirmReferenced) {
+      const referencedBy = await findReferencedBy(branchContext, ctx, req, contentId)
+      if (referencedBy) {
+        const count = referencedBy.entries.length + referencedBy.hiddenCount
+        return {
+          ok: false,
+          status: 409,
+          error: `Entry is referenced by ${count} other ${count === 1 ? 'entry' : 'entries'}`,
+          data: { deleted: false, contentId, referencedBy },
+        }
+      }
+    }
 
     await contentStore.delete(collectionLogicalPath, entrySlug)
 

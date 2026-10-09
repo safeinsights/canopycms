@@ -7,6 +7,7 @@ import type {
   CreateEntryTypeInput,
   UpdateEntryTypeInput,
 } from '../../api'
+import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath, ContentId } from '../../paths/types'
 import { getErrorMessage } from '../../utils/error'
 
@@ -25,6 +26,14 @@ export interface UseSchemaManagerOptions {
  * them into unhandled rejections.
  */
 export type SchemaOpResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * {@link SchemaOpResult}, or a refusal because other entries reference the one being deleted.
+ * That refusal shows no toast: the caller asks the user, then retries with `confirmReferenced`.
+ */
+type DeleteEntryResult =
+  | SchemaOpResult
+  | { ok: false; error: string; referencedBy: EntryReferencedBy }
 
 /** Same shape as {@link SchemaOpResult}, plus a payload on success. */
 type CreateCollectionResult =
@@ -56,7 +65,10 @@ export interface UseSchemaManagerReturn {
   updateOrder: (collectionPath: LogicalPath, order: string[]) => Promise<SchemaOpResult>
 
   // Delete entry
-  deleteEntry: (entryPath: LogicalPath) => Promise<SchemaOpResult>
+  deleteEntry: (
+    entryPath: LogicalPath,
+    options?: { confirmReferenced?: boolean },
+  ) => Promise<DeleteEntryResult>
 
   // State
   isLoading: boolean
@@ -276,13 +288,21 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const deleteEntry = useCallback(
-    async (entryPath: LogicalPath): Promise<SchemaOpResult> => {
+    async (
+      entryPath: LogicalPath,
+      deleteOptions?: { confirmReferenced?: boolean },
+    ): Promise<DeleteEntryResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.entries.delete({
           branch: options.branchName,
           entryPath,
+          ...(deleteOptions?.confirmReferenced ? { confirmReferenced: 'true' } : {}),
         })
+        const referencedBy = result.data?.referencedBy
+        if (!result.ok && referencedBy) {
+          return { ok: false, error: result.error ?? 'Entry is referenced', referencedBy }
+        }
         if (!result.ok) {
           throw new Error(result.error || 'Failed to delete entry')
         }
