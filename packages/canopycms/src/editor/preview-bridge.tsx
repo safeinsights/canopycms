@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 
 import type { ResolvedReferenceMeta } from '../entry-schema'
-import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
+import { createFieldProps } from './field-props'
 import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
 import { readAssetBase } from './raw-asset-base'
@@ -96,13 +96,19 @@ export interface HighlightMessage {
   enabled: boolean
 }
 
+/** The most distinct mark paths one report carries, and the longest path it carries. */
+export const MARK_REPORT_LIMITS = { paths: 500, pathLength: 512 } as const
+
 /**
  * Preview → editor, while highlighting is on: how many `data-canopy-path` elements the page has,
- * so the editor can say when there is nothing to outline. An older bridge sends none.
+ * so the editor can say when there is nothing to outline, and their distinct paths as the page
+ * spells them, within `MARK_REPORT_LIMITS`, so it can say which name no field. An older bridge
+ * sends no report, and one before `paths` sends only the count.
  */
 export interface PreviewMarksMessage {
   type: typeof CANOPY_PREVIEW_MARKS
   count: number
+  paths?: string[]
 }
 
 /**
@@ -139,9 +145,7 @@ export const useCanopyPreview = <T,>(opts: {
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
 
-  const fieldProps = (canopyPath: string | CanopyPathSegment[]) => ({
-    'data-canopy-path': Array.isArray(canopyPath) ? formatCanopyPath(canopyPath) : canopyPath,
-  })
+  const fieldProps = createFieldProps<T>()
 
   /**
    * Report that the current draft fails to compile/render (the editor surfaces it
@@ -275,12 +279,23 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     if (!enabled || window.parent === window) return
     const target = resolveMessageOrigin(editorOrigin)
     if (isOpaqueOrigin(target)) return
-    let reported = -1
+    let reported: string | undefined
     const report = () => {
-      const count = document.querySelectorAll('[data-canopy-path]').length
-      if (count === reported) return
-      reported = count
-      const msg: PreviewMarksMessage = { type: CANOPY_PREVIEW_MARKS, count }
+      const marks = document.querySelectorAll<HTMLElement>('[data-canopy-path]')
+      const paths = new Set<string>()
+      for (const mark of marks) {
+        if (paths.size === MARK_REPORT_LIMITS.paths) break
+        const path = mark.getAttribute('data-canopy-path') ?? ''
+        if (path.length <= MARK_REPORT_LIMITS.pathLength) paths.add(path)
+      }
+      const msg: PreviewMarksMessage = {
+        type: CANOPY_PREVIEW_MARKS,
+        count: marks.length,
+        paths: [...paths],
+      }
+      const key = JSON.stringify([msg.count, msg.paths])
+      if (key === reported) return
+      reported = key
       window.parent.postMessage(msg, target)
     }
     report()

@@ -12,10 +12,12 @@ import {
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   isTrustedEditorMessage,
+  MARK_REPORT_LIMITS,
   resolveMessageOrigin,
   useCanopyPreview,
   usePreviewAssetBaseGate,
   type PreviewLoadingState,
+  type PreviewMarksMessage,
 } from './preview-bridge'
 import type { TypeFromEntrySchema } from '../entry-schema'
 import { PreviewFrame } from './PreviewFrame'
@@ -416,7 +418,7 @@ describe('useCanopyPreview', () => {
       highlight(true)
       await waitFor(() =>
         expect(counts()).toEqual([
-          [{ type: CANOPY_PREVIEW_MARKS, count: 1 }, window.location.origin],
+          [{ type: CANOPY_PREVIEW_MARKS, count: 1, paths: ['value'] }, window.location.origin],
         ]),
       )
     })
@@ -429,8 +431,8 @@ describe('useCanopyPreview', () => {
       addMark('extra')
       await waitFor(() =>
         expect(counts().map(([msg]) => msg)).toEqual([
-          { type: CANOPY_PREVIEW_MARKS, count: 1 },
-          { type: CANOPY_PREVIEW_MARKS, count: 2 },
+          { type: CANOPY_PREVIEW_MARKS, count: 1, paths: ['value'] },
+          { type: CANOPY_PREVIEW_MARKS, count: 2, paths: ['value', 'extra'] },
         ]),
       )
 
@@ -452,7 +454,77 @@ describe('useCanopyPreview', () => {
         document.querySelectorAll('body > i').forEach((el) => el.remove())
       })
       await new Promise((resolve) => setTimeout(resolve, 400))
-      expect(counts().map(([msg]) => msg)).toContainEqual({ type: CANOPY_PREVIEW_MARKS, count: 2 })
+      expect(counts().map(([msg]) => msg)).toContainEqual({
+        type: CANOPY_PREVIEW_MARKS,
+        count: 2,
+        paths: ['value', 'extra'],
+      })
+    })
+  })
+
+  describe('the mark paths', () => {
+    const setUp = () => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', '/posts/marks')
+      render(<PreviewValue initialData={{ value: 'initial' }} />)
+      const reports = () =>
+        vi
+          .mocked(parentWin.postMessage)
+          .mock.calls.map(([msg]) => msg as PreviewMarksMessage)
+          .filter((msg) => msg.type === CANOPY_PREVIEW_MARKS)
+      act(() => {
+        window.dispatchEvent(
+          trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin),
+        )
+      })
+      const mark = (path: string) => {
+        const el = document.createElement('span')
+        el.setAttribute('data-canopy-path', path)
+        onTestFinished(() => el.remove())
+        return el
+      }
+      return { reports, mark }
+    }
+
+    it('lists each path once, however many elements mark it', async () => {
+      const { reports, mark } = setUp()
+      await waitFor(() => expect(reports()).toHaveLength(1))
+      act(() => document.body.append(mark('tags[0]'), mark('tags[0]')))
+      await waitFor(() =>
+        expect(reports().at(-1)).toEqual({
+          type: CANOPY_PREVIEW_MARKS,
+          count: 3,
+          paths: ['value', 'tags[0]'],
+        }),
+      )
+    })
+
+    it('is reported again when a path changes at the same count', async () => {
+      const { reports, mark } = setUp()
+      const el = mark('posts[0].tag')
+      act(() => document.body.append(el))
+      await waitFor(() => expect(reports().at(-1)?.paths).toEqual(['value', 'posts[0].tag']))
+      act(() => el.setAttribute('data-canopy-path', 'posts[0].category'))
+      await waitFor(() =>
+        expect(reports().at(-1)).toEqual({
+          type: CANOPY_PREVIEW_MARKS,
+          count: 2,
+          paths: ['value', 'posts[0].category'],
+        }),
+      )
+    })
+
+    it('carries at most the limit of paths, and none longer than the limit', async () => {
+      const { reports, mark } = setUp()
+      act(() => {
+        document.body.append(mark('x'.repeat(MARK_REPORT_LIMITS.pathLength + 1)))
+        for (let n = 0; n < MARK_REPORT_LIMITS.paths + 10; n++)
+          document.body.append(mark(`list[${n}]`))
+      })
+      await waitFor(() => expect(reports().at(-1)?.count).toBe(MARK_REPORT_LIMITS.paths + 12))
+      const { paths = [] } = reports().at(-1) ?? {}
+      expect(paths).toHaveLength(MARK_REPORT_LIMITS.paths)
+      expect(paths.every((path) => path.length <= MARK_REPORT_LIMITS.pathLength)).toBe(true)
     })
   })
 
@@ -894,10 +966,10 @@ describe('preview error channel', () => {
     await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
   })
 
-  it('PreviewFrame reports the mark count a trusted preview sends, and nothing else', async () => {
-    const onMarkCount = vi.fn()
+  it('PreviewFrame reports the marks a trusted preview sends, and nothing else', async () => {
+    const onMarks = vi.fn()
     const { container } = render(
-      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarkCount={onMarkCount} />,
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarks={onMarks} />,
     )
     const iframe = container.querySelector('iframe') as HTMLIFrameElement
     const send = (data: unknown, origin = window.location.origin) =>
@@ -911,11 +983,41 @@ describe('preview error channel', () => {
     send({ type: CANOPY_PREVIEW_MARKS, count: 1.5 })
     send({ type: CANOPY_PREVIEW_MARKS })
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(onMarkCount).not.toHaveBeenCalled()
+    expect(onMarks).not.toHaveBeenCalled()
 
     send({ type: CANOPY_PREVIEW_MARKS, count: 0 })
-    await waitFor(() => expect(onMarkCount).toHaveBeenCalledWith(0))
-    expect(onMarkCount).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onMarks).toHaveBeenCalledWith({ count: 0 }))
+    expect(onMarks).toHaveBeenCalledTimes(1)
+  })
+
+  it('PreviewFrame passes on mark paths only when they are strings within the limits', async () => {
+    const onMarks = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarks={onMarks} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const send = (paths: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: CANOPY_PREVIEW_MARKS, count: 2, paths },
+          origin: window.location.origin,
+          source: iframe.contentWindow,
+        }),
+      )
+
+    send(['title', 'tags[0]'])
+    send(['title', 3])
+    send('title')
+    send(['x'.repeat(MARK_REPORT_LIMITS.pathLength + 1)])
+    send(Array.from({ length: MARK_REPORT_LIMITS.paths + 1 }, (_, n) => `p${n}`))
+    await waitFor(() => expect(onMarks).toHaveBeenCalledTimes(5))
+    expect(onMarks.mock.calls.map(([marks]) => marks)).toEqual([
+      { count: 2, paths: ['title', 'tags[0]'] },
+      { count: 2 },
+      { count: 2 },
+      { count: 2 },
+      { count: 2 },
+    ])
   })
 
   it('ignores error reports whose message is not a string', async () => {
