@@ -406,6 +406,20 @@ describe('splitByStored', () => {
     ).toEqual([])
   })
 
+  it('does not let a stored string attribute license an expression with the same text', () => {
+    const stored = { summary: '<Btn onClick="{steal()}" />' }
+    expect(split({ summary: '<Btn onClick={steal()} />' }, stored).refused).toHaveLength(1)
+    expect(split({ summary: '<Btn onClick="{steal()}" />' }, stored).refused).toEqual([])
+  })
+
+  it('matches stored code by what it compiles to, not by its raw text in a container', () => {
+    // Inside the quote the expression is `a - b`; the same characters outside it are `a > -b`.
+    const stored = { summary: '> {a\n> -b}' }
+    const moved = split({ summary: '{a\n> -b}' }, stored).refused
+    expect(moved.map((e) => e.message).join()).toMatch(/expressions are not allowed/)
+    expect(split({ summary: 'Intro\n\n> {a\n> -b}' }, stored).refused).toEqual([])
+  })
+
   it('never keeps a body that does not parse, which cannot be checked', () => {
     const { refused, kept } = split({ summary: '<A>{x()}' }, { summary: '<A>{x()}' })
     expect(kept).toEqual([])
