@@ -13,7 +13,8 @@
  * `id-token: write` for npm trusted publishing with provenance across five
  * public packages, and mints a token whose app can bypass main's PR rule.
  *
- * Scope: every workflow in .github/workflows, plus the workflow TEMPLATES the
+ * Scope: every workflow in .github/workflows and every local composite action
+ * in .github/actions, plus the workflow TEMPLATES the
  * CLI scaffolds into adopter repos and the checked-in example, since an
  * adopter inherits whatever those carry -- and `deploy-cms.yml`'s
  * configure-aws-credentials sits in front of a CDK-admin OIDC role.
@@ -47,7 +48,18 @@ function collectTargets() {
         .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
         .map((f) => path.join('.github', 'workflows', f))
     : []
-  return [...workflows, ...EXTRA_TARGETS.filter((f) => existsSync(path.join(ROOT, f)))]
+  // A composite action's own `uses:` run in every job that calls it.
+  const actionsDir = path.join(ROOT, '.github', 'actions')
+  const actions = existsSync(actionsDir)
+    ? readdirSync(actionsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .flatMap((d) =>
+          ['action.yml', 'action.yaml']
+            .map((f) => path.join('.github', 'actions', d.name, f))
+            .filter((f) => existsSync(path.join(ROOT, f))),
+        )
+    : []
+  return [...workflows, ...actions, ...EXTRA_TARGETS.filter((f) => existsSync(path.join(ROOT, f)))]
 }
 
 const problems = []

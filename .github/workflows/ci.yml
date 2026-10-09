@@ -22,8 +22,11 @@ permissions:
   pull-requests: read
 
 jobs:
-  validate:
-    name: Validate, Typecheck & Test
+  # The lint, typecheck, build and unit-test jobs below run in parallel, and
+  # `validate` at the end of this group passes only when every one of them
+  # did. Each job installs through .github/actions/setup.
+  lint:
+    name: Lint, Format & Generated Files
     runs-on: ubuntu-latest
 
     steps:
@@ -130,15 +133,7 @@ jobs:
 
           echo 'No bidirectional unicode control characters in contents or filenames'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Generate API clients
         run: pnpm run generate:client
@@ -258,8 +253,24 @@ jobs:
       - name: Format check (Prettier)
         run: pnpm exec prettier --check .
 
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup
+
       - name: TypeScript type checking
         run: pnpm typecheck
+
+  build:
+    name: Build & Node ESM Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup
 
       - name: Build
         run: pnpm run build
@@ -285,28 +296,81 @@ jobs:
       - name: Check published packages import under Node ESM
         run: pnpm check:esm
 
-      # Runs at the workspace ROOT (`pnpm -r run test`), deliberately: pinning
-      # this to packages/canopycms meant `pnpm test` resolved to that one
-      # package's script, so canopycms-cdk, canopycms-next, canopycms-auth-clerk
-      # and canopycms-auth-dev had never had their tests run in CI at all. The
-      # CDK suite matters most - it is the only automated check on the deploy
-      # template (Function-URL-is-AWS_IAM-only, Lambda->EFS egress, ASG update
-      # policy, log-group names), several of its cases are regression tests for
-      # bugs that already shipped once, and `pnpm typecheck` being recursive is
-      # probably why the gap went unnoticed. Root scope also means a newly added
-      # package is covered by default instead of needing someone to remember.
-      # Every workspace `test` script is vitest (apps/example1 is a no-op echo),
-      # so this adds no browser/e2e work - Playwright stays in its own job.
+  # canopycms holds four fifths of the workspace's test time, so its vitest run
+  # is split by file across runners; `--shard` assigns each file (per vitest
+  # project) to exactly one shard.
+  unit-canopycms:
+    name: Unit Tests (canopycms ${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      BROWSERSLIST_IGNORE_OLD_DATA: true
+      # Git identity via env (process-scoped) instead of `git config` — an
+      # on-disk config once got replicated locally and misattributed commits.
+      GIT_AUTHOR_NAME: CI Bot
+      GIT_AUTHOR_EMAIL: ci@canopycms.test
+      GIT_COMMITTER_NAME: CI Bot
+      GIT_COMMITTER_EMAIL: ci@canopycms.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup
+
+      # init.integration.test.ts runs the built CLI from dist/ and skips that
+      # block when dist/ is absent, so every shard builds first.
+      - name: Build
+        run: pnpm run build
+        working-directory: packages/canopycms
+
       - name: Run tests
+        run: pnpm --filter canopycms run test --shard=${{ matrix.shard }}/3
+
+  # Every workspace package except canopycms, selected by exclusion so a newly
+  # added package is covered without editing this file. The CDK suite matters
+  # most: it is the only automated check on the deploy template
+  # (Function-URL-is-AWS_IAM-only, Lambda->EFS egress, ASG update policy,
+  # log-group names). Every workspace `test` script is vitest (apps/example1's
+  # is a no-op echo), so Playwright stays in its own job.
+  unit-packages:
+    name: Unit Tests (other packages)
+    runs-on: ubuntu-latest
+    env:
+      BROWSERSLIST_IGNORE_OLD_DATA: true
+      GIT_AUTHOR_NAME: CI Bot
+      GIT_AUTHOR_EMAIL: ci@canopycms.test
+      GIT_COMMITTER_NAME: CI Bot
+      GIT_COMMITTER_EMAIL: ci@canopycms.test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup
+
+      - name: Run tests
+        run: pnpm -r --no-bail --filter '!canopycms' run test
+
+  # One check that stands for the five jobs above, under the name the single
+  # job had. `always()` makes it run, and fail, when a needed job failed, was
+  # cancelled or was skipped; a gate that was itself skipped would read as
+  # passing to anything that requires it.
+  validate:
+    name: Validate, Typecheck & Test
+    if: always()
+    needs: [lint, typecheck, build, unit-canopycms, unit-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validate job to have succeeded
         env:
-          BROWSERSLIST_IGNORE_OLD_DATA: true
-          # Git identity via env (process-scoped) instead of `git config` — an
-          # on-disk config once got replicated locally and misattributed commits.
-          GIT_AUTHOR_NAME: CI Bot
-          GIT_AUTHOR_EMAIL: ci@canopycms.test
-          GIT_COMMITTER_NAME: CI Bot
-          GIT_COMMITTER_EMAIL: ci@canopycms.test
-        run: pnpm test
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$failed" ]; then
+            echo "::error::Not successful: $failed"
+            exit 1
+          fi
 
   dual-build:
     name: Dual-Build Fixture (static + cms)
@@ -362,18 +426,8 @@ jobs:
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: ./.github/actions/setup
         if: steps.filter.outputs.relevant == 'true'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.filter.outputs.relevant == 'true'
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        if: steps.filter.outputs.relevant == 'true'
-        run: pnpm install --frozen-lockfile
 
       # The fixture runs in CanopyCMS `mode: 'dev'`, whose request-time content
       # read resolves the active branch from git HEAD. actions/checkout leaves
@@ -421,7 +475,7 @@ jobs:
         env:
           # Dev-mode content reads at request time (the cms build's `/`) do
           # real git ops against a local workspace -- same identity pattern
-          # as the `validate` and `e2e` jobs above.
+          # as the unit-test and `e2e` jobs.
           GIT_AUTHOR_NAME: CI Bot
           GIT_AUTHOR_EMAIL: ci@canopycms.test
           GIT_COMMITTER_NAME: CI Bot
@@ -505,19 +559,9 @@ jobs:
               - 'scripts/smoke/**'
               - '.github/workflows/ci.yml'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: steps.filter.outputs.relevant == 'true'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.filter.outputs.relevant == 'true'
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
       # Only for `pnpm pack`: each package's prepack builds it from this checkout.
-      - name: Install dependencies
+      - uses: ./.github/actions/setup
         if: steps.filter.outputs.relevant == 'true'
-        run: pnpm install --frozen-lockfile
 
       - name: Build, boot and check the CMS image
         if: steps.filter.outputs.relevant == 'true'
@@ -546,7 +590,7 @@ jobs:
     name: Example1 Build & Content Gate
     # apps/example1 is the reference app most doc snippets and e2e
     # expectations are written against, but until now it was never built in
-    # CI at all -- `validate` above only type-checks/lints it, and
+    # CI at all -- the jobs above only type-check and lint it, and
     # `dual-build`'s two builds are apps/dual-build-fixture, a different app.
     # See .claude/future-tasks/resolved/example1-next-build-not-in-ci.md.
     #
@@ -699,18 +743,8 @@ jobs:
               - 'pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: ./.github/actions/setup
         if: steps.filter.outputs.relevant == 'true'
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: steps.filter.outputs.relevant == 'true'
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        if: steps.filter.outputs.relevant == 'true'
-        run: pnpm install --frozen-lockfile
 
       # No `git checkout -B main` step here, on purpose. A build reads the
       # working tree, never a dev-mode branch clone (readsFromCheckout in
@@ -758,8 +792,8 @@ jobs:
     # all tests share one workspace + server; see playwright.config.ts, and
     # DEVELOPING.md "End-to-End Tests" for what contention looks like when
     # someone runs the suite multi-worker locally).
-    # No `needs: validate` — running in parallel with it cuts total PR
-    # latency by the whole validate duration and lets e2e-only iteration
+    # No `needs:` on the validate jobs — running in parallel with them cuts
+    # total PR latency by their whole duration and lets e2e-only iteration
     # skip the wait.
     runs-on: ubuntu-latest
     strategy:
@@ -779,15 +813,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Ensure local main branch exists
         run: git branch main origin/main 2>/dev/null || true
@@ -815,8 +841,27 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install chromium
 
+      # The packages `install-deps` fetches are mostly fonts, ~20 MB, and the
+      # runner's Ubuntu mirror sometimes serves them at ~150 kB/s, which adds
+      # two to three minutes to one shard. apt keeps the downloaded .debs in
+      # the cached directory below and checks each against its package index,
+      # so a stale file is fetched again rather than installed.
+      - name: Cache Playwright system packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-apt-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install Playwright system dependencies
-        run: pnpm exec playwright install-deps chromium
+        run: |
+          mkdir -p ~/.cache/playwright-apt/partial
+          echo "Dir::Cache::Archives \"$HOME/.cache/playwright-apt\";" |
+            sudo tee /etc/apt/apt.conf.d/99playwright-deb-cache
+          pnpm exec playwright install-deps chromium
+          # apt writes as root, and its root-only lock file would fail the cache save.
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/playwright-apt
 
       - name: Run E2E tests
         # No `--` separator: pnpm forwards it literally, and Playwright then
@@ -851,15 +896,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
 
       - name: Download blob reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
