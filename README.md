@@ -1558,7 +1558,7 @@ Admins get a "System health" panel for observing the CMS's operational state, ri
 
 ### Live Preview
 
-The editor shows a live preview of your actual site pages in an iframe, updated as you type. Clicking a preview element focuses its form field, and the highlight toggle outlines them, for elements the view marks with its `fieldProps`: `fieldProps('title')`, `fieldProps(['blocks', i, 'body'])`. A list item focuses its list, a block its own card.
+The editor previews your actual site pages in an iframe, updated as you type. Clicking a preview element focuses its form field, and the highlight toggle outlines them, for elements the view marks with its `fieldProps`: `fieldProps('title')`, `fieldProps(['blocks', i, 'body'])`. A list item focuses its list, a block its own card.
 
 Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` from `canopycms-next/preview`, which carry no editor code or CSS, so pages preview in their own styles.
 
