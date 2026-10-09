@@ -488,8 +488,8 @@ export async function executeTask(
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
       // after) owns the GitHub branch once it recorded a different PR or GitHub push. Without
-      // either, the ref is taken to be the deleted branch's. Corrupt metadata (no branch record
-      // included) keeps the GitHub branch; other read errors retry.
+      // either, the ref is taken to be the deleted branch's. Corrupt metadata, which includes a
+      // file with no branch record, keeps the GitHub branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
       const deletedPushedAt =

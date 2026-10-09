@@ -50,7 +50,8 @@ const enumOf = <T extends string>(values: { [K in T]: K }) => z.nativeEnum(value
  *
  * Strict where a guard or an access check reads the field: `status` (writes and
  * submits are gated on it), `name` (the protected-base-branch test compares it)
- * and `access` (an absent ACL would read as "no ACL", widening access). Lenient,
+ * and `access` (defaulted to `{}`, a missing one would read as "no ACL" and
+ * widen access). Lenient,
  * with defaults, where a hand-written file can omit bookkeeping: the envelope's
  * `version` (0, as occ-json-write reads it) and `schemaVersion`, and
  * `createdBy` ('unknown', which matches no user, so the creator grant fails
