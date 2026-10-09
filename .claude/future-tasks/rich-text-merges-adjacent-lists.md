@@ -8,7 +8,7 @@ In markdown, a bullet list followed by one with a different marker (`-` then `*`
 rich-text editor exports them as one: `@lexical/list`'s list node transform
 (`mergeNextSiblingListIfSameType`) merges a list into the one before it when both have the same
 type. So the first edit anywhere in the body saves them merged.
-Rare in hand-written content, but a change of meaning. Pinned by `adjacent-lists.md` in `KNOWN_EXPORT_DIFFERENCES` in
+Rare in hand-written content, but a change of meaning. Inside a quote too, from MDXEditor 4.3. Pinned by `adjacent-lists.md` in `KNOWN_EXPORT_DIFFERENCES` in
 `markdown-roundtrip-corpus.test.tsx`.
 
 ## Proposal

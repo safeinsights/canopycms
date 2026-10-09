@@ -4,9 +4,8 @@
 
 ## The gap
 
-The editor's unit tests run React 18 and @mdxeditor/editor 3.53.1, from canopycms's own lockfile.
-The e2e app builds with Next 15.5's default bundler. Adopters run React 19, MDXEditor 3.55, and
-Next 16, which builds with Turbopack.
+The editor's unit tests run React 18, from canopycms's own lockfile. The e2e app builds with Next
+15.5's default bundler. Adopters run React 19 and Next 16, which builds with Turbopack.
 
 A crash that depended on how Turbopack's production build splits and scope-hoists MDXEditor was
 invisible to every CI layer. See
@@ -22,8 +21,7 @@ page's first render, never through an in-app navigation that lazily loads the ed
   error.
 - Or move the e2e app to Next 16 and add that navigation to `mdx-jsx-body.spec.ts`.
 - Decide whether the unit tests should also run against the newest versions in the dependency
-  ranges. The skew changes editor behaviour: a quote with two paragraphs merges on 3.53.1 and
-  round-trips on 3.55.0, so the round-trip guard's quote rule fits only the older one.
+  ranges: MDXEditor 3.53.1 and 3.55.0 differed on quotes while our lockfile held the older.
 - A real-browser corpus pass in that job: open every markdown and MDX entry of the sample sites in
   `/edit` and fail on any page error. It's slow (seconds per entry), so run it nightly or per
   release, not per PR. The fast headless corpus test,

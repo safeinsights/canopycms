@@ -4,14 +4,14 @@
 reports it, and the save diff is the only trace.
 
 MarkdownField saves MDXEditor's serialization of the whole body after any edit. Measured against
-`@mdxeditor/editor` 3.53.1 (a review sweep of every import/export path, with probes in jsdom):
+`@mdxeditor/editor` 3.53.1 (a review sweep of every import/export path, with probes in jsdom), and
+re-measured the same on 4.3.2:
 
 | Stored | Saved after an unrelated edit | Cause |
 | --- | --- | --- |
 | Hard break (two trailing spaces, or `\` at line end) | Soft break: the rendered `<br>` disappears | `LexicalLinebreakVisitor` exports a `\n` text node |
 | Ordered list starting at 3 | Renumbered from 1 | `LexicalListVisitor` exports no `start` |
 | `<div className="a"><span className="b">x</span></div>` | `<div className="a b">x</div>` | `collapseNestedHtmlTags` merges a lone `span` child into its parent |
-| `<span style={…}><span style="…">x</span></span>` | Inner style only | the inner `addStyle` overwrites the outer one |
 | A bare URL followed by punctuation: `See https://example.com/docs. Then`, `www.example.org.` | `[https://example.com/docs.](https://example.com/docs.)`, `[www.example.org.](https://www.example.org.)`: the link gains the period (and a scheme) | the link plugin's autolinking, which also turns every bare URL into `[url](url)`; measured in jsdom 2026-10-08 |
 | A loose list (a blank line between items, or between an item's blocks) | Tight: items lose their `<p>` | `LexicalListVisitor` and `LexicalListItemVisitor` export `spread: false`; measured on 3.53.1 and 3.55.0 |
 
@@ -21,7 +21,7 @@ still do, untouched or not: each changes the block's meaning, and the save follo
 meaning. Fixing them at the export is what removes them.
 
 Already safe: content MDXEditor would lose outright, corrupt, or crash on opens in MarkdownField's
-source editor instead (see the round-trip guard in `editor/fields/mdx-jsx-support.tsx`). These six
+source editor instead (see the round-trip guard in `editor/fields/mdx-jsx-support.tsx`). These five
 are subtler: they round-trip into valid but different markdown, so no error fires.
 
 ## Directions
