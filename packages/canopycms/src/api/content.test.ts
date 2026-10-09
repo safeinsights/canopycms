@@ -799,7 +799,7 @@ describe('content api', () => {
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
-    it('keeps code the saved entry already held, with a warning', async () => {
+    it('keeps code in a body saved as the entry already held it, with a warning', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce('article', codeBody)
 
@@ -807,7 +807,7 @@ describe('content api', () => {
         format: 'mdx',
         expectedVersion: EXISTING_VERSION,
         data: {},
-        body: `${codeBody}\nAn edited paragraph.\n`,
+        body: codeBody,
       })
 
       expect(res.ok).toBe(true)
@@ -821,7 +821,7 @@ describe('content api', () => {
       ])
     })
 
-    it('refuses code added beside code the saved entry already held', async () => {
+    it('refuses any change to a body holding code the entry already held', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce('article', codeBody)
 
@@ -834,7 +834,7 @@ describe('content api', () => {
 
       expect(res.status).toBe(422)
       expect(res.fieldErrors).toEqual([
-        { fieldPath: 'content', message: expect.stringMatching(/line 5/) },
+        { fieldPath: 'content', message: expect.stringMatching(/line 3.*and 1 more/) },
       ])
       expect(writeSpy).not.toHaveBeenCalled()
     })

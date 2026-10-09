@@ -111,6 +111,9 @@ describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
       '<Card link={`javascript:alert(1)`} />',
       /javascript:/,
     ],
+    ['an Alpine directive on a tag', '<div x-data="{}" x-init="alert(1)">x</div>', /x-data/],
+    ['an htmx handler on a tag', '<span hx-on:click="alert(1)">x</span>', /hx-on:click/],
+    ['a data- attribute on a tag', '<span data-run="alert(1)">x</span>', /data-run/],
   ]
 
   it.each(refused)('refuses %s', (_label, source, pattern) => {
@@ -170,6 +173,10 @@ describe('findUnsafeMarkdown: MDX that runs no code is accepted', () => {
     ['a boolean attribute', '<Details open>Hidden</Details>'],
     ['props that merely start with on', '<Callout online ongoing="yes" onlyMobile />'],
     ['a plain string prop with a colon', '<Callout title="Note: read this" />'],
+    [
+      'common attributes on tags',
+      '<td colSpan="2" className="x" id="a" aria-label="b" title="t">1</td>',
+    ],
     ['prose that starts with Data:', '<img src="/a.png" alt="Data: sales by region" />'],
     ['a title that starts with data:', '<Callout title="data: see the 2024/25 table" />'],
     [
@@ -334,32 +341,61 @@ describe('splitByStored', () => {
     expect(refused[0]?.message).toMatch(/2 more/)
   })
 
-  it('keeps code the stored entry held in the same field, wherever it moved in the field', () => {
-    const stored = { summary: 'Intro\n\n{legacy()}\n\n<iframe src="/x" />' }
-    const saved = { summary: '<iframe src="/x" />\n\nIntro, edited\n\n{legacy()}' }
-    const { refused, kept } = split(saved, stored)
+  it('keeps a field holding code that is saved unchanged, while other fields change', () => {
+    const stored = { summary: 'Intro\n\n{legacy()}\n\n<iframe src="/x" />', aside: 'Old' }
+    const { refused, kept } = split({ ...stored, aside: 'New aside' }, stored)
     expect(refused).toEqual([])
     expect(kept.map((e) => e.fieldPath)).toEqual(['summary'])
     expect(kept[0]?.message).toMatch(/1 more/)
   })
 
-  it('keeps code across list items of one field', () => {
+  it('keeps an unchanged list item holding code wherever it moves in the list', () => {
     const { refused } = split({ callouts: ['ok', '{x()}'] }, { callouts: ['{x()}', 'ok'] })
     expect(refused).toEqual([])
   })
 
-  it('refuses code it changes', () => {
-    const { refused } = split({ summary: '{legacy(1)}' }, { summary: '{legacy()}' })
-    expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
+  it('refuses any change to a field holding code, since kept code reads what is around it', () => {
+    const pairs: Array<[string, string]> = [
+      // Text edited beside the code.
+      ['Intro\n\n{legacy()}', 'Intro, edited\n\n{legacy()}'],
+      // A sibling prop the kept function reads.
+      ['<Run fn={(s) => s} arg="a" />', '<Run fn={(s) => s} arg="b" />'],
+      // A new parent that calls a kept function.
+      ['Intro {() => hit()}', 'Intro <BrowserOnly>{() => hit()}</BrowserOnly>'],
+      // Markup a kept script reads.
+      ['<script>{"run()"}</script>', '<script>{"run()"}</script>\n\n<span title="x">x</span>'],
+      // New text inside a kept script.
+      ['<script>console.log(1)</script>', '<script>steal(document.cookie)</script>'],
+      // A call to what kept import/export defines.
+      [
+        'export const Foo = () => null\n\nIntro',
+        'export const Foo = () => null\n\nIntro\n\n<Foo />',
+      ],
+      // A footnote definition no reference renders, made live.
+      ['[^x]: {hit("E")}', 'See[^x]\n\n[^x]: {hit("E")}'],
+      // A second copy of kept code.
+      ['{legacy()}', '{legacy()}\n\n{legacy()}'],
+      // Moved from a quote, where it compiles to different code.
+      ['> {a\n> -b}', '{a\n> -b}'],
+    ]
+    for (const [stored, saved] of pairs) {
+      expect(split({ summary: saved }, { summary: stored }).refused).toHaveLength(1)
+    }
   })
 
-  it('refuses a second copy of stored code', () => {
-    const { refused, kept } = split(
-      { summary: '{legacy()}\n\n{legacy()}' },
-      { summary: '{legacy()}' },
+  it('tells an author editing around stored code why the edit is refused', () => {
+    const { refused } = split(
+      { summary: 'Intro, edited\n\n{legacy()}' },
+      { summary: 'Intro\n\n{legacy()}' },
     )
-    expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
-    expect(kept.map((e) => e.fieldPath)).toEqual(['summary'])
+    expect(refused[0]?.message).toMatch(/already holds code.*unchanged or with the code removed/)
+    expect(split({ summary: '{new()}' }, {}).refused[0]?.message).not.toMatch(/already holds code/)
+  })
+
+  it('refuses a stored field copied into a second list item', () => {
+    const { refused, kept } = split({ callouts: ['{x()}', '{x()}'] }, { callouts: ['{x()}'] })
+    expect(refused).toHaveLength(1)
+    expect(kept).toHaveLength(1)
   })
 
   it('refuses stored code moved to a field of another name', () => {
@@ -367,121 +403,22 @@ describe('splitByStored', () => {
     expect(refused.map((e) => e.fieldPath)).toEqual(['aside'])
   })
 
-  it('refuses a changed attribute or URL, and keeps an unchanged one', () => {
-    const stored = { summary: '<a href="javascript:a()">x</a> <Btn onClick="b()" />' }
-    expect(
-      split({ summary: '<a href="javascript:a()">y</a> <Btn onClick="b()" />' }, stored).refused,
-    ).toEqual([])
-    expect(
-      split({ summary: '<a href="javascript:c()">x</a> <Btn onClick="b()" />' }, stored).refused,
-    ).toHaveLength(1)
-    expect(
-      split({ summary: '<a href="javascript:a()">x</a> <Btn onClick="c()" />' }, stored).refused,
-    ).toHaveLength(1)
-  })
-
-  it('keeps a URL only where it was: an inert stored one does not license a live one', () => {
-    const live = { summary: '<a href="javascript:void(0)">click</a>' }
-    for (const stored of [
-      '![x](javascript:void(0))',
-      '[u]: javascript:void(0)',
-      '<a ping="javascript:void(0)">x</a>',
-      '<img src="javascript:void(0)" />',
-    ]) {
-      expect(split(live, { summary: stored }).refused).toHaveLength(1)
-    }
-    expect(split(live, { summary: '<a href="javascript:void(0)">old</a>' }).refused).toEqual([])
-  })
-
-  it('refuses a new reference to a stored unsafe definition, and keeps an old one', () => {
-    const stored = { summary: 'Text\n\n[u]: javascript:void(0)' }
-    expect(
-      split({ summary: '[click][u]\n\n[u]: javascript:void(0)' }, stored).refused,
-    ).toHaveLength(1)
-    expect(split({ summary: '![pic][u]\n\n[u]: javascript:void(0)' }, stored).refused).toHaveLength(
-      1,
+  it('accepts removing the code', () => {
+    expect(split({ summary: 'Intro, edited' }, { summary: 'Intro\n\n{legacy()}' }).refused).toEqual(
+      [],
     )
-    const used = { summary: '[click][u]\n\n[u]: javascript:void(0)' }
-    expect(
-      split({ summary: 'Edited [click][u]\n\n[u]: javascript:void(0)' }, used).refused,
-    ).toEqual([])
   })
 
-  it('does not let a stored string attribute license an expression with the same text', () => {
-    const stored = { summary: '<Btn onClick="{steal()}" />' }
-    expect(split({ summary: '<Btn onClick={steal()} />' }, stored).refused).toHaveLength(1)
-    expect(split({ summary: '<Btn onClick="{steal()}" />' }, stored).refused).toEqual([])
-  })
-
-  it('matches stored code by what it compiles to, not by its raw text in a container', () => {
-    // Inside the quote the expression is `a - b`; the same characters outside it are `a > -b`.
-    const stored = { summary: '> {a\n> -b}' }
-    const moved = split({ summary: '{a\n> -b}' }, stored).refused
-    expect(moved.map((e) => e.message).join()).toMatch(/expressions are not allowed/)
-    expect(split({ summary: 'Intro\n\n> {a\n> -b}' }, stored).refused).toEqual([])
-  })
-
-  it('counts each construct on a line, so stored code never licenses its neighbour', () => {
-    const cases: Array<[string, string]> = [
-      ['Intro {legacy()}', 'Intro {legacy()} {fetch("/api/canopycms/x")}'],
-      ['<Btn onClick="a()" />', '<Btn onClick="a()" /> <Btn onClick="steal()" />'],
-      [
-        '<iframe src="/x" />',
-        '<iframe src="/x" /> <iframe srcdoc="<script>parent.x()</script>" />',
-      ],
-      ['[a](javascript:void(0))', '[a](javascript:void(0)) [b](javascript:fetch("/api"))'],
-      ['Intro {legacy()}', 'Intro {legacy()} {legacy()}'],
-    ]
-    for (const [stored, saved] of cases) {
-      expect(split({ summary: saved }, { summary: stored }).refused).toHaveLength(1)
+  it('keeps a field whatever its line endings', () => {
+    const stored = {
+      summary: 'export const meta = {\r\n  title: "x",\r\n}\r\n\r\nTotal: {a +\r\n  b}',
     }
-    expect(split({ summary: '{b()} {a()}' }, { summary: '{a()} {b()}' }).refused).toEqual([])
-  })
-
-  it('keeps a stored spread only on the element it was on', () => {
-    const stored = { summary: '<Card {...p} />' }
-    expect(split({ summary: '<a {...p}>x</a>' }, stored).refused).toHaveLength(1)
-    expect(split({ summary: 'Intro\n\n<Card {...p} />' }, stored).refused).toEqual([])
-  })
-
-  it('refuses new text inside a kept script or style, which runs as it is', () => {
-    const script = { summary: 'Intro <script>console.log(1)</script>' }
-    expect(
-      split({ summary: 'Intro <script>steal(document.cookie)</script>' }, script).refused,
-    ).toHaveLength(1)
-    const style = { summary: '<style>p : red</style>' }
-    expect(
-      split({ summary: '<style>@import url("https://evil.example/x.css");</style>' }, style)
-        .refused,
-    ).toHaveLength(1)
-    expect(
-      split({ summary: 'Edited intro <script>console.log(1)</script>' }, script).refused,
-    ).toEqual([])
-  })
-
-  it('keeps import/export only in a field saved unchanged, since it sees the whole field', () => {
-    const stored = { summary: 'export const Foo = () => null\n\nIntro' }
-    expect(split({ summary: 'export const Foo = () => null\n\nIntro' }, stored).refused).toEqual([])
-    // New JSX can call what the block defines, and a default export wraps everything.
-    expect(
-      split({ summary: 'export const Foo = () => null\n\nIntro\n\n<Foo />' }, stored).refused,
-    ).toHaveLength(1)
-    expect(
-      split({ summary: 'export const Foo = () => null\n\nIntro, edited' }, stored).refused,
-    ).toHaveLength(1)
-    // Removing the code is always allowed.
-    expect(split({ summary: 'Intro, edited' }, stored).refused).toEqual([])
-  })
-
-  it('matches stored code whatever its line endings', () => {
-    const stored = { summary: 'Total: {a +\r\n  b}' }
-    expect(split({ summary: 'Total: {a +\n  b}' }, stored).refused).toEqual([])
-    const esm = { summary: 'export const meta = {\r\n  title: "x",\r\n}' }
-    expect(split({ summary: 'export const meta = {\n  title: "x",\n}' }, esm).refused).toEqual([])
+    const saved = { summary: 'export const meta = {\n  title: "x",\n}\n\nTotal: {a +\n  b}' }
+    expect(split(saved, stored).refused).toEqual([])
   })
 
   it('keeps code only in a field of the same dialect', () => {
-    const fields: EntrySchema = [
+    const blockFields: EntrySchema = [
       {
         name: 'blocks',
         type: 'block',
@@ -491,25 +428,12 @@ describe('splitByStored', () => {
         ],
       },
     ]
-    const at = (template: string) => [{ template, value: { text: '[a](javascript:x())' } }]
     const found = (template: string) =>
-      findMarkdownSafetyIssues(fields, 'json', { blocks: at(template) })
+      findMarkdownSafetyIssues(blockFields, 'json', {
+        blocks: [{ template, value: { text: '[a](javascript:x())' } }],
+      })
     expect(splitByStored(found('rich'), found('note')).refused).toHaveLength(1)
     expect(splitByStored(found('rich'), found('rich')).refused).toEqual([])
-  })
-
-  it('keeps an edit inside a stored element that is not allowed', () => {
-    const stored = { summary: '<Tabs.Tab label="a">\n\nold text\n\n</Tabs.Tab>' }
-    expect(
-      split({ summary: '<Tabs.Tab label="a">\n\nnew text\n\n</Tabs.Tab>' }, stored).refused,
-    ).toEqual([])
-    expect(
-      split({ summary: '<Tabs.Tab label="b">\n\nold text\n\n</Tabs.Tab>' }, stored).refused,
-    ).toHaveLength(1)
-  })
-
-  it('keeps a stored expression moved from its own line into a sentence', () => {
-    expect(split({ summary: 'Note: {legacy()}' }, { summary: '{legacy()}' }).refused).toEqual([])
   })
 
   it('never keeps a body that does not parse, which cannot be checked', () => {

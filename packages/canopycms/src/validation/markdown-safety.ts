@@ -22,11 +22,11 @@
  * `remark-gfm` cannot hide a construct from the check, and an MDX body that does not parse is
  * refused, since it cannot be checked.
  *
- * A save may keep code the stored entry already holds in the same field, which came from outside
- * the CMS or from before this policy, so an author can still edit around it: `splitByStored`
- * matches each construct by its key, and refuses one that is new, changed, copied or moved to
- * another field. A key holds everything that decides what the construct runs, so `import`/`export`,
- * which every element in the field can reach, is kept only in a field saved unchanged.
+ * A save may keep code the stored entry already holds, which came from outside the CMS or from
+ * before this policy, but only in a field saved unchanged: what code does depends on the field
+ * around it (the props beside it, the component it sits in, the markup a script reads), so no
+ * smaller unit can be kept safely. Every other field of the entry stays editable, and removing the
+ * code from a field is always accepted.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -48,7 +48,7 @@ interface MarkdownSafetyIssue {
   message: string
   /** 1-based line in the checked source, when known. */
   line?: number
-  /** The construct's identity, its source with no position; none when it cannot be kept. */
+  /** What a stored issue must match to be kept: its dialect and whole field. None: never kept. */
   key?: string
 }
 
@@ -166,6 +166,64 @@ const URL_ATTRIBUTES = new Set([
 
 /** Attribute names, lower-cased, that put markup or a document into the page. */
 const FORBIDDEN_ATTRIBUTES = new Set(['dangerouslysetinnerhtml', 'srcdoc'])
+
+/**
+ * Attributes, lower-cased, that `SAFE_HTML_TAGS` may carry, plus any `aria-*`. Anything else is
+ * refused on a tag, because a script the site loads can give an attribute meaning: Alpine's
+ * `x-init`, htmx's `hx-on:click`, or a `data-*` a page script `eval`s.
+ */
+const SAFE_HTML_ATTRIBUTES = new Set([
+  'abbr',
+  'align',
+  'alt',
+  'autoplay',
+  'cite',
+  'class',
+  'classname',
+  'colspan',
+  'controls',
+  'datetime',
+  'decoding',
+  'default',
+  'dir',
+  'download',
+  'headers',
+  'height',
+  'hidden',
+  'href',
+  'hreflang',
+  'id',
+  'kind',
+  'label',
+  'lang',
+  'loading',
+  'loop',
+  'media',
+  'muted',
+  'open',
+  'playsinline',
+  'poster',
+  'preload',
+  'rel',
+  'reversed',
+  'role',
+  'rowspan',
+  'scope',
+  'sizes',
+  'span',
+  'src',
+  'srclang',
+  'srcset',
+  'start',
+  'style',
+  'target',
+  'title',
+  'translate',
+  'type',
+  'valign',
+  'value',
+  'width',
+])
 
 /** The mdast shape this module reads. */
 interface MdNode {
@@ -320,19 +378,8 @@ const MDX_BINDINGS = new Set(['MDXContent', 'MDXLayout'])
 /** Where an issue sits, as the editor shows it. */
 const at = (node: MdNode) => (node.position ? ` (line ${node.position.start.line})` : '')
 
-function issue(node: MdNode, message: string, key: string | undefined): MarkdownSafetyIssue {
-  return { message: `${message}${at(node)}`, line: node.position?.start.line, key }
-}
-
-/**
- * The identity `splitByStored` matches a construct by: its tree with positions and parse data
- * dropped. That is what it compiles from, so the same raw text in another container (a quote's
- * `> ` prefix, a list's indent) is a different construct.
- */
-function treeKey(kind: string, node: unknown): string {
-  return `${kind}\0${JSON.stringify(node, (name, value: unknown) =>
-    name === 'position' || name === 'data' ? undefined : value,
-  )}`
+function issue(node: MdNode, message: string): MarkdownSafetyIssue {
+  return { message: `${message}${at(node)}`, line: node.position?.start.line }
 }
 
 function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue | undefined {
@@ -341,7 +388,6 @@ function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue
   return issue(
     node,
     `The URL scheme "${scheme}:" is not allowed in ${where}; use http(s), mailto, tel, an entry link or a path on the site`,
-    `url\0${where}\0${JSON.stringify(url)}`,
   )
 }
 
@@ -358,11 +404,6 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         name.includes('.')
           ? `${tag} is not allowed: use a component by its plain name`
           : `${tag} is not allowed: it is not one of the HTML tags a body may use, so use one of the site's components instead`,
-        // A component's children are markdown, checked on their own, so editing them keeps it. An
-        // HTML tag's are its content, raw text that runs inside `<script>` or `<style>`.
-        name.includes('.')
-          ? treeKey('tag', { name, attributes: node.attributes })
-          : treeKey('tag', node),
       ),
     ]
   }
@@ -374,29 +415,23 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
       attribute.type !== 'mdxJsxAttribute' ||
       typeof attribute.name !== 'string'
     ) {
-      issues.push(
-        issue(
-          node,
-          `{…} spread attributes are not allowed on ${tag}`,
-          treeKey('spread', [name, attribute]),
-        ),
-      )
+      issues.push(issue(node, `{…} spread attributes are not allowed on ${tag}`))
       continue
     }
     const attributeName = attribute.name
     const value = attribute.value
-    const key = treeKey('attribute', [name, attribute])
     const lower = attributeName.toLowerCase()
     // A tag's `on…` attribute is a handler in any spelling; a component's prop is one by React's
     // convention, so `online` or `onlyMobile` stays a plain prop.
     if (isComponent ? /^on[A-Z]/.test(attributeName) : /^on/.test(lower)) {
-      issues.push(
-        issue(node, `${attributeName} on ${tag} is not allowed: event handlers run code`, key),
-      )
+      issues.push(issue(node, `${attributeName} on ${tag} is not allowed: event handlers run code`))
       continue
     }
-    if (FORBIDDEN_ATTRIBUTES.has(lower)) {
-      issues.push(issue(node, `${attributeName} on ${tag} is not allowed`, key))
+    if (
+      FORBIDDEN_ATTRIBUTES.has(lower) ||
+      (!isComponent && !SAFE_HTML_ATTRIBUTES.has(lower) && !lower.startsWith('aria-'))
+    ) {
+      issues.push(issue(node, `${attributeName} on ${tag} is not allowed`))
       continue
     }
     const isUrl = URL_ATTRIBUTES.has(lower.replace(/[^a-z]/g, ''))
@@ -407,7 +442,6 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
           isUrl
             ? `${attributeName} on ${tag} must be a plain "string"`
             : `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
-          key,
         ),
       )
       continue
@@ -429,7 +463,6 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         issue(
           node,
           `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}, which a component may use as a link`,
-          key,
         ),
       )
     }
@@ -437,27 +470,11 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
   return issues
 }
 
-/** What checking one tree needs beyond its nodes. */
-interface CheckContext {
-  /** The whole field's source, the key of its ESM. */
-  readonly field: string
-  readonly definitions: ReadonlyMap<string, string>
-}
-
-function checkNode(node: MdNode, context: CheckContext): MarkdownSafetyIssue[] {
-  const { definitions } = context
+function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): MarkdownSafetyIssue[] {
   const issues: MarkdownSafetyIssue[] = []
   switch (node.type) {
     case 'mdxjsEsm':
-      issues.push(
-        issue(
-          node,
-          'import/export statements are not allowed: they run as code',
-          // What it defines can be called by any JSX in the field, and a default export receives
-          // all of it, so it is kept only in a field saved unchanged.
-          treeKey('esm', context.field),
-        ),
-      )
+      issues.push(issue(node, 'import/export statements are not allowed: they run as code'))
       break
     case 'mdxFlowExpression':
     case 'mdxTextExpression':
@@ -466,8 +483,6 @@ function checkNode(node: MdNode, context: CheckContext): MarkdownSafetyIssue[] {
           issue(
             node,
             '{…} expressions are not allowed: they run as code. A comment {/* … */} or a plain value such as {" "} is fine',
-            // Its code alone, so moving it between a line of its own and a sentence keeps it.
-            treeKey('expression', node.value),
           ),
         )
       }
@@ -484,8 +499,7 @@ function checkNode(node: MdNode, context: CheckContext): MarkdownSafetyIssue[] {
       if (found) issues.push(found)
       break
     }
-    // A reference loads its definition's URL. Checked where it is used, so that keeping a stored
-    // definition with no reference to it never licenses a new one.
+    // A reference loads its definition's URL.
     case 'linkReference':
     case 'imageReference': {
       const url = node.identifier === undefined ? undefined : definitions.get(node.identifier)
@@ -494,11 +508,11 @@ function checkNode(node: MdNode, context: CheckContext): MarkdownSafetyIssue[] {
       break
     }
   }
-  for (const child of node.children ?? []) issues.push(...checkNode(child, context))
+  for (const child of node.children ?? []) issues.push(...checkNode(child, definitions))
   return issues
 }
 
-/** How an issue names each node that carries a URL; also part of the issue's key. */
+/** How an issue names each node that carries a URL. */
 const URL_SITES: Partial<Record<string, string>> = {
   link: 'a link',
   image: 'an image',
@@ -533,7 +547,7 @@ export function findUnsafeMarkdown(
   source: string,
   dialect: MarkdownDialect,
 ): MarkdownSafetyIssue[] {
-  // Line endings are not part of what MDX compiles, and an editor saves a CRLF file as LF.
+  // Line endings are not part of what MDX compiles, and the editor saves a CRLF file as LF.
   const field = source.replace(/\r\n?/g, '\n')
   const parses: MarkdownSafetyIssue[][] = []
   for (const withGfm of [false, true]) {
@@ -547,16 +561,15 @@ export function findUnsafeMarkdown(
     }
     let found: MarkdownSafetyIssue[]
     try {
-      found = checkNode(tree, { field, definitions: collectDefinitions(tree) })
+      found = checkNode(tree, collectDefinitions(tree))
     } catch (err: unknown) {
       // Nesting deep enough to exhaust the stack.
       return [{ message: `This body is too deeply nested to check: ${getErrorMessage(err)}` }]
     }
     parses.push(found)
   }
-  // Both parses report most constructs. Each is kept as many times as the parse that saw it most
-  // did, so a second construct like the first, on the same line, is still counted.
-  const id = (item: MarkdownSafetyIssue) => `${item.line ?? ''}\0${item.key ?? item.message}`
+  // Both parses report most constructs; each is reported as often as the parse that saw it most.
+  const id = (item: MarkdownSafetyIssue) => item.message
   const [plain = [], withGfm = []] = parses
   const unmatched = new Map<string, number>()
   for (const item of plain) unmatched.set(id(item), (unmatched.get(id(item)) ?? 0) + 1)
@@ -566,10 +579,9 @@ export function findUnsafeMarkdown(
     if (count > 0) unmatched.set(id(item), count - 1)
     else issues.push(item)
   }
-  // The same construct runs differently as markdown and as MDX, so the dialect is part of its key.
-  return issues.map((item) =>
-    item.key === undefined ? item : { ...item, key: `${dialect}\0${item.key}` },
-  )
+  // The same text runs differently as markdown and as MDX, so the dialect is part of the key.
+  const key = `${dialect}\0${field}`
+  return issues.map((item) => ({ ...item, key }))
 }
 
 /** The field's one message: its first issue, and how many more there are. */
@@ -641,16 +653,17 @@ export function findMarkdownSafetyIssues(
 const site = (fieldPath: string) => fieldPath.replace(/\[\d+\]/g, '')
 
 /**
- * Splits a save's issues into those it adds, which refuse it, and those the stored entry already
- * held in the same field, which it keeps. Constructs are matched by key and counted, so a copy
- * of a stored construct is refused, as is one moved to a field of another name. An issue with no
- * key, such as a body that does not parse, is never kept.
+ * Splits a save's issues into those it adds, which refuse it, and those of a field saved exactly as
+ * the stored entry held it, which it keeps. Issues are matched by key and counted, so a second copy
+ * of a stored field is refused, as is one moved to a field of another name. An issue with no key,
+ * such as a body that does not parse, is never kept.
  */
 export function splitByStored(
   found: readonly MarkdownSafetyFinding[],
   stored: readonly MarkdownSafetyFinding[],
 ): { refused: EntryFieldError[]; kept: EntryFieldError[] } {
   const available = new Map<string, number>()
+  const storedSites = new Set(stored.map((finding) => site(finding.fieldPath)))
   for (const finding of stored) {
     for (const { key } of finding.issues) {
       if (key === undefined) continue
@@ -673,7 +686,17 @@ export function splitByStored(
         added.push(item)
       }
     }
-    if (added.length > 0) refused.push(toFieldError(finding.fieldPath, added))
+    if (added.length > 0) {
+      const error = toFieldError(finding.fieldPath, added)
+      refused.push(
+        storedSites.has(site(finding.fieldPath))
+          ? {
+              ...error,
+              message: `This field already holds code, so it saves only unchanged or with the code removed. ${error.message}`,
+            }
+          : error,
+      )
+    }
     if (held.length > 0) kept.push(toFieldError(finding.fieldPath, held))
   }
   return { refused, kept }
