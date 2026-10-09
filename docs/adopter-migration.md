@@ -40,6 +40,23 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
+
+**What changed.** The worker is one on-demand `t4g.nano` by default (about $3 a month, was spot at
+$1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot is opt-in:
+`workerCapacity: { type: 'spot' }`, a mixed-instances policy that still cannot guarantee a worker.
+A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat `workerTerminationHeartbeat`,
+default 5 minutes) lets the old worker finish in-flight work for up to 90 seconds and requeue the
+rest with no retry spent. The systemd unit gains `KillMode=mixed`, `TimeoutStopSec=120` and exit
+status 75 handling; the worker role gains two `autoscaling:` actions on its own group.
+
+**To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
+or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
+deploy that brings this version rolls the worker before the hook exists; the drain applies from the
+next.
+
+**Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
 **What changed.** When synced content names an entry schema the running code lacks, only that
