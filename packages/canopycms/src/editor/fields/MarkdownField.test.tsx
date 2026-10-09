@@ -7,6 +7,7 @@ import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
 import { CanopyCMSProvider } from '../theme'
 import { MarkdownField } from './MarkdownField'
+import { resetRichTextFailures } from './rich-text-failures'
 
 // Preload the chunk MarkdownField's React.lazy() imports.
 //
@@ -64,6 +65,7 @@ describe('MarkdownField', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    resetRichTextFailures()
   })
 
   it('shows the fallback textarea while the MDXEditor chunk loads', () => {
