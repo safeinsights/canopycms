@@ -44,9 +44,9 @@ which entries belong to it is still a read of `git log`.
 
 **What changed.** The preview resolves references inside objects, object lists and blocks too. One
 still resolving is `null`, even in an entry's first draft. `isLoading` mirrors the data at depth,
-typed `PreviewLoadingState<T>`, so its keys read `boolean | undefined`. New: `isResolvedReference`.
+typed `PreviewLoadingState<T>`, so a reference's entry is `boolean | undefined`. New: `isResolvedReference`.
 
-**To adopt.** Make a prop fed from `isLoading` optional if it was a required `boolean`.
+**To adopt.** Make a prop fed from `isLoading` optional if it was required.
 
 **Now deletable.** Hand-written reference narrowing (string id, `null`, `unavailable` checks), and
 top-level-only reference fields kept for the preview's sake.

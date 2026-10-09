@@ -28,7 +28,7 @@ export const MISSING_REFERENCE_TTL_MS = 10_000
 interface ReferenceCacheEntry {
   /** What the endpoint returned for the id, or `null` when it omitted the id. */
   value: unknown
-  /** Set only on a `null` entry: from then on the id is fetched again. */
+  /** From then on the id is fetched again; set on storing `null`, and by `expireReferences`. */
   expiresAt?: number
 }
 
@@ -203,9 +203,9 @@ function setCreating(root: FormValue, path: DataPath, leaf: unknown, source: For
  *
  * Each reference becomes its cached target, or `null` while it has none (still resolving, an
  * id that names no entry, or a malformed id). A list field's array maps element by element, a
- * non-string element to `null`; anything else is left as the form holds it, as on the server. `loadingState` holds `true` at
- * each position still resolving, at the same path as the reference (`boolean[]` for a list),
- * and nothing at positions that are not references.
+ * non-string element to `null`; anything else is left as the form holds it, as on the server.
+ * `loadingState` holds a boolean only at reference positions, `true` while resolving, at the
+ * reference's own path (`boolean[]` for a list).
  */
 export function applyReferenceCache(
   fields: EntrySchema,

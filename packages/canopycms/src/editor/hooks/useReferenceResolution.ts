@@ -30,7 +30,7 @@ export interface UseReferenceResolutionResult {
 /**
  * The draft as live preview shows it. Computed during render from the cache, so the first value
  * for a new entry or edit already has no bare ids; a debounced effect then fetches the ids the
- * cache lacks, in one batched request, and re-renders when they arrive.
+ * cache lacks, in batched requests, and re-renders when they arrive.
  */
 export function useReferenceResolution({
   value,

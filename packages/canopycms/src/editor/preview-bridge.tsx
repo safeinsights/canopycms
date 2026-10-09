@@ -24,7 +24,7 @@ export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
  * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
  * position, `true` while the editor is still resolving that reference, under the same keys and
  * indexes as the data. A reference typed by `resolvedSchema` is recognized by its resolved shape;
- * any other leaf may be an untyped reference, so it is a `boolean` too. Every key is optional
+ * any other non-object leaf may be an untyped reference, so it is a `boolean` too. Every key is optional
  * because only reference positions are present, and nothing is before the first draft arrives.
  */
 export type PreviewLoadingState<T> = T extends readonly (infer U)[]

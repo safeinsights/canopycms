@@ -446,7 +446,7 @@ export function PostView({ data }: { data: PostContent }) {
 
 **Reference fields and loading states:**
 
-In the preview, a reference field holds what `read()` would give it: the referenced entry's data, or its title and URL marked `unavailable` when this editor may not read it. The editor re-resolves references after every edit at every position `read()` resolves them: top-level fields, inline groups, objects, lists of objects and block templates, nested to any depth. A reference the editor has not resolved yet is `null`, never its id, with `isLoading` `true` at the same path. So a view can receive three things where a reference sits: the resolved entry, `null`, or an `unavailable` reference. Narrow with `isResolvedReference` from `canopycms`:
+In the preview, a reference field holds what `read()` would give it: the referenced entry's data, or its title and URL marked `unavailable` when this editor may not read it. The editor resolves each reference an edit adds, at every position `read()` resolves them: top-level fields, inline groups, objects, lists of objects and block templates, nested to any depth. A reference the editor has not resolved yet is `null`, never its id, with `isLoading` `true` at the same path. So a view can receive three things where a reference sits: the resolved entry, `null`, or an `unavailable` reference. Narrow with `isResolvedReference` from `canopycms`:
 
 ```tsx
 'use client'
@@ -481,7 +481,7 @@ function AuthorCard({ author, isLoading }: AuthorCardProps) {
 
 **Loading state structure:**
 
-`isLoading` (typed `PreviewLoadingState<T>`) has an entry only at reference positions, at the same path as the reference:
+`isLoading` (typed `PreviewLoadingState<T>`) holds a boolean only at reference positions, at the same path as the reference:
 
 - Single reference field: `isLoading.author` is a `boolean`
 - Array of references: `isLoading.relatedPosts` is a `boolean[]`

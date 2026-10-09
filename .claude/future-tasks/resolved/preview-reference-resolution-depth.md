@@ -28,6 +28,8 @@ summary: >-
   after which the next edit asks again, since the target can be created meanwhile. A branch switch
   clears the cache. A failed request caches nothing (the reference stays pending). An `unavailable`
   object passes through as sent.
+- A malformed id is never sent (the endpoint rejects a whole request for one) and reads `null`.
+  When the open entry changes, cached targets are fetched again while still shown.
 - `useReferenceResolution` is called by `Editor.tsx`, outside the form's per-field crash
   boundaries, and computes the preview value during render.
 - `isResolvedReference(value)` (root `canopycms`) narrows a reference field's value to its target.
