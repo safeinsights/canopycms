@@ -40,6 +40,23 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `mdx` content that runs code is refused at save — **breaking (behaviour)**
+
+**What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other
+than comments and plain values, `import`/`export`, HTML tags outside a safe set, event-handler,
+`srcdoc` and `dangerouslySetInnerHTML` attributes, and URL schemes other than http(s), mailto and
+tel. `markdown` fields and `md` bodies refuse those URLs. New: the field option `executable` and
+the type `MarkdownFieldConfig`. See
+[MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
+
+**To adopt.** Set `executable: true` only on a field whose editors you trust as code authors; an
+entry type with no `isBody` field needs one declared to opt its body out. Elsewhere, an entry
+holding such content fails its next save with the line named: move the code into a component.
+
+**Now deletable.** A `validateEntry` rule refusing expressions, ESM or `javascript:` links in MDX,
+and the path-prefix matching that backs up its entry-type gate. Keep a rule checking that the body
+compiles.
+
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
 **What changed.** When synced content names an entry schema the running code lacks, only that

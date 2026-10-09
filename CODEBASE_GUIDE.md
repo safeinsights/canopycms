@@ -755,6 +755,7 @@ parse-versus-create-versus-cast conventions.
 - `reference-validator.ts` — reference field validation: ID format, existence, collection and entry-type constraints
 - `entry-type-reference-validator.ts` — `validateReferenceEntryTypes`, checks a reference's `entryTypes` against the resolved schema
 - `entry-link-validator.ts` — `validateEntryLinks`, warns on broken `entry:ID` links at save time
+- `markdown-safety.ts` — `validateMarkdownSafety`, refuses markdown/MDX that runs code; `executable: true` opts a field out
 - `deletion-checker.ts` — `findReferencingEntries`, the entries a delete would orphan
 - `block-structural-keys.ts` — which keys of a block item are structure rather than content
 

@@ -431,7 +431,7 @@ export default defineCanopyConfig({
 })
 ```
 
-The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save. `error` issues reject the save and show the message to the editor; `warning` issues let it through as a notification. **It gates content writes only** — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing.
+The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save that passes schema validation and the [MDX code check](#mdx-content-cannot-run-code). `error` issues reject the save and show the message to the editor; `warning` issues let it through as a notification. **It gates content writes only** — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing.
 
 ### Comments in Content Files Survive Editing
 
@@ -496,7 +496,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. Content that would run code is refused unless the field sets `executable: true`; see [MDX content cannot run code](#mdx-content-cannot-run-code)
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
@@ -530,6 +530,22 @@ CanopyCMS stores and edits markdown and deliberately does **not** ship a rendere
 > **`react-markdown` does not work in a React Server Component.** Rendering its default export from a server component crashes a static prerender with `Element type is invalid … got: undefined`, while the same code resolves fine once it is in the client bundle. The fix is `'use client'` on your own wrapper component.
 
 That fix is not free: the wrapper and its markdown subtree ship to the browser and lose server-only rendering for that part of the page. For static prose, consider a build-time renderer (`remark`/`rehype` to HTML, or MDX compiled at build time). `apps/example1` shows the client-wrapper shape.
+
+#### MDX content cannot run code
+
+MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which runs wherever a body renders with `evaluate`, `run` or `next-mdx-remote`: in the editor's preview as the viewer, in a server render inside the CMS, and on CI, including PR builds of content branches nobody has reviewed. So an `mdx` field, and an `mdx` body, refuse at save:
+
+- `{…}` expressions other than comments and plain values (`{/* note */}`, `{300}`), and `import`/`export`;
+- HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes;
+- URL schemes other than http(s), mailto and tel; React 18 renders a `javascript:` href as given.
+
+Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. The editor shows the error, with its line, before saving.
+
+```typescript
+{ name: 'body', type: 'mdx', isBody: true, executable: true } // editors of this field are code authors
+```
+
+`executable: true` turns the check off for one field, giving its editors the equivalent of repository write access. A body with no `isBody` field is always checked. The policy assumes `md` renders as markdown without raw HTML (`rehype-raw`), and `mdx` as MDX. Content committed outside the CMS, or saved before you upgraded, is unchecked.
 
 ### Field Groups
 
@@ -1564,7 +1580,7 @@ Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` f
 
 **Security model.** Preview pages accept messages only when they are actually framed, and only from their direct parent window with a matching origin — same-origin by default, so a standalone page, including one opened via `window.open` from a hostile site, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. We also recommend serving your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows, since it severs `window.opener` handles entirely; the bridge is safe without it, but defense in depth is cheap.
 
-**Reporting draft errors.** If your page compiles the draft body (MDX, say) and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
+**Reporting draft errors.** If your page compiles the draft body (MDX, say), which is safe to render for a field [that cannot run code](#mdx-content-cannot-run-code), and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
 
 ```typescript
 const { data, reportError } = useCanopyPreview<DocContent>({ initialData })
