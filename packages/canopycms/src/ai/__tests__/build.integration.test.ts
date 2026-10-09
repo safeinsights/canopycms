@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
 import { ContentStore } from '../../content-store'
+import { BranchSchemaCache } from '../../branch-schema-cache'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { GENERATED_RECORD_FILENAME, generateAIContentFiles } from '../../build/generate-ai-content'
 import type { AIManifest } from '../types'
@@ -120,6 +121,34 @@ describe('generateAIContentFiles', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('fails, rather than writing partial content, when the schema has issues', async () => {
+    const issue = {
+      kind: 'unknown-schema' as const,
+      collectionPath: 'posts',
+      entryType: 'post',
+      schemaRef: 'postSchema',
+      metaFile: 'posts/.collection.json',
+      message: 'Schema reference "postSchema" in entry type "post" not found in registry.',
+    }
+    vi.spyOn(BranchSchemaCache.prototype, 'getSchema').mockResolvedValue({
+      schema: testSchema,
+      flatSchema: [],
+      issues: [issue],
+    })
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+
+    await expect(
+      generateAIContentFiles({
+        config: { ...defineCanopyTestConfig({ schema: testSchema }), deployedAs: 'static' },
+        entrySchemaRegistry: {},
+        outputDir,
+      }),
+    ).rejects.toThrow(
+      /does not match this code's entry schema registry:\n {2}- Schema reference "postSchema"/,
+    )
+    expect(await fs.readdir(outputDir)).toEqual([])
   })
 
   it('writes all expected files to disk', async () => {

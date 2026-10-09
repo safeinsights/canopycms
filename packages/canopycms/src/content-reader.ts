@@ -1,4 +1,5 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
+import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
   namesNoWorkspace,
@@ -350,7 +351,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
       return { doc, store, physicalPath, entryType, entryId, slug: resolvedSlug, urlPath }
     } catch (err: unknown) {
-      if (isNotFoundError(err)) return null
+      // An entry of an unavailable type reads as absent, as adopter listings leave it out.
+      if (isNotFoundError(err) || err instanceof SchemaUnavailableError) return null
       throw err
     }
   }

@@ -926,9 +926,11 @@ export class ContentStore {
     const {
       absolutePath,
       relativePath,
+      existed,
       entryTypeName: resolvedEntryTypeName,
     } = await this.buildPaths(schemaItem, slug)
-    if (!options.allowUnavailableEntryType) {
+    // A missing entry stays a not-found below, whatever its collection's default type.
+    if (existed && !options.allowUnavailableEntryType) {
       this.assertEntryTypeAvailable(schemaItem, resolvedEntryTypeName)
     }
     // stat BEFORE readFile: a conservative version token can only produce false-positive
@@ -2003,13 +2005,13 @@ export class ContentStore {
   }
 
   /**
-   * Throw {@link SchemaUnavailableError} when the entry at `slug` is of an `unavailable` entry
-   * type, for a handler to refuse before any other check answers first.
+   * Throw {@link SchemaUnavailableError} when an entry exists at `slug` and is of an
+   * `unavailable` entry type, for a handler to refuse before any other check answers first.
    */
   async assertEntryAvailable(collectionPath: LogicalPath, slug: Slug | '' = ''): Promise<void> {
     const schemaItem = this.assertSchemaItem(collectionPath)
-    const { entryTypeName } = await this.buildPaths(schemaItem, slug)
-    this.assertEntryTypeAvailable(schemaItem, entryTypeName)
+    const { existed, entryTypeName } = await this.buildPaths(schemaItem, slug)
+    if (existed) this.assertEntryTypeAvailable(schemaItem, entryTypeName)
   }
 
   /**

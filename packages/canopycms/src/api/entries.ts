@@ -26,7 +26,7 @@ import {
   sortByOrder,
   type CollectionListItem,
 } from '../content-listing'
-import { findReferencingEntries } from '../validation/deletion-checker'
+import { findReferencingEntries, type ReferenceScanEntry } from '../validation/deletion-checker'
 import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
@@ -356,6 +356,33 @@ const deleteEntryParamsSchema = z.object({
   confirmReferenced: queryBooleanSchema.optional(),
 })
 
+/** What `findReferencedBy` scans and then summarizes. */
+type ReferenceScanSource = ReferenceScanEntry & {
+  slug: Slug
+  collectionPath: LogicalPath
+  entryType: string
+}
+
+/** Every entry of an `unavailable` entry type on the branch. */
+const listUnavailableEntries = async (
+  branchRoot: string,
+  flatSchema: FlatSchemaItem[],
+): Promise<CollectionListItem[]> => {
+  const collections = flatSchema.filter(
+    (item) => item.type === 'collection' && item.entries?.some((e) => e.unavailable),
+  )
+  const listed = await Promise.all(
+    collections.map((collection) => listCollectionEntriesShared(branchRoot, collection)),
+  )
+  return listed.flat().filter((item) => {
+    const collection = collections.find((c) => c.logicalPath === item.collectionPath)
+    return (
+      collection?.type === 'collection' &&
+      collection.entries?.some((e) => e.name === item.entryType && e.unavailable)
+    )
+  })
+}
+
 /**
  * Every entry on the branch that references `contentId`, split by whether `user` may read it.
  * A full raw scan of the branch's content: references are stored only on the referencing
@@ -368,11 +395,25 @@ const findReferencedBy = async (
   contentId: ContentId,
 ): Promise<EntryReferencedBy | null> => {
   const { branchRoot, flatSchema } = branchContext
-  const entries = await listContentEntries(
+  const listed = await listContentEntries(
     branchRoot,
     flatSchema,
     ctx.services.config.contentRoot || 'content',
   )
+  // listEntries leaves out entries of an unavailable type; scanned raw, they still count.
+  const unavailable = await listUnavailableEntries(branchRoot, flatSchema)
+  const entries: ReferenceScanSource[] = [
+    ...listed,
+    ...unavailable.map((item) => ({
+      entryPath: item.logicalPath,
+      entryId: item.contentId,
+      slug: item.slug,
+      collectionPath: item.collectionPath,
+      entryType: item.entryType,
+      data: item.data,
+      schemaUnavailable: true,
+    })),
+  ]
   const referencing = findReferencingEntries(entries, contentId)
   if (referencing.length === 0) return null
 

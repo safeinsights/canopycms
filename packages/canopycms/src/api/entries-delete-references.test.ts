@@ -9,7 +9,9 @@ import { flattenSchema, type PathPermission } from '../config'
 import { createCheckBranchAccess } from '../authorization'
 import { createTestContentAccess, unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
-import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
+import { loadCollectionMetaFiles } from '../schema'
+import { resolveCollectionMetaFiles } from '../schema/meta-loader'
+import type { EntrySchemaRegistry } from '../schema/types'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 import { deleteEntry } from './entries'
 
@@ -53,7 +55,15 @@ async function writeJson(root: string, rel: string, data: unknown) {
  * People alice and bob; posts that reference alice (one of them unreadable to u1, by path
  * rule); an md page that links to alice from its body.
  */
-async function setup(options: { readRules?: PathPermission[]; editRules?: PathPermission[] } = {}) {
+async function setup(
+  options: {
+    readRules?: PathPermission[]
+    editRules?: PathPermission[]
+    /** Defaults to every schema the fixtures name; one left out makes its entry type unavailable. */
+    registry?: EntrySchemaRegistry
+  } = {},
+) {
+  const registry = options.registry ?? (entrySchemaRegistry as EntrySchemaRegistry)
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-delete-refs-'))
   await writeJson(root, `content/${PEOPLE_DIR}/.collection.json`, {
     name: 'people',
@@ -88,7 +98,7 @@ async function setup(options: { readRules?: PathPermission[]; editRules?: PathPe
   )
 
   const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-  const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+  const { schema } = resolveCollectionMetaFiles(metaFiles, registry, 'degrade')
   const config = defineCanopyTestConfig({
     defaultBranchAccess: 'allow',
     contentRoot: 'content',
@@ -108,7 +118,7 @@ async function setup(options: { readRules?: PathPermission[]; editRules?: PathPe
   const ctx = createMockApiContext({
     services: {
       config,
-      entrySchemaRegistry,
+      entrySchemaRegistry: registry,
       checkBranchAccess,
       checkContentAccess,
       createContentAccessChecker,
@@ -148,6 +158,27 @@ const secretReadRule: PathPermission = {
 }
 
 describe('deleteEntry: entries other entries reference', () => {
+  it('counts a referrer whose entry type is unavailable, scanning its raw data', async () => {
+    const { postSchema: _post, ...withoutPostSchema } = entrySchemaRegistry
+    const { del, exists } = await setup({ registry: withoutPostSchema as EntrySchemaRegistry })
+    const res = await del('content/people/alice')
+
+    expect(res.status).toBe(409)
+    const paths = res.data?.referencedBy?.entries.map((entry) => entry.entryPath)
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        'content/posts/by-alice',
+        'content/posts/reviewed',
+        'content/posts/secret',
+      ]),
+    )
+    const reviewed = res.data?.referencedBy?.entries.find(
+      (entry) => entry.entryPath === 'content/posts/reviewed',
+    )
+    expect(reviewed?.fields).toEqual(['reviewers[1]'])
+    expect(await exists(`person.alice.${ALICE}.json`)).toBe(true)
+  })
+
   it('refuses with a 409 naming every referencing entry, and leaves the file in place', async () => {
     const { del, exists } = await setup()
     const res = await del('content/people/alice')

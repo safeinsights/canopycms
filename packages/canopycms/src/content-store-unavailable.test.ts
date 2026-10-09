@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { flattenSchema, type FieldConfig, type RootCollectionConfig } from './config'
 import { ContentStore } from './content-store'
 import { SchemaUnavailableError } from './schema/schema-unavailable-error'
+import { isNotFoundError } from './utils/error'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
 const people = unsafeAsLogicalPath('content/people')
@@ -122,6 +123,16 @@ describe('ContentStore with an unavailable entry type', () => {
       allowUnavailableEntryType: true,
     })
     expect(raw.data).toEqual({ name: 'Ada' })
+  })
+
+  it('still answers a missing entry as missing, though the default type is unavailable', async () => {
+    const missing = unsafeAsSlug('nobody')
+    await expect(store.assertEntryAvailable(people, missing)).resolves.toBeUndefined()
+    const err = await store.read(people, missing).then(
+      () => undefined,
+      (e: unknown) => e,
+    )
+    expect(isNotFoundError(err)).toBe(true)
   })
 
   it('leaves entries of the collection’s other types alone', async () => {
