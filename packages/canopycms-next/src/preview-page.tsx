@@ -108,9 +108,12 @@ export interface CreatePreviewPageOptions {
  * `cache` scopes it to one server request, and outside one it is a fresh, empty object, so a
  * render that is not a preview, or a static build, reads `undefined`.
  */
-let previewRequestScope: (() => { assetBase?: string }) | undefined
+interface PreviewRequest {
+  assetBase?: string
+}
+let previewRequestScope: (() => PreviewRequest) | undefined
 // Created on first use, because React 18 has no `cache`; it must be one instance for every request.
-const previewRequest = () => (previewRequestScope ??= cache(() => ({})))()
+const previewRequest = () => (previewRequestScope ??= cache((): PreviewRequest => ({})))()
 const readPreviewRequestAssetBase = (): string | undefined => previewRequest().assetBase
 
 /** The props Next passes a `[[...path]]` page. */
