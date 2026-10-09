@@ -3,8 +3,8 @@
  * splits across two scripts is scanned whole.
  *
  * Next writes each chunk of the stream as its own `<script>`, and React Flight cuts chunks at
- * arbitrary bytes (fixed-size views, plus timed flushes), so a URL can straddle two scripts and the
- * page text holds only its fragments. The format is the same in Next 15.5.21 and 16.1.7
+ * arbitrary bytes (it fills fixed-size views and enqueues the partial one at every flush), so a URL
+ * can straddle two scripts and the page text holds only its fragments. The format is the same in Next 15.5.21 and 16.1.7
  * (`createInlinedDataReadableStream` in `dist/server/app-render/use-flight-response.js`, read back
  * by `nextServerDataCallback` in `dist/client/app-index.js`):
  *

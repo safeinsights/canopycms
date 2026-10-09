@@ -290,7 +290,7 @@ describe('collectAssetRefs on a page with an inline RSC payload', () => {
   })
 
   it('records the whole key when the split falls inside an extension', async () => {
-    // Each truncation alone is a valid-looking key: `logo.sv` passes the static filename check.
+    // Each truncation alone passes validation (`logo.sv`, `photo.p`), so it would be recorded.
     const svg = `"/assets/${HASH2}/logo.svg"`
     const png = `"/assets/t/w=320/${HASH}/photo.png"`
     await write(
@@ -461,7 +461,7 @@ describe('collectAssetRefs on a page with an inline RSC payload', () => {
         }
       }
     }
-    expect(variants).toBeGreaterThan(500)
+    expect(variants).toBe(1126)
   })
 })
 
