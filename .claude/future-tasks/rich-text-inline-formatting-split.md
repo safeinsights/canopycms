@@ -9,7 +9,7 @@ formatted span containing one exports differently:
 
 - `**Read the [setup guide](/docs/setup) first.**` → `**Read the** [setup guide](/docs/setup)
   **first.**`: the link loses its bold.
-- `~~old `fetchAll` call~~` → `~~old ~~~~`fetchAll`~~~~ call~~`, which reads back as different
+- ``~~old `fetchAll` call~~`` → ``~~old ~~~~`fetchAll`~~~~ call~~``, which reads back as different
   text.
 
 A save after any edit writes the changed block (the save splice keeps only blocks that mean the

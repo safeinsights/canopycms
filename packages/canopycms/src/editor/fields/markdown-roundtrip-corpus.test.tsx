@@ -3,8 +3,9 @@
  * editor's load → export → save cycle. `MDXEditorLazy`, MarkdownField's editor, mounts each body
  * without crashing; a body it reports opens as source and is listed in `ROUTED_TO_SOURCE`; any
  * other body's export has the same top-level blocks by `markdownBlocks` (the save splice's
- * comparison, so formatting alone never differs); and the export saved by `serializeFrontmatter`
- * writes its md/mdx file byte for byte. A listed body fails the run once it comes out right.
+ * comparison, which ignores marker and escape style); and the export saved by
+ * `serializeFrontmatter` writes its md/mdx file byte for byte. A listed body fails the run once it
+ * comes out right.
  *
  * Bundling bugs are out of reach: request 86 crashed only under Turbopack's chunking. See
  * `.claude/future-tasks/editor-tests-miss-adopter-runtime-stack.md`.
@@ -126,7 +127,7 @@ function collectCorpus(): CorpusBody[] {
     if (!['.md', '.mdx', '.json'].includes(ext)) return []
     const raw = fs.readFileSync(path.join(REPO_ROOT, name), 'utf8')
     if (ext === '.md' || ext === '.mdx') {
-      // The body as the content store splits it, and the data as a save request carries it (JSON).
+      // The body as the content store splits it, and the data after JSON, as the API carries it.
       const parsed = matter(raw, {})
       const data = JSON.parse(JSON.stringify(parsed.data)) as Record<string, unknown>
       const fieldBodies = jsonBodies(data, '').map(
