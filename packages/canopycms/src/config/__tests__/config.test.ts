@@ -195,6 +195,17 @@ describe('config validation', () => {
     ).toThrow()
   })
 
+  it("accepts danglingReferences 'error' or 'warn' only", () => {
+    const base = { ...gitAuthor, mode: 'prod' as const }
+    expect(validateCanopyConfig({ ...base, danglingReferences: 'warn' }).danglingReferences).toBe(
+      'warn',
+    )
+    expect(validateCanopyConfig(base).danglingReferences).toBeUndefined()
+    expect(() =>
+      validateCanopyConfig({ ...base, danglingReferences: 'off' as unknown as 'warn' }),
+    ).toThrow()
+  })
+
   it('lets a later fragment override an earlier fragment field-by-field', () => {
     const first: CanopyConfigFragment = {
       ...gitAuthor,

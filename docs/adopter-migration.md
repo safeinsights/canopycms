@@ -40,6 +40,22 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### A reference to a missing entry resolves to its id, and fails the build — **breaking (types and build)**
+
+**What changed.** A reference whose id names no entry resolves to
+`{ id, unavailable: true, reason: 'missing' }` (`MissingReference`) instead of `null`, and a
+production build fails on one, naming entry, field path and id. Saving the referring entry keeps
+the id, where it used to write `null` over it; a save adding a new dangling id is refused.
+
+**To adopt.**
+
+- After narrowing on `unavailable`, check `reason === 'restricted'` before reading `title` or
+  `urlPath` (TypeScript flags it), and test `reason === 'missing'` where you tested `null`.
+  `Exclude<…, RestrictedReference>` becomes `Exclude<…, UnavailableReference>`.
+- Repoint or clear each reference the build lists, or set `danglingReferences: 'warn'`.
+
+**Now deletable.** A content-integrity test checking reference fields against entry ids.
+
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
 **What changed.** Deleting an entry that other entries reference (by field or `entry:` link)

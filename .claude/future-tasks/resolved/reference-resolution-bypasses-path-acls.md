@@ -16,7 +16,7 @@ private static pages is kept as a future option in
 (entry-schema.ts): `{ id, slug, collection, urlPath, title, unavailable: true, reason:
 'restricted' }` and no other field. The tag is `unavailable` + `reason` rather than
 `restricted: true` so the tombstone for a deleted target
-([dangling-reference-null-overwrites-id.md](../dangling-reference-null-overwrites-id.md)) can
+([dangling-reference-null-overwrites-id.md](dangling-reference-null-overwrites-id.md)) can
 join it as another `reason`. The check is the request's `createContentAccessChecker`, passed as a
 predicate into `ContentStore`'s one resolution walk, and is wired at every request-time surface:
 `read()`/`readByUrlPath()` (content-reader.ts), the editor's content read (api/content.ts), the

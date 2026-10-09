@@ -1,25 +1,29 @@
 # `static/` — Static generation
 
-Framework-agnostic static-generation helpers, and the four build-time guards that keep a published site honest.
+Framework-agnostic static-generation helpers, and the five build-time guards that keep a published site honest.
 
 The **code comment at the point of the rule is authoritative**; this file is the map to
 where those rules live.
 
 ## Overview
 
-Framework-agnostic static-generation helpers: `collectStaticPaths` (paths only) and `collectRoutableEntries` (same enumeration, `data`/`updatedAt` carried through) share one internal pass, so both inherit the build-time schema-validity guard — sitemap generation is therefore a new place a production build can go red — and both also inherit the non-fatal `findEntriesWithUnknownKeys`/`warnUnknownEntryKeys` report, which runs immediately BEFORE the throwing guard so a build about to go red still lists everything it found; neither is on `canopycms/server`, matching `findInvalidEntries`/`assertBuildEntriesValid`.
+Framework-agnostic static-generation helpers: `collectStaticPaths` (paths only) and `collectRoutableEntries` (same enumeration, `data`/`updatedAt` carried through) share one internal pass, so both inherit the build-time schema-validity guard — and both also inherit the non-fatal `findEntriesWithUnknownKeys`/`warnUnknownEntryKeys` report, which runs first so a failing build still lists everything it found; neither is on `canopycms/server`, matching `findInvalidEntries`/`assertBuildEntriesValid`.
 
 ### Guard 3 — no two entries may claim the same `urlPath`
 
-A THIRD check, and the only one exported, is `findDuplicateUrlPaths`/`assertNoDuplicateUrlPaths`, enforcing that no two entries claim the same `urlPath`; deliberately formulated on `urlPath` rather than on names, so the legitimate landing-page-entry-beside-a-sibling-collection shape (no index entry, nothing contested) stays allowed while case-only and merge-delivered same-slug collisions are caught.
+A THIRD check, exported, is `findDuplicateUrlPaths`/`assertNoDuplicateUrlPaths`, enforcing that no two entries claim the same `urlPath`; formulated on `urlPath`, not names, so the legitimate landing-page-entry-beside-a-sibling-collection shape (no index entry, nothing contested) stays allowed while case-only and merge-delivered same-slug collisions are caught.
 
 ### Guard 4 — every listed slug must actually be routable (runs FIRST)
 
-A FOURTH, `findUnroutableSlugs`/`assertRoutableSlugs` (also not on `canopycms/server`, matching `findInvalidEntries`/`assertBuildEntriesValid`), closes a gap the other three don't: the filename grammar (`utils/typed-filename.ts`'s `parseTypedFilename`) allows a slug to contain characters — a dot, most commonly — that `parseSlug` rejects, and `readByUrlPath` runs every URL-resolution candidate through `parseSlug` before trying a read. A listed entry whose slug fails that check builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit — breaking the `Round-trip safe` contract `content-listing.ts` documents on `urlPath`. Run FIRST among the four, ahead of schema validity and duplicate URLs, since an unroutable entry has no URL at all as far as the other three are concerned. Its WRITE-boundary half is the `[SLUG]` guard in `content-store.ts`'s `write()` (plus a clearer-messaged fast path in `api/content.ts` and a `parseSlug` check in `renameEntry()`), exactly mirroring the url-collision.ts/`assertNoDuplicateUrlPaths` pairing below — neither replaces the other, since git-delivered and hand-authored content never passes the write boundary.
+A FOURTH, `findUnroutableSlugs`/`assertRoutableSlugs`, closes a gap the others don't: the filename grammar (`utils/typed-filename.ts`'s `parseTypedFilename`) allows a slug to contain characters — a dot, most commonly — that `parseSlug` rejects, and `readByUrlPath` runs every URL-resolution candidate through `parseSlug` before trying a read. A listed entry whose slug fails that check builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit — breaking the `Round-trip safe` contract `content-listing.ts` documents on `urlPath`. Run FIRST, ahead of schema validity and duplicate URLs, since an unroutable entry has no URL at all as far as the others are concerned. Its WRITE-boundary half is the `[SLUG]` guard in `content-store.ts`'s `write()` (plus a clearer-messaged fast path in `api/content.ts` and a `parseSlug` check in `renameEntry()`), exactly mirroring the url-collision.ts/`assertNoDuplicateUrlPaths` pairing below — neither replaces the other, since git-delivered and hand-authored content never passes the write boundary.
+
+### Guard 5 — every reference names an entry (runs LAST)
+
+`findDanglingReferences` (exported)/`assertNoDanglingReferences` check references at any depth (`collectReferenceIds`) against every entry id in the tree; `danglingReferences: 'warn'` downgrades the failure. A `rootPath`-scoped call lists the whole tree once per build context (`knownEntryIds`). Write-boundary half: `api/content.ts` refuses a new dangling id and keeps one already in that field.
 
 ### INVARIANT — slug enforcement is create/rename only
 
-That enforcement is **create/rename only**, and `parseSlug` must NOT be pushed down into `ContentStore.resolvePath`/`validateSlug`, which are on the READ path — an entry that already carries a non-conforming slug has to stay readable, saveable and renameable, because renaming it is the only way to clear this build failure; tightening the resolver instead converts a red build into unreachable data. All four run on the RAW listing, before the caller's `filter` — `rootPath` scoping narrows them, `filter` deliberately does not. `findDuplicateUrlPaths` is exported from `canopycms/server` so adopters stop hand-rolling the scan; `canopycms-next`'s `dedupeSitemapItems` stays as the non-build-mode and `extraUrls` half.
+That enforcement is **create/rename only**, and `parseSlug` must NOT be pushed down into `ContentStore.resolvePath`/`validateSlug`, which are on the READ path — an entry that already carries a non-conforming slug has to stay readable, saveable and renameable, because renaming it is the only way to clear this build failure; tightening the resolver instead converts a red build into unreachable data. All five run on the RAW listing, before the caller's `filter` — `rootPath` scoping narrows them, `filter` deliberately does not. `findDuplicateUrlPaths` is exported from `canopycms/server` so adopters stop hand-rolling the scan; `canopycms-next`'s `dedupeSitemapItems` stays as the non-build-mode and `extraUrls` half.
 
 ### INVARIANT — an index entry answers at exactly one URL
 

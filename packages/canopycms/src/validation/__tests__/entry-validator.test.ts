@@ -9,6 +9,7 @@ import {
   validateEntryFormValue,
 } from '../entry-validator'
 import { referenceValueId } from '../field-traversal'
+import { buildMissingReference } from '../../entry-schema'
 
 const schema: EntrySchema = [
   { name: 'title', type: 'string', required: true },
@@ -266,6 +267,7 @@ describe('referenceValueId / normalizeReferenceValues', () => {
   it('extracts ids from strings and resolved objects', () => {
     expect(referenceValueId('abc')).toBe('abc')
     expect(referenceValueId({ id: 'abc', slug: 's' })).toBe('abc')
+    expect(referenceValueId(buildMissingReference('abc'))).toBe('abc')
     expect(referenceValueId(7)).toBeUndefined()
     expect(referenceValueId(null)).toBeUndefined()
   })

@@ -56,4 +56,4 @@ none of them can orphan a reference. There is no bulk delete.
 
 The check is advisory under races: a reference saved between the scan and the delete still
 dangles, which is the case
-[dangling-reference-null-overwrites-id.md](../dangling-reference-null-overwrites-id.md) covers.
+[dangling-reference-null-overwrites-id.md](dangling-reference-null-overwrites-id.md) covers.

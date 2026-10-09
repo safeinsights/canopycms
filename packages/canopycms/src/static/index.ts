@@ -9,6 +9,7 @@ import {
 import { findBodyFieldName } from '../utils/body-field'
 import { isDataOnlyFormat } from '../utils/format'
 import { parseSlug } from '../paths'
+import { collectReferenceIds } from '../validation/field-traversal'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -112,13 +113,20 @@ export interface CollectRoutableEntriesOptions<T = Record<string, unknown>> {
 }
 
 /**
+ * What the enumeration helpers take: a listing, plus the services whose config sets
+ * `danglingReferences`. A context without `services` gets the default, `'error'`.
+ */
+type StaticBuildContext = Pick<CanopyBuildContext, 'listEntries'> &
+  Partial<Pick<CanopyBuildContext, 'services'>>
+
+/**
  * Shared enumeration behind `collectStaticPaths` and `collectRoutableEntries`.
  *
  * `phaseLabel` only names the phase in the build-guard error, but it is threaded through rather
  * than fixed so the message points at the surface that actually failed.
  */
 async function enumerateRoutableEntries<T>(
-  ctx: Pick<CanopyBuildContext, 'listEntries'>,
+  ctx: StaticBuildContext,
   rootPath: string | undefined,
   phaseLabel: string,
   resolveReferences?: boolean,
@@ -129,17 +137,24 @@ async function enumerateRoutableEntries<T>(
   // an abandoned schema-invalid scaffold shipping into a static build silently drops that page's
   // route (or worse, renders broken), which is worse than a red build.
   //
-  // These four guards run in a fixed order on the RAW listing, before the caller's `filter` —
+  // These five guards run in a fixed order on the RAW listing, before the caller's `filter` —
   // `rootPath` narrows them, `filter` deliberately does not. The unknown-key warning runs first,
   // so a build about to go red still reports everything found. Slug routability runs next: an
-  // unroutable entry has no URL at all as far as the other three are concerned, the most
+  // unroutable entry has no URL at all as far as the other four are concerned, the most
   // fundamental problem a listed entry can have. Schema validity runs before duplicate URLs for
-  // the same "most fundamental first" reason, one level down.
+  // the same "most fundamental first" reason, one level down, and dangling references last: a
+  // page whose reference is broken still has its own route and data.
   if (isBuildMode()) {
     warnUnknownEntryKeys(entries, phaseLabel)
     assertRoutableSlugs(entries, phaseLabel)
     assertBuildEntriesValid(entries, phaseLabel)
     assertNoDuplicateUrlPaths(entries, phaseLabel)
+    assertNoDanglingReferences(
+      entries,
+      await knownEntryIds(ctx, entries, rootPath),
+      phaseLabel,
+      ctx.services?.config.danglingReferences ?? 'error',
+    )
   }
   return entries.map((entry) => ({
     urlPath: entry.urlPath,
@@ -172,7 +187,7 @@ async function enumerateRoutableEntries<T>(
  * const published = entries.filter((e) => !isNoindexEntry(e.data))
  */
 export async function collectRoutableEntries<T = Record<string, unknown>>(
-  ctx: Pick<CanopyBuildContext, 'listEntries'>,
+  ctx: StaticBuildContext,
   options: CollectRoutableEntriesOptions<T> = {},
 ): Promise<RoutableEntry<T>[]> {
   const entries = await enumerateRoutableEntries<T>(
@@ -198,7 +213,7 @@ export async function collectRoutableEntries<T = Record<string, unknown>>(
  * const posts = await collectStaticPaths(await getCanopyForBuild(), { rootPath: 'content/posts' })
  */
 export async function collectStaticPaths(
-  ctx: Pick<CanopyBuildContext, 'listEntries'>,
+  ctx: StaticBuildContext,
   options: CollectStaticPathsOptions = {},
 ): Promise<StaticPathEntry[]> {
   const entries = await enumerateRoutableEntries(ctx, options.rootPath, 'static path enumeration')
@@ -560,4 +575,110 @@ export function assertRoutableSlugs(items: readonly SlugScanItem[], phaseLabel: 
       'above would build, appear in generateStaticParams and any sitemap, and then 404 on every ' +
       'visit. Rename the slug (the file itself, not just its content), then rebuild.',
   )
+}
+
+/** A reference whose id names no listed entry. */
+export interface DanglingReference {
+  /** Logical path of the referring entry. */
+  entryPath: string
+  /** Field path in `traverseFields`' format, e.g. `author`, `blocks[2].author`, `reviewers[1]`. */
+  fieldPath: string
+  /** The id that names no entry. */
+  id: string
+}
+
+/** What the dangling-reference scan needs off a listing item. */
+type ReferenceScanItem = Pick<ListEntriesItem, 'entryPath' | 'entryId' | 'schema'> & {
+  data: unknown
+}
+
+/**
+ * How many dangling references the warning lists before summarising the rest; the error lists
+ * every one, for the reason `warnUnknownEntryKeys` gives.
+ */
+const DANGLING_REFERENCE_REPORT_LIMIT = 20
+
+/**
+ * Find every reference, at any depth (objects, lists, blocks), whose id names none of
+ * `knownIds`. `knownIds` defaults to the items' own ids, which is the whole id universe for an
+ * unscoped `listEntries()`.
+ *
+ * Reads ids through `referenceValueId`, so a listing that resolved its references scans the same
+ * as a raw one. An id naming a collection is dangling too, since it resolves to no entry.
+ * Exported for adopters to assert on directly; `assertNoDanglingReferences` is what the build
+ * uses. Sorted by entry, then field path.
+ */
+export function findDanglingReferences(
+  items: readonly ReferenceScanItem[],
+  knownIds: ReadonlySet<string> = new Set(items.map((item) => item.entryId)),
+): DanglingReference[] {
+  const found: DanglingReference[] = []
+  for (const item of items) {
+    if (!item.schema || typeof item.data !== 'object' || item.data === null) continue
+    const data = item.data as Record<string, unknown>
+    for (const { id, path } of collectReferenceIds(item.schema, data)) {
+      if (id && !knownIds.has(id)) found.push({ entryPath: item.entryPath, fieldPath: path, id })
+    }
+  }
+  return found.sort(
+    (a, b) => a.entryPath.localeCompare(b.entryPath) || a.fieldPath.localeCompare(b.fieldPath),
+  )
+}
+
+/**
+ * Fail the build (or, under `danglingReferences: 'warn'`, warn) when a reference names no entry.
+ *
+ * A dangling reference resolves to a `MissingReference`, so the page builds without whatever the
+ * reference supplied (a byline, its structured-data author) and nothing else notices. The save
+ * path refuses to introduce one, but a deleted target, a merge, a hand edit or a `sync pull`
+ * leaves one behind.
+ */
+export function assertNoDanglingReferences(
+  items: readonly ReferenceScanItem[],
+  knownIds: ReadonlySet<string>,
+  phaseLabel: string,
+  mode: 'error' | 'warn',
+): void {
+  const found = findDanglingReferences(items, knownIds)
+  if (found.length === 0) return
+
+  const shown = mode === 'warn' ? found.slice(0, DANGLING_REFERENCE_REPORT_LIMIT) : found
+  const lines = shown.map(
+    ({ entryPath, fieldPath, id }) => `  - ${entryPath} — ${fieldPath} → ${id}`,
+  )
+  if (found.length > shown.length) lines.push(`  …and ${found.length - shown.length} more`)
+  const message =
+    `CanopyCMS static build: found ${found.length} ${found.length === 1 ? 'reference' : 'references'} to a missing entry during ${phaseLabel}:\n${lines.join('\n')}\n` +
+    'Each resolves as unavailable, so the page renders without what it references. Repoint or ' +
+    'clear each reference, or restore the entry it names, then rebuild.'
+
+  if (mode === 'warn') console.warn(message)
+  else throw new Error(message + " Set `danglingReferences: 'warn'` to build anyway.")
+}
+
+/**
+ * Every entry id a build context can resolve a reference to, computed at most once per context.
+ *
+ * Targets live anywhere in the content tree, so a `rootPath`-scoped listing is not the id
+ * universe; that case lists the whole tree once and keeps the result for the context's lifetime.
+ * Safe to keep, unlike a request-time memo, because these guards run only in build mode, which
+ * reads a checkout that does not change mid-build (`build-mode.ts`, `readsFromCheckout`). Keyed weakly on the context, so it lives
+ * exactly as long as the context does; a rejected listing is forgotten so the next call retries.
+ */
+const entryIdUniverse = new WeakMap<object, Promise<ReadonlySet<string>>>()
+
+async function knownEntryIds(
+  ctx: StaticBuildContext,
+  listed: readonly Pick<ListEntriesItem, 'entryId'>[],
+  rootPath: string | undefined,
+): Promise<ReadonlySet<string>> {
+  const cached = entryIdUniverse.get(ctx)
+  if (cached) return cached
+  const universe: Promise<ReadonlySet<string>> =
+    rootPath === undefined
+      ? Promise.resolve(new Set(listed.map((item) => item.entryId)))
+      : ctx.listEntries().then((all) => new Set(all.map((item) => item.entryId)))
+  entryIdUniverse.set(ctx, universe)
+  universe.catch(() => entryIdUniverse.delete(ctx))
+  return universe
 }
