@@ -152,6 +152,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
     })
 
@@ -211,6 +212,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
       expect(consoleSpy).toHaveWarned('Failed to convert PR #123 to ready for review')
       consoleSpy.restore()
@@ -237,6 +239,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
         syncStatus: 'synced',
+        pushedToGitHub: true,
       })
     })
 
@@ -388,6 +391,26 @@ describe('syncSubmitPr (GIT-H1)', () => {
         }),
       )
       expect(result.syncStatus).toBe('pending-sync')
+    })
+
+    it("carries the submit's stamp to the worker and records no GitHub push of its own", async () => {
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService: undefined },
+      })
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      const result = await syncSubmitPr(ctx, branchContext, {
+        changedPaths: [],
+        submittedAt: '2026-03-01T00:00:00.000Z',
+      })
+
+      expect(mockEnqueueTask).toHaveBeenCalledWith(
+        '/mock/.tasks',
+        expect.objectContaining({
+          payload: expect.objectContaining({ submittedAt: '2026-03-01T00:00:00.000Z' }),
+        }),
+      )
+      expect(result.pushedToGitHub).toBeUndefined()
     })
 
     it('still enqueues push-and-create-or-update-pr (not push-and-update-pr) when pullRequestNumber is already known', async () => {

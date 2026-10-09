@@ -37,6 +37,18 @@ export interface BranchMetadata {
   baseBranch?: string
   pullRequestUrl?: string
   pullRequestNumber?: number
+  /**
+   * ISO timestamp of the branch's latest submit. A queued PR task carries it, so the worker's
+   * failure handling acts only on the submit that queued it.
+   */
+  submittedAt?: string
+  /**
+   * ISO timestamp of the CMS's latest push of this branch to GitHub: a worker push GitHub
+   * accepted, or a direct-path submit. Branch delete takes it as
+   * proof that a same-named GitHub branch is this branch's, since a submit whose PR GitHub refused
+   * leaves no PR number. Absent on branches the CMS never pushed there.
+   */
+  pushedToGitHubAt?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
   /** Whether this branch has unresolved merge conflicts with the base branch */
@@ -78,12 +90,11 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
-   * Short, sanitized reason the worker's last GitHub sync task failed permanently,
-   * set alongside `syncStatus: 'sync-failed'` by
-   * CmsWorker.updateBranchMetadataOnFailure -- e.g. a non-fast-forward push
-   * rejection naming the branch. Absent until a task has failed permanently, and
-   * reset to undefined by the next successful sync task, so a stale reason never
-   * survives a later successful push.
+   * Short, sanitized reason the last GitHub sync failed, set alongside
+   * `syncStatus: 'sync-failed'` by the worker's updateBranchMetadataOnFailure or a
+   * direct-path submit -- e.g. a non-fast-forward push rejection naming the branch.
+   * Shown on the branch's row in the editor. Reset to undefined by the next submit
+   * and the next successful sync task, so a stale reason never outlives it.
    */
   syncFailureReason?: string
 }
@@ -142,6 +153,30 @@ export interface BuildIdentity {
 }
 
 /**
+ * The worker holding the base branch at its current tip because the incoming tip references
+ * entry schemas the serving editor does not define (worker/schema-gate.ts).
+ */
+export interface BaseSchemaHold {
+  /** The earliest of `firstSeen`. */
+  since: string
+  /** When each missing schema was first seen missing; the earliest bounds the hold. */
+  firstSeen: Record<string, string>
+  /** GitHub's base tip the worker is not advancing to. */
+  incomingSha: string
+  /** Schema names the incoming tip references and the serving editor's registry lacks. */
+  missingSchemas: string[]
+  /** `.collection.json` files referencing them, repo-relative, at most 10. */
+  files: string[]
+  /** How many files reference them, `files` being the first 10. */
+  fileCount: number
+  /** The build that recorded the registry the gate checked against. */
+  editorBuild: BuildIdentity
+  editorRecordedAt: string
+  /** Set on the cycle the hold outlived its bound and the worker advanced anyway. */
+  expired?: true
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -191,4 +226,9 @@ export interface WorkerStatusReport {
     }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+  /**
+   * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
+   * into a restarted worker's first snapshot, so the bound survives restarts.
+   */
+  baseHold?: BaseSchemaHold
 }

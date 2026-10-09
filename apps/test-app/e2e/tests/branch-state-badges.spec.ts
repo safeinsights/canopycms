@@ -9,6 +9,7 @@ import {
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
+  saveHomeChangeViaAPI,
   withdrawBranchViaAPI,
   approveBranchViaAPI,
   deleteBranchViaAPI,
@@ -189,6 +190,7 @@ test.describe('Branch State Badges', () => {
     })
 
     await test.step('submit via API and reload', async () => {
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const res = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(res.ok).toBe(true)
       await page.reload()
@@ -246,6 +248,7 @@ test.describe('Branch State Badges', () => {
     await test.step('create, submit, approve, then mark merged', async () => {
       const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(createRes.ok).toBe(true)
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -275,6 +278,7 @@ test.describe('Branch State Badges', () => {
     await test.step('create, submit, approve via API', async () => {
       const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(createRes.ok).toBe(true)
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
       const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')

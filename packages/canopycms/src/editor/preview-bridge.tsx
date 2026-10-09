@@ -19,6 +19,7 @@ export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
+export const CANOPY_PREVIEW_MARKS = 'canopycms:preview:marks'
 
 /**
  * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
@@ -93,6 +94,15 @@ export interface PreviewFocusMessage {
 export interface HighlightMessage {
   type: typeof CANOPY_PREVIEW_HIGHLIGHT
   enabled: boolean
+}
+
+/**
+ * Preview → editor, while highlighting is on: how many `data-canopy-path` elements the page has,
+ * so the editor can say when there is nothing to outline. An older bridge sends none.
+ */
+export interface PreviewMarksMessage {
+  type: typeof CANOPY_PREVIEW_MARKS
+  count: number
 }
 
 /**
@@ -258,6 +268,41 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [editorOrigin])
+
+  // Reported after the render that turned highlighting on, then again whenever the marks change
+  // (a draft, or content rendered after hydration), so the editor's note keeps up with the page.
+  useEffect(() => {
+    if (!enabled || window.parent === window) return
+    const target = resolveMessageOrigin(editorOrigin)
+    if (isOpaqueOrigin(target)) return
+    let reported = -1
+    const report = () => {
+      const count = document.querySelectorAll('[data-canopy-path]').length
+      if (count === reported) return
+      reported = count
+      const msg: PreviewMarksMessage = { type: CANOPY_PREVIEW_MARKS, count }
+      window.parent.postMessage(msg, target)
+    }
+    report()
+    // A trailing throttle, so steady DOM churn cannot hold the report back, on a timer rather
+    // than requestAnimationFrame, which a hidden frame never runs.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const observer = new MutationObserver(() => {
+      timer ??= setTimeout(() => {
+        timer = undefined
+        report()
+      }, 100)
+    })
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributeFilter: ['data-canopy-path'],
+    })
+    return () => {
+      observer.disconnect()
+      clearTimeout(timer)
+    }
+  }, [enabled, editorOrigin])
 
   return enabled
 }
