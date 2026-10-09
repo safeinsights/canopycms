@@ -26,9 +26,11 @@ import {
   isNode,
   isScalar,
   isSeq,
+  parse as yamlParse,
   parseDocument,
   Scalar,
   stringify as yamlStringify,
+  visit,
   type Document,
   type Pair,
   type YAMLMap,
@@ -50,6 +52,24 @@ interface ReconcileContext {
   readonly replaced: WeakMap<object, unknown>
   /** Fresh scalars given the replaced scalar's style, which a re-print may have to take back. */
   readonly restyled: Scalar[]
+  /** Strings the file's reader would not read back from plain text; written single-quoted. */
+  readonly quote?: (text: string) => boolean
+}
+
+/** A fresh node for `value`, its strings that `ctx.quote` names single-quoted. */
+function createNode(ctx: ReconcileContext, value: unknown): ReturnType<Document['createNode']> {
+  const node = ctx.doc.createNode(value)
+  const { quote } = ctx
+  if (quote !== undefined) {
+    visit(node, {
+      Scalar(_key, scalar) {
+        if (typeof scalar.value === 'string' && quote(scalar.value)) {
+          scalar.type = Scalar.QUOTE_SINGLE
+        }
+      },
+    })
+  }
+  return node
 }
 
 /** The comment metadata every `yaml` node carries (see `NodeBase` in the `yaml` types). */
@@ -246,7 +266,7 @@ function reconcileNode(ctx: ReconcileContext, existing: unknown, value: unknown)
   // Changed, or a shape change (scalar <-> collection). A fresh node rather than mutating
   // `scalar.value` in place, which would keep the old node's representation and emit `'42'` where
   // the number 42 was meant.
-  const fresh = ctx.doc.createNode(value)
+  const fresh = createNode(ctx, value)
   if (isNode(existing)) ctx.replaced.set(fresh, existing)
   if (isScalar(existing) && isScalar(fresh) && typeof value === 'string') {
     const style = carriedStyle(existing, value)
@@ -317,7 +337,7 @@ function reconcileMap(
 
   for (const key of Object.keys(value)) {
     if (seen.has(key) || !wanted.has(key)) continue
-    map.set(ctx.doc.createNode(key), ctx.doc.createNode(value[key]))
+    map.set(createNode(ctx, key), createNode(ctx, value[key]))
   }
 }
 
@@ -398,12 +418,15 @@ function reconcileSeq(
 function reconcileYamlSource(
   raw: string,
   data: Record<string, unknown>,
-  rootAtColumnZero = false,
+  {
+    rootAtColumnZero = false,
+    quote,
+  }: Pick<ReconcileContext, 'quote'> & { rootAtColumnZero?: boolean } = {},
 ): string | undefined {
   const doc: Document = parseDocument(raw)
   if (doc.errors.length > 0) return undefined
   const snapshot = snapshotDocument(doc)
-  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [] }
+  const ctx: ReconcileContext = { doc, replaced: new WeakMap(), restyled: [], quote }
   doc.contents = reconcileNode(ctx, doc.contents, data) as Document['contents']
   let reconciled = withSourceLineEndings(doc.toString(), raw)
   if (!readsBackAs(reconciled, doc)) {
@@ -469,7 +492,8 @@ function extractRawFrontmatter(raw: string): string | undefined {
   }
   const frontmatter = (parsed as { matter?: unknown }).matter
   if (typeof frontmatter !== 'string' || frontmatter.trim() === '') return undefined
-  return frontmatter
+  // gray-matter ends the frontmatter at `\n---`, so a CRLF file's keeps the closing line's `\r`.
+  return frontmatter.replace(/\r$/, '')
 }
 
 /** The body of a file as gray-matter splits it, or undefined when it cannot split it. */
@@ -559,11 +583,36 @@ function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): un
   }
   if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
     if (read.length !== disk.length) return value
-    return value.map((child, i) =>
-      i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child,
-    )
+    // An item sent as read anywhere in the list, so an insert or a reorder keeps the rest as read.
+    const readKeys = read.map(identityKey)
+    const claimed = new Set<number>()
+    return value.map((child, i) => {
+      const key = identityKey(child)
+      const at = readKeys.findIndex((k, j) => k !== undefined && k === key && !claimed.has(j))
+      if (at >= 0) {
+        claimed.add(at)
+        return disk[at]
+      }
+      return i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child
+    })
   }
   return value
+}
+
+/**
+ * Whether js-yaml (YAML 1.1) reads `text`, written plain, as a value the API would not carry as
+ * that string: `1:30` is 90 and a bare date a `Date`, while a timestamp the editor's date field
+ * writes reads as a date the API carries as the same text, and stays plain. `yaml`'s YAML 1.1
+ * schema stands in for js-yaml; it also takes `yes` and `no` for booleans, which only quotes them
+ * needlessly.
+ */
+function readsAsAnotherValue(text: string): boolean {
+  if (text.includes('\n')) return false
+  try {
+    return identityKey(yamlParse(text, { version: '1.1' })) !== identityKey(text)
+  } catch {
+    return true
+  }
 }
 
 /**
@@ -597,7 +646,7 @@ export function serializeFrontmatter(
   const reconciled = reconcileYamlSource(
     existingFrontmatter,
     isPlainRecord(toReconcile) ? toReconcile : data,
-    true,
+    { rootAtColumnZero: true, quote: readsAsAnotherValue },
   )
   if (reconciled === undefined) return matter.stringify(file, data)
 

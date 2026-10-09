@@ -618,6 +618,46 @@ Body.
     expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
   })
 
+  it('keeps comments and unchanged lines in a CRLF file', () => {
+    const crlf = DATED.replace(/\n/g, '\r\n')
+    const out = serializeFrontmatter('\r\nBody.\r\n', asRead(crlf), crlf, 'md')
+    expect(out).toContain('title: Launch # shown in the card\r\ndate: 2024-01-15\r\n')
+    expect(out).toContain('  published: 2024-03-01')
+    expect(asRead(out)).toEqual(asRead(crlf))
+  })
+
+  it.each(['1:30', '12:30:00', '1_000', '0b101', '2024-05-01', '014'])(
+    'quotes a changed string the read path would read as another type (%s), keeping the rest',
+    (text) => {
+      const data = { ...asRead(DATED), title: text }
+      const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+      expect(asRead(out)).toEqual(data)
+      expect(out).toContain(`title: '${text}' # shown in the card\ndate: 2024-01-15\n`)
+    },
+  )
+
+  it('keeps unchanged list items as written when an item is inserted before them', () => {
+    const blocks = `---
+blocks:
+  # keep this hero
+  - kind: hero
+    when: 2024-01-15
+  - kind: cta
+    when: 2024-02-15
+---
+
+Body.
+`
+    const read = asRead(blocks)
+    const data = { blocks: [{ kind: 'banner' }, ...(read.blocks as unknown[])] }
+    const out = serializeFrontmatter('\nBody.\n', data, blocks, 'md')
+    expect(out).toContain(
+      '  # keep this hero\n  - kind: banner\n  - kind: hero\n    when: 2024-01-15\n',
+    )
+    expect(out).toContain('    when: 2024-02-15\n')
+    expect(asRead(out)).toEqual(data)
+  })
+
   it('writes a date-like string as a string', () => {
     const data = { ...asRead(DATED), version: '2024-05-01' }
     expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
