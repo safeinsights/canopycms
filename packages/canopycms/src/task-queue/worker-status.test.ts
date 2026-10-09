@@ -9,7 +9,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { writeWorkerStatus, WORKER_STATUS_FILE } from './worker-status'
+import { readCarriedOverStatus, writeWorkerStatus, WORKER_STATUS_FILE } from './worker-status'
 import type { WorkerStatusReport } from '../types'
 
 describe('writeWorkerStatus', () => {
@@ -87,5 +87,48 @@ describe('writeWorkerStatus', () => {
     expect(parsed.lastFatalError).toBeUndefined()
     expect(parsed.lastGitSync).toBeUndefined()
     expect(parsed.lastTaskCycleAt).toBe('2026-01-01T00:02:00.000Z')
+  })
+})
+
+describe('readCarriedOverStatus', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-status-carry-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it("returns the previous worker's fatal error and shutdown record, and nothing else", async () => {
+    const lastFatalError = {
+      message: 'dead',
+      at: '2026-01-01T00:00:00.000Z',
+      phase: 'run' as const,
+    }
+    const lastShutdown = {
+      reason: 'SIGTERM',
+      at: '2026-01-01T00:01:00.000Z',
+      outcome: 'deadline' as const,
+      drainMs: 90_000,
+      abandoned: ['git sync'],
+    }
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: 'x',
+      lastTaskCycleAt: '2026-01-01T00:00:30.000Z',
+      lastFatalError,
+      lastShutdown,
+    })
+
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError, lastShutdown })
+  })
+
+  it('returns nothing when there is no readable status file', async () => {
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({})
+    await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({})
   })
 })

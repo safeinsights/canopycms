@@ -26,6 +26,7 @@ const makeWorker = () =>
     githubRepo: 'test-repo',
     githubToken: 'fake-token',
     taskTimeoutMs: 500,
+    drainDeadlineMs: 500,
   })
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ describe('CmsWorker.stop()', () => {
 
   it('awaits all active operations before returning', async () => {
     const worker = makeWorker()
-    const activeOps = (worker as unknown as { activeOperations: Set<Promise<void>> })
+    const activeOps = (worker as unknown as { activeOperations: Map<Promise<void>, string> })
       .activeOperations
 
     const log: string[] = []
@@ -64,8 +65,8 @@ describe('CmsWorker.stop()', () => {
       }, 40)
     })
 
-    activeOps.add(op1)
-    activeOps.add(op2)
+    activeOps.set(op1, 'op1')
+    activeOps.set(op2, 'op2')
 
     // Prevent releaseLock from running (worker was never started/locked)
     ;(worker as unknown as { releaseLock(): Promise<void> }).releaseLock = async () => {}
@@ -78,14 +79,14 @@ describe('CmsWorker.stop()', () => {
     expect(log).toContain('op2')
   })
 
-  it('returns after taskTimeoutMs even if operations are still pending', async () => {
-    const worker = makeWorker() // taskTimeoutMs = 500
-    const activeOps = (worker as unknown as { activeOperations: Set<Promise<void>> })
+  it('returns after the drain deadline even if operations are still pending', async () => {
+    const worker = makeWorker() // drainDeadlineMs = 500
+    const activeOps = (worker as unknown as { activeOperations: Map<Promise<void>, string> })
       .activeOperations
 
     // Op that never resolves
     const hanging = new Promise<void>(() => {})
-    activeOps.add(hanging)
+    activeOps.set(hanging, 'hanging')
     ;(worker as unknown as { releaseLock(): Promise<void> }).releaseLock = async () => {}
     ;(worker as unknown as { running: boolean }).running = false
 
@@ -93,7 +94,7 @@ describe('CmsWorker.stop()', () => {
     await worker.stop()
     const elapsed = Date.now() - start
 
-    // Should have bailed after ~500ms (taskTimeoutMs), not hung forever
+    // Should have bailed after ~500ms (the deadline) plus the abort grace, not hung forever
     expect(elapsed).toBeGreaterThanOrEqual(400)
     expect(elapsed).toBeLessThan(5000)
   })
@@ -738,7 +739,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.pushBranchToGitHub).toHaveBeenCalledWith(branch)
+    expect(internals.pushBranchToGitHub).toHaveBeenCalledWith(branch, expect.any(AbortSignal))
     expect(internals.octokit.pulls.list).not.toHaveBeenCalled()
     expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
     expect(internals.octokit.pulls.update).not.toHaveBeenCalled()

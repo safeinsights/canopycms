@@ -191,4 +191,19 @@ export interface WorkerStatusReport {
     }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+  /**
+   * How the previous worker stopped, written by `CmsWorker.stop()` and carried
+   * into each new worker's snapshot. `deadline` means in-flight work was still
+   * running when the drain deadline hit; `abandoned` names it.
+   */
+  lastShutdown?: WorkerShutdownRecord
+}
+
+export interface WorkerShutdownRecord {
+  /** Why the worker stopped, as its entrypoint described it (e.g. 'SIGTERM'). */
+  reason: string
+  at: string
+  outcome: 'drained' | 'deadline'
+  drainMs: number
+  abandoned?: string[]
 }

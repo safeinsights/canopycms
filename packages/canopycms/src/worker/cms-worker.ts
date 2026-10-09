@@ -19,7 +19,7 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
+import { readCarriedOverStatus, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import type { WorkerContext } from './worker-context'
@@ -121,11 +121,43 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * older than this is abandoned and taken over by the next worker to start.
    */
   lockStaleMs?: number
+  /**
+   * How long `stop()` waits for in-flight work before aborting it, in ms
+   * (default {@link DEFAULT_DRAIN_DEADLINE_MS}). An entrypoint's process
+   * manager must allow longer than this before it kills the process.
+   */
+  drainDeadlineMs?: number
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
+/**
+ * 90s fits inside an EC2 spot interruption's two-minute notice with room to
+ * exit, and exceeds the default task timeout, so a task already running when
+ * the drain begins normally finishes or times out on its own.
+ */
+export const DEFAULT_DRAIN_DEADLINE_MS = 90_000
+/**
+ * After aborting at the drain deadline, how long to let the aborted work
+ * unwind: this, or the deadline itself if that is shorter.
+ */
+const ABORT_GRACE_MS = 5_000
+
+/** Whether every promise settles within `ms`. */
+async function settlesWithin(operations: Promise<unknown>[], ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      Promise.allSettled(operations).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * CMS Worker daemon: the operations Lambda, which has no internet, cannot
@@ -160,7 +192,13 @@ export class CmsWorker {
   private settingsBranchResolved?: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
-  private activeOperations = new Set<Promise<void>>()
+  // In-flight loop iterations, each labelled for the drain's log lines and
+  // `lastShutdown.abandoned`.
+  private activeOperations = new Map<Promise<void>, string>()
+  private stopping: Promise<void> | null = null
+  private drainDeadlineMs: number
+  // Aborted when a draining stop() reaches its deadline; see WorkerContext.
+  private shutdownController = new AbortController()
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
   private maxRetries: number
@@ -190,6 +228,7 @@ export class CmsWorker {
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
+    this.drainDeadlineMs = config.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS
     this.contentRoot = config.contentRoot ?? 'content'
   }
 
@@ -273,8 +312,9 @@ export class CmsWorker {
       refreshGitHubCredential: () => this.refreshGitHubCredential(),
       branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
       executeTask: (task, signal) => this.executeTask(task, signal),
-      pushBranchToGitHub: (branch) => this.pushBranchToGitHub(branch),
+      pushBranchToGitHub: (branch, signal) => this.pushBranchToGitHub(branch, signal),
       isRunning: () => this.running,
+      shutdownSignal: () => this.shutdownController.signal,
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
@@ -288,16 +328,25 @@ export class CmsWorker {
     this.ensureStatusReport()
 
     await this.acquireLock()
+    // stop() ran while the lock was being acquired, and found nothing to release.
+    if (!this.running) {
+      await this.releaseLock()
+      return
+    }
 
     // Replace the previous holder's status file now: the first sync can take
     // minutes, and until then System health would report the old worker's
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
-    // its alert between restarts while the first successful sync still clears it.
+    // its alert between restarts while the first successful sync still clears
+    // it. `lastShutdown` is kept on the report itself, until this worker's own
+    // stop() replaces it.
     try {
-      const lastFatalError = await readLastFatalError(this.taskDir)
+      const { lastFatalError, lastShutdown } = await readCarriedOverStatus(this.taskDir)
+      const report = this.ensureStatusReport()
+      if (lastShutdown) report.lastShutdown = lastShutdown
       await writeWorkerStatus(this.taskDir, {
-        ...this.ensureStatusReport(),
+        ...report,
         ...(lastFatalError ? { lastFatalError } : {}),
       })
     } catch (err) {
@@ -346,9 +395,10 @@ export class CmsWorker {
         workerLog(`Recovered ${recovered} orphaned task(s)`)
       }
 
-      const initialTasks: Promise<void>[] = [this.syncGit()]
+      // Tracked like loop iterations, so a stop() during the first sync drains it.
+      const initialTasks: Promise<void>[] = [this.trackOperation('git sync', this.syncGit())]
       if (this.config.refreshAuthCache) {
-        initialTasks.push(this.refreshAuthCache())
+        initialTasks.push(this.trackOperation('auth cache refresh', this.refreshAuthCache()))
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
@@ -377,19 +427,21 @@ export class CmsWorker {
       throw err
     }
 
+    if (!this.running) return
+
     const taskInterval = this.config.taskPollInterval ?? 5_000
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
-    this.scheduleLoop(() => this.processTaskQueue(), taskInterval)
+    this.scheduleLoop('task queue', () => this.processTaskQueue(), taskInterval)
     // The wrapper, not syncGit() itself: a failed sync is where a rotated or
     // revoked GitHub credential is noticed. start()'s own initial syncGit()
     // above stays unwrapped -- there is no stale credential to refresh one line
     // after reading it at boot.
-    this.scheduleLoop(() => this.syncGitWithCredentialRefresh(), gitInterval)
+    this.scheduleLoop('git sync', () => this.syncGitWithCredentialRefresh(), gitInterval)
 
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
-      this.scheduleLoop(() => this.refreshAuthCache(), cacheInterval)
+      this.scheduleLoop('auth cache refresh', () => this.refreshAuthCache(), cacheInterval)
       workerLog(`  Auth cache refresh: every ${cacheInterval / 1000}s`)
     }
 
@@ -398,22 +450,82 @@ export class CmsWorker {
     workerLog(`  Git sync: every ${gitInterval / 1000}s`)
   }
 
-  async stop(): Promise<void> {
+  /**
+   * Drain, then release the worker lock. Idempotent: a second call returns the
+   * first call's promise.
+   *
+   * 1. Stop taking work: `running` goes false, so no loop starts another
+   *    iteration and no loop claims another task or starts another sync stage
+   *    or branch rebase (each checks `isRunning()` at its boundaries).
+   * 2. Wait up to `drainDeadlineMs` for what is already in flight.
+   * 3. At the deadline, abort it through `shutdownSignal()`: a task's git push
+   *    and GitHub calls are killed and the task is released to pending with no
+   *    retry spent; a sync's fetch or settings push is killed. A branch rebase
+   *    is never aborted, because a rebase killed mid-branch is recovered
+   *    lossily; anything still unsettled after a short grace is abandoned to
+   *    the process exit.
+   * 4. Record `lastShutdown` in worker-status.json -- only while this worker
+   *    still holds the lock, since after a compromise another worker owns the
+   *    file -- and release the lock. Release comes LAST, so no successor can
+   *    start while this worker's work is still running.
+   */
+  stop(options: { reason?: string } = {}): Promise<void> {
+    this.stopping ??= this.drainAndStop(options.reason ?? 'stop requested')
+    return this.stopping
+  }
+
+  private async drainAndStop(reason: string): Promise<void> {
+    const startedAt = Date.now()
     this.running = false
     for (const t of this.activeTimeouts) {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
-    let drainTimer: NodeJS.Timeout | undefined
-    await Promise.race([
-      Promise.allSettled([...this.activeOperations]),
-      new Promise<void>((r) => {
-        drainTimer = setTimeout(r, this.taskTimeoutMs)
-      }),
-    ])
-    clearTimeout(drainTimer)
+
+    const inFlight = [...this.activeOperations.values()]
+    workerLog(
+      inFlight.length > 0
+        ? `Draining (${reason}): waiting up to ${this.drainDeadlineMs / 1000}s for ${inFlight.join(', ')}`
+        : `Draining (${reason}): nothing in flight`,
+    )
+
+    let abandoned: string[] = []
+    if (!(await settlesWithin([...this.activeOperations.keys()], this.drainDeadlineMs))) {
+      abandoned = [...new Set(this.activeOperations.values())]
+      workerLogWarn(
+        `Drain deadline (${this.drainDeadlineMs / 1000}s) hit, aborting: ${abandoned.join(', ')}`,
+      )
+      this.shutdownController.abort()
+      const graceMs = Math.min(ABORT_GRACE_MS, this.drainDeadlineMs)
+      if (!(await settlesWithin([...this.activeOperations.keys()], graceMs))) {
+        workerLogError(
+          `Still running ${graceMs / 1000}s after the abort, abandoned to the exit: ${[
+            ...new Set(this.activeOperations.values()),
+          ].join(', ')}`,
+        )
+      }
+    }
+
+    const drainMs = Date.now() - startedAt
+    if (this.releaseLockFn) {
+      const report = this.ensureStatusReport()
+      report.lastShutdown = {
+        reason,
+        at: new Date().toISOString(),
+        outcome: abandoned.length > 0 ? 'deadline' : 'drained',
+        drainMs,
+        ...(abandoned.length > 0 ? { abandoned } : {}),
+      }
+      await writeWorkerStatus(this.taskDir, report).catch((err) =>
+        workerLogError('Failed to write worker status on shutdown:', getErrorMessage(err)),
+      )
+    }
     await this.releaseLock()
-    workerLog('CMS Worker stopped')
+    workerLog(
+      abandoned.length > 0
+        ? `CMS Worker stopped after the drain deadline (${(drainMs / 1000).toFixed(1)}s)`
+        : `CMS Worker stopped: drained in ${(drainMs / 1000).toFixed(1)}s`,
+    )
   }
 
   /**
@@ -450,7 +562,7 @@ export class CmsWorker {
           // to preserve the single-consumer invariant.
           workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
-          void this.stop()
+          void this.stop({ reason: 'worker lock compromised' })
         },
       })
     } catch (err) {
@@ -474,12 +586,19 @@ export class CmsWorker {
     }
   }
 
+  /** Register `operation` as in flight under `label` until it settles. */
+  private trackOperation(label: string, operation: Promise<void>): Promise<void> {
+    this.activeOperations.set(operation, label)
+    void operation.finally(() => this.activeOperations.delete(operation)).catch(() => {})
+    return operation
+  }
+
   /**
    * Run `fn` repeatedly, the next invocation starting `interval` ms after the
    * previous one COMPLETES. setTimeout chaining rather than setInterval, so
    * executions cannot overlap when one runs longer than the interval.
    */
-  private scheduleLoop(fn: () => Promise<void>, interval: number): void {
+  private scheduleLoop(label: string, fn: () => Promise<void>, interval: number): void {
     const run = () => {
       if (!this.running) return
       const timeout = setTimeout(async () => {
@@ -487,9 +606,7 @@ export class CmsWorker {
         const operation = fn().catch((err) => {
           workerLogError('Worker loop error:', err instanceof Error ? err.message : err)
         })
-        this.activeOperations.add(operation)
-        operation.finally(() => this.activeOperations.delete(operation))
-        await operation
+        await this.trackOperation(label, operation)
         run()
       }, interval)
       this.activeTimeouts.add(timeout)
@@ -721,8 +838,8 @@ export class CmsWorker {
     return updateBranchMetadata(this.ctx(), task, result)
   }
 
-  private async pushBranchToGitHub(branch: string): Promise<void> {
-    return pushBranchToGitHub(this.ctx(), branch)
+  private async pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void> {
+    return pushBranchToGitHub(this.ctx(), branch, signal)
   }
 
   /**

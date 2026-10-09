@@ -82,6 +82,7 @@ export type GitSyncContext = Pick<
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
+  | 'shutdownSignal'
 > &
   // syncGit hands its own context straight to runRebaseCycle, so the rebase
   // loop's own requirements are part of this cluster's surface.
@@ -400,6 +401,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // (scheduleLoop only reschedules after completion). The block timeout
     // is inactivity-based, so a slow-but-flowing transfer is unaffected.
     timeout: { block: ctx.taskTimeoutMs },
+    // A fetch or settings push still running at the drain deadline is killed.
+    // Each ref update is atomic, so a killed one leaves every ref either as it
+    // was or fully moved, and the next worker's sync carries on from there.
+    abort: ctx.shutdownSignal(),
   })
   // gitNetworkChildEnv because the fetch and push here reach GitHub, and
   // because pushSettingsBranches(git) below needs its stable-English guarantee
@@ -432,6 +437,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
 
+    if (stoppedForDrain(ctx, 'the GitHub fetch')) return
+
     // Direct URL (no named remote), into the GITHUB_TRACKING_REF_PREFIX
     // remote-tracking namespace rather than refs/heads/* -- see that constant's
     // doc comment for the destructive-fetch bug this avoids. Raw git, because
@@ -453,9 +460,12 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // -- this could run before or after them just as safely.
     await pushSettingsBranches(ctx, git, trackedNames)
 
+    if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
 
+    if (stoppedForDrain(ctx, 'the rebase cycle')) return
     const rebaseSummary = await runRebaseCycle(ctx)
+    if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
@@ -503,6 +513,17 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     )
     throw err
   }
+}
+
+/**
+ * A draining worker ends the sync cycle at the next stage boundary, never
+ * mid-stage. The early return leaves the previous cycle's `lastGitSync` in
+ * worker-status.json; the shutdown itself is recorded as `lastShutdown`.
+ */
+function stoppedForDrain(ctx: Pick<GitSyncContext, 'isRunning'>, nextStage: string): boolean {
+  if (ctx.isRunning()) return false
+  workerLog(`Git sync stopped before ${nextStage}: the worker is draining`)
+  return true
 }
 
 /** Foreign repositories already reported by this process, so each is logged once. */

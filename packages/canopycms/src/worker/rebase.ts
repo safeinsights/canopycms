@@ -72,6 +72,7 @@ export type RebaseContext = Pick<
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
+  | 'isRunning'
 >
 
 /**
@@ -564,6 +565,12 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
   }
 
   for (const branchDir of branchDirs) {
+    // A draining worker finishes the branch it is rebasing and starts no other:
+    // a rebase killed mid-branch is recovered lossily on the next boot.
+    if (!ctx.isRunning()) {
+      workerLog('  Rebase cycle stopped: the worker is draining')
+      break
+    }
     // Known structural entries under content-branches/, not branch workspaces:
     // branches.json (registry snapshot) and dot-prefixed entries
     // (.canopy-meta/, transient lock dirs). Skipped SILENTLY so the no-.git
