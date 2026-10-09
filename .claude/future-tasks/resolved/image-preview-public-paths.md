@@ -5,10 +5,10 @@
 
 ## Problem
 
-An adopter converted image fields to `type: 'image'` keeping their existing `public/` paths (the
-serving-neutral first step `docs/adopter-migration.md` recommends). Every `ImageField` then showed
+An adopter converted image fields to `type: 'image'` keeping their existing `public/` paths. Every
+`ImageField` then showed
 "Preview unavailable": the field built its preview with `assetUrl(..., { baseUrl: <raw route> })`,
-and `assetUrl` puts every root-relative src behind its mount, so `/people/x.png` was fetched as
+and `assetUrl` puts every root-relative src behind its mount (`assets/asset-url.ts:136`), so `/people/x.png` was fetched as
 `/api/canopycms/assets/raw/people/x.png` and 404'd. The public site rendered the same values fine,
 because without a mount `assetUrl` returns a non-asset src unchanged. Around 28 of the adopter's
 images stay on `public/` paths for the foreseeable future.
@@ -35,5 +35,10 @@ reached an editor `<img>` unneutralized.
 `editor-image-src.test.ts` (width/crop on a transform src; `public/` raster and svg as written;
 protocol-relative and `blob:` as written; backslash, mixed-slash and tab-split spellings stay
 same-origin) and `ImageField.test.tsx` (`/logos/x.svg` and `/people/x.png` preview at their own
-path with no Crop button). Each was red before the fix, and four deliberate breaks of the fix each
-failed the tests aimed at them.
+path with no Crop button). The ImageField, width/crop and backslash/mixed-slash cases were red
+before the fix; the `public/` and protocol-relative/`blob:` unit cases pin behaviour the old
+`editorImageSrc` already had. Four deliberate breaks of the fix (always mounting, passing non-store
+srcs through raw, dropping `opts`, ungating Crop) each failed the tests aimed at them.
+
+Follow-ups: [svg-asset-crop-never-renders.md](../svg-asset-crop-never-renders.md),
+[editor-preview-public-paths-under-basepath.md](../editor-preview-public-paths-under-basepath.md).

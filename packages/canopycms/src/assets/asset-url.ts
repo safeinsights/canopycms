@@ -66,7 +66,7 @@ const ASSET_SPACE_PREFIX = `/${ASSET_PREFIXES.public}/`
 /**
  * Whether `src` is in canopycms's own `/assets` URL space - a transform or static asset src the
  * asset store serves. Every other src (a site's own static file, an off-site URL, a `data:` URI)
- * is the host's, and no asset mount point applies to it.
+ * is the host's, and the asset store never serves it.
  */
 export function isAssetStoreSrc(src: string): boolean {
   return src.startsWith(ASSET_SPACE_PREFIX)

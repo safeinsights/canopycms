@@ -150,6 +150,8 @@ with the in-flight ACL chips.
 
 | File | Summary |
 | ---- | ------- |
+| [svg-asset-crop-never-renders.md](svg-asset-crop-never-renders.md) | New 2026-10-08. `ImageField` offers Crop for an svg asset, but `assetUrl` applies a crop only to `/assets/t/` srcs, so the stored crop never renders. Gate Crop on an exported transform-src predicate [BOTH] |
+| [editor-preview-public-paths-under-basepath.md](editor-preview-public-paths-under-basepath.md) | New 2026-10-08. Editor previews of a `public/` image src use the bare path, which misses under a Next `basePath`. Carry `basePath` in `AssetContext` and prefix non-store root-relative srcs as the public site does [BOTH] |
 | [prettier-on-edited-markdown-blocks.md](prettier-on-edited-markdown-blocks.md) | New 2026-10-08, deferred from adopter request 85. Untouched body blocks keep their text and new text uses Prettier's markers, but an edited block is still MDXEditor's serialisation, whose escapes (`a\_b`) Prettier rewrites. Format edited blocks with `prettier/standalone` server-side inside the splice, with Prettier's defaults [BOTH] |
 | [markdown-field-values-not-source-preserved.md](markdown-field-values-not-source-preserved.md) | New 2026-10-08. A markdown field stored as a frontmatter/YAML string is saved whole as the editor's serialisation, restyling untouched paragraphs in it. Apply `preserveMarkdownSource` to markdown-typed values at `ContentStore.write`, which has the schema [BOTH] |
 | [inserted-image-lands-inline.md](inserted-image-lands-inline.md) | New 2026-10-08, from adopter request 85's report. A toolbar image insert lands inline at the cursor with no blank lines around it. Make the toolbar insert block-level if MDXEditor allows it, or document it [MKT] |

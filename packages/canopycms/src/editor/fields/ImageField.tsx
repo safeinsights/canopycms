@@ -73,7 +73,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const previewSrc = value
     ? editorImageSrc(value.src, baseUrl, { width: PREVIEW_WIDTH, crop: value.crop })
     : undefined
-  // A crop is applied only to an asset-store src; one stored on any other src would never render.
+  // `assetUrl` never applies a crop to a src outside the asset store, so one stored there never renders.
   const canCrop = aspectRatio !== undefined && !!value && isAssetStoreSrc(value.src)
   // Broken-preview fallback, mirroring AssetCard.tsx's thumbnail fallback (same
   // icon/copy, same reset-during-render pattern). Covers both an asset broken
