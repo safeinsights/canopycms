@@ -240,7 +240,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           target.style.boxShadow = previous
         }, 1200)
 
-        // Cleared shortly after, once FieldWrapper has seen it and focused the field.
+        // Cleared shortly after, once FieldWrapper has seen it and scrolled to the field.
         setFocusedFieldPath(found.path)
         later(() => setFocusedFieldPath(undefined), 100)
       }

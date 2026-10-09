@@ -270,7 +270,7 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
   }, [editorOrigin])
 
   // Reported after the render that turned highlighting on, then again whenever the marks change
-  // (a draft, or content rendered after hydration), so the editor's note never trails the page.
+  // (a draft, or content rendered after hydration), so the editor's note keeps up with the page.
   useEffect(() => {
     if (!enabled || window.parent === window) return
     const target = resolveMessageOrigin(editorOrigin)

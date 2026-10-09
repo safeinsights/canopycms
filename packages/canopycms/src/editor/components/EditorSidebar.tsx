@@ -141,7 +141,7 @@ export function EditorSidebar({
         </ActionIcon>
 
         <Tooltip
-          label="This preview page marks no editable elements. Mark them with fieldProps to highlight and click to focus them."
+          label="This preview page marks no editable elements, so nothing can be highlighted or clicked to focus. The site's developer can mark them with fieldProps."
           opened={highlightEnabled && previewMarksNothing}
           position="left"
           multiline
