@@ -845,23 +845,25 @@ jobs:
       # runner's Ubuntu mirror sometimes serves them at ~150 kB/s, which adds
       # two to three minutes to one shard. apt keeps the downloaded .debs in
       # the cached directory below and checks each against its package index,
-      # so a stale file is fetched again rather than installed.
+      # so a stale file is fetched again rather than installed. The directory
+      # is under /tmp because apt downloads as the unprivileged `_apt` user,
+      # which cannot enter the runner's home directory.
       - name: Cache Playwright system packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/playwright-apt
+          path: /tmp/playwright-apt
           key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             playwright-apt-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install Playwright system dependencies
         run: |
-          mkdir -p ~/.cache/playwright-apt/partial
-          echo "Dir::Cache::Archives \"$HOME/.cache/playwright-apt\";" |
+          mkdir -p /tmp/playwright-apt/partial
+          echo 'Dir::Cache::Archives "/tmp/playwright-apt";' |
             sudo tee /etc/apt/apt.conf.d/99playwright-deb-cache
           pnpm exec playwright install-deps chromium
-          # apt writes as root, and its root-only lock file would fail the cache save.
-          sudo chown -R "$(id -u):$(id -g)" ~/.cache/playwright-apt
+          # apt leaves root- and _apt-owned files that the cache save could not read.
+          sudo chown -R "$(id -u):$(id -g)" /tmp/playwright-apt
 
       - name: Run E2E tests
         # No `--` separator: pnpm forwards it literally, and Playwright then

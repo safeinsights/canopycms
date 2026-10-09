@@ -48,16 +48,13 @@ function collectTargets() {
         .filter((f) => f.endsWith('.yml') || f.endsWith('.yaml'))
         .map((f) => path.join('.github', 'workflows', f))
     : []
-  // A composite action's own `uses:` run in every job that calls it.
+  // A composite action's own `uses:` run in every job that calls it, and
+  // `uses: ./.github/actions/a/b` may name one at any depth.
   const actionsDir = path.join(ROOT, '.github', 'actions')
   const actions = existsSync(actionsDir)
-    ? readdirSync(actionsDir, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .flatMap((d) =>
-          ['action.yml', 'action.yaml']
-            .map((f) => path.join('.github', 'actions', d.name, f))
-            .filter((f) => existsSync(path.join(ROOT, f))),
-        )
+    ? readdirSync(actionsDir, { recursive: true, withFileTypes: true })
+        .filter((d) => d.isFile() && (d.name === 'action.yml' || d.name === 'action.yaml'))
+        .map((d) => path.relative(ROOT, path.join(d.parentPath, d.name)))
     : []
   return [...workflows, ...actions, ...EXTRA_TARGETS.filter((f) => existsSync(path.join(ROOT, f)))]
 }
