@@ -28,6 +28,7 @@ export type {
   SelectFieldConfig,
   ReferenceFieldConfig,
   ImageFieldConfig,
+  MarkdownFieldConfig,
   ImageFieldValue,
   ObjectFieldConfig,
   InlineGroupFieldConfig,

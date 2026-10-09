@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
@@ -10,6 +12,7 @@ import { findBodyFieldName } from '../utils/body-field'
 import { isDataOnlyFormat } from '../utils/format'
 import { parseSlug } from '../paths'
 import { collectReferenceIds } from '../validation/field-traversal'
+import { findMarkdownSafetyIssues } from '../validation/markdown-safety'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -146,6 +149,7 @@ async function enumerateRoutableEntries<T>(
   // page whose reference is broken still has its own route and data.
   if (isBuildMode()) {
     warnUnknownEntryKeys(entries, phaseLabel)
+    warnUnsafeMarkdown(entries, phaseLabel)
     assertRoutableSlugs(entries, phaseLabel)
     assertBuildEntriesValid(entries, phaseLabel)
     assertNoDuplicateUrlPaths(entries, phaseLabel)
@@ -245,9 +249,10 @@ export interface InvalidBuildEntry {
 type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
   data: unknown
   /**
-   * Only the unknown-key scan reads this, to recognise the md/mdx body key that `listEntries`
-   * merges into `data`. Optional so a caller assembling items by hand still typechecks; an
-   * absent format is treated as markdown-shaped, which errs toward under-reporting.
+   * The unknown-key and unsafe-markdown scans read this, to recognise the md/mdx body key that
+   * `listEntries` merges into `data`. Optional so a caller assembling items by hand still typechecks; an
+   * absent format errs toward under-reporting: the unknown-key scan treats it as markdown-shaped,
+   * and the unsafe-markdown scan checks no body.
    */
   format?: ListEntriesItem['format']
 }
@@ -388,6 +393,78 @@ export function warnUnknownEntryKeys(items: readonly BuildScanItem[], phaseLabel
     `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry has' : 'entries have'} content keys not defined in their schema during ${phaseLabel}:\n${lines.join('\n')}\n` +
       `These are usually left over from a renamed or reshaped field. Nothing reads them, and they are kept in the file on every save. ` +
       `Add them to the schema or remove them from the content.`,
+  )
+}
+
+/** An entry holding code in a markdown or MDX field that is not `executable`. */
+export interface EntryWithUnsafeMarkdown {
+  entryPath: string
+  fieldPaths: string[]
+}
+
+/**
+ * Scan listEntries-shaped items for markdown and MDX that runs code where the field is not
+ * `executable`. A save keeps such code only in a field saved unchanged, so the build is where it
+ * is listed. Non-fatal, like the unknown-key scan.
+ */
+export function findEntriesWithUnsafeMarkdown(
+  items: readonly BuildScanItem[],
+): EntryWithUnsafeMarkdown[] {
+  const found: EntryWithUnsafeMarkdown[] = []
+  for (const item of items) {
+    if (!item.schema || typeof item.data !== 'object' || item.data === null) continue
+    const fieldPaths = unsafeFieldPaths(
+      item.schema,
+      item.format,
+      item.data as Record<string, unknown>,
+    )
+    if (fieldPaths.length > 0) found.push({ entryPath: item.entryPath, fieldPaths })
+  }
+  return found
+}
+
+/**
+ * A build lists its entries several times (every catch-all route, the sitemap), and parsing each
+ * body costs milliseconds, so results are kept per schema object and hash of an entry's content.
+ */
+const unsafeFieldPathsMemo = new WeakMap<object, Map<string, string[]>>()
+
+function unsafeFieldPaths(
+  schema: NonNullable<BuildScanItem['schema']>,
+  format: BuildScanItem['format'],
+  data: Record<string, unknown>,
+): string[] {
+  let bySchema = unsafeFieldPathsMemo.get(schema)
+  if (bySchema === undefined) {
+    bySchema = new Map()
+    unsafeFieldPathsMemo.set(schema, bySchema)
+  }
+  const key = createHash('sha256')
+    .update(`${format ?? ''}\0${JSON.stringify(data)}`)
+    .digest('hex')
+  let fieldPaths = bySchema.get(key)
+  if (fieldPaths === undefined) {
+    fieldPaths = findMarkdownSafetyIssues(schema, format, data).map((f) => f.fieldPath)
+    bySchema.set(key, fieldPaths)
+  }
+  return fieldPaths
+}
+
+/** Warn — never throw — about entries holding code in markdown or MDX that is not `executable`. */
+export function warnUnsafeMarkdown(items: readonly BuildScanItem[], phaseLabel: string): void {
+  const found = findEntriesWithUnsafeMarkdown(items)
+  if (found.length === 0) return
+  // Capped and counted for the reason `warnUnknownEntryKeys` gives.
+  const shown = found.slice(0, UNKNOWN_KEY_REPORT_LIMIT)
+  const lines = shown.map(
+    ({ entryPath, fieldPaths }) => `  - ${entryPath} — ${fieldPaths.join(', ')}`,
+  )
+  if (found.length > shown.length) {
+    lines.push(`  …and ${found.length - shown.length} more`)
+  }
+  console.warn(
+    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry holds' : 'entries hold'} markdown or MDX that runs code during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      `A save keeps it but refuses adding more. Move it into a component, or set \`executable: true\` on a field whose editors you trust as code authors.`,
   )
 }
 

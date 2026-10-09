@@ -23,12 +23,15 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
+import { findMarkdownSafetyIssues, splitByStored } from '../validation/markdown-safety'
+import type { MarkdownSafetyFinding } from '../validation/markdown-safety'
 import { collectReferenceIds } from '../validation/field-traversal'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
+import { findBodyFieldName } from '../utils/body-field'
 
 /**
  * Parse an API path into logical path segments, prepending the content root if needed.
@@ -240,6 +243,28 @@ const storedReferenceSites = async (
   )
 }
 
+function withoutKey(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  if (!(key in record)) return record
+  const { [key]: _dropped, ...rest } = record
+  return rest
+}
+
+/** The policy's issues in the stored entry, which a save may keep. */
+const storedMarkdownSafetyIssues = async (
+  store: ContentStore,
+  collectionPath: LogicalPath,
+  slug: Slug,
+  fields: EntrySchema,
+): Promise<MarkdownSafetyFinding[]> => {
+  // A stored file that does not read keeps nothing, so the save's code is refused, not a 500.
+  const doc = await store
+    .read(collectionPath, slug, { resolveReferences: false })
+    .catch(() => undefined)
+  if (doc === undefined) return []
+  const data = 'body' in doc ? mergeBodyIntoData(fields, doc.data, doc.body) : doc.data
+  return findMarkdownSafetyIssues(fields, doc.format, data)
+}
+
 const writeContentHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -348,8 +373,14 @@ const writeContentHandler = async (
     throw new SchemaUnavailableError(resolvedEntryType.name, resolvedEntryType.unavailable)
   }
 
-  const data = body.data ?? {}
   const isDataOnly = isDataOnlyFormat(body.format)
+  // An md/mdx file's body field is its body, so a frontmatter key of that name is dropped: no
+  // check would see it, and a read or a resolved reference would serve it as the body.
+  const requestData =
+    isDataOnly || body.data === undefined
+      ? body.data
+      : withoutKey(body.data, findBodyFieldName(fields))
+  const data = requestData ?? {}
   // The store's own `undefined` (blind write) is never reachable from here: an omitted token is
   // a create, so an update that lost its token 409s instead of overwriting unchecked.
   const expectedVersion = body.expectedVersion ?? null
@@ -358,7 +389,7 @@ const writeContentHandler = async (
       ? `An entry with slug "${slug}" already exists`
       : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
-  const danglingWarnings: EntryValidationIssue[] = []
+  const keptWarnings: EntryValidationIssue[] = []
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
@@ -419,6 +450,24 @@ const writeContentHandler = async (
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
       const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
 
+      // Code in markdown or MDX (validation/markdown-safety.ts). A field the stored entry held
+      // with code is kept, with a warning, when saved unchanged; any other code is refused.
+      const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation)
+      if (unsafe.length > 0) {
+        const stored = exists
+          ? await storedMarkdownSafetyIssues(store, schemaItem.logicalPath, slug, fields)
+          : []
+        const { refused, kept } = splitByStored(unsafe, stored)
+        fieldErrors.push(...refused)
+        for (const e of kept) {
+          keptWarnings.push({
+            level: 'warning',
+            fieldPath: e.fieldPath,
+            message: `holds code that runs when the page renders, kept because the saved entry already had it: ${e.message}. Ask a developer to move it into a component.`,
+          })
+        }
+      }
+
       // Reference existence (server-only: reads the content ID index). Editor
       // payloads may still carry resolved `{ id, ... }` objects from a prior
       // read, so collapse them to id strings before checking.
@@ -440,7 +489,7 @@ const writeContentHandler = async (
             : new Set<string>()
         for (const e of refResult.errors) {
           if (e.dangling && storedSites.has(referenceSite(e.fieldPath, e.id))) {
-            danglingWarnings.push({
+            keptWarnings.push({
               level: 'warning',
               fieldPath: e.fieldPath,
               message: `references a missing entry (${e.id}). It is kept as it was; repoint or clear it.`,
@@ -472,7 +521,7 @@ const writeContentHandler = async (
   // refuse the save (e.g. a body that would break the site's production build),
   // 'warning' issues are returned alongside the successful write.
   let validationWarnings: EntryValidationIssue[] | undefined =
-    danglingWarnings.length > 0 ? danglingWarnings : undefined
+    keptWarnings.length > 0 ? keptWarnings : undefined
   const validateEntry = ctx.services.config.validateEntry
   // Collapse resolved reference objects back to bare ID strings before persisting (the reference
   // validator above gets its own copy). The editor's GET resolves references by default, so form
@@ -481,7 +530,7 @@ const writeContentHandler = async (
   // re-resolves plain ID strings), permanently severing the reference from its target. Idempotent:
   // a payload that already holds ID strings is unchanged.
   const normalizedData =
-    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+    requestData === undefined ? undefined : normalizeReferenceValues(fields, requestData)
   // Computed before the validateEntry hook and the entry-link scan too, not just the write, so
   // every consumer agrees on the same bytes — otherwise an adopter's hook could see a resolved
   // object while the file got an ID string, depending on whether the post came from the editor.

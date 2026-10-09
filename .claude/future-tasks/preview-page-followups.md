@@ -46,6 +46,6 @@ Filed 2026-10-05, out of scope for the `createPreviewPage` PR (`feat/preview-pag
 
 ## Related
 
-- [mdx-preview-executes-editor-code.md](mdx-preview-executes-editor-code.md): rendering a draft MDX
+- [mdx-preview-executes-editor-code.md](resolved/mdx-preview-executes-editor-code.md): rendering a draft MDX
   body in a preview view runs the editor's code.
 - [preview-src-trailing-slash.md](resolved/preview-src-trailing-slash.md): the preview prefix itself.

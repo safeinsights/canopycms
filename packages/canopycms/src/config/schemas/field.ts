@@ -4,7 +4,7 @@
 
 import { z } from 'zod'
 
-import { primitiveFieldTypes, fieldTypes } from '../types'
+import { fieldTypes, markdownFieldTypes, primitiveFieldTypes } from '../types'
 import type { FieldType } from '../types'
 
 const fieldBaseSchema = z.object({
@@ -34,7 +34,12 @@ export const referenceOptionSchema = z.union([
 ])
 
 const primitiveFieldSchema = fieldBaseSchema.extend({
-  type: z.enum(primitiveFieldTypes),
+  type: z.enum(primitiveFieldTypes).exclude([...markdownFieldTypes]),
+})
+
+const markdownFieldSchema = fieldBaseSchema.extend({
+  type: z.enum(markdownFieldTypes),
+  executable: z.boolean().optional(),
 })
 
 // "W:H" aspect ratio, e.g. "16:9" or "1:1" — positive integers on both sides,
@@ -123,6 +128,7 @@ const customFieldSchema = z.lazy(() =>
 
 const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
   primitiveFieldSchema,
+  markdownFieldSchema,
   selectFieldSchema,
   referenceFieldSchema,
   imageFieldSchema,
