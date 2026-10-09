@@ -1,35 +1,35 @@
-# A live preview's first paint loads images from the public path
+# A hook-only preview page's first paint loads images from the public path
 
 **Status:** Open. **Priority: P2.** Filed 2026-10-07 from the final review of
-[image-materialization-epic.md](resolved/image-materialization-epic.md). Needs a decision before code: every
-option changes how a preview view gets its asset prefix.
+[image-materialization-epic.md](resolved/image-materialization-epic.md). `createPreviewPage` views
+are fixed. This file holds what remains: pages that call the preview hooks without it.
 
 ## State
 
-`editor/preview-asset-base.ts` returns `undefined` on the server, so the CMS build's server render
-of a preview page (`canopycms-next`'s `createPreviewPage` views, or any page using the preview
-hooks) emits public `/assets/t/…` URLs. The browser requests them while parsing the HTML. Under
-`AssetSupport`'s S3-only default, a derivative no build produced (a fresh crop, a new width) is a
-403 until the first draft message sets the prefix in `usePreviewData` and that component
-re-renders. Two consequences:
+A `createPreviewPage` view renders after hydration with the signed-in asset prefix already set,
+and server components its `load` returns read a request-scoped prefix (`usePreviewAssetBaseGate`,
+`canopycms-next`'s `preview-page.tsx`). A page that calls `useCanopyPreview` itself gets no such
+signal: its server render does not know the request is a preview, so it emits public `/assets/t/…`
+URLs. Under `AssetSupport`'s S3-only default, a derivative no build produced is a 403 until the
+first draft message sets the prefix and that component re-renders. An image outside the hooked
+component (a layout, a memoized sibling) stays 403.
 
-- Every preview load of a draft with new crops shows broken images for a moment.
-- An image rendered outside the component that called the hook (a layout, a memoized sibling)
-  never re-renders and stays 403.
-
-Each preview session also adds public-path 403s, which the proposed
+Each such preview load also adds public-path 403s, which the proposed
 [assets-transform-4xx-alarm.md](assets-transform-4xx-alarm.md) would count.
+
+## Why it was not fixed with `createPreviewPage`
+
+- Next renders a page's client components on the server in an async context of its own. A value an
+  `AsyncLocalStorage` holds for the page never reaches it, and one entered during render is lost
+  on Suspense retries. So only the page's own props can carry "this is a preview".
+- A hook-only page is the adopter's own server component, so carrying that signal means a new
+  adopter touchpoint: the page would have to pass something to its views.
 
 ## Options
 
-1. **Server-side prefix for a preview request.** The preview route already knows the request is an
-   authenticated preview. `canopycms/server` registers a request-scoped getter (AsyncLocalStorage)
-   into the slot `asset-url.ts` reads, set by the preview page, so the server render and hydration
-   both emit raw-route URLs. `asset-url.ts` stays dependency-free, since it only reads an injected
-   getter. Covers images outside the hook's subtree.
-2. **Pass the prefix as a view prop** and have adopters hand it to `assetUrl`'s `baseUrl`. That is
-   simple, but it is a new adopter touchpoint and easy to forget per image.
-3. **Accept and document** the first-paint flash, as a same-origin preview's known limitation.
-
-Option 1 is the likely answer. Check it against every preview shape the README documents,
-including pages that use the preview hooks without `createPreviewPage`.
+1. **An opt-in prop or helper.** The adopter's server page hands its preview views the prefix,
+   for example through a helper on the context that returns `previewAssetBase` for an
+   authenticated `?branch=` request. The views then use the same gate. This is additive, not
+   breaking.
+2. **Point adopters at `createPreviewPage`** for every same-origin preview under the S3-only
+   default, and leave hook-only pages as they are.

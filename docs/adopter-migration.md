@@ -40,6 +40,18 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `createPreviewPage` views render after hydration — **behaviour change on the preview route**
+
+**What changed.** On that route a `withCanopyPreview` view is not server-rendered. It renders right
+after hydration with its `/assets/t/` URLs behind the signed-in asset route, so a crop no build made
+never returns 403; server components from `load` get the same prefix. Until hydration the view's
+area is empty, so content below it can shift. A view that throws fails in the browser, not as a
+server error page, and its effects run after the preview's ready message. Pages calling
+`useCanopyPreview` themselves are unchanged.
+
+**To adopt.** Nothing. A test reading view content from the route's server HTML must load the page
+in a browser.
+
 ### A save rewrites only the lines whose values changed
 
 **What changed.** In YAML entries and md/mdx frontmatter, untouched values, comments, blank lines

@@ -700,7 +700,7 @@ One **MediaLibrary** component serves both a manage drawer and a picker modal, a
 
 **The editor never reads the public asset path.** Every editor image loads through the authenticated raw route (`api/assets.ts`) under `basePath`, which transforms on demand. On S3 it answers a stored object, or a fresh transform over 4 MiB, with a `no-store` 302 to a presigned GET: the CMS function's response is buffered and capped near 6 MiB, and its concurrency is reserved. It never redirects to `/assets/…`, which `withCanopy` rewrites back onto the route.
 
-The live preview follows suit: drafts carry the route prefix to a same-origin preview, and `assetUrl` puts `/assets/t/…` srcs behind it ahead of `baseUrl`, in a browser only (`editor/preview-asset-base.ts`).
+The live preview follows suit: drafts, or `createPreviewPage`'s server page, carry the route prefix, and `assetUrl` puts `/assets/t/…` srcs behind it ahead of `baseUrl` (`editor/preview-asset-base.ts`).
 
 **Guards mirror the server exactly**: uploading and listing are open to any authenticated user; deleting is allowed to an admin, or to the asset's recorded uploader, and an asset with no recorded uploader is admin-only. There is no per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
 
