@@ -5,9 +5,12 @@ import {
   Annotations,
   ArnFormat,
   Duration,
+  Names,
   RemovalPolicy,
   Stack,
   Token,
+  aws_cloudwatch as cloudwatch,
+  aws_cloudwatch_actions as cloudwatchActions,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_cloudfront as cloudfront,
@@ -18,6 +21,7 @@ import {
   aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
+import type * as sns from 'aws-cdk-lib/aws-sns'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
@@ -25,6 +29,7 @@ import {
   EXIT_DRAINED_FOR_TERMINATION,
   WORKER_CAPACITY_ENV,
   WORKER_DRAIN_HOOK_NAME,
+  WORKER_SYNC_LOG_PHRASE,
 } from './worker-lifecycle'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
@@ -860,6 +865,19 @@ export interface CanopyCmsServiceProps {
   workerLogGroupName?: string
 
   /**
+   * SNS topic notified when the worker has stopped syncing git (and again when
+   * it recovers). Creating the topic and subscribing to it (email, Slack,
+   * PagerDuty) is the adopter's job. Default: none, and then no metric filter,
+   * alarm or alarm action is created.
+   *
+   * The alarm fires when the worker's log shows no git-sync cycle for 30
+   * minutes, which covers a crash loop, a boot loop, a worker that never
+   * started and a worker whose loops have stopped. A deploy or a spot
+   * replacement does not trip it. See `workerDownAlarm`.
+   */
+  alarmTopic?: sns.ITopic
+
+  /**
    * Execution role for the CMS Lambda (default: CDK creates one).
    *
    * Set this when the role's ARN has to be computable WITHOUT a reference to
@@ -1019,6 +1037,9 @@ export class CanopyCmsService extends Construct {
 
   /** The EC2 worker's CloudWatch log group (worker stdout/stderr) */
   public readonly workerLogGroup: logs.LogGroup
+
+  /** Alarms when the worker logs no git-sync cycle for 30 minutes. Set only with `alarmTopic`. */
+  public readonly workerDownAlarm?: cloudwatch.Alarm
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
@@ -1456,6 +1477,47 @@ export class CanopyCmsService extends Construct {
     // CreateLogStream + PutLogEvents scoped to this group only (least privilege;
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
+
+    if (props.alarmTopic) {
+      // Metrics are keyed by namespace and name alone, so the name carries this
+      // construct's unique id: two services in one account and region must not
+      // share one count.
+      const syncCycles = new logs.MetricFilter(this, 'WorkerSyncCycles', {
+        logGroup: this.workerLogGroup,
+        filterPattern: logs.FilterPattern.literal(`"${WORKER_SYNC_LOG_PHRASE}"`),
+        metricNamespace: 'CanopyCMS',
+        metricName: `WorkerGitSyncCycles-${Names.uniqueId(this)}`,
+        metricValue: '1',
+      })
+
+      // Fires when 3 consecutive 10-minute periods hold no git-sync cycle line.
+      // The worker logs one every cycle (default 5 minutes), even while the
+      // schema gate holds the base branch. 30 minutes is the shortest window a
+      // normal replacement stays inside: the terminating hook's drain
+      // (`workerTerminationHeartbeat`, 5 minutes by default), a 2-4 minute boot
+      // and the first sync. So a deploy or a spot replacement does not page,
+      // while a crash loop, a boot loop, a worker that never started and a
+      // worker whose loops have stopped all go silent and do. Missing data
+      // counts as a breach because a boot loop dies before the CloudWatch agent
+      // is installed and so writes no events at all. The construct does not
+      // expose CANOPYCMS_GIT_SYNC_INTERVAL; an adopter who sets it above about
+      // 10 minutes on the instance needs a wider window.
+      this.workerDownAlarm = new cloudwatch.Alarm(this, 'WorkerDownAlarm', {
+        metric: syncCycles.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        evaluationPeriods: 3,
+        datapointsToAlarm: 3,
+        treatMissingData: cloudwatch.TreatMissingData.BREACHING,
+        alarmDescription:
+          `The CMS worker has not run a git sync for 30 minutes, so publishing and branch syncing ` +
+          `are stalled. Check System health in the editor's admin panel and the worker log group ` +
+          `${this.workerLogGroup.logGroupName}.`,
+      })
+      const topicAction = new cloudwatchActions.SnsAction(props.alarmTopic)
+      this.workerDownAlarm.addAlarmAction(topicAction)
+      this.workerDownAlarm.addOkAction(topicAction)
+    }
 
     // The worker is bundled with esbuild into a single JS file (pnpm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {

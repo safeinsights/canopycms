@@ -437,6 +437,8 @@ async function reconcileTrackedBranches(
 export async function syncGit(ctx: GitSyncContext): Promise<void> {
   if (!ctx.isRunning()) return
 
+  // The CDK worker-down alarm counts this line (WORKER_SYNC_LOG_PHRASE in
+  // canopycms-cdk worker-lifecycle.ts); changing its text breaks the alarm.
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
   const gitOptions = {

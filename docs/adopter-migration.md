@@ -13,13 +13,10 @@ entry has the same three parts:
   upgrade that adds the new API without removing the code it replaces leaves two implementations to
   drift apart, which is the failure mode most of these changes exist to end.
 
-An entry's description of a hand-rolled version's bug is often the fastest way to find that code
-in your repo.
-
 ## Picking a target version
 
-Resolve your target when you plan the upgrade, with `npm view canopycms version`, never from a
-number in this document: `main` auto-publishes a patch on every push.
+Resolve your target with `npm view canopycms version`, never from a number in this document:
+`main` auto-publishes a patch on every push.
 
 Read every entry between your pin and your target, not just the newest: deletable-code lists
 compound, and a later entry can supersede an earlier one's workaround.
@@ -64,14 +61,22 @@ $1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot i
 A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat `workerTerminationHeartbeat`,
 default 5 minutes) lets the old worker finish in-flight work for up to 90 seconds and requeue the
 rest with no retry spent. The systemd unit gains `KillMode=mixed`, `TimeoutStopSec=120` and exit
-status 75 handling; the worker role may complete its own group's hook.
+status 75 handling.
 
 **To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
 or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
-deploy that brings this version rolls the worker before the hook exists; the drain applies from the
-next.
+drain applies from the deploy after this one.
 
 **Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
+### `canopycms-cdk`: optional worker-down alarm — **new prop `alarmTopic`**
+
+**What changed.** `CanopyCmsService` alarms when the worker logs no git sync for 30 minutes. See
+[Worker-down alarm](deploying-to-aws.md#worker-down-alarm).
+
+**To adopt.** Optional: pass `alarmTopic`.
+
+**Now deletable.** A hand-built alarm on the worker log group.
 
 ### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
 

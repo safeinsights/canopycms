@@ -981,10 +981,9 @@ Lambda get their own log groups on the same convention.
   Name overrides keep two `CanopyCmsService` or `AssetSupport` instances in one
   stack from colliding.
 
-- **Log streams**: one per instance id for the worker — a new stream appears
-  every time the worker instance is replaced (including by the rolling update
-  described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
-  below). The Lambdas use their usual per-container-instance streams.
+- **Log streams**: one per worker instance id, so a replacement (see
+  [Redeploying updates the worker too](#redeploying-updates-the-worker-too))
+  starts a new stream. The Lambdas use their usual per-container streams.
 - **Timestamps**: every worker line starts with an ISO-8601 UTC timestamp and a
   level tag, which CloudWatch's `multi_line_start_pattern` keys on, so worker
   code logs through `packages/canopycms/src/worker/log.ts`, never bare `console.*`.
@@ -992,8 +991,21 @@ Lambda get their own log groups on the same convention.
   logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
   this file, so `journalctl -u canopy-worker` shows nothing;
   `systemctl status canopy-worker` still reports whether it runs.
-- **Org tagging**: stack-wide tag aspects (`Tags.of(stack).add(...)`) reach every
-  log group like any other CDK resource.
+- **Org tagging**: stack-wide tag aspects reach every log group.
+
+### Worker-down alarm
+
+Pass an SNS topic you own, with its own subscription (email, Slack, PagerDuty),
+as `alarmTopic`. It is notified when the worker logs no git-sync cycle for 30
+minutes, and on recovery. Without it nothing is created.
+
+```ts
+new CanopyCmsService(this, 'Cms', { /* ... */ alarmTopic: new sns.Topic(this, 'CmsAlerts') })
+```
+
+A deploy or spot replacement fits inside 30 minutes, so it does not page; a
+crash loop, boot loop, or worker that never started or stopped looping does.
+Then read System health in the editor's admin panel and the worker log group.
 
 ## Worker capacity
 
@@ -1017,19 +1029,17 @@ Graviton (arm64).
 The worker's Auto Scaling Group has a rolling `UpdatePolicy` with
 `minInstancesInService: 0` (the group holds exactly one instance), so
 `cdk deploy` replaces the instance whenever its launch template changes: a new
-worker bundle (every canopycms upgrade, since the bundle carries the version),
-an AMI refresh, a role or user-data change. Without it, CloudFormation would
-update the template and leave the old worker running.
+worker bundle (every canopycms upgrade), an AMI refresh, a role or user-data
+change. Without it, CloudFormation would leave the old worker running.
 
 Because `minInstancesInService` must be `0` here, every such deploy leaves no
 worker while the replacement boots (installing packages and mounting EFS,
 typically about 2 minutes). This is expected and safe:
 
-- The task queue and branch workspaces live on EFS, not on the instance, so
-  the replacement worker picks up exactly where the old one left off.
-- The Lambda's Save/Publish paths only enqueue task files onto EFS and never
-  talk to the worker directly, so they queue up normally during the outage
-  instead of failing.
+- The task queue and branch workspaces live on EFS, so the replacement worker
+  picks up where the old one left off.
+- The Lambda's Save/Publish paths only enqueue task files onto EFS, never
+  talking to the worker, so they queue up during the outage instead of failing.
 - **The old worker drains first.** A terminating lifecycle hook holds the
   instance while the worker claims nothing new and finishes its push, pull
   request or branch rebase. Work still running after 90 seconds (inside a spot
@@ -1046,14 +1056,13 @@ install, EFS mount, bundle unpack or service start shuts the instance down so
 the ASG replaces it — the only automatic recovery here, since a half-booted
 instance passes the EC2-only health check forever. The best-effort CloudWatch
 agent setup runs after fail-fast is turned off, so a mirror hiccup there cannot
-take down a healthy worker. Node comes from the OS package repository, not a
-third-party script, so a replacement never depends on a third party to boot.
+take down a healthy worker. Node comes from the OS package repository, so a
+replacement never depends on a third party to boot.
 
 There is deliberately no `cfn-signal` readiness gate: the unit is `Type=simple`
 with `Restart=always`, so `systemctl start` succeeds the instant the process
 execs, crash-loop or not. To confirm a redeploy took, check the new instance's
-log stream (see [Worker observability](#worker-observability)), not
-`cdk deploy`'s exit code.
+log stream (see [Worker observability](#worker-observability)).
 
 ## Security Model
 
@@ -1202,11 +1211,9 @@ request then logs one `[CanopyCMS:timing]` line with its route, status, total an
 milliseconds (`filter @message like /CanopyCMS:timing/` in Logs Insights). Unset it afterwards,
 because it also enables every other debug line.
 
-**Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
-CloudWatch log group (`/canopycms/<stackName>/worker` — see
-[Worker observability](#worker-observability)); no shell access needed. If you can
-shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
-works.
+**Tasks stuck in pending**: Check if the EC2 worker is running. Look at its
+CloudWatch log group (see [Worker observability](#worker-observability)), or run
+`systemctl status canopy-worker` on the instance (SSM or SSH).
 
 **503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists.
 
@@ -1214,15 +1221,14 @@ works.
 
 **Preview not rendering**: `editor.previewPrefix` must name the preview route's folder, and an entry type missing from `views` is a 404. A pane the browser will not frame lacks `frame-ancestors`.
 
-**Stranded edits on the base branch** (editor saves made directly on `main` before
-base-branch protection existed, or via any future bypass): the base clone on EFS has
-uncommitted changes that will never reach a PR. Symptoms: worker logs show
+**Stranded edits on the base branch** (editor saves made directly on `main`): the
+base clone on EFS has uncommitted changes that will never reach a PR. Symptoms: worker logs show
 `Base branch workspace (<base>) has uncommitted changes -- skipping refresh. Dirty
 files: ...` on every sync — the base workspace stops tracking origin until cleaned.
 Recovery:
 
-1. Reach the EFS mount (SSM/SSH into the worker EC2, or any shell with the
-   filesystem) and go to `{workspaceRoot}/content-branches/{baseBranch}`.
+1. Reach the EFS mount (SSM/SSH into the worker) and go to
+   `{workspaceRoot}/content-branches/{baseBranch}`.
 2. Inspect what's stranded: `git fetch origin`, then `git status` and
    `git log origin/<base>..<base>` for stranded local commits.
 3. In the editor, create a rescue branch (it forks from the origin base). Copy the
@@ -1236,8 +1242,7 @@ Recovery:
 5. If the base branch's `.canopy-meta/branch.json` was left in
    `status: "submitted"` / `syncStatus: "sync-failed"` (from a pre-protection
    submit attempt), set `status` back to `"editing"` and remove `syncStatus` — or
-   have an admin use **Withdraw** in the editor, which is deliberately still
-   allowed on the protected base branch as the recovery path. `mark-merged` is not
-   a cleanup option here: it requires a recorded PR number, which a failed base
-   submit never produced.
+   have an admin use **Withdraw** in the editor, which stays allowed on the
+   protected base branch for this. `mark-merged` is not an option: it requires a
+   recorded PR number, which a failed base submit never produced.
 6. Submit the rescue branch through the normal flow.

@@ -19,3 +19,10 @@ export const EXIT_DRAINED_FOR_TERMINATION = 75
  * arms the watch for a spot interruption notice.
  */
 export const WORKER_CAPACITY_ENV = 'CANOPYCMS_WORKER_CAPACITY'
+
+/**
+ * The text of the line `syncGit()` (canopycms `worker/git-sync.ts`) logs at the
+ * start of every git-sync cycle. The worker-down alarm's metric filter counts
+ * it, so the alarm misfires if the worker's text drifts from this one.
+ */
+export const WORKER_SYNC_LOG_PHRASE = 'Syncing git...'
