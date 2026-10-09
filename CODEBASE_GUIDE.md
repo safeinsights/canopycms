@@ -494,7 +494,7 @@ Context providers, in `editor/context/`:
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
-- `AssetContext.tsx` — the editor's asset-URL prefix
+- `AssetContext.tsx` — editor asset-URL prefix
 - `index.ts` — context exports
 
 Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
@@ -559,7 +559,7 @@ Media UI, in `editor/media/`:
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
-- `editor-image-src.ts` — body-image preview srcs
+- `editor-image-src.ts` — editor image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
 - `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
 - `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
