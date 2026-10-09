@@ -558,7 +558,7 @@ Media UI, in `editor/media/`:
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
-- `editor-image-src.ts` — body-image preview srcs
+- `editor-image-src.ts` — editor image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
 - `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
 - `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
