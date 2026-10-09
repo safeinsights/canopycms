@@ -14,7 +14,13 @@ import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-wor
 import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import {
+  initTestRepo,
+  mockConsole,
+  noCommitsBetweenError,
+  octokitErrorFor,
+  type MockConsole,
+} from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CANOPYCMS_VERSION } from '../version'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
@@ -781,6 +787,105 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     expect(internals.octokit.pulls.create).toHaveBeenCalled()
   })
+
+  describe('when GitHub finds no commits to open a PR for', () => {
+    const seedMeta = async (branch: Record<string, unknown>) => {
+      await setupBranchDir('feature-x')
+      await getBranchMetadataFileManager(
+        path.join(contentBranchesPath, 'feature-x'),
+        contentBranchesPath,
+      ).save({ branch: { name: 'feature-x', ...branch } })
+    }
+
+    const SUBMIT = '2026-03-01T00:00:00.000Z'
+
+    const runSubmitTask = async (createError: Error, submittedAt: string | null = SUBMIT) => {
+      const { worker, internals } = makePrWorker()
+      internals.octokit.pulls.list.mockResolvedValue({ data: [] })
+      internals.octokit.pulls.create.mockRejectedValue(createError)
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: {
+          branch: 'feature-x',
+          title: 'Submit feature-x',
+          body: '',
+          baseBranch: 'main',
+          ...(submittedAt !== null && { submittedAt }),
+        },
+      })
+      await worker.processTaskQueue()
+      return getTask(taskDir, id)
+    }
+
+    it('fails fast and returns a submitted branch to editing with the reason', async () => {
+      await seedMeta({ status: 'submitted', syncStatus: 'pending-sync', submittedAt: SUBMIT })
+
+      const task = await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      expect(task?.status).toBe('failed')
+      expect(task?.retryCount ?? 0).toBe(0)
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('editing')
+      expect(meta.branch.syncStatus).toBe('sync-failed')
+      expect(meta.branch.syncFailureReason).toBe(
+        'Nothing was submitted: "feature-x" has no changes compared with "main", so GitHub ' +
+          'opened no pull request. The branch is unlocked for editing; save a change, then submit again.',
+      )
+    })
+
+    it('leaves the status alone when the branch already has a PR', async () => {
+      await seedMeta({ status: 'submitted', pullRequestNumber: 12, submittedAt: SUBMIT })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('submitted')
+      expect(meta.branch.syncFailureReason).toBe(
+        'Nothing was submitted: "feature-x" has no changes compared with "main", so GitHub ' +
+          'opened no pull request.',
+      )
+    })
+
+    it('leaves a newer submit locked', async () => {
+      await seedMeta({ status: 'submitted', submittedAt: '2026-03-01T00:05:00.000Z' })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      expect((await readBranchMeta('feature-x')).branch.status).toBe('submitted')
+    })
+
+    it('leaves the status alone when the task carries no submit stamp', async () => {
+      await seedMeta({ status: 'submitted' })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'), null)
+
+      expect((await readBranchMeta('feature-x')).branch.status).toBe('submitted')
+    })
+
+    it('leaves the status alone when the branch is no longer submitted', async () => {
+      await seedMeta({ status: 'approved', submittedAt: SUBMIT })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      expect((await readBranchMeta('feature-x')).branch.status).toBe('approved')
+    })
+
+    it('keeps a branch submitted when a different 422 fails the PR', async () => {
+      await seedMeta({ status: 'submitted', submittedAt: SUBMIT })
+
+      const task = await runSubmitTask(
+        await octokitErrorFor(422, {
+          message: 'Validation Failed',
+          errors: [{ resource: 'PullRequest', code: 'invalid', field: 'base' }],
+        }),
+      )
+
+      expect(task?.status).toBe('failed')
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('submitted')
+      expect(meta.branch.syncFailureReason).toContain('Validation Failed')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -878,6 +983,29 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     expect(await fixtureHasBranch('feature-clean')).toBe(true)
     expect(consoleSpy).toHaveLogged('Pushed feature-clean to GitHub')
+  })
+
+  it('records the push on branch metadata only once GitHub accepted it', async () => {
+    const readPushedAt = async (branch: string) =>
+      (await BranchMetadataFileManager.loadOnly(path.join(contentBranchesPath, branch)))?.branch
+        .pushedToGitHubAt
+    await seedBranchInRemoteGit('feature-clean', 'hello')
+    await seedBranchInRemoteGit('feature-x', 'this deployment')
+    await seedBranchInGitHubFixture('feature-x', 'another deployment')
+    for (const branch of ['feature-clean', 'feature-x']) {
+      await fs.mkdir(path.join(contentBranchesPath, branch), { recursive: true })
+      await getBranchMetadataFileManager(
+        path.join(contentBranchesPath, branch),
+        contentBranchesPath,
+      ).save({ branch: { name: branch } })
+    }
+    const worker = makePushWorker() as unknown as PushBranchInternals
+
+    await worker.pushBranchToGitHub('feature-clean')
+    await expect(worker.pushBranchToGitHub('feature-x')).rejects.toThrow(PermanentTaskError)
+
+    expect(await readPushedAt('feature-clean')).toEqual(expect.any(String))
+    expect(await readPushedAt('feature-x')).toBeUndefined()
   })
 
   it('throws PermanentTaskError naming the branch on a real non-fast-forward rejection', async () => {
@@ -2406,6 +2534,7 @@ describe('CmsWorker delete-remote-branch', () => {
     deleteRef: ReturnType<typeof vi.fn>,
     branch = 'feature-x',
     pullRequestNumber?: number,
+    pushedToGitHubAt?: string,
   ) => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
@@ -2422,7 +2551,11 @@ describe('CmsWorker delete-remote-branch', () => {
     internals.octokit = { git: { deleteRef } }
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
-      payload: { branch, ...(pullRequestNumber !== undefined && { pullRequestNumber }) },
+      payload: {
+        branch,
+        ...(pullRequestNumber !== undefined && { pullRequestNumber }),
+        ...(pushedToGitHubAt !== undefined && { pushedToGitHubAt }),
+      },
     })
     await worker.processTaskQueue()
     return getTask(taskDir, id)
@@ -2510,6 +2643,26 @@ describe('CmsWorker delete-remote-branch', () => {
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
     const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect(task?.result).toEqual({ deleted: true })
+  })
+
+  it('leaves GitHub alone when a branch that reused the name has pushed it itself', async () => {
+    await seedReused({ pushedToGitHubAt: '2026-02-01T00:00:00.000Z' })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.result).toEqual({ deleted: false, skipped: 'name-reused' })
+  })
+
+  it("still deletes when the live metadata records the deleted branch's own push", async () => {
+    await seedReused({ pushedToGitHubAt: '2026-01-01T00:00:00.000Z' })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
     expect(task?.result).toEqual({ deleted: true })

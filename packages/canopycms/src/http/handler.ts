@@ -9,6 +9,7 @@ import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { recordConfiguredSparseCone } from '../branch-sparse'
+import { recordServedSchemaRegistry } from '../schema-registry-record'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { resolveCanopyUser } from '../resolve-canopy-user'
@@ -43,6 +44,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   await recordConfiguredSparseCone(services.config)
+  await recordServedSchemaRegistry(services.config, services.entrySchemaRegistry)
   const operatingMode = services.config.mode
   // Derived from the strategy, which resolves deploymentName; a literal here
   // would miss a deployment-namespaced settings branch (say canopycms-settings-acme).

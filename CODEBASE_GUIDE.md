@@ -224,6 +224,7 @@ direction, and every invariant.
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the worker's logged repack of `remote.git` (rule and config: `git-manager.ts` `repackBareRemoteIfNeeded`, `ensureRemoteGitConfig`)
 - `sparse-cone.ts` — `reapplySparseCones`: moves sparse clones to the recorded cone after a content-root change
+- `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
@@ -634,6 +635,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
 - `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
+- `schema-registry-record.ts` — `recordServedSchemaRegistry`: the serving editor's schema names in `.schema-registry.json`, for the worker's schema gate
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
 - `branch-schema-cache.ts` — per-branch schema caching, always file-based; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
@@ -694,7 +696,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the full submit workflow: checkout, status, commit all (with the submitter's trailers), push; returns `changedPaths`
+- `submitBranch()` — the submit workflow: checkout, status, commit all (with submitter trailers), push; returns `changedPaths` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 

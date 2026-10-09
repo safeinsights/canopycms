@@ -14,6 +14,7 @@ import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../uti
 import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser } from '../submission-attribution'
+import { NothingToSubmitError } from '../services'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -84,6 +85,9 @@ const submitBranchForMergeHandler = async (
   try {
     ;({ changedPaths } = await ctx.services.submitBranch({ context: branchContext, submitter }))
   } catch (err) {
+    if (err instanceof NothingToSubmitError) {
+      return { ok: false, status: 400, error: err.message }
+    }
     // Retriable either way: a resubmit commits nothing new and pushes only
     // what has not reached the remote.
     if (err instanceof ContentWriteLockBusyError) {
@@ -140,14 +144,35 @@ const submitBranchForMergeHandler = async (
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, branchContext, { submitter, changedPaths })
+  const submittedAt = new Date().toISOString()
+  const prResult = await syncSubmitPr(ctx, branchContext, {
+    submitter,
+    changedPaths,
+    submittedAt,
+  })
 
-  // Update metadata with status and PR info
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
+  const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
+  // GitHub found nothing between the pushed branch and its base, though the diff above found
+  // changes: GitHub's base can already hold them, or the diff could not be computed. The branch
+  // stays editable; the stamp records that it is now on GitHub, for delete.
+  if (prResult.nothingToSubmit) {
+    await meta.save({ branch: { name: branchContext.branch.name, ...pushed } })
+    const base = branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+    return {
+      ok: false,
+      status: 400,
+      error: new NothingToSubmitError(branchContext.branch.name, base).message,
+    }
+  }
+
   const updated = await meta.save({
     branch: {
       name: branchContext.branch.name,
       status: 'submitted',
+      submittedAt,
+      ...pushed,
+      syncFailureReason: prResult.syncFailureReason,
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),

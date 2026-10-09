@@ -40,6 +40,13 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
+
+**What changed.** Submit answers 400 when a branch's saved content matches its base.
+`BranchMetadata` gains optional `submittedAt` and `pushedToGitHubAt`.
+
+**To adopt.** Scripts calling submit: save a change first, or handle the 400.
+
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
 **What changed.** When synced content names an entry schema the running code lacks, only that
@@ -49,6 +56,14 @@ types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, opt
 `ApiResponse.code`, and a required `SchemaResolutionResult.issues`.
 
 **To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`.
+
+### Content naming a new schema waits for the editor deploy — **behaviour change**
+
+**What changed.** The worker holds the base branch, for up to 30 minutes, while synced content
+names an entry schema the running editor lacks; see
+[New schemas wait for the editor deploy](deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy).
+
+**To adopt.** Nothing. A custom worker entrypoint can pass `schemaHoldMaxMs` to `CmsWorker`.
 
 ### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
 
