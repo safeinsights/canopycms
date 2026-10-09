@@ -63,7 +63,7 @@ describe('assetUrl - the preview asset base on the server', () => {
     setServerPreviewAssetBaseGetter(undefined)
   })
 
-  it('is ignored where there is no window (server render, static build)', () => {
+  it("a draft's browser value is ignored where there is no window (server render, static build)", () => {
     const src = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
     setPreviewAssetBase('/api/canopycms/assets/raw')
 

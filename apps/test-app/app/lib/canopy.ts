@@ -3,11 +3,11 @@ import {
   type GenerateContentStaticParamsOptions,
   type NextCanopyContextResult,
 } from 'canopycms-next'
-
-export { previewView } from 'canopycms-next'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
+
+export { previewView } from 'canopycms-next'
 
 /**
  * Dev auth plugin for local development and E2E testing.

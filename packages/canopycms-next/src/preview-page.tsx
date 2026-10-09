@@ -113,7 +113,8 @@ interface PreviewRequest {
   assetBase?: string
 }
 let previewRequestScope: (() => PreviewRequest) | undefined
-// Created on first use, because React 18 has no `cache`; it must be one instance for every request.
+// Created on first use, so this module loads where React has no `cache` (React 18); one instance
+// serves every request.
 const previewRequest = () => (previewRequestScope ??= cache((): PreviewRequest => ({})))()
 const readPreviewRequestAssetBase = (): string | undefined => previewRequest().assetBase
 

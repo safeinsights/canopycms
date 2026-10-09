@@ -96,8 +96,8 @@ test.describe('A createPreviewPage view paints its images from the signed-in rou
       expect(requests.filter((path) => !path.startsWith(RAW_ROUTE))).toEqual([])
       expect(new Set(requests).size).toBeGreaterThanOrEqual(3)
 
-      // How long the view's area stays empty: from the first paint, which shows the layout, to the
-      // first image request, which follows the view's render. Recorded for the PR, not asserted.
+      // How long the view's area stays empty: compare first paint, which shows the layout, with
+      // the first image request, which follows the view's render. An annotation, not asserted.
       const timing = await page.evaluate(() => {
         const [navigation] = performance.getEntriesByType(
           'navigation',

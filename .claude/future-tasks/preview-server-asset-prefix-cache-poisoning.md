@@ -13,14 +13,14 @@ there and stored across requests carries that prefix:
 
 1. An adopter wraps a helper that calls `assetUrl` in `unstable_cache`, or memoizes its result at
    module level.
-2. A preview request's `load` calls it first and fills the cache with
+2. A preview request's `load` calls it first, which can fill the cache with
    `/api/canopycms/assets/raw/assets/t/…` URLs.
 3. A public page served by the **same Next process** reads the cached value, so anonymous
    visitors get broken images (the raw route requires a session) until the cache is revalidated,
    or for good with a module memo.
 
-`'use cache'` is unaffected: it renders in its own Flight request. A static-export public site is
-unaffected: its pages never share a process with the preview route. The prefix is
+A static-export public site is unaffected: its pages never share a process with the preview
+route. The prefix is
 `basePath` + `/api/canopycms/assets/raw`, with no branch name and no token, so a poisoned cache
 exposes nothing but that path.
 

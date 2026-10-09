@@ -1,8 +1,8 @@
 /**
  * The prefix a live preview puts `/assets/t/` srcs behind, for `assets/asset-url.ts`; imports
  * nothing. A browser stores it from drafts and `usePreviewAssetBaseGate`. A server reads the
- * getter `canopycms-next`'s preview page registers, which is request-scoped, so any other render
- * and every static build see `undefined`.
+ * getter `canopycms-next`'s preview page registers, which is request-scoped, so a render outside a
+ * preview request, including every static build, sees `undefined`.
  */
 
 let previewAssetBase: string | undefined

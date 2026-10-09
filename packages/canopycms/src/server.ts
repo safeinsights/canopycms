@@ -262,7 +262,8 @@ export { materializeAssets } from './assets/materialize'
 
 /**
  * The live preview's asset prefix on the server: the signed-in raw route under a `basePath`, the
- * same-origin check every preview prefix passes, and the request-scoped getter `assetUrl` reads.
+ * same-origin check every preview prefix passes, and the hook registering the request-scoped getter
+ * `assetUrl` reads.
  * @internal `canopycms-next`'s preview page is their consumer.
  */
 export { authenticatedAssetBase, readAssetBase } from './editor/raw-asset-base'
