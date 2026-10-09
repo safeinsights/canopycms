@@ -2,7 +2,7 @@ import { canopyLogWarn } from './utils/logger'
 
 /**
  * Bounds the dedupe set below. A process that has seen this many distinct dangling references
- * stops warning about new ones rather than growing without limit; the build guard still lists
+ * stops warning about new ones rather than growing without limit; the build guard still counts
  * every one.
  */
 const MAX_WARNED = 1000

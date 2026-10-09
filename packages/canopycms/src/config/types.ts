@@ -518,7 +518,7 @@ export interface CanopyConfigInput {
   /**
    * What a production build does when a reference names no entry. Default `'error'`: the build
    * fails, listing each entry, field path and missing id, since the page would otherwise ship
-   * without what the reference supplied. `'warn'` prints the same list and lets the build pass.
+   * without what the reference supplied. `'warn'` prints the list, capped at 20, and lets the build pass.
    */
   danglingReferences?: 'error' | 'warn'
   editor?: CanopyEditorConfig

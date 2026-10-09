@@ -220,7 +220,8 @@ const readContentHandler = async (
 
 /**
  * A reference's field and id, positions dropped (`blocks[2].author` → `blocks.author`), so
- * reordering blocks or list items keeps a match while moving an id to another field does not.
+ * reordering blocks or list items keeps a match while moving an id to a field of another name
+ * does not.
  */
 const referenceSite = (fieldPath: string, id: string) =>
   `${fieldPath.replace(/\[\d+\]/g, '')}\0${id}`
@@ -425,7 +426,8 @@ const writeContentHandler = async (
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
         // A dangling id the file already holds in that field is kept with a warning, so an entry
         // whose target was deleted stays saveable and the id survives; the production build is
-        // what fails on it. A dangling id this save introduces, or moves, is refused.
+        // what fails on it. A dangling id this save introduces, or moves to a field of another name, is
+        // refused.
         const storedSites =
           exists && refResult.errors.some((e) => e.dangling)
             ? await storedReferenceSites(store, schemaItem.logicalPath, slug, fields)

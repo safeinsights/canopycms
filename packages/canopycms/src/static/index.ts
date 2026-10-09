@@ -662,7 +662,7 @@ export function assertNoDanglingReferences(
  * Targets live anywhere in the content tree, so a `rootPath`-scoped listing is not the id
  * universe; that case lists the whole tree once and keeps the result for the context's lifetime.
  * Safe to keep, unlike a request-time memo, because these guards run only in build mode, which
- * reads a checkout that does not change mid-build. Keyed weakly on the context, so it lives
+ * reads a checkout that does not change mid-build (`build-mode.ts`, `readsFromCheckout`). Keyed weakly on the context, so it lives
  * exactly as long as the context does; a rejected listing is forgotten so the next call retries.
  */
 const entryIdUniverse = new WeakMap<object, Promise<ReadonlySet<string>>>()

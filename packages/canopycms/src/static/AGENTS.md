@@ -19,7 +19,7 @@ A FOURTH, `findUnroutableSlugs`/`assertRoutableSlugs`, closes a gap the others d
 
 ### Guard 5 — every reference names an entry (runs LAST)
 
-`findDanglingReferences` (exported)/`assertNoDanglingReferences` check references at any depth (`collectReferenceIds`) against every entry id in the tree; `danglingReferences: 'warn'` downgrades the failure. A `rootPath`-scoped call lists the whole tree once per build context (`knownEntryIds`). Write-boundary half: `api/content.ts` refuses a new dangling id and keeps one already in the file.
+`findDanglingReferences` (exported)/`assertNoDanglingReferences` check references at any depth (`collectReferenceIds`) against every entry id in the tree; `danglingReferences: 'warn'` downgrades the failure. A `rootPath`-scoped call lists the whole tree once per build context (`knownEntryIds`). Write-boundary half: `api/content.ts` refuses a new dangling id and keeps one already in that field.
 
 ### INVARIANT — slug enforcement is create/rename only
 
