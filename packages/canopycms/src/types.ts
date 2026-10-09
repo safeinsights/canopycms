@@ -38,11 +38,16 @@ export interface BranchMetadata {
   pullRequestUrl?: string
   pullRequestNumber?: number
   /**
-   * ISO timestamp stamped each time a submit pushed this branch to its remote. Branch delete takes
-   * it as proof that a same-named GitHub branch is this branch's, since a submit whose PR GitHub
-   * refused leaves no PR number. Absent on branches never submitted.
+   * ISO timestamp of the branch's latest submit. A queued PR task carries it, so the worker's
+   * failure handling acts only on the submit that queued it.
    */
   submittedAt?: string
+  /**
+   * ISO timestamp of the CMS's latest push of this branch to GitHub. Branch delete takes it as
+   * proof that a same-named GitHub branch is this branch's, since a submit whose PR GitHub refused
+   * leaves no PR number. Absent on branches the CMS never pushed there.
+   */
+  pushedToGitHubAt?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
   /** Whether this branch has unresolved merge conflicts with the base branch */

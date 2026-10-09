@@ -395,6 +395,7 @@ async function _createCanopyServicesInternal(
         )
       }
       if (changedPaths?.length === 0) {
+        if (committed) await git.undoLastCommit()
         throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
       }
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {

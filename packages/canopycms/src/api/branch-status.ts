@@ -144,15 +144,20 @@ const submitBranchForMergeHandler = async (
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, branchContext, { submitter, changedPaths })
+  const submittedAt = new Date().toISOString()
+  const prResult = await syncSubmitPr(ctx, branchContext, {
+    submitter,
+    changedPaths,
+    submittedAt,
+  })
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  const submittedAt = new Date().toISOString()
+  const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
   // GitHub found nothing between the pushed branch and its base, though the diff above did (a
   // racing base update, or a diff that could not be computed). The branch stays editable; the
   // stamp records that it now exists on GitHub, for delete.
   if (prResult.nothingToSubmit) {
-    await meta.save({ branch: { name: branchContext.branch.name, submittedAt } })
+    await meta.save({ branch: { name: branchContext.branch.name, ...pushed } })
     const base = branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
     return {
       ok: false,
@@ -166,6 +171,7 @@ const submitBranchForMergeHandler = async (
       name: branchContext.branch.name,
       status: 'submitted',
       submittedAt,
+      ...pushed,
       syncFailureReason: prResult.syncFailureReason,
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,

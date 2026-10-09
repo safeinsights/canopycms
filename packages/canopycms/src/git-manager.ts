@@ -1513,6 +1513,11 @@ export class GitManager {
     await this.git.commit(message)
   }
 
+  /** Drop the checked-out branch's last commit, leaving its changes unstaged in the working tree. */
+  async undoLastCommit(): Promise<void> {
+    await this.git.raw(['reset', '--mixed', 'HEAD~1'])
+  }
+
   async push(branch?: string): Promise<void> {
     const target = branch ?? (await this.currentBranchName())
     // Explicit full-ref refspec (local:remote) so push works for branches not

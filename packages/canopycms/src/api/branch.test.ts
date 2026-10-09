@@ -1193,7 +1193,7 @@ describe('deleteBranch api', () => {
     it('is deleted when a submit pushed it but GitHub opened no PR', async () => {
       const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
       const pushedNoPr = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
-      pushedNoPr.branch.submittedAt = '2026-01-02T03:04:05.000Z'
+      pushedNoPr.branch.pushedToGitHubAt = '2026-01-02T03:04:05.000Z'
 
       const direct = await deleteBranch(
         ctxWith(pushedNoPr, {
@@ -1209,11 +1209,11 @@ describe('deleteBranch api', () => {
       expect(deleteBranchMock).toHaveBeenCalledWith('feature/x')
       expect(mockEnqueueTask).toHaveBeenCalledWith(expect.any(String), {
         action: 'delete-remote-branch',
-        payload: { branch: 'feature/x', submittedAt: '2026-01-02T03:04:05.000Z' },
+        payload: { branch: 'feature/x', pushedToGitHubAt: '2026-01-02T03:04:05.000Z' },
       })
     })
 
-    it('is never touched when the branch has neither a PR nor a submit stamp, so the CMS never pushed it', async () => {
+    it('is never touched when the branch has neither a PR nor a GitHub push stamp, so the CMS never pushed it', async () => {
       const deleteBranchMock = vi.fn().mockResolvedValue(undefined)
       const noPr = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
 

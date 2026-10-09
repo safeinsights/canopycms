@@ -20,12 +20,16 @@ export interface GitHubSyncResult {
   syncFailureReason?: string
   /** GitHub refused the PR because the pushed branch has no commits its base lacks. */
   nothingToSubmit?: boolean
+  /** The submit's push went to GitHub itself (the direct path), whatever the PR call did. */
+  pushedToGitHub?: boolean
 }
 
 /** What the PR body records about a submit. */
 export interface SubmissionRecord {
   submitter?: SubmissionEditor
   changedPaths: readonly string[]
+  /** The submit's `submittedAt`, carried to the worker so its failure handling targets this submit. */
+  submittedAt?: string
 }
 
 /**
@@ -99,6 +103,7 @@ export async function syncSubmitPr(
           prUrl: context.branch.pullRequestUrl,
           prNumber: context.branch.pullRequestNumber,
           syncStatus: 'synced',
+          pushedToGitHub: true,
         }
       } else {
         // GIT-H1: pullRequestNumber isn't recorded — this may be a genuine
@@ -125,17 +130,19 @@ export async function syncSubmitPr(
           prUrl: result.url,
           prNumber: result.number,
           syncStatus: 'synced',
+          pushedToGitHub: true,
         }
       }
     } catch (err) {
       const message = getErrorMessage(err)
       console.error(`CanopyCMS: Failed to create/update PR for ${context.branch.name}:`, message)
-      if (isNoCommitsBetweenError(err)) return { nothingToSubmit: true }
+      if (isNoCommitsBetweenError(err)) return { nothingToSubmit: true, pushedToGitHub: true }
       return {
         prUrl: context.branch.pullRequestUrl,
         prNumber: context.branch.pullRequestNumber,
         syncStatus: 'sync-failed',
         syncFailureReason: sanitizeErrorMessage(message),
+        pushedToGitHub: true,
       }
     }
   }
@@ -159,6 +166,7 @@ export async function syncSubmitPr(
       // A content submit is an explicit "ready for review" action: convert a
       // pre-existing draft PR to ready.
       markReadyIfDraft: true,
+      submittedAt: submission.submittedAt,
     },
   })
 }
@@ -197,10 +205,9 @@ export async function syncConvertToDraft(ctx: ApiContext, context: BranchContext
 
 /**
  * Used by delete, after the local delete succeeded. Deletes the branch on GitHub when the CMS
- * put it there: a content branch reaches GitHub only through submit, so a recorded PR number or
- * `submittedAt` stamp is the proof (a submit whose PR GitHub refused pushed the branch but has
- * no PR number). Without either, a same-named GitHub branch is someone else's (the create-time
- * collision check is best-effort) and is never touched.
+ * put it there: a recorded PR number or `pushedToGitHubAt` stamp is the proof (a submit whose PR
+ * GitHub refused pushed the branch but has no PR number). Without either, a same-named GitHub
+ * branch is someone else's (the create-time collision check is best-effort) and is never touched.
  *
  * Returns a client-facing warning when the delete could not be done or queued; never throws.
  */
@@ -208,8 +215,8 @@ export async function syncDeleteRemoteBranch(
   ctx: ApiContext,
   context: BranchContext,
 ): Promise<string | undefined> {
-  const { pullRequestNumber, submittedAt } = context.branch
-  if (!pullRequestNumber && !submittedAt) return undefined
+  const { pullRequestNumber, pushedToGitHubAt } = context.branch
+  if (!pullRequestNumber && !pushedToGitHubAt) return undefined
 
   const { githubService } = ctx.services
   const branch = context.branch.name
@@ -233,7 +240,7 @@ export async function syncDeleteRemoteBranch(
 
   const result = await enqueueGitHubTask(ctx, context, {
     action: 'delete-remote-branch',
-    payload: { branch, pullRequestNumber, submittedAt },
+    payload: { branch, pullRequestNumber, pushedToGitHubAt },
   })
   return result.syncStatus === 'sync-failed'
     ? 'Deleting the branch on GitHub could not be queued; delete it there by hand'

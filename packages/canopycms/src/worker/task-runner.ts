@@ -413,7 +413,7 @@ export async function executeTask(
         if (!isNoCommitsBetweenError(err)) throw err
         throw new NothingToSubmitTaskError(
           `Nothing was submitted: "${branch}" has no changes compared with "${base}", so GitHub ` +
-            'opened no pull request. The branch is unlocked for editing; save a change, then submit again.',
+            'opened no pull request.',
         )
       }
       workerLog(
@@ -462,13 +462,13 @@ export async function executeTask(
         )
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
-      // after) owns the GitHub branch once its own submit recorded a different PR or submit
-      // stamp. Without either, the ref is taken to be the deleted branch's. Unparseable metadata
-      // keeps the GitHub branch; other read errors retry.
+      // after) owns the GitHub branch once it recorded a different PR or GitHub push. Without
+      // either, the ref is taken to be the deleted branch's. Unparseable metadata keeps the
+      // GitHub branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
-      const deletedSubmittedAt =
-        typeof payload.submittedAt === 'string' ? payload.submittedAt : undefined
+      const deletedPushedAt =
+        typeof payload.pushedToGitHubAt === 'string' ? payload.pushedToGitHubAt : undefined
       let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
       let unreadable = false
       try {
@@ -491,9 +491,9 @@ export async function executeTask(
         workerLog(`Not deleting GitHub branch ${branch}: a newer branch's PR #${livePr} uses it`)
         return { deleted: false, skipped: 'name-reused' }
       }
-      const liveSubmittedAt = live?.branch.submittedAt
-      if (liveSubmittedAt !== undefined && liveSubmittedAt !== deletedSubmittedAt) {
-        workerLog(`Not deleting GitHub branch ${branch}: a newer branch submitted under that name`)
+      const livePushedAt = live?.branch.pushedToGitHubAt
+      if (livePushedAt !== undefined && livePushedAt !== deletedPushedAt) {
+        workerLog(`Not deleting GitHub branch ${branch}: a newer branch pushed under that name`)
         return { deleted: false, skipped: 'name-reused' }
       }
       try {
@@ -586,9 +586,10 @@ export async function updateBranchMetadata(
  * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
  * syncFailureReason so the editor can show WHY, not just that it failed.
  *
- * `unlock` also returns the branch to 'editing', but only while it is still
- * 'submitted' with no PR: a withdraw, a newer submit's PR, or a review decision
- * that landed meanwhile is left alone.
+ * `unlock` also returns the branch to 'editing', but only while it is still in
+ * the submit this task carries (its `submittedAt`), 'submitted' with no PR: a
+ * withdraw, a newer submit, or a review decision that landed meanwhile is left
+ * alone.
  */
 async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
@@ -609,13 +610,22 @@ async function updateBranchMetadataOnFailure(
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&
+      typeof submittedAt === 'string' &&
       (await meta.saveIf(
-        { branch: { ...failed, status: 'editing' } },
+        {
+          branch: {
+            ...failed,
+            status: 'editing',
+            syncFailureReason: `${error} The branch is unlocked for editing; save a change, then submit again.`,
+          },
+        },
         (existing) =>
           existing?.branch.status === 'submitted' &&
-          existing.branch.pullRequestNumber === undefined,
+          existing.branch.pullRequestNumber === undefined &&
+          existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) await meta.save({ branch: failed })
   } catch (err) {
@@ -740,6 +750,7 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
       // The lease was refused, so GitHub is provably not at the marker: it
       // has moved past the rewritten commit and the marker is spent.
       await clearHistoryRewrittenMarker(ctx, branchPath, branch)
+      await recordPushedToGitHub(ctx, branchPath, branch)
       workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
       return
     }
@@ -767,5 +778,32 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
   if (marker && outgoingSha && outgoingSha !== marker) {
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
   }
+  await recordPushedToGitHub(ctx, branchPath, branch)
   workerLog(`Pushed ${branch} to GitHub`)
+}
+
+/**
+ * Stamp `pushedToGitHubAt`, branch delete's proof that the GitHub branch is this one. Recorded
+ * when the push lands, whatever the PR call after it does. Best-effort: a branch deleted
+ * meanwhile has no metadata to stamp, and a failed stamp only leaves a later delete to skip
+ * GitHub.
+ */
+async function recordPushedToGitHub(
+  ctx: TaskRunnerContext,
+  branchPath: string,
+  branch: string,
+): Promise<void> {
+  if (isSettingsBranch(branch)) return
+  try {
+    await fs.stat(branchPath)
+  } catch {
+    return
+  }
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
+      branch: { name: branch, pushedToGitHubAt: new Date().toISOString() },
+    })
+  } catch (err) {
+    workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))
+  }
 }

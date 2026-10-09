@@ -206,6 +206,11 @@ describe('services submitBranch', () => {
       )
 
       expect(await remoteBranchSha('feature-1')).toBe(pushed)
+      // The refused submit's own commit is undone; the saved deletion stays in the working tree.
+      expect(await localSha()).toBe(pushed)
+      const tree = await simpleGit({ baseDir: localPath }).status()
+      expect(tree.deleted).toEqual(['a.txt'])
+      expect(tree.staged).toEqual([])
     })
 
     it('submits when the changes cannot be listed', async () => {

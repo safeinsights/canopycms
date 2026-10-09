@@ -478,7 +478,7 @@ describe('branch status api', () => {
       expect(res.error).toMatch(/^Nothing to submit yet: "feature\/x"/)
       expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
       expect(mockMetadataUpdate).toHaveBeenCalledWith({
-        branch: { name: 'feature/x', submittedAt: expect.any(String) },
+        branch: { name: 'feature/x', pushedToGitHubAt: expect.any(String) },
       })
       consoleSpy.restore()
     })
@@ -502,6 +502,7 @@ describe('branch status api', () => {
           status: 'submitted',
           syncStatus: 'sync-failed',
           syncFailureReason: 'Bad credentials for https://***@github.com',
+          pushedToGitHubAt: expect.any(String),
         }),
       })
       consoleSpy.restore()
@@ -516,6 +517,7 @@ describe('branch status api', () => {
       const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
       expect(saved.submittedAt).toEqual(expect.any(String))
       expect(saved).toHaveProperty('syncFailureReason', undefined)
+      expect(saved).not.toHaveProperty('pushedToGitHubAt')
     })
   })
 
