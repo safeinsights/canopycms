@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { findReferencingEntries, type ReferenceScanEntry } from '../deletion-checker'
-import type { ContentFormat, FieldConfig } from '../../config'
+import type { FieldConfig } from '../../config'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const TARGET_ID = 'tgtTGTtgtTGT'
@@ -9,12 +9,11 @@ function entry(
   slug: string,
   schema: FieldConfig[] | undefined,
   data: Record<string, unknown>,
-  options: { format?: ContentFormat; id?: string } = {},
+  options: { id?: string } = {},
 ): ReferenceScanEntry {
   return {
     entryPath: unsafeAsLogicalPath(`content/posts/${slug}`),
     entryId: unsafeAsContentId(options.id ?? `${slug}zzzzzzzzzzzz`.slice(0, 12)),
-    format: options.format ?? 'json',
     schema,
     data,
   }
@@ -108,13 +107,17 @@ describe('findReferencingEntries', () => {
     expect(result).toEqual([])
   })
 
-  it('skips an entry with no resolvable schema', () => {
-    expect(
-      findReferencingEntries([entry('raw', undefined, { author: TARGET_ID })], TARGET_ID),
-    ).toEqual([])
+  it('reads no reference fields from an entry with no resolvable schema, but still its links', () => {
+    const result = findReferencingEntries(
+      [entry('raw', undefined, { author: TARGET_ID, body: `[x](entry:${TARGET_ID})` })],
+      TARGET_ID,
+    )
+    expect(result).toHaveLength(1)
+    expect(result[0].fields).toEqual([])
+    expect(result[0].links).toEqual(['body'])
   })
 
-  describe('entry: links in markdown text', () => {
+  describe('entry: links', () => {
     it('finds a link in a declared markdown field, and ignores one inside a code span', () => {
       const schema: FieldConfig[] = [
         { name: 'intro', type: 'markdown', label: 'Intro' },
@@ -136,7 +139,7 @@ describe('findReferencingEntries', () => {
     it("finds a link in an md file's body when the schema does not declare a body field", () => {
       const schema: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
       const result = findReferencingEntries(
-        [entry('page', schema, { title: 'T', body: `[x](entry:${TARGET_ID})` }, { format: 'md' })],
+        [entry('page', schema, { title: 'T', body: `[x](entry:${TARGET_ID})` })],
         TARGET_ID,
       )
       expect(result[0].links).toEqual(['body'])
@@ -147,19 +150,40 @@ describe('findReferencingEntries', () => {
         { name: 'content', type: 'mdx', label: 'Content', isBody: true },
       ]
       const result = findReferencingEntries(
-        [entry('page', schema, { content: `[x](entry:${TARGET_ID})` }, { format: 'mdx' })],
+        [entry('page', schema, { content: `[x](entry:${TARGET_ID})` })],
         TARGET_ID,
       )
       expect(result[0].links).toEqual(['content'])
     })
 
-    it('does not read a stray body key on a json entry', () => {
-      const schema: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+    it('finds a link in any string the reader resolves, whatever its field type', () => {
+      const schema: FieldConfig[] = [
+        { name: 'ctaHref', type: 'string', label: 'CTA' },
+        {
+          name: 'blocks',
+          type: 'block',
+          label: 'Blocks',
+          templates: [
+            {
+              name: 'card',
+              label: 'Card',
+              fields: [{ name: 'links', type: 'string', label: 'L' }],
+            },
+          ],
+        },
+      ]
       const result = findReferencingEntries(
-        [entry('page', schema, { body: `[x](entry:${TARGET_ID})` })],
+        [
+          entry('page', schema, {
+            ctaHref: `entry:${TARGET_ID}`,
+            blocks: [
+              { template: 'card', value: { links: ['entry:otherOTHER12', `entry:${TARGET_ID}`] } },
+            ],
+          }),
+        ],
         TARGET_ID,
       )
-      expect(result).toEqual([])
+      expect(result[0].links).toEqual(['ctaHref', 'blocks[0].value.links[1]'])
     })
   })
 })

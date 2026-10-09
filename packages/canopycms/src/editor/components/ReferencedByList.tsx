@@ -33,7 +33,7 @@ export function ReferencedByList({ referencedBy, onOpenEntry }: ReferencedByList
           ...(entry.links.length > 0 ? [`linked from ${entry.links.join(', ')}`] : []),
         ].join('; ')
         return (
-          <List.Item key={entry.contentId}>
+          <List.Item key={entry.entryPath}>
             <Anchor
               component="button"
               type="button"

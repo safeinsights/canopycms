@@ -27,8 +27,6 @@ import { fieldTypes } from '../config'
 import { isValidCropRect, roundCropRect } from '../assets/transform-directives'
 import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
 import { referenceValueId, resolveBlockItem, traverseFields } from './field-traversal'
-
-export { referenceValueId }
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isDataOnlyFormat } from '../utils/format'

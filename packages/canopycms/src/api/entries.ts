@@ -319,7 +319,7 @@ interface ReferencingEntrySummary {
   title: string
   /** Reference fields holding the target's id, e.g. `author` or `blocks[0].cta.target`. */
   fields: string[]
-  /** Markdown fields, the file body included, linking to the target with `entry:<id>`. */
+  /** Where its strings, the md/mdx body included, link to the target with `entry:<id>`. */
   links: string[]
 }
 

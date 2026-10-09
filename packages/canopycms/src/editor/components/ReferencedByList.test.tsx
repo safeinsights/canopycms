@@ -63,6 +63,16 @@ describe('ReferencedByList', () => {
     expect(onOpenEntry).toHaveBeenCalledWith('content/posts/by-alice')
   })
 
+  it('lists two entries that share a content id as two rows', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const twin = { ...byAlice, entryPath: unsafeAsLogicalPath('content/posts/twin'), title: 'Twin' }
+    const onOpenEntry = renderList({ entries: [byAlice, twin], hiddenCount: 0 })
+    fireEvent.click(screen.getByRole('button', { name: 'Twin' }))
+    expect(onOpenEntry).toHaveBeenCalledWith('content/posts/twin')
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/same key/)
+    errors.mockRestore()
+  })
+
   it('counts the entries the user cannot view, after the visible ones', () => {
     renderList({ entries: [byAlice], hiddenCount: 2 })
     expect(listText()).toContain("and 2 entries you can't view")

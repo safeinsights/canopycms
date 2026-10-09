@@ -241,12 +241,7 @@ export function findFieldsByType(
   })
 }
 
-/**
- * Extract the id from a reference value. The editor holds references either
- * as an id string or as a resolved object `{ id, slug, collection, ... }`
- * (content reads resolve references by default). Returns undefined for any
- * other shape.
- */
+/** The id of a reference value held as an id string or a resolved `{ id, ... }` object. */
 export function referenceValueId(value: unknown): string | undefined {
   if (typeof value === 'string') return value
   if (isPlainRecord(value) && typeof value.id === 'string') return value.id
