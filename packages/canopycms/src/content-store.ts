@@ -26,7 +26,14 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName } from './utils/body-field'
-import { buildResolvedReference, buildRestrictedReference } from './entry-schema'
+import {
+  buildMissingReference,
+  buildResolvedReference,
+  buildRestrictedReference,
+  type MissingReference,
+} from './entry-schema'
+import { warnDanglingReference } from './dangling-reference-log'
+import { canopyLogError } from './utils/logger'
 import { resolveEntryTitle } from './utils/title-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { findUrlPathClaimant } from './url-collision'
@@ -292,6 +299,10 @@ const FORCED_REFRESH_MIN_INTERVAL_MS = 5000
 /** Internal sentinel: a lookup result that suggests this store's index is stale. */
 const STALE_LOOKUP = Symbol('stale-index-lookup')
 
+/** A resolver's own `MissingReference`; a full target never carries `unavailable`. */
+const isMissingReference = (value: Record<string, unknown>): value is MissingReference =>
+  value.unavailable === true && value.reason === 'missing'
+
 /**
  * Per-batch memo for reference resolution, keyed by content ID (plus `includeBody`).
  *
@@ -311,10 +322,11 @@ const STALE_LOOKUP = Symbol('stale-index-lookup')
  * cache must never be shared by two readers.
  *
  * Misses are memoized alongside hits so one batch stays internally coherent: a shared block
- * resolving to data on page 1 and `null` on page 40 of one sitemap is worse than either
- * consistent answer. Each DISTINCT id still gets its full self-healing retry, inside the memo.
+ * resolving to data on page 1 and a `MissingReference` on page 40 of one sitemap is worse than
+ * either consistent answer. Each DISTINCT id still gets its full self-healing retry, inside the
+ * memo.
  */
-export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown> | null>>
+export type ReferenceResolveCache = Map<string, Promise<Record<string, unknown>>>
 
 /** Create a cache for one batch of reference resolution. See {@link ReferenceResolveCache}. */
 export const createReferenceResolveCache = (): ReferenceResolveCache => new Map()
@@ -984,6 +996,10 @@ export class ContentStore {
         fields,
         undefined,
         options.referenceAccess,
+        {
+          entry: slug ? entryLogicalPath(schemaItem.logicalPath, slug) : schemaItem.logicalPath,
+          prefix: '',
+        },
       )
     }
 
@@ -1753,36 +1769,52 @@ export class ContentStore {
    * unmemoized behavior.
    *
    * `access` applies to every target exactly as in `read()`; see {@link ReferenceTargetAccess}.
+   * `origin`, the referring entry's logical path, names it in the dangling-reference warning.
    */
   public async resolveReferences(
     data: Record<string, unknown>,
     fields: EntrySchema,
     cache?: ReferenceResolveCache,
     access?: ReferenceTargetAccess,
+    origin?: string,
   ): Promise<Record<string, unknown>> {
-    return this.resolveReferencesInData(data, fields, cache, access)
+    return this.resolveReferencesInData(data, fields, cache, access, { entry: origin, prefix: '' })
   }
 
   /**
    * Resolve one reference id the way a reference field resolves it, for the editor's
-   * live-preview endpoint (api/resolve-references.ts), which has ids but no field to walk. Null
-   * when the id names no entry. No body is embedded, since there is no field to ask for one.
+   * live-preview endpoint (api/resolve-references.ts), which has ids but no field to walk. An id
+   * naming no readable entry resolves to a `MissingReference`, as in `read()`. No body is
+   * embedded, since there is no field to ask for one.
    */
   public async resolveReferenceTarget(
     id: string,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     return this.resolveSingleReference(id, await this.idIndex(), false, undefined, access)
   }
 
+  /**
+   * `trail` names where `data` sits, for the dangling-reference warning: the referring entry and
+   * the field path so far, in `traverseFields`' format (`blocks[2].author`, `reviewers[1]`).
+   */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
     fields: EntrySchema,
-    cache?: ReferenceResolveCache,
-    access?: ReferenceTargetAccess,
+    cache: ReferenceResolveCache | undefined,
+    access: ReferenceTargetAccess | undefined,
+    trail: { entry?: string; prefix: string },
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()
+    const at = (name: string) => (trail.prefix ? `${trail.prefix}.${name}` : name)
+    const resolveAt = async (id: string, includeBody: boolean, fieldPath: string) => {
+      const value = await this.resolveSingleReference(id, idIndex, includeBody, cache, access)
+      if (isMissingReference(value)) {
+        warnDanglingReference({ root: this.root, entry: trail.entry, path: fieldPath, id })
+      }
+      return value
+    }
 
     for (const field of fields) {
       // Inline groups are transparent — recurse into their children at the same data level
@@ -1792,12 +1824,14 @@ export class ContentStore {
           (field as InlineGroupFieldConfig).fields,
           cache,
           access,
+          trail,
         )
         Object.assign(resolved, groupResolved)
         continue
       }
 
       const value = data[field.name]
+      const fieldPath = at(field.name)
 
       if (field.type === 'reference') {
         // Whether this reference EMBEDS its target (wants the target's body) or merely LINKS
@@ -1805,18 +1839,12 @@ export class ContentStore {
         // which routinely contains both kinds at once. See ReferenceFieldConfig.includeBody.
         const includeBody = (field as ReferenceFieldConfig).includeBody === true
         if (typeof value === 'string' && value) {
-          resolved[field.name] = await this.resolveSingleReference(
-            value,
-            idIndex,
-            includeBody,
-            cache,
-            access,
-          )
+          resolved[field.name] = await resolveAt(value, includeBody, fieldPath)
         } else if (field.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
-            value.map((id) =>
-              typeof id === 'string'
-                ? this.resolveSingleReference(id, idIndex, includeBody, cache, access)
+            value.map((id, index) =>
+              typeof id === 'string' && id
+                ? resolveAt(id, includeBody, `${fieldPath}[${index}]`)
                 : null,
             ),
           )
@@ -1826,13 +1854,14 @@ export class ContentStore {
         if (!objectField.fields) continue
         if (objectField.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
-            value.map((item) =>
+            value.map((item, index) =>
               typeof item === 'object' && item !== null
                 ? this.resolveReferencesInData(
                     item as Record<string, unknown>,
                     objectField.fields,
                     cache,
                     access,
+                    { entry: trail.entry, prefix: `${fieldPath}[${index}]` },
                   )
                 : item,
             ),
@@ -1843,12 +1872,13 @@ export class ContentStore {
             objectField.fields,
             cache,
             access,
+            { entry: trail.entry, prefix: fieldPath },
           )
         }
       } else if (field.type === 'block' && Array.isArray(value)) {
         const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
-          (value as unknown[]).map(async (block) => {
+          (value as unknown[]).map(async (block, index) => {
             const b = block as Record<string, unknown>
             if (!b || typeof b.value !== 'object') return block
             const template = blockField.templates.find((t) => t.name === b.template)
@@ -1861,6 +1891,7 @@ export class ContentStore {
                 template.fields,
                 cache,
                 access,
+                { entry: trail.entry, prefix: `${fieldPath}[${index}]` },
               ),
             }
           }),
@@ -1901,7 +1932,7 @@ export class ContentStore {
     includeBody: boolean,
     cache?: ReferenceResolveCache,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     if (!cache) return this.resolveSingleReferenceUncached(id, idIndex, includeBody, access)
     // The key carries `includeBody`, not just the id: two fields can reference the SAME target
     // with different settings, and sharing one entry between them would make the shape depend
@@ -1918,11 +1949,12 @@ export class ContentStore {
     // The cached promise always has this handler attached, so it is never an unhandled
     // rejection; entry data is plain parsed JSON/YAML/frontmatter and so always cloneable (a
     // `!!binary` Buffer is the sole shape not preserved exactly: it clones to a Uint8Array).
-    return pending.then((resolved) => (resolved === null ? null : structuredClone(resolved)))
+    return pending.then((resolved) => structuredClone(resolved))
   }
 
   /**
-   * Returns null if the reference is invalid or missing. Includes id, slug and collection.
+   * The target's data with its reference metadata, a `RestrictedReference` for a denied target,
+   * or a `MissingReference` when the id names no readable entry.
    *
    * A suspicious result (ID missing from the index, or an index hit whose file is gone)
    * triggers one forced index refresh and a retry — self-healing for mutations by other
@@ -1939,7 +1971,7 @@ export class ContentStore {
     idIndex: ContentIdIndex,
     includeBody: boolean,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<Record<string, unknown>> {
     const first = await this.resolveSingleReferenceOnce(id, idIndex, includeBody, access)
     if (first !== STALE_LOOKUP) return first
     // Force a rebuild (throttled). Even when this caller loses the throttle, retry against the
@@ -1952,7 +1984,7 @@ export class ContentStore {
       includeBody,
       access,
     )
-    return second === STALE_LOOKUP ? null : second
+    return second === STALE_LOOKUP ? buildMissingReference(id) : second
   }
 
   /**
@@ -1975,13 +2007,13 @@ export class ContentStore {
     idIndex: ContentIdIndex,
     includeBody: boolean,
     access?: ReferenceTargetAccess,
-  ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
+  ): Promise<Record<string, unknown> | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
 
       if (!location) return STALE_LOOKUP
       if (location.type !== 'entry' || !location.collection || !location.slug) {
-        return null
+        return buildMissingReference(id)
       }
 
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
@@ -2029,8 +2061,9 @@ export class ContentStore {
       // Index hit but the file is gone — the typical symptom of an external
       // rename/delete this store hasn't observed yet.
       if (isNodeError(error) && error.code === 'ENOENT') return STALE_LOOKUP
-      console.error(`Failed to resolve reference ${id}:`, error)
-      return null
+      // Still the id, so a save of the referring entry keeps it.
+      canopyLogError(`Failed to resolve reference ${id}:`, error)
+      return buildMissingReference(id)
     }
   }
 }

@@ -12,7 +12,8 @@ export const AuthorCard: React.FC<AuthorCardProps> = ({ author, isLoading }) => 
     return <p className="text-sm text-slate-500">Loading author...</p>
   }
 
-  if (!author) {
+  // No author, or one whose entry no longer exists (`reason: 'missing'`, which carries only the id).
+  if (!author || (author.unavailable && author.reason === 'missing')) {
     return null
   }
 
