@@ -1,28 +1,13 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect, type Locator } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
+import { expectAllLoaded } from '../fixtures/images'
 import { MediaPage } from '../fixtures/media-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
-import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import { STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 const RAW_ROUTE = '/api/canopycms/assets/raw/'
-
-/** Resolves once every image in `images` has loaded real pixels. */
-async function expectAllLoaded(images: Locator, count: number): Promise<void> {
-  await expect(images).toHaveCount(count, { timeout: STANDARD_TIMEOUT })
-  await expect
-    .poll(
-      () =>
-        images.evaluateAll((els) =>
-          els.every(
-            (el) => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0,
-          ),
-        ),
-      { timeout: LONG_TIMEOUT },
-    )
-    .toBe(true)
-}
 
 /**
  * The editor and its live preview load every image through the authenticated raw route, never
