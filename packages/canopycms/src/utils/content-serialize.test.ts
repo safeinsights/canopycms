@@ -652,6 +652,14 @@ Body.
     },
   )
 
+  it.each(['a ', 'x\uFEFF'])('quotes %j on the last line, which gray-matter would trim', (text) => {
+    const raw = '---\ntitle: Launch # c\n---\n\nBody.\n'
+    const data = { title: 'Launch', extra: text }
+    const out = serializeFrontmatter('\nBody.\n', data, raw, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # c\n')
+  })
+
   it('quotes a new key js-yaml would read as a date, keeping comments', () => {
     const data = { ...asRead(DATED), '2024-01-01T10:00:00.000Z': 'launch' }
     const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')

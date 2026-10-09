@@ -610,6 +610,8 @@ function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): un
  */
 function readsAsAnotherValue(text: string, asKey: boolean): boolean {
   if (/[\r\n]/.test(text)) return false
+  // `matter.stringify` trims the frontmatter it writes, so an edge character `trim` drops is lost.
+  if (text !== text.trim()) return true
   try {
     const { data } = matter(`---\n${asKey ? `${text}: v` : `v: ${text}`}\n---\n`, {})
     if (!isPlainRecord(data)) return true
