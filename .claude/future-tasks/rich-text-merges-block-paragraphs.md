@@ -19,7 +19,7 @@ opens such a body as source. The cases:
 - **Quotes.** The import joins a quote's paragraphs the same way, and `LexicalQuoteVisitor` exports
   all of its blocks as one paragraph.
 
-Elsewhere, an export keeps the content and loses only looseness; that is a row in
+Other list-item and quote shapes keep their blocks and lose only looseness; that is a row in
 [mdxeditor-edit-rewrites-markdown.md](mdxeditor-edit-rewrites-markdown.md).
 
 Cost of the containment, measured over the repo's 491 tracked markdown files:
@@ -29,15 +29,16 @@ Cost of the containment, measured over the repo's 491 tracked markdown files:
 | 3.53.1 (our lockfile) | 20 | 20 | 0 |
 | 3.55.0 (adopters' latest 3.x) | 22 | 17 | 5 (multi-block quotes) |
 
-The quote rule is needed through 3.53.1 and over-rejects from 3.55.0, where quotes round-trip. Our
+The quote rule is needed through 3.53.x and over-rejects from 3.54.0, whose quote visitors are
+3.55.0's, where quotes round-trip. Our
 range `^3.52.4` admits both, so the rule stays until the floor moves (see
 [editor-tests-miss-adopter-runtime-stack.md](editor-tests-miss-adopter-runtime-stack.md)).
 
 ## Options for editing these in rich text
 
-1. **Upgrade to MDXEditor 4.3.** 4.0.2 imports a list item's later paragraphs as two line breaks,
-   which export as a blank line (upstream issue mdx-editor/editor#936). 3.54.0's release notes list
-   a quote fix too, and quotes measure clean on 3.55.0. Its only breaking change is the Sandpack
+1. **Upgrade to MDXEditor 4.3.** 4.0.2 imports a list item's later paragraphs as two line breaks
+   (`MdastParagraphVisitor`; upstream issue mdx-editor/editor#936). Quotes are fixed from 3.54.0
+   (same visitor), and measure clean on 3.55.0. Its only breaking change is the Sandpack
    plugin, which we do not use, but it moves Lexical from 0.35 to 0.48. 4.3.2 still has the
    nested-list reorder and the tight export, so those rules stay. None of this is measured on 4.x
    yet; the shape cases in `markdown-roundtrip-corpus.test.tsx` are the measurement.
@@ -53,10 +54,10 @@ range `^3.52.4` admits both, so the rule stays until the floor moves (see
    - **Risk:** it relies on the line-break export writing `\n` text. That is the hard-break bug in
      [mdxeditor-edit-rewrites-markdown.md](mdxeditor-edit-rewrites-markdown.md), so fixing that bug
      breaks this. Throwaway once option 1 lands.
-3. **Keep a list's later content in place.** Lexical keeps a nested list in an item of its own,
-   with nothing after it, so the content that follows would need its own item marked as a
-   continuation, plus an export that folds it back. Indent, outdent and Enter know nothing of the
-   mark.
+3. **Keep a list's later content in place.** MDXEditor puts a nested list in an item of its own
+   with nothing after it (`MdastListVisitor`), so the content that follows would need its own item
+   marked as a continuation, plus an export that folds it back. Indent, outdent and Enter know
+   nothing of the mark.
    - **Cost:** high.
    - **Risk:** high, for a rare shape.
 4. **Nested editors per item or quote.** A decorator node with a `NestedLexicalEditor`, as JSX

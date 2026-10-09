@@ -495,7 +495,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would change on save (e.g. a list item with two paragraphs) or crash on open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. two-paragraph list items) or that crash it open as source
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`

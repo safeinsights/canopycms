@@ -6,7 +6,8 @@
  * comparison, which ignores marker and escape style); and the export saved by
  * `serializeFrontmatter` writes its md/mdx file byte for byte. A listed body fails the run once it
  * comes out right. List-item and quote shapes follow: those MDXEditor merges or reorders open as
- * source (`rearrangedBlocks` in `mdx-jsx-support.tsx`), and the rest export what they mean.
+ * source (`rearrangedBlocks` in `mdx-jsx-support.tsx`), and the rest export what they mean but for
+ * `spread`.
  *
  * Bundling bugs are out of reach: request 86 crashed only under Turbopack's chunking. See
  * `.claude/future-tasks/editor-tests-miss-adopter-runtime-stack.md`.
@@ -308,7 +309,7 @@ const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
     body: '- a\n  - b\n\n    c\n',
     reason: 'list item with more than one paragraph',
   },
-  'a paragraph, then an element on a line of its own.mdx': {
+  'a paragraph, then a paragraph holding only an element.mdx': {
     body: '1. a\n\n   <Badge>new</Badge>\n',
     reason: 'list item with more than one paragraph',
   },
@@ -376,7 +377,7 @@ const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
     body: '- > a\n  >\n  > b\n',
     reason: 'quote with more than one paragraph or block',
   },
-  // A nested editor imports an element's children only once they are edited.
+  // An element's nested editor writes its children back only once they are edited.
   'a list item with two paragraphs inside an element.mdx': {
     body: '<Callout>\n\n- a\n\n  b\n\n</Callout>\n',
     reason: 'list item with more than one paragraph',
