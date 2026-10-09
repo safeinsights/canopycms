@@ -1214,7 +1214,7 @@ npx canopycms collect-asset-refs out           # after `next build`, before any 
 npx canopycms materialize-assets --refs out/canopy-asset-refs.json --report materialize.json
 ```
 
-`collect-asset-refs` records the `/assets/…` keys in the output's text files and fails on a non-canonical or malformed URL. `materialize-assets` transforms the keys the store lacks, checks svg/pdf keys exist, naming each failure's pages. Exit codes: `0` success; `1` it did not finish; `2` content failures (`0` under `--allow-failures`); `3` any store failure. `--report` writes JSON with `schemaVersion: 1`, a `summary` and a `status` per key (`existed`, `created`, `copied`, `failed`).
+`collect-asset-refs` records the `/assets/…` keys in output text, failing on non-canonical or malformed URLs or unreadable RSC scripts. `materialize-assets` transforms the keys the store lacks, checks svg/pdf keys exist, naming each failure's pages. Exit codes: `0` success; `1` it did not finish; `2` content failures (`0` under `--allow-failures`); `3` any store failure. `--report` writes JSON with `schemaVersion: 1`, a `summary` and a `status` per key (`existed`, `created`, `copied`, `failed`).
 
 **The contract for site code:** every `/assets/t/` URL your site can request must appear as text in its build output. Compute widths at render time, never on client-side interaction. An image value passed to a client component puts its `orig` URL in the output, so that copy is stored too. Widths may be any integer up to 8192; `lazyPublicTransforms` accepts only 32, 48, 64, 96, 128 and multiples of 160 up to 4096.
 

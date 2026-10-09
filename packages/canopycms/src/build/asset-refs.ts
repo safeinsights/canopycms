@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { ASSET_PREFIXES } from '../assets/asset-prefixes'
 import { canonicalizeTransformPath } from '../assets/transform-directives'
 import { atomicWriteFile } from '../utils/atomic-write'
+import { extractInlineFlight } from './inline-flight'
 
 /** @internal Written into the scanned directory, so a manifest the adopter builds afterwards covers it. */
 export const ASSET_REFS_FILENAME = 'canopy-asset-refs.json'
@@ -84,9 +85,10 @@ type AssetRefEntry = z.infer<typeof assetRefEntrySchema>
 
 export type AssetRefsFile = z.infer<typeof assetRefsFileSchema>
 
-/** A URL in the output that no stored object can answer. */
+/** A URL in the output that no stored object can answer, or an inline flight script that cannot be read. */
 export interface AssetRefProblem {
   file: string
+  /** The URL, or the script's position when the problem is a script. */
   url: string
   error: string
 }
@@ -120,10 +122,12 @@ async function listScannedFiles(root: string): Promise<string[]> {
     .sort()
 }
 
+const HTML_FILE_RE = /\.html?$/
+
 /** The route a static-export HTML file serves (`about/index.html` and `about.html` are `/about`). */
 function routeForFile(file: string): string | undefined {
-  if (!/\.html?$/.test(file)) return undefined
-  const withoutExt = file.replace(/\.html?$/, '')
+  if (!HTML_FILE_RE.test(file)) return undefined
+  const withoutExt = file.replace(HTML_FILE_RE, '')
   const route = withoutExt === 'index' ? '' : withoutExt.replace(/\/index$/, '')
   return `/${route}`
 }
@@ -232,13 +236,8 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
   const statics = new RefCollector()
   const problems: AssetRefProblem[] = []
 
-  let scannedFiles = 0
-  for (const file of files) {
-    const filePath = path.join(root, file)
-    if (path.extname(file) === '' && (await startsBinary(filePath))) continue
-    scannedFiles++
-    const text = decodeUrlEscapes(await fs.readFile(filePath, 'utf-8'))
-
+  const scan = (file: string, raw: string): void => {
+    const text = decodeUrlEscapes(raw)
     for (const match of text.matchAll(TRANSFORM_URL_RE)) {
       const [url, filename] = trimTrailingPunctuation(match[0], match[3])
       const [, encodedDirectives, hash32] = match
@@ -267,6 +266,23 @@ export async function collectAssetRefs(outDir: string): Promise<CollectAssetRefs
         statics.add(`${ASSET_PREFIXES.public}/${hash32}/${filename}`, file)
       }
     }
+  }
+
+  let scannedFiles = 0
+  for (const file of files) {
+    const filePath = path.join(root, file)
+    if (path.extname(file) === '' && (await startsBinary(filePath))) continue
+    scannedFiles++
+    const text = await fs.readFile(filePath, 'utf-8')
+    if (!HTML_FILE_RE.test(file)) {
+      scan(file, text)
+      continue
+    }
+    // A page's inline RSC payload is split across scripts at arbitrary bytes (inline-flight.ts).
+    const page = extractInlineFlight(text)
+    scan(file, page.markup)
+    for (const flight of page.texts) scan(file, flight)
+    for (const { script, error } of page.problems) problems.push({ file, url: script, error })
   }
 
   if (problems.length > 0) throw new AssetRefsError(problems)
