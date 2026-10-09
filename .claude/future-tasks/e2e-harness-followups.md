@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Four latent harness defects, all verified still live: the settings workspace (permissions/groups) is **never reset** between tests or runs, `TEST_USERS.admin.userId` is `'test-admin'` where the real id is `dev_admin_3xY6zW1qR5`, `listBranchesViaAPI` is mistyped and has zero callers, and `submitBranchViaAPI` consumes its response body. All worked around, none fixed. **Do item 1 together with `e2e-remote-git-ref-accumulation`** — both edit the same `resetWorkspace()`
+---
 # E2E harness follow-ups from the coverage sweep
 
-**Priority:** P2 — latent harness defects; none currently breaks a test
+**Priority:** P3 — latent harness defects; none currently breaks a test
 **Found:** 2026-07-30, program workstream C (see
 [apps/test-app/e2e/COVERAGE-MATRIX.md](../../apps/test-app/e2e/COVERAGE-MATRIX.md))
 

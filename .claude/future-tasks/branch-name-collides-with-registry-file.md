@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, reasoned from code, pre-existing. Branch creation does not reserve the branch registry's file names, so an editor can create a branch named `branches.json`, whose workspace path is the registry file. Provisioning or a later registry write then fails with an unhelpful error
+---
 # A branch can be named after a file in the branches root
 
 ## Priority: P3 [BOTH]

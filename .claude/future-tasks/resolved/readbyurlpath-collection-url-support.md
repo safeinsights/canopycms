@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (commit `2ec4ff11`) — both halves shipped and documented. `listEntries` now returns `urlPath` (`content-listing.ts:143`, computed at `:233-253` with the proposed index-collapsing rule), and `readByUrlPath` handles the root path (`url-path-resolver.ts:20` returns the index entry for zero segments). **Found still open by the 2026-08-13 audit**: the same commit that implemented it also rewrote this file into its current form, so it read as an open proposal for months. One of three files in this batch with that exact shape
+---
 # URL path handling: listEntries urlPath + readByUrlPath root support
 
 ## Problem 1: listEntries doesn't provide URL-ready paths

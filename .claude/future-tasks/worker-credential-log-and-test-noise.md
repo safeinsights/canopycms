@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-09-13, three small code-level items from the worker-credential epic's claims pass, which fixed prose only: the Secrets Manager retry log line never names the error, so AccessDenied reads as an outage; "Failed to re-read" is logged when a timed-out refresh later succeeds; and the CLI exit-127 bridge test writes `env`'s error to the runner's stderr, where the CI log guard cannot see it
+---
 # [P3] Worker credential logging says less than it knows, and one CLI test writes to stderr
 
 Found 2026-09-13 during the worker-credential epic's review and claims pass. These are three small

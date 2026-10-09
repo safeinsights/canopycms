@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04. The `.canopy-meta` directory name is spelled in at least seven places (two exported constants, two private ones, several literals, the exclude pattern), and the sync loop's "is this canopycms state" check relies on them agreeing. Point them all at `CANOPY_META_DIR`
+---
 # Consolidate the `.canopy-meta` directory name onto one constant
 
 Noticed 2026-10-04 while adding `CANOPY_META_DIR` to `utils/git.ts`.

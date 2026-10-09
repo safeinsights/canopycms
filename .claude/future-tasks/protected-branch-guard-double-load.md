@@ -1,6 +1,11 @@
+---
+priority: P3
+summary: >-
+  The 7 schema-mutation endpoints resolve branch context twice per request (`writableBranch` guard + `getSchemaOps` at `api/schema.ts:315-330`) — two `branch.json` reads (EFS round-trips) where there was one; thread the guard-resolved context into `getSchemaOps`. Negligible in dev mode; an EFS cost once prod schema editing exists
+---
 # Schema write endpoints load branch context twice per request
 
-## Priority: P2
+## Priority: P3
 
 Surfaced by the protected-base-branch code review (2026-07-24), finding #6. Real
 efficiency regression, deferred from the fix pass (findings 1-5 were fixed).

@@ -1,7 +1,13 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  `canopycms init` should detect the adopter's Prettier config + package manager and match them in generated files + next-steps. **Half-built already** — `project-detect.ts` has `detectPackageManager`/`commandsFor`, but they are wired only into `initDeployAws`; base `init` still hardcodes `npm install`. Reuse it; only the Prettier half is greenfield
+---
 # init should respect adopter conventions (style, package manager)
 
 **Status**: proposed
-**Priority**: P2 (enhancement)
+**Priority**: P3 (enhancement)
 **Origin**: surfaced while scaffolding `safeinsights/website` on 2026-04-17 — init emitted double-quoted, semicolon-terminated TypeScript into a repo whose Prettier config demanded single quotes and ASI, and the final "Next steps" block suggested `npm install` even though the repo uses pnpm. Both forced hand-cleanup.
 
 ## Motivation

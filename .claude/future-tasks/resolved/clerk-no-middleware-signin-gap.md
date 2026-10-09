@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-01, branch `feat/editor-signed-out-state`. The editor had no signed-out state, so dropping `clerkMiddleware` (to keep the secret off the Lambda) also dropped the only sign-in redirect. Shipped `EditorAuthGate` (401 before mount → provider sign-in full-screen; after mount → overlay on the still-mounted editor), `ClerkSignIn` and `DevSignIn`, a real dev sign-out, and docs stating the middleware is optional. Follow-ups in `clerk-signed-out-followups.md`
+---
 # Clerk without `clerkMiddleware`: no sign-in surface, and no documented path
 
 **RESOLVED 2026-10-01, branch `feat/editor-signed-out-state`.** Options 1 and 2 below both

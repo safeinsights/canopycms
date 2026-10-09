@@ -1,4 +1,9 @@
-# [P3] Node versions are stated in many places and must move together
+---
+priority: P2
+summary: >-
+  New 2026-08-21. Owed from the infra-review epic's plan (the repo-wide 22 → 24 bump I said I would file), merged with two inconsistencies the round-4 review found. Everything now agrees at 22: runtimes, `engines` (`>=22.12.0` since PR #308, which answered the file's first question), and, since `chore/actions-node24`, the three esbuild `target`s no earlier sweep had listed. What remains open is when to move everything to 24 (no urgency — 22 is supported to 2027-04-30). The bump must move `.nvmrc`, root engines, CI, the worker, both Lambda runtimes, the esbuild targets and both scaffold templates TOGETHER; a partial bump is what produced the split this file records
+---
+# [P2] Node versions are stated in many places and must move together
 
 Owed from the 2026-08 infra-review epic's plan (I said I would file the
 repo-wide 22 → 24 bump and did not), plus two inconsistencies the round-4

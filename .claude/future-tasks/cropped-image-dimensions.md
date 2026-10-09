@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  `assetUrl` now applies an image value's `crop`, but `width`/`height` stay the uncropped original's, so every adopter hand-writes the `crop.w`/`crop.h` scaling for the `<img>` attributes. Export a helper beside `assetUrl` (needs approval: new main-entry export)
+---
 # [P3] A cropped image field value has no helper for its rendered dimensions
 
 `assetUrl`/`assetSrcSet` apply an `image` field value's `crop`, but the value's `width` and

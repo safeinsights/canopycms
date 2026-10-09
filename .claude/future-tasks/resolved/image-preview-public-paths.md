@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `fix/image-preview-public-paths`, base `int-202610-b` — adopter request #89. An `image` field whose src is outside `/assets/` (a `public/` path) previews at that src as written instead of 404ing through the raw route; `editorImageSrc` is the one editor resolver (ImageField, AssetCard, MDX body previews) and uses `assetUrl`'s exported `isAssetStoreSrc`, so non-store srcs are also neutralized against off-origin spellings. Crop is hidden for non-store srcs, where it would never apply
+---
 # The `image` field's preview fails for any `public/` path
 
 > **RESOLVED 2026-10-08**, branch `fix/image-preview-public-paths`, base `int-202610-b`. Adopter

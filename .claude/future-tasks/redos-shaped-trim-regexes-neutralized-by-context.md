@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-08-15 — from the same session's repo-wide grep for sibling ReDoS-shaped `replace(/.../)` patterns. `cli/migrate.ts`'s `slugifyName` and `assets/keys.ts`'s slug generation both end with a trailing-hyphen-trim regex in the exact `-+$` shape measured elsewhere as polynomial (~26s/128KB in isolation) — currently safe only because an earlier step in each pipeline already collapses every hyphen run to length 1, a property enforced by ordering, not types or a test
+---
 # Two `replace(/…$/g)` trim regexes are ReDoS-shaped but currently safe by construction
 
 **Priority:** P3 — verified NOT exploitable today; defensive hardening only

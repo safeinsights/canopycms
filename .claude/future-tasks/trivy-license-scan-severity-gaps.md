@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-11, found while landing the license scan in PR #313. The Trivy step gates `HIGH,CRITICAL`, but Trivy files a license it cannot classify as **UNKNOWN** — so a dependency whose `license` is a custom string rather than an SPDX id is invisible to the gate whatever its real terms. The graph already has one: `@codesandbox/nodebox`, licensed `SEE LICENSE IN ./LICENSE`. Adding UNKNOWN reds CI immediately on it, which is why it was not folded into #313 — the fix needs someone to actually read that LICENSE and then exempt it by package name in `.trivy-ignore-policy.rego`
+---
 # License scan: UNKNOWN-severity licenses are not gated
 
 **Status:** Open, found 2026-09-11 while landing the license scan itself (PR #313). **Priority: P3.**

@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  `GitManager.pushBranchToLocalRemote` adds a `__canopycms_init_<ts>__` remote to the adopter's **real** repo to seed the simulated `remote.git`. Its `finally` cleanup swallows all errors silently and is skipped entirely on a hard kill, and each init uses a fresh timestamped name — so leaks accumulate forever. **Verified still accumulating in this very checkout**: three stray remotes at HEAD, one dangling at a deleted temp dir. Fix: sweep `^__canopycms_init_\d+__$` at init, log cleanup failures, or push to a URL directly
+---
 # Dev-init temp remotes accumulate in the adopter's real repo config
 
 ## Priority: P3

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, deferred from the final code review of PR 3 of the CMS editor image epic. The tracing-root lookup in `sharp-tracing.ts` mirrors Next's lockfile inference, but in two LOW edge cases it can pick a root different from Next's. (1) Next 13.5.x does not look for `bun.lockb`, so a Bun workspace on Next 13 with no configured root gets a wider root here. Such an adopter already has to set `experimental.outputFileTracingRoot`. (2) Both lockfile walks start from `process.cwd()` as given, not its realpath, which only differs through something like a Windows junction. The outermost walk had that gap before PR 3
+---
 # [P3] Two lockfile edge cases in `withCanopy`'s tracing-root lookup
 
 Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](resolved/cms-image-build-epic.md)).

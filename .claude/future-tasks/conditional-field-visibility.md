@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: MKT
+summary: >-
+  No `showIf`/`visibleWhen`/`dependsOn` and no `oneOf` field type, so a block with two mutually-exclusive authoring shapes can only signpost the rule in **field labels** — an editor sees every field, can fill all of them, and two get silently discarded at render. Wants design, not a quick attribute: where it evaluates (cosmetic UI hide vs. the authoritative write boundary), what it can reference, and whether a discriminated `variant` field is the better-shaped answer
+---
 # No conditional field visibility, so mutually-exclusive fields can only be signposted in labels
 
-**Status:** Open. **Priority: P2.** Found 2026-08-20 reviewing the marketing site's
+**Status:** Open. **Priority: P3.** Found 2026-08-20 reviewing the marketing site's
 `int-official-content` branch (PR #80). Filed rather than fixed — this is new schema surface and
 wants its own design pass.
 

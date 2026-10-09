@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New "list" permission level: see content exists without read/edit access. Unstarted; `PermissionLevel` is still `'read' | 'edit' | 'review'`. Two path drifts corrected 2026-08-13 (the named `path-permissions.ts` no longer exists; the `EditorEntry` sketch uses field names the real interface doesn't have). Note it would add a **sixth** ACL matcher unless the consolidation lands first
+---
 # Add "list" Permission Level
 
 ## Overview

@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Prod falls back to `'main'` when `defaultBaseBranch` is unset (`utils/git.ts:155-166`); detect the remote's real default branch (origin/HEAD) at service creation instead. **This is now a live KB risk, not just a marketing-site hypothetical**: the KB's effective branch isn't literally named `main`, and if the config step is skipped, forking/rebasing/protection silently misconfigures rather than failing at startup
+---
 # Prod mode assumes 'main' when defaultBaseBranch is unset — detect the remote's real default branch
 
-## Priority: P3
+## Priority: P2
 
 Surfaced by the protected-base-branch work (2026-07-24), from JP's question about
 repos whose base is `master`/`develop`. The protection predicate correctly keys off

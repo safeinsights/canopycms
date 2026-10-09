@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  **Widened 2026-08-23** from two files to a whole-package assessment. ~~`worker/cms-worker.ts` (2,949 lines)~~ **DONE 2026-08-23** — all four clusters split into `task-runner.ts`/`git-sync.ts`/`rebase.ts`/`history-rewrite.ts` behind a `WorkerContext`, and the 667-line `rebaseActiveBranches` decomposed; `cms-worker.ts` is now 802 lines. Package grew +23%, not the estimated +5% — see the file for why, and for the instance-replacement trap the eight-file test suite caught. Still open: `git-manager.ts` is two modules sharing a class name (statics = provisioning, instance = per-repo ops, `status()` is the line); `api/branch.ts` is a branch service in route-handler clothes: 7 of 14 exports have one consumer, its own test. Verdict **do not split** on `schema/schema-store.ts` (disciplined) and `editor/Editor.tsx` (hooks already extracted). The old "not while prod-readiness work is in flight" sequencing note is **superseded** — the quiet window before prod testing is the window, not the hazard
+---
 # Split Large Files
 
 Extract focused modules from oversized files to improve maintainability.

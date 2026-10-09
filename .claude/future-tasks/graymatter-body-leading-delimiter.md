@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  **Pre-existing, found 2026-08-21** by the independent review of PR #254. An entry body whose own text starts with a `---` block is read as frontmatter by gray-matter, so saving through the editor silently DELETES that block from the body — reachable just by pasting a document that begins with a horizontal rule. The comment-preservation branch did not cause this and does not fix it; it only changed the fate of the block's parsed keys (previously promoted into the real frontmatter, now dropped), which also left the reconcile path and the fallback path disagreeing on this one input. Needs one decision applied to both paths — refuse-and-report is the only option with no silent loss
+---
 # A body that starts with `---` loses that block on save
 
-**Status:** Open. **Priority: P3.** Found 2026-08-21 by the independent review of
+**Status:** Open. **Priority: P2.** Found 2026-08-21 by the independent review of
 `fix/content-comment-preservation` (PR #254). **Pre-existing** — the data loss is not introduced
 by that branch, which only changes what happens to the block's parsed keys.
 

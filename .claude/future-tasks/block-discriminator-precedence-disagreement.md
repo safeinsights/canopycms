@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  **Pre-existing, found 2026-08-22** while fixing comment misattachment in `content-serialize.ts`. The block discriminator has two readers that prefer opposite keys: `resolveBlockItem` tries `template` then `_type`, `ai/json-to-markdown.ts:547` does `_type || template`. An item carrying BOTH resolves to a different template when validated than when rendered into the AI bundle, silently. The `||` also falls through on `_type: ''` where the other reader accepts it. `validation/block-structural-keys.ts` now exists as the single home for the ordered key list, so the fix is pointing both readers at it — but which precedence wins is a behaviour decision, not a refactor
+---
 # The two block-discriminator readers disagree on precedence
 
 **Status:** Open. **Priority: P3.** Found 2026-08-22 while fixing comment misattachment on list

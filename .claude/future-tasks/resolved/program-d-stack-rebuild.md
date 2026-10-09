@@ -1,3 +1,7 @@
+---
+summary: >-
+  RETIRED 2026-10-05, resolved by events: the first deployed editor went live without the deploy-test rebuild; the live checks are in [infra-review-2026-08-deploy-verification.md](../infra-review-2026-08-deploy-verification.md).
+---
 # Program D — Rebuild and exercise the deploy-test stack
 
 **Closed 2026-10-05, resolved by events:** the first real deployed editor went live without this rebuild; the checks that remain live as [infra-review-2026-08-deploy-verification.md](../infra-review-2026-08-deploy-verification.md).

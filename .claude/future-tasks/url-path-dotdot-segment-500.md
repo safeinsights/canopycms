@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-05, measured. A `..` inside a URL segment (`/posts/hello..world`, encoded `..%2F`) makes `readByUrlPath` throw a plain traversal `Error` from `createLogicalPath`, which only `ContentStoreError` swallowing misses: a 500, not a 404, on every public catch-all route and the preview route
+---
 # A `..` inside a URL segment makes `readByUrlPath` a 500, not a 404
 
 ## Priority: P2 [BOTH]

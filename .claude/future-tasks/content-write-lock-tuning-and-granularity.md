@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  From PR #229's human review (#5b), explicitly **not** rated a blocker — "the trade is the right one". [SYNC-C1]'s lock is per-branch-root, so every write to a branch now serializes where in-process serialization used to be per-entry, with a 2s ceiling before a 409: bounded on Lambda (one invocation per container), real under `next dev` and build-time provisioning. `DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS` is a constant with no config path. The case to watch is a write whose in-lock path triggers a full `idIndex()` rescan of a large tree over EFS. Doc and message halves already landed.
+---
 # [P3] Content-write lock: wait budget is not configurable, granularity is per-branch
 
 Raised by the human review of

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. A markdown field stored as a frontmatter/YAML string is saved whole as the editor's serialisation, restyling untouched paragraphs in it. Apply `preserveMarkdownSource` to markdown-typed values at `ContentStore.write`, which has the schema
+---
 # [P3] Markdown fields stored in frontmatter or YAML are saved as the editor's serialisation
 
 Found 2026-10-08 while making markdown BODY saves source-preserving.

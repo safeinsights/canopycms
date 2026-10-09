@@ -1,3 +1,7 @@
+---
+summary: >-
+  DUPLICATE, closed 2026-09-13 in the base merge (#341). Filed on `int-202609-a` on 2026-09-12, the same day as two other filings of the same `examples/aws-deployment/` drift. Every fact in it is merged into [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), which stays open and takes over its "Do next" rank.
+---
 # `examples/aws-deployment/deploy-cms.yml` has drifted from its template
 
 **Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, reasoned from code. The listing memo in `context.ts` is described as request-scoped, but `getCanopyForBuild` and `createBuildCanopy` keep one context for the life of the process. Under `next dev` its listings then keep a stale flattened schema and any rejected first provisioning
+---
 # The listing memo in `context.ts` outlives a request on the build context
 
 ## Priority: P3 [BOTH]

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24) — level-scoped `defaultPathAccess` (`{ read: 'allow' }`) for public read + `readByUrlPath` now renders a FORBIDDEN denial as `null` (404 via `notFound()`) instead of throwing a 500; documented in README's Permission Model section. Strict `read()` still throws.
+---
 # Anonymous reads on a `deployedAs: 'server'` site render 500, not 401/404
 
 ## Status: RESOLVED (2026-07-24, server-mode-500-errors branch)

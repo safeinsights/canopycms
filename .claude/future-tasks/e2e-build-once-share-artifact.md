@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Each e2e shard pays ~70s of `canopycms-next` + `next build` inside the Playwright webServer command, on top of ~48s setup — so ~2m of every shard's ~3.6m is fixed cost, and it scales with shard count. No prep job or artifact sharing exists in `ci.yml` today. Build once and share the artifact
+---
 # Build the e2e test app once and share it across shards
 
-**Priority:** P2 — CI latency; no correctness impact
+**Priority:** P3 — CI latency; no correctness impact
 **Measured:** 2026-07-30, run 30589885335
 
 ## The number

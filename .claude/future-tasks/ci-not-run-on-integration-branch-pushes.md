@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04. `ci.yml` runs on `pull_request` and pushes to `main` only, so a merge into an `int-*` branch is never tested where it lands. Two individually green PRs combined into a red `int-202610-a` (an ACL test helper writing without `expectedVersion` against the OCC change), and it surfaced as an unrelated PR's failure. Fix: add `int-*` to `push.branches`
+---
 # [P3] CI never runs on an integration branch itself
 
 New 2026-10-04, found while landing the workflow-push fix.

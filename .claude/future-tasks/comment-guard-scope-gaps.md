@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-13, from the manager's review of the guard PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `apps/` is outside the comment budget; `PACKAGE_ROOTS` is hardcoded so a new package is silently unbudgeted; test scaffolding files are still budgeted; multi-line block directives count as code after line one; "stale doc budget" only checks existence; `findLongListItems` stops at a blank line; `--list-long-items` is undocumented
+---
 # [P3] Comment-budget guard: scope gaps and counting-rule edges
 
 **Status:** Open. Filed 2026-09-13 from the manager's review of the guard PR in

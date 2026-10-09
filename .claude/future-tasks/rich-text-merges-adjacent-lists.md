@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus test. Two adjacent bullet lists with different markers are saved as one list after any edit
+---
 # [P3] The rich-text editor merges two adjacent lists into one
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).

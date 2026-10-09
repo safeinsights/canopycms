@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Four instances of "a helper exists and the call sites reimplement it", **two already drifted**: `atomicWriteFile` has three hand-rolled copies and one of them omits cleanup on failed rename (leaks `.tmp`); `permissionPathSchema` is defined twice byte-identical; the permissions/groups settings loaders are copy-paste twins that **disagree on error behavior for the same failure class**; and three slugify implementations disagree on accented input, so a CLI migration fails where an asset upload of the same filename succeeds
+---
 # Helpers that exist, and the call sites that reimplement them
 
-## Priority: P2
+## Priority: P3
 
 Found 2026-08-23 by the [baseline structural evaluation](../../docs/reviews/2026-08-structure.md).
 All re-verified at `64d804f5`.

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, split out while planning adopter requests #45/#46 and deliberately scoped OUT of them. `createGitHubService` resolves its credential from an env var and nothing else (`github-service.ts:494-495`), so when the worker gains GitHub App auth this second Octokit path does not, and an App-only adopter gets `githubService === null`. **Measured, not assumed, as a non-blocker:** `supportsPullRequests()` is true in prod, but `CanopyCmsService` stamps no GitHub token onto the Lambda at all (`cms-service.ts:1266-1291`), so the path is already inert on the shipped deployment and every PR is created by the worker. It bites only a non-AWS, internet-having, App-only adopter running no worker, whose settings pushes sit queued with a `canopyLogWarn` as the sole signal — and that is **pre-existing**, identical today for any adopter with no PAT. Carries one constraint for whoever fixes it: `github-service.ts` is in every adopter's Next.js SERVER bundle via `services.ts:39`, and `lint:bundle` only guards the CLIENT boundary, so `@octokit/auth-app` must not be imported there
+---
 # [P3] `GitHubService` can only authenticate with a static token, so a GitHub-App-only adopter has no path through it
 
 Split out 2026-09-12 while planning adopter requests #45/#46 (GitHub App auth for the

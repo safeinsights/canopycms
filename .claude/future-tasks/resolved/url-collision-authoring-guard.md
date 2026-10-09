@@ -1,3 +1,8 @@
+---
+adopters: MKT
+summary: >-
+  RESOLVED (2026-08-21, branch `fix/url-collision-authoring-guard`, epic `adopter-request-intake`) — the write-boundary half of "no two entries may claim the same `urlPath`", completing the build-time half shipped in #253. `url-collision.ts`'s `findUrlPathClaimant` refuses a create/rename that would contest a URL, via `UrlPathConflictError` (a `ContentConflictError` subclass, so existing 409 mapping is unchanged). Keyed on the URL, never the name: an entry beside a same-named sibling collection stays legal until that collection gains an index entry. **The filed four-site list was wrong — there are three.** `createCollection` needs no check (collections are created EMPTY, so they cannot contest a URL until an index entry lands in them); the missed site is collection RENAME, which re-paths every entry beneath it. Create-only on `write()` — blocking an ordinary save would trap the author in an entry they could no longer fix
+---
 # Block a URL collision at the write boundary, not just at the build
 
 **Status: RESOLVED** (2026-08-21, branch `fix/url-collision-authoring-guard`, epic

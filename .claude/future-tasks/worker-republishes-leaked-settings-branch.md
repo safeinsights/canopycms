@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-05. Where content history already leaked under the settings name, settings provisioning now fails closed, but the worker's tracked-branch promotion and settings push can recreate the branch on whichever side an operator deleted it. Check before pushing or promoting, and document recovery
+---
 # The worker restores a leaked settings branch after an operator deletes it
 
 ## Priority: P2 [BOTH]

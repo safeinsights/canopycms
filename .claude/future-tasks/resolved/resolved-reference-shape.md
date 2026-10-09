@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, branch `feat/resolved-reference-shape`, epic `adopter-request-intake`) — merges the two files that were the same question from opposite sides: `resolved-references-url.md` (link case: no URL, so the KB ran a **second full `listEntries` pass** to build a contentId→urlPath table) and `resolved-reference-md-body.md` (embed case: an md target's prose lives on `doc.body` and was never spread in). Shipped `urlPath` unconditionally via the existing `computeEntryUrl` — and replaced `listEntries`' own inline copy of that rule with the same call, so the two agree by construction — plus `includeBody` declared **per field**, because embed-vs-link belongs to the content model and one call routinely contains both kinds. Cache keyed by id+includeBody. `TypeFromEntrySchema` now intersects `ResolvedReferenceMeta`. Type-level residue split to [resolved-reference-inferred-body.md](../resolved-reference-inferred-body.md)
+---
 # What a resolved reference contains — embed vs link
 
 **RESOLVED** 2026-08-21, branch `feat/resolved-reference-shape`, epic

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-13, from the claims pass over the integration PR (#331) of [cms-image-build-epic.md](resolved/cms-image-build-epic.md). `transform.sharp-unavailable.test.ts`'s "does not leave an un-awaited first load as an unhandled rejection" still passes with `loading.catch` removed from `sharp-loader.ts`: all 5 tests in the file pass, and only vitest's run-level "Errors 1" fails the run. Make the test observe the rejection itself, e.g. with a `process.on('unhandledRejection')` listener
+---
 # [P3] The unhandled-rejection test for `loadSharp()` passes without the code it guards
 
 **Priority:** P3. A test-strength gap, not a defect: the guarded code is correct today, and the

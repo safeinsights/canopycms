@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. YAML saves now keep a CRLF file's bytes, but a CRLF md/mdx file's frontmatter still falls back to a whole re-serialisation: gray-matter leaves a bare `\r` on `.matter` and writes `---\n` delimiters. Proposal: frame the frontmatter ourselves when the file is consistently CRLF
+---
 # [P3] A CRLF md/mdx file's frontmatter is still rewritten on every save
 
 Found 2026-10-07 while making YAML saves source-preserving (`utils/yaml-source-splice.ts`).

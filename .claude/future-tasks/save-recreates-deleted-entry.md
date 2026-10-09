@@ -1,3 +1,8 @@
+---
+priority: P2
+summary: >-
+  New 2026-10-04, same source. A save carrying a numeric `expectedVersion` whose file is gone skips the version check (`ENOENT` is treated as a first write), so editing an entry another editor deleted silently recreates it, undoing their delete. Not content loss, but a version-holding save that isn't checked against disk
+---
 # A save carrying a version silently recreates an entry another editor deleted
 
 Found 2026-10-04 while re-verifying

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-09, from the website adopter declining a migration step with a good reason. The generated `cms-stack.ts` derives `baseBranch`/`settingsBranch` from `canopycms.config.ts`, which is right for a single-deployment adopter and **wrong in the silent direction** for one deploying a repo in two modes: if the config resolves the branch from the environment, at synth time the env var is unset, the literal fallback wins, and the production mode quietly resolves the testing branch — the same failure class the derivation was added to prevent. Nothing is broken (a multi-mode adopter hand-maintains the stack anyway); what is missing is a documented seam, so the next one re-derives the trap. Fix is a two-line comment in the template naming when NOT to derive
+---
 # [P3] The generated stack derives one base branch, but a multi-mode adopter has two
 
 Raised 2026-09-09 by the website adopter, declining to adopt a migration step

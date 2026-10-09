@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Found 2026-08-20 in adversarial review of the `.d.ts` fix. `add-js-extensions.mjs` checks `isDirectory()` BEFORE trying `${base}.js`, the opposite of tsc's Bundler resolution, so when a file and a same-named directory both exist the published output binds to a different module than the one tsc typechecked. `dist/config.js` + `dist/config/` is a live collision; harmless only because `src/config.ts` is a pure re-export shim, and it stops being harmless the moment that shim gains an export of its own. Pre-existing for `.js`; extending the rewrite to `.d.ts` doubled the surface. Suggested fix is to ban the collision rather than pick a winner
+---
 # `add-js-extensions.mjs` resolves a directory before a same-named file
 
 Found 2026-08-20 in an adversarial review of

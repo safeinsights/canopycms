@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — permissions/groups writes now run the full layered stack via `authorization/settings-file-store.ts`; contentVersion unified into the OCC `version` (advisory — lockfile is the cross-host guarantee); GET+editor wired for `expectedContentVersion` (2026-07-24)
+---
 # Audit settings-file OCC for cross-host safety
 
 **Priority: P2** — authorization data; same failure class the EFS epic fixed elsewhere

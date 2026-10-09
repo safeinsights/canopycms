@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Worker's plain `git.push(<url>, branch)` has no `--end-of-options` separator at three sites (`task-runner.ts:580,605`, `git-sync.ts:209`); the leased force push at `task-runner.ts:574` already passes it — argument-injectable in principle, low exposure since branch names originate from the CMS's own workflow. It was simply never back-applied. Its batch partner `efs-tls-in-transit` is resolved
+---
 # Worker git push: add `--end-of-options` before the branch name
 
 **Priority: P3 [BOTH].** Low exposure, cheap hardening.

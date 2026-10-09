@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07, branch `fix/preview-entrypoints`. Host pages import the preview bridge from new `canopycms/preview` / `canopycms-next/preview` entries that reach no CSS or Mantine (`lint:bundle`); example1's `/posts/hello-world` loads 1.26 MB with no Mantine (2.38 MB, 4 Mantine assets, when it imports the editor), asserted in build-verify
+---
 # Public pages that import `canopycms/client` ship the editor
 
 **Status: RESOLVED 2026-10-07**, branch `fix/preview-entrypoints`, base `int-202610-b`, by the

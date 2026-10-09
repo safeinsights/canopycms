@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  Does not reproduce: both `next` installs resolve to one pnpm store path today. Nothing pins them aligned, so a peer-resolution change on one side would bring back TS2742 in `apps/example1`; if so, re-export the Next types from `canopycms-next` rather than hoisting `next`
+---
 # `apps/example1` typecheck TS2742 on the `canopycms-next` static helpers: latent, not reproducing
 
-**Priority: P3 [NEITHER].** Does not reproduce today. `pnpm install --frozen-lockfile` then
+**Priority: P2 [NEITHER].** Does not reproduce today. `pnpm install --frozen-lockfile` then
 `pnpm typecheck` (the CI invocation) passes for `apps/example1` with zero TS2742s, because
 `apps/example1/node_modules/next` and `packages/canopycms-next/node_modules/next` resolve to the
 same pnpm store path (`next@15.5.21`, identical peer-dependency hash), so `tsc` never has to name a

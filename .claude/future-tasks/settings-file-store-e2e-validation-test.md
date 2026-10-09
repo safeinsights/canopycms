@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  `permissions-loader.test.ts` already runs the real `mutatePermissionsFile` with an invalid payload; groups has no test that an invalid mutation result is rejected with the file untouched
+---
 # groups file store: no test that an invalid mutation result is rejected
 
 **Priority: P3 [BOTH].** Thin glue, low risk.

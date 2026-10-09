@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `chore/mdxeditor-4`, base `int-202610-b`. The MDXEditor 4.3.2 upgrade opens a fenced block in any language, with or without a meta string, in rich text, and it round-trips
+---
 # [P2] A code block in an unlisted language, or with a title, opens the whole body as source
 
 **RESOLVED 2026-10-08** by the MDXEditor 4.3.2 upgrade (branch `chore/mdxeditor-4`): a fence in any

@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED 2026-09-14 in the final-review fixes PR of [baseline-quality-202609.md](baseline-quality-202609.md). README's `canopycms/utils/error` sentence now lists `EACCES` alone for `isPermissionError`, matching `utils/error.ts`
+---
 # README says `isPermissionError` covers EPERM; the code tests EACCES only
 
 **Status:** RESOLVED 2026-09-14 in the final-review fixes PR of

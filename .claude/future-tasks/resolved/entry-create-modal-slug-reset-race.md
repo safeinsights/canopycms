@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — `EntryCreateModal` seeded its form from a value-derived effect keyed on the `entryTypes` array, so any parent re-render (the caller built that array inline) silently reset a typed slug to `untitled` and a chosen entry type back to the collection default. Reseeding is now an open-transition event keyed on `isOpen` alone; caller memoizes the array. 3 regression tests; the by-title workaround in media-upload.spec.ts is gone
+---
 # EntryCreateModal silently reverts a typed slug to `untitled`
 
 **Priority:** P1 — silent wrong data on disk, no error surfaced

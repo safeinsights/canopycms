@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  Warm editor API calls took ~2 s on Lambda + EFS, reads included. The two largest suspects are fixed: the settings workspace re-provisioned on every request (97.5 to 99.7% of a warm request locally), and the cross-container lock queueing behind it (#375). Per-request timing spans ship (`CANOPYCMS_DEBUG`, #370). Open: read the deployed per-phase breakdown (the file has the steps), then suspects 3 to 6: directories re-read many times per request, the ContentId index rebuilt by a full tree walk on every read and write, save-path extras, duplicate settings reads. P2 once the breakdown is read
+---
 # Editor API latency: ~2 s per call on Lambda + EFS, reads included
 
 **Status:** Open. **Priority: P1 [BOTH]** until the deployed breakdown below is read, then P2.

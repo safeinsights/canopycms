@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Dev-mode settings (groups, permissions) isolated per git branch. `DevStrategy.getSettingsBranchName()` is deployment-scoped, not git-branch-scoped, and `getSettingsRoot()` returns one fixed path. **Demoted P2→P3** — pure local-dev DX, with no evidence of active multi-developer settings collisions
+---
 # Future Task: Per-Branch Settings Isolation in Dev Mode
 
 ## Problem

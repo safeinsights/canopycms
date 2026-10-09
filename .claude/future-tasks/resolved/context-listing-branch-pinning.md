@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-04, branch `fix/prod-listing-branch-pinning`. `listEntries` and `buildContentTree` on the request-scoped context take `branch?: string`, matching `read`/`readByUrlPath`, so an index page previewed on a content branch in prod can list that branch by passing the iframe's `?branch=`. A requested non-active branch is load-only (never provisioned), branch access is checked before its files are read, and a missing, unreadable or traversal name lists nothing. Build time and static deployments ignore it
+---
 # `listEntries` / `buildContentTree` always list the base branch in prod
 
 ## RESOLVED 2026-10-04, branch `fix/prod-listing-branch-pinning` (option 1)

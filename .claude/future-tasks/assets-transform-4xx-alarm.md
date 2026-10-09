@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, follow-up of the image-materialization epic. A `/assets/t/` URL the collector missed is a silent 403 on the S3-only public path. Proposal: an opt-in per-distribution alarm on that behaviour's 4xx rate as the runtime backstop
+---
 # Alarm on a 4xx rate for `/assets/t/*`
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of

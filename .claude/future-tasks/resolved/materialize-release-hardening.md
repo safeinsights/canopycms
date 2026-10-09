@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-07, integration branch `int-materialize-release` (#419, #420, #421), merged into `int-202610-b` as #422. Content-addressed asset writes are create-only (S3 `If-None-Match`, local `link()`) with an opt-in `AssetSupport` Deny; `canopycms/server` exports the materialize APIs and the CLI gains `--bucket`/`--region`, exit codes 0/1/2/3 and a local-store refusal; `outputPrefix` keeps preview builds out of production's keys. Real-bucket CopyObject and ListBucket behaviour measured on the adopting site's bucket. Follow-ups: transform-lambda-sdk-create-only, release-tool-packaging, local-asset-store-temp-sweep
+---
 # Materialize release hardening: create-only writes, release tooling, preview output prefix
 
 **Status:** Resolved: merged into `int-202610-b` 2026-10-07 as the epic PR #422 (#419, #420, #421). **Priority: P1.** Filed

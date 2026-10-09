@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Config validation accepts `contentRoot: './content'`, but `normalizeFilesystemPath` preserves the `.` segment, so `cms-worker.ts`'s rebase-conflict comparison sees `'content' !== './content'` and **silently drops the root collection's conflict** — the same failure shape PR-2 closed for the multi-segment case. Not a regression, but the fix is incomplete against what validation permits. Fix once at the boundary rather than per call site; `schema-store.ts` avoids it via `path.resolve`. Needs an adopter to actually write a `./`-prefixed root, which none does today
+---
 # `contentRoot` values with a leading `./` still defeat path comparisons
 
 ## Priority: P3

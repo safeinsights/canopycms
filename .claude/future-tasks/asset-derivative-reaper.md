@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, follow-up of the image-materialization epic. Materialized `assets/t/` derivatives are kept forever, so widths changes, re-crops and preview builds only add objects. Proposal: reap keys no in-window build's `canopy-asset-refs.json` names, after a grace period; access logs can't tell use
+---
 # Reap `assets/t/` derivatives no build in the rollback window references
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of

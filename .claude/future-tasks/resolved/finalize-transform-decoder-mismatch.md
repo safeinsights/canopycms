@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-30, fix/finalize-validates-decodability) — the write-up's "sharp is intentionally kept out of the CMS Lambda" premise was disproven (sharp is a direct dependency and ships via plain `npm ci`), which made validating through the real decoder at finalize cheap. `pipeline.ts`'s `rasterIsDecodable` forces a real sharp decode-and-resize (not a header-only `metadata()` read) for raster kinds only, reusing `MAX_INPUT_PIXELS`; fails open only when sharp itself can't load, fails closed (422) when it loads and rejects the bytes. Also fixed the related transform-status-flattening nit (see asset-review-followups.md) and added an `ImageField.tsx` broken-preview fallback matching `AssetCard.tsx`.
+---
 # Upload finalize and the transform Lambda use different image decoders → "accepted but unrenderable" assets
 
 Found during the deployment-test epic (2026-07-24) on the live deploy: a malformed

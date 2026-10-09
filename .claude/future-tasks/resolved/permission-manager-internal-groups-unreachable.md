@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12, `fix/internal-groups-in-permission-picker`, PR #186) — `permissions.listGroups` now merges `deriveInternalGroups` with `authPlugin.listGroups()`, so groups created in Manage Groups are assignable as path permissions through the UI instead of only by hand-editing `permissions.json`; each option is tagged Internal/External/both in the picker since the two ID spaces aren't namespaced. Internal options are name-only (no members/memberCount) because the endpoint is `privileged` while `groups.getInternal` is admin-only; an ID collision collapses to one option marked "Internal + External", matching what `checkPathPermission` actually enforces. Review caught a second layer: the handler's deliberate 500 was being swallowed into `[]` by the client hook, rendering an empty picker with no warning — `handleListGroups` now throws, pinned by a hook↔component integration test
+---
 # Permission Manager's "Add Groups" picker can't reach internal groups
 
 RESOLVED 2026-08-12 on `fix/internal-groups-in-permission-picker`.

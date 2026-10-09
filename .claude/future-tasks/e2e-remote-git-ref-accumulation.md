@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  The preserved e2e `remote.git` accumulates submit-test branch refs and settings commits forever — `resetWorkspace` only force-resets `refs/heads/main`; prune non-main refs in the reset. Slow leak, no CI impact (runners are ephemeral). **Do together with `e2e-harness-followups` item 1** — same function
+---
 # E2E remote.git accumulates branch refs and settings commits across runs
 
 **Priority:** P3 — slow leak, not a failure; keeps the two-back-to-back-runs gate honest long-term

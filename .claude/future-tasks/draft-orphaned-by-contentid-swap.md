@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-10-04, found while closing the OCC contentId-swap task. Drafts are keyed by contentId, so when another editor deletes and recreates the open path, the editor's unsaved draft loses its entry: `editedFiles` drops it, `modifiedCount` still counts it, and it sits in localStorage until "Discard all". No server overwrite (any save of it now 409s), but the work vanishes from view without a word
+---
 # An unsaved draft disappears from view when its entry's path is deleted and recreated
 
 Found 2026-10-04 while re-verifying

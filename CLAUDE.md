@@ -3,7 +3,7 @@
 ## Behavioral Rules (always apply)
 
 - Commit and push without asking when the task clearly implies landing changes (PR fix loops, "fix and reply" requests, explicit feature work) — non-main branches only, and always report what was committed. Ask first before anything touching main, force-pushes, or history rewrites. When work ends uncommitted, provide a commit message.
-- Any out-of-scope issue flagged mid-session (background-task chip, review aside, agent finding, deferred fix) must be captured as a `.claude/future-tasks/` file plus an `index.md` row before the session ends — session suggestions are ephemeral; the files are the durable backlog. When a task is completed, move its file to `.claude/future-tasks/resolved/` (updating inbound links) and move its index row to the Resolved section.
+- Any out-of-scope issue flagged mid-session (background-task chip, review aside, agent finding, deferred fix) must be captured as a `.claude/future-tasks/` file, with `priority` and `summary` frontmatter, before the session ends — session suggestions are ephemeral; the files are the durable backlog. `index.md` is only the hand-ranked list, so don't add a row there for a new task. When a task is completed, `git mv` its file into `.claude/future-tasks/resolved/`, rewrite its summary as RESOLVED, and run `pnpm lint:tasks --fix` for the inbound links.
 - Propose next work at the end of each iteration.
 - Use `pnpm`/`pnpm exec`, NOT npm or bun.
 - Use extensionless local imports.

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Split out of the 2026-08-21 resolved-reference-shape work. `TypeFromEntrySchema` infers a resolved reference from the field's `resolvedSchema`, so if that schema declares a body field the type promises it whether or not the new `includeBody` is set — a `string` the runtime leaves `undefined`. Pre-existing in substance (before `includeBody` there was no way to get the body at all). Not fixed with the rest because tightening it needs a type-level `findBodyFieldName` plus an `Omit` on a hot inference path, and getting that subtly wrong is worse than the overstatement. Workaround: set `includeBody`, or leave the body field out of `resolvedSchema`
+---
 # A reference's inferred type promises a body the runtime omits without `includeBody`
 
 **Status:** Open. **Priority: P3** — a type-level overstatement with a one-line adopter

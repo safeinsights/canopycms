@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Deferred 2026-10-06. Adopter-registered MDX components (`editor.mdxComponents` with typed props → MDXEditor descriptors: prop editors, toolbar insert). Bodies already edit any JSX through the catch-all; design it with the preview trust-model task, whose component allowlist this list would be
+---
 # Adopter-registered MDX components for markdown/mdx body fields
 
 **Priority: P3 [BOTH]. Deferred 2026-10-06.** Design this together with

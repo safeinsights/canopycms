@@ -1,4 +1,10 @@
-# [P2] Branch ACL: the manager/admin lockdown is documented above an explicit ACL but runs only without one
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-09-14 from the manager's review of the A2 comment-compression PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `authorization/branch.ts:33-44` documents the `managerOrAdminAllowed` lockdown as outranking an explicit ACL, but the code runs the lockdown only when no user or group ACL exists, so the ACL decides. The comment was left byte-identical on purpose; which side is right is an authorization decision for JP, alongside [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md)
+---
+# [P3] Branch ACL: the manager/admin lockdown is documented above an explicit ACL but runs only without one
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the A2 comment-compression PR in
 [baseline-quality-202609.md](resolved/baseline-quality-202609.md). Decide it alongside

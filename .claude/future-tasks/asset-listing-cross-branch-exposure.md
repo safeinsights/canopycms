@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `GET /assets` has no guard, so any authenticated user enumerates every image site-wide across all branches (filename, uploader, public URL) — which defeats the unguessable-key mitigation the design relied on. Accepted for now with the boundary stated explicitly; a site's asset upload going live is the real trigger to revisit. Branch-scoped listing is the open design question, and content-hash dedup makes provenance multi-valued. **Its delete-permission section was corrected 2026-08-13** — delete is admin-or-uploader via an inline check, never `guards: ['admin']`
+---
 # Asset listing exposes every branch's images to every authenticated user
 
 Audited 2026-07-30 (question: "can an editor see or delete images from a branch they

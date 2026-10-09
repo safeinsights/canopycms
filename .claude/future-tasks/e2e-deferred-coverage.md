@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  The capabilities the 2026-07-30 coverage sweep consciously deferred, grouped by what unblocks them (prod-mode test app, fake GitHub, bigger fixtures, injectable server delays). A living inventory rather than a task — every row verified still `⬜ deferred` in COVERAGE-MATRIX.md. Its B5 row (prod-mode `readOnly` banner) shares the "nobody has run prod mode under test" gap with `test-gap-backfill`'s operating-mode slice
+---
 # E2E capabilities consciously deferred by the coverage sweep
 
-**Priority:** P2 — each is covered at another layer today; none is a silent gap
+**Priority:** P3 — each is covered at another layer today; none is a silent gap
 **Recorded:** 2026-07-30, program workstream C
 
 The full reasoning per capability is in

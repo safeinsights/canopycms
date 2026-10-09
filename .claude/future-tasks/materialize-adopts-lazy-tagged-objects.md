@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, from review of the image-materialization epic's Phase 3. A key the lazy Lambda wrote (tagged to expire) that a build later references stays tagged, because `materialize-assets` reports it `existed`; it expires into a permanent 403 once no Lambda can recompute it (concurrency 0, or lazy mode left with a BYO tag-filtered rule in place). Proposal: read the tag count (needs `s3:GetObjectTagging`, and a HEAD per listed key) and remove the tag (`DeleteObjectTagging`); create-only writes rule out rewriting the key
+---
 # `materialize-assets` leaves a lazily-written derivative expiring
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from review round 3 of

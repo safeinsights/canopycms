@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  **Decided 2026-10-05 (JP): a static build is public by design.** Path read rules govern the editor and request-time reads; merged content, references to restricted entries included, is public in a static build. Kept as a future option, not planned: gate private static pages with something like a Lambda@Edge function or an authorizer in front of the site. It would need the rules (they live on the settings branch, not in the build checkout), an edge-verified identity, and a story for restricted content already embedded in public pages through references
+---
 # Gate private pages on a static site
 
 ## Priority: P3 [BOTH] — future, not planned yet

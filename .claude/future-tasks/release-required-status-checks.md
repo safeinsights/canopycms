@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-08-21, split out of the resolved release-pipeline task: the one half that lives in GitHub repo SETTINGS, so only JP can do it. Verified against live config — the org `require-pr` ruleset requires a PR plus 1 approval on main, but **neither ruleset contains `required_status_checks`**, so nothing blocks merging a PR whose CI is red or still running (and `gh pr merge --auto` merges immediately here, having no required checks to wait on). The consequence that mattered is already closed in code — publish.yml now refuses to publish unless CI concluded successfully on the merge commit, which also covers merge skew that branch protection never could. What the rule would add is feedback at the merge button rather than at publish time. Note the documented trap: a job skipped by a workflow-level `paths:` filter never reports, so a PR gates forever on "Expected — Waiting for status to be reported"
+---
 # [P3] Add a `required_status_checks` rule to main's ruleset — repo settings, JP only
 
 Split out of [resolved/infra-review-2026-08-release-pipeline.md](resolved/infra-review-2026-08-release-pipeline.md)

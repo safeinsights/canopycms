@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Richer editor UX for settings 409 conflicts (reload-latest action, diff view) on top of the wired version-conflict flow. The safety net works; today the user must reopen the manager to reload, as both hooks' comments state. Needs two admins editing simultaneously to matter
+---
 # Editor conflict-resolution UX for settings 409s
 
 **Priority: P3** — the safety net exists; this is the ergonomics on top

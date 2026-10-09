@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  `editor/PermissionManager.tsx` and `editor/GroupManager.tsx` are re-export shims whose own comments say they exist "for backward compatibility", while `CLAUDE.md` says this is new code needing none. All six importers are internal and neither is on `canopycms/client`. Small, but it is the shape that costs an agent time: two near-identical names where one is real and one redirects, inside a 176-file directory. Found by the 2026-08-23 baseline structural evaluation
+---
 # `editor/` back-compat shims in a codebase whose rules say no back-compat
 
 ## Priority: P3

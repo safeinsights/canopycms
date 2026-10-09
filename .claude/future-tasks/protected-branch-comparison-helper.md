@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Extract a shared `isSameBranch`/`effectiveBaseBranch` helper — the sanitized head==base compare is hand-rolled in `services.ts:311-312`, `api/github-sync.ts:33,44` and `worker/cms-worker.ts:894-901`, each re-deriving `branch.baseBranch ?? config.defaultBaseBranch ?? 'main'`. No such helper exists today
+---
 # Extract a shared branch-name-equality / effective-base helper
 
 ## Priority: P3

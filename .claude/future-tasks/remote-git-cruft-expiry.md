@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06. The worker repacks `remote.git` with `--cruft` and no expiry, so unreachable objects from history rewrites accumulate in a cruft pack forever. Add a long, rarely-run expiry when it matters
+---
 # Expire cruft objects in `remote.git`
 
 ## Priority: P3 [BOTH]

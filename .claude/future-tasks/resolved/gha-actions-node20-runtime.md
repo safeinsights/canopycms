@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-09-11, branch `chore/actions-node24`, base `int-202609-a`. The annotation named three actions, but all nine third-party actions we pin were on Node 20. Each is re-pinned to its latest `node24` release, including in the adopter deploy template and the example. Changelog items that touch us: setup-node v7 drops the dummy `NODE_AUTH_TOKEN` (publish auth; publishing still works, verified locally, but pnpm now warns on each command there), and create-github-app-token deprecated `app-id` in v3.1.0, so `publish.yml` now reads `vars.RELEASE_BOT_CLIENT_ID`. CI confirmed the Node 20 annotation and the `punycode` warnings are gone from every job. The Dependabot half was decided the same day (see the next row).
+---
 # [P3] RESOLVED — Pinned GitHub Actions still declare the Node 20 runtime
 
 See [Resolution](#resolution) at the end.

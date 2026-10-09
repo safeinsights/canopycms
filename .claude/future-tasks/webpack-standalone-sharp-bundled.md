@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, found by a Next 15.5.21 probe of the new `standalone-image` smoke test ([cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 5). In a webpack-built CMS image, sharp's JavaScript is bundled into a server chunk, where it cannot reach its native binding. `require.resolve('sharp')` from the chunks fails, and the uploaded image's original and its WebP transform both answer 500, with "Could not load the \"sharp\" module" in the container log. Routes still serve, and both libvips libraries are in the image. Seen on Next 15.5.21 with pnpm; other Next 15 versions, npm, and Next 16 `--webpack` are unverified. Next 16's default Turbopack build is fine. A webpack CI leg also needs sharp checks for webpack's external shape
+---
 # [P2] A webpack-built CMS image bundles sharp, so image transforms fail
 
 **Priority:** P2. It was seen on a Next 15.5.21 (webpack) build with pnpm, and probably affects any

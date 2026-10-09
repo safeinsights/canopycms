@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, from the `createPreviewPage` PR. (1) Server-component views have no preview route: add a per-type server `render(entry)` fallback that only posts `preview:ready`, built once an adopter needs it. (2) Nothing checks that `editor.previewPrefix` names the route's folder, so a mismatch previews every entry as a 404. (3) A non-client view type-checks but 500s every request of its type. (4) A `previewView` `load` can reach the ACL-free `canopy.services`. (5) Links inside a preview load the published page, leaving the branch
+---
 # Preview page: server-rendered views, a prefix/route mismatch check, and non-client views
 
 ## Priority: P3 [BOTH]

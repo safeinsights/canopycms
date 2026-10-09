@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04, from the editor-API trailing-slash fix. `withCanopy` now inlines `trailingSlash: true` as `env.CANOPY_TRAILING_SLASH`, so `generateContentSitemap`/`entryToMetadata` could default their explicit `trailingSlash` option from it instead of README's "CanopyCMS cannot read that file"
+---
 # Default the sitemap/metadata `trailingSlash` from `withCanopy`
 
 ## Priority: P3 [BOTH]

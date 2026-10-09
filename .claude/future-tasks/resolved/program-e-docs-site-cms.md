@@ -1,3 +1,7 @@
+---
+summary: >-
+  RETIRED 2026-10-05, resolved by events: the first deployed editor shipped on the marketing site; the KB follows on the same shape.
+---
 # Program E — Docs-site CMS deployment
 
 **Closed 2026-10-05, resolved by events:** the first deployed editor went live on the marketing site, not here; this site follows on the same Lambda + EFS + worker shape, with its setup traps tracked in the backlog index.

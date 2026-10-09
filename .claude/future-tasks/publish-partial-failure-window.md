@@ -1,4 +1,9 @@
-# [P2] A FAILING publish step leaves the same mismatched dist-tags cancellation did
+---
+priority: P3
+summary: >-
+  New 2026-08-22, from the human review of PR #257. The infra-review epic closed the CANCELLATION path (`cancel-in-progress: false`) and its analysis was entirely about cancellation — but a **failing** publish step produces the identical state, since the five packages publish as five sequential steps: `latest` moved for some and not others. Published peer deps are exact pins (pnpm pack resolves `workspace:*` at pack time), so a mixed install in that window is an ERESOLVE. The `--min` registry floor makes the VERSION self-healing on the next push to main; the window itself is unaddressed and unreported. Cheap fix: pack all five before publishing any, which moves most realistic failures to before anything ships, plus an `if: failure()` step naming what already published
+---
+# [P3] A FAILING publish step leaves the same mismatched dist-tags cancellation did
 
 Found by the human review of PR #257 (2026-08-22), rated low-medium. The
 infra-review epic closed the *cancellation* path and its analysis was entirely

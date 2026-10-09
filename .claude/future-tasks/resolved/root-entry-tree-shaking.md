@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `fix/root-tree-shaking`, base `int-202610-b` — adopter request #88. `canopycms` declares a `sideEffects` array (editor theme CSS, the CLI bin, two vitest registration modules), so `import { assetUrl } from 'canopycms'` bundles to 4.6 KB minified with no zod (was 71 KB). `src/package-side-effects.test.ts` fails if zod or a config module reaches that bundle, if a declared entry rots, or if a module gains a top-level statement that runs code without being listed
+---
 # Importing `assetUrl` from the package root pulls zod into client bundles
 
 **Status: RESOLVED 2026-10-08**, branch `fix/root-tree-shaking`, base `int-202610-b`. Adopter

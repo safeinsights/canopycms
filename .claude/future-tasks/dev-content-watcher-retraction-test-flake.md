@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05. The watcher's "announces the retraction" test failed once in a loaded full run (retraction announced twice) and passed 3 of 3 alone. Suspected: the test's two non-atomic resolving writes let the watcher see an intermediate state
+---
 # `dev-content-watcher.test.ts` retraction test is flaky under load
 
 ## Priority: P3 [BOTH]

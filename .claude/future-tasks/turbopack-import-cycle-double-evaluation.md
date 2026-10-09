@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. Turbopack scope-hoisted MDXEditor's jsx-plugin import cycle into a multi-id factory and evaluated it twice when canopycms entered it by a member id first, crashing the editor. Fixed here by routing MDXEditor through MarkdownField; build a minimal repro and report it upstream
+---
 # Report Turbopack's double evaluation of an import cycle entered mid-cycle
 
 ## Priority: P3 [BOTH]

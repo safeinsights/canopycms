@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-30, PR #176) — worker ASG gets `UpdatePolicy.rollingUpdate({ minInstancesInService: 0 })`, so `cdk deploy` actually replaces the instance and a changed worker bundle reaches it. cfn-signal deliberately NOT added (it would make a CloudWatch-agent failure roll back the whole deploy, and `Type=simple`+`Restart=always` means it would pass for a crash-looping worker anyway) — reasoning recorded in-code. Exposed and fixed a prerequisite: orphaned-task recovery ran only at boot, and a replacement boots *under* the 5-minute staleness threshold, so a task orphaned by the roll would have wedged forever; recovery now runs every task-queue cycle.
+---
 # Worker ASG has no update policy — deploys don't actually update the worker
 
 Found while planning the pre-merge sandbox verification of

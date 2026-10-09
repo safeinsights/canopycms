@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED as a record (2026-08-13) — seven of nine findings from PR #172's human review are fixed and verified (#1/#2/#3 → PR #224, #4 → #223, #6/#9 → #227, #7 → #226), including the most security-significant one: an unverified tarball extracted and executed inside the job holding `id-token: write` is gone, both workflows now using `pnpm dlx npm@11.19.0`. The two deferred **by decision** were split into [pr172-deferred-by-decision.md](../pr172-deferred-by-decision.md)
+---
 # PR #172 human review — the nine findings and what happens to each
 
 [PR #172](https://github.com/safeinsights/canopycms/pull/172) (`integration-202607-a` → `main`,

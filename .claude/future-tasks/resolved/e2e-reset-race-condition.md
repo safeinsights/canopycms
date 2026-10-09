@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — 404-on-ENOENT in api/content.ts + reset polling gates (verified at 2026-07 baseline re-review)
+---
 # Fix e2e test race condition: ENOENT during workspace reset
 
 ## Problem

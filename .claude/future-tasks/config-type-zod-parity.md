@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  The config shape is defined **three times** and hand-synced with no structural link: 19 hand-written interfaces in `config/types.ts`, 431 lines of zod in `config/schemas/`, and `CanopyConfig`/`CanopyConfigInput` duplicating each other (with verbatim-identical doc comments). Missing one is silent — `field.ts:74-78` already documents zod stripping a runtime-consumed flag. Fix the cheap half first: a ~30-line `expectTypeOf` parity assertion that makes drift fail at build time, gating any rewrite
+---
 # The config shape is defined three times, hand-synced, with a silent failure mode
 
-## Priority: P2
+## Priority: P3
 
 Found 2026-08-23 by the [baseline structural evaluation](../../docs/reviews/2026-08-structure.md).
 

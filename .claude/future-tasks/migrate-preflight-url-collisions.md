@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  `cli/migrate.ts` writes content files directly, so no write-boundary guard applies — it can author two same-slug files in one collection (`slugifyName` collapses `Getting Started.md` and `getting_started.md` to one slug) and the contested cross-collection shape (`guides.md` beside `guides/index.md`). Both are caught by the build guard later, but the adopter meets it as a failed build with no link back to the two source files. The migrate PLAN already enumerates every rename, so detecting this is a pure function over it using the exported `computeEntryUrl`/`findDuplicateUrlPaths` — warn and name the files, don't refuse
+---
 # `canopycms migrate` can author both URL-collision shapes with no plan-time warning
 
 **Status:** Open. **Priority: P3.** Found 2026-08-21 by the bypass sweep of

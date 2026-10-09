@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, from the int-202610-a combined review. `?branch=` reads refuse the settings prefix rather than the configured settings-branch name (safe today only by directory layout), and the GitHub PR title skips `cleanText`. Both reasoned, neither reachable as a bug today
+---
 # Two small hardening gaps found by the int-202610-a combined review
 
 ## Priority: P3 [BOTH]

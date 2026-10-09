@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-14, from the manager's review of the Chip B encapsulation PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `knip.json` excludes barrel `index.ts` files and the two editor shims and treats the config and groups barrels as entries, so dead barrel re-exports are never re-detected; unused files and dependencies are not checked; `USER_ROUTES` is a value export from `api/index.ts` held safe only by `lint:bundle`
+---
 # [P3] knip guard: what `pnpm lint:exports` cannot see
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the Chip B encapsulation PR in

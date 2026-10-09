@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, deferred from adopter request 85. Untouched body blocks keep their text and new text uses Prettier's markers, but an edited block is still MDXEditor's serialisation, whose escapes (`a\_b`) Prettier rewrites. Format edited blocks with `prettier/standalone` server-side inside the splice, with Prettier's defaults
+---
 # [P3] Format edited markdown blocks with Prettier
 
 Found 2026-10-08, deferred from adopter request 85 by agreement with the adopter.

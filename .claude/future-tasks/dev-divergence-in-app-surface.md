@@ -1,4 +1,10 @@
-# [P2] Surface dev content divergence in-app, not only in the dev-server log
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Raised by JP 2026-08-22 from a real `pnpm dev` log. The terminal half is fixed on `epic/infra-review-2026-08` (globalThis watcher registry so Next's per-bundle re-evaluation stops re-arming and re-printing; `reportOnce` verbatim-repeat suppression; a colored gutter-framed block with blank-line separation and a 5-per-category file cap; a one-line retraction when it resolves). What remains is that divergence is a **condition**, not an event — it stays true until `sync push` runs, and a scrolling append-only log cannot hold a condition, so a developer who walks away and comes back still cannot see current state without a restart. **Blocked on a decision, not on code**: editor banner only (cheap, existing touchpoints, but the developer is usually looking at the *site*), or the host-app view too (catches that, but is a new adopter touchpoint needing approval, plus a client-bundle boundary question)
+---
+# [P3] Surface dev content divergence in-app, not only in the dev-server log
 
 Raised by JP, 2026-08-22, while looking at a real `pnpm dev` log where the
 "working-tree content has diverged" warning was repeating and scrolling away. The

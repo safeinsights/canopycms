@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, from review. The Branches drawer's Submit/Withdraw/Delete confirms still lose the drawer on Escape; a failed selected-entry load makes the unsaved-changes confirm wait its full 3 s cap; leftovers count as unsaved while a branch's entry list loads
+---
 # Branch dialogs and draft verification: follow-ups
 
 ## Priority: P3 [BOTH]

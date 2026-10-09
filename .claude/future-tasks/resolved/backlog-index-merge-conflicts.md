@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  RESOLVED 2026-10-09, branch `chore/backlog-frontmatter`. Each task's priority, adopters and summary live in its own frontmatter, which `lint:tasks` validates; `pnpm tasks:index` prints the full tables, and `index.md` keeps only the hand-ranked lists
+---
 # Every backlog PR conflicts with every other one in `index.md`
 
-**Priority:** P2 [NEITHER]. **Found:** 2026-10-09, raised by JP.
+**Priority:** P2 [NEITHER]. **Found:** 2026-10-09, raised by JP. **Resolved:** 2026-10-09 as proposed, except that `--index` prints to stdout only; nothing is written to disk.
 
 ## Problem
 

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — the enforcement half landed earlier in `3f74e7fc` (writableBranch guard rejects any non-'editing' status; locked banner + disabled Save; e2e B6/B7). This PR finished the wire flag: `getBranchProtection()` gained a `status` arg and a `writeBlocked` result, `BranchListItem` ships it, and the editor consumes it instead of re-deriving `status !== 'editing'` in two places
+---
 # Submitted branches remain fully editable — 'locked' status is never enforced
 
 ## RESOLVED (2026-08-12)

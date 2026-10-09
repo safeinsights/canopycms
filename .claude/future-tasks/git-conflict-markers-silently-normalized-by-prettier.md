@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-08-22. Found `AGENTS.md` on `epic/adopter-request-intake` carrying two full hunks of unresolved git conflict markers, left by an unresolved merge and then camouflaged by a subsequent `prettier --write` run — prettier reads `>>>>>>> ...` as a blockquote and a bare `=======` under a text line as a Setext heading, so it reformats the markers into plausible-looking prose instead of erroring. Silently degraded every session's context (`AGENTS.md` is `@`-included). Fixed in place on this branch by merging both sides' independent content; the systemic gap (nothing greps for conflict markers pre-commit or in CI) remains open
+---
 # Unresolved git merge-conflict markers can survive a commit undetected, because prettier reformats them into valid-looking Markdown instead of erroring
 
-**Status:** Open. **Priority: P1.** Found 2026-08-22 while verifying the CI path-filter /
+**Status:** Open. **Priority: P3.** Found 2026-08-22 while verifying the CI path-filter /
 stale-comment items on `epic/adopter-request-intake`. Not previously filed.
 
 ## The defect

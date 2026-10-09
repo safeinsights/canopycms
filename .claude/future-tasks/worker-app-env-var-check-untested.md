@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-13, noticed while landing PR #334 (reactive secret re-read) and left for a separate pass rather than widening a secret-handling PR into an `index.ts` restructure. The worker entrypoint rejects a partial set of the three `CANOPYCMS_GITHUB_APP_*` variables at `worker/index.ts:110-118`, and **nothing exercises that condition**: `index.ts` ends in `main().catch(...)`, so importing it RUNS the worker — which is precisely why `secrets.ts`, `github-app-auth.ts` and now `credential-refresh.ts` / `clerk-refresh.ts` were each split out. Bounded by its synth-time twin `assertGitHubAuthProps` (`src/constructs/cms-service.ts`), which IS tested and which every CDK deployment goes through; the untested entrypoint check exists only for an operator setting the instance environment directly. The fix is to extract it beside `github-app-auth.ts` and test the five partial permutations — after #334, `main()` is otherwise nothing but env reads and wiring
+---
 # [P3] The worker entrypoint's all-or-nothing GitHub App env-var check is untested
 
 Part of the worker-down observability cluster; see

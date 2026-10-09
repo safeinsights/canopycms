@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05. `defineBlockTemplate`'s `description` is public API but `BlockField` shows it neither in the "Add block" picker nor on the block card, so template guidance silently disappears
+---
 # Block templates' `description` is rendered nowhere
 
 ## Priority: P3 [BOTH]

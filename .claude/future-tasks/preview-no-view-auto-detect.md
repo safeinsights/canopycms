@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06. The preview pane shows its no-preview state only for entries an adopter marks `previewBase: false`; any other entry without a page frames the host's 404. The preview route already knows which entry types have no view, and could tell the editor over the bridge, which would remove the config step
+---
 # The editor cannot tell on its own that an entry has no page
 
 **Status:** Open. **Priority: P3** — the explicit opt-out works; this removes a config step.

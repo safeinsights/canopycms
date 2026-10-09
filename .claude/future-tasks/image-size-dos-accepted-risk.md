@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  **Standing watch item, not a task.** `image-size` (prod dep, called on uploaded bytes at `assets/pipeline.ts:143`) has a high-severity DoS advisory with no upstream fix — re-confirmed 2026-08-13 that latest is still `2.0.2` from April 2025. JP accepted the risk with reasoning recorded (dimension extraction already non-fatal, input byte-capped, uploads authenticated) and rejected consolidating onto `sharp.metadata()` because sharp deliberately fails open, which would make dimensions silently vanish. Four explicit revisit triggers; check trigger 2 (upstream patch) whenever dependencies are next audited
+---
 # `image-size` DoS advisory — standing risk acceptance
 
 ## Priority: P3 — this is a watch item, not a task

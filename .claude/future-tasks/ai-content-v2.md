@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  `llms.txt` metadata, ETag support, selective rebuild for AI content. One bullet corrected 2026-08-13 — `Cache-Control` already ships in prod mode (`ai/handler.ts:92,103`), so only the ETag half is open. `generateAIContentFiles` still regenerates every entry unconditionally
+---
 # AI Content — Future Enhancements
 
 v1 shipped: route handler, static build, CLI, schema-driven markdown, bundles, exclusions, field transforms. See `packages/canopycms/src/ai/`.

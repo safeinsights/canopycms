@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-06, branch `feat/authenticated-editor-assets`. `GET /admin/status` probes `loadSharp()` (a failure is reported, never thrown) and returns `imageProcessing: { available, error? }`; the System health Overview shows an "Image processing" row beside Media storage, orange with the error text when unavailable. Probing, not reporting a settled result, was the decided answer: the request is rare and admin-only, and "unknown" would hide the failing case. The field speaks only for the process that answers, the editor API
+---
 # Admin status: report whether image processing is available
 
 ## Priority: P3

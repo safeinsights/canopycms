@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Found by PR #198's adversarial review in the marker that PR introduced. No data loss — the lease discipline holds — but three ways a branch ends up **wedged with a false "something else moved it on GitHub" diagnosis**: a concurrent marker-clear disarms a new rewrite episode and kills its own self-heal; a stale marker surviving a failed clear wedges the next episode; and any marker-kept wedge re-enqueues a permanently-failing task every sync cycle (~288/day/branch, each doing a registry regen). Plus 4 LOWs. The shipped code self-documents the gap at `cms-worker.ts:1143-1145`. Rated fix-before-production.
+---
 # The history-rewrite marker has three race/retry gaps that can wedge a branch with a false diagnosis
 
 Found by the adversarial review of PR #198

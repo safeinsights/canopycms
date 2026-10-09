@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Worker-side self-heal for a poisoned pre-existing remote.git: auto-re-clone when no unpushed refs exist, keep refusing (with the ref list) when they do. `ensureRemoteGit` still throws "Delete `<path>` and restart the worker"; the System health panel surfaces the state but recovery needs an operator. A months-in operational risk, not a first-deploy blocker.
+---
 # Worker-side self-heal for a poisoned pre-existing remote.git
 
 Deferred from the git-admin-observability epic (2026-07-24) — surfaced-not-actioned

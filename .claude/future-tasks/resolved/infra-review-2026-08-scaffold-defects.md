@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — all five adopter-facing scaffold defects. The cms-stack template's media block now names a REAL API and passes the required `editorOrigins`; fixing it surfaced that `CanopyCmsDistribution` had no way to accept AssetSupport's behaviors at all, so the template's own instructions were a dead end regardless — it gained an `additionalBehaviors` prop, with the CloudFront pattern-ordering caveat documented (`/assets/t/*` before `/assets/*`). A test now extracts every `assetSupport.<member>` the template references and asserts it exists, which is what would have caught the nonexistent `cloudFrontBehaviors`. The generated deploy workflow's `paths:` filter gained `next.config.*`, `middleware.ts` and `public/**`. `init` now derives middleware.ts from `appDir` (so `--app-dir src/app` gets edge protection instead of a file Next never loads), refuses to write `next.config.ts` beside an existing `.js`/`.mjs` config that Next would keep using — printing the manual `withCanopy` wiring instead — and CREATES `.gitignore` when absent, so `git add .` no longer commits the whole `.canopy-dev` workspace as gitlinks
+---
 # [P3] Five `canopycms init` / deploy-scaffold defects
 
 From the 2026-08-20 three-round infrastructure review (rounds 1 and 2), all

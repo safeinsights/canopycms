@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, four LOW findings from the review of [cms-image-build-epic.md](resolved/cms-image-build-epic.md) PR 5, a fifth from the first review round of the epic's integration PR, #331, and a sixth from the code review of the base merge, #341; four still open. **(1)** `init-deploy aws` re-serializes an adopter's whole `tsconfig.json` (indentation, CRLF) without the `--force`/confirm rule its other writes follow. **(4)** An unreadable Next version, as under Yarn PnP, gets no `turbopack` key, so a Next 16 build can still exit. **(5)** The smoke test's sitemap check matches a slug the working tree and the `release-base` commit share, so it cannot tell a build-time read from a request-time one. **(6)** `scaffold-synth.test.ts`'s file-level `beforeAll` also runs, and can fail, for the type-check describe, which has a scaffold of its own. Resolved 2026-09-13 by PR #332 (`fix/scaffold-cdk-typecheck`): (2) the scaffolded CDK app is type-checked again, through `infrastructure/tsconfig.json` and a `tsc` step in the deploy workflow; (3) README says to make `withCanopy` the outermost config wrapper
+---
 # [P3] Follow-ups from the review of the CMS image smoke test
 
 **Priority:** P3. Each item was rated LOW, and none breaks a build or a deploy that works today.

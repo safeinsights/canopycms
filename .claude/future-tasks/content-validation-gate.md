@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: KB
+summary: >-
+  New 2026-08-14 — from the site audits. Malformed MDX compiles fine and explodes at render; the KB was hit by this in a real production incident and wrote its own defense (a standalone render-safety script). Port it into `compileAndRenderCheck()` + a `canopycms validate-content` CLI so the next adopter doesn't have to get burned first
+---
 # Content validation gate: `compileAndRenderCheck()` + `canopycms validate-content`
 
-## Priority: P1 [KB]
+## Priority: P2 [KB]
 
 From the 2026-08-13/14 adopter site audits, triaged as part of the
 2026-08-14 go-live backlog re-baseline. No existing task file covered this.

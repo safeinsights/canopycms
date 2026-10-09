@@ -1,3 +1,9 @@
+---
+priority: adopter-side
+adopters: KB
+summary: >-
+  The package half is done: publish state is branch-only and documented (ARCHITECTURE.md, "Publish State Is Branch-Only"). What remains is the KB's own docs, which still list a phantom `draft` frontmatter field that three filters check
+---
 # Draft/publish: decided, publish state is branch-only; the KB's own docs remain
 
 ## Priority: adopter-side, no P-level [KB]

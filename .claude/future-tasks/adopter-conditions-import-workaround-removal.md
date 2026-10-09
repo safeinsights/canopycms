@@ -1,3 +1,9 @@
+---
+priority: adopter-side
+adopters: BOTH
+summary: >-
+  Drop the `NODE_OPTIONS=--conditions=import` workaround from an adopter's CDK app now that the published packages declare a `require` condition
+---
 # [P2] Drop the `--conditions=import` workaround from adopter CDK apps once the fixed packages ship
 
 **Adopter-side work, tracked here for visibility. No priority level: the adopter schedules it.**

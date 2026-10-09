@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-10, pre-existing and found while working nearby. `presignAssetHandler` runs its 413 declared-size check AFTER `beginUpload()`, so an over-cap request mints a real 15-minute presigned credential and then discards it. Not a leak — it is never returned and nothing is written — a wasted signing operation and a confusing read of the handler. The fix needs `maxBytes` readable without minting a presign, which would also tidy `uploadProxiedHandler`’s throwaway `beginUpload` call
+---
 # The presign handler mints a signature before deciding to refuse the request
 
 **Status:** Open. **Priority: P3.** Pre-existing; filed 2026-09-10 while working nearby on

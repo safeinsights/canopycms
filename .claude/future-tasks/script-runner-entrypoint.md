@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  The read half of scripting ships (`createBuildCanopy`, `generateId`). Left: a documented script write path that goes through schema validation, ID assignment and the ID index (absorbs `content-authoring-api-id-generator`); related decision in `build-canopy-scripts-outside-next-build`
+---
 # A supported script write path (and the scripting-entrypoint cluster)
 
 ## Priority: P3 [BOTH]

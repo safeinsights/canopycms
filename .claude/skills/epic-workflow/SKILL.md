@@ -62,8 +62,8 @@ at each step instead.
 
 - Judgment-heavy docs (design references like docs/concurrency.md) are written by the
   main loop; run `update-codebase-guide` and `docs-architecture` agents for the
-  mechanical doc sweeps; mark resolved future-task files RESOLVED with implementation
-  summaries and update `index.md`.
+  mechanical doc sweeps; move resolved future-task files into `resolved/` with their
+  frontmatter `summary` rewritten as RESOLVED, and take them out of `index.md`'s ranked lists.
 - If the epic created a durable pattern, give it a durable home (a docs/ reference +
   agent-charter maintenance trigger), not just PR descriptions.
 

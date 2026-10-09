@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-07, branch `fix/branch-provisioning-crash-safe`. The race was real: `withOccFileLock` ran `mkdir -p` on its parent, so a waiter recreated a deleted branch root and its operation failed on the missing collection. The lock now creates only its own directory, `withSchemaLock` reports a schema op on a vanished root as `SchemaStoreBusyError`, and the test removes the root by rename, as delete does; 25 of 25 runs pass
+---
 # Schema-store "branch directory disappears mid-contention" test flakes under load
 
 ## Priority: P3 [NEITHER] — RESOLVED 2026-10-07

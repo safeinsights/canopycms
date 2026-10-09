@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Truthful archive path for closed-without-merge PRs. Today's only route to `archived` is `mark-merged`, which always goes through `buildMergedBranchUpdate` and unconditionally stamps `mergedAt`/`'merged'` — so the options are to fabricate history or dead-end. The "Merged" badge that would distinguish them already exists.
+---
 # Truthful archive path for branches whose PR closed without merging
 
 Deferred from the git-admin-observability epic (adversarial finding M7,

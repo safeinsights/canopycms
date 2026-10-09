@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  `cli/sync.ts` (3 sites) and `cli/migrate.ts` (1) never read the adopter's `canopycms.config.ts`, so `--content-root` must be passed by hand for any non-default root. Fails loudly, unlike the three silent sites fixed in PR #190. Not blocked on infrastructure — `jiti` already ships and the CLI already loads adopter config twice; the work is factoring that duplicated loader out and deciding flag-vs-config precedence. Note `sync` is exactly the path a dev-mode, not-yet-deployed setup uses to move content to/from GitHub
+---
 # CLI `sync`/`migrate` never read the adopter's configured `contentRoot`
 
-## Priority: P2
+## Priority: P3
 
 Found while finishing PR #190's `contentRoot` threading (fix/content-root-threading):
 three other sites with the same "compares/derives against the wrong shape of

@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-07; `createPreviewPage` views fixed 2026-10-08. A page that calls the preview hooks itself still server-renders public `/assets/t/` URLs, so under the S3-only default a draft's new crops are 403 until the first draft re-renders the hooked component. A fix needs an additive adopter opt-in
+---
 # A hook-only preview page's first paint loads images from the public path
 
 **Status:** Open. **Priority: P2.** Filed 2026-10-07 from the final review of

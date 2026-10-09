@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-09-14. The baseline-quality epic on `int-202609-baseline-quality`: guards (#344), three comment-compression chips (#347, #345, #346), docs consolidation (#348), encapsulation with knip (#349), bookkeeping (#350). Guarded comment lines 28,235 → 20,992 (ratio 0.564 → 0.412), source history markers 147 → 0 (151 by the plan's scout counter), knip 272 → 0, the four root docs 98,570 → 54,399 words. The manager opens the final PR from `int-202609-baseline-quality` into `int-202609-a`. Record: `docs/reviews/2026-09-baseline-quality.md`; follow-ups start at [cdk-comment-second-pass.md](../cdk-comment-second-pass.md)
+---
 # Baseline quality: comment volume, encapsulation, doc volume
 
 **Status:** RESOLVED 2026-09-14. All six inner PRs merged into `int-202609-baseline-quality`:

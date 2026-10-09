@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, found by the adversarial design review of the build-reads-working-tree fix. `startDevContentWatcher` resolves a relative `config.sourceRoot` against cwd, but `sourceRoot` is git-root-relative, so `apps/example1` (`sourceRoot: 'apps/example1'`, `next dev` run from the app directory) looks for `apps/example1/apps/example1/content`, finds nothing, and returns a no-op: the default `dev.contentSync: 'warn'` is **silently off** for every adopter with a relative `sourceRoot`. Its tests pass an absolute one
+---
 # [P2] Dev content watcher is silently off for a relative `sourceRoot`
 
 **Priority:** P2 — a dev-only warning never fires for monorepo adopters; no data risk

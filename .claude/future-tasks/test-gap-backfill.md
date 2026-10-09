@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Targeted tests for modules with no direct test: `api/route-builder.ts`, `authorization/groups/loader.ts`, `user.ts`, `utils/atomic-write.ts`. The earlier operating-mode slice is dropped: `operating-mode/__tests__/strategies.test.ts` covers both strategies
+---
 # Test-Gap Backfill
 
 **Priority: P3 [BOTH].** Add targeted tests opportunistically when touching these modules; batch the rest.

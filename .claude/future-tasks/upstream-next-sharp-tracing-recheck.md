@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-09-12, filed by PR 3 of the CMS editor image epic. `withCanopy` now adds the real `lib/` directory of sharp 0.35's libvips to `outputFileTracingIncludes['/**']`, because Next's tracing misses the `dlopen`-loaded library ([vercel/next.js#97973](https://github.com/vercel/next.js/issues/97973), open). A Next 16.1.7 Turbopack standalone image failed every sharp load with `ERR_DLOPEN_FAILED` without it. Re-check on every Next upgrade by building a standalone image with the include disabled. Once upstream traces the library, delete the module, its tests and the manual docs snippet. The file also lists what the include cannot control: the pnpm rpath symlink it relies on Next to trace, and the extra Turbopack glob walk any include costs (about 5 s of compile time, measured on one app)
+---
 # [P3] Re-check Next's libvips tracing on each Next upgrade, and remove `withCanopy`'s include once upstream fixes it
 
 Filed 2026-09-12 by PR 3 of the CMS editor image epic ([cms-image-build-epic.md](resolved/cms-image-build-epic.md)),

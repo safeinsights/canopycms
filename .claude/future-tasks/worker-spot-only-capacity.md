@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  New 2026-10-09, from marketing-site request 49. The worker is always a one-time spot `t4g.nano`; a capacity shortage on the first deploy left no worker for 11 minutes and `/edit` answering 500. The site overrides the launch template by hand. Add a `workerCapacity` prop (on-demand, or mixed instances with an on-demand fallback)
+---
 # The worker is always a one-time spot `t4g.nano`
 
 **Priority:** P1 [BOTH]. **Found:** 2026-10-04, marketing-site request 49 (its first editor deploy);

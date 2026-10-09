@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. `lint:account-ids` runs in pre-commit and CI, so a merge, rebase or `--no-verify` commit carrying an account id is public before anything checks it. Add a pre-push mode that scans the added lines of every commit being pushed; also lists four matcher blind spots
+---
 # The account-id guard's remaining gaps: push-time scan and matcher blind spots
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08 while reviewing

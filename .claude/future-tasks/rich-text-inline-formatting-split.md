@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus test. Bold around a link drops off the link; a save after any edit writes it
+---
 # [P2] The rich-text editor splits bold around a link
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).

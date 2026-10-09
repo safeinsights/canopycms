@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, from review of the source-preserving YAML saves. Rare shapes still fall back to a whole-file re-print (a pinned comment run re-indented into a deeper scalar, dropping a compact item's first key when the next key has a comment), and one comment line can get stacked indentation. Data is right in every case
+---
 # [P3] Source-preserving YAML saves: rare shapes that still re-print, and one cosmetic indent
 
 Found 2026-10-07 by the review rounds on the source-preserving write path

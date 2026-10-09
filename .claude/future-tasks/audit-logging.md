@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Phase 1 only: record the acting editor on settings (ACL and group) commits so "who changed this rule" is answerable. Group path rules are live, and today that question can only be answered from bot-authored commits; the trailer builder from #368 can carry the editor cheaply (`api/settings-helpers.ts`)
+---
 # Audit Logging for Permissions and Groups
 
 ## Overview

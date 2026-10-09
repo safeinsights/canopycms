@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  **Decided:** an operator runbook (save the branch's work, purge and re-provision the workspace; steps in the file), no code unless a second adopter tracks `.canopy-meta`. Branch clones with modified tracked state there stay a recorded `rebaseFailure` after the adopter untracks it upstream, and the obvious auto-fix deletes live `branch.json`/`comments.json` on branches whose pre-fix submits committed that state
+---
 # Branch clones still tracking `.canopy-meta/` after the adopter untracks it
 
 **Priority: P2 [BOTH].** Found 2026-10-04 in review of the `.canopy-meta` sync fix.

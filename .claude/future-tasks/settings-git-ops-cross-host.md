@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Settings-branch pull→commit→push runs outside the cross-host lock on the shared EFS clone (`services.ts:364-434`); a lost push race surfaces as `pushed: false`. Extend a `.git-ops.lock` around the sequence or formally accept with editor surfacing. Cheap and bounded; part of the one-coordinated-PR locking cluster.
+---
 # Settings-branch git ops (pull/commit/push) are not cross-host serialized
 
 Found by the human review of PR #149 (2026-07-24, LOW — "adjacent cross-host risk

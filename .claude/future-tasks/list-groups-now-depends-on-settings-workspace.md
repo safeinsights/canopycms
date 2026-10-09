@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Not a defect, a failure-surface note: `GET /groups` used to fail only when the auth provider was down; merging internal groups means it now also resolves the settings workspace and reads `groups.json`, so EFS/settings-root trouble surfaces as a group-load warning in the Permission Manager. Deliberately fails loudly rather than degrading to an external-only list. The action is a runbook line — "no groups in the picker" → check settings-workspace health, not just the auth provider — **and it has not been written yet**
+---
 # `permissions.listGroups` gained a settings-workspace dependency
 
 Recorded 2026-08-12 alongside PR #186 (internal groups in the Permission

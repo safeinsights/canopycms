@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED (2026-08-22, branch `chore/lint-root-scripts`, epic `infra-review-2026-08`) — `pnpm lint` is `pnpm -r`, which recurses over workspace **packages**, so the repo-root `scripts/` directory was never linted; `lint-staged`'s glob omitted `mjs`, so the commit hook did not reach it either. Both halves had to close — config alone would have left nothing running it. 90 errors and 4 warnings across all seven root scripts, **four of which gate CI or pre-commit themselves** (`lint:tasks`, `lint:actions`, `check:esm`). Fixed by declaring node globals for `**/*.mjs` (cleared 69 of 90), a new CI-gated `lint:scripts` with `--max-warnings 0`, and widening the lint-staged glob. **The filing's ReDoS claim was wrong**: both `detect-unsafe-regex` hits time at 0.2/0.5ms against 50–60KB adversarial input — `safe-regex` flags on star height alone and both inner `*`s sit inside `(?:...)?`, which matches at most once. All four warnings are false positives, suppressed per-line, verified by confirming `/^(a+)+$/` still fails the gate. **Scope was wider than filed** — the same gap was open in `next.config.mjs` and the CDK `build.mjs`, so the override covers all `**/*.mjs`
+---
 # Root `scripts/*.mjs` are never linted — RESOLVED
 
 Resolved 2026-08-22 on `chore/lint-root-scripts`, into epic

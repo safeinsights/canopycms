@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, reasoned from code. The reference picker's options omit entries the user may not read (correctly), so a stored value pointing at one, or at a deleted entry, shows as an **empty** field, and an editor may repoint it. The form value is now a `RestrictedReference` with a title, so the field can show "Restricted entry: <title>" instead
+---
 # The reference picker shows nothing for a value it does not offer
 
 ## Priority: P3 [BOTH] — reasoned from code, not reproduced

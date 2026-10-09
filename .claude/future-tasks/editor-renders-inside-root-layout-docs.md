@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-09, from marketing-site request 66. Nothing says the editor route renders inside the adopter's root layout, so site chrome, analytics and global fetches run in `/edit`. A doc note, optionally an `isEditorPath` helper (needs approval)
+---
 # The docs never say the editor renders inside the adopter's root layout
 
 **Priority:** P3 [BOTH]. **Found:** 2026-10-05, marketing-site request 66 (measured on a deployed

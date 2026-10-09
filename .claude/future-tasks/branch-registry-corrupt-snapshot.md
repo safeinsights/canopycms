@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `branch-registry.ts` regenerates its snapshot only on a not-found error and rethrows a `SyntaxError`, so a corrupt `branches.json` on EFS fails branch listing for every editor until someone deletes the file by hand. Regenerate on a parse failure
+---
 # A corrupt `branches.json` bricks branch listing for every editor
 
 ## Priority: P2 [BOTH]

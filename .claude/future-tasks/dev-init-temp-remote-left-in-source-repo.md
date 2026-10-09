@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. Dev-mode init adds a temporary `__canopycms_init_*` remote to the source repo and removes it in a `finally` that ignores errors, so killed or failed runs leave strays (3 found in this repo). Push by path instead, with no named remote
+---
 # Dev-mode init can leave a temporary remote in the source repo's git config
 
 ## Priority: P3 [BOTH]

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — the worker recorded the auth cache's `current` symlink with an **absolute** target, which is meaningless to the Lambda: the worker writes through `CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace` while the Lambda mounts the `/workspace` access point at `/mnt/efs` and reads the same directory as `/mnt/efs/.cache`. The escape guard in `resolveActiveCacheDir` then correctly rejected the target and fell back to the flat layout, where the worker never writes — so every CMS Lambda request served a **permanently empty** cache. Fixed by writing the target as the bare `snapshot-<ts>` basename, which the reader already resolves against its own `cachePath`, so it is correct from either mount namespace while a genuinely escaping absolute link is still caught. Covered by a cross-mount regression test (write via one path, read the same directory via a symlinked alias) — the shape no existing test had, and verified red before the fix. The pre-existing "symlink target escapes cache directory" test is kept and now carries a note that it asserts the fallback rather than this case
+---
 # [P1] Auth cache is permanently empty on the prod Lambda — absolute `current` symlink target
 
 Found by the 2026-08-20 three-round infrastructure review (round 3), at HEAD

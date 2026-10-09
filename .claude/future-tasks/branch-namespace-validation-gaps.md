@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `parseBranchName` rejects a raw leading hyphen but accepts names that `sanitizeBranchName` turns into one (`!f` becomes the git ref `-f`), breaking the invariant its own comment asserts. Fails safe today (500 plus an orphan directory). The settings-branch half moved to `settings-branch-as-content-workspace`
+---
 # `parseBranchName` accepts names that sanitize to a leading hyphen
 
-## Priority: P3 [BOTH]
+## Priority: P2 [BOTH]
 
 The settings-branch half (finding B2: the settings branch reachable through the generic `/:branch`
 routes) is resolved in

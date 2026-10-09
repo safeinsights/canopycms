@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-14, from the same review. Ten exports knip found with no importer anywhere are tagged `@internal` as deletion candidates rather than deleted; the tag hides them from `lint:exports`, so this file is the only thing holding the decision
+---
 # [P3] knip: ten exports with no importer, tagged instead of deleted
 
 **Status:** Open. Filed 2026-09-14 from the manager's review of the Chip B encapsulation PR in

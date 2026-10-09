@@ -1,3 +1,7 @@
+---
+summary: >-
+  DUPLICATE 2026-10-05, backlog curation. Merged into [branch-metadata-no-schema-validation.md](../branch-metadata-no-schema-validation.md).
+---
 # DUPLICATE: merged into branch-metadata-no-schema-validation
 
 Folded into [branch-metadata-no-schema-validation.md](../branch-metadata-no-schema-validation.md): one

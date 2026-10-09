@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  VERIFY FIRST — the fixed half (listing sanitization, worker FETCH_HEAD pinning) is confirmed still present. The **unstarted** half is verification, not implementation: prod with a slashed `defaultBaseBranch` (`release/1.0`) through workspace seeding, `refreshBaseBranchWorkspace` and PR base names; `canopycms sync`; PR head/base against a real GitHub remote. No config-time rejection of slashed base branches exists.
+---
 # Verify sanitized-vs-git branch-name behavior for slashed branch names
 
-## Priority: P2
+## Priority: P3
 
 Surfaced during exploration for the protected-base-branch work (2026-07-24).
 Unverified suspicion — first step is to confirm or refute, then scope.

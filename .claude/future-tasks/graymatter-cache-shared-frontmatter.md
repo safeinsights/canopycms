@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  gray-matter's process-global cache returns the same `data` object for identical content. The top level is copied now, but nested frontmatter objects still alias across reads, calls and requests, including across requests in a warm Lambda container. Deep-copy, or drop the cache after measuring
+---
 # gray-matter's global cache aliases nested md/mdx frontmatter across reads
 
 **Priority: P3 [BOTH].** Latent: nothing mutates nested frontmatter today, but it is shared mutable

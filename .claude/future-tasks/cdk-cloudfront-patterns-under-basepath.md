@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  CloudFront behaviors are attached on root-anchored patterns (`/_next/static/*`, `/assets/*`), so under a deployment `basePath` they stop matching and static chunks fall through to the no-cache Lambda origin — degraded, not broken, and no deployment uses a basePath today. Found while closing [assets-basepath-deployments.md](resolved/assets-basepath-deployments.md); the likely answer is "one distribution per deployment, mounted at its root" as a documented constraint rather than code.
+---
 # CloudFront path patterns don't match under a deployment `basePath`
 
 **Status:** Open. **Priority: P3.** Found 2026-08-21 while closing

@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  230 hand-written `{ ok: false, ... }` literals across 17 api modules with **zero response constructors**, including 19 verbatim copies of the same catch→500 ladder and 6 of the same 409. There is no single place to change what a 500 looks like on the wire. It also hides a real inconsistency: `sanitizeErrorMessage` (which strips absolute paths and embedded git credentials) is applied to 25 of 39 error responses; 14 return raw, and `api/branch.ts` does both
+---
 # `api/` has 230 hand-written response literals and no response constructors
 
-## Priority: P2
+## Priority: P3
 
 Found 2026-08-23 by the [baseline structural evaluation](../../docs/reviews/2026-08-structure.md).
 

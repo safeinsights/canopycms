@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  Pre-existing, found 2026-08-21 while auditing the write-boundary URL guard. `createCollection` checks sibling-name uniqueness **not at all** — it `mkdir`s `${name}.${newId}` unconditionally, so two collections named `guides` can sit under one parent, and `resolveCollectionPath`'s `.find()` then makes one of them silently unreachable by logical path. Entry creation is guarded; collection creation got none of it. Verified empirically: both dirs resolve to the SAME one, so the winner's entries enumerate twice (the new duplicate-`urlPath` guard therefore fires whenever the winner holds any entry) while the shadowed dir's entries never enumerate at all — invisible content, not just unreachable URLs. Collection RENAME guards it only case-SENSITIVELY (a JS string compare, so `guides` beside `Guides.{id}` passes on every platform), and creation does not guard it at all. Also a PREREQUISITE for the write-boundary URL guard: two same-named siblings let an index entry into each, and both writes pass
+---
 # `createCollection` does not check sibling-name uniqueness at all
 
 **Status:** Open. **Priority: P2.** Found 2026-08-21 while checking the write boundary's existing

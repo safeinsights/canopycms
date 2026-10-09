@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-09-13, from review round 1 of the worker-credential epic. `worker/index.ts` reads every secret before `worker.start()`, so a JSON-field mismatch, a binary secret, or AccessDenied on the new App-key ARN crash-loops the worker, and `lastFatalError` is never written. It is the #198 shape, and the App path's deferred key normalisation does not help because the read feeding it is not deferred
+---
 # [P2] A secret the worker cannot read or parse at boot crash-loops with nothing in worker-status.json
 
 Part of the worker-down observability cluster; see

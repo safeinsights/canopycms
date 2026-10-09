@@ -1,3 +1,8 @@
+---
+adopters: NEITHER
+summary: >-
+  RESOLVED 2026-09-12, branch `fix/build-reads-working-tree`, base `int-202609-cms-image` ([cms-image-build-epic.md](cms-image-build-epic.md) PR 1). `next build` now reads the working tree for every build-time read, in every mode and deployment type, exactly as a static deployment does: `readsFromCheckout` (`build-mode.ts`) short-circuits `loadOrCreateBranchContext`, and `content-reader.ts`, `ai/resolve-branch.ts` and `services.ts`'s HEAD detection use the same predicate. It shared a root cause with an adopter's CMS image build failing on `base branch '<name>' does not exist locally`: the builder synthesized a git repo only so the build could provision a clone it never needed. The template's builder lost its git install and snapshot commit and gained `ENV CANOPY_BUILD_MODE=true`; example1's CI HEAD-attach step is gone, so its green build on a detached HEAD is the live proof. Left open: [build-canopy-scripts-outside-next-build.md](../build-canopy-scripts-outside-next-build.md)
+---
 # `next build` in `mode: 'dev'` reads the branch clone, not the working tree — contradicts DEVELOPING.md
 
 **Priority:** P1 — documented behavior is wrong, and following it wastes real time (see below)

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05. `CANOPY_BUILD_MODE=true` in a serving process's env resolves every request to `STATIC_DEPLOY_USER` with ACLs off, so every read, including the preview route, shows any branch. Needs a misconfiguration; the generated Dockerfile sets it in the builder stage only. Fail loudly at runtime, and optionally 404 `STATIC_DEPLOY_USER` on the preview route
+---
 # A runtime `CANOPY_BUILD_MODE=true` turns off every request's ACLs
 
 ## Priority: P3 [BOTH]

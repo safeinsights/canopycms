@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — `CanopyCmsDistribution` passed no `readTimeout`, so aws-cdk-lib omitted `originReadTimeout` entirely and CloudFront's **30s** service default capped the CMS Lambda's 60s budget: every request in the 30-60s band was answered 504 at the edge while the invocation ran to completion behind it (first-touch branch provisioning does a full `git clone` onto EFS inside the request). The two values now come from ONE exported constant, `DEFAULT_CMS_LAMBDA_TIMEOUT`, and `CanopyCmsService` exposes its resolved `timeout` so an override can be wired straight into the distribution — which the scaffold template now does. A synth test asserts the emitted `OriginReadTimeout` equals the Lambda `Timeout` and is never absent, and a timeout above CloudFront's 60s ceiling now fails at SYNTH with a message naming the service-quota increase, rather than deploying a config that 504s. `AssetSupport.buildBehaviors()`'s accidental 30/30 match is now explicit too
+---
 # [P2] CloudFront's 30s origin read timeout silently caps the CMS Lambda's 60s budget
 
 Found by the 2026-08-20 three-round infrastructure review (round 2) at HEAD

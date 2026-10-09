@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-21, `fix/assets-basepath-deployments`) — adopter request #24's behaviour half, plus the larger break found underneath it. `assetUrl`/`assetSrcSet`'s existing `baseUrl` option is now a documented, tested contract for a same-origin path prefix; no second `basePath` parameter was added (the name already means a nested-route prefix on `collectStaticParams`, which *filters* by it — passing a deployment prefix there yields zero static params and a green build, now warned about in the README). `joinBaseUrl` turned out to be a weaker copy of `resolveSeoUrl`'s join and was replaced by one shared `utils/url-prefix.ts`, fixing two live bugs: an absolute src was concatenated onto the prefix, and a prefix without a leading slash produced document-relative URLs. Also: the editor was entirely non-functional under a basePath (hardcoded API base + root-relative preview src) and is now plumbed from a new top-level `basePath` config key. **The asset advice is topology-dependent** — a basePath moves the asset space only when Next serves `/assets`, never on CloudFront, where behaviors are anchored at the distribution root. Dead `S3AssetStoreOptions.publicBaseUrl` deleted.
+---
 # Asset URLs are always root-relative, so they 404 under a `basePath` deployment
 
 **Status: RESOLVED** 2026-08-21 on `fix/assets-basepath-deployments`. **Priority was P2.** Split

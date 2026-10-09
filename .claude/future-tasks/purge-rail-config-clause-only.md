@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  The admin purge rail + branch-health scan re-derive "is base branch" from `defaultBaseBranch` only (`api/admin-branch-health.ts:173,216`, `branch-health.ts:170` — zero references to `getBranchProtection`), skipping its second clause, so a drifted base workspace with corrupt metadata scans as purgeable (softened by trash-rename retention). Route the check through the single source of truth.
+---
 # Base-branch purge rail re-derives "is base" instead of using getBranchProtection
 
-**Priority:** P2 — data-loss-adjacent gap, softened by purge being a reversible trash-rename
+**Priority:** P3 — data-loss-adjacent gap, softened by purge being a reversible trash-rename
 **Found:** 2026-07-31, independent review of the e2e coverage sweep (Fable final pass)
 
 ## Problem

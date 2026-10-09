@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: MKT
+summary: >-
+  New 2026-10-09, from marketing-site request 77. A component in its own block inside a list item is saved glued to the item's text. Re-measure on MDXEditor 4.3.2 first
+---
 # A component inside a list item is glued onto the item's text after an edit
 
 **Priority:** P3 [MKT]. **Found:** 2026-10-06, marketing-site request 77 (MDXEditor 3.55, measured

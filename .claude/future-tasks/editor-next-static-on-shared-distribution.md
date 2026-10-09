@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05. A CMS build sharing a distribution with a static site sets Next's `assetPrefix` and passes the same value to `CanopyCmsService.attachTo`'s `editorAssetPrefix`; nothing ties the two, and drift 404s the editor's chunks. Follow-up: let `withCanopy` set `assetPrefix` for the CMS build from one value. Also: `next/image` in preview views requests the site's `/_next/image`
+---
 # The CMS build's `assetPrefix` and `editorAssetPrefix` are set in two places
 
 ## Priority: P3 [BOTH]

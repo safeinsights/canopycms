@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Filed 2026-08-24, adopted onto the branch 2026-09-08 (previously untracked with no index row). Mechanical rename of the `asset-staging` S3 prefix to `asset-incoming`: "staging" names an environment in this org, so the prefix reads as "assets belonging to Staging" rather than "assets staged for promotion". Cheap **now** and not later — objects under the prefix expire after a day, so there is no data migration, only a 24-hour overlap window to tolerate. `asset-prefixes.ts` is the source of truth but the literal spans ~20 files across both packages. Two traps recorded: `isValidStagingKey` in `finalize.ts` enforces that finalize can only promote from this prefix (a rename that quietly weakens it is worse than no rename), and the one-day lifecycle rule is prefix-matched, so both prefixes need an expiry rule during the overlap or old objects linger forever. Overlaps [cdk-prefixes-duplication.md](cdk-prefixes-duplication.md), which wants the same literals imported rather than re-declared
+---
 # [P3] Rename the `asset-staging` prefix to `asset-incoming`
 
 Decided 2026-08-24 alongside the shared artifact-bucket design in the

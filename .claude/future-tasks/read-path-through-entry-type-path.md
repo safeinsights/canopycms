@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from PR #429's claim check. `read({ entryPath: 'content/blog/article', slug: 'hello' })` reports `path` `/blog/article/hello?branch=…`, a URL `readByUrlPath` refuses, while `meta.urlPath` is `/blog/hello`: `path` is built from the requested entry-type path, not the resolved collection. Build it from `meta.urlPath` instead
+---
 # `read()`'s `path` is a phantom URL when `entryPath` names an entry type
 
 ## Priority: P3 [BOTH]

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-30, feat/dual-build-ci-safety-net) — `apps/dual-build-fixture` runs real `next build`s for both `CANOPY_BUILD` flavors and `dual-build.test.ts` asserts the static export has zero editor/Mantine code and no CMS-only routes, the cms build has `/edit` + the catch-all API route, and both builds read the same content (verified live via `next start`). Gated `dual-build` CI job added to ci.yml (paths-filter inside the job, not on the workflow trigger, to avoid the required-check-stuck-pending trap). Also surfaced that `canopycms-next`'s `dist/config.{cjs,mjs}` was never built in CI before (no app importing `canopycms-next/config` was `next build`-ed there) — the new job builds it explicitly.
+---
 # Dual-Build CI Fixture
 
 **Priority: P2** (was ADO-H1 in the July 2026 baseline review — high finding, deferred as bigger design work)

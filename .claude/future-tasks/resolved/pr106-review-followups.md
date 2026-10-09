@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — all deferred items from the PR #106 integration review (mode-default, abandoned-scaffold guard, worker PR-logic dedup, Octokit throttling, editor lows, idIndex-in-lock) fixed on `fix/pr106-review-followups` (2026-07-20); test-coverage gaps closed
+---
 # PR #106 review follow-ups (2026-07 baseline integration review)
 
 Source: debshila's approving review of PR #106 (2026-07-20). The review's two

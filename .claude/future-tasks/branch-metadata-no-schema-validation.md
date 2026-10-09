@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `branch.json` is parsed with a bare cast, so a partial or hand-repaired file reaches guards that treat an undefined `status` as open and readers that crash on a missing `branch` object (absorbs `branch-json-shape-unvalidated`). One zod schema at the read boundary, raising `BranchMetadataCorruptError` so the existing quarantine and branch-health path handles it
+---
 # `branch.json` is never shape-validated
 
 **Priority:** P2 [BOTH]. A partially written or hand-repaired `branch.json` on EFS reaches guards that

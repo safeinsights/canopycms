@@ -1,3 +1,7 @@
+---
+summary: >-
+  Static-export SEO metadata helper
+---
 # Static-export SEO metadata helper
 
 **RESOLVED (2026-08-14, epic `integration-202608-b`)** — shipped alongside #10

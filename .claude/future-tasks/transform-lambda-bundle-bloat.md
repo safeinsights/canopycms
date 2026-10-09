@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Transform Lambda's `handler.js` bundles unrelated octokit/simple-git/proper-lockfile code via the broad `canopycms/server` barrel (~1 MB dead weight). Non-functional, but **the only blocker is a yes/no decision** — the repo bans new package entrypoints without approval, and the code change itself is a small re-export module.
+---
 # Transform Lambda bundle pulls in unrelated canopycms code via canopycms/server
 
 > **Re-scoped 2026-08-14 — the "blocked on approving a new package entrypoint"

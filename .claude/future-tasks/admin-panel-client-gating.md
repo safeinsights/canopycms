@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Permissions/Groups/Schema panels render for all users and rely on API 403s. `Editor.tsx:1159-1162` passes the two manager callbacks unconditionally while gating only `onSystemHealthOpen`, and the Drawer mounts at `:1343-1400` have no guard either — so the fix is to mirror the `showSystemHealth` pattern that already sits two props away
+---
 # Client-side gating for existing admin panels (Permissions / Groups / Schema)
 
 Confirmed during the git-admin-observability epic (2026-07-24): the epic's new

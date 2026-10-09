@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — 2026-07-30 e2e coverage sweep (production-readiness workstream C): suite 52→97 tests; written coverage matrix over all 67 capabilities shipped since 2026-04-12 (43 newly covered, 20 deferred with reasons, none in the no-manual-fallback-in-prod set). Found and fixed the missing `withCanopy()` wrap that 404'd every public asset URL; found two P1 product defects, filed separately
+---
 # Program C — E2E coverage sweep
 
 **Part of:** [production-readiness-program.md](../production-readiness-program.md)

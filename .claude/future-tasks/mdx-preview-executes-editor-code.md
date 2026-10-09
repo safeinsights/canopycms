@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: MKT
+summary: >-
+  Rendering a draft MDX body with `evaluate` runs the editor's `{expressions}` on the CMS origin with the viewer's session. The marketing site renders with `evaluate` and refuses expressions in `validateEntry`. Decide the MDX trust model, document a non-executing renderer, and consider a save-time "no expressions" option
+---
 # MDX bodies are code: rendering a draft in the preview runs an editor's JavaScript
 
 ## Priority: P1 [MKT]

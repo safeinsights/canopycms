@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-30, `epic/canopy-hardening`, PRs #168/#169/#170/#174/#176/#177/#178/#180/#181) — a second deployment can safely share a GitHub repo (`deploymentName` env-injectable and stamped by CDK, all four divergent readers reconciled, content-branch collisions caught at create time and surfaced as actionable errors); `cdk deploy` reaches the worker (rolling ASG update) and the template runs it; CMS+transform Lambda log groups have retention; day-one editor defects fixed (request dedup, stale-response cancellation, undecodable uploads rejected at finalize); both build shapes verified by a CI fixture demonstrated to fail when a shape breaks. Open decision #1 settled as detect-and-surface. Prerequisite found by the design review and fixed first: `syncGit()`'s fetch refspec silently destroyed unpushed refs, one case reporting success while dropping the publish (#168).
+---
 # Program B — Canopy hardening
 
 **Part of:** [production-readiness-program.md](../production-readiness-program.md)

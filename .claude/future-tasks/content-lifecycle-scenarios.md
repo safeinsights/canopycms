@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Design the editorial and development workflow scenarios: dev/staging/prod flow, schema changes vs in-flight content branches, long- vs short-lived branches (staleness surfacing and recovery rather than prevention, since reviewers forget branches), upstream-conflict UX, PR-workflow checks. No longer a prerequisite: a site is deployed without it
+---
 # Content lifecycle scenario planning (editorial + development workflows)
 
 Status: planning task (no code). Folded out of the original FIXES.md catch-all

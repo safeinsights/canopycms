@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12, `fix/adopter-config-correctness`) — reference fields whose `entryTypes` name a nonexistent entry type now fail at schema resolution with the field, its location, a closest-match "Did you mean…?" and the known names. Note the task file's suggested home was wrong: `ensureReferenceFieldsHaveScope` runs at entry-schema *registration*, before any branch schema exists, and entry types are declared per-branch in `.collection.json` — so validation lives in `validation/entry-type-reference-validator.ts`, wired into `branch-schema-cache.ts` beside the existing `isValidSchema` throw and before anything is cached. Validating `collections` names the same way is still open
+---
 # Validate entryTypes names against the schema at config time
 
 ## RESOLVED — 2026-08-12 (`fix/adopter-config-correctness`)

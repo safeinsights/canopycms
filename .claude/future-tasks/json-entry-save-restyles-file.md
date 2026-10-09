@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, measured. A `.json` entry is saved as `JSON.stringify(data, null, 2)`, which puts a short array one element per line where Prettier keeps it on one, so the first save of a Prettier-formatted JSON entry with a short array fails an adopter's `prettier --check` on untouched lines. Splice changed values into the file's text, as YAML saves do
+---
 # [P2] Saving a JSON entry re-prints the whole file in `JSON.stringify` style
 
 Found 2026-10-08 while making markdown body saves source-preserving. Measured with Prettier 3.8.1.

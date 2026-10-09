@@ -61,10 +61,10 @@ When a workstream — or a meaningful chunk of one — completes:
 2. **Update the hub doc**: status column, decisions table, open decisions that
    closed.
 3. **Resolve the workstream file** into `resolved/` with an implementation
-   summary, and move its index row to the Resolved section — per the project's
+   summary, and rewrite its frontmatter `summary` as RESOLVED — per the project's
    standing rule.
 4. **Capture new out-of-scope findings** as their own future-task files with
-   index rows, linked from the log entry.
+   `priority` and `summary` frontmatter, linked from the log entry.
 
 ## Phase 5 — Propose the next move
 

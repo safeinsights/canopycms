@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  `branch.json`'s `name` has three writers that disagree: `openOrCreateBranch` writes the sanitized name, `admin-branch-health`'s repair deliberately writes the clone's real ref, and the worker writes the sanitized directory name at six `meta.save` sites — so **the worker silently reverts the repair's deliberate choice on the next cycle**. Harmless today, re-verified: every load-bearing consumer sanitizes both sides. Becomes P2 if branches can ever be provisioned from existing refs
+---
 # `branch.json`'s `name` has two writers that disagree about sanitized vs raw ref
 
 Captured 2026-08-13 by PR-4 of the 2026-08-12 adversarial review of

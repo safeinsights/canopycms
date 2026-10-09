@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  **Narrowed 2026-09-08** (adopter request #39) — the `baseBranch`/`settingsBranch` divergence itself is fixed: `CanopyCmsService` gained a validated `settingsBranch` prop, and the generated `infrastructure/lib/cms-stack.ts` now derives both from the adopter's own `canopycms.config.ts` at synth time, so the two can no longer drift for anyone deploying through the generated stack. What remains: when they DO still diverge (a hand-rolled stack, a non-CDK deployment), the only signal is a per-cycle `workerLogWarn`, invisible to a shell-less operator — surface it into `WorkerStatusReport` for the admin System Health panel
+---
 # Settings-branch mismatch has no observable signal beyond a per-cycle log warning
 
 ## Priority: P3

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07 by the image-materialization epic, without signing: the default public path computes nothing, so no anonymous caller can mint a crop. Crop stays unbounded only in the opt-in lazy mode
+---
 # [P2] Crop is still an unbounded cache-key dimension on the anonymous transform path
 
 > **RESOLVED 2026-10-07 by [image-materialization-epic.md](image-materialization-epic.md)** without signing: the default public path computes nothing, so only the opt-in lazy mode leaves crop unbounded. Kept for its analysis.

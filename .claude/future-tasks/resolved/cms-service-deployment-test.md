@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — first full prod-mode AWS deploy (epic/deployment-test, 2026-07-24): entire stack deployed to sandbox + all 9 verification rows exercised on the live editor. 13 PRs (#128–#140) fixed deploy blockers found by design review, dogfooding, template review, and the live deploy. Open follow-ups spun out (post-merge-sync-gaps P1, worker-cloudwatch-logs P1 (now resolved — see below), slug/anon 500s, pack prepack). Reusable harness kept.
+---
 # RESOLVED — Full CMS-service deployment test (its own epic)
 
 **Done 2026-07-24** on integration branch `epic/deployment-test`. The entire

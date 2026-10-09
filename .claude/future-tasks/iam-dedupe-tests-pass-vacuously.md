@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Measured: deleting `CanopyCmsService`'s IAM `new Set` leaves all 480 cdk tests green, because `PolicyStatement` dedupes `resources` itself, so the test that names that dedupe cannot fail. The comment and its new sibling were fixed; the original test is still there
+---
 # The IAM-dedupe tests in `cms-deploy.test.ts` cannot fail
 
 **Priority:** P3

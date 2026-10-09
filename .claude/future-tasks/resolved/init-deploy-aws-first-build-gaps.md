@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-09-12 with PR 5 of [cms-image-build-epic.md](cms-image-build-epic.md). `init-deploy aws` adds `infrastructure` to a plain-JSON `tsconfig.json` `exclude` (and warns instead for one with comments, one that inherits `exclude` through `extends`, or none), the generated `.dockerignore` excludes it, and the pnpm Dockerfile COPY carries `pnpm-workspace.yaml` through an optional glob. The smoke test's first build found a third gap: `withCanopy`'s `webpack` function made Next 16's default Turbopack `next build` and `next dev` exit, so on Next 16 it now sets `turbopack: {}` when the adopter set neither key
+---
 # [P2] `init-deploy aws` scaffold: two gaps a first real image build hits
 
 **RESOLVED 2026-09-12** by PR 5 of [cms-image-build-epic.md](cms-image-build-epic.md). That PR's
