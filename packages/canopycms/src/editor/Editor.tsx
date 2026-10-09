@@ -239,7 +239,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
     null,
   )
-  // How many elements the framed page marks, keyed to the src that said so.
+  // How many elements the framed page marks, keyed to the src that said so; a toggle clears it.
   const [previewMarks, setPreviewMarks] = useState<{ src: string; count: number } | null>(null)
 
   const apiClient = useApiClient()
@@ -1224,7 +1224,10 @@ const EditorContent: React.FC<EditorProps> = ({
                 headerHeight={headerHeight}
                 footerHeight={footerHeight}
                 onLayoutChange={setLayout}
-                onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
+                onHighlightToggle={() => {
+                  setHighlightEnabled(!highlightEnabled)
+                  setPreviewMarks(null)
+                }}
                 onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
                 onGroupManagerOpen={() => setGroupManagerOpen(true)}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}

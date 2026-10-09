@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -26,14 +26,15 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 interface FrameProps {
   data?: unknown
   isLoading?: unknown
+  onMarkCount?: (count: number) => void
 }
 
 /** Every `data`/`isLoading` pair the editor hands the preview frame, in render order. */
 const frames: FrameProps[] = []
 
 vi.mock('./PreviewFrame', () => ({
-  PreviewFrame: ({ data, isLoading }: FrameProps) => {
-    frames.push({ data, isLoading })
+  PreviewFrame: ({ data, isLoading, onMarkCount }: FrameProps) => {
+    frames.push({ data, isLoading, onMarkCount })
     return <iframe title="preview" />
   },
 }))
@@ -282,5 +283,56 @@ describe('Editor preview references', () => {
       { timeout: 10_000 },
     )
     expect(consoleSpy).toHaveErrored('[canopycms] editor error caught (field settings)')
+  })
+})
+
+describe('Editor preview marks', () => {
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    frames.length = 0
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+    vi.unstubAllGlobals()
+    window.localStorage.clear()
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('notes a preview that marks nothing only while highlighting is on, from a count sent since', async () => {
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(frames.some((frame) => frame.onMarkCount)).toBe(true), {
+      timeout: 10_000,
+    })
+    const reportCount = (count: number) =>
+      act(() => {
+        frames[frames.length - 1].onMarkCount?.(count)
+      })
+    const note = () => screen.queryByText(/marks no editable elements/)
+    const toggle = screen.getByRole('button', { name: 'Toggle highlights' })
+
+    reportCount(0)
+    expect(note()).toBeNull()
+
+    fireEvent.click(toggle)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(note()).toBeNull()
+
+    reportCount(0)
+    expect(await screen.findByText(/marks no editable elements/)).toBeTruthy()
+
+    reportCount(3)
+    await waitFor(() => expect(note()).toBeNull())
+
+    reportCount(0)
+    await screen.findByText(/marks no editable elements/)
+    fireEvent.click(toggle)
+    await waitFor(() => expect(note()).toBeNull())
+    fireEvent.click(toggle)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(note()).toBeNull()
   })
 })

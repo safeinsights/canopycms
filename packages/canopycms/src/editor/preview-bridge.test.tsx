@@ -439,6 +439,21 @@ describe('useCanopyPreview', () => {
       await new Promise((resolve) => setTimeout(resolve, 200))
       expect(counts()).toHaveLength(2)
     })
+
+    it('is reported within the throttle while the page keeps changing', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      const churn = setInterval(() => document.body.append(document.createElement('i')), 20)
+      onTestFinished(() => {
+        clearInterval(churn)
+        document.querySelectorAll('body > i').forEach((el) => el.remove())
+      })
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      expect(counts().map(([msg]) => msg)).toContainEqual({ type: CANOPY_PREVIEW_MARKS, count: 2 })
+    })
   })
 
   it('posts the ready handshake to the editor origin, never *', () => {

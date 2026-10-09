@@ -284,11 +284,14 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
       window.parent.postMessage(msg, target)
     }
     report()
-    // A timer, not requestAnimationFrame, which a hidden frame never runs.
+    // A trailing throttle, so steady DOM churn cannot hold the report back, on a timer rather
+    // than requestAnimationFrame, which a hidden frame never runs.
     let timer: ReturnType<typeof setTimeout> | undefined
     const observer = new MutationObserver(() => {
-      clearTimeout(timer)
-      timer = setTimeout(report, 100)
+      timer ??= setTimeout(() => {
+        timer = undefined
+        report()
+      }, 100)
     })
     observer.observe(document.body, {
       subtree: true,
