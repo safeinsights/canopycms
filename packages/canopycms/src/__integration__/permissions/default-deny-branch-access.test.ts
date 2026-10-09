@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient } from '../test-utils/api-client'
+import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
 
@@ -120,6 +120,8 @@ describe('defaultBranchAccess: deny', () => {
       branch: 'feature/submit-me',
       title: 'Submit me',
     })
+
+    await saveSamplePost(editorClient, 'feature-submit-me')
 
     const res = await editorClient.post('/api/canopycms/feature-submit-me/submit', {
       title: 'Submit me',

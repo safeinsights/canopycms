@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 
@@ -555,6 +555,143 @@ Body text here.
     expect(first).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Post metadata. Keep `draft` first')
+  })
+})
+
+/**
+ * The read path parses frontmatter with gray-matter, whose js-yaml reads YAML 1.1: a bare date is
+ * a `Date` (carried over JSON as a timestamp string) and `014` is octal. The editor sends every
+ * field back as it read it.
+ */
+describe('serializeFrontmatter compares values as the read path parsed them', () => {
+  const DATED = `---
+title: Launch # shown in the card
+date: 2024-01-15
+updated: 2024-01-15T10:30:00Z
+mode: 014
+history:
+  - 2023-12-01
+  - drafted
+meta:
+  published: 2024-03-01
+---
+
+Body.
+`
+  const asRead = (raw: string) =>
+    JSON.parse(JSON.stringify(matter(raw, {}).data)) as Record<string, unknown>
+
+  it('writes the file byte for byte when no value changed', () => {
+    expect(asRead(DATED).date).toBe('2024-01-15T00:00:00.000Z')
+    expect(serializeFrontmatter('\nBody.\n', asRead(DATED), DATED, 'md')).toBe(DATED)
+  })
+
+  it('treats a server-side Date like the timestamp the API would carry', () => {
+    const data = { ...matter(DATED, {}).data }
+    expect(data.date).toBeInstanceOf(Date)
+    expect(serializeFrontmatter('\nBody.\n', data, DATED, 'md')).toBe(DATED)
+  })
+
+  it('writes a date the editor changed, and only that line', () => {
+    const data = { ...asRead(DATED), date: '2024-02-20T00:00:00.000Z' }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(out).toBe(DATED.replace('date: 2024-01-15\n', 'date: 2024-02-20T00:00:00.000Z\n'))
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes changed dates inside a list and a nested map, leaving their neighbours', () => {
+    const read = asRead(DATED)
+    const data = {
+      ...read,
+      history: ['2023-11-30T00:00:00.000Z', 'drafted'],
+      meta: { published: '2024-04-01T00:00:00.000Z' },
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(out).toContain('title: Launch # shown in the card\ndate: 2024-01-15\n')
+    expect(out).toContain('mode: 014\n')
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes a value changed to what the yaml library, not the read path, reads on disk', () => {
+    // `yaml` reads `014` as 14 and js-yaml as 12; the editor's 14 is a change.
+    const data = { ...asRead(DATED), mode: 14 }
+    expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
+  })
+
+  it('keeps comments and unchanged lines in a CRLF file', () => {
+    const crlf = DATED.replace(/\n/g, '\r\n')
+    const out = serializeFrontmatter('\r\nBody.\r\n', asRead(crlf), crlf, 'md')
+    expect(out).toContain('title: Launch # shown in the card\r\ndate: 2024-01-15\r\n')
+    expect(out).toContain('  published: 2024-03-01')
+    expect(asRead(out)).toEqual(asRead(crlf))
+  })
+
+  it.each(['1:30', '12:30:00', '1_000', '0b101', '2024-05-01', '014'])(
+    'quotes a changed string the read path would read as another type (%s), keeping the rest',
+    (text) => {
+      const data = { ...asRead(DATED), title: text }
+      const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+      expect(asRead(out)).toEqual(data)
+      expect(out).toContain(`title: '${text}' # shown in the card\ndate: 2024-01-15\n`)
+    },
+  )
+
+  it.each(['2024-01-01T10:00:00.', '2024-01-01T10:00:00+35', '!Important notice', '%x'])(
+    'quotes %s as js-yaml reads it, keeping comments and printing no warning',
+    (text) => {
+      const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {})
+      try {
+        const data = { ...asRead(DATED), title: text }
+        const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+        expect(asRead(out)).toEqual(data)
+        expect(out).toContain(' # shown in the card\ndate: 2024-01-15\n')
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    },
+  )
+
+  it.each(['a ', 'x\uFEFF'])('quotes %j on the last line, which gray-matter would trim', (text) => {
+    const raw = '---\ntitle: Launch # c\n---\n\nBody.\n'
+    const data = { title: 'Launch', extra: text }
+    const out = serializeFrontmatter('\nBody.\n', data, raw, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # c\n')
+  })
+
+  it('quotes a new key js-yaml would read as a date, keeping comments', () => {
+    const data = { ...asRead(DATED), '2024-01-01T10:00:00.000Z': 'launch' }
+    const out = serializeFrontmatter('\nBody.\n', data, DATED, 'md')
+    expect(asRead(out)).toEqual(data)
+    expect(out).toContain('title: Launch # shown in the card\n')
+  })
+
+  it('keeps unchanged list items as written when an item is inserted before them', () => {
+    const blocks = `---
+blocks:
+  # keep this hero
+  - kind: hero
+    when: 2024-01-15
+  - kind: cta
+    when: 2024-02-15
+---
+
+Body.
+`
+    const read = asRead(blocks)
+    const data = { blocks: [{ kind: 'banner' }, ...(read.blocks as unknown[])] }
+    const out = serializeFrontmatter('\nBody.\n', data, blocks, 'md')
+    expect(out).toContain(
+      '  # keep this hero\n  - kind: banner\n  - kind: hero\n    when: 2024-01-15\n',
+    )
+    expect(out).toContain('    when: 2024-02-15\n')
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('writes a date-like string as a string', () => {
+    const data = { ...asRead(DATED), version: '2024-05-01' }
+    expect(asRead(serializeFrontmatter('\nBody.\n', data, DATED, 'md'))).toEqual(data)
   })
 })
 

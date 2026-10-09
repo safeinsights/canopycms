@@ -3505,6 +3505,98 @@ cards:
     expect(saved).not.toContain('Placeholder copy.')
   })
 
+  it('keeps the formatting of untouched lines in a JSON entry across an editor save', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'config',
+          entries: [
+            {
+              name: 'setting',
+              format: 'json' as const,
+              schema: [
+                { name: 'siteName', type: 'string' as const },
+                { name: 'tags', type: 'string' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const settings = unsafeAsLogicalPath('content/config')
+
+    const created = await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { siteName: 'CanopyCMS' },
+    })
+    const prettier = '{\n  "siteName": "CanopyCMS",\n  "tags": ["a", "b"]\n}\n'
+    await fs.writeFile(created.absolutePath, prettier, 'utf8')
+
+    await store.write(settings, unsafeAsSlug('site'), {
+      format: 'json',
+      data: { siteName: 'Canopy', tags: ['a', 'b'] },
+    })
+
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      '{\n  "siteName": "Canopy",\n  "tags": ["a", "b"]\n}\n',
+    )
+  })
+
+  it('keeps a frontmatter date as written when an editor saves the entry it read', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'date', type: 'datetime' as const },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const posts = unsafeAsLogicalPath('content/posts')
+
+    const created = await store.write(posts, unsafeAsSlug('launch'), {
+      format: 'md',
+      data: { title: 'Launch' },
+      body: 'Body.\n',
+    })
+    const dated = '---\ntitle: Launch\ndate: 2024-01-15\n---\n\nBody.\n'
+    await fs.writeFile(created.absolutePath, dated, 'utf8')
+
+    // As the API carries it: the date read as a `Date` arrives as a timestamp string.
+    const doc = await store.read(posts, unsafeAsSlug('launch'))
+    if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
+    const data = JSON.parse(JSON.stringify(doc.data)) as Record<string, unknown>
+    expect(data.date).toBe('2024-01-15T00:00:00.000Z')
+
+    await store.write(posts, unsafeAsSlug('launch'), { format: 'md', data, body: doc.body })
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(dated)
+
+    await store.write(posts, unsafeAsSlug('launch'), {
+      format: 'md',
+      data: { ...data, date: '2024-02-20T00:00:00.000Z' },
+      body: doc.body,
+    })
+    expect(await fs.readFile(created.absolutePath, 'utf8')).toBe(
+      dated.replace('2024-01-15', '2024-02-20T00:00:00.000Z'),
+    )
+  })
+
   it('removes a key the save dropped, comment and all', async () => {
     const root = await tmpDir()
     const config = defineCanopyTestConfig({ schema: yamlSchema })

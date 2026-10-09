@@ -11,7 +11,7 @@
  * (utils/atomic-write.ts), never a read-modify-write, so whichever write lands
  * last is one writer's complete, self-consistent snapshot. That covers the one
  * window where two holders overlap -- after a lock compromise the old holder's
- * `stop()` drains for up to `taskTimeoutMs` while a new holder is already
+ * `stop()` aborts its in-flight work while a new holder may already be
  * running against the same workspace.
  *
  * Readers are stale-tolerant by design: this is a liveness signal, not
@@ -29,6 +29,36 @@ import type { WorkerStatusReport } from '../types'
 export const WORKER_STATUS_FILE = 'worker-status.json'
 
 /**
+ * What a new worker carries from the previous status file into its first
+ * snapshot: `lastFatalError`, so a crash loop keeps its alert, and how the
+ * previous worker stopped. A `lastShutdown` written by an earlier worker than
+ * the file's own means the last one stopped without draining. Tolerant like
+ * every reader: a missing or unreadable file yields neither.
+ */
+export async function readCarriedOverStatus(
+  taskDir: string,
+): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown'>> {
+  let previous: Partial<WorkerStatusReport>
+  try {
+    const content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
+    previous = JSON.parse(content) as Partial<WorkerStatusReport>
+  } catch {
+    return {}
+  }
+  const { lastFatalError, startedAt, updatedAt } = previous
+  let { lastShutdown } = previous
+  if (startedAt && updatedAt && lastShutdown?.workerStartedAt !== startedAt) {
+    lastShutdown = {
+      reason: 'stopped without draining',
+      at: updatedAt,
+      workerStartedAt: startedAt,
+      outcome: 'not-drained',
+    }
+  }
+  return { lastFatalError, lastShutdown }
+}
+
+/**
  * Write the worker's status report to `{taskDir}/worker-status.json`.
  *
  * Full-file regeneration, never a partial update: pass the complete report,
@@ -39,24 +69,6 @@ export const WORKER_STATUS_FILE = 'worker-status.json'
  * `processTaskQueue`, `start()`); any that don't fall back on scheduleLoop's
  * per-cycle catch, which logs and continues.
  */
-/**
- * The `lastFatalError` in the current status file, or undefined when the file is
- * missing, unreadable or has none. Tolerant for the same reason readers are.
- * Its one caller carries the value into a full snapshot right after taking the
- * worker lock; a write racing in between only keeps or drops one crash alert
- * until the next write.
- */
-export async function readLastFatalError(
-  taskDir: string,
-): Promise<WorkerStatusReport['lastFatalError']> {
-  try {
-    const content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
-    return (JSON.parse(content) as Partial<WorkerStatusReport>).lastFatalError
-  } catch {
-    return undefined
-  }
-}
-
 export async function writeWorkerStatus(
   taskDir: string,
   report: WorkerStatusReport,

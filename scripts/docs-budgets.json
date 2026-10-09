@@ -64,12 +64,12 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24115
+      "words": 24140
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4150
+      "words": 4175
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -79,22 +79,22 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 15798
+      "words": 15817
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 9591,
-      "words": 16091
+      "words": 16332
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1280,
-      "words": 5498
+      "words": 5539
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1766,
-      "words": 9180
+      "words": 9293
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,
@@ -169,7 +169,7 @@
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
       "maxSectionWords": 220,
-      "words": 531
+      "words": 545
     }
   }
 }

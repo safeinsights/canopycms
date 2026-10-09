@@ -11,6 +11,12 @@ export const postSchema = defineEntrySchema([
   // an image commits immediately instead of opening the canvas crop step
   // (crop math is unit-tested; driving react-easy-crop from Playwright is not).
   { name: 'heroImage', type: 'image', label: 'Hero Image' },
+  {
+    name: 'byline',
+    type: 'object',
+    label: 'Byline',
+    fields: [{ name: 'name', type: 'string', label: 'Byline Name' }],
+  },
   { name: 'body', type: 'mdx', label: 'Body', isBody: true },
 ] as const)
 

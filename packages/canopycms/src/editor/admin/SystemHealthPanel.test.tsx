@@ -11,7 +11,7 @@ import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
-import type { BaseRefreshReport, WorkerStatusReport } from '../../types'
+import type { BaseRefreshReport, BaseSchemaHold, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
@@ -181,6 +181,68 @@ describe('SystemHealthPanel', () => {
         const text = screen.getByTestId('build-source-revision').textContent ?? ''
         expect(text).toContain('not set')
         expect(text).toContain('CANOPY_SOURCE_SHA')
+      })
+
+      it('shows how the previous worker shut down, in orange when its drain hit the deadline', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'ASG termination',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'deadline',
+                drainMs: 90_000,
+                abandoned: ['task queue'],
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('ASG termination')
+        expect(text).toContain('drain deadline hit, aborted task queue')
+      })
+
+      it('says when the previous worker stopped without draining', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'stopped without draining',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'not-drained',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('stopped without draining')
+        expect(text).toContain('a crash or a forced stop')
+        expect(text).not.toContain('drained in')
+      })
+
+      it('shows no shutdown line when the status file has none', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('build-last-shutdown')).toBeNull()
       })
 
       it('shows the worker version as unknown when the worker did not report one', async () => {
@@ -408,6 +470,74 @@ describe('SystemHealthPanel', () => {
 
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
       expect(screen.queryByTestId('schema-issues-alert')).toBeNull()
+    })
+  })
+
+  describe('Overview tab: base branch held for an editor deploy', () => {
+    const hold: BaseSchemaHold = {
+      since: '2026-01-01T00:20:00.000Z',
+      firstSeen: {
+        personSchema: '2026-01-01T00:20:00.000Z',
+        teamSchema: '2026-01-01T00:22:00.000Z',
+      },
+      incomingSha: 'f00dfeed',
+      missingSchemas: ['personSchema', 'teamSchema'],
+      files: ['content/people/.collection.json'],
+      fileCount: 1,
+      editorBuild: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
+      editorRecordedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const statusWithHold = (baseHold: BaseSchemaHold): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      status.workerStatus.baseHold = baseHold
+      return status
+    }
+
+    it('says the worker is waiting, naming the schemas, the editor build and the files', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithHold(hold)))
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('Waiting for editor deploy')
+      expect(alert.textContent).toContain(
+        'Newly merged content names personSchema, teamSchema, which the running editor (built from abcdef012345) does not define.',
+      )
+      expect(alert.textContent).toContain('keeps the base branch at its current version')
+      expect(alert.textContent).toContain('content/people/.collection.json')
+    })
+
+    it('counts the files past the first ten it lists', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithHold({ ...hold, fileCount: 13 })),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('content/people/.collection.json and 12 more')
+    })
+
+    it('says the worker stopped waiting once the hold expired', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithHold({ ...hold, expired: true })),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('Stopped waiting for the editor deploy')
+      expect(alert.textContent).toContain('updated the base branch anyway')
+    })
+
+    it('shows no hold alert when the last sync held nothing', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('base-hold-alert')).toBeNull()
     })
   })
 

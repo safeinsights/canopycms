@@ -22,11 +22,12 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `provisioned-workspace.ts`  | Zero-retry provisioning-lock hold                                                                                                                                                                                                                                          |
 | `remote-git-maintenance.ts` | `remote.git` repack, logged (rule and gc config: `git-manager.ts`)                                                                                                                                                                                                         |
 | `sparse-cone.ts`            | Re-applying a changed sparse cone                                                                                                                                                                                                                                          |
+| `schema-gate.ts`            | Holding base for an editor deploy                                                                                                                                                                                                                                          |
 | `log.ts`                    | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
 | `github-auth.ts`            | GitHub credential selection (token or App), installation-token minting, the PAT swap in `refreshCredential` behind its 60s floor, PEM normalization                                                                                                                        |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone` and `remote-git-maintenance` leaves under `git-sync` and `rebase`. `github-auth` sits outside that chain as a leaf:
+`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-auth` sits outside that chain as a leaf:
 `cms-worker` imports it, and it imports nothing from `worker/`. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
@@ -40,7 +41,9 @@ lint and still break the layering above. Keep the direction by review.
 - Non-fast-forward and workflow-content push refusals fail fast as `PermanentTaskError`, not
   retries: `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
 - Sync-cycle order, upkeep ahead of the GitHub fetch: `git-sync.ts`'s top comment.
+- Schema gate scope, fail-open and bound: `schema-gate.ts`, `decideBaseAdvance`.
 - Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
+- The drain's rules: `cms-worker.ts`'s `stop()`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
   function (it is part of provisioning, so it stays there).
 - `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
@@ -60,8 +63,8 @@ lint and still break the layering above. Keep the direction by review.
   here inherits.
 - The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
   `canopycms-cdk/worker/index.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
-- github-auth's own invariants (fail-closed boot classification, mint-timeout bounds, never
-  caching a resolved token, never re-wrapping a mint rejection): `github-auth.ts`, at each rule.
+- github-auth's invariants (fail-closed boot, mint timeouts, no token caching, no re-wrapped
+  mint rejection): `github-auth.ts`, at each rule.
 
 ## `github-auth.ts`: the one cross-file rule
 

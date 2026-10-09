@@ -12,7 +12,7 @@ AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 - EFS filesystem with `/workspace` access point
 - Lambda function (Docker image, EFS mount, private subnet, no internet)
 - Lambda Function URL (for CloudFront origin)
-- EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount)
+- EC2 Worker (on-demand t4g.nano in ASG, spot opt-in, public subnet, EFS mount, drained before replacement)
 - Security groups and IAM roles (least-privilege)
 - `attachTo(distribution)`: adds the editor's `/edit`, `/edit/*` and `/api/canopycms/*` behaviors (and, optionally, the CMS build's `assetPrefix` and the preview route) to a CloudFront distribution you already own
 
@@ -74,13 +74,13 @@ See [ARCHITECTURE.md](../../ARCHITECTURE.md#deployment-architecture) for details
 
 ## Cost
 
-| Resource                      | Monthly Cost    |
-| ----------------------------- | --------------- |
-| EC2 t4g.nano spot (ASG 1/1/1) | ~$1.50          |
-| Lambda (editors only)         | ~$1-5           |
-| EFS (small repo)              | ~$1             |
-| CloudFront (low traffic)      | ~$1             |
-| **Total**                     | **~$5-9/month** |
+| Resource                           | Monthly Cost     |
+| ---------------------------------- | ---------------- |
+| EC2 t4g.nano on-demand (ASG 1/1/1) | ~$3              |
+| Lambda (editors only)              | ~$1-5            |
+| EFS (small repo)                   | ~$1              |
+| CloudFront (low traffic)           | ~$1              |
+| **Total**                          | **~$6-10/month** |
 
 ## What Adopters Provide
 

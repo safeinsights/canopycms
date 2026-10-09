@@ -8,6 +8,7 @@ import {
   CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_FOCUS,
   CANOPY_PREVIEW_HIGHLIGHT,
+  CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   isTrustedEditorMessage,
@@ -377,6 +378,82 @@ describe('useCanopyPreview', () => {
 
     window.dispatchEvent(trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin))
     await waitFor(() => expect(getByTestId('value').dataset.highlight).toBe('true'))
+  })
+
+  describe('the mark count', () => {
+    const setUp = () => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', '/posts/marks')
+      render(<PreviewValue initialData={{ value: 'initial' }} />)
+      const counts = () =>
+        vi
+          .mocked(parentWin.postMessage)
+          .mock.calls.filter(([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MARKS)
+      const highlight = (enabled: boolean, origin?: string) =>
+        act(() => {
+          window.dispatchEvent(
+            trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled }, parentWin, origin),
+          )
+        })
+      const addMark = (path: string) =>
+        act(() => {
+          const el = document.createElement('span')
+          el.setAttribute('data-canopy-path', path)
+          document.body.appendChild(el)
+          onTestFinished(() => el.remove())
+        })
+      return { counts, highlight, addMark }
+    }
+
+    it('is reported to the editor origin once trusted highlighting turns on', async () => {
+      const { counts, highlight } = setUp()
+
+      highlight(false)
+      highlight(true, 'https://evil.example')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(counts()).toEqual([])
+
+      highlight(true)
+      await waitFor(() =>
+        expect(counts()).toEqual([
+          [{ type: CANOPY_PREVIEW_MARKS, count: 1 }, window.location.origin],
+        ]),
+      )
+    })
+
+    it('is reported again when the marks change while highlighting is on, and not after', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      await waitFor(() =>
+        expect(counts().map(([msg]) => msg)).toEqual([
+          { type: CANOPY_PREVIEW_MARKS, count: 1 },
+          { type: CANOPY_PREVIEW_MARKS, count: 2 },
+        ]),
+      )
+
+      highlight(false)
+      addMark('later')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(counts()).toHaveLength(2)
+    })
+
+    it('is reported within the throttle while the page keeps changing', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      const churn = setInterval(() => document.body.append(document.createElement('i')), 20)
+      onTestFinished(() => {
+        clearInterval(churn)
+        document.querySelectorAll('body > i').forEach((el) => el.remove())
+      })
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      expect(counts().map(([msg]) => msg)).toContainEqual({ type: CANOPY_PREVIEW_MARKS, count: 2 })
+    })
   })
 
   it('posts the ready handshake to the editor origin, never *', () => {
@@ -815,6 +892,30 @@ describe('preview error channel', () => {
       }),
     )
     await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
+  })
+
+  it('PreviewFrame reports the mark count a trusted preview sends, and nothing else', async () => {
+    const onMarkCount = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarkCount={onMarkCount} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const send = (data: unknown, origin = window.location.origin) =>
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin, source: iframe.contentWindow }),
+      )
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 3 }, 'https://evil.example')
+    send({ type: CANOPY_PREVIEW_MARKS, count: '3' })
+    send({ type: CANOPY_PREVIEW_MARKS, count: -1 })
+    send({ type: CANOPY_PREVIEW_MARKS, count: 1.5 })
+    send({ type: CANOPY_PREVIEW_MARKS })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onMarkCount).not.toHaveBeenCalled()
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 0 })
+    await waitFor(() => expect(onMarkCount).toHaveBeenCalledWith(0))
+    expect(onMarkCount).toHaveBeenCalledTimes(1)
   })
 
   it('ignores error reports whose message is not a string', async () => {

@@ -404,12 +404,15 @@ export interface EntryValidationIssue {
   fieldPath?: string
 }
 
-/** Input passed to the `validateEntry` hook on every editor save. */
+/** Input passed to the `validateEntry` hook on every content save, from the editor or not. */
 export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
   branch: string
-  /** Entry type name when the editor specifies one (collections with multiple entry types). */
+  /**
+   * The entry type the save is validated and written as: an existing entry's on-disk type, else
+   * the requested one, else the collection's default. Absent only when the collection has none.
+   */
   entryType?: string
   format: 'md' | 'mdx' | 'json' | 'yaml'
   data: Record<string, unknown>

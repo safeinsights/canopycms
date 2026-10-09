@@ -218,12 +218,13 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle, worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the worker's logged repack of `remote.git` (rule and config: `git-manager.ts` `repackBareRemoteIfNeeded`, `ensureRemoteGitConfig`)
 - `sparse-cone.ts` — `reapplySparseCones`: moves sparse clones to the recorded cone after a content-root change
+- `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
@@ -240,7 +241,7 @@ behaviour and conflict tracking are in
 
 **Location**: `packages/canopycms/src/task-queue/` — the generic queue (zero Canopy dependencies, EFS-safe) and the CMS contract on top of it.
 
-- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
+- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, release, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
 - `types.ts` — `Task`, `TaskStatus`, `QueueStats`, `TaskQueueLogger`, `CorruptTaskFile`
 - `index.ts` — public re-exports
 - `cms-task-queue.ts` — the CMS contract: `TaskAction`, `WorkerTask`, `cmsTaskQueueLogger`; the `canopycms/worker/task-queue` entrypoint
@@ -282,11 +283,12 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
 - `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
-- `src/worker.ts` — re-exports `CmsWorker` from core for convenience
+- `src/worker.ts` — re-exports `CmsWorker`
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
-- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, starts `CmsWorker`
+- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, runs `CmsWorker`
+- `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot
@@ -530,6 +532,7 @@ Field components, in `editor/fields/`:
 - `rich-text-failures.ts` — markdown that failed rich text, reopened as source
 - `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
 - `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
+- `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object field, with a Clear control when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
@@ -613,7 +616,7 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 exported via `canopycms/preview`) and `PreviewFrame.tsx` (editor side, via `canopycms/client`)
 
 Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:preview:highlight`,
-`canopycms:preview:ready`, `canopycms:preview:error`.
+`canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
 - `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
@@ -634,6 +637,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
 - `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
+- `schema-registry-record.ts` — `recordServedSchemaRegistry`: the serving editor's schema names in `.schema-registry.json`, for the worker's schema gate
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
 - `branch-schema-cache.ts` — per-branch schema caching, always file-based; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
@@ -694,7 +698,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the full submit workflow: checkout, status, commit all (with the submitter's trailers), push; returns `changedPaths`
+- `submitBranch()` — the submit workflow: checkout, status, commit all (with submitter trailers), push; returns `changedPaths` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -791,7 +795,8 @@ in `server.ts` and `client.ts`. See
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
-- `yaml-source-splice.ts` — `spliceSource`, writes reconciled YAML into its own source text
+- `yaml-source-splice.ts` — `spliceSource`, its YAML half
+- `json-source-splice.ts` — `serializeJson`, the JSON half
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
 - `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`

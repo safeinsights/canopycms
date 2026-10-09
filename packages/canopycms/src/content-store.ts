@@ -19,6 +19,7 @@ import matter from 'gray-matter'
 import { parse as yamlParse } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
 import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
+import { serializeJson } from './utils/json-source-splice'
 import { withLock } from './utils/async-mutex'
 import {
   ContentWriteLockBusyError,
@@ -1257,8 +1258,9 @@ export class ContentStore {
 
           // Comment preservation: re-serialise onto the file's OWN parsed document rather
           // than a fresh one, so nodes the payload did not change -- and their attached
-          // comments -- survive the write. JSON has no comment syntax and skips the read. See
-          // utils/content-serialize.ts.
+          // comments -- survive the write. JSON has no comments; it reads the file to keep
+          // untouched lines' formatting. See utils/content-serialize.ts and
+          // utils/json-source-splice.ts.
           //
           // This makes the write a genuine read-modify-write of the content file, so WHERE
           // the read happens matters: inside withLock(lockKey), inside
@@ -1273,12 +1275,11 @@ export class ContentStore {
           // today: the editor renames through renameEntry(), which link()s the bytes across
           // intact, and no caller passes `existingId`. If a relocating write becomes
           // reachable, read the ID's current path here instead of `absolutePath`.
-          const existingRaw =
-            input.format === 'json' ? undefined : await readFileIfExists(absolutePath)
+          const existingRaw = await readFileIfExists(absolutePath)
 
           let content: string
           if (input.format === 'json') {
-            content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
+            content = serializeJson(input.data ?? {}, existingRaw)
           } else if (input.format === 'yaml') {
             content = serializeYaml(input.data ?? {}, existingRaw)
           } else {

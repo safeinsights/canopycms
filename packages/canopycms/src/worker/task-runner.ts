@@ -5,10 +5,15 @@ import {
   dequeueTask,
   failTask,
   recoverOrphanedTasks,
+  releaseTask,
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import { createOrUpdatePullRequest, isRefAlreadyGoneError } from '../github-service'
+import {
+  createOrUpdatePullRequest,
+  isNoCommitsBetweenError,
+  isRefAlreadyGoneError,
+} from '../github-service'
 import {
   BranchMetadataCorruptError,
   BranchMetadataFileManager,
@@ -24,7 +29,7 @@ import {
 } from '../utils/git'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
-import { workerLog, workerLogError } from './log'
+import { workerLog, workerLogError, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -65,6 +70,8 @@ export type TaskRunnerContext = Pick<
   | 'executeTask'
   | 'pushBranchToGitHub'
   | 'isRunning'
+  | 'isDraining'
+  | 'shutdownSignal'
   | 'ensureStatusReport'
 >
 
@@ -74,6 +81,19 @@ export type TaskRunnerContext = Pick<
  * burning its retry budget.
  */
 export class PermanentTaskError extends Error {}
+
+/**
+ * The attempt was cut off by a draining `stop()` reaching its deadline, not by
+ * anything wrong with the task: it goes back to pending with no retry spent.
+ */
+class TaskAbortedForShutdownError extends Error {}
+
+/**
+ * GitHub refused a submit's PR because the pushed branch has no commits its base lacks: the API's
+ * own check found changes against an older base, or could not run. The failure handler returns
+ * the branch to editing if it is still in that submit, since nothing is under review.
+ */
+class NothingToSubmitTaskError extends PermanentTaskError {}
 
 /**
  * Classify a task failure as permanent (fail fast) or transient (retry).
@@ -209,8 +229,11 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
 
   let processed = 0
   let task: Task | null
+  // Checked before every claim: a draining worker finishes the task it holds
+  // and claims no other.
   while (
     processed < ctx.maxTasksPerCycle &&
+    !ctx.isDraining() &&
     (task = await dequeueTask(ctx.taskDir, ctx.log)) !== null
   ) {
     try {
@@ -218,6 +241,15 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       await completeTask(ctx.taskDir, task.id, result, ctx.log)
       await updateBranchMetadata(ctx, task, result)
     } catch (err) {
+      if (err instanceof TaskAbortedForShutdownError) {
+        // The next worker runs it again from the start, exactly as a retry
+        // after a timed-out attempt does.
+        await releaseTask(ctx.taskDir, task.id, ctx.log)
+        workerLogWarn(
+          `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,
+        )
+        break
+      }
       const message = getErrorMessage(err)
       workerLogError(`Task ${task.id} (${task.action}) failed:`, message)
 
@@ -237,7 +269,9 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
         workerLog(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
       } else {
         await failTask(ctx.taskDir, task.id, persistedMessage, ctx.log)
-        await updateBranchMetadataOnFailure(ctx, task, persistedMessage)
+        await updateBranchMetadataOnFailure(ctx, task, persistedMessage, {
+          unlock: err instanceof NothingToSubmitTaskError,
+        })
         workerLogError(
           permanent
             ? '  Permanently failed (non-retryable error)'
@@ -273,18 +307,17 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
 }
 
 /**
- * Execute a task bounded by taskTimeoutMs (DEP-H1). Two layers:
- * - an AbortSignal cancels Octokit HTTP calls promptly;
- * - a Promise.race rejects when the timeout fires, so work that cannot observe
- *   the signal (git subprocesses via simple-git, and a hung
- *   `ctx.buildGitHubUrl()` in pushBranchToGitHub) still fails the attempt and
- *   the worker moves on instead of stalling forever.
+ * Execute a task bounded by taskTimeoutMs (DEP-H1) and by the worker's
+ * shutdown signal. Two layers:
+ * - an AbortSignal cancels Octokit HTTP calls and kills the push's git process
+ *   (pushBranchToGitHub passes it to simple-git's `abort`);
+ * - a Promise.race rejects when either fires, so work that cannot observe the
+ *   signal (a hung `ctx.buildGitHubUrl()` in pushBranchToGitHub) still ends
+ *   the attempt and the worker moves on instead of stalling forever.
  *
- * A raced-out resolution is not CANCELLED: if it later settles, the abandoned
- * push continues. On the App path the mint is separately bounded by
- * gitTokenMintTimeoutMs, and git-sync.ts's two resolutions run on the sync loop
- * and are not bounded by taskTimeoutMs at all. pushBranchToGitHub additionally
- * kills stalled git processes via simple-git's block timeout.
+ * A raced-out credential resolution is not cancelled. On the App path the mint
+ * is separately bounded by gitTokenMintTimeoutMs, and git-sync.ts's two
+ * resolutions run on the sync loop and are not bounded by taskTimeoutMs at all.
  */
 async function executeTaskWithTimeout(
   ctx: TaskRunnerContext,
@@ -292,19 +325,24 @@ async function executeTaskWithTimeout(
 ): Promise<Record<string, unknown>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ctx.taskTimeoutMs)
+  const shutdown = ctx.shutdownSignal()
+  const signal = AbortSignal.any([controller.signal, shutdown])
   try {
-    const work = ctx.executeTask(task, controller.signal)
-    // If the timeout wins the race, the losing promise must not surface an
+    const work = ctx.executeTask(task, signal)
+    // If the abort wins the race, the losing promise must not surface an
     // unhandled rejection when it eventually settles.
     work.catch(() => {})
-    const timedOut = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener(
-        'abort',
-        () => reject(new Error(`Task timed out after ${ctx.taskTimeoutMs}ms`)),
-        { once: true },
-      )
+    const aborted = new Promise<never>((_, reject) => {
+      const onAbort = () =>
+        reject(
+          shutdown.aborted
+            ? new TaskAbortedForShutdownError(`Task aborted: the worker is shutting down`)
+            : new Error(`Task timed out after ${ctx.taskTimeoutMs}ms`),
+        )
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
     })
-    return await Promise.race([work, timedOut])
+    return await Promise.race([work, aborted])
   } finally {
     clearTimeout(timer)
   }
@@ -320,12 +358,12 @@ export async function executeTask(
   switch (action) {
     case 'push-branch': {
       const branch = requireString(payload, 'branch')
-      await ctx.pushBranchToGitHub(branch)
+      await ctx.pushBranchToGitHub(branch, signal)
       return { pushed: true }
     }
     case 'push-and-create-pr': {
       const branch = requireString(payload, 'branch')
-      await ctx.pushBranchToGitHub(branch)
+      await ctx.pushBranchToGitHub(branch, signal)
       const pr = await ctx.octokit().pulls.create({
         owner: ctx.githubOwner,
         repo: ctx.githubRepo,
@@ -341,7 +379,7 @@ export async function executeTask(
     case 'push-and-update-pr': {
       const branch = requireString(payload, 'branch')
       const prNumber = requireNumber(payload, 'pullRequestNumber')
-      await ctx.pushBranchToGitHub(branch)
+      await ctx.pushBranchToGitHub(branch, signal)
       await ctx.octokit().pulls.update({
         owner: ctx.githubOwner,
         repo: ctx.githubRepo,
@@ -375,25 +413,34 @@ export async function executeTask(
       // The settings branch is an orphan with no history in common with the
       // base, so GitHub 422s a PR for it: push it and stop.
       if (isSettingsBranch(branch)) {
-        await ctx.pushBranchToGitHub(branch)
+        await ctx.pushBranchToGitHub(branch, signal)
         workerLog(`Pushed settings branch ${branch}; settings branches never get a PR`)
         return { pushed: true }
       }
-      await ctx.pushBranchToGitHub(branch)
+      await ctx.pushBranchToGitHub(branch, signal)
 
-      const result = await createOrUpdatePullRequest({
-        octokit: ctx.octokit(),
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        head: branch,
-        base,
-        title: optionalString(payload, 'title', `Submit ${branch}`),
-        body: optionalString(payload, 'body', ''),
-        // Content submits (api/github-sync.ts) set both.
-        markReadyIfDraft: payload.markReadyIfDraft === true,
-        mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
-        signal,
-      })
+      let result: Awaited<ReturnType<typeof createOrUpdatePullRequest>>
+      try {
+        result = await createOrUpdatePullRequest({
+          octokit: ctx.octokit(),
+          owner: ctx.githubOwner,
+          repo: ctx.githubRepo,
+          head: branch,
+          base,
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
+          // Content submits (api/github-sync.ts) set both.
+          markReadyIfDraft: payload.markReadyIfDraft === true,
+          mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+          signal,
+        })
+      } catch (err) {
+        if (!isNoCommitsBetweenError(err)) throw err
+        throw new NothingToSubmitTaskError(
+          `Nothing was submitted: "${branch}" has no changes compared with "${base}", so GitHub ` +
+            'opened no pull request.',
+        )
+      }
       workerLog(
         result.created
           ? `Created PR #${result.number} for ${branch}`
@@ -440,12 +487,13 @@ export async function executeTask(
         )
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
-      // after) owns the GitHub branch once its own submit recorded a different PR. Without one,
-      // the ref is taken to be the deleted branch's, which is wrong only if that submit pushed
-      // and then lost its PR number. Unparseable metadata keeps the GitHub branch; other read
-      // errors retry.
+      // after) owns the GitHub branch once it recorded a different PR or GitHub push. Without
+      // either, the ref is taken to be the deleted branch's. Unparseable metadata keeps the
+      // GitHub branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
+      const deletedPushedAt =
+        typeof payload.pushedToGitHubAt === 'string' ? payload.pushedToGitHubAt : undefined
       let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
       let unreadable = false
       try {
@@ -466,6 +514,11 @@ export async function executeTask(
       const livePr = live?.branch.pullRequestNumber
       if (livePr !== undefined && livePr !== deletedPr) {
         workerLog(`Not deleting GitHub branch ${branch}: a newer branch's PR #${livePr} uses it`)
+        return { deleted: false, skipped: 'name-reused' }
+      }
+      const livePushedAt = live?.branch.pushedToGitHubAt
+      if (livePushedAt !== undefined && livePushedAt !== deletedPushedAt) {
+        workerLog(`Not deleting GitHub branch ${branch}: a newer branch pushed under that name`)
         return { deleted: false, skipped: 'name-reused' }
       }
       try {
@@ -557,11 +610,17 @@ export async function updateBranchMetadata(
  * Update branch metadata after permanent task failure. `error` is already
  * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
  * syncFailureReason so the editor can show WHY, not just that it failed.
+ *
+ * `unlock` also returns the branch to 'editing', but only while it is still in
+ * the submit this task carries (its `submittedAt`), 'submitted' with no PR: a
+ * withdraw, a newer submit, or a review decision that landed meanwhile is left
+ * alone.
  */
 async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,
+  options: { unlock: boolean },
 ): Promise<void> {
   const branch = metadataBranchOf(task)
   if (!branch) return
@@ -575,9 +634,25 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({
-      branch: { name: branch, syncStatus: 'sync-failed', syncFailureReason: error },
-    })
+    const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const submittedAt = task.payload.submittedAt
+    const unlocked =
+      options.unlock &&
+      typeof submittedAt === 'string' &&
+      (await meta.saveIf(
+        {
+          branch: {
+            ...failed,
+            status: 'editing',
+            syncFailureReason: `${error} The branch is unlocked for editing; save a change, then submit again.`,
+          },
+        },
+        (existing) =>
+          existing?.branch.status === 'submitted' &&
+          existing.branch.pullRequestNumber === undefined &&
+          existing.branch.submittedAt === submittedAt,
+      )) !== null
+    if (!unlocked) await meta.save({ branch: failed })
   } catch (err) {
     workerLogError(
       `Failed to update failure metadata for ${branch}:`,
@@ -605,13 +680,22 @@ function throwIfWorkflowRefusal(branch: string, message: string): void {
   )
 }
 
-export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string): Promise<void> {
+export async function pushBranchToGitHub(
+  ctx: TaskRunnerContext,
+  branch: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const git = simpleGit({
     baseDir: ctx.remoteGitPath,
     // DEP-H1: kill the git process if it produces no output for taskTimeoutMs
     // (network stall, credential prompt) instead of letting it hang past the
     // task timeout.
     timeout: { block: ctx.taskTimeoutMs },
+    // Kills the push when the task times out or the worker's drain deadline
+    // hits, so an abandoned push never races the retry. GitHub moves the ref
+    // only after receiving the whole pack: a push killed before that changes
+    // nothing, and one killed after it is found already done by the re-run.
+    abort: signal,
   })
   // Force stable (English) git output so isNonFastForwardRejection below can
   // match it -- git's rejection text is gettext-translated, so a non-English
@@ -700,6 +784,7 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
       // The lease was refused, so GitHub is provably not at the marker: it
       // has moved past the rewritten commit and the marker is spent.
       await clearHistoryRewrittenMarker(ctx, branchPath, branch)
+      await recordPushedToGitHub(ctx, branchPath, branch)
       workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
       return
     }
@@ -727,5 +812,32 @@ export async function pushBranchToGitHub(ctx: TaskRunnerContext, branch: string)
   if (marker && outgoingSha && outgoingSha !== marker) {
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
   }
+  await recordPushedToGitHub(ctx, branchPath, branch)
   workerLog(`Pushed ${branch} to GitHub`)
+}
+
+/**
+ * Stamp `pushedToGitHubAt`, branch delete's proof that the GitHub branch is this one. Recorded
+ * when the push lands, whatever the PR call after it does. Best-effort: a branch deleted
+ * meanwhile has no metadata to stamp, and a failed stamp only leaves a later delete to skip
+ * GitHub.
+ */
+async function recordPushedToGitHub(
+  ctx: TaskRunnerContext,
+  branchPath: string,
+  branch: string,
+): Promise<void> {
+  if (isSettingsBranch(branch)) return
+  try {
+    await fs.stat(branchPath)
+  } catch {
+    return
+  }
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
+      branch: { name: branch, pushedToGitHubAt: new Date().toISOString() },
+    })
+  } catch (err) {
+    workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))
+  }
 }

@@ -4,6 +4,7 @@ import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
 import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 import { createMockApiContext } from '../test-utils'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -1179,6 +1180,8 @@ describe('content api', () => {
       existingEntryType?: string
       /** The existing entry's raw on-disk data, as a `resolveReferences: false` read returns it. */
       storedData?: Record<string, unknown>
+      /** Marks the 'settings' type unavailable, as a degraded schema resolve does. */
+      settingsUnavailable?: boolean
     }) => {
       const { ContentStore } = await import('../content-store')
       const writeSpy = vi
@@ -1210,7 +1213,20 @@ describe('content api', () => {
                   default: true,
                   ...(opts.maxItems !== undefined ? { maxItems: opts.maxItems } : {}),
                 },
-                { name: 'settings', format: 'json', schema: settingsSchema },
+                {
+                  name: 'settings',
+                  format: 'json',
+                  schema: settingsSchema,
+                  ...(opts.settingsUnavailable
+                    ? {
+                        unavailable: {
+                          reason: 'unknown-schema',
+                          schemaRef: 'settingsSchema',
+                          metaFile: 'posts/.collection.json',
+                        },
+                      }
+                    : {}),
+                },
               ],
             },
             slug: 'hello',
@@ -1698,6 +1714,56 @@ describe('content api', () => {
       })
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('shows the validateEntry hook the existing entry type when the request omits it', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([{ level: 'error', message: 'settings rule' }])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { siteName: 'My Site' },
+      })
+      expect(hook).toHaveBeenCalledWith(expect.objectContaining({ entryType: 'settings' }))
+      expect(res.status).toBe(422)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('shows the validateEntry hook the default entry type on a create that omits it', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({ exists: false, knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: null,
+        data: { title: 'Hello', author: AUTHOR_ID },
+      })
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledWith(expect.objectContaining({ entryType: 'post' }))
+      // The store writes as the same type the hook was shown.
+      expect(writeSpy.mock.calls[0][3]).toBe('post')
+    })
+
+    it('refuses a write to an unavailable entry type before the validateEntry hook runs', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce({
+        existingEntryType: 'settings',
+        settingsUnavailable: true,
+      })
+      await expect(
+        writeContent(ctx, writeReq, writeParams, {
+          format: 'json',
+          expectedVersion: EXISTING_VERSION,
+          data: { siteName: 'My Site' },
+        }),
+      ).rejects.toBeInstanceOf(SchemaUnavailableError)
+      expect(hook).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
     })
 
     it('rejects a conflicting entryType param against an existing entry with 409', async () => {

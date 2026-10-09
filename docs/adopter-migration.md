@@ -56,6 +56,30 @@ entry type with no `isBody` field needs one declared to opt its body out. An ent
 and the path-prefix matching that backs up its entry-type gate. Keep a rule checking that the body
 compiles.
 
+### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
+
+**What changed.** The worker is one on-demand `t4g.nano` by default (about $3 a month, was spot at
+$1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot is opt-in:
+`workerCapacity: { type: 'spot' }`, a mixed-instances policy that still cannot guarantee a worker.
+A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat `workerTerminationHeartbeat`,
+default 5 minutes) lets the old worker finish in-flight work for up to 90 seconds and requeue the
+rest with no retry spent. The systemd unit gains `KillMode=mixed`, `TimeoutStopSec=120` and exit
+status 75 handling; the worker role may complete its own group's hook.
+
+**To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
+or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
+deploy that brings this version rolls the worker before the hook exists; the drain applies from the
+next.
+
+**Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
+### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
+
+**What changed.** Submit answers 400 when a branch's saved content matches its base.
+`BranchMetadata` gains optional `submittedAt` and `pushedToGitHubAt`.
+
+**To adopt.** Scripts calling submit: save a change first, or handle the 400.
+
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
 **What changed.** When synced content names an entry schema the running code lacks, only that
@@ -65,6 +89,14 @@ types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, opt
 `ApiResponse.code`, and a required `SchemaResolutionResult.issues`.
 
 **To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`.
+
+### Content naming a new schema waits for the editor deploy — **behaviour change**
+
+**What changed.** The worker holds the base branch, for up to 30 minutes, while synced content
+names an entry schema the running editor lacks; see
+[New schemas wait for the editor deploy](deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy).
+
+**To adopt.** Nothing. A custom worker entrypoint can pass `schemaHoldMaxMs` to `CmsWorker`.
 
 ### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
 
@@ -155,10 +187,11 @@ keep it out of cross-request caches (`unstable_cache`, module memos).
 
 ### A save rewrites only the lines whose values changed
 
-**What changed.** In YAML entries and md/mdx frontmatter, untouched values, comments, blank lines
-and (in `.yaml` files) CRLF line endings stay as written, and an edited `>-`, `|` or quoted value
-keeps that style where it can hold the new value; the first save re-wrapped long values at 80
-columns. Anchors, aliases and rare layouts still re-serialise the whole file.
+**What changed.** In YAML and JSON entries and md/mdx frontmatter, untouched values, comments,
+blank lines and (in `.yaml` and `.json` files) CRLF line endings stay as written, and an edited
+`>-`, `|` or quoted value keeps that style where it can. The first save re-wrapped YAML,
+restyled JSON and rewrote dates. Anchors, aliases and rare layouts still re-serialise the whole
+file.
 
 **To adopt.** Nothing.
 
@@ -168,8 +201,8 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **What changed.** An md/mdx body save keeps every untouched block verbatim (markers, escapes, JSX,
 blank lines, CRLF), so `prettier --check` passes. New and edited blocks use Prettier's
-markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break, an
-ordered list's start or a bare URL before punctuation still changes on the first edit. A body
+markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break or
+a bare URL before punctuation still changes on the first edit. A body
 with text after a nested list in a list item opens as source.
 
 **To adopt.** Nothing.
