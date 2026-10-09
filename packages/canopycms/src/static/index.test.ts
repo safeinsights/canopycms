@@ -4,6 +4,7 @@ import {
   collectStaticPaths,
   findInvalidEntries,
   findEntriesWithUnknownKeys,
+  findEntriesWithUnsafeMarkdown,
   warnUnknownEntryKeys,
   assertBuildEntriesValid,
   findDuplicateUrlPaths,
@@ -18,6 +19,12 @@ import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
 import type { CanopyConfig, EntrySchema } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
+import * as markdownSafety from '../validation/markdown-safety'
+
+vi.mock('../validation/markdown-safety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../validation/markdown-safety')>()
+  return { ...actual, findMarkdownSafetyIssues: vi.fn(actual.findMarkdownSafetyIssues) }
+})
 
 /** Minimal listEntries stub returning the given items (typed loosely — only fields the helper reads). */
 function fakeCtx(
@@ -1232,5 +1239,28 @@ describe('dangling-reference build guard', () => {
     vi.stubEnv('CANOPY_BUILD_MODE', '')
     const { ctx } = treeCtx([article({ author: MISSING_ID })])
     await expect(collectStaticPaths(ctx)).resolves.toHaveLength(1)
+  })
+})
+
+describe('findEntriesWithUnsafeMarkdown', () => {
+  const schema: EntrySchema = [{ name: 'title', type: 'string' }]
+  const item = (body: string) => ({
+    entryPath: 'content/posts/legacy' as never,
+    schema,
+    format: 'mdx' as const,
+    data: { title: 'Legacy', body },
+  })
+
+  it('parses an unchanged entry once per build, however many passes list it', () => {
+    const scan = vi.mocked(markdownSafety.findMarkdownSafetyIssues)
+    scan.mockClear()
+    const first = findEntriesWithUnsafeMarkdown([item('{legacy()}')])
+    const second = findEntriesWithUnsafeMarkdown([item('{legacy()}')])
+    expect(second).toEqual(first)
+    expect(first).toEqual([{ entryPath: 'content/posts/legacy', fieldPaths: ['body'] }])
+    expect(scan).toHaveBeenCalledTimes(1)
+
+    expect(findEntriesWithUnsafeMarkdown([item('Fixed')])).toEqual([])
+    expect(scan).toHaveBeenCalledTimes(2)
   })
 })

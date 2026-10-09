@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
@@ -410,16 +412,41 @@ export function findEntriesWithUnsafeMarkdown(
   const found: EntryWithUnsafeMarkdown[] = []
   for (const item of items) {
     if (!item.schema || typeof item.data !== 'object' || item.data === null) continue
-    const findings = findMarkdownSafetyIssues(
+    const fieldPaths = unsafeFieldPaths(
       item.schema,
       item.format,
       item.data as Record<string, unknown>,
     )
-    if (findings.length > 0) {
-      found.push({ entryPath: item.entryPath, fieldPaths: findings.map((f) => f.fieldPath) })
-    }
+    if (fieldPaths.length > 0) found.push({ entryPath: item.entryPath, fieldPaths })
   }
   return found
+}
+
+/**
+ * A build lists its entries several times (every catch-all route, the sitemap), and parsing each
+ * body costs milliseconds, so results are kept per schema object and hash of an entry's content.
+ */
+const unsafeFieldPathsMemo = new WeakMap<object, Map<string, string[]>>()
+
+function unsafeFieldPaths(
+  schema: NonNullable<BuildScanItem['schema']>,
+  format: BuildScanItem['format'],
+  data: Record<string, unknown>,
+): string[] {
+  let bySchema = unsafeFieldPathsMemo.get(schema)
+  if (bySchema === undefined) {
+    bySchema = new Map()
+    unsafeFieldPathsMemo.set(schema, bySchema)
+  }
+  const key = createHash('sha256')
+    .update(`${format ?? ''}\0${JSON.stringify(data)}`)
+    .digest('hex')
+  let fieldPaths = bySchema.get(key)
+  if (fieldPaths === undefined) {
+    fieldPaths = findMarkdownSafetyIssues(schema, format, data).map((f) => f.fieldPath)
+    bySchema.set(key, fieldPaths)
+  }
+  return fieldPaths
 }
 
 /** Warn — never throw — about entries holding code in markdown or MDX that is not `executable`. */

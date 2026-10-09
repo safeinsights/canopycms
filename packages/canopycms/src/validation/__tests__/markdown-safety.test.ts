@@ -101,7 +101,6 @@ describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
     ['a javascript: url prop', '<Card url="javascript:alert(1)" />', /javascript:/],
     ['a javascript: URL in any prop', '<Card link="javascript:alert(1)" />', /javascript:/],
     ['a vbscript: URL in any prop', '<Card target="vbscript:x" />', /vbscript:/],
-    ['a data: document in any prop', '<Card doc="data:text/html,<script></script>" />', /data:/],
     [
       'a javascript: URL nested in a static value',
       '<Nav items={[{ "href": "javascript:alert(1)" }]} />',
@@ -171,6 +170,8 @@ describe('findUnsafeMarkdown: MDX that runs no code is accepted', () => {
     ['a boolean attribute', '<Details open>Hidden</Details>'],
     ['props that merely start with on', '<Callout online ongoing="yes" onlyMobile />'],
     ['a plain string prop with a colon', '<Callout title="Note: read this" />'],
+    ['prose that starts with Data:', '<img src="/a.png" alt="Data: sales by region" />'],
+    ['a title that starts with data:', '<Callout title="data: see the 2024/25 table" />'],
     [
       'a static value holding ordinary URLs',
       '<Nav items={[{ href: "/docs" }, { href: "https://x.test" }]} />',
@@ -418,6 +419,37 @@ describe('splitByStored', () => {
     const moved = split({ summary: '{a\n> -b}' }, stored).refused
     expect(moved.map((e) => e.message).join()).toMatch(/expressions are not allowed/)
     expect(split({ summary: 'Intro\n\n> {a\n> -b}' }, stored).refused).toEqual([])
+  })
+
+  it('counts each construct on a line, so stored code never licenses its neighbour', () => {
+    const cases: Array<[string, string]> = [
+      ['Intro {legacy()}', 'Intro {legacy()} {fetch("/api/canopycms/x")}'],
+      ['<Btn onClick="a()" />', '<Btn onClick="a()" /> <Btn onClick="steal()" />'],
+      [
+        '<iframe src="/x" />',
+        '<iframe src="/x" /> <iframe srcdoc="<script>parent.x()</script>" />',
+      ],
+      ['[a](javascript:void(0))', '[a](javascript:void(0)) [b](javascript:fetch("/api"))'],
+      ['Intro {legacy()}', 'Intro {legacy()} {legacy()}'],
+    ]
+    for (const [stored, saved] of cases) {
+      expect(split({ summary: saved }, { summary: stored }).refused).toHaveLength(1)
+    }
+    expect(split({ summary: '{b()} {a()}' }, { summary: '{a()} {b()}' }).refused).toEqual([])
+  })
+
+  it('keeps an edit inside a stored element that is not allowed', () => {
+    const stored = { summary: '<Tabs.Tab label="a">\n\nold text\n\n</Tabs.Tab>' }
+    expect(
+      split({ summary: '<Tabs.Tab label="a">\n\nnew text\n\n</Tabs.Tab>' }, stored).refused,
+    ).toEqual([])
+    expect(
+      split({ summary: '<Tabs.Tab label="b">\n\nold text\n\n</Tabs.Tab>' }, stored).refused,
+    ).toHaveLength(1)
+  })
+
+  it('keeps a stored expression moved from its own line into a sentence', () => {
+    expect(split({ summary: 'Note: {legacy()}' }, { summary: '{legacy()}' }).refused).toEqual([])
   })
 
   it('never keeps a body that does not parse, which cannot be checked', () => {

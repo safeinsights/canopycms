@@ -171,6 +171,8 @@ interface MdNode {
   readonly children?: readonly MdNode[]
   readonly position?: { readonly start: { readonly line: number } }
   readonly name?: string | null
+  /** An expression's or ESM block's code. */
+  readonly value?: unknown
   readonly url?: string
   /** A definition's, or a link or image reference's, normalised label. */
   readonly identifier?: string
@@ -258,14 +260,13 @@ function unsafeUrlScheme(url: string): string | undefined {
 }
 
 /**
- * The scheme of a value that runs script or loads a document if it reaches an `href` or `src`,
- * which a component may do with any prop: checked on every string a prop holds.
+ * The scheme of a value that runs script if it reaches an `href` or `src`, which a component may
+ * do with any prop: checked on every string a prop holds. `data:` is left to the URL attributes,
+ * since a data document runs in an opaque origin and prose often starts with "Data:".
  */
 function scriptScheme(value: string): string | undefined {
   const scheme = urlScheme(value)
-  if (scheme === 'javascript' || scheme === 'vbscript') return scheme
-  if (scheme === 'data' && !SAFE_DATA_URL.test(value.trim())) return scheme
-  return undefined
+  return scheme === 'javascript' || scheme === 'vbscript' ? scheme : undefined
 }
 
 /** Every string in a static value: literals, template text, and array and object values. */
@@ -355,7 +356,8 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         name.includes('.')
           ? `${tag} is not allowed: use a component by its plain name`
           : `${tag} is not allowed: it is not one of the HTML tags a body may use, so use one of the site's components instead`,
-        treeKey('tag', node),
+        // Its children are checked on their own, so editing them keeps it.
+        treeKey('tag', { name, attributes: node.attributes }),
       ),
     ]
   }
@@ -449,7 +451,8 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
           issue(
             node,
             '{…} expressions are not allowed: they run as code. A comment {/* … */} or a plain value such as {" "} is fine',
-            treeKey('expression', node),
+            // Its code alone, so moving it between a line of its own and a sentence keeps it.
+            treeKey('expression', node.value),
           ),
         )
       }
@@ -515,8 +518,7 @@ export function findUnsafeMarkdown(
   source: string,
   dialect: MarkdownDialect,
 ): MarkdownSafetyIssue[] {
-  const issues: MarkdownSafetyIssue[] = []
-  const seen = new Set<string>()
+  const parses: MarkdownSafetyIssue[][] = []
   for (const withGfm of [false, true]) {
     let tree: MdNode
     try {
@@ -533,11 +535,19 @@ export function findUnsafeMarkdown(
       // Nesting deep enough to exhaust the stack.
       return [{ message: `This body is too deeply nested to check: ${getErrorMessage(err)}` }]
     }
-    for (const item of found) {
-      if (seen.has(item.message)) continue
-      seen.add(item.message)
-      issues.push(item)
-    }
+    parses.push(found)
+  }
+  // Both parses report most constructs. Each is kept as many times as the parse that saw it most
+  // did, so a second construct like the first, on the same line, is still counted.
+  const id = (item: MarkdownSafetyIssue) => `${item.line ?? ''}\0${item.key ?? item.message}`
+  const [plain = [], withGfm = []] = parses
+  const unmatched = new Map<string, number>()
+  for (const item of plain) unmatched.set(id(item), (unmatched.get(id(item)) ?? 0) + 1)
+  const issues = [...plain]
+  for (const item of withGfm) {
+    const count = unmatched.get(id(item)) ?? 0
+    if (count > 0) unmatched.set(id(item), count - 1)
+    else issues.push(item)
   }
   return issues
 }

@@ -722,7 +722,11 @@ describe('content api', () => {
       path: unsafeAsLogicalPath('posts/hello'),
     }
 
-    const mockStoreOnce = async (existingEntryType: 'article' | 'trusted', storedBody = '') => {
+    const mockStoreOnce = async (
+      existingEntryType: 'article' | 'trusted',
+      storedBody = '',
+      readError?: Error,
+    ) => {
       const { ContentStore } = await import('../content-store')
       const writeSpy = vi
         .fn()
@@ -754,12 +758,14 @@ describe('content api', () => {
           getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
           countEntriesOfType: vi.fn().mockResolvedValue(0),
           idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
-          read: vi.fn().mockResolvedValue({
-            format: 'mdx',
-            data: {},
-            body: storedBody,
-            bodyFieldName: 'content',
-          }),
+          read: readError
+            ? vi.fn().mockRejectedValue(readError)
+            : vi.fn().mockResolvedValue({
+                format: 'mdx',
+                data: {},
+                body: storedBody,
+                bodyFieldName: 'content',
+              }),
           write: writeSpy,
         } as any
       })
@@ -847,6 +853,21 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
       expect(writeSpy.mock.calls[0][2]).toMatchObject({ body: 'Safe text' })
       expect(writeSpy.mock.calls[0][2].data).not.toHaveProperty('content')
+    })
+
+    it('refuses new code with a 422 when the stored entry cannot be read', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', '', new Error('bad frontmatter'))
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.status).toBe(422)
+      expect(writeSpy).not.toHaveBeenCalled()
     })
 
     it('saves the same body when its field is executable', async () => {

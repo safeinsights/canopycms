@@ -256,7 +256,11 @@ const storedMarkdownSafetyIssues = async (
   slug: Slug,
   fields: EntrySchema,
 ): Promise<MarkdownSafetyFinding[]> => {
-  const doc = await store.read(collectionPath, slug, { resolveReferences: false })
+  // A stored file that does not read keeps nothing, so the save's code is refused, not a 500.
+  const doc = await store
+    .read(collectionPath, slug, { resolveReferences: false })
+    .catch(() => undefined)
+  if (doc === undefined) return []
   const data = 'body' in doc ? mergeBodyIntoData(fields, doc.data, doc.body) : doc.data
   return findMarkdownSafetyIssues(fields, doc.format, data)
 }
