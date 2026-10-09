@@ -27,8 +27,8 @@ export type AIUnavailableReference = MissingReference | AIExcludedReference
 
 /**
  * What a `reference` field holds in {@link AIEntryMeta.data} (an array of these for
- * `list: true`), at any depth: never the bare id stored on disk. Branch on `unavailable` before
- * reading anything but `id`.
+ * `list: true`), at any depth, in place of the stored id; a cleared reference stays `''`. Branch
+ * on `unavailable` before reading anything but `id`.
  */
 export type AIReferenceValue = AIResolvedReference | AIUnavailableReference
 
@@ -187,7 +187,8 @@ export interface EntryTransformContext {
 }
 
 /**
- * Per-entry-type transform. Runs once per entry at generation time (may be async). Return a
+ * Per-entry-type transform. Runs once per entry at generation time (may be async), and again if
+ * an entry it references fails to render and is masked out of its data. Return a
  * markdown string to APPEND after the entry's body/fields, or `undefined` to append nothing.
  * Append-only by design — `entryToMarkdown` remains the sole owner of base serialization.
  *
@@ -222,7 +223,8 @@ export interface AIContentConfig {
   /**
    * Site-relative URL path the generated files are served under, without the deployment
    * `basePath`, as page links are. A reference links its target's markdown copy beneath it.
-   * Default `/ai`: where `canopycms init` mounts the route and `generate-ai-content` writes.
+   * Default `/ai`: where `canopycms init` mounts the route, and where `generate-ai-content`'s
+   * default `--output public/ai` is served. Set it when you serve the files elsewhere.
    */
   mountPath?: string
   /** Opt-out exclusions — content to skip */

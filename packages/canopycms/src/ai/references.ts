@@ -63,7 +63,8 @@ function referenceSlots(
 /**
  * A copy of `data` with every reference id replaced by its target, or by a `MissingReference`
  * when the id names no readable entry, so the id survives into the output.
- * A `list: true` field resolves each string element; any other shape is left as stored.
+ * A `list: true` field resolves each non-empty string element; any other value, including the
+ * `''` of a cleared reference, is left as stored.
  */
 export async function resolveReferenceFields(
   data: Record<string, unknown>,
@@ -99,8 +100,8 @@ function isShownTarget(value: unknown): value is Record<string, unknown> & { id:
 /**
  * Replace, in place, every resolved target that is not itself in this export with an
  * {@link AIExcludedReference}, so no title, URL or field of an excluded entry reaches the
- * output. Runs before entry transforms and rendering, which therefore never see such a target.
- * Returns whether it replaced anything.
+ * output. Runs before each round of entry transforms and rendering, so their final output never
+ * carries such a target. Returns whether it replaced anything.
  */
 export function maskUnexportedTargets(
   entry: AIEntry,

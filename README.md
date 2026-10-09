@@ -1686,7 +1686,8 @@ const aiConfig = defineAIContentConfig({
   bodyTransforms: { guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, '') },
 
   // Per-entry-type transforms appending markdown after the entry's body/fields.
-  // Runs once per entry, may be async; return undefined to append nothing.
+  // Runs once per entry (again if a referenced entry fails to render), may be async;
+  // return undefined to append nothing.
   entryTransforms: {
     dataset: async (entry, { contentId, readSibling }) => {
       const raw = await readSibling(`${contentId}.profile.json`)

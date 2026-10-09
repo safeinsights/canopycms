@@ -24,7 +24,7 @@ import type { AIEntry, AIContentConfig } from './types'
  * knows every target's schema and the adopter's `entryLinkUrl`; the default needs neither.
  */
 export interface ReferenceRendering {
-  /** Display title of a resolved target, used when the field names no `displayField`. */
+  /** Display title of a resolved target, used unless the field's `displayField` holds text. */
   title(target: Record<string, unknown>): string
   /** Where the link points, or undefined to render the title as plain text. */
   url(target: Record<string, unknown>): string | undefined

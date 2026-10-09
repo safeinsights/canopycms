@@ -24,12 +24,11 @@ whole non-excluded tree) or cycles (resolution is one level deep).
 ## What shipped
 
 - `ai/references.ts` resolves each reference with `traverseFields` and
-  `ContentStore.resolveReferenceTarget`, which embeds no body. A missing target keeps its id as
-  `{ id, unavailable: true, reason: 'missing' }`, marked as unavailable the way a
-  `RestrictedReference` is.
-- `generateAIContent` runs in two phases. It collects and filters every entry first, so the set
-  of exported ids is known. Then it masks any reference to a target outside that set, runs the
-  entry transforms, and renders.
+  `ContentStore.resolveReferenceTarget`, which embeds no body. A missing target keeps its id, as
+  the store's `MissingReference`.
+- `generateAIContent` collects and filters every entry first, so the set of exported ids is
+  known. Then it masks any reference to a target outside that set, runs the entry transforms, and
+  renders, repeating for the entries a failed render affects until no render fails.
 - `json-to-markdown.ts` renders every reference through one `formatReference`: the page link,
   then a link labeled `markdown version` to the target's file in this export, under the AI
   config's `mountPath` (default `/ai`), so an AI reader can fetch the referenced entry's clean

@@ -77,9 +77,10 @@ export interface GenerateResult {
  * and produces per-entry files, per-collection all.md files,
  * bundle files, and a manifest.
  *
- * Runs in two phases because a reference may only show a target that is itself exported: every
- * entry is read and filtered first, which settles the exported set, and only then are references
- * to anything outside it masked, entry transforms run, and markdown rendered.
+ * A reference may only show a target that is itself exported, so every entry is read and
+ * filtered first, which settles the exported set. Only then are references to anything outside
+ * it masked, entry transforms run, and markdown rendered, in rounds that repeat while a render
+ * fails (see the loop below).
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
   const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
@@ -117,7 +118,7 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   const rootCollection = collections.find((c) => c.logicalPath === contentRoot)
   const rootEntries = rootCollection?.entries ? await collectEntries(read, rootCollection, '') : []
 
-  // Collection entries first, then root entries: the order every all.md and bundle lists them in
+  // Collection entries first, then root entries: the order bundles list them in
   const allPending = [...collectionNodes.flatMap(subtreeEntries), ...rootEntries]
   // Content id -> output file of every exported entry: the export set, and where each
   // reference's markdown copy lives
@@ -448,8 +449,9 @@ function makeReadSibling(dir: string): (name: string) => Promise<string | null> 
 /**
  * Run the configured entry transform (if any), caching its returned markdown on
  * `entry.appendedSections`. The transform receives the entry's content ID and a directory-bound
- * `readSibling`. Runs once per entry; the cached result is reused across the per-entry file, the
- * collection `all.md`, and any bundle that includes this entry. A throwing transform is logged and
+ * `readSibling`. Runs in each round whose masking changed the entry, on the data as masked; the
+ * cached result is reused across the per-entry file, the collection `all.md`, and any bundle that
+ * includes this entry. A throwing transform is logged and
  * skipped — the entry still renders without the appended section (distinct from an unreadable
  * entry, which is skipped entirely upstream).
  */

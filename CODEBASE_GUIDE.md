@@ -816,16 +816,17 @@ Read-only content serving; needs neither auth nor the editor API.
 - `handler.ts` — `createAIContentHandler()`, the GET handler for AI-ready content
 - `generate.ts` — `generateAIContent()` and the traversal-guarded `ctx.readSibling`
 - `json-to-markdown.ts` — schema-driven entry-to-markdown conversion, Prettier-stable output
+- `references.ts` — resolving, masking and linking references
 - `transform-components.ts` — `applyComponentTransforms` / `parseComponentProps`, JSX to clean markdown
 - `to-plain-text.ts` — `toPlainText`, markup-free prose for a search index; keeps a paired component's children
 - `strip-mdx.ts` — `stripMdxImports`, removes import and export statements from MDX bodies
 - `resolve-branch.ts` — `resolveBranchRoot()`, the AI handler's branch root
-- `types.ts` — `AIContentConfig`, `AIEntryMeta`, the transform hook types, and the manifest types
+- `types.ts` — `AIContentConfig`, `AIEntryMeta`, `AIReferenceValue`, transform hook and manifest types
 - `index.ts` — module exports
 
 Transform hooks on `AIContentConfig`, all keyed by entry type: `fieldTransforms`,
-`componentTransforms`, `bodyTransforms` (MD and MDX only), and `entryTransforms`, which runs once
-per entry for every format and appends its returned markdown after the body and fields. Caching and
+`componentTransforms`, `bodyTransforms` (MD and MDX only), and `entryTransforms`, which runs per
+entry for every format and appends its returned markdown after the body and fields. Caching and
 `Cache-Control` are set in `handler.ts`. Adopter configuration is in
 [README.md](README.md#ai-content-configuration); design detail in
 [ARCHITECTURE.md](ARCHITECTURE.md#ai-content-generation).
