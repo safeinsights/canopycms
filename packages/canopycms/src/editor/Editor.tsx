@@ -61,6 +61,7 @@ import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
+import { EditorCrashBoundary } from './components/EditorCrashScreen'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
 import { AssetContextProvider, authenticatedAssetBase, useApiClient } from './context'
@@ -153,7 +154,13 @@ export interface EditorProps {
  * High-level editor wrapper that wires entry navigation, form rendering,
  * saving/loading, and preview rendering using entry definitions.
  */
-export const Editor: React.FC<EditorProps> = ({
+export const Editor: React.FC<EditorProps> = (props) => (
+  <EditorCrashBoundary themeOptions={props.themeOptions}>
+    <EditorContent {...props} />
+  </EditorCrashBoundary>
+)
+
+const EditorContent: React.FC<EditorProps> = ({
   entries,
   title,
   subtitle,

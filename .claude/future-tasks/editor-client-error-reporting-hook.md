@@ -12,8 +12,9 @@ own monitoring.
 ## Suggested shape
 
 An adopter hook in the editor's client config, for example `onClientError(error, context)`. It is
-called for errors the editor's boundaries catch (see
-[editor-field-error-boundary.md](editor-field-error-boundary.md)), for uncaught window errors and
+called for errors the editor's boundaries catch (each passes through `reportEditorError` in
+`editor/utils/editor-errors.ts`; see
+[editor-field-error-boundary.md](resolved/editor-field-error-boundary.md)), for uncaught window errors and
 unhandled rejections while `/edit` is mounted, and for failed API calls the editor already surfaces.
 `context` carries the branch, entry path, field path and editor version, never field values.
 
