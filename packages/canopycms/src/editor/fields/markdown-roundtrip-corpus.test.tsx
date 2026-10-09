@@ -90,7 +90,7 @@ const KNOWN_EXPORT_DIFFERENCES: Record<string, string> = {
 }
 
 interface CorpusBody {
-  /** Repo-relative file path, plus `#key.path` for a markdown value inside a JSON entry. */
+  /** Repo-relative file path, plus `#key.path` for a markdown field value in the entry's data. */
   readonly name: string
   readonly body: string
   readonly format: MarkdownBodyFormat
@@ -106,7 +106,7 @@ function walk(dir: string): string[] {
   })
 }
 
-/** The `body` strings in a JSON entry: every markdown field in the sample schemas is a `body`. */
+/** The `body` strings in entry data: every markdown field in the sample schemas is a `body`. */
 function jsonBodies(value: unknown, at: string): { key: string; body: string }[] {
   if (Array.isArray(value)) return value.flatMap((item, i) => jsonBodies(item, `${at}.${i}`))
   if (typeof value !== 'object' || value === null) return []
@@ -128,13 +128,17 @@ function collectCorpus(): CorpusBody[] {
     if (ext === '.md' || ext === '.mdx') {
       // The body as the content store splits it, and the data as a save request carries it (JSON).
       const parsed = matter(raw, {})
+      const data = JSON.parse(JSON.stringify(parsed.data)) as Record<string, unknown>
+      const fieldBodies = jsonBodies(data, '').map(
+        ({ key, body }): CorpusBody => ({
+          name: `${name}#${key.slice(1)}`,
+          body,
+          format: 'md',
+        }),
+      )
       return [
-        {
-          name,
-          body: parsed.content,
-          format: ext === '.mdx' ? 'mdx' : 'md',
-          file: { raw, data: JSON.parse(JSON.stringify(parsed.data)) as Record<string, unknown> },
-        },
+        { name, body: parsed.content, format: ext === '.mdx' ? 'mdx' : 'md', file: { raw, data } },
+        ...fieldBodies,
       ]
     }
     let entry: unknown

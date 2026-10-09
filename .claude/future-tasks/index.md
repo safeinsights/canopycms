@@ -82,6 +82,7 @@ with the in-flight ACL chips.
 
 | File | Summary |
 | ---- | ------- |
+| [frontmatter-date-rewritten-on-save.md](frontmatter-date-rewritten-on-save.md) | New 2026-10-08, from the round-trip corpus review. `date: 2024-01-15` in md frontmatter reaches the save as an ISO timestamp and `serializeFrontmatter` rewrites the line; confirm end to end through the editor, then make the reconciler treat the two as equal [BOTH] |
 | [rich-text-code-fence-opens-source.md](rich-text-code-fence-opens-source.md) | New 2026-10-08, from the round-trip corpus test. A fenced block in a language `codeBlockLanguages` lacks, or with a meta string, opens the whole body as source (the example site's Users API docs do). Add a catch-all plain-text code block descriptor [BOTH] |
 | [rich-text-reference-links-open-source.md](rich-text-reference-links-open-source.md) | New 2026-10-08, from the round-trip corpus test. MDXEditor has no import visitor for reference-style links and definitions, so `[text][ref]` opens the body as source [BOTH] |
 | [rich-text-md-body-parsed-as-mdx.md](rich-text-md-body-parsed-as-mdx.md) | New 2026-10-08, from the round-trip corpus test. MDXEditor parses `.md` bodies as MDX, so an HTML comment, a `{` or a `<placeholder>` opens the body as source. Give `.md` bodies markdown-only parsing [BOTH] |
