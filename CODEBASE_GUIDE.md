@@ -68,7 +68,7 @@ Content, git and branch files have their own sections below; the rest:
 - `preview.ts` — `use client` host-page exports for `canopycms/preview`
 - `server.ts` — server entry exports, e.g. `collectAssetRefs`, `readAssetRefsFile`, `materializeAssets`
 - `config.ts` — re-export shim over the `config/` module
-- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport` (`lastGitSync.baseRefresh`)
+- `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport`
 - `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
@@ -85,7 +85,7 @@ Content, git and branch files have their own sections below; the rest:
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
 - `resource-generation.ts` — the on-disk generation-marker primitive behind durable cache invalidation
 - `dev-content-watcher.ts` — dev-mode working-tree vs branch-clone divergence warning
-- `sync-core.ts` — prompt-free core of working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
+- `sync-core.ts` — prompt-free working-tree to branch-clone content sync, `pushContentToWorkspace` under the content-write lock
 - `url-exclusivity-fixtures.ts` — vitest-free enumerate-then-probe check for the one-URL invariant
 
 ### Static-Export Helpers
@@ -309,7 +309,7 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
 - `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
 - `preview.tsx` — `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
-- `preview-page.tsx` — `createPreviewPageFor`, behind the context's `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` (or a `previewView({ view, load })` whose `load` feeds `extras`), else `notFound()`; types only from `preview.tsx`, held by `server-entry-client-boundary.test.ts`
+- `preview-page.tsx` — `createPreviewPageFor`, behind `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` or a `previewView`, else `notFound()`; types only from `preview.tsx` (`server-entry-client-boundary.test.ts`)
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
@@ -373,7 +373,7 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (a denied target resolves to a `RestrictedReference`), the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `resolveReferences`, `resolveReferenceTarget` (denied targets become `RestrictedReference`), the typed `ContentStoreError` codes, and the conflict errors
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
 - `content-index-registry.ts` — in-process registry connecting branch-mutating operations to the stores they make stale
@@ -447,7 +447,7 @@ Every key, its default and its adopter-facing meaning are in
 
 - `meta-loader.ts` — loads `.collection.json` files, extracts ContentIds from directory names, rejects a `body` field name
 - `resolver.ts` — `resolveSchema`, the high-level resolution API
-- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for callers outside `SchemaOps`
+- `schema-store.ts` — `SchemaOps`: collection, entry-type and ordering CRUD, every mutator under `withSchemaLock`; `withBranchSchemaLock` for other callers
 - `schema-store-types.ts` — types for schema store operations
 - `types.ts` — `EntrySchemaRegistry` and `SchemaResolutionResult`
 - `index.ts` — module exports
@@ -470,7 +470,7 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
-- `FormRenderer.tsx` — schema-driven form dispatch, including the `group` and string-list special cases
+- `FormRenderer.tsx` — schema-driven form dispatch, including `group` and string-list cases; a boundary per field
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
@@ -484,11 +484,12 @@ Top-level components and helpers:
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
 - `utils/env.ts` — `getNotificationDuration`, longer under test
+- `utils/editor-errors.ts` — `reportEditorError` (one logging point), `formatErrorDetails`
 - `test-setup.ts` / `setup-test-dom.ts` — vitest DOM setup for editor suites
 
 Context providers, in `editor/context/`:
 
-- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks; `EditorAuthGate` mounts it keyed by user id, Storybook's preview too
+- `SWRProvider.tsx` — `SWRConfig` wrapper for the data hooks, keyed by user id in `EditorAuthGate`
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
@@ -502,36 +503,38 @@ Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
-- `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm (`confirmCreate`); adopts server-sanitized names
+- `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
 - `create-branch-request.ts` — `requestBranchCreate`: create under a 90 s deadline, settling by the branch list
 - `useEntryManager.ts` — entry loading/saving, `readEntryValue`, `listAllEntries` cursors
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; verifies restored drafts
 - `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
-- `useEditorLayout.ts` — panel layout state
+- `useEditorLayout.ts` — panel layout
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and user metadata
 - `useReferenceResolution.ts` — resolves reference IDs to display values
-- `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data before `PreviewFrame`
+- `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
-- `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import; the rest are deep-imported
+- `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:
 
 - `TextField.tsx`, `NumberField.tsx`, `ToggleField.tsx`, `DateTimeField.tsx`, `SelectField.tsx` — scalar inputs
-- `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one uses `TagsInput` with no comma splitting
+- `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one, `TagsInput` without comma splitting
 - `MarkdownField.tsx` — MDXEditor-backed markdown and MDX
+- `rich-text-failures.ts` — markdown that failed rich text, reopened as source
+- `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
 - `mdx-jsx-support.tsx` — JSX plugins
 - `CodeField.tsx` — code and Mermaid field
-- `ObjectField.tsx` — nested object field, with a Clear control for an optional filled field
+- `ObjectField.tsx` — nested object field, with a Clear control when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — page blocks
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
 - `MdxImageDialog.tsx` — image insert dialog for markdown
 - `FieldDescription.tsx` — `description` without Mantine's native prop
-- `entry-link/EntryLinkContext.tsx` — React context supplying `EntryLinkOption[]` to toolbar components
-- `entry-link/InsertEntryLink.tsx` — toolbar button plus searchable entry picker, inserting `[Title](entry:ID)`
+- `entry-link/EntryLinkContext.tsx` — context supplying `EntryLinkOption[]` to toolbar components
+- `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
 
 Components, in `editor/components/`:
 
@@ -540,6 +543,8 @@ Components, in `editor/components/`:
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` — Branches drawer
 - `UserBadge.tsx` — user avatar and name
+- `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
+- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
 - `index.ts` — component exports
 
 Comments UI, in `editor/comments/`:
@@ -553,7 +558,7 @@ Media UI, in `editor/media/`:
 - `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
-- `editor-image-src.ts` — body-image preview srcs
+- `editor-image-src.ts` — editor image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
 - `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
 - `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
@@ -789,7 +794,7 @@ in `server.ts` and `client.ts`. See
 - `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
-- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (the `CANOPY_TRAILING_SLASH` build-time flag)
+- `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (`CANOPY_TRAILING_SLASH` at build time)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
 - `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`
@@ -853,6 +858,7 @@ the split.
 - `api-test-helpers.ts` — mock factories: `createMockBranchContext`, `createMockUser`, `createMockServices`, `createMockApiContext`, `createMockSettingsMutation`
 - `console-spy.ts` — `mockConsole()` plus the `toHaveLogged` / `toHaveWarned` / `toHaveErrored` matchers
 - `git-helpers.ts` — `initTestRepo()`, a git repo with the CanopyCMS marker and user config
+- `render-errors.ts` — `silenceReportedRenderErrors()`
 - `index.ts` — exports
 
 ## Example App

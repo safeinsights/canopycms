@@ -7,11 +7,12 @@ import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { IconAlertCircle, IconPhoto, IconPhotoOff, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
-import { assetUrl } from '../../assets/asset-url'
+import { isAssetStoreSrc } from '../../assets/asset-url'
 import type { CropRect } from '../../assets/transform-directives'
 import type { ImageFieldValue } from '../../config'
 import { useAssetContext } from '../context'
 import { CropStep } from '../media/CropStep'
+import { editorImageSrc } from '../media/editor-image-src'
 import { parseAspectRatio } from '../media/crop-math'
 import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
@@ -70,8 +71,10 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   const hasValue = !!value?.src
 
   const previewSrc = value
-    ? assetUrl({ src: value.src }, { width: PREVIEW_WIDTH, crop: value.crop, baseUrl })
+    ? editorImageSrc(value.src, baseUrl, { width: PREVIEW_WIDTH, crop: value.crop })
     : undefined
+  // `assetUrl` never applies a crop to a src outside the asset store, so one stored there never renders.
+  const canCrop = aspectRatio !== undefined && !!value && isAssetStoreSrc(value.src)
   // Broken-preview fallback, mirroring AssetCard.tsx's thumbnail fallback (same
   // icon/copy, same reset-during-render pattern). Covers both an asset broken
   // at upload time and a transform failing at render time.
@@ -144,9 +147,9 @@ export const ImageField: React.FC<ImageFieldProps> = ({
 
   const cropImageSrc =
     cropRequest?.kind === 'new'
-      ? assetUrl({ src: cropRequest.asset.src }, { baseUrl })
+      ? editorImageSrc(cropRequest.asset.src, baseUrl)
       : cropRequest?.kind === 'existing' && value
-        ? assetUrl({ src: value.src }, { baseUrl })
+        ? editorImageSrc(value.src, baseUrl)
         : ''
   const cropInitial = cropRequest?.kind === 'existing' ? value?.crop : undefined
 
@@ -262,7 +265,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             >
               Replace
             </Button>
-            {aspectRatio !== undefined && (
+            {canCrop && (
               <Button
                 variant="light"
                 size="xs"

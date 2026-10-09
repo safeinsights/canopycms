@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useRef, useState } from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
 import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
@@ -36,6 +36,8 @@ import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
+import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
+import { FieldCrashFallback } from './fields/FieldCrashFallback'
 
 export type FormValue = Record<string, unknown>
 
@@ -75,6 +77,42 @@ const normalizeOptions = (
 }
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
+
+/** Builds the control inside the field's boundary: a custom renderer is called, not mounted. */
+const FieldControl: React.FC<{ build: () => React.ReactNode }> = ({ build }) => <>{build()}</>
+
+/**
+ * One field's error boundary. Every edit callback a field was rendered with before it crashed
+ * is dead for good, so nothing it scheduled can land later, even on another entry's draft.
+ * Callbacks from renders after the crash, which happen once the boundary resets on an entry or
+ * branch change, work.
+ */
+const FieldBoundary: React.FC<{
+  canopyPath: string
+  resetKey: string
+  update: (v: unknown) => void
+  build: (update: (v: unknown) => void) => React.ReactNode
+  fallback: (caught: CaughtEditorError) => React.ReactNode
+}> = ({ canopyPath, resetKey, update, build, fallback }) => {
+  const [generation, setGeneration] = useState(0)
+  const liveGeneration = useRef(0)
+  const guardedUpdate = (next: unknown) => {
+    if (liveGeneration.current === generation) update(next)
+  }
+  return (
+    <EditorErrorBoundary
+      context={{ boundary: 'field', fieldPath: canopyPath }}
+      resetKey={resetKey}
+      onCaught={() => {
+        liveGeneration.current += 1
+        setGeneration(liveGeneration.current)
+      }}
+      fallback={fallback}
+    >
+      <FieldControl build={() => build(guardedUpdate)} />
+    </EditorErrorBoundary>
+  )
+}
 
 export interface FormRendererProps {
   fields: EntrySchema
@@ -136,21 +174,81 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     onLoadingStateChange,
   })
 
-  // Wraps the rendered control with an inline validation message when this
-  // field has an active error (keyed by canonical canopy path, so errors land
-  // on nested object/block fields too). Passed down to BlockField/ObjectField
-  // so nested fields get the same decoration.
+  const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
+
+  // Object-list item keys. An object listed once keeps the key it was first shown with, so an
+  // append remounts no item and a removal never hands a crashed item's boundary to the next one.
+  // A list whose length is unchanged (an edited item, the saved copy of the same items) keeps
+  // keys by position.
+  const listItemKeys = useRef(new WeakMap<object, string>())
+  const lastListKeys = useRef(new Map<string, string[]>())
+  const nextListItemKey = useRef(0)
+  const keysForList = (items: unknown[], listPath: string): string[] => {
+    const previous = lastListKeys.current.get(listPath)
+    const occurrences = new Map<object, number>()
+    for (const item of items) {
+      if (typeof item === 'object' && item !== null) {
+        occurrences.set(item, (occurrences.get(item) ?? 0) + 1)
+      }
+    }
+    // Only an object listed once has an identity; a repeated one is keyed by position.
+    const single = (item: unknown): item is object =>
+      typeof item === 'object' && item !== null && occurrences.get(item) === 1
+    const claimed = new Set<string>()
+    const keys = items.map((item) => {
+      const own = single(item) ? listItemKeys.current.get(item) : undefined
+      // Two objects can hold one key, an edited copy having inherited its original's.
+      if (own === undefined || claimed.has(own)) return undefined
+      claimed.add(own)
+      return own
+    })
+    // The rest inherit their position's key, never one an object present here holds.
+    const resolved = keys.map((key, idx) => {
+      if (key !== undefined) return key
+      let next = previous?.length === items.length ? previous[idx] : undefined
+      if (next === undefined || claimed.has(next)) {
+        nextListItemKey.current += 1
+        next = `item-${nextListItemKey.current}`
+      }
+      claimed.add(next)
+      const item = items[idx]
+      if (single(item)) listItemKeys.current.set(item, next)
+      return next
+    })
+    lastListKeys.current.set(listPath, resolved)
+    return resolved
+  }
+
+  // Wraps the rendered control in an error boundary, and with an inline validation message
+  // when this field has an active error (keyed by canonical canopy path, so errors land on
+  // nested object/block fields too). Passed down to BlockField/ObjectField so nested fields
+  // get the same decoration.
   const renderField = (
     field: FieldConfig,
     currentValue: unknown,
     update: (v: unknown) => void,
     path: Array<string | number>,
   ) => {
-    const control = renderFieldControl(field, currentValue, update, path)
-    const error = fieldErrors?.[normalizeCanopyPath(path)]
+    const canopyPath = normalizeCanopyPath(path)
+    const error = fieldErrors?.[canopyPath]
     return (
       <Stack key={fieldKey(path)} gap={4}>
-        {control}
+        <FieldBoundary
+          canopyPath={canopyPath}
+          resetKey={boundaryResetKey}
+          update={update}
+          build={(guardedUpdate) => renderFieldControl(field, currentValue, guardedUpdate, path)}
+          fallback={(caught) => (
+            <FieldCrashFallback
+              label={field.label ?? field.name}
+              fieldType={field.type}
+              value={currentValue}
+              onChange={update}
+              caught={caught}
+              dataCanopyField={canopyPath}
+            />
+          )}
+        />
         {error && (
           <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
             {error}
@@ -431,6 +529,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           const items = Array.isArray(currentValue)
             ? (currentValue as Record<string, unknown>[])
             : []
+          const itemKeys = keysForList(items, fieldKey(path))
           return wrapWithComments(
             <Paper
               key={fieldKey(path)}
@@ -463,7 +562,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                     )
                     return (
                       <Paper
-                        key={fieldKey([...path, idx])}
+                        key={itemKeys[idx]}
                         role="group"
                         aria-label={itemTitle}
                         withBorder
