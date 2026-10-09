@@ -27,6 +27,9 @@ const config = {
   '**/*.md': () => 'pnpm run lint:docs',
   'packages/*/package.json': () => 'pnpm run lint:docs',
   'scripts/docs-budgets.json': () => 'pnpm run lint:docs',
+  // An account id can land in any file type, and the scan of every tracked
+  // file takes well under a second, so any staged file triggers it.
+  '**/*': () => 'pnpm run lint:account-ids',
 }
 
 export default config

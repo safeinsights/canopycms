@@ -1,14 +1,14 @@
 # RESOLVED — Full CMS-service deployment test (its own epic)
 
 **Done 2026-07-24** on integration branch `epic/deployment-test`. The entire
-CanopyCMS prod-mode stack was deployed to the sandbox account (905418271997 /
-us-east-1, `canopy` bootstrap) for the first time and exercised end-to-end against
+CanopyCMS prod-mode stack was deployed to the sandbox account (us-east-1,
+`canopy` bootstrap) for the first time and exercised end-to-end against
 real AWS + real Clerk. Original kickoff prompt preserved at the bottom.
 
 ## Outcome: it works end-to-end — after 13 PRs of fixes
 
 Everything the kickoff asked to prove was proven on the live deployment
-(CloudFront `https://d1rxq1tjvketcw.cloudfront.net`). None of it worked on the first
+(the stack's CloudFront distribution domain). None of it worked on the first
 try; the value of the test was the defect list below.
 
 ### Verified on the live deploy (verification matrix)

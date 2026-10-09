@@ -32,7 +32,7 @@ Record:
 
 - the `canopy-cms-deploy-test` stack's existence and status
 - the `CDKToolkit-canopy` bootstrap stack
-- **the `docs-site-proto` stacks sharing account `905418271997` — do not touch these**
+- **the adopter's own stacks sharing the sandbox account — do not touch these**
 - the current `builds/{sha}` behind `dev-docs.sandbox…`, as the rollback point for E
 
 This inventory also resolves open decision #2 (whether testing/production is
