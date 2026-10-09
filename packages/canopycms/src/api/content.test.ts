@@ -833,6 +833,22 @@ describe('content api', () => {
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
+    it('never stores a frontmatter key named like the body field, which nothing would check', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: { content: '{globalThis.probe}' },
+        body: 'Safe text',
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2]).toMatchObject({ body: 'Safe text' })
+      expect(writeSpy.mock.calls[0][2].data).not.toHaveProperty('content')
+    })
+
     it('saves the same body when its field is executable', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce('trusted')

@@ -157,6 +157,8 @@ const URL_ATTRIBUTES = new Set([
   'poster',
   'src',
   'srcset',
+  'to',
+  'url',
   'xlinkhref',
 ])
 
@@ -173,6 +175,8 @@ interface MdNode {
   }
   readonly name?: string | null
   readonly url?: string
+  /** A definition's, or a link or image reference's, normalised label. */
+  readonly identifier?: string
   /** An MDX JSX element's attributes; other node types use the key for other shapes. */
   readonly attributes?: unknown
   readonly data?: unknown
@@ -256,6 +260,48 @@ function unsafeUrlScheme(url: string): string | undefined {
   return scheme
 }
 
+/**
+ * The scheme of a value that runs script or loads a document if it reaches an `href` or `src`,
+ * which a component may do with any prop: checked on every string a prop holds.
+ */
+function scriptScheme(value: string): string | undefined {
+  const scheme = urlScheme(value)
+  if (scheme === 'javascript' || scheme === 'vbscript') return scheme
+  if (scheme === 'data' && !SAFE_DATA_URL.test(value.trim())) return scheme
+  return undefined
+}
+
+/** Every string in a static value: literals, template text, and array and object values. */
+function staticStrings(node: unknown): string[] {
+  if (!isRecord(node)) return []
+  switch (node.type) {
+    case 'Program':
+      return Array.isArray(node.body) ? node.body.flatMap(staticStrings) : []
+    case 'ExpressionStatement':
+      return staticStrings(node.expression)
+    case 'Literal':
+      return typeof node.value === 'string' ? [node.value] : []
+    case 'TemplateLiteral':
+      return Array.isArray(node.quasis)
+        ? node.quasis.flatMap((quasi) =>
+            isRecord(quasi) && isRecord(quasi.value) && typeof quasi.value.cooked === 'string'
+              ? [quasi.value.cooked]
+              : [],
+          )
+        : []
+    case 'ArrayExpression':
+      return Array.isArray(node.elements) ? node.elements.flatMap(staticStrings) : []
+    case 'ObjectExpression':
+      return Array.isArray(node.properties)
+        ? node.properties.flatMap((property) =>
+            isRecord(property) ? staticStrings(property.value) : [],
+          )
+        : []
+    default:
+      return []
+  }
+}
+
 /** Each URL a `srcset` names: the first token of every comma-separated candidate. */
 function srcsetUrls(value: string): string[] {
   return value
@@ -264,8 +310,12 @@ function srcsetUrls(value: string): string[] {
     .filter((url) => url !== '')
 }
 
-/** A JSX name MDX resolves from the site's components rather than rendering as an HTML tag. */
-const COMPONENT_NAME = /^[A-Z_$][\w$]*$/
+/**
+ * A JSX name MDX resolves from the site's components rather than rendering as an HTML tag. A name
+ * led by `_` or `$` could name one of MDX's own bindings, as could the two below.
+ */
+const COMPONENT_NAME = /^[A-Z][\w$]*$/
+const MDX_BINDINGS = new Set(['MDXContent', 'MDXLayout'])
 
 /** Where an issue sits, as the editor shows it. */
 const at = (node: MdNode) => (node.position ? ` (line ${node.position.start.line})` : '')
@@ -288,7 +338,7 @@ function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue
   return issue(
     node,
     `The URL scheme "${scheme}:" is not allowed in ${where}; use http(s), mailto, tel, an entry link or a path on the site`,
-    `url\0${url}`,
+    `url\0${where}\0${url}`,
   )
 }
 
@@ -297,7 +347,8 @@ function checkJsxElement(node: MdNode, source: string): MarkdownSafetyIssue[] {
   // A fragment (`<>…</>`) renders its children and nothing else.
   if (name === null || name === undefined) return []
   const tag = `<${name}>`
-  if (!COMPONENT_NAME.test(name) && !SAFE_HTML_TAGS.has(name)) {
+  const isComponent = COMPONENT_NAME.test(name) && !MDX_BINDINGS.has(name)
+  if (!isComponent && !SAFE_HTML_TAGS.has(name)) {
     return [
       issue(
         node,
@@ -332,7 +383,9 @@ function checkJsxElement(node: MdNode, source: string): MarkdownSafetyIssue[] {
       isRecord(value) ? `{${String(value.value)}}` : String(value)
     }`
     const lower = attributeName.toLowerCase()
-    if (/^on/.test(lower)) {
+    // A tag's `on…` attribute is a handler in any spelling; a component's prop is one by React's
+    // convention, so `online` or `onlyMobile` stays a plain prop.
+    if (isComponent ? /^on[A-Z]/.test(attributeName) : /^on/.test(lower)) {
       issues.push(
         issue(node, `${attributeName} on ${tag} is not allowed: event handlers run code`, key),
       )
@@ -343,18 +396,16 @@ function checkJsxElement(node: MdNode, source: string): MarkdownSafetyIssue[] {
       continue
     }
     const isUrl = URL_ATTRIBUTES.has(lower.replace(/[^a-z]/g, ''))
-    if (isRecord(value)) {
-      if (isUrl) {
-        issues.push(issue(node, `${attributeName} on ${tag} must be a plain "string"`, key))
-      } else if (!isInertProgram(estreeOf(value))) {
-        issues.push(
-          issue(
-            node,
-            `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
-            key,
-          ),
-        )
-      }
+    if (isRecord(value) && (isUrl || !isInertProgram(estreeOf(value)))) {
+      issues.push(
+        issue(
+          node,
+          isUrl
+            ? `${attributeName} on ${tag} must be a plain "string"`
+            : `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
+          key,
+        ),
+      )
       continue
     }
     if (isUrl && typeof value === 'string') {
@@ -363,12 +414,30 @@ function checkJsxElement(node: MdNode, source: string): MarkdownSafetyIssue[] {
         const found = urlIssue(node, url, `${attributeName} on ${tag}`)
         if (found) issues.push(found)
       }
+      continue
+    }
+    const strings =
+      typeof value === 'string' ? [value] : isRecord(value) ? staticStrings(estreeOf(value)) : []
+    for (const text of strings) {
+      const scheme = scriptScheme(text)
+      if (scheme === undefined) continue
+      issues.push(
+        issue(
+          node,
+          `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}, which a component may use as a link`,
+          key,
+        ),
+      )
     }
   }
   return issues
 }
 
-function checkNode(node: MdNode, source: string): MarkdownSafetyIssue[] {
+function checkNode(
+  node: MdNode,
+  source: string,
+  definitions: ReadonlyMap<string, string>,
+): MarkdownSafetyIssue[] {
   const issues: MarkdownSafetyIssue[] = []
   switch (node.type) {
     case 'mdxjsEsm':
@@ -399,13 +468,41 @@ function checkNode(node: MdNode, source: string): MarkdownSafetyIssue[] {
     case 'link':
     case 'image':
     case 'definition': {
-      const found = node.url === undefined ? undefined : urlIssue(node, node.url, `a ${node.type}`)
+      const found =
+        node.url === undefined ? undefined : urlIssue(node, node.url, URL_SITES[node.type] ?? '')
+      if (found) issues.push(found)
+      break
+    }
+    // A reference loads its definition's URL. Checked where it is used, so that keeping a stored
+    // definition with no reference to it never licenses a new one.
+    case 'linkReference':
+    case 'imageReference': {
+      const url = node.identifier === undefined ? undefined : definitions.get(node.identifier)
+      const found = url === undefined ? undefined : urlIssue(node, url, URL_SITES[node.type] ?? '')
       if (found) issues.push(found)
       break
     }
   }
-  for (const child of node.children ?? []) issues.push(...checkNode(child, source))
+  for (const child of node.children ?? []) issues.push(...checkNode(child, source, definitions))
   return issues
+}
+
+/** How an issue names each node that carries a URL; also part of the issue's key. */
+const URL_SITES: Partial<Record<string, string>> = {
+  link: 'a link',
+  image: 'an image',
+  definition: 'a definition',
+  linkReference: 'a link reference',
+  imageReference: 'an image reference',
+}
+
+/** Each definition's URL by label. The first definition of a label is the one that applies. */
+function collectDefinitions(node: MdNode, into = new Map<string, string>()): Map<string, string> {
+  if (node.type === 'definition' && node.identifier !== undefined && node.url !== undefined) {
+    if (!into.has(node.identifier)) into.set(node.identifier, node.url)
+  }
+  for (const child of node.children ?? []) collectDefinitions(child, into)
+  return into
 }
 
 function parse(source: string, dialect: MarkdownDialect, withGfm: boolean): MdNode {
@@ -436,10 +533,17 @@ export function findUnsafeMarkdown(
         { message: `This MDX does not parse, so it cannot be checked: ${getErrorMessage(err)}` },
       ]
     }
-    for (const found of checkNode(tree, source)) {
-      if (seen.has(found.message)) continue
-      seen.add(found.message)
-      issues.push(found)
+    let found: MarkdownSafetyIssue[]
+    try {
+      found = checkNode(tree, source, collectDefinitions(tree))
+    } catch (err: unknown) {
+      // Nesting deep enough to exhaust the stack.
+      return [{ message: `This body is too deeply nested to check: ${getErrorMessage(err)}` }]
+    }
+    for (const item of found) {
+      if (seen.has(item.message)) continue
+      seen.add(item.message)
+      issues.push(item)
     }
   }
   return issues

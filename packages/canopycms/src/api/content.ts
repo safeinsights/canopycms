@@ -31,6 +31,7 @@ import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../pat
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
+import { findBodyFieldName } from '../utils/body-field'
 
 /**
  * Parse an API path into logical path segments, prepending the content root if needed.
@@ -242,6 +243,12 @@ const storedReferenceSites = async (
   )
 }
 
+function withoutKey(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  if (!(key in record)) return record
+  const { [key]: _dropped, ...rest } = record
+  return rest
+}
+
 /** The policy's issues in the stored entry, which a save may keep. */
 const storedMarkdownSafetyIssues = async (
   store: ContentStore,
@@ -362,8 +369,14 @@ const writeContentHandler = async (
     throw new SchemaUnavailableError(resolvedEntryType.name, resolvedEntryType.unavailable)
   }
 
-  const data = body.data ?? {}
   const isDataOnly = isDataOnlyFormat(body.format)
+  // An md/mdx file's body field is its body, so a frontmatter key of that name is dropped: no
+  // check would see it, and a read or a resolved reference would serve it as the body.
+  const requestData =
+    isDataOnly || body.data === undefined
+      ? body.data
+      : withoutKey(body.data, findBodyFieldName(fields))
+  const data = requestData ?? {}
   // The store's own `undefined` (blind write) is never reachable from here: an omitted token is
   // a create, so an update that lost its token 409s instead of overwriting unchecked.
   const expectedVersion = body.expectedVersion ?? null
@@ -514,7 +527,7 @@ const writeContentHandler = async (
   // re-resolves plain ID strings), permanently severing the reference from its target. Idempotent:
   // a payload that already holds ID strings is unchanged.
   const normalizedData =
-    body.data === undefined ? undefined : normalizeReferenceValues(fields, body.data)
+    requestData === undefined ? undefined : normalizeReferenceValues(fields, requestData)
   // Computed before the validateEntry hook and the entry-link scan too, not just the write, so
   // every consumer agrees on the same bytes — otherwise an adopter's hook could see a resolved
   // object while the file got an ID string, depending on whether the post came from the editor.

@@ -33,6 +33,14 @@ describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
     ['a spread inside an array value', '<Chart rows={[...xs]} />', /plain value/],
     ['a spread attribute', '<Chart {...props} />', /spread/],
     ['a member-expression component', '<motion.div animate="x" />', /<motion\.div>/],
+    [
+      'the content function MDX defines, which recurses forever',
+      '<_createMdxContent />',
+      /<_createMdxContent>/,
+    ],
+    ['the MDXContent binding', '<MDXContent />', /<MDXContent>/],
+    ['the MDXLayout binding', '<MDXLayout>x</MDXLayout>', /<MDXLayout>/],
+    ['a dollar-led name', '<$x />', /<\$x>/],
     ['a script tag', '<script>alert(1)</script>', /<script>/],
     ['a script tag inline', 'Text <script>alert(1)</script> more', /<script>/],
     ['an iframe with srcdoc', '<iframe srcdoc="<script>parent.x()</script>" />', /<iframe>/],
@@ -89,12 +97,33 @@ describe('findUnsafeMarkdown: MDX that runs code is refused', () => {
     ],
     ['a javascript: xlinkHref', '<Icon xlinkHref="javascript:alert(1)" />', /javascript:/],
     ['a javascript: formAction', '<Submit formAction="javascript:alert(1)" />', /javascript:/],
+    ['a javascript: router link', '<Link to="javascript:alert(1)">x</Link>', /javascript:/],
+    ['a javascript: url prop', '<Card url="javascript:alert(1)" />', /javascript:/],
+    ['a javascript: URL in any prop', '<Card link="javascript:alert(1)" />', /javascript:/],
+    ['a vbscript: URL in any prop', '<Card target="vbscript:x" />', /vbscript:/],
+    ['a data: document in any prop', '<Card doc="data:text/html,<script></script>" />', /data:/],
+    [
+      'a javascript: URL nested in a static value',
+      '<Nav items={[{ "href": "javascript:alert(1)" }]} />',
+      /javascript:/,
+    ],
+    [
+      'a javascript: URL in a static template literal',
+      '<Card link={`javascript:alert(1)`} />',
+      /javascript:/,
+    ],
   ]
 
   it.each(refused)('refuses %s', (_label, source, pattern) => {
     const issues = mdx(source)
     expect(issues.length).toBeGreaterThan(0)
     expect(issues.map((i) => i.message).join('\n')).toMatch(pattern)
+  })
+
+  it('refuses a body nested too deeply to check, rather than throwing', () => {
+    const issues = mdx('>'.repeat(5000) + ' x')
+    expect(issues).toHaveLength(1)
+    expect(issues[0]?.key).toBeUndefined()
   })
 
   it('reports the line of the offending construct', () => {
@@ -140,6 +169,12 @@ describe('findUnsafeMarkdown: MDX that runs no code is accepted', () => {
     ],
     ['a self-closing component', '<YouTube id="dQw4w9WgXcQ" />'],
     ['a boolean attribute', '<Details open>Hidden</Details>'],
+    ['props that merely start with on', '<Callout online ongoing="yes" onlyMobile />'],
+    ['a plain string prop with a colon', '<Callout title="Note: read this" />'],
+    [
+      'a static value holding ordinary URLs',
+      '<Nav items={[{ href: "/docs" }, { href: "https://x.test" }]} />',
+    ],
     ['a number literal attribute', '<Chart height={300} />'],
     ['a negative number attribute', '<Offset by={-4} />'],
     ['a string literal attribute', '<Chart title={"Sales"} />'],
@@ -170,7 +205,6 @@ describe('findUnsafeMarkdown: MDX that runs no code is accepted', () => {
     ['a raster data: image', '![dot](data:image/png;base64,iVBORw0KGgo=)'],
     ['an entry link, which the site resolves to a path', '[About](entry:abcdefghijkm#team)'],
     ['a path with a colon after the first slash', '[a](/a:b)'],
-    ['an underscore-led component', '<_Private />'],
   ]
 
   it.each(accepted)('accepts %s', (_label, source) => {
@@ -343,6 +377,33 @@ describe('splitByStored', () => {
     expect(
       split({ summary: '<a href="javascript:a()">x</a> <Btn onClick="c()" />' }, stored).refused,
     ).toHaveLength(1)
+  })
+
+  it('keeps a URL only where it was: an inert stored one does not license a live one', () => {
+    const live = { summary: '<a href="javascript:void(0)">click</a>' }
+    for (const stored of [
+      '![x](javascript:void(0))',
+      '[u]: javascript:void(0)',
+      '<a ping="javascript:void(0)">x</a>',
+      '<img src="javascript:void(0)" />',
+    ]) {
+      expect(split(live, { summary: stored }).refused).toHaveLength(1)
+    }
+    expect(split(live, { summary: '<a href="javascript:void(0)">old</a>' }).refused).toEqual([])
+  })
+
+  it('refuses a new reference to a stored unsafe definition, and keeps an old one', () => {
+    const stored = { summary: 'Text\n\n[u]: javascript:void(0)' }
+    expect(
+      split({ summary: '[click][u]\n\n[u]: javascript:void(0)' }, stored).refused,
+    ).toHaveLength(1)
+    expect(split({ summary: '![pic][u]\n\n[u]: javascript:void(0)' }, stored).refused).toHaveLength(
+      1,
+    )
+    const used = { summary: '[click][u]\n\n[u]: javascript:void(0)' }
+    expect(
+      split({ summary: 'Edited [click][u]\n\n[u]: javascript:void(0)' }, used).refused,
+    ).toEqual([])
   })
 
   it('never keeps a body that does not parse, which cannot be checked', () => {
