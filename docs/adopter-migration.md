@@ -64,6 +64,14 @@ before punctuation) still change on the first edit.
 **Now deletable.** A formatter pass or `.prettierignore` entry undoing the editor's restyling of
 untouched markdown.
 
+### The `image` field previews a `public/` path
+
+**What changed.** An `image` field whose `src` is outside `/assets/`, such as `/logos/x.svg`,
+previews at that src instead of through the raw route, and has no Crop button: a crop applies only
+to asset-store srcs.
+
+**To adopt.** Nothing. To crop such an image, upload it to the media library.
+
 ### `unauthenticatedStatus`: answer signed-out API calls with 419
 
 **To adopt.** Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on the

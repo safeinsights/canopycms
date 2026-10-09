@@ -238,6 +238,26 @@ describe('ImageField', () => {
     )
   })
 
+  it.each([
+    ['an svg', '/logos/x.svg'],
+    ['a raster', '/people/x.png'],
+  ])('previews %s outside the asset store at its own path, with no Crop button', (_l, src) => {
+    const Wrapper = wrapper
+    render(
+      <CanopyCMSProvider>
+        <Wrapper>
+          <AssetContextProvider basePath="/p">
+            <StatefulImageField value={{ src, alt: 'A logo' }} aspect="1:1" />
+          </AssetContextProvider>
+        </Wrapper>
+      </CanopyCMSProvider>,
+    )
+
+    expect(screen.getByAltText('A logo').getAttribute('src')).toBe(src)
+    expect(screen.getByTestId('image-field-replace-hero')).toBeTruthy()
+    expect(screen.queryByTestId('image-field-crop-hero')).toBeNull()
+  })
+
   it('omits the Crop button when the field has no aspect configured', () => {
     renderField({ value: { src: catAsset.src, alt: 'A cat', width: 400, height: 300 } })
     expect(screen.queryByTestId('image-field-crop-hero')).toBeNull()
