@@ -6,7 +6,7 @@ summary: >-
 ---
 # [P2] A YAML date in md/mdx frontmatter may be rewritten as a timestamp on save
 
-**Status: RESOLVED 2026-10-09**, branch `fix/save-fidelity-edited-blocks`. A value the editor sends back as gray-matter read it keeps its text; a changed value is written, a changed string js-yaml would read as another value (`1:30`, a bare date) is single-quoted, and a change the reconciler cannot see (14 over a file's `014`) falls back to gray-matter's own output. CRLF files and items inserted into a list keep their unchanged lines too. Pinned in `utils/content-serialize.test.ts`, through `ContentStore` in `content-store.test.ts`, and by `frontmatter-date.md` in the corpus.
+**Status: RESOLVED 2026-10-09**, branch `fix/save-fidelity-edited-blocks`. A value the editor sends back as gray-matter read it keeps its text; a changed value is written, a changed string js-yaml would read as another value (`1:30`, a bare date) is single-quoted, and a change the reconciler cannot see (14 over a file's `014`) falls back to gray-matter's own output. A CRLF file and the items after one inserted into a list keep their comments and unchanged values' text too; a CRLF file's delimiters are [crlf-frontmatter-delimiters-written-lf.md](../crlf-frontmatter-delimiters-written-lf.md). Pinned in `utils/content-serialize.test.ts`, through `ContentStore` in `content-store.test.ts`, and by `frontmatter-date.md` in the corpus.
 
 Found 2026-10-08 by a reviewer of the round-trip corpus test (adopter request 87b). Reproduced at
 `serializeFrontmatter` only; not yet checked end to end through the editor's form state.
