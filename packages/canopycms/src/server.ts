@@ -151,6 +151,14 @@ export { findDuplicateUrlPaths } from './static'
 export type { DuplicateUrlPath } from './static'
 
 /**
+ * Find every reference naming no entry — the check a production build runs and fails on unless
+ * `danglingReferences: 'warn'`. Pass an unscoped `listEntries()`.
+ */
+export { findDanglingReferences } from './static'
+
+export type { DanglingReference } from './static'
+
+/**
  * SEO field extraction and URL shaping, framework-agnostic. `isNoindexEntry` is the single
  * predicate behind both `robots: noindex` and sitemap exclusion.
  */

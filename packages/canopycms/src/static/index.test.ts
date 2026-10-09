@@ -10,10 +10,13 @@ import {
   assertNoDuplicateUrlPaths,
   findUnroutableSlugs,
   assertRoutableSlugs,
+  findDanglingReferences,
+  assertNoDanglingReferences,
   type StaticPathEntry,
 } from './index'
 import type { ListEntriesItem, ListEntriesOptions } from '../content-listing'
-import type { EntrySchema } from '../config'
+import type { CanopyConfig, EntrySchema } from '../config'
+import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 
 /** Minimal listEntries stub returning the given items (typed loosely — only fields the helper reads). */
@@ -991,5 +994,219 @@ describe('assertRoutableSlugs', () => {
     expect(message).toContain('test phase')
     expect(message).toContain('content/posts/getting.started.guide')
     expect(message).not.toContain('content/posts/hello-world')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// findDanglingReferences / assertNoDanglingReferences
+// ---------------------------------------------------------------------------
+
+const PERSON_ID = 'Pers0nAda123'
+const MISSING_ID = 'M1ss1ngPers9'
+const articleSchema: EntrySchema = [
+  { name: 'title', type: 'string' },
+  { name: 'author', type: 'reference' },
+  { name: 'reviewers', type: 'reference', list: true },
+  { name: 'meta', type: 'object', fields: [{ name: 'editor', type: 'reference' }] },
+  {
+    name: 'credits',
+    type: 'object',
+    list: true,
+    fields: [{ name: 'who', type: 'reference' }],
+  },
+  {
+    name: 'blocks',
+    type: 'block',
+    templates: [{ name: 'byline', fields: [{ name: 'person', type: 'reference' }] }],
+  },
+]
+
+const person = (): Partial<ListEntriesItem> => ({
+  entryPath: 'content/people/ada' as never,
+  entryId: PERSON_ID as never,
+  urlPath: '/people/ada',
+  slug: 'ada' as never,
+  entryType: 'person',
+  format: 'json',
+  schema: [{ name: 'name', type: 'string' }],
+  data: { name: 'Ada' },
+})
+
+const article = (data: Record<string, unknown>, slug = 'post'): Partial<ListEntriesItem> => ({
+  entryPath: `content/articles/${slug}` as never,
+  entryId: `Art1c1e${slug.padEnd(5, 'x')}` as never,
+  urlPath: `/articles/${slug}`,
+  slug: slug as never,
+  entryType: 'article',
+  format: 'json',
+  schema: articleSchema,
+  data,
+})
+
+describe('findDanglingReferences', () => {
+  it('names every dangling reference with its entry, nested field path and id', () => {
+    const items = [
+      person(),
+      article({
+        title: 'Hello',
+        author: MISSING_ID,
+        reviewers: [PERSON_ID, MISSING_ID],
+        meta: { editor: MISSING_ID },
+        credits: [{ who: PERSON_ID }, { who: MISSING_ID }],
+        blocks: [
+          { template: 'byline', value: { person: PERSON_ID } },
+          { template: 'byline', value: { person: MISSING_ID } },
+        ],
+      }),
+    ] as ListEntriesItem[]
+
+    expect(findDanglingReferences(items)).toEqual([
+      { entryPath: 'content/articles/post', fieldPath: 'author', id: MISSING_ID },
+      { entryPath: 'content/articles/post', fieldPath: 'blocks[1].person', id: MISSING_ID },
+      { entryPath: 'content/articles/post', fieldPath: 'credits[1].who', id: MISSING_ID },
+      { entryPath: 'content/articles/post', fieldPath: 'meta.editor', id: MISSING_ID },
+      { entryPath: 'content/articles/post', fieldPath: 'reviewers[1]', id: MISSING_ID },
+    ])
+  })
+
+  it('scans resolved data the same as raw ids', () => {
+    const items = [
+      person(),
+      article({
+        author: {
+          id: PERSON_ID,
+          slug: 'ada',
+          collection: 'content/people',
+          urlPath: '/people/ada',
+        },
+        reviewers: [{ id: MISSING_ID, unavailable: true, reason: 'missing' }],
+      }),
+    ] as ListEntriesItem[]
+
+    expect(findDanglingReferences(items)).toEqual([
+      { entryPath: 'content/articles/post', fieldPath: 'reviewers[0]', id: MISSING_ID },
+    ])
+  })
+
+  it('checks against the given id universe, not just the scanned items', () => {
+    const items = [article({ author: PERSON_ID })] as ListEntriesItem[]
+    expect(findDanglingReferences(items)).toHaveLength(1)
+    expect(findDanglingReferences(items, new Set([PERSON_ID]))).toEqual([])
+  })
+
+  it('ignores empty references and entries without a schema', () => {
+    const items = [
+      article({ author: '', reviewers: [] }),
+      { ...article({ author: MISSING_ID }, 'raw'), schema: undefined },
+    ] as ListEntriesItem[]
+    expect(findDanglingReferences(items)).toEqual([])
+  })
+})
+
+describe('assertNoDanglingReferences', () => {
+  const items = [person(), article({ author: MISSING_ID })] as ListEntriesItem[]
+  const known = new Set([PERSON_ID])
+
+  it('throws naming the entry, field and id, and how to downgrade', () => {
+    expect(() => assertNoDanglingReferences(items, known, 'test phase', 'error')).toThrow(
+      new RegExp(
+        `content/articles/post — author → ${MISSING_ID}[\\s\\S]*danglingReferences: 'warn'`,
+      ),
+    )
+  })
+
+  it('warns instead under warn mode', () => {
+    const consoleSpy = mockConsole()
+    try {
+      assertNoDanglingReferences(items, known, 'test phase', 'warn')
+      expect(consoleSpy.all().warn).toEqual([
+        expect.stringContaining(`content/articles/post — author → ${MISSING_ID}`),
+      ])
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('is silent when every reference resolves', () => {
+    expect(() =>
+      assertNoDanglingReferences(
+        [person(), article({ author: PERSON_ID })] as ListEntriesItem[],
+        known,
+        'p',
+        'error',
+      ),
+    ).not.toThrow()
+  })
+})
+
+describe('dangling-reference build guard', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  /** A context over a whole tree that honours `rootPath` and counts its listings. */
+  const treeCtx = (items: Array<Partial<ListEntriesItem>>, config: Partial<CanopyConfig> = {}) => {
+    const calls: Array<string | undefined> = []
+    return {
+      calls,
+      ctx: {
+        services: { config } as unknown as CanopyServices,
+        listEntries: async <T = Record<string, unknown>>(options?: ListEntriesOptions<T>) => {
+          calls.push(options?.rootPath)
+          const rootPath = options?.rootPath
+          return items.filter(
+            (item) => !rootPath || item.entryPath!.startsWith(`${rootPath}/`),
+          ) as unknown as ListEntriesItem<T>[]
+        },
+      },
+    }
+  }
+
+  it('fails a production build on a dangling reference', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    const { ctx } = treeCtx([person(), article({ author: MISSING_ID })])
+    await expect(collectStaticPaths(ctx)).rejects.toThrow(
+      `content/articles/post — author → ${MISSING_ID}`,
+    )
+  })
+
+  it('only warns under danglingReferences: warn', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    const { ctx } = treeCtx([person(), article({ author: MISSING_ID })], {
+      danglingReferences: 'warn',
+    })
+    const consoleSpy = mockConsole()
+    try {
+      await expect(collectRoutableEntries(ctx)).resolves.toHaveLength(2)
+      expect(consoleSpy.all().warn.join('\n')).toContain(`author → ${MISSING_ID}`)
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('resolves a scoped listing against the whole tree, listing it once per context', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    const { ctx, calls } = treeCtx([person(), article({ author: PERSON_ID })])
+
+    // The person lives outside the scope, so the scoped listing alone would call it dangling.
+    await collectStaticPaths(ctx, { rootPath: 'content/articles' })
+    await collectRoutableEntries(ctx, { rootPath: 'content/articles' })
+    await collectStaticPaths(ctx, { rootPath: 'content/people' })
+
+    expect(calls).toEqual(['content/articles', undefined, 'content/articles', 'content/people'])
+  })
+
+  it('reuses an unscoped listing as the id universe', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    const { ctx, calls } = treeCtx([person(), article({ author: PERSON_ID })])
+
+    await collectStaticPaths(ctx)
+    await collectStaticPaths(ctx, { rootPath: 'content/articles' })
+
+    expect(calls).toEqual([undefined, 'content/articles'])
+  })
+
+  it('does not run outside a build', async () => {
+    vi.stubEnv('CANOPY_BUILD_MODE', '')
+    const { ctx } = treeCtx([article({ author: MISSING_ID })])
+    await expect(collectStaticPaths(ctx)).resolves.toHaveLength(1)
   })
 })
