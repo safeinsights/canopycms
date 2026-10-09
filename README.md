@@ -640,7 +640,7 @@ const pageSchema = defineEntrySchema([
 
 Reading resolves it automatically: `read()` and `readByUrlPath()` recurse into block templates and resolve any `reference` field there, the same as a top-level one, so `section.value.snippet` on a `sharedCta` section is the full resolved entry rather than an id.
 
-> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export is separate: it disables resolution on purpose, so shared-block content is not duplicated into every referencing page's export.)
+> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export links a reference instead of inlining it; see [AI-Ready Content](#ai-ready-content).)
 
 ## Content Identification & References
 
@@ -1614,6 +1614,8 @@ CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools
 
 All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+
 ### Option 1: Route Handler (Runtime)
 
 Serve AI content dynamically from a Next.js catch-all route, generated on first request and cached (regenerated every request in dev mode). **`npx canopycms init` sets this up** unless you pass `--no-ai`, generating `{appDir}/ai/config.ts` and `{appDir}/ai/[...path]/route.ts`. To do it manually:
@@ -1657,6 +1659,10 @@ await generateAIContentFiles({
 import { defineAIContentConfig } from 'canopycms/ai'
 
 const aiConfig = defineAIContentConfig({
+  // Where these files are served, site-relative (default '/ai'); a reference links its
+  // target's markdown copy beneath it
+  mountPath: '/ai',
+
   // Opt-out exclusions
   exclude: {
     collections: ['drafts'],
@@ -1680,7 +1686,8 @@ const aiConfig = defineAIContentConfig({
   bodyTransforms: { guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, '') },
 
   // Per-entry-type transforms appending markdown after the entry's body/fields.
-  // Runs once per entry, may be async; return undefined to append nothing.
+  // Runs once per entry (again if a referenced entry fails to render), may be async;
+  // return undefined to append nothing.
   entryTransforms: {
     dataset: async (entry, { contentId, readSibling }) => {
       const raw = await readSibling(`${contentId}.profile.json`)

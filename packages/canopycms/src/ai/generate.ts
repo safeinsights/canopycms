@@ -21,7 +21,14 @@ import {
 } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
-import { entryToMarkdown } from './json-to-markdown'
+import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
+import {
+  createReferenceRendering,
+  createReferenceTargetResolver,
+  maskUnexportedTargets,
+  resolveReferenceFields,
+  type ReferenceTargetResolver,
+} from './references'
 import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
 import type {
   AIContentConfig,
@@ -69,24 +76,31 @@ export interface GenerateResult {
  * Walks the schema tree, reads entries, converts to markdown,
  * and produces per-entry files, per-collection all.md files,
  * bundle files, and a manifest.
+ *
+ * A reference may only show a target that is itself exported, so every entry is read and
+ * filtered first, which settles the exported set. Only then are references to anything outside
+ * it masked, entry transforms run, and markdown rendered, in rounds that repeat while a render
+ * fails (see the loop below).
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
   const { store, flatSchema, contentRoot, config, entryLinkUrl, generatedAt, buildId } = options
   const files = new Map<string, string>()
 
   const idIndex = await store.idIndex()
+  const read: EntryReadContext = {
+    store,
+    contentRoot,
+    config,
+    idIndex,
+    entryLinkUrl,
+    resolveTarget: createReferenceTargetResolver(store),
+  }
 
   const collections = flatSchema.filter(
     (item): item is FlatSchemaItem & { type: 'collection' } => item.type === 'collection',
   )
 
-  // Track all entries for bundle filtering
-  const allEntries: AIEntry[] = []
-  // Track manifest collections (tree structure)
-  const manifestCollections: AIManifestCollection[] = []
-  // Track root-level entries (entries in the content root, not in a subcollection)
-  const rootEntries: AIManifestEntry[] = []
-
+  const collectionNodes: CollectionNode[] = []
   for (const collection of collections) {
     // Skip the content root itself — we process its children
     if (collection.logicalPath === contentRoot) continue
@@ -97,41 +111,51 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     // (subcollections are handled recursively via their parent)
     if (collection.parentPath && collection.parentPath !== contentRoot) continue
 
-    const collectionResult = await processCollection(
-      store,
-      collection,
-      flatSchema,
-      contentRoot,
-      config,
-      idIndex,
-      entryLinkUrl,
-    )
-
-    allEntries.push(...collectionResult.entries)
-    for (const [filePath, content] of collectionResult.files) {
-      files.set(filePath, content)
-    }
-    manifestCollections.push(collectionResult.manifestCollection)
+    collectionNodes.push(await collectCollection(read, collection, flatSchema))
   }
 
-  // Process root-level entries (entries in content root, not in any subcollection)
+  // Root-level entries (entries in content root, not in any subcollection)
   const rootCollection = collections.find((c) => c.logicalPath === contentRoot)
-  if (rootCollection?.entries) {
-    const rootResult = await processRootEntries(
-      store,
-      rootCollection,
-      contentRoot,
-      config,
-      idIndex,
-      entryLinkUrl,
-    )
-    allEntries.push(...rootResult.entries)
-    for (const [filePath, content] of rootResult.files) {
-      files.set(filePath, content)
+  const rootEntries = rootCollection?.entries ? await collectEntries(read, rootCollection, '') : []
+
+  // Collection entries first, then root entries: the order bundles list them in
+  const allPending = [...collectionNodes.flatMap(subtreeEntries), ...rootEntries]
+  // Content id -> output file of every exported entry: the export set, and where each
+  // reference's markdown copy lives
+  const exported = new Map<string, string>()
+  for (const pending of allPending) {
+    if (pending.contentId !== null) exported.set(pending.contentId, pending.filePath)
+  }
+  const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl, {
+    mountPath: config?.mountPath ?? '/ai',
+    files: exported,
+  })
+  // An entry whose render throws is not in the export after all, so references to it are masked
+  // like any other left-out target, and the entries that changed run their transforms and render
+  // again. That can fail another entry, so this repeats until a round fails none; each round
+  // removes at least one entry, so it ends.
+  let round: PendingEntry[] = allPending
+  for (;;) {
+    for (const pending of round) {
+      maskUnexportedTargets(pending.entry, exported)
+      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), on data as masked
+      pending.entry.appendedSections = undefined
+      await runEntryTransform(pending.entry, pending.absolutePath, pending.contentId, config)
     }
-    rootEntries.push(...rootResult.manifestEntries)
+    const failed = renderAll(round, config, references)
+    if (failed.length === 0) break
+    for (const pending of failed) {
+      if (pending.contentId !== null) exported.delete(pending.contentId)
+    }
+    round = allPending.filter(
+      (pending) => isRendered(pending) && maskUnexportedTargets(pending.entry, exported),
+    )
   }
 
+  const manifestCollections = collectionNodes.map((node) => emitCollection(node, files))
+  const manifestRootEntries = emitEntries(rootEntries, files)
+
+  const allEntries = allPending.filter(isRendered)
   const manifestBundles: AIManifestBundle[] = []
   if (config?.bundles) {
     for (const bundle of config.bundles) {
@@ -139,13 +163,11 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
       if (/[/\\]|\.\./.test(bundle.name)) {
         throw new Error(`Invalid bundle name "${bundle.name}": must not contain slashes or ".."`)
       }
-      const matchingEntries = allEntries.filter((entry) =>
-        matchesBundleFilter(entry, bundle.filter, contentRoot),
+      const matchingEntries = allEntries.filter((pending) =>
+        matchesBundleFilter(pending.entry, bundle.filter, contentRoot),
       )
       if (matchingEntries.length > 0) {
-        const bundleContent = matchingEntries
-          .map((e) => entryToMarkdown(e, config))
-          .join('\n---\n\n')
+        const bundleContent = matchingEntries.map((p) => p.markdown).join('\n---\n\n')
         const bundlePath = `bundles/${bundle.name}.md`
         files.set(bundlePath, bundleContent)
         manifestBundles.push({
@@ -165,7 +187,7 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   const manifest: AIManifest = {
     ...(buildId ? { buildId } : {}),
     ...(generatedAt || !buildId ? { generated: generatedAt || new Date().toISOString() } : {}),
-    entries: rootEntries,
+    entries: manifestRootEntries,
     collections: manifestCollections,
     bundles: manifestBundles,
   }
@@ -175,28 +197,94 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   return { manifest, files }
 }
 
-interface CollectionProcessResult {
-  entries: AIEntry[]
-  files: Map<string, string>
-  manifestCollection: AIManifestCollection
+/** Render each entry's markdown, returning those whose render threw (left without markdown). */
+function renderAll(
+  entries: PendingEntry[],
+  config: AIContentConfig | undefined,
+  references: ReferenceRendering,
+): PendingEntry[] {
+  const failed: PendingEntry[] = []
+  for (const pending of entries) {
+    try {
+      pending.markdown = entryToMarkdown(pending.entry, config, references)
+    } catch (err) {
+      pending.markdown = undefined
+      failed.push(pending)
+      console.warn(
+        `AI content: skipping entry "${pending.entry.slug}" in ${pending.collectionPath}:`,
+        getErrorMessage(err),
+      )
+    }
+  }
+  return failed
 }
 
-async function processCollection(
-  store: ContentStore,
+/** What reading one entry needs, shared by every collection in a run. */
+interface EntryReadContext {
+  store: ContentStore
+  contentRoot: string
+  config?: AIContentConfig
+  idIndex: ContentIdIndex
+  entryLinkUrl?: EntryLinkUrlResolver
+  resolveTarget: ReferenceTargetResolver
+}
+
+/** An entry that passed every exclusion; `markdown` is set once it renders. */
+interface PendingEntry {
+  entry: AIEntry
+  contentId: string | null
+  absolutePath: string
+  collectionPath: string
+  filePath: string
+  markdown?: string
+}
+
+type RenderedEntry = PendingEntry & { markdown: string }
+
+function isRendered(pending: PendingEntry): pending is RenderedEntry {
+  return pending.markdown !== undefined
+}
+
+interface CollectionNode {
+  collection: FlatSchemaItem & { type: 'collection' }
+  cleanPath: string
+  entries: PendingEntry[]
+  subcollections: CollectionNode[]
+}
+
+/** A collection's direct entries, then each subcollection's, in the order all.md lists them. */
+function subtreeEntries(node: CollectionNode): PendingEntry[] {
+  return [...node.entries, ...node.subcollections.flatMap(subtreeEntries)]
+}
+
+async function collectCollection(
+  read: EntryReadContext,
   collection: FlatSchemaItem & { type: 'collection' },
   flatSchema: FlatSchemaItem[],
-  contentRoot: string,
-  config?: AIContentConfig,
-  idIndex?: ContentIdIndex,
-  entryLinkUrl?: EntryLinkUrlResolver,
-): Promise<CollectionProcessResult> {
-  const files = new Map<string, string>()
-  const entries: AIEntry[] = []
-  const cleanPath = stripContentRoot(collection.logicalPath, contentRoot)
-  const manifestEntries: AIManifestEntry[] = []
+): Promise<CollectionNode> {
+  const cleanPath = stripContentRoot(collection.logicalPath, read.contentRoot)
+  const entries = await collectEntries(read, collection, cleanPath)
+
+  const subcollections: CollectionNode[] = []
+  for (const sub of flatSchema) {
+    if (sub.type !== 'collection' || sub.parentPath !== collection.logicalPath) continue
+    if (isCollectionExcluded(sub.logicalPath, read.contentRoot, read.config)) continue
+    subcollections.push(await collectCollection(read, sub, flatSchema))
+  }
+
+  return { collection, cleanPath, entries, subcollections }
+}
+
+/** Read, resolve and filter the entries directly in `collection` (not its subcollections). */
+async function collectEntries(
+  read: EntryReadContext,
+  collection: FlatSchemaItem & { type: 'collection' },
+  cleanPath: string,
+): Promise<PendingEntry[]> {
+  const { store, contentRoot, config, idIndex, entryLinkUrl, resolveTarget } = read
+  const pending: PendingEntry[] = []
 
   const listed = await store.getCollectionEntryPaths(collection.logicalPath)
-
   // Filter to only entries in this exact collection (not subcollections)
   const directEntries = listed.filter((e) => e.collection === collection.logicalPath)
 
@@ -213,159 +301,68 @@ async function processCollection(
       const doc = await store.read(listEntry.collection, listEntry.slug, {
         resolveReferences: false,
       })
+      doc.data = await resolveReferenceFields(doc.data, entryTypeConfig.schema, resolveTarget)
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
 
-      if (aiEntry.body && idIndex) {
+      if (aiEntry.body) {
         aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
       }
 
       if (config?.exclude?.where?.(aiEntry)) continue
 
-      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
-      await runEntryTransform(
-        aiEntry,
-        doc.absolutePath,
-        extractIdFromFilename(path.basename(listEntry.relativePath)),
-        config,
-      )
-
-      entries.push(aiEntry)
-
-      const entryFilePath = `${cleanPath}/${listEntry.slug}.md`
-      const entryMarkdown = entryToMarkdown(aiEntry, config)
-      files.set(entryFilePath, entryMarkdown)
-
-      manifestEntries.push({
-        slug: listEntry.slug,
-        title: aiEntry.data.title ? String(aiEntry.data.title) : undefined,
-        file: entryFilePath,
+      pending.push({
+        entry: aiEntry,
+        contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
+        absolutePath: doc.absolutePath,
+        collectionPath: collection.logicalPath,
+        filePath: cleanPath ? `${cleanPath}/${listEntry.slug}.md` : `${listEntry.slug}.md`,
       })
     } catch (err) {
       console.warn(
         `AI content: skipping entry "${listEntry.slug}" in ${collection.logicalPath}:`,
         getErrorMessage(err),
       )
-      continue
     }
   }
 
-  const subcollections = flatSchema.filter(
-    (item): item is FlatSchemaItem & { type: 'collection' } =>
-      item.type === 'collection' && item.parentPath === collection.logicalPath,
-  )
+  return pending
+}
 
-  const manifestSubcollections: AIManifestCollection[] = []
-  for (const sub of subcollections) {
-    if (isCollectionExcluded(sub.logicalPath, contentRoot, config)) continue
-
-    const subResult = await processCollection(
-      store,
-      sub,
-      flatSchema,
-      contentRoot,
-      config,
-      idIndex,
-      entryLinkUrl,
-    )
-    entries.push(...subResult.entries)
-    for (const [filePath, content] of subResult.files) {
-      files.set(filePath, content)
+/** Write each rendered entry's file and return its manifest rows. */
+function emitEntries(entries: PendingEntry[], files: Map<string, string>): AIManifestEntry[] {
+  return entries.filter(isRendered).map((pending) => {
+    files.set(pending.filePath, pending.markdown)
+    return {
+      slug: pending.entry.slug,
+      title: frontmatterTitle(pending.entry.data),
+      file: pending.filePath,
     }
-    manifestSubcollections.push(subResult.manifestCollection)
+  })
+}
+
+/** Write a collection's entry files and all.md, recursively, and return its manifest node. */
+function emitCollection(node: CollectionNode, files: Map<string, string>): AIManifestCollection {
+  const manifestEntries = emitEntries(node.entries, files)
+  const manifestSubcollections = node.subcollections.map((sub) => emitCollection(sub, files))
+
+  // all.md covers direct entries + subcollection entries
+  const rendered = subtreeEntries(node).filter(isRendered)
+  const allPath = `${node.cleanPath}/all.md`
+  if (rendered.length > 0) {
+    files.set(allPath, rendered.map((p) => p.markdown).join('\n---\n\n'))
   }
 
-  // Write all.md for this collection (includes direct entries + subcollection entries)
-  if (entries.length > 0) {
-    const allContent = entries.map((e) => entryToMarkdown(e, config)).join('\n---\n\n')
-    const allPath = `${cleanPath}/all.md`
-    files.set(allPath, allContent)
-  }
-
-  const manifestCollection: AIManifestCollection = {
-    name: collection.name,
-    label: collection.label,
-    description: collection.description,
-    path: cleanPath,
-    allFile: entries.length > 0 ? `${cleanPath}/all.md` : undefined,
-    entryCount: entries.length,
+  return {
+    name: node.collection.name,
+    label: node.collection.label,
+    description: node.collection.description,
+    path: node.cleanPath,
+    allFile: rendered.length > 0 ? allPath : undefined,
+    entryCount: rendered.length,
     entries: manifestEntries,
     subcollections: manifestSubcollections.length > 0 ? manifestSubcollections : undefined,
   }
-
-  return { entries, files, manifestCollection }
-}
-
-interface RootEntryResult {
-  entries: AIEntry[]
-  files: Map<string, string>
-  manifestEntries: AIManifestEntry[]
-}
-
-async function processRootEntries(
-  store: ContentStore,
-  rootCollection: FlatSchemaItem & { type: 'collection' },
-  contentRoot: string,
-  config?: AIContentConfig,
-  idIndex?: ContentIdIndex,
-  entryLinkUrl?: EntryLinkUrlResolver,
-): Promise<RootEntryResult> {
-  const files = new Map<string, string>()
-  const entries: AIEntry[] = []
-  const manifestEntries: AIManifestEntry[] = []
-
-  const listed = await store.getCollectionEntryPaths(rootCollection.logicalPath)
-  // Only direct entries in root (not in subcollections)
-  const directEntries = listed.filter((e) => e.collection === rootCollection.logicalPath)
-
-  for (const listEntry of directEntries) {
-    const entryTypeName = extractEntryTypeFromFilename(path.basename(listEntry.relativePath))
-    if (!entryTypeName) continue
-
-    if (config?.exclude?.entryTypes?.includes(entryTypeName)) continue
-
-    const entryTypeConfig = findEntryType(rootCollection, entryTypeName)
-    if (!entryTypeConfig) continue
-
-    try {
-      const doc = await store.read(listEntry.collection, listEntry.slug, {
-        resolveReferences: false,
-      })
-
-      const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, '')
-
-      if (aiEntry.body && idIndex) {
-        aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
-      }
-
-      if (config?.exclude?.where?.(aiEntry)) continue
-
-      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
-      await runEntryTransform(
-        aiEntry,
-        doc.absolutePath,
-        extractIdFromFilename(path.basename(listEntry.relativePath)),
-        config,
-      )
-
-      entries.push(aiEntry)
-
-      const entryFilePath = `${listEntry.slug}.md`
-      const entryMarkdown = entryToMarkdown(aiEntry, config)
-      files.set(entryFilePath, entryMarkdown)
-
-      manifestEntries.push({
-        slug: listEntry.slug,
-        title: aiEntry.data.title ? String(aiEntry.data.title) : undefined,
-        file: entryFilePath,
-      })
-    } catch (err) {
-      console.warn(`AI content: skipping root entry "${listEntry.slug}":`, getErrorMessage(err))
-      continue
-    }
-  }
-
-  return { entries, files, manifestEntries }
 }
 
 function stripContentRoot(logicalPath: string, contentRoot: string): string {
@@ -452,8 +449,9 @@ function makeReadSibling(dir: string): (name: string) => Promise<string | null> 
 /**
  * Run the configured entry transform (if any), caching its returned markdown on
  * `entry.appendedSections`. The transform receives the entry's content ID and a directory-bound
- * `readSibling`. Runs once per entry; the cached result is reused across the per-entry file, the
- * collection `all.md`, and any bundle that includes this entry. A throwing transform is logged and
+ * `readSibling`. Runs for every entry in the first round, then again in any later round whose
+ * masking changed the entry, always on the data as masked; the cached result is reused across the per-entry file, the collection `all.md`, and any bundle that
+ * includes this entry. A throwing transform is logged and
  * skipped — the entry still renders without the appended section (distinct from an unreadable
  * entry, which is skipped entirely upstream).
  */

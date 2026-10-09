@@ -1782,8 +1782,9 @@ export class ContentStore {
   }
 
   /**
-   * Resolve one reference id the way a reference field resolves it, for the editor's
-   * live-preview endpoint (api/resolve-references.ts), which has ids but no field to walk. An id
+   * Resolve one reference id the way a reference field resolves it, for callers with ids but no
+   * field to walk: the editor's live-preview endpoint (api/resolve-references.ts) and the AI
+   * export (ai/references.ts). An id
    * naming no readable entry resolves to a `MissingReference`, as in `read()`. No body is
    * embedded, since there is no field to ask for one.
    */

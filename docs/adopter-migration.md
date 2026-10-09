@@ -51,6 +51,28 @@ typed `PreviewLoadingState<T>`, so a reference's entry is `boolean | undefined`.
 **Now deletable.** Hand-written reference narrowing (string id, `null`, `unavailable` checks), and
 top-level-only reference fields kept for the preview's sake.
 
+### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
+
+**What changed.** A `reference` field renders as a link to its target, not the stored id: a
+byline that read `**Author:** 5NVkkrB1MJUv` now links the name `Alice` to that entry's page, then
+to its markdown copy under the AI config's new `mountPath` (default `/ai`). A gone
+target renders as `(missing entry <id>)`, one left out by `exclude` as `(unavailable entry <id>)`.
+An md/mdx entry's object or block field renders as a section, not `[object Object]`.
+
+`where` predicates and transforms receive an `AIReferenceValue` (from `canopycms/ai`), not the id:
+
+```ts
+// before
+where: (entry) => entry.data.author === ALICE_ID
+// after
+where: (entry) => (entry.data.author as AIReferenceValue | undefined)?.id === ALICE_ID
+```
+
+**To adopt.** `entry.data` is untyped, so an old comparison still compiles and silently stops
+matching: search your AI config for each reference field's name.
+
+**Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
+
 ### A reference to a missing entry resolves to its id, and fails the build — **breaking (types and build)**
 
 **What changed.** A reference whose id names no entry resolves to
