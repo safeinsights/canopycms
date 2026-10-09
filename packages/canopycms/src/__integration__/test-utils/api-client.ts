@@ -96,7 +96,7 @@ export async function createApiClient(options: ApiClientOptions) {
     const urlStr =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
-    const path = urlStr.replace(/^http:\/\/[^/]+/, '') // Strip protocol/host
+    const path = urlStr.replace(/^http:\/\/[^/]+/, '').replace(/\?.*$/, '') // Strip protocol/host and query
     const segments = path
       .replace(/^\/api\/canopycms\/?/, '')
       .split('/')

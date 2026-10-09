@@ -639,6 +639,10 @@ describe('BranchSchemaCache', () => {
   }
 
   describe('reference entryTypes validation', () => {
+    // Degraded resolves log their issues; captured here so tests that do not assert on them stay quiet.
+    beforeEach(() => setCanopyLogger({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+    afterEach(() => resetCanopyLogger())
+
     const registryWithReference: Record<string, readonly FieldConfig[]> = {
       pageSchema: [
         { name: 'title', type: 'string', label: 'Title' },
@@ -694,6 +698,10 @@ describe('BranchSchemaCache', () => {
   // A merge can sync content naming a schema into a workspace before the image defining it is
   // live; that must cost one entry type, not the branch's whole schema.
   describe('unknown entry schema', () => {
+    // Degraded resolves log their issues; captured here so tests that do not assert on them stay quiet.
+    beforeEach(() => setCanopyLogger({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+    afterEach(() => resetCanopyLogger())
+
     const writeMetaNaming = (schema: string) =>
       fs.writeFile(
         collectionPath,

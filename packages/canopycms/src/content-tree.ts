@@ -75,6 +75,7 @@ import { isIndexSlug } from './utils/entry-url'
 import {
   createReferenceResolver,
   listCollectionEntries,
+  withoutUnavailableEntries,
   resolveCollectionItemReferences,
   sortByOrder,
   type CollectionListItem,
@@ -236,7 +237,10 @@ export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTy
   const listVisibleEntries = async (
     collection: CollectionSchemaItem,
   ): Promise<CollectionListItem[]> => {
-    const entries = await listCollectionEntries(branchRoot, collection)
+    const entries = withoutUnavailableEntries(
+      await listCollectionEntries(branchRoot, collection),
+      collection,
+    )
     const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.logicalPath)) : entries
     // Resolved here rather than at the two node-building sites so BOTH inherit it — the same
     // reason the ACL filter lives here. A denied entry is filtered above and never resolved.

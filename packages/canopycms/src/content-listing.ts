@@ -249,6 +249,21 @@ export interface ListingReferenceResolver {
 }
 
 /**
+ * A collection's listed entries minus those of an `unavailable` entry type, for the listings
+ * adopter pages render: data whose shape the running code does not know renders wrong rather
+ * than failing. The editor's own listing keeps them, so it can say why they cannot be opened.
+ */
+export const withoutUnavailableEntries = (
+  items: CollectionListItem[],
+  collection: CollectionSchemaItem,
+): CollectionListItem[] => {
+  const unavailable = new Set(
+    collection.entries?.filter((e) => e.unavailable).map((e) => e.name) ?? [],
+  )
+  return unavailable.size > 0 ? items.filter((item) => !unavailable.has(item.entryType)) : items
+}
+
+/**
  * Resolve `reference` fields in a collection's listed entries, in place of their raw data.
  *
  * Shared by `listEntries` and `buildContentTree` so both opt into resolution through one
@@ -326,8 +341,9 @@ export async function listEntries<T = Record<string, unknown>>(
     : null
   const collectionResults = await Promise.all(
     collections.map(async (collection) => {
-      const entries = await listCollectionEntries(branchRoot, collection, (file) =>
-        skippedFiles.push(file),
+      const entries = withoutUnavailableEntries(
+        await listCollectionEntries(branchRoot, collection, (file) => skippedFiles.push(file)),
+        collection,
       )
       const visible = shouldInclude ? entries.filter((e) => shouldInclude(e.logicalPath)) : entries
       // Resolve AFTER the visibility filter (a denied entry is never resolved, so its

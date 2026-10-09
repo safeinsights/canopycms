@@ -34,6 +34,7 @@ import {
 } from './entry-schema'
 import { warnDanglingReference } from './dangling-reference-log'
 import { canopyLogError } from './utils/logger'
+import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { resolveEntryTitle } from './utils/title-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { findUrlPathClaimant } from './url-collision'
@@ -346,6 +347,12 @@ export interface ReadOptions {
   resolveReferences?: boolean
   /** See {@link ReferenceTargetAccess}. */
   referenceAccess?: ReferenceTargetAccess
+  /**
+   * Read an entry of an `unavailable` entry type as raw data instead of throwing
+   * {@link SchemaUnavailableError}: for reads that only label or link it, like reference
+   * resolution, never for one an author edits.
+   */
+  allowUnavailableEntryType?: boolean
 }
 
 export class ContentStore {
@@ -921,6 +928,9 @@ export class ContentStore {
       relativePath,
       entryTypeName: resolvedEntryTypeName,
     } = await this.buildPaths(schemaItem, slug)
+    if (!options.allowUnavailableEntryType) {
+      this.assertEntryTypeAvailable(schemaItem, resolvedEntryTypeName)
+    }
     // stat BEFORE readFile: a conservative version token can only produce false-positive
     // conflicts. A write landing between stat and readFile gives the client newer content with
     // an older token, so their next save 409s (safe); stat-after or a parallel stat+read risks
@@ -1054,6 +1064,8 @@ export class ContentStore {
     // concurrent renameEntry() completes, so it must be re-resolved as ground truth once the
     // lock is held (see entryLockKey()). The format check above still runs unlocked.
     const prePass = await this.buildPaths(schemaItem, slug, { entryTypeName, existingId })
+    // The type the entry is written as: its on-disk one when it exists, else the requested/default.
+    this.assertEntryTypeAvailable(schemaItem, prePass.entryTypeName)
     let lockKey = this.entryLockKey(schemaItem, slug, prePass)
 
     // Reclassification loop: the world can change between the pre-pass and lock acquisition (a
@@ -1450,6 +1462,7 @@ export class ContentStore {
     // Pre-pass: classify existing-vs-already-gone by directory scan (local ground truth), not
     // this._idIndex, which can be stale in exactly the way this locking scheme guards against.
     const prePass = await this.buildPaths(collection, slug)
+    if (prePass.existed) this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
 
     if (!prePass.existed) {
       // Nothing on disk for this slug -- no shared resource to lock on, and fs.unlink on the
@@ -1548,6 +1561,7 @@ export class ContentStore {
     if (!prePass.existed) {
       throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
     }
+    this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
     let sourceLockKey = this.entryLockKey(collection, currentSlug, prePass)
     let sourceId = prePass.id
 
@@ -1989,6 +2003,32 @@ export class ContentStore {
   }
 
   /**
+   * Throw {@link SchemaUnavailableError} when the entry at `slug` is of an `unavailable` entry
+   * type, for a handler to refuse before any other check answers first.
+   */
+  async assertEntryAvailable(collectionPath: LogicalPath, slug: Slug | '' = ''): Promise<void> {
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    const { entryTypeName } = await this.buildPaths(schemaItem, slug)
+    this.assertEntryTypeAvailable(schemaItem, entryTypeName)
+  }
+
+  /**
+   * Throw {@link SchemaUnavailableError} when the entry type an entry is read or written as --
+   * `entryTypeName`, else the collection's default, as `read()` falls back -- is `unavailable`.
+   */
+  private assertEntryTypeAvailable(schemaItem: FlatSchemaItem, entryTypeName?: string): void {
+    const entryType =
+      schemaItem.type === 'entry-type'
+        ? schemaItem
+        : ((entryTypeName
+            ? schemaItem.entries?.find((e) => e.name === entryTypeName)
+            : undefined) ?? getDefaultEntryType(schemaItem.entries))
+    if (entryType?.unavailable) {
+      throw new SchemaUnavailableError(entryType.name, entryType.unavailable)
+    }
+  }
+
+  /**
    * The entry type an entry file was written as, by its filename's type token, falling back to
    * the collection's default the way `read()` does for a legacy untyped file.
    */
@@ -2020,6 +2060,7 @@ export class ContentStore {
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
       const doc = await this.read(location.collection, location.slug, {
         resolveReferences: false,
+        allowUnavailableEntryType: true,
       })
       // `urlPath` is what makes a resolved reference linkable without a second listing pass to
       // build a contentId -> url table. Deliberately `computeEntryUrl` (utils/entry-url.ts), the

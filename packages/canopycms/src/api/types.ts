@@ -49,4 +49,12 @@ export interface ApiResponse<TData = unknown> {
    * surface each error next to its form field.
    */
   fieldErrors?: Array<{ fieldPath: string; message: string }>
+  /** A machine-readable reason for some failures; see {@link ApiErrorCode}. */
+  code?: ApiErrorCode
 }
+
+/**
+ * `SCHEMA_UNAVAILABLE`: the entry's type names an entry schema the running code lacks (a 503,
+ * see `SchemaUnavailableError`).
+ */
+export type ApiErrorCode = 'SCHEMA_UNAVAILABLE'

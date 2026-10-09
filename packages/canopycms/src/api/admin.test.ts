@@ -8,6 +8,7 @@ import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser } from '../test-utils'
 import { enqueueTask, dequeueTask, failTask } from '../task-queue/cms-task-queue'
 import type { AssetStore } from '../assets/types'
+import type { BranchSchemaCache } from '../branch-schema-cache'
 import { CANOPYCMS_VERSION } from '../version'
 
 const { loadSharpMock } = vi.hoisted(() => ({ loadSharpMock: vi.fn() }))
@@ -186,6 +187,45 @@ describe('admin api', () => {
       const result = await statusHandler(ctx, req)
 
       expect(result.data).not.toHaveProperty('settingsWorkspaceError')
+    })
+
+    it("reports the base branch's schema issues", async () => {
+      const issue = {
+        kind: 'unknown-schema' as const,
+        collectionPath: 'people',
+        entryType: 'contributor',
+        schemaRef: 'contributorSchema',
+        metaFile: 'people/.collection.json',
+        message: 'not found in registry',
+      }
+      const getSchema = vi.fn().mockResolvedValue({ schema: {}, flatSchema: [], issues: [issue] })
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod', defaultBaseBranch: 'main' } as CanopyConfig,
+          branchSchemaCache: { getSchema } as unknown as BranchSchemaCache,
+        },
+      })
+
+      const result = await statusHandler(ctx, req)
+
+      expect(result.data?.schemaIssues).toEqual([issue])
+      expect(ctx.getBranchContext).toHaveBeenCalledWith('main')
+    })
+
+    it('omits schemaIssues when there are none, or the schema cannot be read', async () => {
+      expect((await statusHandler(ctx, req)).data).not.toHaveProperty('schemaIssues')
+
+      ctx = createMockApiContext({
+        services: {
+          config: { mode: 'prod' } as CanopyConfig,
+          branchSchemaCache: {
+            getSchema: vi.fn().mockRejectedValue(new Error('no schema')),
+          } as unknown as BranchSchemaCache,
+        },
+      })
+      const result = await statusHandler(ctx, req)
+      expect(result.ok).toBe(true)
+      expect(result.data).not.toHaveProperty('schemaIssues')
     })
 
     it('returns null status + statusReadError for a garbage worker-status.json', async () => {

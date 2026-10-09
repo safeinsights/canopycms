@@ -55,6 +55,7 @@ export const createTestServices = async (
     getSchema: async () => ({
       schema: config.schema,
       flatSchema,
+      issues: [],
     }),
     invalidate: async () => {},
   }

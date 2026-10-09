@@ -504,6 +504,9 @@ const deleteEntryHandler = async (
     }
   }
 
+  // Before the reference scan, whose 409 would otherwise answer first; mapped to a 503.
+  await contentStore.assertEntryAvailable(collectionLogicalPath, entrySlug)
+
   let orderCleanupWarning: string | undefined
 
   try {

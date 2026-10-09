@@ -36,6 +36,7 @@ export type {
   EntrySchema,
   BranchSchema,
   EntryTypeConfig,
+  EntryTypeUnavailable,
   CollectionConfig,
   RootCollectionConfig,
   // Media
