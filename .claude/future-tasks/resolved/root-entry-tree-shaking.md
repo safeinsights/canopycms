@@ -23,8 +23,10 @@ lives in `src/package-side-effects.test.ts`.
 
 The test bundles `import { assetUrl } from 'canopycms'` with esbuild through the workspace
 package and fails if zod or any `src/config/` module contributes bytes. It also checks that every
-declared entry exists and that each shipped one has its dist twin, and it rejects a bare relative
-`import './x'` of an unlisted module, which webpack would silently drop.
+declared entry exists and that each shipped one has its dist twin. Finally it parses every module
+`tsconfig.build.json` compiles and requires the modules with a top-level statement that runs code
+(an expression, `if`/`try`, a bare `import './x'`, a class static block) to be exactly the listed
+ones, so a new registration or polyfill fails until its module is declared.
 
 ## Measured
 

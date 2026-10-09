@@ -1,6 +1,6 @@
 /**
- * `package.json`'s `sideEffects` array names every module that does something when merely
- * evaluated. Bundlers drop any other module whose exports go unused, which is what keeps
+ * `package.json`'s `sideEffects` array names the modules whose evaluation does something. Bundlers
+ * drop any other module whose exports go unused, which is what keeps
  * `import { assetUrl } from 'canopycms'` from dragging the root barrel's zod config schemas into a
  * client bundle.
  *
@@ -10,24 +10,29 @@
  * List each shipped module twice, as `./src/<path>` for workspace consumers (whose dev `exports`
  * resolve to src) and `./dist/<path>.js` for the published tarball.
  *
+ * The last test below enforces the list: every module `tsconfig.build.json` compiles, plus the
+ * listed src-only ones, is parsed, and the modules with a top-level statement that runs code (an
+ * expression, `if`, `try`, a bare `import './x'`, a class static block or decorator) must be
+ * exactly the listed ones. So a new registration, global getter or polyfill written as a statement
+ * fails until its module is listed. A call inside a `const` initializer is not counted: it
+ * constructs a value, and a module that holds one is kept whenever the value is used.
+ *
  * What is deliberately absent:
- * - `defineEndpoint` pushes into `ROUTE_REGISTRY` at module scope, but only
+ * - `defineEndpoint` pushes into `ROUTE_REGISTRY` from a `const` initializer, but only
  *   `scripts/generate-client.ts` reads that registry, unbundled under tsx with explicit imports.
  *   The router mounts routes through `api/routes.ts`'s named imports, never through the registry.
- * - Module-scope loggers, zod schemas and `Symbol.for` keys construct values; dropping an unused
- *   one loses nothing.
- *
- * A module whose effect must happen on import (a registration, a global getter, a polyfill) is
- * added to the list in the same change. A bare `import './x'` of an unlisted module is silently
- * dropped by webpack, so the last test below rejects one.
+ * - `config/schemas/field.ts` assigns its own module-local holder at top level; nothing outside
+ *   the module reads it, so the scan allows that one statement.
+ * - The vitest setup files `tsconfig.build.json` excludes are loaded by path, never imported.
  */
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
+import ts from 'typescript'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -108,27 +113,81 @@ describe('sideEffects declaration', () => {
     }
   })
 
-  it('has no bare relative import of a module outside the list', async () => {
-    const declared = new Set(await declaredSideEffects())
-    const srcDir = path.join(packageDir, 'src')
-    const files = (await readdir(srcDir, { recursive: true })).filter(
-      (file) =>
-        /\.tsx?$/.test(file) &&
-        !/\.(test|stories)\.tsx?$/.test(file) &&
-        !file.split(path.sep).includes('__integration__'),
-    )
+  it('lists exactly the modules with top-level statements that run code', async () => {
+    const declared = await declaredSideEffects()
+    const listedSrc = declared.filter((entry) => entry.startsWith('./src/'))
+    const files = new Set([
+      ...compiledSources(),
+      ...listedSrc.map((entry) => path.join(packageDir, entry)),
+    ])
 
-    const offenders: string[] = []
+    const effectful: Record<string, string[]> = {}
     for (const file of files) {
-      const source = await readFile(path.join(srcDir, file), 'utf8')
-      for (const match of source.matchAll(/^import\s+['"](\.[^'"]+)['"]/gm)) {
-        const target = path.relative(packageDir, path.resolve(srcDir, path.dirname(file), match[1]))
-        const listed = ['.ts', '.tsx'].some((ext) =>
-          declared.has(`./${target.split(path.sep).join('/')}${ext}`),
-        )
-        if (!listed) offenders.push(`${file}: ${match[0]}`)
-      }
+      const key = `./${path.relative(packageDir, file).split(path.sep).join('/')}`
+      const allowed = MODULE_LOCAL_EFFECTS[key] ?? []
+      const effects = topLevelEffects(file, await readFile(file, 'utf8')).filter(
+        (statement) => !allowed.includes(statement),
+      )
+      if (effects.length > 0) effectful[key] = effects
     }
-    expect(offenders).toEqual([])
+
+    expect(Object.keys(effectful).sort(), JSON.stringify(effectful, null, 2)).toEqual(
+      [...listedSrc].sort(),
+    )
   })
 })
+
+/** Top-level statements a module may run without anything outside it ever observing them. */
+const MODULE_LOCAL_EFFECTS: Record<string, string[]> = {
+  './src/config/schemas/field.ts': ['fieldHolder[0] = fieldSchema'],
+}
+
+/** The src files `tsconfig.build.json` compiles into dist. */
+function compiledSources(): string[] {
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    path.join(packageDir, 'tsconfig.build.json'),
+    {},
+    {
+      ...ts.sys,
+      onUnRecoverableConfigFileDiagnostic: (diagnostic) => {
+        throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
+      },
+    },
+  )
+  if (!parsed) throw new Error('tsconfig.build.json did not parse')
+  return parsed.fileNames.filter((file) => /\.tsx?$/.test(file) && !file.endsWith('.d.ts'))
+}
+
+function topLevelEffects(file: string, source: string): string[] {
+  const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
+  return sourceFile.statements
+    .filter(runsCode)
+    .map((statement) => statement.getText(sourceFile).split('\n')[0].trim())
+}
+
+function runsCode(statement: ts.Statement): boolean {
+  if (ts.isImportDeclaration(statement)) return statement.importClause === undefined
+  // A string-literal statement is a directive (`'use client'`) or a no-op.
+  if (ts.isExpressionStatement(statement)) return !ts.isStringLiteral(statement.expression)
+  if (ts.isClassDeclaration(statement)) {
+    return (
+      statement.members.some(ts.isClassStaticBlockDeclaration) ||
+      (ts.getDecorators(statement)?.length ?? 0) > 0
+    )
+  }
+  if (ts.isExportAssignment(statement)) {
+    return ts.isCallExpression(statement.expression) || ts.isNewExpression(statement.expression)
+  }
+  return !(
+    ts.isVariableStatement(statement) ||
+    ts.isFunctionDeclaration(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement) ||
+    ts.isModuleDeclaration(statement) ||
+    ts.isEnumDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    ts.isImportEqualsDeclaration(statement) ||
+    ts.isEmptyStatement(statement)
+  )
+}
