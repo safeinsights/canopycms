@@ -638,7 +638,7 @@ media: { adapter: 's3', bucket: 'my-site-assets', region: 'us-east-1' }
   Passing an `image` field value applies its stored crop (`opts.crop` overrides it). Its `width`
   and `height` are the uncropped original's, so scale them by `crop.w` and `crop.h` for a cropped
   value. SVGs and PDFs are served statically, with no transform. The package declares
-  `sideEffects`, so this import adds about 5 KB minified to a client bundle and none of the
+  `sideEffects`, so this import adds under 7 KB minified to a client bundle and none of the
   config schemas.
 
 - **Where `/assets` is mounted** — the URLs above are root-relative, because that is what gets

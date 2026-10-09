@@ -21,9 +21,10 @@
  * statement, never as `const _ = install()`.
  *
  * What is deliberately absent:
- * - `defineEndpoint` pushes into `ROUTE_REGISTRY` from a `const` initializer, but only
- *   `scripts/generate-client.ts` reads that registry, unbundled under tsx with explicit imports.
- *   The router mounts routes through `api/routes.ts`'s named imports, never through the registry.
+ * - `defineEndpoint` pushes into `ROUTE_REGISTRY` from a `const` initializer, but its one reader,
+ *   `getAllRoutes()`, is called only by `scripts/generate-client.ts`, unbundled under tsx with
+ *   explicit imports. `http/router.ts` mounts routes from `buildCanopyRoutes()` in
+ *   `api/routes.ts`, whose named imports keep every route module, never from the registry.
  * - `config/schemas/field.ts` assigns its own module-local holder at top level; nothing outside
  *   the module reads it, so the scan allows that one statement.
  * - The vitest setup files `tsconfig.build.json` excludes are loaded by path, never imported.
