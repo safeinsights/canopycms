@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Fail when a tracked text file contains a twelve-digit run that could be an
- * AWS account id. This repository is public, and account ids -- ours or an
+ * Fail when a tracked file's text or path holds a value that could be an AWS
+ * account id. This repository is public, and account ids -- ours or an
  * adopter's -- stay out of it: code reads them from the environment, and docs,
  * fixtures and backlog records name the account by its role ("the sandbox
  * account") or use a placeholder below.
@@ -21,8 +21,8 @@
  * - The last group of a UUID (8-4-4-4-12), which is twelve hex characters that
  *   can happen to be all digits.
  *
- * Findings print as file:line:column only, so the check never copies a value
- * into a CI log.
+ * Findings print as file:line:column only, with the digits of any path holding
+ * twelve of them masked, so a finding never copies a value into a CI log.
  *
  *   node scripts/check-account-ids.mjs              # scan every tracked file
  *   node scripts/check-account-ids.mjs --self-test  # check the matcher itself

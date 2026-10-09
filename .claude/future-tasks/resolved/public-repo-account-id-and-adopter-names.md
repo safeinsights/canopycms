@@ -14,9 +14,11 @@ Fixed forward; history is not rewritten (JP's call).
 - The sandbox id, the adopter's stack names, and four more real account ids (the org's
   build, dev, staging and production accounts, in `program-log.md` and
   [program-f-production.md](program-f-production.md)) are replaced with role names.
-- `pnpm lint:account-ids` (`scripts/check-account-ids.mjs`, CI and pre-commit) fails on any
-  twelve-digit run in a tracked file. It exempts three placeholder values and the last group
-  of a UUID; the tree had no other false positives.
+- `pnpm lint:account-ids` (`scripts/check-account-ids.mjs`, CI and pre-commit) fails when a
+  tracked file's text or path holds twelve digits or the console's dddd-dddd-dddd, also
+  URL-encoded. It exempts three placeholder values and the last group of a UUID; the tree had
+  no other false positives. Its known gaps, including a push-time scan, are
+  [account-id-guard-gaps.md](../account-id-guard-gaps.md).
 - The adopter's site name and docs hostname, which appear in many more backlog files, are
   [public-repo-adopter-site-names.md](../public-repo-adopter-site-names.md).
 

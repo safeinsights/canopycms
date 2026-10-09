@@ -24,7 +24,9 @@ name appears in two dozen tracked files, all of them backlog records:
 The adopter's live docs hostname appears at `production-readiness-program.md:70,85`,
 `program-log.md:68`, `resolved/program-d-stack-rebuild.md:36` and
 `resolved/program-e-docs-site-cms.md:21,97`. `program-log.md:76` and
-`resolved/program-f-production.md:40` also cite a path in a private infrastructure repo.
+`resolved/program-f-production.md:40` also cite a path in a private infrastructure repo, and
+`stray-init-remotes-accumulate.md:35-36` paste absolute paths under a maintainer's home
+directory.
 
 ## Proposal
 

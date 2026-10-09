@@ -30,9 +30,9 @@ Note that husky in a worktree resolves `core.hooksPath` to the main checkout's `
 runs the hook body from the main checkout's branch, so a hook change only fires in a worktree
 once the main checkout has it.
 
-## Known matcher blind spots
+## Known blind spots
 
-None occurs in the tree today; each is a shape the matcher accepts silently.
+None occurs in the tree today; each passes the check silently.
 
 - A backslash hex escape touching the id (`\x3A<id>`), the same shape as `%3A<id>`, which the
   matcher handles by URL-decoding.
@@ -41,3 +41,7 @@ None occurs in the tree today; each is a shape the matcher accepts silently.
 - UTF-16 text files, which hold NUL bytes and are skipped as binary.
 - The UUID-tail exemption matches by shape alone, so an id written after
   `xxxxxxxx-xxxx-xxxx-xxxx-` is exempt.
+- An escape that decodes to a letter or digit next to the id (`%41<id>`, `%3A<id>%39`):
+  decoding glues the two together. URL encoders never encode letters or digits.
+- An unreadable tracked file (EACCES, ELOOP) makes `lstatSync`/`readFileSync` throw, and
+  Node's error prints the absolute path unmasked. Catch it and report the masked path instead.

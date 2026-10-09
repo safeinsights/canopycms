@@ -1224,7 +1224,7 @@ Both budgets run in CI and in the pre-commit hook. Each script's header comment 
 
 ### Account-ID Check
 
-`pnpm lint:account-ids` fails on any twelve-digit run in a tracked file that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the two exemptions.
+`pnpm lint:account-ids` fails when a tracked file's text or path holds a value that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the matching rules and the two exemptions. Known gaps: [account-id-guard-gaps.md](.claude/future-tasks/account-id-guard-gaps.md).
 
 ### Published-Package ESM Import Check
 
