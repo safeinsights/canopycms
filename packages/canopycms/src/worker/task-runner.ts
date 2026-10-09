@@ -8,7 +8,11 @@ import {
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import { createOrUpdatePullRequest, isRefAlreadyGoneError } from '../github-service'
+import {
+  createOrUpdatePullRequest,
+  isNoCommitsBetweenError,
+  isRefAlreadyGoneError,
+} from '../github-service'
 import {
   BranchMetadataCorruptError,
   BranchMetadataFileManager,
@@ -74,6 +78,13 @@ export type TaskRunnerContext = Pick<
  * burning its retry budget.
  */
 export class PermanentTaskError extends Error {}
+
+/**
+ * GitHub refused a submit's PR because the pushed branch has no commits its base lacks: the API's
+ * own check found changes, then the base caught up or the check could not run. The failure
+ * handler returns the branch to editing, since nothing is under review.
+ */
+class NothingToSubmitTaskError extends PermanentTaskError {}
 
 /**
  * Classify a task failure as permanent (fail fast) or transient (retry).
@@ -237,7 +248,9 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
         workerLog(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
       } else {
         await failTask(ctx.taskDir, task.id, persistedMessage, ctx.log)
-        await updateBranchMetadataOnFailure(ctx, task, persistedMessage)
+        await updateBranchMetadataOnFailure(ctx, task, persistedMessage, {
+          unlock: err instanceof NothingToSubmitTaskError,
+        })
         workerLogError(
           permanent
             ? '  Permanently failed (non-retryable error)'
@@ -381,19 +394,28 @@ export async function executeTask(
       }
       await ctx.pushBranchToGitHub(branch)
 
-      const result = await createOrUpdatePullRequest({
-        octokit: ctx.octokit(),
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        head: branch,
-        base,
-        title: optionalString(payload, 'title', `Submit ${branch}`),
-        body: optionalString(payload, 'body', ''),
-        // Content submits (api/github-sync.ts) set both.
-        markReadyIfDraft: payload.markReadyIfDraft === true,
-        mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
-        signal,
-      })
+      let result: Awaited<ReturnType<typeof createOrUpdatePullRequest>>
+      try {
+        result = await createOrUpdatePullRequest({
+          octokit: ctx.octokit(),
+          owner: ctx.githubOwner,
+          repo: ctx.githubRepo,
+          head: branch,
+          base,
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
+          // Content submits (api/github-sync.ts) set both.
+          markReadyIfDraft: payload.markReadyIfDraft === true,
+          mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+          signal,
+        })
+      } catch (err) {
+        if (!isNoCommitsBetweenError(err)) throw err
+        throw new NothingToSubmitTaskError(
+          `Nothing was submitted: "${branch}" has no changes compared with "${base}", so GitHub ` +
+            'opened no pull request. The branch is unlocked for editing; save a change, then submit again.',
+        )
+      }
       workerLog(
         result.created
           ? `Created PR #${result.number} for ${branch}`
@@ -440,12 +462,13 @@ export async function executeTask(
         )
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
-      // after) owns the GitHub branch once its own submit recorded a different PR. Without one,
-      // the ref is taken to be the deleted branch's, which is wrong only if that submit pushed
-      // and then lost its PR number. Unparseable metadata keeps the GitHub branch; other read
-      // errors retry.
+      // after) owns the GitHub branch once its own submit recorded a different PR or submit
+      // stamp. Without either, the ref is taken to be the deleted branch's. Unparseable metadata
+      // keeps the GitHub branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
+      const deletedSubmittedAt =
+        typeof payload.submittedAt === 'string' ? payload.submittedAt : undefined
       let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
       let unreadable = false
       try {
@@ -466,6 +489,11 @@ export async function executeTask(
       const livePr = live?.branch.pullRequestNumber
       if (livePr !== undefined && livePr !== deletedPr) {
         workerLog(`Not deleting GitHub branch ${branch}: a newer branch's PR #${livePr} uses it`)
+        return { deleted: false, skipped: 'name-reused' }
+      }
+      const liveSubmittedAt = live?.branch.submittedAt
+      if (liveSubmittedAt !== undefined && liveSubmittedAt !== deletedSubmittedAt) {
+        workerLog(`Not deleting GitHub branch ${branch}: a newer branch submitted under that name`)
         return { deleted: false, skipped: 'name-reused' }
       }
       try {
@@ -557,11 +585,16 @@ export async function updateBranchMetadata(
  * Update branch metadata after permanent task failure. `error` is already
  * redacted by the caller (see [REDACT] in processTaskQueue) and is recorded as
  * syncFailureReason so the editor can show WHY, not just that it failed.
+ *
+ * `unlock` also returns the branch to 'editing', but only while it is still
+ * 'submitted' with no PR: a withdraw, a newer submit's PR, or a review decision
+ * that landed meanwhile is left alone.
  */
 async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,
+  options: { unlock: boolean },
 ): Promise<void> {
   const branch = metadataBranchOf(task)
   if (!branch) return
@@ -575,9 +608,16 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({
-      branch: { name: branch, syncStatus: 'sync-failed', syncFailureReason: error },
-    })
+    const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const unlocked =
+      options.unlock &&
+      (await meta.saveIf(
+        { branch: { ...failed, status: 'editing' } },
+        (existing) =>
+          existing?.branch.status === 'submitted' &&
+          existing.branch.pullRequestNumber === undefined,
+      )) !== null
+    if (!unlocked) await meta.save({ branch: failed })
   } catch (err) {
     workerLogError(
       `Failed to update failure metadata for ${branch}:`,

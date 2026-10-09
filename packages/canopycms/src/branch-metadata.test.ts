@@ -368,6 +368,52 @@ describe('BranchMetadataFileManager', () => {
     })
   })
 
+  describe('saveIf', () => {
+    it('writes when the predicate accepts the metadata on disk', async () => {
+      const root = await tmpDir()
+      await createMeta(root, root).save({ branch: { name: 'b', status: 'submitted' } })
+
+      const saved = await createMeta(root, root).saveIf(
+        { branch: { name: 'b', status: 'editing' } },
+        (existing) => existing?.branch.status === 'submitted',
+      )
+
+      expect(saved?.branch.status).toBe('editing')
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.status).toBe('editing')
+    })
+
+    it('writes nothing and resolves null when the predicate refuses', async () => {
+      const root = await tmpDir()
+      const first = await createMeta(root, root).save({ branch: { name: 'b', status: 'approved' } })
+
+      const saved = await createMeta(root, root).saveIf(
+        { branch: { name: 'b', status: 'editing' } },
+        (existing) => existing?.branch.status === 'submitted',
+      )
+
+      expect(saved).toBeNull()
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.status).toBe('approved')
+      expect(onDisk?.version).toBe(first.version)
+    })
+
+    it('judges the latest write, including one made through another manager', async () => {
+      const root = await tmpDir()
+      const meta = createMeta(root, root)
+      await meta.save({ branch: { name: 'b', status: 'submitted' } })
+      await createMeta(root, root).save({ branch: { name: 'b', pullRequestNumber: 3 } })
+
+      const seen: Array<number | undefined> = []
+      await meta.saveIf({ branch: { name: 'b', status: 'editing' } }, (existing) => {
+        seen.push(existing?.branch.pullRequestNumber)
+        return existing?.branch.pullRequestNumber === undefined
+      })
+
+      expect(seen).toEqual([3])
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.status).toBe('submitted')
+    })
+  })
+
   describe('buildMergedBranchUpdate', () => {
     it('produces archived/merged metadata with an ISO mergedAt and the branch name preserved', () => {
       const now = new Date('2026-01-01T12:00:00.000Z')

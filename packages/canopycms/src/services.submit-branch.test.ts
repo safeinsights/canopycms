@@ -9,7 +9,7 @@ import { createTestServices } from './config-test'
 import { GitManager, ensureGitExcludePattern } from './git-manager'
 import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import type { BranchContext } from './types'
-import type { CanopyServices } from './services'
+import { NothingToSubmitError, type CanopyServices } from './services'
 import { ContentWriteLockBusyError, tryAcquireContentWriteLock } from './utils/content-write-lock'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
@@ -183,13 +183,42 @@ describe('services submitBranch', () => {
     expect(pushSpy).not.toHaveBeenCalled()
   })
 
-  it('a never-pushed branch with a clean tree still pushes', async () => {
-    // No file changes -> the tree is clean immediately after checkout, but
-    // this branch (created fresh from origin/main) has never reached the
-    // mirror under its own name.
-    await services.submitBranch({ context, message: 'no changes, first submit' })
+  describe('nothing to submit', () => {
+    it('refuses a branch with no changes, pushing nothing', async () => {
+      const before = await localSha()
 
-    expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+      await expect(services.submitBranch({ context, message: 'no changes' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect(await localSha()).toBe(before)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
+    })
+
+    it('refuses saved edits that restore the base content, pushing nothing', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      await services.submitBranch({ context, message: 'first submit' })
+      const pushed = await remoteBranchSha('feature-1')
+      await fs.rm(path.join(localPath, 'a.txt'))
+
+      await expect(services.submitBranch({ context, message: 'revert' })).rejects.toThrow(
+        'Nothing to submit yet: "feature-1" has no saved changes compared with "main"',
+      )
+
+      expect(await remoteBranchSha('feature-1')).toBe(pushed)
+    })
+
+    it('submits when the changes cannot be listed', async () => {
+      mockConsole()
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockRejectedValue(
+        new Error('simulated fetch failure'),
+      )
+
+      const result = await services.submitBranch({ context, message: 'no changes' })
+
+      expect(result.changedPaths).toEqual([])
+      expect(await remoteBranchSha('feature-1')).toBe(await localSha())
+    })
   })
   describe("canopycms's own state", () => {
     const CACHE = '.canopy-meta/schema-cache.json'
@@ -232,14 +261,16 @@ describe('services submitBranch', () => {
       ])
     })
 
-    it('creates no commit when canopycms state is the only change', async () => {
+    it('refuses a submit whose only change is canopycms state, creating no commit', async () => {
       const upstreamSha = await trackCanopyMetaUpstream()
       await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
 
-      await services.submitBranch({ context, message: 'submit' })
+      await expect(services.submitBranch({ context, message: 'submit' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
 
       expect(await localSha()).toBe(upstreamSha)
-      expect(await remoteBranchSha('feature-1')).toBe(upstreamSha)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
     })
   })
 

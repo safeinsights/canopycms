@@ -5,9 +5,11 @@ import {
   createCanopyOctokit,
   shouldRetryRateLimit,
   shouldRetrySecondaryRateLimit,
+  isNoCommitsBetweenError,
 } from './github-service'
 import type { CanopyConfig } from './config'
 import { mockConsole } from './test-utils/console-spy'
+import { noCommitsBetweenError, octokitErrorFor } from './test-utils/github-errors'
 import { PR_SECTION_END, PR_SECTION_START } from './submission-attribution'
 
 describe('GitHubService', () => {
@@ -729,5 +731,48 @@ describe('GitHubService', () => {
       // are unaffected by the auth shape.
       expect(octokit.pulls).toBeDefined()
     })
+  })
+})
+
+describe('isNoCommitsBetweenError', () => {
+  it("matches GitHub's 422 for a head with no commits ahead of its base", async () => {
+    expect(isNoCommitsBetweenError(await noCommitsBetweenError())).toBe(true)
+  })
+
+  it('matches on the errors array when the message does not carry the reason', async () => {
+    const err = await noCommitsBetweenError()
+    err.message = 'Validation Failed'
+    expect(isNoCommitsBetweenError(err)).toBe(true)
+  })
+
+  it('matches on the message when the response carries no errors array', async () => {
+    const err = await noCommitsBetweenError()
+    Object.assign(err, { response: undefined })
+    expect(isNoCommitsBetweenError(err)).toBe(true)
+  })
+
+  it.each([
+    ['a duplicate PR', 422, 'A pull request already exists for o:feature-1.'],
+    ['an unknown base', 422, 'base: Field is invalid'],
+    ['a non-422 carrying the same text', 403, 'No commits between main and feature-1'],
+  ])('rejects %s', async (_label, status, message) => {
+    const err = await octokitErrorFor(status, {
+      message: 'Validation Failed',
+      errors: [{ resource: 'PullRequest', code: 'custom', message }],
+    })
+    expect(isNoCommitsBetweenError(err)).toBe(false)
+  })
+
+  it('rejects a 422 whose text only mentions the phrase mid-sentence', async () => {
+    const err = await octokitErrorFor(422, {
+      message: 'Validation Failed',
+      errors: [{ resource: 'PullRequest', code: 'custom', message: 'Found No commits between x' }],
+    })
+    expect(isNoCommitsBetweenError(err)).toBe(false)
+  })
+
+  it('rejects errors without an HTTP status', () => {
+    expect(isNoCommitsBetweenError(new Error('No commits between main and feature-1'))).toBe(false)
+    expect(isNoCommitsBetweenError('No commits between main and feature-1')).toBe(false)
   })
 })

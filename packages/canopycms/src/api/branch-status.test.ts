@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
+import type { CanopyUser } from '../user'
 
 const mockMetadataUpdate = vi.fn().mockResolvedValue({
   schemaVersion: 1,
@@ -40,11 +41,13 @@ vi.mock('../authorization', async (importOriginal) => {
 
 import { WORKFLOW_ROUTES } from './branch-status'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
+import { NothingToSubmitError } from '../services'
 import {
   createMockApiContext,
   createMockBranchContext,
   createMockGitManager,
   mockConsole,
+  noCommitsBetweenError,
 } from '../test-utils'
 
 // Extract handlers for testing
@@ -429,6 +432,93 @@ describe('branch status api', () => {
       expect(ctx.services.submitBranch).toHaveBeenCalled()
     })
   })
+  describe('nothing to submit', () => {
+    const user: CanopyUser = { type: 'authenticated', userId: 'u1', groups: [] }
+    const params = { branch: 'feature/x' as BranchName }
+
+    /** A prod context whose githubService answers createOrUpdatePR with `createOrUpdatePR`. */
+    function directCtx(createOrUpdatePR: ReturnType<typeof vi.fn>) {
+      const ctx = makeCtx(true)
+      ctx.services.config = {
+        ...ctx.services.config,
+        mode: 'prod',
+        defaultBaseBranch: 'main',
+      }
+      ctx.services.githubService = {
+        createOrUpdatePR,
+      } as unknown as NonNullable<typeof ctx.services.githubService>
+      ctx.services.submitBranch = vi.fn().mockResolvedValue({ changedPaths: ['a.md'] })
+      return ctx
+    }
+
+    it('answers 400 with the reason and leaves the branch untouched', async () => {
+      const ctx = makeCtx(true)
+      mockMetadataUpdate.mockClear()
+      ctx.services.submitBranch = vi
+        .fn()
+        .mockRejectedValue(new NothingToSubmitError('feature/x', 'main'))
+
+      const res = await submitBranchForMerge(ctx, { user }, params)
+
+      expect(res).toMatchObject({ ok: false, status: 400 })
+      expect(res.error).toBe(
+        'Nothing to submit yet: "feature/x" has no saved changes compared with "main". Save your edits, then submit.',
+      )
+      expect(mockMetadataUpdate).not.toHaveBeenCalled()
+    })
+
+    it('answers 400 when GitHub finds no commits, recording only that the branch was pushed', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = directCtx(vi.fn().mockRejectedValue(await noCommitsBetweenError()))
+      mockMetadataUpdate.mockClear()
+
+      const res = await submitBranchForMerge(ctx, { user }, params)
+
+      expect(res).toMatchObject({ ok: false, status: 400 })
+      expect(res.error).toMatch(/^Nothing to submit yet: "feature\/x"/)
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
+      expect(mockMetadataUpdate).toHaveBeenCalledWith({
+        branch: { name: 'feature/x', submittedAt: expect.any(String) },
+      })
+      consoleSpy.restore()
+    })
+
+    it('records the reason when a direct PR call fails otherwise', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = directCtx(
+        vi
+          .fn()
+          .mockRejectedValue(
+            new Error('Bad credentials for https://x-access-token:tok@github.com'),
+          ),
+      )
+      mockMetadataUpdate.mockClear()
+
+      const res = await submitBranchForMerge(ctx, { user }, params)
+
+      expect(res.ok).toBe(true)
+      expect(mockMetadataUpdate).toHaveBeenCalledWith({
+        branch: expect.objectContaining({
+          status: 'submitted',
+          syncStatus: 'sync-failed',
+          syncFailureReason: 'Bad credentials for https://***@github.com',
+        }),
+      })
+      consoleSpy.restore()
+    })
+
+    it('stamps submittedAt and clears a stale failure reason on a successful submit', async () => {
+      mockMetadataUpdate.mockClear()
+
+      const res = await submitBranchForMerge(makeCtx(true), { user }, params)
+
+      expect(res.ok).toBe(true)
+      const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
+      expect(saved.submittedAt).toEqual(expect.any(String))
+      expect(saved).toHaveProperty('syncFailureReason', undefined)
+    })
+  })
+
   describe('records the submitting user', () => {
     it('passes the authenticated user to submitBranch and the changed paths into the PR body', async () => {
       const createOrUpdatePR = vi.fn().mockResolvedValue({ number: 5, url: 'https://pr/5' })

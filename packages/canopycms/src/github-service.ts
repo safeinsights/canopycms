@@ -264,6 +264,31 @@ export function isRefAlreadyGoneError(err: unknown): boolean {
   return status === 422 && /reference does not exist/i.test(err.message)
 }
 
+const NO_COMMITS_BETWEEN = /^No commits between /
+
+/**
+ * Whether a PR create failed because the head branch has no commits its base lacks. GitHub
+ * answers 422 "Validation Failed" with the reason in `response.data.errors[].message`, which
+ * Octokit also folds into `err.message`. Other 422s (a duplicate PR, an unknown base) never match.
+ */
+export function isNoCommitsBetweenError(err: unknown): boolean {
+  if (!(err instanceof Error) || !('status' in err) || err.status !== 422) return false
+  const data = 'response' in err ? (err.response as { data?: unknown } | undefined)?.data : null
+  const errors =
+    typeof data === 'object' && data !== null && 'errors' in data ? data.errors : undefined
+  if (Array.isArray(errors)) {
+    return errors.some(
+      (e: unknown) =>
+        typeof e === 'object' &&
+        e !== null &&
+        'message' in e &&
+        typeof e.message === 'string' &&
+        NO_COMMITS_BETWEEN.test(e.message),
+    )
+  }
+  return /"message":"No commits between /.test(err.message)
+}
+
 export class GitHubService {
   private octokit: Octokit
   private owner: string

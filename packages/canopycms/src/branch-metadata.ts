@@ -140,6 +140,20 @@ export class BranchMetadataFileManager {
    * creates only its own directory (`withOccFileLock`), so the save fails there.
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
+    const saved = await this.saveIf(incoming, () => true)
+    if (saved === null) throw new Error('unreachable: an unconditional save was skipped')
+    return saved
+  }
+
+  /**
+   * {@link save}, applied only when `onlyIf` accepts the metadata on disk; resolves null when it
+   * does not, having written nothing. `onlyIf` runs inside the lock stack against the version
+   * the write is checked against, so the decision and the write are one compare-and-set.
+   */
+  async saveIf(
+    incoming: BranchMetadataUpdate,
+    onlyIf: (existing: BranchMetadataFile | null) => boolean,
+  ): Promise<BranchMetadataFile | null> {
     try {
       await fs.stat(this.branchRoot)
     } catch (err: unknown) {
@@ -149,12 +163,13 @@ export class BranchMetadataFileManager {
       throw err
     }
 
-    let saved: BranchMetadataFile
+    let saved: BranchMetadataFile | null
     try {
       saved = await withLock(this.filePath, () =>
         withOccFileLock(this.filePath, () =>
           withOccRetry(async () => {
             const { meta: existing, version } = await this.load()
+            if (!onlyIf(existing)) return null
             const merged = mergeBranchMetadata(existing, version, incoming)
             const written = await this.write(merged, version)
             merged.version = written.version
@@ -174,7 +189,7 @@ export class BranchMetadataFileManager {
     // does, and the registry's eager regeneration is O(branch count) fs reads
     // on EFS — holding the lock through it would stretch every save's critical
     // section for no correctness gain.
-    await this.invalidateRegistry()
+    if (saved !== null) await this.invalidateRegistry()
     return saved
   }
 

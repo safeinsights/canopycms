@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient } from '../test-utils/api-client'
+import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse, BranchListResponse } from '../../api/branch'
 
@@ -148,6 +148,8 @@ describe('Role Permission Integration', () => {
       title: 'Approval Test',
     })
 
+    await saveSamplePost(editorClient, 'approval-test')
+
     await editorClient.post('/api/canopycms/approval-test/submit', {
       message: 'Ready for review',
     })
@@ -168,6 +170,8 @@ describe('Role Permission Integration', () => {
       branch: 'self-approve-test',
       title: 'Self Approve Test',
     })
+
+    await saveSamplePost(editorClient, 'self-approve-test')
 
     await editorClient.post('/api/canopycms/self-approve-test/submit', {
       message: 'Ready',
@@ -223,6 +227,8 @@ describe('Role Permission Integration', () => {
       branch: 'changes-test',
       title: 'Changes Test',
     })
+
+    await saveSamplePost(editorClient, 'changes-test')
 
     await editorClient.post('/api/canopycms/changes-test/submit', {
       message: 'Ready',

@@ -39,7 +39,6 @@ import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
-import { BRANCH_META_DIR } from './branch-metadata-file'
 import {
   appendTrailers,
   buildEditorTrailers,
@@ -90,6 +89,20 @@ export const getBootstrapAdminIds = (): Set<string> => {
       .map((id) => id.trim())
       .filter(Boolean),
   )
+}
+
+/**
+ * Submit found nothing to send: the branch's saved content, committed or not, matches its base
+ * as of the fork point. Raised before anything is pushed, so the branch is left as it was.
+ */
+export class NothingToSubmitError extends Error {
+  constructor(branch: string, base: string) {
+    super(
+      `Nothing to submit yet: "${branch}" has no saved changes compared with "${base}". ` +
+        'Save your edits, then submit.',
+    )
+    this.name = 'NothingToSubmitError'
+  }
 }
 
 export interface SubmitBranchResult {
@@ -145,7 +158,8 @@ export interface CanopyServices {
    * Submit branch: commit all changes (with the submitter's trailers) and push
    * to remote. Resolves with every path the branch changes against its base.
    * Holds the branch's content-write lock; rejects with
-   * `ContentWriteLockBusyError` when busy.
+   * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
+   * before pushing when the branch changes nothing.
    */
   submitBranch: (options: {
     context: BranchContext
@@ -364,29 +378,32 @@ async function _createCanopyServicesInternal(
         )
         committed = true
       }
+      // The diff runs after the commit so it covers saved-but-uncommitted edits too, and
+      // before the push so a branch with nothing to submit never reaches the remote. A diff
+      // that cannot be computed lets the submit through: the list only feeds the PR body, and
+      // the worker reports a branch GitHub finds empty (task-runner.ts).
+      let changedPaths: string[] | undefined
+      try {
+        changedPaths = (await git.listChangedPathsSinceBase()).filter(
+          (p) => !isCanopyInternalPath(p),
+        )
+      } catch (err) {
+        console.warn(
+          `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
+            "the PR body lists only this submit's changes:",
+          redactCredentials(getErrorMessage(err)),
+        )
+      }
+      if (changedPaths?.length === 0) {
+        throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
+      }
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
         await git.push(options.context.branch.name)
       }
-      return status
+      return changedPaths ?? status.files.map((f) => f.path).filter((p) => !isCanopyInternalPath(p))
     })
 
-    // The list only feeds the PR body, so a failure to compute it falls back to
-    // this submit's own working-tree changes rather than failing a submit that
-    // has already been pushed.
-    let changedPaths: string[]
-    try {
-      changedPaths = await git.listChangedPathsSinceBase()
-    } catch (err) {
-      console.warn(
-        `CanopyCMS: Could not list the changes on ${options.context.branch.name} against its base; ` +
-          "the PR body lists only this submit's changes:",
-        redactCredentials(getErrorMessage(err)),
-      )
-      changedPaths = submitted.files.map((f) => f.path)
-    }
-    return {
-      changedPaths: changedPaths.filter((p) => !p.startsWith(`${BRANCH_META_DIR}/`)),
-    }
+    return { changedPaths: submitted }
   }
 
   // Must be initialized before closures that reference it (commitToSettingsBranch)

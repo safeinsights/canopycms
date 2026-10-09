@@ -398,11 +398,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         )}
                         {b.syncStatus === 'sync-failed' && (
                           <Tooltip
-                            label={
-                              b.syncFailureReason
-                                ? `GitHub sync failed: ${b.syncFailureReason}`
-                                : 'GitHub sync failed — an admin can retry it from System health.'
-                            }
+                            label="GitHub sync failed — an admin can retry it from System health."
+                            disabled={Boolean(b.syncFailureReason)}
                             multiline
                             maw={320}
                           >
@@ -439,6 +436,18 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           </Tooltip>
                         )}
                       </Group>
+                      {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
+                        <Text
+                          size="xs"
+                          c="red"
+                          maw={480}
+                          data-testid={`sync-failed-reason-${b.name}`}
+                        >
+                          {b.syncFailureReason}
+                          {b.status === 'submitted' &&
+                            ' Withdraw this branch to unlock it for editing.'}
+                        </Text>
+                      )}
                       <Group gap="xs" align="center">
                         {b.updatedAt && (
                           <Tooltip label={new Date(b.updatedAt).toLocaleString()}>

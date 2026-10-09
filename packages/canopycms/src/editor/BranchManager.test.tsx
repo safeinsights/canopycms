@@ -477,20 +477,33 @@ describe('BranchManager', () => {
     expect(await screen.findByText(/System health/)).toBeDefined()
   })
 
-  it('shows the specific failure reason in the Sync failed tooltip when the worker recorded one', async () => {
+  it('shows the recorded failure reason on the row instead of the generic tooltip', async () => {
+    const reason = 'Push rejected for branch "main": it has moved on GitHub.'
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], syncStatus: 'sync-failed', syncFailureReason: reason },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(reason)
+    await userEvent.hover(screen.getByTestId('sync-failed-badge-main'))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByText(/System health/)).toBeNull()
+  })
+
+  it('tells the author to withdraw when the failed branch is still submitted', () => {
     const branches: BranchSummary[] = [
       {
         ...baseBranches[0],
+        status: 'submitted',
         syncStatus: 'sync-failed',
-        syncFailureReason:
-          'Push rejected for branch "main": it has moved on GitHub (likely another CanopyCMS deployment sharing this repository, or a direct push).',
+        syncFailureReason: 'Push rejected.',
       },
     ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
-    const badge = screen.getByTestId('sync-failed-badge-main')
 
-    await userEvent.hover(badge)
-    expect(await screen.findByText(/moved on GitHub/)).toBeDefined()
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
+      'Push rejected. Withdraw this branch to unlock it for editing.',
+    )
   })
 
   it('shows a gray Syncing badge with a tooltip when sync is pending', async () => {

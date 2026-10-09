@@ -14,7 +14,13 @@ import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-wor
 import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import {
+  initTestRepo,
+  mockConsole,
+  noCommitsBetweenError,
+  octokitErrorFor,
+  type MockConsole,
+} from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CANOPYCMS_VERSION } from '../version'
 import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
@@ -780,6 +786,78 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await worker.processTaskQueue()
 
     expect(internals.octokit.pulls.create).toHaveBeenCalled()
+  })
+
+  describe('when GitHub finds no commits to open a PR for', () => {
+    const seedMeta = async (branch: Record<string, unknown>) => {
+      await setupBranchDir('feature-x')
+      await getBranchMetadataFileManager(
+        path.join(contentBranchesPath, 'feature-x'),
+        contentBranchesPath,
+      ).save({ branch: { name: 'feature-x', ...branch } })
+    }
+
+    const runSubmitTask = async (createError: Error) => {
+      const { worker, internals } = makePrWorker()
+      internals.octokit.pulls.list.mockResolvedValue({ data: [] })
+      internals.octokit.pulls.create.mockRejectedValue(createError)
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch: 'feature-x', title: 'Submit feature-x', body: '', baseBranch: 'main' },
+      })
+      await worker.processTaskQueue()
+      return getTask(taskDir, id)
+    }
+
+    it('fails fast and returns a submitted branch to editing with the reason', async () => {
+      await seedMeta({ status: 'submitted', syncStatus: 'pending-sync' })
+
+      const task = await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      expect(task?.status).toBe('failed')
+      expect(task?.retryCount ?? 0).toBe(0)
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('editing')
+      expect(meta.branch.syncStatus).toBe('sync-failed')
+      expect(meta.branch.syncFailureReason).toBe(
+        'Nothing was submitted: "feature-x" has no changes compared with "main", so GitHub ' +
+          'opened no pull request. The branch is unlocked for editing; save a change, then submit again.',
+      )
+    })
+
+    it('leaves the status alone when the branch already has a PR', async () => {
+      await seedMeta({ status: 'submitted', pullRequestNumber: 12 })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('submitted')
+      expect(meta.branch.syncFailureReason).toMatch(/^Nothing was submitted/)
+    })
+
+    it('leaves the status alone when the branch is no longer submitted', async () => {
+      await seedMeta({ status: 'approved' })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+
+      expect((await readBranchMeta('feature-x')).branch.status).toBe('approved')
+    })
+
+    it('keeps a branch submitted when a different 422 fails the PR', async () => {
+      await seedMeta({ status: 'submitted' })
+
+      const task = await runSubmitTask(
+        await octokitErrorFor(422, {
+          message: 'Validation Failed',
+          errors: [{ resource: 'PullRequest', code: 'invalid', field: 'base' }],
+        }),
+      )
+
+      expect(task?.status).toBe('failed')
+      const meta = await readBranchMeta('feature-x')
+      expect(meta.branch.status).toBe('submitted')
+      expect(meta.branch.syncFailureReason).toContain('Validation Failed')
+    })
   })
 })
 
@@ -2406,6 +2484,7 @@ describe('CmsWorker delete-remote-branch', () => {
     deleteRef: ReturnType<typeof vi.fn>,
     branch = 'feature-x',
     pullRequestNumber?: number,
+    submittedAt?: string,
   ) => {
     const worker = new CmsWorker({
       workspacePath: tmpDir,
@@ -2422,7 +2501,11 @@ describe('CmsWorker delete-remote-branch', () => {
     internals.octokit = { git: { deleteRef } }
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
-      payload: { branch, ...(pullRequestNumber !== undefined && { pullRequestNumber }) },
+      payload: {
+        branch,
+        ...(pullRequestNumber !== undefined && { pullRequestNumber }),
+        ...(submittedAt !== undefined && { submittedAt }),
+      },
     })
     await worker.processTaskQueue()
     return getTask(taskDir, id)
@@ -2510,6 +2593,26 @@ describe('CmsWorker delete-remote-branch', () => {
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
     const task = await runDelete(deleteRef, 'feature-x', 7)
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect(task?.result).toEqual({ deleted: true })
+  })
+
+  it('leaves GitHub alone when a branch that reused the name has its own submit stamp', async () => {
+    await seedReused({ submittedAt: '2026-02-01T00:00:00.000Z' })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
+
+    expect(deleteRef).not.toHaveBeenCalled()
+    expect(task?.result).toEqual({ deleted: false, skipped: 'name-reused' })
+  })
+
+  it('still deletes when the live metadata records the deleted submit stamp itself', async () => {
+    await seedReused({ submittedAt: '2026-01-01T00:00:00.000Z' })
+    const deleteRef = vi.fn().mockResolvedValue({ data: {} })
+
+    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
     expect(task?.result).toEqual({ deleted: true })
