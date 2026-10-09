@@ -9,9 +9,10 @@
  *
  * A match is exactly twelve digits, or the console's dddd-dddd-dddd, with no
  * letter or digit on either side, so hex digests and longer numbers never
- * match. Percent-escapes are blanked first, since the hex digit ending `%3A`
- * would otherwise hide an id in a URL-encoded ARN. Two exemptions, neither of
- * which can ever name a real account:
+ * match. A percent-escape, `%3A` or a re-encoded `%253A`, also counts as a
+ * boundary on the left: its last hex digit would otherwise hide an id in a
+ * URL-encoded ARN. Tracked paths are checked as well as contents. Two
+ * exemptions, neither of which can ever name a real account:
  *
  * - PLACEHOLDERS: AWS's own documentation placeholder and two repeated-digit
  *   values for multi-account examples. This set never grows to hold a real id;
@@ -36,14 +37,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PLACEHOLDERS = new Set(['123456789012', '111111111111', '222222222222'])
 
 const ACCOUNT_ID =
-  /(?<![0-9A-Za-z-])[0-9]{4}-[0-9]{4}-[0-9]{4}(?![0-9A-Za-z-])|(?<![0-9A-Za-z])[0-9]{12}(?![0-9A-Za-z])/g
-const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/g
+  /(?<![0-9A-Za-z-])[0-9]{4}-[0-9]{4}-[0-9]{4}(?![0-9A-Za-z-])|(?:(?<![0-9A-Za-z])|(?<=%(?:25)*[0-9A-Fa-f]{2}))[0-9]{12}(?![0-9A-Za-z])/g
 const UUID_HEAD = /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-$/
 
-/** Columns (1-based) of every non-exempt twelve-digit run in one line. */
-function findAccountIds(rawLine) {
-  // Same length, so columns still point into the original line.
-  const line = rawLine.replace(PERCENT_ESCAPE, '   ')
+/** Columns (1-based) of every non-exempt account-id match in one line. */
+function findAccountIds(line) {
   const columns = []
   for (const match of line.matchAll(ACCOUNT_ID)) {
     if (PLACEHOLDERS.has(match[0].replaceAll('-', ''))) continue
@@ -59,6 +57,8 @@ function scanTree() {
     .filter(Boolean)
   const findings = []
   for (const rel of files) {
+    // Digits masked, so a path holding an id is not copied into the log either.
+    if (findAccountIds(rel).length > 0) findings.push(`${rel.replace(/[0-9]/g, '#')} (path)`)
     const abs = path.join(ROOT, rel)
     // Skips a tracked file deleted in the working tree, a symlink and a submodule.
     if (!lstatSync(abs, { throwIfNoEntry: false })?.isFile()) continue
@@ -98,6 +98,9 @@ function selfTest() {
     [`x-${fake}`, 1],
     [`${fake} and ${fake}`, 2],
     [`arn%3Aaws%3Aiam%3A%3A${fake}%3Arole`, 1],
+    [`arn%253Aaws%253Aiam%253A%253A${fake}%253Arole`, 1],
+    [`LIKE '%${fake}%'`, 1],
+    [`%25${fake}`, 1],
     [`account ${fakeDashed}`, 1],
     [`account 1234-5678-9012`, 0],
     [`'00000000-${fakeDashed}-${'0'.repeat(12)}'`, 0],
