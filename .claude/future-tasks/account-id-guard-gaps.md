@@ -1,4 +1,4 @@
-# The account-id guard runs only at commit time and in CI
+# The account-id guard's remaining gaps: push-time scan and matcher blind spots
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08 while reviewing
 [public-repo-account-id-and-adopter-names.md](resolved/public-repo-account-id-and-adopter-names.md).
@@ -14,7 +14,7 @@ A pre-push line that ran the same working-tree scan was tried and dropped. It in
 the checked-out tree, not what was being pushed: `git push origin other-branch`, or an id
 committed and then deleted in an uncommitted edit, passed it.
 
-## Proposal
+## Proposal: a push-time scan
 
 Give the script a push mode for `.husky/pre-push`:
 
@@ -29,3 +29,15 @@ Give the script a push mode for `.husky/pre-push`:
 Note that husky in a worktree resolves `core.hooksPath` to the main checkout's `.husky/_`, and
 runs the hook body from the main checkout's branch, so a hook change only fires in a worktree
 once the main checkout has it.
+
+## Known matcher blind spots
+
+None occurs in the tree today; each is a shape the matcher accepts silently.
+
+- A backslash hex escape touching the id (`\x3A<id>`), the same shape as `%3A<id>`, which the
+  matcher handles by URL-decoding.
+- The dashed form directly after a hyphen (`stack-dddd-dddd-dddd`). The hyphen exclusion that
+  keeps card-like 4-4-4-4 numbers and UUID groups out also drops this.
+- UTF-16 text files, which hold NUL bytes and are skipped as binary.
+- The UUID-tail exemption matches by shape alone, so an id written after
+  `xxxxxxxx-xxxx-xxxx-xxxx-` is exempt.
