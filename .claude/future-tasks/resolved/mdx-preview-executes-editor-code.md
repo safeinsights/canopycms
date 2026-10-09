@@ -2,8 +2,8 @@
 summary: >-
   RESOLVED 2026-10-09, fix/mdx-preview-trust-model. JP chose a save-time policy, secure by default.
   An `mdx` field and the body of an `mdx` entry refuse anything that runs code as it renders:
-  `{…}` expressions other than comments and literals, `import`/`export`, HTML tags outside a safe
-  set, event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes, and unsafe URL schemes.
+  `{…}` expressions other than comments and literals, `import`/`export`, HTML tags and tag attributes
+  outside a safe set, event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes, and unsafe URL schemes.
   `markdown` fields and `md` bodies have their URLs checked. A field opts out with
   `executable: true`. The API enforces it at the write boundary. Code the stored entry already
   held is kept with a warning in a field saved unchanged, and a production build lists every

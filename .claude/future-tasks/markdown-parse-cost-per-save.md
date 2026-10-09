@@ -14,7 +14,7 @@ summary: >-
 ## Problem
 
 `micromark` is super-linear on some shapes. A 250KB body of about 500 nested list levels took
-24.6s in one `findUnsafeMarkdown` call; an ordinary 100KB body takes about 1.6s.
+24.6s in one `findUnsafeMarkdown` call; a 100KB body of plain prose or of simple components took about 0.18s on a developer laptop.
 
 A save parses the body in two places, and the CMS caps a save's body at 2MB
 (`MAX_CONTENT_BODY_CHARS` in `api/content.ts`):

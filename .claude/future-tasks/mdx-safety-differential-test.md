@@ -25,7 +25,7 @@ renders. A scratch harness did, during the PR that added the policy:
 
 It must record no global read and emit no `<script`, `<iframe`, `javascript:`, `srcdoc` or `on…=`.
 
-The result over 20,000 bodies: 3,233 accepted, 0 failures. Control cases showed the refused shapes
+The result over 20,000 bodies, at the policy the PR merged with: 2,960 accepted, 0 failures. Control cases showed the refused shapes
 really do run code or emit unsafe HTML.
 
 ## To do

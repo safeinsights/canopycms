@@ -1,32 +1,32 @@
 /**
  * The save-time policy that keeps code out of `markdown` and `mdx` content.
  *
- * MDX compiles `{expressions}`, `import`/`export` and JSX into JavaScript, so whatever renders a
- * body with `evaluate` or `run` executes it: in a preview, on the CMS origin with the viewer's
- * session; in a server render, in the CMS process; in a build, on CI. A body this policy accepts
- * runs only the site's own components. An `mdx` field, and the body of an `mdx` entry, accepts:
+ * MDX compiles `{expressions}`, `import`/`export` and JSX into JavaScript that runs wherever a
+ * body renders: a preview with the viewer's session, a server render, a CI build. A body this
+ * policy accepts runs only the site's own components. An `mdx` field or `mdx` body accepts:
  *
  * - no `import`/`export`, and no `{…}` expression except a comment or a static literal
  *   (`{300}`, `{["a", "b"]}`), in text or as an attribute value; no spread attributes;
  * - components by plain name (`<Callout>`, the site's own code) and HTML tags from
  *   `SAFE_HTML_TAGS` only, since a tag is a real element whose attributes need no expression to
  *   run code (`<script>`, `<iframe srcdoc>`);
- * - no event-handler, `dangerouslySetInnerHTML` or `srcdoc` attribute on any element;
- * - URLs, in links, images, definitions and URL attributes, that are relative or use a scheme in
- *   `SAFE_URL_SCHEMES`. React 18 renders a `javascript:` href as given.
+ * - on an HTML tag, attributes from `SAFE_HTML_ATTRIBUTES` and `aria-*` only; no event handler
+ *   (`on…` on a tag, `onX` on a component), `dangerouslySetInnerHTML` or `srcdoc` anywhere;
+ * - URLs, in links, images, definitions and URL attributes, that are relative, use a scheme in
+ *   `SAFE_URL_SCHEMES`, or are raster `data:` images; no `javascript:` or `vbscript:` value in any
+ *   prop. React 18 renders a `javascript:` href as given.
  *
- * Markdown (`markdown` fields, the body of an `md` entry) renders braces, imports and tags as
- * text, so only its URLs are checked. A field with `executable: true` is not checked at all.
+ * Markdown (`markdown` fields, the body of an `md` entry) renders braces and imports as text, and
+ * tags too unless the site enables raw HTML, so only its URLs are checked. A field with
+ * `executable: true` is not checked at all.
  *
- * A body is parsed with and without GFM and the issues of both kept, so a site's choice of
- * `remark-gfm` cannot hide a construct from the check, and an MDX body that does not parse is
- * refused, since it cannot be checked.
+ * A body is parsed with and without GFM, so a site's choice of `remark-gfm` cannot hide a
+ * construct from the check; an MDX body that does not parse cannot be checked, so is refused.
  *
- * A save may keep code the stored entry already holds, which came from outside the CMS or from
- * before this policy, but only in a field saved unchanged: what code does depends on the field
- * around it (the props beside it, the component it sits in, the markup a script reads), so no
- * smaller unit can be kept safely. Every other field of the entry stays editable, and removing the
- * code from a field is always accepted.
+ * A save keeps code the stored entry already holds (from outside the CMS, or from before this
+ * policy) only in a field saved unchanged: code reads what surrounds it (the props beside it, its
+ * parent, the markup a script reads), so no smaller unit is safe to keep. Other fields stay
+ * editable, and removing the code is always accepted.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -460,10 +460,7 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
       const scheme = scriptScheme(text)
       if (scheme === undefined) continue
       issues.push(
-        issue(
-          node,
-          `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}, which a component may use as a link`,
-        ),
+        issue(node, `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}`),
       )
     }
   }
@@ -547,7 +544,7 @@ export function findUnsafeMarkdown(
   source: string,
   dialect: MarkdownDialect,
 ): MarkdownSafetyIssue[] {
-  // Line endings are not part of what MDX compiles, and the editor saves a CRLF file as LF.
+  // Line endings are not part of what MDX compiles, and a save may turn CRLF into LF.
   const field = source.replace(/\r\n?/g, '\n')
   const parses: MarkdownSafetyIssue[][] = []
   for (const withGfm of [false, true]) {

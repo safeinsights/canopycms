@@ -45,7 +45,7 @@ which entries belong to it is still a read of `git log`.
 **What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other
 than comments and plain values, `import`/`export`, HTML tags and tag attributes outside a safe
 set, event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes, and URL schemes other than http(s), mailto,
-tel and `entry:`. `markdown` fields and `md` bodies refuse those URLs. New: the field option `executable` and
+tel, `entry:` and raster `data:` images. `markdown` fields and `md` bodies refuse those URLs. New: the field option `executable` and
 the type `MarkdownFieldConfig`. See
 [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 

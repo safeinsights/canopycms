@@ -450,9 +450,8 @@ const writeContentHandler = async (
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
       const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
 
-      // Code in markdown or MDX (validation/markdown-safety.ts). What the stored entry already
-      // held in the same field is kept with a warning, so an author is never stuck; anything this
-      // save adds, changes, copies or moves is refused.
+      // Code in markdown or MDX (validation/markdown-safety.ts). A field the stored entry held
+      // with code is kept, with a warning, when saved unchanged; any other code is refused.
       const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation)
       if (unsafe.length > 0) {
         const stored = exists

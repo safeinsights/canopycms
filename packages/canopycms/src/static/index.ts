@@ -251,7 +251,8 @@ type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
   /**
    * The unknown-key and unsafe-markdown scans read this, to recognise the md/mdx body key that
    * `listEntries` merges into `data`. Optional so a caller assembling items by hand still typechecks; an
-   * absent format is treated as markdown-shaped, which errs toward under-reporting.
+   * absent format errs toward under-reporting: the unknown-key scan treats it as markdown-shaped,
+   * and the unsafe-markdown scan checks no body.
    */
   format?: ListEntriesItem['format']
 }
@@ -403,8 +404,8 @@ export interface EntryWithUnsafeMarkdown {
 
 /**
  * Scan listEntries-shaped items for markdown and MDX that runs code where the field is not
- * `executable`. A save refuses adding such code but keeps what an entry already holds, so the
- * build is where it is listed. Non-fatal, like the unknown-key scan.
+ * `executable`. A save keeps such code only in a field saved unchanged, so the build is where it
+ * is listed. Non-fatal, like the unknown-key scan.
  */
 export function findEntriesWithUnsafeMarkdown(
   items: readonly BuildScanItem[],
