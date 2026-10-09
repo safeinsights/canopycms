@@ -396,8 +396,33 @@ describe('SystemHealthPanel', () => {
       renderPanel()
 
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
-      expect(screen.getByText('Worker crash detected')).toBeTruthy()
+      expect(screen.getByText('The worker failed to start')).toBeTruthy()
       expect(screen.getByText('Worker crashed on boot')).toBeTruthy()
+    })
+
+    it('says the worker stopped while running for a failure after startup', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          makeStatus({
+            worker: { state: 'absent' },
+            workerStatus: {
+              version: 1,
+              startedAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: new Date().toISOString(),
+              lastFatalError: {
+                message: 'The worker lost its lock on the shared workspace and stopped',
+                at: new Date().toISOString(),
+                phase: 'run',
+              },
+            },
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('The worker stopped while running')).toBeTruthy())
+      expect(screen.queryByText('The worker failed to start')).toBeNull()
     })
   })
 

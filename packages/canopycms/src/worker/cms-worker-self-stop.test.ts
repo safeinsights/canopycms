@@ -87,12 +87,14 @@ describe('CmsWorker.selfStopped', () => {
     // The heartbeat's next refresh finds the lock gone.
     await fs.rm(path.join(taskDir, '.worker-lock'), { recursive: true, force: true })
 
-    expect(await settledWithin(worker, 5000)).toEqual({ reason: 'worker lock compromised' })
+    expect(await settledWithin(worker, 5000)).toEqual({
+      reason: 'the worker lost its lock on the shared workspace',
+    })
     const status = await readStatus()
     expect(status?.lastFatalError).toMatchObject({ phase: 'run' })
     expect(status?.lastFatalError?.message).toContain('lost its lock on the shared workspace')
     expect(status?.lastShutdown).toMatchObject({
-      reason: 'worker lock compromised',
+      reason: 'the worker lost its lock on the shared workspace',
       workerStartedAt: status?.startedAt,
     })
     // Released once recorded, so the restarted worker takes it at once.
@@ -118,7 +120,9 @@ describe('CmsWorker.selfStopped', () => {
       onCompromised: () => {},
     })
     try {
-      expect(await settledWithin(worker, 8000)).toEqual({ reason: 'worker lock compromised' })
+      expect(await settledWithin(worker, 8000)).toEqual({
+        reason: 'the worker lost its lock on the shared workspace',
+      })
       expect(await readStatus()).toBeNull()
       expect(consoleSpy).toHaveErrored('Not recording the lock loss')
     } finally {

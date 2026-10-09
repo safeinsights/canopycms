@@ -180,7 +180,8 @@ export interface WorkerSelfStop {
   reason: string
 }
 
-const LOCK_COMPROMISED_REASON = 'worker lock compromised'
+// Shown as the last shutdown's reason in System health, so it reads as a sentence there.
+const LOCK_COMPROMISED_REASON = 'the worker lost its lock on the shared workspace'
 
 /**
  * Take the cross-host worker lock (see {@link CmsWorker}'s `acquireLock`), retrying for up to
