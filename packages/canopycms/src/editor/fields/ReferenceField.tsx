@@ -16,6 +16,17 @@ export interface ReferenceOption {
   label: string
 }
 
+/** Label for a set value the options omit (a restricted, missing or unlisted target). */
+function unlistedReferenceLabel(value: unknown, id: string): string {
+  if (value && typeof value === 'object' && 'unavailable' in value && value.unavailable === true) {
+    if ('reason' in value && value.reason === 'restricted' && 'title' in value) {
+      return `Restricted entry: ${String(value.title)}`
+    }
+    return `Missing entry (${id})`
+  }
+  return `Unavailable entry (${id})`
+}
+
 export interface ReferenceFieldProps {
   id?: string
   label?: string
@@ -69,6 +80,17 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       ? value.map(extractId)
       : []
     : extractId(value)
+
+  // Otherwise Select shows a set value as empty, inviting an editor to repoint it.
+  const listed = new Set(options.map((option) => option.value))
+  const unlisted = new Map<string, ReferenceOption>()
+  for (const raw of multiple ? (Array.isArray(value) ? value : []) : [value]) {
+    const valueId = extractId(raw)
+    if (valueId && !listed.has(valueId) && !unlisted.has(valueId)) {
+      unlisted.set(valueId, { value: valueId, label: unlistedReferenceLabel(raw, valueId) })
+    }
+  }
+  const data = unlisted.size > 0 ? [...options, ...unlisted.values()] : options
   const generatedId = useId()
   const inputId = id ?? generatedId
 
@@ -200,7 +222,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           id={inputId}
           label={label}
           description={description}
-          data={options}
+          data={data}
           value={normalizedValue as string[]}
           onChange={(next) => onChange(next)}
           searchable
@@ -212,7 +234,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           id={inputId}
           label={label}
           description={description}
-          data={options}
+          data={data}
           value={normalizedValue as string}
           onChange={(next) => onChange(next ?? '')}
           searchable

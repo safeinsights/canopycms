@@ -63,16 +63,19 @@ const blockRegistry: BlockComponentRegistry<Blocks, BlockExtraProps> = {
   ),
   // A shared/referenced block (see README's "Shared / Referenced Blocks"): `snippet` is
   // the resolved entry data, not an id — CanopyCMS resolves the reference before this
-  // component ever sees it. Null-safe because the referenced entry can be deleted, and
-  // `unavailable` when the reader may not read it, which leaves only its title and URL.
+  // component ever sees it. `unavailable` when the referenced entry was deleted
+  // (`reason: 'missing'`, only its id) or the reader may not read it (`'restricted'`, its title
+  // and URL).
   sharedCta: ({ data, index, fieldProps }) => (
     <div
       {...fieldProps(['blocks', index])}
       className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3"
     >
-      {data.snippet?.unavailable ? (
+      {!data.snippet || (data.snippet.unavailable && data.snippet.reason === 'missing') ? (
+        <p className="text-xs text-amber-700">Shared CTA snippet not found.</p>
+      ) : data.snippet.unavailable ? (
         <p className="text-xs text-amber-700">{data.snippet.title} (sign in to see this)</p>
-      ) : data.snippet ? (
+      ) : (
         <>
           <div
             className="text-sm font-semibold text-amber-900"
@@ -87,8 +90,6 @@ const blockRegistry: BlockComponentRegistry<Blocks, BlockExtraProps> = {
             {data.snippet.ctaText}
           </button>
         </>
-      ) : (
-        <p className="text-xs text-amber-700">Shared CTA snippet not found.</p>
       )}
     </div>
   ),

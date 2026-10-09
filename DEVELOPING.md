@@ -307,7 +307,7 @@ A reference field scopes what it can point at with `collections` (at least one r
 
 ### Live Reference Resolution in the Editor
 
-The live preview must show referenced content, not ids, from its first frame. `useReferenceResolution`, called in `Editor.tsx` rather than inside the form, computes the preview value during render from a cache keyed `"<branch>:<id>"`, so a reference is its target or `null` and never a bare id. A debounced effect fetches the ids the cache lacks through `POST /:branch/resolve-references` in batches of 100. `client-reference-resolver.ts` walks the draft with `traverseFields` and each container's `dataPath`, reaching every position the server resolves. An id the endpoint omits caches as `null` until `MISSING_REFERENCE_TTL_MS` passes, and a failed request caches nothing. See `client-reference-resolver.test.ts` and `Editor.preview-references.test.tsx`.
+The live preview must show referenced content, not ids, from its first frame. `useReferenceResolution`, called in `Editor.tsx` rather than inside the form, computes the preview value during render from a cache keyed `"<branch>:<id>"`, so a reference is its target or `null` and never a bare id. A debounced effect fetches the ids the cache lacks through `POST /:branch/resolve-references` in batches of 100. `client-reference-resolver.ts` walks the draft with `traverseFields` and each container's `dataPath`, reaching every position the server resolves. An id the endpoint omits (its lookup threw) caches as `null` until `MISSING_REFERENCE_TTL_MS` passes, and a failed request caches nothing. See `client-reference-resolver.test.ts` and `Editor.preview-references.test.tsx`.
 
 ## Working with Assets
 

@@ -434,6 +434,8 @@ export interface CanopyConfig {
   basePath?: string
   /** HTTP status of an unauthenticated API response — see {@link CanopyConfigInput.unauthenticatedStatus}. */
   unauthenticatedStatus?: 401 | 419
+  /** What a production build does on a dangling reference — see {@link CanopyConfigInput.danglingReferences}. */
+  danglingReferences?: 'error' | 'warn'
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links — see {@link CanopyConfigInput.entryLinkUrl}. */
@@ -513,6 +515,12 @@ export interface CanopyConfigInput {
    * The body says `status: 401` either way, and that is what the editor detects sign-out from.
    */
   unauthenticatedStatus?: 401 | 419
+  /**
+   * What a production build does when a reference names no entry. Default `'error'`: the build
+   * fails, listing each entry, field path and missing id, since the page would otherwise ship
+   * without what the reference supplied. `'warn'` prints the list, capped at 20, and lets the build pass.
+   */
+  danglingReferences?: 'error' | 'warn'
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */

@@ -8,9 +8,11 @@ import type { ContentId } from './paths/types'
 import { sortByOrder, parseTypedFilename, listEntries } from './content-listing'
 import { ContentIdIndex } from './content-id-index'
 import { ContentStore } from './content-store'
-import { referenceValueId } from './validation/entry-validator'
+import { referenceValueId } from './validation/field-traversal'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
+import { resetDanglingReferenceWarnings } from './dangling-reference-log'
+import { mockConsole } from './test-utils/console-spy'
 import type { EntryTypeConfig, FieldConfig, RootCollectionConfig } from './config'
 
 // ---------------------------------------------------------------------------
@@ -1144,18 +1146,33 @@ describe('listEntries', () => {
       expect(refs[1]).toMatchObject({ title: 'Sign up today' })
     })
 
-    it('resolves a dangling reference to null rather than throwing', async () => {
+    it('resolves a dangling reference to a MissingReference naming the listed entry', async () => {
       const { postsDir, schema } = await createSnippetAndPosts(referenceField)
+      const danglingId = generateId()
       await createEntry(postsDir, 'post', 'hello', 'json', {
         title: 'Hello',
-        snippet: generateId(),
+        snippet: danglingId,
       })
+      resetDanglingReferenceWarnings()
+      const consoleSpy = mockConsole()
+      try {
+        const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+          resolveReferences: true,
+        })
 
-      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
-        resolveReferences: true,
-      })
-
-      expect(entries.find((e) => e.slug === 'hello')!.data.snippet).toBeNull()
+        expect(entries.find((e) => e.slug === 'hello')!.data.snippet).toEqual({
+          id: danglingId,
+          unavailable: true,
+          reason: 'missing',
+        })
+        expect(consoleSpy.all().warn).toEqual([
+          expect.stringContaining(
+            `content/posts/hello field "snippet" references missing entry ${danglingId}`,
+          ),
+        ])
+      } finally {
+        consoleSpy.restore()
+      }
     })
 
     it('hands resolved data to extract and filter, not the raw id', async () => {

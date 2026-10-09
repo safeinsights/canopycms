@@ -51,6 +51,31 @@ typed `PreviewLoadingState<T>`, so a reference's entry is `boolean | undefined`.
 **Now deletable.** Hand-written reference narrowing (string id, `null`, `unavailable` checks), and
 top-level-only reference fields kept for the preview's sake.
 
+### A reference to a missing entry resolves to its id, and fails the build — **breaking (types and build)**
+
+**What changed.** A reference whose id names no entry resolves to
+`{ id, unavailable: true, reason: 'missing' }` (`MissingReference`) instead of `null`, and a
+production build fails on one, naming entry, field path and id. Saving the referring entry keeps
+the id, where it used to write `null` over it; a save adding a new dangling id is refused.
+
+**To adopt.**
+
+- After narrowing on `unavailable`, check `reason === 'restricted'` before reading `title` or
+  `urlPath` (TypeScript flags it), and test `reason === 'missing'` where you tested `null`.
+  `Exclude<…, RestrictedReference>` becomes `Exclude<…, UnavailableReference>`.
+- Repoint or clear each reference the build lists, or set `danglingReferences: 'warn'`.
+
+**Now deletable.** A content-integrity test checking reference fields against entry ids.
+
+### Deleting a referenced entry asks first — **behaviour change on the delete API**
+
+**What changed.** Deleting an entry that other entries reference (by field or `entry:` link)
+returns 409 with `data.referencedBy`: the referencing entries the user may read, and a
+`hiddenCount` of the rest. `?confirmReferenced=true` deletes anyway; the editor's dialog offers
+**Delete anyway**.
+
+**To adopt.** Only scripts calling the delete endpoint: pass the flag or handle the 409.
+
 ### The markdown editor runs MDXEditor 4.3
 
 **What changed.** `@mdxeditor/editor` is `^4.3.2` (Lexical 0.48), up from `^3.52.4`. Two-paragraph

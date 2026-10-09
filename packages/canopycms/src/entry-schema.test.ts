@@ -13,7 +13,9 @@ import {
   RESOLVED_REFERENCE_KEYS,
   type EntryTypesFromRegistry,
   type ResolvedReferenceMeta,
+  type MissingReference,
   type RestrictedReference,
+  type UnavailableReference,
   type TypeFromEntrySchema,
 } from './entry-schema'
 import { validateEntryData } from './validation/entry-validator'
@@ -214,9 +216,16 @@ describe('TypeFromEntrySchema', () => {
             bio: string
           } & ResolvedReferenceMeta & { unavailable?: undefined })
         | RestrictedReference
+        | MissingReference
         | null
       >()
-      expectTypeOf<NonNullable<PostContent['author']>['urlPath']>().toEqualTypeOf<string>()
+      // Only a full target or a restricted one carries `urlPath`; a missing one is just its id.
+      expectTypeOf<
+        Exclude<NonNullable<PostContent['author']>, MissingReference>['urlPath']
+      >().toEqualTypeOf<string>()
+      expectTypeOf<
+        Extract<NonNullable<PostContent['author']>, UnavailableReference>['reason']
+      >().toEqualTypeOf<'restricted' | 'missing'>()
 
       void postSchema
     })
@@ -266,6 +275,7 @@ describe('TypeFromEntrySchema', () => {
             bio: string
           } & ResolvedReferenceMeta & { unavailable?: undefined })
         | RestrictedReference
+        | MissingReference
         | null
       >()
 
@@ -293,6 +303,7 @@ describe('TypeFromEntrySchema', () => {
         (
           | ({ label: string } & ResolvedReferenceMeta & { unavailable?: undefined })
           | RestrictedReference
+          | MissingReference
           | null
         )[]
       >()
@@ -966,7 +977,7 @@ describe('isResolvedReference', () => {
         { name: 'editors'; type: 'reference'; list: true; resolvedSchema: AuthorFields },
       ]
     >
-    type Author = Exclude<NonNullable<Post['author']>, RestrictedReference>
+    type Author = Exclude<NonNullable<Post['author']>, UnavailableReference>
 
     const value = resolved as Post['author']
     if (isResolvedReference(value)) {

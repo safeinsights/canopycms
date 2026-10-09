@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-05, reasoned from code. The reference picker's options omit entries the user may not read (correctly), so a stored value pointing at one, or at a deleted entry, shows as an **empty** field, and an editor may repoint it. The form value is now a `RestrictedReference` with a title, so the field can show "Restricted entry: <title>" instead
+  RESOLVED 2026-10-09, branch `fix/dangling-reference-integrity`. `ReferenceField` adds an option for each set value the list omits, labelled "Restricted entry: <title>", "Missing entry (<id>)" or "Unavailable entry (<id>)". Mantine 7.17's `MultiSelect` already kept an unknown id when another pill was removed; `Select` showed it as empty
 ---
 # The reference picker shows nothing for a value it does not offer
 
@@ -29,5 +29,5 @@ whether `MultiSelect` keeps unknown ids when another pill is removed.
 
 ## Related
 
-- [reference-resolution-bypasses-path-acls.md](resolved/reference-resolution-bypasses-path-acls.md)
+- [reference-resolution-bypasses-path-acls.md](reference-resolution-bypasses-path-acls.md)
 - [dangling-reference-null-overwrites-id.md](dangling-reference-null-overwrites-id.md)

@@ -253,3 +253,38 @@ export function findFieldsByType(
     return []
   })
 }
+
+/** The id of a reference value held as an id string or a resolved `{ id, ... }` object. */
+export function referenceValueId(value: unknown): string | undefined {
+  if (typeof value === 'string') return value
+  if (isPlainRecord(value) && typeof value.id === 'string') return value.id
+  return undefined
+}
+
+export interface ReferenceIdOccurrence {
+  id: string
+  path: string
+}
+
+/**
+ * Every id held by the schema's `reference` fields, in traversal order, one per stored value
+ * (duplicates kept). `path` is traverseFields' (`a.b`, `items[0].x`, `blocks[2].author`), plus
+ * `[i]` per element of a `list: true` reference (`reviewers[1]`). Raw ids and resolved or
+ * `unavailable` objects both yield their id (`referenceValueId`); `''`, null, and values with
+ * no id are skipped.
+ */
+export function collectReferenceIds(
+  fields: readonly FieldConfig[],
+  data: Record<string, unknown>,
+): ReferenceIdOccurrence[] {
+  return traverseFields<ReferenceIdOccurrence>(fields, data, ({ field, value, path }) => {
+    if (field.type !== 'reference') return []
+    const items = Array.isArray(value)
+      ? value.map((item, index) => ({ item, path: `${path}[${index}]` }))
+      : [{ item: value, path }]
+    return items.flatMap(({ item, path: itemPath }) => {
+      const id = referenceValueId(item)
+      return id ? [{ id, path: itemPath }] : []
+    })
+  })
+}

@@ -2,7 +2,12 @@ import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
-import { resetWorkspace, ensureMainBranch, readContentFile } from '../fixtures/test-workspace'
+import {
+  resetWorkspace,
+  ensureMainBranch,
+  readContentFile,
+  findContentFile,
+} from '../fixtures/test-workspace'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 /**
@@ -211,6 +216,49 @@ test.describe('Reference Fields', () => {
         .fill('Ban')
 
       await expect(options).toHaveText(['Banana'], { timeout: STANDARD_TIMEOUT })
+    })
+  })
+  test('deleting a referenced post names the referencing entry, then deletes on confirm', async ({
+    page,
+  }) => {
+    await test.step('reference a new post from the Home Page and save', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost('doomed-post', 'Doomed Post')
+      await editorPage.openEntryNavigator()
+      await editorPage.selectEntry('Home Page')
+      await page.keyboard.press('Escape')
+      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.selectReferenceOption('relatedPost', 'Doomed Post')
+      await editorPage.saveAndVerify()
+    })
+
+    const modal = page.locator('[data-testid="confirm-delete-modal"]')
+
+    await test.step('delete the post: the dialog names the Home Page', async () => {
+      await editorPage.openEntryNavigator()
+      await page.locator('[data-testid="entry-menu-doomed-post"]').click()
+      await page.locator('[data-testid="delete-entry-menu-item"]').click()
+      await expect(modal).toBeVisible()
+      await page.locator('[data-testid="confirm-delete-submit"]').click()
+
+      const list = modal.locator('[data-testid="referenced-by-list"]')
+      await expect(list).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(list).toContainText('Home Page')
+      await expect(list).toContainText('relatedPost')
+      await expect(page.locator('[data-testid="confirm-delete-submit"]')).toHaveText(
+        'Delete anyway',
+      )
+      expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).not.toBeNull()
+    })
+
+    await test.step('Delete anyway removes the post', async () => {
+      await page.locator('[data-testid="confirm-delete-submit"]').click()
+      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+      await expect(page.locator('[data-testid="entry-nav-item-doomed-post"]')).not.toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
+      expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).toBeNull()
     })
   })
 })

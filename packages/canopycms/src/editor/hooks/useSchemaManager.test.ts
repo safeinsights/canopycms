@@ -7,6 +7,7 @@ import { setupMockApiClient, createApiClientWrapper } from './__test__/test-util
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 import { mockConsole } from '../../test-utils/console-spy'
+import { notifications } from '@mantine/notifications'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -349,6 +350,63 @@ describe('useSchemaManager', () => {
       })
 
       expect(deleteResult).toEqual({ ok: false, error: 'Edit permission required' })
+    })
+
+    it('returns the referencing entries on a referenced-entry refusal, without a toast', async () => {
+      const referencedBy = {
+        entries: [
+          {
+            entryPath: unsafeAsLogicalPath('posts/by-alice'),
+            contentId: unsafeAsContentId('pst1pst1pst1'),
+            title: 'By Alice',
+            fields: ['author'],
+            links: [],
+          },
+        ],
+        hiddenCount: 2,
+      }
+      mockClient.entries.delete.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Entry is referenced by 3 other entries',
+        data: { deleted: false, referencedBy },
+      })
+      const onSchemaChange = vi.fn()
+      const { result } = renderHook(
+        () => useSchemaManager({ branchName: 'main', onSchemaChange }),
+        { wrapper },
+      )
+      vi.mocked(notifications.show).mockClear()
+
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = { ok: true }
+      await act(async () => {
+        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('people/alice'))
+      })
+
+      expect(deleteResult).toEqual({
+        ok: false,
+        error: 'Entry is referenced by 3 other entries',
+        referencedBy,
+      })
+      expect(notifications.show).not.toHaveBeenCalled()
+      expect(onSchemaChange).not.toHaveBeenCalled()
+    })
+
+    it('sends the confirm flag only when asked to', async () => {
+      mockClient.entries.delete.mockResolvedValueOnce(mockSuccess({ deleted: true }))
+      const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
+
+      await act(async () => {
+        await result.current.deleteEntry(unsafeAsLogicalPath('people/alice'), {
+          confirmReferenced: true,
+        })
+      })
+
+      expect(mockClient.entries.delete).toHaveBeenCalledWith({
+        branch: 'main',
+        entryPath: 'people/alice',
+        confirmReferenced: 'true',
+      })
     })
   })
 

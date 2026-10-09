@@ -24,8 +24,9 @@ summary: >-
   record sits under `value`). Additive; no other caller changes.
 - `client-reference-resolver.ts` walks the draft with it and fills each reference from a cache
   keyed `<branch>:<id>`. The ids it lacks go to `POST /:branch/resolve-references` in batches of 100.
-- Missing targets: an id the endpoint omits caches as `null` for `MISSING_REFERENCE_TTL_MS` (10s),
-  after which the next edit asks again, since the target can be created meanwhile. A branch switch
+- An id the endpoint omits (its lookup threw; a missing target comes back as a `MissingReference`)
+  caches as `null` for `MISSING_REFERENCE_TTL_MS` (10s), after which the next edit asks again,
+  since the lookup can succeed later. A branch switch
   clears the cache. A failed request caches nothing (the reference stays pending). An `unavailable`
   object passes through as sent.
 - A malformed id is never sent (the endpoint rejects a whole request for one) and reads `null`.

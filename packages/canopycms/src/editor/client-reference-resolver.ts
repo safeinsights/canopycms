@@ -19,8 +19,8 @@ type Container = Record<string | number, unknown>
 const MAX_IDS_PER_REQUEST = 100
 
 /**
- * How long an id the endpoint omitted (it names no entry) stays cached as `null`. Its target can
- * be created afterwards, so the id is asked for again on the first edit after this.
+ * How long an id the endpoint omitted (its lookup threw there) stays cached as `null`. The lookup
+ * can succeed later, so the id is asked for again on the first edit after this.
  * @internal Exported for tests.
  */
 export const MISSING_REFERENCE_TTL_MS = 10_000

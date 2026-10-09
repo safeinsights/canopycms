@@ -22,8 +22,9 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
+import { collectReferenceIds } from '../validation/field-traversal'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
-import { entryLogicalPath, parseSlug, type Slug } from '../paths'
+import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
@@ -217,6 +218,27 @@ const readContentHandler = async (
   }
 }
 
+/**
+ * A reference's field and id, positions dropped (`blocks[2].author` → `blocks.author`), so
+ * reordering blocks or list items keeps a match while moving an id to a field of another name
+ * does not.
+ */
+const referenceSite = (fieldPath: string, id: string) =>
+  `${fieldPath.replace(/\[\d+\]/g, '')}\0${id}`
+
+/** Every reference site the stored entry holds, read raw so a missing target still yields its id. */
+const storedReferenceSites = async (
+  store: ContentStore,
+  collectionPath: LogicalPath,
+  slug: Slug,
+  fields: EntrySchema,
+): Promise<Set<string>> => {
+  const doc = await store.read(collectionPath, slug, { resolveReferences: false })
+  return new Set(
+    collectReferenceIds(fields, doc.data).map((ref) => referenceSite(ref.path, ref.id)),
+  )
+}
+
 const writeContentHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -330,6 +352,7 @@ const writeContentHandler = async (
       ? `An entry with slug "${slug}" already exists`
       : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
+  const danglingWarnings: EntryValidationIssue[] = []
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
@@ -401,9 +424,25 @@ const writeContentHandler = async (
           (name) => store.resolveCollectionItem(name)?.logicalPath,
         )
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
-        fieldErrors.push(
-          ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
-        )
+        // A dangling id the file already holds in that field is kept with a warning, so an entry
+        // whose target was deleted stays saveable and the id survives; the production build is
+        // what fails on it. A dangling id this save introduces, or moves to a field of another name, is
+        // refused.
+        const storedSites =
+          exists && refResult.errors.some((e) => e.dangling)
+            ? await storedReferenceSites(store, schemaItem.logicalPath, slug, fields)
+            : new Set<string>()
+        for (const e of refResult.errors) {
+          if (e.dangling && storedSites.has(referenceSite(e.fieldPath, e.id))) {
+            danglingWarnings.push({
+              level: 'warning',
+              fieldPath: e.fieldPath,
+              message: `references a missing entry (${e.id}). It is kept as it was; repoint or clear it.`,
+            })
+          } else {
+            fieldErrors.push({ fieldPath: e.fieldPath, message: e.error })
+          }
+        }
       }
 
       if (fieldErrors.length > 0) {
@@ -426,7 +465,8 @@ const writeContentHandler = async (
   // Adopter save-time validation, run BEFORE the file is written: 'error' issues
   // refuse the save (e.g. a body that would break the site's production build),
   // 'warning' issues are returned alongside the successful write.
-  let validationWarnings: EntryValidationIssue[] | undefined
+  let validationWarnings: EntryValidationIssue[] | undefined =
+    danglingWarnings.length > 0 ? danglingWarnings : undefined
   const validateEntry = ctx.services.config.validateEntry
   // Collapse resolved reference objects back to bare ID strings before persisting (the reference
   // validator above gets its own copy). The editor's GET resolves references by default, so form
@@ -455,6 +495,7 @@ const writeContentHandler = async (
       const overflow = unknownKeys.length - shown.length
       const list = overflow > 0 ? `${shown.join(', ')} (and ${overflow} more)` : shown.join(', ')
       validationWarnings = [
+        ...(validationWarnings ?? []),
         {
           level: 'warning',
           message:
@@ -497,8 +538,8 @@ const writeContentHandler = async (
           .join('; '),
       }
     }
-    // Appended, not assigned: the unknown-key scan above may already have found some, and the
-    // editor shows the channel as one notification.
+    // Appended, not assigned: the scans above may already have found some, and the editor shows
+    // the channel as one notification.
     const warnings = issues.filter((issue) => issue.level === 'warning')
     if (warnings.length > 0) validationWarnings = [...(validationWarnings ?? []), ...warnings]
   }

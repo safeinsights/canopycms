@@ -2,10 +2,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
-import { flattenSchema } from './config'
+import { flattenSchema, type EntrySchema } from './config'
 import { ContentIdIndex } from './content-id-index'
 import {
   bumpContentIndexGeneration,
@@ -26,6 +26,8 @@ import { getErrorMessage } from './utils/error'
 import { generateId } from './id'
 import { unsafeAsContentId, unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
+import { buildMissingReference } from './entry-schema'
+import { resetDanglingReferenceWarnings } from './dangling-reference-log'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -2636,7 +2638,7 @@ describe('ContentStore cross-process index consistency', () => {
       if (!authorId) throw new Error('expected an id for the author')
 
       const postFields = refSchema.collections[1].entries[0].schema
-      return { store, authorId, postFields }
+      return { store, root, authorId, postFields }
     }
 
     it('reads a repeated reference once across separate calls sharing one cache', async () => {
@@ -2676,6 +2678,7 @@ describe('ContentStore cross-process index consistency', () => {
       const { store, postFields } = await makeRefStore()
       const cache = createReferenceResolveCache()
       const danglingId = generateId()
+      const consoleSpy = mockConsole()
 
       // Warm the index so the spy below counts only lookup work, not the initial build.
       await store.idIndex()
@@ -2683,19 +2686,110 @@ describe('ContentStore cross-process index consistency', () => {
       const findSpy = vi.spyOn(ContentIdIndex.prototype, 'findById')
       try {
         const first = await store.resolveReferences({ author: danglingId }, postFields, cache)
-        expect(first.author).toBeNull()
+        expect(first.author).toEqual(buildMissingReference(danglingId))
         const afterFirst = findSpy.mock.calls.length
         expect(afterFirst).toBeGreaterThan(0)
 
         const second = await store.resolveReferences({ author: danglingId }, postFields, cache)
-        expect(second.author).toBeNull()
-        // No further index work: the null is memoized alongside hits, so a shared block
-        // cannot resolve to data on one entry and null on another within one batch.
+        expect(second.author).toEqual(buildMissingReference(danglingId))
+        // No further index work: the miss is memoized alongside hits, so a shared block
+        // cannot resolve to data on one entry and a miss on another within one batch.
         expect(findSpy.mock.calls.length).toBe(afterFirst)
         expect(cache.size).toBe(1)
       } finally {
         findSpy.mockRestore()
+        consoleSpy.restore()
       }
+    })
+
+    describe('a reference naming no entry', () => {
+      beforeEach(() => resetDanglingReferenceWarnings())
+
+      it('resolves to a MissingReference keeping the id, and warns once naming entry, field and id', async () => {
+        const { store } = await makeRefStore()
+        const postsPath = unsafeAsLogicalPath('content/posts')
+        const danglingId = generateId()
+        await store.write(postsPath, unsafeAsSlug('hello'), {
+          format: 'md',
+          data: { title: 'Hello', author: danglingId },
+          body: '',
+        })
+        const consoleSpy = mockConsole()
+        try {
+          const first = await store.read(postsPath, unsafeAsSlug('hello'))
+          await store.read(postsPath, unsafeAsSlug('hello'))
+
+          expect(first.data.author).toEqual({
+            id: danglingId,
+            unavailable: true,
+            reason: 'missing',
+          })
+          const warnings = consoleSpy.all().warn
+          expect(warnings).toHaveLength(1)
+          expect(warnings[0]).toContain('content/posts/hello')
+          expect(warnings[0]).toContain('"author"')
+          expect(warnings[0]).toContain(danglingId)
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      it('treats an id naming a collection as missing', async () => {
+        const { store, root, postFields } = await makeRefStore()
+        const collectionId = generateId()
+        await fs.mkdir(path.join(root, 'content', `archive.${collectionId}`))
+        const consoleSpy = mockConsole()
+        try {
+          const resolved = await store.resolveReferences({ author: collectionId }, postFields)
+          expect((await store.idIndex()).findById(collectionId)?.type).toBe('collection')
+          expect(resolved.author).toEqual(buildMissingReference(collectionId))
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      it('names nested object-list, block and list positions in the warning', async () => {
+        const { store } = await makeRefStore()
+        const danglingId = generateId()
+        const fields = [
+          {
+            name: 'items',
+            type: 'object',
+            list: true,
+            fields: [{ name: 'who', type: 'reference' }],
+          },
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [{ name: 'card', fields: [{ name: 'who', type: 'reference' }] }],
+          },
+          { name: 'reviewers', type: 'reference', list: true },
+        ] as const satisfies EntrySchema
+        const consoleSpy = mockConsole()
+        try {
+          const resolved = await store.resolveReferences(
+            {
+              items: [{ who: danglingId }],
+              blocks: [
+                { template: 'card', value: {} },
+                { template: 'card', value: { who: danglingId } },
+              ],
+              reviewers: ['', danglingId],
+            },
+            fields,
+            undefined,
+            undefined,
+            'content/posts/nested',
+          )
+          expect(resolved.reviewers).toEqual([null, buildMissingReference(danglingId)])
+          const warnings = consoleSpy.all().warn.join('\n')
+          expect(warnings).toContain('content/posts/nested field "items[0].who"')
+          expect(warnings).toContain('content/posts/nested field "blocks[1].who"')
+          expect(warnings).toContain('content/posts/nested field "reviewers[1]"')
+        } finally {
+          consoleSpy.restore()
+        }
+      })
     })
 
     it('keys the cache by includeBody, so two fields sharing a target get their own shapes', async () => {

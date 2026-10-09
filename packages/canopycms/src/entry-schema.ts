@@ -152,6 +152,30 @@ export function buildRestrictedReference(
 }
 
 /**
+ * What a reference resolves to when its id names no readable entry: a deleted target, an id a
+ * merge or hand edit left behind, or one naming a collection. It carries the id and nothing else,
+ * so a save of the referring entry writes the id back rather than erasing it, and a renderer can
+ * say which entry is missing. The production build fails on one (`static/index.ts`,
+ * `assertNoDanglingReferences`).
+ */
+export type MissingReference = {
+  id: string
+  unavailable: true
+  reason: 'missing'
+}
+
+/** Assemble a {@link MissingReference}. */
+export function buildMissingReference(id: string): MissingReference {
+  return { id, unavailable: true, reason: 'missing' }
+}
+
+/**
+ * Every reference value that is not the target's data. Narrow on `unavailable`, then on `reason`:
+ * only a `'restricted'` one carries a title and URL.
+ */
+export type UnavailableReference = RestrictedReference | MissingReference
+
+/**
  * The resolved-target member of a reference field's value type `T`: the object members that
  * are not marked `unavailable`. When `T` has none (`unknown`, or `string | null` for a reference
  * without `resolvedSchema`), any resolved reference.
@@ -299,7 +323,7 @@ type FieldValue<F extends InferableField> = F extends {
             F,
             | (InferContentShape<Extract<S, readonly InferableField[]>> &
                 ResolvedReferenceMeta & { unavailable?: undefined })
-            | RestrictedReference
+            | UnavailableReference
             | null
           >
         : F extends { type: 'reference' }
