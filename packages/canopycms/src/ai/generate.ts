@@ -449,8 +449,8 @@ function makeReadSibling(dir: string): (name: string) => Promise<string | null> 
 /**
  * Run the configured entry transform (if any), caching its returned markdown on
  * `entry.appendedSections`. The transform receives the entry's content ID and a directory-bound
- * `readSibling`. Runs in each round whose masking changed the entry, on the data as masked; the
- * cached result is reused across the per-entry file, the collection `all.md`, and any bundle that
+ * `readSibling`. Runs for every entry in the first round, then again in any later round whose
+ * masking changed the entry, always on the data as masked; the cached result is reused across the per-entry file, the collection `all.md`, and any bundle that
  * includes this entry. A throwing transform is logged and
  * skipped — the entry still renders without the appended section (distinct from an unreadable
  * entry, which is skipped entirely upstream).
