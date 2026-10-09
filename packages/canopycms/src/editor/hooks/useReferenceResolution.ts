@@ -41,27 +41,37 @@ export function useReferenceResolution({
   // The context client carries the deployment's basePath. `null` outside an ApiClientProvider
   // (this hook's own unit tests); fetchReferences then falls back to a default client.
   const apiClient = useOptionalApiClient()
+  // One map per branch, so a request for a branch left behind stores into an orphaned map.
   const cacheRef = useRef<ReferenceCache>(new Map())
   // The cache is a ref, so a fetch that fills it bumps this to recompute the memo below.
   const [cacheVersion, setCacheVersion] = useState(0)
   // Ids already requested, so an edit while a request is in flight does not repeat it.
   const inFlightRef = useRef(new Set<string>())
+  // An edit skipped in-flight ids, so a failed request retries instead of awaiting an edit.
+  const skippedRef = useRef(false)
+  const [retryTick, setRetryTick] = useState(0)
 
   const { resolvedValue, loadingState } = useMemo(
     () => applyReferenceCache(fields, value, branch, cacheRef.current),
     [fields, value, branch, cacheVersion],
   )
 
-  // Declared before the fetch effect, which therefore sees the entries expired.
+  // These two are declared before the fetch effect, so it sees their result in the same commit.
+  useEffect(() => {
+    cacheRef.current = new Map()
+    setCacheVersion((prev) => prev + 1)
+  }, [branch])
+
   useEffect(() => {
     expireReferences(cacheRef.current)
   }, [entryKey])
 
   useEffect(() => {
+    const cache = cacheRef.current
     const inFlight = inFlightRef.current
-    const ids = idsToFetch(fields, value, branch, cacheRef.current, Date.now()).filter(
-      (id) => !inFlight.has(`${branch}:${id}`),
-    )
+    const needed = idsToFetch(fields, value, branch, cache, Date.now())
+    const ids = needed.filter((id) => !inFlight.has(`${branch}:${id}`))
+    if (ids.length < needed.length) skippedRef.current = true
     if (ids.length === 0) return
 
     const timeout = setTimeout(async () => {
@@ -70,22 +80,22 @@ export function useReferenceResolution({
       try {
         const found = await fetchReferences(ids, branch, apiClient ?? undefined)
         // Keyed by branch and id, a result stays valid however the draft changed meanwhile.
-        storeReferences(cacheRef.current, branch, found, Date.now())
+        storeReferences(cache, branch, found, Date.now())
+        skippedRef.current = false
         setCacheVersion((prev) => prev + 1)
       } catch (error) {
         console.error('Reference resolution failed:', error)
+        if (skippedRef.current) {
+          skippedRef.current = false
+          setRetryTick((prev) => prev + 1)
+        }
       } finally {
         keys.forEach((key) => inFlight.delete(key))
       }
     }, 300)
 
     return () => clearTimeout(timeout)
-  }, [value, fields, branch, apiClient])
-
-  useEffect(() => {
-    cacheRef.current.clear()
-    setCacheVersion((prev) => prev + 1)
-  }, [branch])
+  }, [value, fields, branch, apiClient, retryTick])
 
   return { resolvedValue, loadingState }
 }

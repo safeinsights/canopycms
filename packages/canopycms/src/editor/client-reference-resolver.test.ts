@@ -220,6 +220,25 @@ describe('applyReferenceCache', () => {
     })
   })
 
+  it('gives every list item a loading entry, so isLoading arrays have no holes', () => {
+    const { loadingState } = applyReferenceCache(
+      schema,
+      {
+        credits: [{}, { people: ['idCreditAAAA'] }],
+        blocks: [
+          { template: 'text', value: { body: 'no references' } },
+          { template: 'quote', value: { speaker: 'idBxockAAAAA' } },
+        ],
+      },
+      'main',
+      new Map(),
+    )
+
+    expect(loadingState.credits).toEqual([{ people: false }, { people: [true] }])
+    expect(loadingState.blocks).toEqual([{}, { value: { speaker: true } }])
+    expect(Object.keys(loadingState.blocks as unknown[])).toEqual(['0', '1'])
+  })
+
   it('follows the server on list shapes: arrays only for list fields, non-strings to null', () => {
     const { resolvedValue, loadingState } = applyReferenceCache(
       schema,

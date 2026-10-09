@@ -182,13 +182,18 @@ function setCopied(
   return nextRoot as FormValue
 }
 
-/** Write `leaf` at `path` in a fresh tree, creating an array or object for each missing level. */
-function setCreating(root: FormValue, path: DataPath, leaf: unknown): void {
+/**
+ * Write `leaf` at `path` in a fresh tree, creating each missing level. An array is created as
+ * long as `source`'s array at that path, with an empty object per item, so it has no holes.
+ */
+function setCreating(root: FormValue, path: DataPath, leaf: unknown, source: FormValue): void {
   let node: Container = root
-  path.slice(0, -1).forEach((key, index) => {
+  let from: unknown = source
+  path.slice(0, -1).forEach((key) => {
+    from = isContainer(from) ? from[key] : undefined
     let child = node[key]
     if (!isContainer(child)) {
-      child = typeof path[index + 1] === 'number' ? [] : {}
+      child = Array.isArray(from) ? Array.from(from, () => ({})) : {}
       node[key] = child
     }
     node = child as Container
@@ -225,7 +230,7 @@ export function applyReferenceCache(
     if (typeof slot.value === 'string' && slot.value) {
       const { value: target, loading } = lookup(slot.value)
       resolvedValue = setCopied(resolvedValue, slot.path, target, copies)
-      setCreating(loadingState, slot.path, loading)
+      setCreating(loadingState, slot.path, loading, value)
     } else if (slot.list && Array.isArray(slot.value)) {
       const items = slot.value.map(lookup)
       if (slot.value.length > 0) {
@@ -240,9 +245,10 @@ export function applyReferenceCache(
         loadingState,
         slot.path,
         items.map((item) => item.loading),
+        value,
       )
     } else {
-      setCreating(loadingState, slot.path, false)
+      setCreating(loadingState, slot.path, false, value)
     }
   }
 
