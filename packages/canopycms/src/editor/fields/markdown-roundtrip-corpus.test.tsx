@@ -313,7 +313,7 @@ const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
   },
 }
 
-/** List items and quotes MDXEditor keeps, but for `spread`: it writes every list tight. */
+/** List items and quotes MDXEditor keeps, but for `spread`: it writes these lists tight. */
 const KEPT_SHAPES: Record<string, string> = {
   'a tight list': '- a\n- b\n',
   'a loose list': '- a\n\n- b\n',

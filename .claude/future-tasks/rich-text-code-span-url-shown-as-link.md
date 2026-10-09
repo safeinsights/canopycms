@@ -11,7 +11,7 @@ summary: >-
 lexical's auto-link transform matches text and never sees formats, so a URL or email address in a
 code span becomes an `AutoLinkNode` in the editor. The export writes it as code
 (`linkExportVisitor` in `editor/fields/markdown-fidelity-visitors.ts`), so nothing reaches disk,
-but the editor shows a link the file does not have, and a click on it follows the link.
+but the editor shows a link the file does not have.
 
 ## Proposal
 

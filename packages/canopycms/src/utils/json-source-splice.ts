@@ -1,11 +1,10 @@
 /**
  * Source-preserving serialisation for JSON content files.
  *
- * A value `data` leaves alone keeps its bytes in the file; a value that changed is re-rendered
- * by jsonc-parser at its own slot, in the file's indent and line ending; and anything this
- * module cannot vouch for (a file that is not a JSON object, an edit set that does not read
- * back as `data`) is written as `JSON.stringify(data, null, 2)`. Retained keys keep the file's
- * order and new keys are appended.
+ * A value `data` leaves alone keeps its bytes in the file; a value that changed is written at
+ * its own slot, in the file's indent and line ending; and anything this module cannot vouch for
+ * (a file that is not a JSON object, an edit set that does not read back as `data`) is written as
+ * `JSON.stringify(data, null, 2)`. Retained keys keep the file's order and new keys are appended.
  */
 
 import { isDeepStrictEqual } from 'node:util'

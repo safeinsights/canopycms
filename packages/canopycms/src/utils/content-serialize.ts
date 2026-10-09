@@ -628,9 +628,10 @@ function readsAsAnotherValue(text: string, asKey: boolean): boolean {
  * text of its unchanged body blocks through. The reconciled YAML goes back through
  * `matter.stringify` via a custom stringify engine rather than being spliced between
  * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
- * would have produced. The result is kept only if the read path reads `data` back from it: a
- * changed value whose text `yaml` and js-yaml read differently (a date-like string, or 14
- * where the file has `014`) is written by gray-matter instead, without the comments.
+ * would have produced. The result is kept only if the read path reads `data` back from it;
+ * otherwise gray-matter writes it, without the comments. A fresh string the read path would
+ * misread is quoted (`readsAsAnotherValue`), so this is left for a changed value meeting text the
+ * two parsers read differently, as 14 meets a file's `014`.
  */
 export function serializeFrontmatter(
   editorBody: string,

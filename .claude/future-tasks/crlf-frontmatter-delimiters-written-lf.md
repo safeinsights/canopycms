@@ -12,8 +12,7 @@ summary: >-
 `matter.stringify`, which writes its delimiters and the newline after the frontmatter as `\n` and
 drops a leading BOM. The frontmatter between them keeps the file's CRLF, as does the body, so an
 unchanged save of a CRLF file changes two or three lines' endings only: the opening `---`, the
-last frontmatter line and the closing `---`. A BOM is lost the same way. A `.gitattributes` with
-`eol=crlf` hides it in the working tree, but not in a diff of the file's bytes.
+last frontmatter line and the closing `---`. A BOM is lost the same way.
 
 ## Proposal
 
