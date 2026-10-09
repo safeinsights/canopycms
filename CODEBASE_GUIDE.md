@@ -486,7 +486,9 @@ Top-level components and helpers:
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
-- `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
+- `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
+- `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
@@ -619,7 +621,7 @@ Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:p
 `canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
-- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
+- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, typed `fieldProps()`, `reportError()`
 - `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — site-side primitives it wraps
 - `isTrustedEditorMessage` / `resolveMessageOrigin` — origin resolution and the inbound trust check
 

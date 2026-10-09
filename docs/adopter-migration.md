@@ -40,6 +40,21 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Preview `fieldProps` is typed, with server-safe helpers — **breaking (types and schemas)**
+
+**What changed.** `fieldProps` checks each path against the view's content type, and `canopycms`
+exports `FieldProps`, `FieldAttrs`, `fieldAttrs` and `scopeFieldProps`, callable from server
+components. A string path marks the form's spelling (`'a.0.b'` marks `a[0].b`), and an empty path
+marks nothing. The editor counts and logs marks that name no field. `createEntrySchemaRegistry` refuses a field name that is all digits or contains `.`,
+`[` or `]`. See [Live Preview](../README.md#live-preview).
+
+**To adopt.** Fix each path that stops compiling; the error lists the valid ones. Rewrite computed
+string paths as segments, or type that component's prop as plain `FieldProps`. Pass `fieldProps`
+as `undefined` on public pages. Rename any field the registry refuses, in its content too.
+
+**Now deletable.** A local `FieldProps` type, `fieldAttrs`/`scopeFieldProps` helpers and no-op
+`fieldProps` defaults; tests that walk the schema to check mark paths, once components are typed.
+
 ### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
 **What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other
