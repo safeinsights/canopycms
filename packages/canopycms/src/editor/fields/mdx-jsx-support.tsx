@@ -90,6 +90,44 @@ function unsupportedJsx(mdx: MdxEditorModule, node: MdastNode): string | null {
   return null
 }
 
+// Blocks that run into the block before them in a list item, by that block's type.
+const RUNS_INTO: Partial<Record<string, readonly string[]>> = {
+  paragraph: ['paragraph', 'thematicBreak'],
+  blockquote: ['paragraph', 'blockquote', 'table'],
+  table: ['paragraph', 'table'],
+}
+
+const BLOCK_NAMES: Partial<Record<string, string>> = {
+  paragraph: 'paragraph',
+  blockquote: 'quote',
+  table: 'table',
+  thematicBreak: 'horizontal rule',
+}
+
+/**
+ * Why MDXEditor would change what this list item or quote says, or null. Its import joins a list
+ * item's adjacent paragraphs and moves a nested list into a new item after its own, so what follows
+ * the list comes out before it; its export writes an item tight, so `---` underlines a paragraph and
+ * a line continues a quote or table (`RUNS_INTO`); and 3.53 exports a quote as one paragraph.
+ */
+function rearrangedBlocks(node: MdastNode): string | null {
+  if (node.type === 'blockquote') {
+    return node.children.length > 1 ? 'a quote with more than one paragraph or block' : null
+  }
+  if (node.type !== 'listItem') return null
+  for (let i = 1; i < node.children.length; i++) {
+    const before = node.children[i - 1].type
+    const after = node.children[i].type
+    if (before === 'list') return 'a list item with content after its nested list'
+    if (RUNS_INTO[before]?.includes(after)) {
+      return before === 'paragraph' && after === 'paragraph'
+        ? 'a list item with more than one paragraph'
+        : `a list item with a ${BLOCK_NAMES[before] ?? before} followed by a ${BLOCK_NAMES[after] ?? after}`
+    }
+  }
+  return null
+}
+
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
 
@@ -146,17 +184,22 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
   /**
    * Reports through `onError`, at import, what MDXEditor would otherwise lose or
    * break on without reporting it: `import`/`export` lines (its visitor for them
-   * is a no-op), elements `unsupportedJsx` rejects, and content with no visitor
-   * inside a JSX element or table, whose children nested editors import later,
-   * only logging a failure and writing partial children back on edit. It throws
-   * an error class MDXEditor's import reports; any other error crashes the editor.
+   * is a no-op), what `unsupportedJsx` and `rearrangedBlocks` reject, and content
+   * with no visitor inside a JSX element or table, whose children nested editors
+   * import later, only logging a failure and writing partial children back on
+   * edit. It throws an error class MDXEditor's import reports; any other error
+   * crashes the editor.
    */
   const roundTripGuardPlugin = realmPlugin({
     init(realm) {
       const guard: MdastImportVisitor<MdastNode> = {
         priority: 100,
         testNode: (node) =>
-          node.type === ESM_NODE_TYPE || node.type === 'table' || isMdastJsxNode(node),
+          node.type === ESM_NODE_TYPE ||
+          node.type === 'table' ||
+          node.type === 'listItem' ||
+          node.type === 'blockquote' ||
+          isMdastJsxNode(node),
         visitNode({ mdastNode, descriptors, actions }) {
           if (mdastNode.type === ESM_NODE_TYPE) {
             throw new UnrecognizedMarkdownConstructError(
@@ -164,7 +207,7 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
             )
           }
           const reject = (node: MdastNode) => {
-            const reason = unsupportedJsx(mdx, node)
+            const reason = unsupportedJsx(mdx, node) ?? rearrangedBlocks(node)
             if (reason !== null) {
               throw new UnrecognizedMarkdownConstructError(
                 `${reason} cannot be edited in the rich-text editor`,
@@ -172,6 +215,10 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
             }
           }
           reject(mdastNode)
+          if (mdastNode.type === 'listItem' || mdastNode.type === 'blockquote') {
+            actions.nextVisitor()
+            return
+          }
           const visitors = realm.getValue(importVisitors$).filter((visitor) => visitor !== guard)
           const hasVisitor = (node: MdastNode) =>
             visitors.some((visitor) =>
