@@ -71,8 +71,8 @@ never been deployed. `cdk.json` defines exactly two modes and three environments
 each (`dev`, `staging`, `production`) — there is no `dev-staging` key anywhere in
 the repo.
 
-**official mode maps onto the real SafeInsights accounts.** build `767397792557`
-(Security), dev `872515273917`, staging `867344442985`, production `533267019973`
+**official mode maps onto the real SafeInsights accounts:** build to the Security account,
+dev to Dev, staging to Staging, production to Production
 — matching `iac/lib/definitions.ts`. `iac` itself contains no docs-site infra at
 all, deploys via CodeBuild + Jenkins rather than GitHub Actions OIDC, and uses
 Secrets Manager exclusively with a `${namePrefix}Secrets-${envSlug}` convention.
