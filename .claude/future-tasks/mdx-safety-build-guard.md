@@ -14,7 +14,7 @@ summary: >-
 ## Where things stand
 
 The save path refuses any code a save adds to a field that is not `executable`, but keeps code the
-stored entry already held, with a warning, so no author is stuck
+stored entry already held, with a warning, in a field saved unchanged
 (`splitByStored` in `validation/markdown-safety.ts`). That kept code came from outside the CMS, or
 from before the upgrade. A production build lists every entry holding some (`warnUnsafeMarkdown`),
 but renders it anyway. CI builds of content branches run with the repo's secrets.

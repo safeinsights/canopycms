@@ -536,10 +536,10 @@ That fix is not free: the wrapper and its markdown subtree ship to the browser a
 MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which runs wherever a body renders with `evaluate`, `run` or `next-mdx-remote`: in the editor's preview as the viewer, in a server render inside the CMS, and on CI, including PR builds of content branches nobody has reviewed. So an `mdx` field, and an `mdx` body, refuse at save:
 
 - `{…}` expressions other than comments and plain values (`{/* note */}`, `{300}`), and `import`/`export`;
-- HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes;
+- HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and on a tag any attribute outside a safe set, since a script your site loads can give one meaning (Alpine's `x-init`); event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes anywhere;
 - URL schemes other than http(s), mailto, tel and `entry:`; React 18 renders a `javascript:` href as given.
 
-Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. A save adding or changing such code is refused, naming the line; code the entry already held is kept with a warning, and a production build lists every entry holding some.
+Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. A save adding such code is refused, naming the line. Code the entry already held is kept, with a warning, only in a field saved unchanged, since kept code reads what surrounds it; removing it is always accepted, and a production build lists every entry holding some.
 
 ```typescript
 { name: 'body', type: 'mdx', isBody: true, executable: true } // editors of this field are code authors

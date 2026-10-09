@@ -6,8 +6,8 @@ summary: >-
   set, event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes, and unsafe URL schemes.
   `markdown` fields and `md` bodies have their URLs checked. A field opts out with
   `executable: true`. The API enforces it at the write boundary. Code the stored entry already
-  held in the same field is kept with a warning, and a production build lists every entry holding
-  some. The README states the trust model. The non-executing renderer is deferred to
+  held is kept with a warning in a field saved unchanged, and a production build lists every
+  entry holding some. The README states the trust model. The non-executing renderer is deferred to
   [mdx-non-executing-preview-renderer.md](../mdx-non-executing-preview-renderer.md)
 ---
 # MDX bodies are code: rendering a draft in the preview runs an editor's JavaScript

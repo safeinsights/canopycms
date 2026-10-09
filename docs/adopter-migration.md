@@ -43,14 +43,14 @@ which entries belong to it is still a read of `git log`.
 ### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
 **What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other
-than comments and plain values, `import`/`export`, HTML tags outside a safe set, event-handler,
-`srcdoc` and `dangerouslySetInnerHTML` attributes, and URL schemes other than http(s), mailto,
+than comments and plain values, `import`/`export`, HTML tags and tag attributes outside a safe
+set, event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes, and URL schemes other than http(s), mailto,
 tel and `entry:`. `markdown` fields and `md` bodies refuse those URLs. New: the field option `executable` and
 the type `MarkdownFieldConfig`. See
 [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `executable: true` only on a field whose editors you trust as code authors; an
-entry type with no `isBody` field needs one declared to opt its body out. An entry already holding such content keeps it, with a warning; a production build lists them. Move the code into a component.
+entry type with no `isBody` field needs one declared to opt its body out. An entry already holding such content keeps it, with a warning, while that field is saved unchanged; a production build lists them. To edit the field, move the code into a component.
 
 **Now deletable.** A `validateEntry` rule refusing expressions, ESM or `javascript:` links in MDX,
 and the path-prefix matching that backs up its entry-type gate. Keep a rule checking that the body

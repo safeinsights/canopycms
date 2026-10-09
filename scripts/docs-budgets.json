@@ -64,7 +64,7 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24107
+      "words": 24111
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
@@ -79,12 +79,12 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4914,
-      "words": 15756
+      "words": 15791
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 9591,
-      "words": 16077
+      "words": 16089
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
