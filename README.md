@@ -1601,7 +1601,7 @@ CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools
 
 All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
-A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL follows `entryLinkUrl`, as body `entry:` links do. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
 ### Option 1: Route Handler (Runtime)
 
@@ -1646,6 +1646,10 @@ await generateAIContentFiles({
 import { defineAIContentConfig } from 'canopycms/ai'
 
 const aiConfig = defineAIContentConfig({
+  // Where these files are served, site-relative (default '/ai'); a reference links its
+  // target's markdown copy beneath it
+  mountPath: '/ai',
+
   // Opt-out exclusions
   exclude: {
     collections: ['drafts'],

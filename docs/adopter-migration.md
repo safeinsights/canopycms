@@ -43,7 +43,8 @@ which entries belong to it is still a read of `git log`.
 ### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
 
 **What changed.** A `reference` field renders as a link to its target, not the stored id: a
-byline that read `**Author:** 5NVkkrB1MJUv` now links the name `Alice` to that entry's URL. A gone
+byline that read `**Author:** 5NVkkrB1MJUv` now links the name `Alice` to that entry's page, then
+to its markdown copy under the AI config's new `mountPath` (default `/ai`). A gone
 target renders as `(missing entry <id>)`, one left out by `exclude` as `(unavailable entry <id>)`.
 An md/mdx entry's object or block field renders as a section, not `[object Object]`.
 

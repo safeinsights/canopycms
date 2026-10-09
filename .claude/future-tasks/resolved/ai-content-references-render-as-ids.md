@@ -30,7 +30,10 @@ whole non-excluded tree) or cycles (resolution is one level deep).
 - `generateAIContent` runs in two phases. It collects and filters every entry first, so the set
   of exported ids is known. Then it masks any reference to a target outside that set, runs the
   entry transforms, and renders.
-- `json-to-markdown.ts` renders every reference through one `formatReference`. On md/mdx entries,
+- `json-to-markdown.ts` renders every reference through one `formatReference`: the page link,
+  then a link labeled `markdown version` to the target's file in this export, under the AI
+  config's `mountPath` (default `/ai`), so an AI reader can fetch the referenced entry's clean
+  copy and tell it from the page. On md/mdx entries,
   object and block frontmatter fields render as sections; before, they printed as
   `[object Object]`, which hid any reference inside them.
 - Regression test: `ai/__tests__/reference-app-ai-references.integration.test.ts`, run over
