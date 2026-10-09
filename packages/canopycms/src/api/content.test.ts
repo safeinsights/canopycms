@@ -1275,6 +1275,65 @@ describe('content api', () => {
       expect(refused.writeSpy).not.toHaveBeenCalled()
     })
 
+    it('refuses a stored dangling id moved into another field', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: DANGLING_ID },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [{ template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }],
+        },
+      })
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'blocks[0].source', message: 'Referenced entry does not exist' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps a stored dangling id when its block moves to another position', async () => {
+      const ctx = allowedCtx()
+      const quote = { template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }
+      const other = { template: 'quote', value: { text: 'other' } }
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: AUTHOR_ID, blocks: [quote, other] },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: { title: 'Hello', author: AUTHOR_ID, blocks: [other, quote] },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+      expect(res.data?.validationWarnings?.[0].fieldPath).toBe('blocks[1].source')
+    })
+
+    it('keeps a malformed id the stored entry already holds, saving with a warning', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        knownIds: [AUTHOR_ID],
+        storedData: { title: 'Hello', author: 'not-an-id' },
+      })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        expectedVersion: EXISTING_VERSION,
+        data: {
+          title: 'Edited',
+          author: { id: 'not-an-id', unavailable: true, reason: 'missing' },
+        },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy.mock.calls[0][2].data).toEqual({ title: 'Edited', author: 'not-an-id' })
+      expect(res.data?.validationWarnings?.map((w) => w.fieldPath)).toEqual(['author'])
+    })
+
     it('saves a valid entry', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })

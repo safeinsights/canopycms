@@ -218,15 +218,24 @@ const readContentHandler = async (
   }
 }
 
-/** Every reference id the stored entry holds, read raw so a missing target still yields its id. */
-const storedReferenceIds = async (
+/**
+ * A reference's field and id, positions dropped (`blocks[2].author` → `blocks.author`), so
+ * reordering blocks or list items keeps a match while moving an id to another field does not.
+ */
+const referenceSite = (fieldPath: string, id: string) =>
+  `${fieldPath.replace(/\[\d+\]/g, '')}\0${id}`
+
+/** Every reference site the stored entry holds, read raw so a missing target still yields its id. */
+const storedReferenceSites = async (
   store: ContentStore,
   collectionPath: LogicalPath,
   slug: Slug,
   fields: EntrySchema,
 ): Promise<Set<string>> => {
   const doc = await store.read(collectionPath, slug, { resolveReferences: false })
-  return new Set(collectReferenceIds(fields, doc.data).map((ref) => ref.id))
+  return new Set(
+    collectReferenceIds(fields, doc.data).map((ref) => referenceSite(ref.path, ref.id)),
+  )
 }
 
 const writeContentHandler = async (
@@ -414,15 +423,15 @@ const writeContentHandler = async (
           (name) => store.resolveCollectionItem(name)?.logicalPath,
         )
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
-        // A dangling id the file already holds is kept with a warning, so an entry whose target
-        // was deleted stays saveable and the id survives; the production build is what fails on
-        // it. A dangling id this save introduces is refused.
-        const storedIds =
+        // A dangling id the file already holds in that field is kept with a warning, so an entry
+        // whose target was deleted stays saveable and the id survives; the production build is
+        // what fails on it. A dangling id this save introduces, or moves, is refused.
+        const storedSites =
           exists && refResult.errors.some((e) => e.dangling)
-            ? await storedReferenceIds(store, schemaItem.logicalPath, slug, fields)
+            ? await storedReferenceSites(store, schemaItem.logicalPath, slug, fields)
             : new Set<string>()
         for (const e of refResult.errors) {
-          if (e.dangling && storedIds.has(e.id)) {
+          if (e.dangling && storedSites.has(referenceSite(e.fieldPath, e.id))) {
             danglingWarnings.push({
               level: 'warning',
               fieldPath: e.fieldPath,

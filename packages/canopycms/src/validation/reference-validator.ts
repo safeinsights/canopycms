@@ -11,7 +11,7 @@ export interface ValidationError {
   fieldPath: string
   id: string
   error: string
-  /** The id names no entry (a deleted target, or a collection); set by `validate()`. */
+  /** A string id naming no entry (deleted, a collection, or malformed); set by `validate()`. */
   dangling?: true
 }
 
@@ -76,6 +76,7 @@ export class ReferenceValidator {
             fieldPath,
             id: String(id),
             error: 'Invalid content ID format',
+            ...(typeof id === 'string' ? { dangling: true as const } : {}),
           })
           continue
         }
