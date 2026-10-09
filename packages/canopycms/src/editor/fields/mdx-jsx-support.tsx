@@ -157,8 +157,8 @@ function writeBlocks(node: LexicalNode, target: MdastParent, actions: ExportPara
   }
 }
 
-// MDXEditor 4 exports each child of a quote as a block, so the inline children the toolbar's Quote
-// and the `> ` shortcut move into a quote would come out one paragraph each.
+// MDXEditor 4 exports each child of a quote as a block, so inline children the toolbar's Quote,
+// the `> ` shortcut or a merge put in a quote would come out one paragraph each.
 const quoteExportVisitor: MdxEditor.LexicalVisitor = {
   priority: 100,
   testLexicalNode: (node): node is LexicalNode => node.getType() === 'quote',
