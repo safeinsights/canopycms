@@ -132,9 +132,9 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       actions.nextVisitor()
       const list = mdastParent.children.at(-1)
       if (list?.type === 'list' && isListLike(lexicalNode)) list.start = lexicalNode.getStart()
-      // Only a list starting at 1 can interrupt a paragraph, so one after other content in a list
-      // item needs the blank line a loose item writes, or it reads back as that paragraph's text.
-      if (isListItem(mdastParent) && mdastParent.children.length > 1) {
+      // Only a list starting at 1 can interrupt a paragraph, so one right after a paragraph in a
+      // list item needs the blank line a loose item writes, or it reads back as that paragraph.
+      if (isListItem(mdastParent) && mdastParent.children.at(-2)?.type === 'paragraph') {
         mdastParent.spread = true
       }
     },

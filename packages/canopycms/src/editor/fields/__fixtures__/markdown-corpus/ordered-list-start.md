@@ -23,3 +23,9 @@ One after a paragraph in its item:
 
   7. Check the preview.
   8. Publish.
+
+One after a heading in its item needs no blank line:
+
+- ### Then
+  7. Check the preview.
+- Publish.
