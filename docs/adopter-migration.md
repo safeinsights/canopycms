@@ -40,6 +40,15 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Deleting a referenced entry asks first — **behaviour change on the delete API**
+
+**What changed.** Deleting an entry that other entries reference (by field or `entry:` link)
+returns 409 with `data.referencedBy`: the referencing entries the user may read, and a
+`hiddenCount` of the rest. `?confirmReferenced=true` deletes anyway; the editor's dialog offers
+**Delete anyway**.
+
+**To adopt.** Only scripts calling the delete endpoint: pass the flag or handle the 409.
+
 ### The markdown editor runs MDXEditor 4.3
 
 **What changed.** `@mdxeditor/editor` is `^4.3.2` (Lexical 0.48), up from `^3.52.4`. Two-paragraph

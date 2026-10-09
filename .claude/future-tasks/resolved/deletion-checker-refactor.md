@@ -1,10 +1,12 @@
 ---
-priority: P3
-adopters: BOTH
 summary: >-
-  Refactor `DeletionChecker`'s `findIdInData` (`deletion-checker.ts:120-210`, still hand-rolled) to use `traverseFields` — the duplicated block-shape logic has bitten three times. **Its secondary ask is now resolved** and struck: PR #88 added a shared `resolveBlockItem()` (`field-traversal.ts:60-81`) called by both traversals, so `_type` vs `template` is reconciled. The structural duplication that caused the recurrences remains
+  RESOLVED 2026-10-09, branch `fix/guard-referenced-delete`, base `int-202610-b` (stacked on `chore/backlog-frontmatter`). The hand-rolled `findIdInData` and the `DeletionChecker` class are gone. Reference ids are collected by `collectReferenceIds` (`validation/field-traversal.ts`), built on `traverseFields`, so block, object-list and group shapes are the validator's. The scan is the pure `findReferencingEntries` (`validation/deletion-checker.ts`) over raw `listEntries` items, read per entry by that entry's own type schema. The old class also compared ids against reference-RESOLVED data and used one schema per collection, so it could not have found a reference through a real store. Shipped with [delete-referenced-entry-unguarded.md](delete-referenced-entry-unguarded.md).
 ---
 # DeletionChecker: Use traverseFields Instead of Manual Traversal
+
+**Status: RESOLVED 2026-10-09**, with the delete guard in
+[delete-referenced-entry-unguarded.md](delete-referenced-entry-unguarded.md). The text below is
+the original task.
 
 ## Problem
 
