@@ -444,6 +444,60 @@ describe('splitByStored', () => {
     expect(split({ summary: 'Intro\n\n<Card {...p} />' }, stored).refused).toEqual([])
   })
 
+  it('refuses new text inside a kept script or style, which runs as it is', () => {
+    const script = { summary: 'Intro <script>console.log(1)</script>' }
+    expect(
+      split({ summary: 'Intro <script>steal(document.cookie)</script>' }, script).refused,
+    ).toHaveLength(1)
+    const style = { summary: '<style>p : red</style>' }
+    expect(
+      split({ summary: '<style>@import url("https://evil.example/x.css");</style>' }, style)
+        .refused,
+    ).toHaveLength(1)
+    expect(
+      split({ summary: 'Edited intro <script>console.log(1)</script>' }, script).refused,
+    ).toEqual([])
+  })
+
+  it('keeps import/export only in a field saved unchanged, since it sees the whole field', () => {
+    const stored = { summary: 'export const Foo = () => null\n\nIntro' }
+    expect(split({ summary: 'export const Foo = () => null\n\nIntro' }, stored).refused).toEqual([])
+    // New JSX can call what the block defines, and a default export wraps everything.
+    expect(
+      split({ summary: 'export const Foo = () => null\n\nIntro\n\n<Foo />' }, stored).refused,
+    ).toHaveLength(1)
+    expect(
+      split({ summary: 'export const Foo = () => null\n\nIntro, edited' }, stored).refused,
+    ).toHaveLength(1)
+    // Removing the code is always allowed.
+    expect(split({ summary: 'Intro, edited' }, stored).refused).toEqual([])
+  })
+
+  it('matches stored code whatever its line endings', () => {
+    const stored = { summary: 'Total: {a +\r\n  b}' }
+    expect(split({ summary: 'Total: {a +\n  b}' }, stored).refused).toEqual([])
+    const esm = { summary: 'export const meta = {\r\n  title: "x",\r\n}' }
+    expect(split({ summary: 'export const meta = {\n  title: "x",\n}' }, esm).refused).toEqual([])
+  })
+
+  it('keeps code only in a field of the same dialect', () => {
+    const fields: EntrySchema = [
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [
+          { name: 'note', fields: [{ name: 'text', type: 'markdown' }] },
+          { name: 'rich', fields: [{ name: 'text', type: 'mdx' }] },
+        ],
+      },
+    ]
+    const at = (template: string) => [{ template, value: { text: '[a](javascript:x())' } }]
+    const found = (template: string) =>
+      findMarkdownSafetyIssues(fields, 'json', { blocks: at(template) })
+    expect(splitByStored(found('rich'), found('note')).refused).toHaveLength(1)
+    expect(splitByStored(found('rich'), found('rich')).refused).toEqual([])
+  })
+
   it('keeps an edit inside a stored element that is not allowed', () => {
     const stored = { summary: '<Tabs.Tab label="a">\n\nold text\n\n</Tabs.Tab>' }
     expect(

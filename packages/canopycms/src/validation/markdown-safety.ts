@@ -23,8 +23,10 @@
  * refused, since it cannot be checked.
  *
  * A save may keep code the stored entry already holds in the same field, which came from outside
- * the CMS or from before this policy, so an author is never stuck: `splitByStored` matches each
- * construct by its tree, and refuses one that is new, changed, copied or moved to another field.
+ * the CMS or from before this policy, so an author can still edit around it: `splitByStored`
+ * matches each construct by its key, and refuses one that is new, changed, copied or moved to
+ * another field. A key holds everything that decides what the construct runs, so `import`/`export`,
+ * which every element in the field can reach, is kept only in a field saved unchanged.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -356,8 +358,11 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         name.includes('.')
           ? `${tag} is not allowed: use a component by its plain name`
           : `${tag} is not allowed: it is not one of the HTML tags a body may use, so use one of the site's components instead`,
-        // Its children are checked on their own, so editing them keeps it.
-        treeKey('tag', { name, attributes: node.attributes }),
+        // A component's children are markdown, checked on their own, so editing them keeps it. An
+        // HTML tag's are its content, raw text that runs inside `<script>` or `<style>`.
+        name.includes('.')
+          ? treeKey('tag', { name, attributes: node.attributes })
+          : treeKey('tag', node),
       ),
     ]
   }
@@ -432,7 +437,15 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
   return issues
 }
 
-function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): MarkdownSafetyIssue[] {
+/** What checking one tree needs beyond its nodes. */
+interface CheckContext {
+  /** The whole field's source, the key of its ESM. */
+  readonly field: string
+  readonly definitions: ReadonlyMap<string, string>
+}
+
+function checkNode(node: MdNode, context: CheckContext): MarkdownSafetyIssue[] {
+  const { definitions } = context
   const issues: MarkdownSafetyIssue[] = []
   switch (node.type) {
     case 'mdxjsEsm':
@@ -440,7 +453,9 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
         issue(
           node,
           'import/export statements are not allowed: they run as code',
-          treeKey('esm', node),
+          // What it defines can be called by any JSX in the field, and a default export receives
+          // all of it, so it is kept only in a field saved unchanged.
+          treeKey('esm', context.field),
         ),
       )
       break
@@ -479,7 +494,7 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
       break
     }
   }
-  for (const child of node.children ?? []) issues.push(...checkNode(child, definitions))
+  for (const child of node.children ?? []) issues.push(...checkNode(child, context))
   return issues
 }
 
@@ -518,11 +533,13 @@ export function findUnsafeMarkdown(
   source: string,
   dialect: MarkdownDialect,
 ): MarkdownSafetyIssue[] {
+  // Line endings are not part of what MDX compiles, and an editor saves a CRLF file as LF.
+  const field = source.replace(/\r\n?/g, '\n')
   const parses: MarkdownSafetyIssue[][] = []
   for (const withGfm of [false, true]) {
     let tree: MdNode
     try {
-      tree = parse(source, dialect, withGfm)
+      tree = parse(field, dialect, withGfm)
     } catch (err: unknown) {
       return [
         { message: `This MDX does not parse, so it cannot be checked: ${getErrorMessage(err)}` },
@@ -530,7 +547,7 @@ export function findUnsafeMarkdown(
     }
     let found: MarkdownSafetyIssue[]
     try {
-      found = checkNode(tree, collectDefinitions(tree))
+      found = checkNode(tree, { field, definitions: collectDefinitions(tree) })
     } catch (err: unknown) {
       // Nesting deep enough to exhaust the stack.
       return [{ message: `This body is too deeply nested to check: ${getErrorMessage(err)}` }]
@@ -549,7 +566,10 @@ export function findUnsafeMarkdown(
     if (count > 0) unmatched.set(id(item), count - 1)
     else issues.push(item)
   }
-  return issues
+  // The same construct runs differently as markdown and as MDX, so the dialect is part of its key.
+  return issues.map((item) =>
+    item.key === undefined ? item : { ...item, key: `${dialect}\0${item.key}` },
+  )
 }
 
 /** The field's one message: its first issue, and how many more there are. */
@@ -622,7 +642,7 @@ const site = (fieldPath: string) => fieldPath.replace(/\[\d+\]/g, '')
 
 /**
  * Splits a save's issues into those it adds, which refuse it, and those the stored entry already
- * held in the same field, which it keeps. Constructs are matched by source and counted, so a copy
+ * held in the same field, which it keeps. Constructs are matched by key and counted, so a copy
  * of a stored construct is refused, as is one moved to a field of another name. An issue with no
  * key, such as a body that does not parse, is never kept.
  */
