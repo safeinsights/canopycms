@@ -58,7 +58,7 @@ export const PreviewFrame = ({
   assetBase?: string
   /** Called when the preview reports a draft compile/render error; null clears it. */
   onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
-  /** Called with how many elements the preview marks, each time highlighting turns on. */
+  /** Called with how many elements the preview marks, while highlighting is on. */
   onMarkCount?: (count: number) => void
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)

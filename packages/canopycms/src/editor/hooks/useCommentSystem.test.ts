@@ -550,6 +550,27 @@ describe('useCommentSystem', () => {
     document.body.removeChild(mockElement)
   })
 
+  it('jumps to a comment field whose path no selector could spell', () => {
+    vi.useFakeTimers()
+    const element = document.createElement('div')
+    element.setAttribute('data-canopy-field', 'notes["x"]')
+    element.scrollIntoView = vi.fn()
+    document.body.appendChild(element)
+    try {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      act(() => {
+        result.current.handleJumpToField('entry1', 'notes["x"]', 'thread1')
+      })
+      act(() => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(element.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+    } finally {
+      vi.useRealTimers()
+      element.remove()
+    }
+  })
+
   describe('preview focus on a path with no field of its own', () => {
     const focusOn = (fieldPath: string, fields: string[]) => {
       const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })

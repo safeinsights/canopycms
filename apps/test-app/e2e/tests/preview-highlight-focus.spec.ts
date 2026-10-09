@@ -52,8 +52,9 @@ const expectHighlightToggles = async (page: Page, marked: Locator[]) => {
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   for (const element of marked) await expect.poll(() => outlineStyle(element)).toBe('dashed')
-  await expect.poll(() => markCounts(page)).toEqual([expect.any(Number)])
-  expect((await markCounts(page))[0]).toBeGreaterThanOrEqual(marked.length)
+  await expect
+    .poll(async () => (await markCounts(page)).at(-1) ?? 0)
+    .toBeGreaterThanOrEqual(marked.length)
   await expect(page.getByText(/marks no editable elements/)).toHaveCount(0)
 
   await toggle.click()

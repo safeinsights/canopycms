@@ -380,31 +380,65 @@ describe('useCanopyPreview', () => {
     await waitFor(() => expect(getByTestId('value').dataset.highlight).toBe('true'))
   })
 
-  it('answers highlighting turned on with how many elements the page marks', async () => {
-    const parentWin = simulateFramed()
-    window.history.pushState({}, '', '/posts/marks')
-    render(<PreviewValue initialData={{ value: 'initial' }} />)
-    const marksReplies = () =>
-      vi
-        .mocked(parentWin.postMessage)
-        .mock.calls.filter(([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MARKS)
+  describe('the mark count', () => {
+    const setUp = () => {
+      const parentWin = simulateFramed()
+      window.history.pushState({}, '', '/posts/marks')
+      render(<PreviewValue initialData={{ value: 'initial' }} />)
+      const counts = () =>
+        vi
+          .mocked(parentWin.postMessage)
+          .mock.calls.filter(([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MARKS)
+      const highlight = (enabled: boolean, origin?: string) =>
+        act(() => {
+          window.dispatchEvent(
+            trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled }, parentWin, origin),
+          )
+        })
+      const addMark = (path: string) =>
+        act(() => {
+          const el = document.createElement('span')
+          el.setAttribute('data-canopy-path', path)
+          document.body.appendChild(el)
+          onTestFinished(() => el.remove())
+        })
+      return { counts, highlight, addMark }
+    }
 
-    window.dispatchEvent(
-      trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: false }, parentWin),
-    )
-    window.dispatchEvent(
-      trustedEvent(
-        { type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true },
-        parentWin,
-        'https://evil.example',
-      ),
-    )
-    expect(marksReplies()).toEqual([])
+    it('is reported to the editor origin once trusted highlighting turns on', async () => {
+      const { counts, highlight } = setUp()
 
-    window.dispatchEvent(trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin))
-    expect(marksReplies()).toEqual([
-      [{ type: CANOPY_PREVIEW_MARKS, count: 1 }, window.location.origin],
-    ])
+      highlight(false)
+      highlight(true, 'https://evil.example')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(counts()).toEqual([])
+
+      highlight(true)
+      await waitFor(() =>
+        expect(counts()).toEqual([
+          [{ type: CANOPY_PREVIEW_MARKS, count: 1 }, window.location.origin],
+        ]),
+      )
+    })
+
+    it('is reported again when the marks change while highlighting is on, and not after', async () => {
+      const { counts, highlight, addMark } = setUp()
+      highlight(true)
+      await waitFor(() => expect(counts()).toHaveLength(1))
+
+      addMark('extra')
+      await waitFor(() =>
+        expect(counts().map(([msg]) => msg)).toEqual([
+          { type: CANOPY_PREVIEW_MARKS, count: 1 },
+          { type: CANOPY_PREVIEW_MARKS, count: 2 },
+        ]),
+      )
+
+      highlight(false)
+      addMark('later')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(counts()).toHaveLength(2)
+    })
   })
 
   it('posts the ready handshake to the editor origin, never *', () => {

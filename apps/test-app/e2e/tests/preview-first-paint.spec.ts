@@ -22,7 +22,7 @@ const joinFlightChunks = (html: string): string =>
 const fetchAsAdmin = async (path: string): Promise<string> => {
   const response = await fetch(`${BASE_URL}${path}`, { headers: { 'X-Test-User': 'admin' } })
   expect(response.status).toBe(200)
-  return response.text()
+  return joinFlightChunks(await response.text())
 }
 
 /**
@@ -127,9 +127,7 @@ test.describe('A createPreviewPage view paints its images from the signed-in rou
       const thumb = (prefix: string) =>
         new RegExp(`"${prefix}/assets/t/c=[0-9.:]+,w=200/${hash32}/`)
       const responses = await Promise.all(
-        Array.from({ length: 16 }, (_, i) =>
-          fetchAsAdmin(i % 2 ? '/hero' : PREVIEW_URL).then(joinFlightChunks),
-        ),
+        Array.from({ length: 16 }, (_, i) => fetchAsAdmin(i % 2 ? '/hero' : PREVIEW_URL)),
       )
       const heroPages = responses.filter((_, i) => i % 2)
       const previews = responses.filter((_, i) => i % 2 === 0)

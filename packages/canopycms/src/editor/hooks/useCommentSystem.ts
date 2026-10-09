@@ -61,8 +61,8 @@ export interface UseCommentSystemReturn {
 }
 
 /**
- * The form element for a preview path, else for its nearest ancestor that has one: a list item or
- * block (`tags[1]`) has no field of its own. Compares values, not a selector: the path is untrusted.
+ * The form element for a path as given, else for its nearest ancestor that has one: a list item
+ * (`tags[1]`) has no field of its own. Compares values, not a selector: the path is untrusted.
  */
 const findFieldTarget = (path: string): { element: HTMLElement; path: string } | undefined => {
   const byField = new Map<string, HTMLElement>()
@@ -70,6 +70,8 @@ const findFieldTarget = (path: string): { element: HTMLElement; path: string } |
     const field = element.getAttribute('data-canopy-field')
     if (field && !byField.has(field)) byField.set(field, element)
   }
+  const exact = byField.get(path)
+  if (exact) return { element: exact, path }
   const segments = parseCanopyPath(path)
   for (let length = segments.length; length > 0; length--) {
     const candidate = formatCanopyPath(segments.slice(0, length))
@@ -261,10 +263,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
     window.setTimeout(
       () => {
-        const fieldElement = document.querySelector(`[data-canopy-field="${canopyPath}"]`)
-        if (fieldElement) {
-          fieldElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }
+        findFieldTarget(canopyPath)?.element.scrollIntoView({ behavior: 'smooth', block: 'center' })
         setFocusedFieldPath(canopyPath)
         setHighlightThreadId(threadId)
         window.setTimeout(() => {
