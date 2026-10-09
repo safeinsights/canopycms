@@ -30,7 +30,8 @@ export interface MarkdownFieldProps {
   dataCanopyField?: string
 }
 
-const MDXEditorLazy = React.lazy(async () => {
+/** @internal Exported for the round-trip corpus test, which drives exactly this editor. */
+export const MDXEditorLazy = React.lazy(async () => {
   // MDXEditor's only code import (theme.tsx loads its CSS); see mdx-jsx-support for why.
   const mdx = await import('@mdxeditor/editor')
   const {
@@ -84,10 +85,9 @@ const MDXEditorLazy = React.lazy(async () => {
   }
 
   /**
-   * Bridges mdxeditor's realm cells (reachable only once this lazy chunk has
-   * loaded) into MdxImageDialog's plain-props interface, so that component
-   * never imports `@mdxeditor/editor` at runtime — same pattern as
-   * `EntryLinkToolbarButton` above.
+   * Bridges mdxeditor's realm cells (reachable only once this lazy chunk has loaded) into
+   * MdxImageDialog's plain-props interface, so that component never imports `@mdxeditor/editor`
+   * at runtime — same pattern as `EntryLinkToolbarButton` above.
    */
   const MdxImageDialogBridge: React.FC = () => {
     const [state, editor] = useCellValues(imageDialogState$, activeEditor$)

@@ -67,9 +67,12 @@ if (typeof window !== 'undefined') {
     Element.prototype.scrollIntoView = () => {}
   }
 
-  // Nor does Range measure anything. Lexical measures the caret after each
-  // keystroke to scroll it into view, so typing into MDXEditor needs this.
+  // Nor does Range measure anything: Lexical measures the caret after each keystroke to
+  // scroll it into view, and CodeMirror measures the text of a code block it renders.
   if (!Range.prototype.getBoundingClientRect) {
     Range.prototype.getBoundingClientRect = () => document.body.getBoundingClientRect()
+  }
+  if (!Range.prototype.getClientRects) {
+    Range.prototype.getClientRects = () => Object.assign([], { item: () => null })
   }
 }

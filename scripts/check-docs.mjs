@@ -35,6 +35,8 @@ const EXCLUDED = [
   '.claude/worktrees',
   'dist',
   'BACKLOG.md',
+  // Sample site content for the editor round-trip test; its links are site URLs.
+  'packages/canopycms/src/editor/fields/__fixtures__',
 ]
 
 /**

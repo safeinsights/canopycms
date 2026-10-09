@@ -91,6 +91,23 @@ function canonical(node: MdNode): string {
   })
 }
 
+/**
+ * `text`'s top-level blocks, each as its source text and its `canonical` form, or undefined when
+ * `text` does not parse: two bodies mean the same to the splice exactly when their `meaning`
+ * lists are equal.
+ *
+ * @internal Exported for the round-trip corpus test.
+ */
+export function markdownBlocks(
+  text: string,
+  format: MarkdownBodyFormat,
+): { text: string; meaning: string }[] | undefined {
+  return parse(text, format)?.children?.map((node) => ({
+    text: sliceOf(text, node) ?? '',
+    meaning: canonical(node),
+  }))
+}
+
 /** What a changed block must share with an original to be paired with it. */
 function kindOf(node: MdNode): string {
   return `${node.type}:${String(node.ordered ?? '')}:${String(node.checked ?? '')}`
