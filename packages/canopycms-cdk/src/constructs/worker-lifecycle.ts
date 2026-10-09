@@ -15,6 +15,15 @@ export const WORKER_DRAIN_HOOK_NAME = 'canopycms-worker-drain'
 export const EXIT_DRAINED_FOR_TERMINATION = 75
 
 /**
+ * The worker's exit status after it stopped itself (its EFS lock was
+ * compromised). Non-zero, and deliberately not {@link EXIT_DRAINED_FOR_TERMINATION}
+ * (75), which the unit lists in `RestartPreventExitStatus=`: this one must let
+ * `Restart=always` start a fresh worker. Not in `SuccessExitStatus=` either.
+ * 69 is sysexits' EX_UNAVAILABLE.
+ */
+export const EXIT_WORKER_SELF_STOPPED = 69
+
+/**
  * Set to `spot` in the worker's environment when it runs on spot capacity, which
  * arms the watch for a spot interruption notice.
  */
