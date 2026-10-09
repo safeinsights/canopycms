@@ -8,6 +8,7 @@ import {
   CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_FOCUS,
   CANOPY_PREVIEW_HIGHLIGHT,
+  CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   isTrustedEditorMessage,
@@ -377,6 +378,33 @@ describe('useCanopyPreview', () => {
 
     window.dispatchEvent(trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin))
     await waitFor(() => expect(getByTestId('value').dataset.highlight).toBe('true'))
+  })
+
+  it('answers highlighting turned on with how many elements the page marks', async () => {
+    const parentWin = simulateFramed()
+    window.history.pushState({}, '', '/posts/marks')
+    render(<PreviewValue initialData={{ value: 'initial' }} />)
+    const marksReplies = () =>
+      vi
+        .mocked(parentWin.postMessage)
+        .mock.calls.filter(([msg]) => (msg as { type?: string }).type === CANOPY_PREVIEW_MARKS)
+
+    window.dispatchEvent(
+      trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: false }, parentWin),
+    )
+    window.dispatchEvent(
+      trustedEvent(
+        { type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true },
+        parentWin,
+        'https://evil.example',
+      ),
+    )
+    expect(marksReplies()).toEqual([])
+
+    window.dispatchEvent(trustedEvent({ type: CANOPY_PREVIEW_HIGHLIGHT, enabled: true }, parentWin))
+    expect(marksReplies()).toEqual([
+      [{ type: CANOPY_PREVIEW_MARKS, count: 1 }, window.location.origin],
+    ])
   })
 
   it('posts the ready handshake to the editor origin, never *', () => {
@@ -815,6 +843,30 @@ describe('preview error channel', () => {
       }),
     )
     await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
+  })
+
+  it('PreviewFrame reports the mark count a trusted preview sends, and nothing else', async () => {
+    const onMarkCount = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onMarkCount={onMarkCount} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+    const send = (data: unknown, origin = window.location.origin) =>
+      window.dispatchEvent(
+        new MessageEvent('message', { data, origin, source: iframe.contentWindow }),
+      )
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 3 }, 'https://evil.example')
+    send({ type: CANOPY_PREVIEW_MARKS, count: '3' })
+    send({ type: CANOPY_PREVIEW_MARKS, count: -1 })
+    send({ type: CANOPY_PREVIEW_MARKS, count: 1.5 })
+    send({ type: CANOPY_PREVIEW_MARKS })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onMarkCount).not.toHaveBeenCalled()
+
+    send({ type: CANOPY_PREVIEW_MARKS, count: 0 })
+    await waitFor(() => expect(onMarkCount).toHaveBeenCalledWith(0))
+    expect(onMarkCount).toHaveBeenCalledTimes(1)
   })
 
   it('ignores error reports whose message is not a string', async () => {

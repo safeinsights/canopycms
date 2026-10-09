@@ -6,12 +6,14 @@ import { useEffect, useRef, useState } from 'react'
 import {
   CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_HIGHLIGHT,
+  CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
   type DraftUpdateMessage,
   type HighlightMessage,
   isOpaqueOrigin,
   type PreviewErrorMessage,
+  type PreviewMarksMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
 
@@ -39,6 +41,7 @@ export const PreviewFrame = ({
   style,
   highlightEnabled,
   onPreviewError,
+  onMarkCount,
   assetBase,
 }: {
   src: string
@@ -55,6 +58,8 @@ export const PreviewFrame = ({
   assetBase?: string
   /** Called when the preview reports a draft compile/render error; null clears it. */
   onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
+  /** Called with how many elements the preview marks, each time highlighting turns on. */
+  onMarkCount?: (count: number) => void
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -111,10 +116,12 @@ export const PreviewFrame = ({
   const postRef = useRef(post)
   const postHighlightRef = useRef(postHighlight)
   const onPreviewErrorRef = useRef(onPreviewError)
+  const onMarkCountRef = useRef(onMarkCount)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
+    onMarkCountRef.current = onMarkCount
   })
 
   useEffect(() => {
@@ -151,6 +158,11 @@ export const PreviewFrame = ({
             ? null
             : { message: msg.message, ...(fieldPath ? { fieldPath } : {}) },
         )
+      } else if (type === CANOPY_PREVIEW_MARKS) {
+        const { count } = event.data as Partial<PreviewMarksMessage>
+        if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
+          onMarkCountRef.current?.(count)
+        }
       }
     }
     window.addEventListener('message', handleMessage)

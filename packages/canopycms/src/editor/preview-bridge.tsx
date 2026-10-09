@@ -19,6 +19,7 @@ export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
+export const CANOPY_PREVIEW_MARKS = 'canopycms:preview:marks'
 
 /**
  * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
@@ -93,6 +94,15 @@ export interface PreviewFocusMessage {
 export interface HighlightMessage {
   type: typeof CANOPY_PREVIEW_HIGHLIGHT
   enabled: boolean
+}
+
+/**
+ * Preview → editor answer to highlighting turned on: how many `data-canopy-path` elements the page
+ * has, so the editor can say when there is nothing to outline. An older bridge sends none.
+ */
+export interface PreviewMarksMessage {
+  type: typeof CANOPY_PREVIEW_MARKS
+  count: number
 }
 
 /**
@@ -254,6 +264,12 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
       const msg = event.data as HighlightMessage
       if (msg?.type !== CANOPY_PREVIEW_HIGHLIGHT) return
       setEnabled(Boolean(msg.enabled))
+      if (!msg.enabled) return
+      const reply: PreviewMarksMessage = {
+        type: CANOPY_PREVIEW_MARKS,
+        count: document.querySelectorAll('[data-canopy-path]').length,
+      }
+      window.parent.postMessage(reply, event.origin)
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)

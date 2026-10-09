@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { EditorSidebar, type EditorSidebarProps } from './EditorSidebar'
@@ -56,5 +56,34 @@ describe('EditorSidebar - System health menu item', () => {
 
     await userEvent.click(item)
     expect(onSystemHealthOpen).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('EditorSidebar - highlight toggle', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('draws its icon as a dashed outline, like the outline it turns on in the preview', () => {
+    render(<EditorSidebar {...defaultProps} />, { wrapper: Wrapper })
+
+    const strokes = [...screen.getByLabelText('Toggle highlights').querySelectorAll('svg path')]
+      .map((path) => path.getAttribute('d') ?? '')
+      .join(' ')
+      .match(/[Mm]/g)
+    expect(strokes?.length ?? 0).toBeGreaterThanOrEqual(8)
+  })
+
+  it('says so beside the toggle when highlights are on and the preview marks nothing', async () => {
+    const { rerender } = render(<EditorSidebar {...defaultProps} highlightEnabled />, {
+      wrapper: Wrapper,
+    })
+    expect(screen.queryByText(/marks no editable elements/)).toBeNull()
+
+    rerender(<EditorSidebar {...defaultProps} highlightEnabled previewMarksNothing />)
+    expect(await screen.findByText(/marks no editable elements/)).toBeTruthy()
+
+    rerender(<EditorSidebar {...defaultProps} previewMarksNothing />)
+    await waitFor(() => expect(screen.queryByText(/marks no editable elements/)).toBeNull())
   })
 })
