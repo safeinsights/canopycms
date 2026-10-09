@@ -677,7 +677,7 @@ const schema = defineEntrySchema([
 ])
 ```
 
-Deleting a referenced entry asks first: the dialog names the entries pointing at it, and **Delete anyway** leaves them with validation errors.
+Deleting a referenced entry asks first: the dialog lists the entries pointing at it, and **Delete anyway** leaves their references dangling.
 
 ### How References Work in the Editor
 

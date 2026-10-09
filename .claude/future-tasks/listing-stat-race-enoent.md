@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  `listCollectionEntries` (content-listing.ts) stats each file after `readdir` with no guard, so a file another editor deletes or renames (or the worker's rebase moves) between the two makes the whole listing throw ENOENT. `readEntryData` already treats a vanished file as empty. Callers then surface it as their own failure: the delete guard reports "could not check references" and the entries API fails the listing. Fix: treat ENOENT at `stat` as a skipped entry
+  `listCollectionEntries` (content-listing.ts) stats each file after `readdir` with no guard, so a file another editor deletes or renames (or the worker's rebase moves) between the two makes the whole listing throw ENOENT. `readEntryData` already treats a vanished file as empty. Every caller sees the throw; the delete guard reports it as "could not check references". Fix: treat ENOENT at `stat` as a skipped entry
 ---
 # Listing throws when a file vanishes mid-scan
 
