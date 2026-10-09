@@ -1,8 +1,9 @@
 'use client'
 
 /**
- * MarkdownField's MDXEditor plugins: a catch-all JSX editor, and a guard that
- * turns what MDXEditor would lose without an error into `onError`.
+ * MarkdownField's MDXEditor plugins: a catch-all JSX editor, a guard that
+ * turns what MDXEditor would lose without an error into `onError`, and export
+ * visitors for block shapes its own export writes wrong.
  *
  * MDXEditor is passed in from MarkdownField's import of the package entry. A named
  * import here enters the jsx plugin's import cycle mid-cycle; where Turbopack merged
@@ -122,6 +123,63 @@ function rearrangedBlocks(node: MdastNode): string | null {
   return null
 }
 
+type ExportParams = Parameters<NonNullable<MdxEditor.LexicalVisitor['visitLexicalNode']>>[0]
+type LexicalNode = ExportParams['lexicalNode']
+type MdastParent = ExportParams['mdastParent']
+type MdastParagraph = Extract<MdastNode, { type: 'paragraph' }>
+type MdastBlockquote = Extract<MdastNode, { type: 'blockquote' }>
+
+interface LexicalParent {
+  getChildren(): LexicalNode[]
+}
+
+const isLexicalParent = (node: object): node is LexicalParent =>
+  'getChildren' in node && typeof node.getChildren === 'function'
+
+const hasBlockChild = (node: LexicalNode) =>
+  isLexicalParent(node) && node.getChildren().some((child) => !child.isInline())
+
+// Writes `node`'s children into `target`: a run of inline children as one paragraph, a block as itself.
+function writeBlocks(node: LexicalNode, target: MdastParent, actions: ExportParams['actions']) {
+  let paragraph: MdastParagraph | null = null
+  for (const child of isLexicalParent(node) ? node.getChildren() : []) {
+    if (!child.isInline()) {
+      paragraph = null
+      actions.visit(child, target)
+      continue
+    }
+    if (paragraph === null) {
+      const created: MdastParagraph = { type: 'paragraph', children: [] }
+      actions.appendToParent(target, created)
+      paragraph = created
+    }
+    actions.visit(child, paragraph)
+  }
+}
+
+// MDXEditor 4 exports each child of a quote as a block, so the inline children the toolbar's Quote
+// and the `> ` shortcut move into a quote would come out one paragraph each.
+const quoteExportVisitor: MdxEditor.LexicalVisitor = {
+  priority: 100,
+  testLexicalNode: (node): node is LexicalNode => node.getType() === 'quote',
+  visitLexicalNode({ lexicalNode, mdastParent, actions }) {
+    const quote: MdastBlockquote = { type: 'blockquote', children: [] }
+    actions.appendToParent(mdastParent, quote)
+    writeBlocks(lexicalNode, quote, actions)
+  },
+}
+
+// Backspace at the start of a quote moves its paragraphs and lists into one paragraph, which
+// MDXEditor would export as one run of text; they are written as the blocks they show.
+const paragraphOfBlocksExportVisitor: MdxEditor.LexicalVisitor = {
+  priority: 100,
+  testLexicalNode: (node): node is LexicalNode =>
+    node.getType() === 'paragraph' && hasBlockChild(node),
+  visitLexicalNode({ lexicalNode, mdastParent, actions }) {
+    writeBlocks(lexicalNode, mdastParent, actions)
+  },
+}
+
 /** Typed `string` because the mdast node union this package resolves omits the ESM node. */
 const ESM_NODE_TYPE: string = 'mdxjsEsm'
 
@@ -133,6 +191,7 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
   const {
     NestedLexicalEditor,
     UnrecognizedMarkdownConstructError,
+    addExportVisitor$,
     addImportVisitor$,
     importVisitors$,
     isMdastJsxNode,
@@ -239,8 +298,15 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
     },
   })
 
+  const blockExportPlugin = realmPlugin({
+    init(realm) {
+      realm.pub(addExportVisitor$, [quoteExportVisitor, paragraphOfBlocksExportVisitor])
+    },
+  })
+
   return () => [
     jsxPlugin({ jsxComponentDescriptors: [catchAllJsxDescriptor] }),
     roundTripGuardPlugin(),
+    blockExportPlugin(),
   ]
 }

@@ -361,6 +361,7 @@ const KEPT_SHAPES: Record<string, string> = {
   'a quote with a paragraph and a horizontal rule': '> a\n>\n> ***\n',
   'a quote in a quote, with two paragraphs': '> > a\n> >\n> > b\n',
   'a quote with two paragraphs in a list item': '- > a\n  >\n  > b\n',
+  // An edit inside these two elements is `MarkdownField.test.tsx`'s nested-edit test.
   'a list item with two paragraphs inside an element.mdx':
     '<Callout>\n\n- a\n\n  b\n\n</Callout>\n',
   'a quote with two paragraphs inside an element.mdx': '<Callout>\n\n> a\n>\n> b\n\n</Callout>\n',

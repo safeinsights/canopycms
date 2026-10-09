@@ -26,6 +26,9 @@ are subtler: they round-trip into valid but different markdown, so no error fire
 
 ## Directions
 
+- From MDXEditor 4.0.2 a list item's second paragraph imports as two line breaks, so Backspace at
+  its start leaves one, which saves as a soft break: the hard-break row's cause (reasoned from the
+  visitors, not measured; jsdom has no `Selection.modify`).
 - Hard breaks and list `start` look like small upstream fixes to MDXEditor's export visitors; check
   its issue tracker, then either upstream them or override the two export visitors in a realm plugin
   (`addExportVisitor$` with a higher priority).
