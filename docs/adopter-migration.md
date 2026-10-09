@@ -50,7 +50,8 @@ server error page, and its effects run after the preview's ready message. Pages 
 `useCanopyPreview` themselves are unchanged.
 
 **To adopt.** Nothing. A test reading view content from the route's server HTML must load the page
-in a browser.
+in a browser. Server output rendered during a preview request carries the signed-in asset prefix;
+keep it out of cross-request caches (`unstable_cache`, module memos).
 
 ### A save rewrites only the lines whose values changed
 

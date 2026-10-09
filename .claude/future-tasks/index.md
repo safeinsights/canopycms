@@ -150,6 +150,7 @@ with the in-flight ACL chips.
 
 | File | Summary |
 | ---- | ------- |
+| [preview-server-asset-prefix-cache-poisoning.md](preview-server-asset-prefix-cache-poisoning.md) | New 2026-10-08, accepted and documented. Server output rendered in a `createPreviewPage` request carries the signed-in asset prefix, so an adopter's `unstable_cache` or module memo shared with public pages in the same process serves anonymous visitors broken images. Remedy: an explicit `assetBase` on `load`'s context [BOTH] |
 | [next-react-cache-import-react18-esm.md](next-react-cache-import-react18-esm.md) | New 2026-10-08, from the preview first-paint fix's review. `import { cache } from 'react'` is a link-time SyntaxError under unbundled Node ESM on React 18, which the peer range allows; App Router pages are unaffected [BOTH] |
 | [svg-asset-crop-never-renders.md](svg-asset-crop-never-renders.md) | New 2026-10-08. `ImageField` offers Crop for an svg asset, but `assetUrl` applies a crop only to `/assets/t/` srcs, so the stored crop never renders. Gate Crop on an exported transform-src predicate [BOTH] |
 | [editor-preview-public-paths-under-basepath.md](editor-preview-public-paths-under-basepath.md) | New 2026-10-08. Editor previews of a `public/` image src use the bare path, which misses under a Next `basePath`. Carry `basePath` in `AssetContext` and prefix non-store root-relative srcs as the public site does [BOTH] |

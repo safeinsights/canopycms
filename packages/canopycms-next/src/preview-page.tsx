@@ -106,7 +106,8 @@ export interface CreatePreviewPageOptions {
 /**
  * The asset prefix of the request being rendered, set once it is known to be a preview. React's
  * `cache` scopes it to one server request, and outside one it is a fresh, empty object, so a
- * render that is not a preview, or a static build, reads `undefined`.
+ * render that is not a preview, or a static build, reads `undefined`. Server output rendered
+ * during a preview request carries it, so keep that out of cross-request caches.
  */
 interface PreviewRequest {
   assetBase?: string
