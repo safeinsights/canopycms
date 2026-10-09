@@ -11,6 +11,7 @@ import {
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
+  saveHomeChangeViaAPI,
   approveBranchViaAPI,
 } from '../fixtures/test-workspace'
 import {
@@ -281,6 +282,7 @@ test.describe('Admin Branch Health', () => {
   }) => {
     const branchName = `merge-approved-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
     const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(submitRes.ok).toBe(true)
     const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')

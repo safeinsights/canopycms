@@ -1513,6 +1513,21 @@ export class GitManager {
     await this.git.commit(message)
   }
 
+  /** The checked-out commit's SHA. */
+  async headSha(): Promise<string> {
+    return (await this.git.revparse(['--verify', 'HEAD'])).trim()
+  }
+
+  /**
+   * Move the checked-out branch back to `sha`, leaving everything after it unstaged in the
+   * working tree (`reset --mixed`). Takes a SHA the caller read itself, never a relative ref:
+   * a commit call that committed nothing still resolves, so "the last commit" is not always
+   * the caller's.
+   */
+  async resetKeepingChanges(sha: string): Promise<void> {
+    await this.git.raw(['reset', '--mixed', sha])
+  }
+
   async push(branch?: string): Promise<void> {
     const target = branch ?? (await this.currentBranchName())
     // Explicit full-ref refspec (local:remote) so push works for branches not

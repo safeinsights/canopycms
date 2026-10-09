@@ -16,7 +16,7 @@ import { simpleGit } from 'simple-git'
 import { CmsWorker } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { Task } from '../task-queue/cms-task-queue'
 import type { WorkerStatusReport } from '../types'
@@ -221,7 +221,7 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
     // A push to the fixture blocks in its pre-receive hook, as a slow upload
     // to GitHub would, so it is still running when the signal aborts.
     const hook = path.join(githubFixture, 'hooks', 'pre-receive')
-    await fs.writeFile(hook, '#!/bin/sh\nsleep 3\nexit 1\n')
+    await fs.writeFile(hook, '#!/bin/sh\ntouch receiving\nsleep 3\nexit 1\n')
     await fs.chmod(hook, 0o755)
 
     const seedPath = path.join(tmpDir, 'seed')
@@ -236,6 +236,50 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
   afterEach(async () => {
     consoleSpy.restore()
     await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a submit whose push the drain aborts is released, not stamped as pushed, and stays submitted', async () => {
+    const workspacePath = path.join(tmpDir, 'workspace')
+    const contentBranchesPath = path.join(workspacePath, 'content-branches')
+    const branchPath = path.join(contentBranchesPath, 'feature')
+    await fs.mkdir(branchPath, { recursive: true })
+    const meta = getBranchMetadataFileManager(branchPath, contentBranchesPath)
+    const submittedAt = '2026-10-09T00:00:00.000Z'
+    await meta.save({ branch: { name: 'feature', status: 'submitted', submittedAt } })
+
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 10_000,
+      drainDeadlineMs: 300,
+    })
+    const w = internals(worker)
+    w.buildGitHubUrl = async () => githubFixture
+    await w.acquireLock()
+    w.running = true
+    const taskDir = path.join(workspacePath, '.tasks')
+    const id = await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'feature', submittedAt },
+    })
+
+    void w.trackOperation('task queue', worker.processTaskQueue())
+    // The push is under way once the fixture's hook has started.
+    const receiving = path.join(githubFixture, 'receiving')
+    for (let i = 0; i < 300 && !(await fs.stat(receiving).catch(() => null)); i++) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    await fs.stat(receiving)
+    await worker.stop({ reason: 'SIGTERM' })
+
+    const released = await readTaskFile(taskDir, 'pending', id)
+    expect(released?.retryCount ?? 0).toBe(0)
+    const branch = (await BranchMetadataFileManager.loadOnly(branchPath))!.branch
+    expect(branch.pushedToGitHubAt).toBeUndefined()
+    expect(branch.status).toBe('submitted')
+    expect(branch.syncFailureReason).toBeUndefined()
   })
 
   it('rejects with the abort as soon as the signal fires, not when git would have finished', async () => {
