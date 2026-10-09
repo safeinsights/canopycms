@@ -50,8 +50,7 @@ the type `MarkdownFieldConfig`. See
 [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `executable: true` only on a field whose editors you trust as code authors; an
-entry type with no `isBody` field needs one declared to opt its body out. Elsewhere, an entry
-holding such content fails its next save with the line named: move the code into a component.
+entry type with no `isBody` field needs one declared to opt its body out. An entry already holding such content keeps it, with a warning; a production build lists them. Move the code into a component.
 
 **Now deletable.** A `validateEntry` rule refusing expressions, ESM or `javascript:` links in MDX,
 and the path-prefix matching that backs up its entry-type gate. Keep a rule checking that the body

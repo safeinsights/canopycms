@@ -539,13 +539,13 @@ MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which 
 - HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes;
 - URL schemes other than http(s), mailto, tel and `entry:`; React 18 renders a `javascript:` href as given.
 
-Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. The editor shows the error, with its line, before saving.
+Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. A save adding or changing such code is refused, naming the line; code the entry already held is kept with a warning, and a production build lists every entry holding some.
 
 ```typescript
 { name: 'body', type: 'mdx', isBody: true, executable: true } // editors of this field are code authors
 ```
 
-`executable: true` turns the check off for one field, giving its editors the equivalent of repository write access. A body with no `isBody` field is always checked. The policy assumes `md` renders as markdown without raw HTML (`rehype-raw`), and `mdx` as MDX. Content committed outside the CMS, or saved before you upgraded, is unchecked.
+`executable: true` turns the check off for one field, giving its editors the equivalent of repository write access. A body with no `isBody` field is always checked. The policy assumes `md` renders as markdown without raw HTML (`rehype-raw`), and `mdx` as MDX.
 
 ### Field Groups
 

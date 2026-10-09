@@ -2,35 +2,30 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  The MDX code policy runs only at a CMS save, so content committed outside the CMS, or saved
-  before the upgrade, can still run code in a build. Run `validateMarkdownSafety` in the production
-  build's schema guard (`static/index.ts` `findInvalidEntries`), which would fail such a build.
-  Needs JP's call: it can turn a green build red on upgrade
+  A production build warns about entries holding code in a non-`executable` markdown or MDX field
+  (`warnUnsafeMarkdown` in `static/index.ts`), but still renders them, so a site that `evaluate`s
+  them runs that code on CI. Decide when the warning becomes a build failure. JP's call: it turns a
+  green build red for content the save path deliberately keeps
 ---
-# Check the MDX code policy at build time
+# Fail the build on code in a non-executable markdown or MDX field
 
 **Priority:** P2 [BOTH]. **Filed:** 2026-10-09, from the MDX trust-model work.
 
-## Problem
+## Where things stand
 
-`validateMarkdownSafety` (`validation/markdown-safety.ts`) runs in the editor and at the API's
-write boundary. A production build re-validates every entry against its schema
-(`findInvalidEntries` in `static/index.ts`, through `validateEntryData`), but not against this
-policy. So a non-`executable` field holding code reaches the site's `evaluate` at build time when:
-
-- it was committed outside the CMS;
-- it was saved before the adopter upgraded;
-- it was merged into a work branch from a base that held it.
-
-CI builds of content branches run with the repo's secrets.
+The save path refuses any code a save adds to a field that is not `executable`, but keeps code the
+stored entry already held, with a warning, so no author is stuck
+(`splitByStored` in `validation/markdown-safety.ts`). That kept code came from outside the CMS, or
+from before the upgrade. A production build lists every entry holding some (`warnUnsafeMarkdown`),
+but renders it anyway. CI builds of content branches run with the repo's secrets.
 
 ## Proposal
 
-Have `findInvalidEntries` also run `validateMarkdownSafety(item.schema, item.format, data)`, and
-report the result like any schema-invalid entry. The list items need their format; check that
-`BuildScanItem` carries it.
+After adopters have had a release to clean up, make the build fail instead of warn. Run the scan
+in `assertBuildEntriesValid` instead of beside it, or behind a config switch like
+`danglingReferences`.
 
 ## Decision needed
 
-This fails a build that passes today when existing content breaks the policy. One option is to
-warn for a release, then fail.
+When the warning becomes an error, and whether a switch keeps it a warning for a site that needs
+longer.

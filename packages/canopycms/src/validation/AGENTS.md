@@ -15,7 +15,7 @@ Validation utilities (field traversal, reference validation, entry link validati
 
 `entry-validator.ts`'s `findUnknownKeys` is built on `traverseFields` and reports content keys the schema does not define — non-blocking, feeding `validationWarnings` at the API boundary and `static/`'s `warnUnknownEntryKeys` at build time; it runs on the NORMALIZED (about-to-be-persisted) data, so a resolved reference collapsed to an id string can't be mistaken for anything, and it reports nothing when a container has no fields at all ("no schema" is not "every key is unknown").
 
-`markdown-safety.ts` (code in markdown/MDX) runs via `validateEntryFormValue` and `api/content.ts`, never in the build guard.
+`markdown-safety.ts` (code in markdown/MDX) runs in `api/content.ts` and `static/`'s build warning, not the editor.
 
 ### `normalizeReferenceValues` — the inverse of reference resolution
 
