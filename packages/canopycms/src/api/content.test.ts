@@ -675,7 +675,7 @@ describe('content api', () => {
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'mdx',
         data: {},
-        body: '# {broken',
+        body: '# Hello',
       })
       expect(res.ok).toBe(false)
       expect(res.status).toBe(422)
@@ -712,6 +712,95 @@ describe('content api', () => {
       expect(res.ok).toBe(false)
       expect(res.status).toBe(500)
       expect(res.error).toContain('validateEntry hook failed: boom')
+    })
+  })
+
+  describe('markdown safety at the write boundary', () => {
+    const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+    const writeParams = {
+      branch: unsafeAsBranchName('feature/x'),
+      path: unsafeAsLogicalPath('posts/hello'),
+    }
+
+    const mockStoreOnce = async (existingEntryType: 'article' | 'trusted') => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy = vi
+        .fn()
+        .mockResolvedValue({ collection: 'content/posts', format: 'mdx', data: {} })
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [
+                {
+                  name: 'article',
+                  format: 'mdx',
+                  default: true,
+                  schema: [{ name: 'content', type: 'mdx', isBody: true }],
+                },
+                {
+                  name: 'trusted',
+                  format: 'mdx',
+                  schema: [{ name: 'content', type: 'mdx', isBody: true, executable: true }],
+                },
+              ],
+            },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'content/posts/hello' }),
+          documentExists: vi.fn().mockResolvedValue(true),
+          getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          read: vi.fn().mockResolvedValue({ data: {} }),
+          write: writeSpy,
+        } as any
+      })
+      return { writeSpy }
+    }
+
+    const codeBody = '# Post\n\n{fetch("/api/canopycms/x", { method: "POST" })}\n'
+
+    it('refuses a body that runs code, before the validateEntry hook or the write', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+      const { writeSpy } = await mockStoreOnce('article')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        {
+          fieldPath: 'content',
+          message: expect.stringMatching(/expressions are not allowed.*line 3/),
+        },
+      ])
+      expect(hook).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('saves the same body when its field is executable', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('trusted')
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: codeBody,
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
     })
   })
 

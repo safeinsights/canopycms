@@ -30,6 +30,7 @@ import { referenceValueId, resolveBlockItem, traverseFields } from './field-trav
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isDataOnlyFormat } from '../utils/format'
+import { validateMarkdownSafety } from './markdown-safety'
 
 /**
  * One per-field validation error. `fieldPath` uses the canonical CanopyCMS
@@ -299,23 +300,21 @@ export function validateEntryData(
 }
 
 /**
- * Validate an editor FormValue (client-side entry point). For md/mdx formats
- * the editor keeps the body under the literal `body` key; remap it to the
- * schema's body field before validating so required/type checks see it.
+ * Validate an editor FormValue (client-side entry point): the schema rules and the markdown
+ * safety policy, as the server applies both at the write boundary. For md/mdx formats the editor
+ * keeps the body under the literal `body` key; remap it to the schema's body field first.
  */
 export function validateEntryFormValue(
   fields: EntrySchema,
   format: ContentFormat | undefined,
   value: Record<string, unknown>,
 ): EntryFieldError[] {
+  let data = value
   if (format && !isDataOnlyFormat(format)) {
     const { body, ...rest } = value
-    return validateEntryData(
-      fields,
-      mergeBodyIntoData(fields, rest, typeof body === 'string' ? body : ''),
-    )
+    data = mergeBodyIntoData(fields, rest, typeof body === 'string' ? body : '')
   }
-  return validateEntryData(fields, value)
+  return [...validateEntryData(fields, data), ...validateMarkdownSafety(fields, format, data)]
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
+import { validateMarkdownSafety } from '../validation/markdown-safety'
 import { collectReferenceIds } from '../validation/field-traversal'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../paths'
@@ -417,7 +418,10 @@ const writeContentHandler = async (
       // Pure rules (shared with the editor). For md/mdx the body is validated
       // as the schema's isBody field.
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
-      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+      const fieldErrors: EntryFieldError[] = [
+        ...validateEntryData(fields, dataForValidation),
+        ...validateMarkdownSafety(fields, body.format, dataForValidation),
+      ]
 
       // Reference existence (server-only: reads the content ID index). Editor
       // payloads may still carry resolved `{ id, ... }` objects from a prior

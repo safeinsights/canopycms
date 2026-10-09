@@ -11,15 +11,11 @@ import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
 
-export const primitiveFieldTypes = [
-  'string',
-  'number',
-  'boolean',
-  'datetime',
-  'markdown',
-  'mdx',
-  'code',
-] as const
+const scalarFieldTypes = ['string', 'number', 'boolean', 'datetime', 'code'] as const
+
+export const markdownFieldTypes = ['markdown', 'mdx'] as const
+
+export const primitiveFieldTypes = [...scalarFieldTypes, ...markdownFieldTypes] as const
 
 // 'image' is not a primitive: it has a structured value (ImageFieldValue) and
 // its own per-type config (ImageFieldConfig, below), so it gets a dedicated
@@ -74,7 +70,14 @@ interface BaseFieldConfig {
 }
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {
-  type: PrimitiveFieldType
+  type: (typeof scalarFieldTypes)[number]
+}
+
+/** Content that would run code as it renders is refused at save; see `validation/markdown-safety.ts`. */
+export interface MarkdownFieldConfig extends BaseFieldConfig {
+  type: (typeof markdownFieldTypes)[number]
+  /** Accept code, making every editor of this field a code author for whoever renders it. */
+  executable?: boolean
 }
 
 export interface SelectFieldConfig extends BaseFieldConfig {
@@ -194,6 +197,7 @@ export type CustomFieldConfig = BaseFieldConfig & {
 
 export type FieldConfig =
   | PrimitiveFieldConfig
+  | MarkdownFieldConfig
   | SelectFieldConfig
   | ReferenceFieldConfig
   | ImageFieldConfig
