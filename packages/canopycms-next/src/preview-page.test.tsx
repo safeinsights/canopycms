@@ -1,8 +1,9 @@
+import type { AsyncLocalStorage } from 'node:async_hooks'
 import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CanopyContext } from 'canopycms/server'
 import { notFound } from 'next/navigation'
-import { ANONYMOUS_USER } from 'canopycms'
+import { ANONYMOUS_USER, assetUrl } from 'canopycms'
 import type { PreviewLoadContext } from './preview-page'
 
 const NOT_FOUND = 'NEXT_NOT_FOUND'
@@ -11,6 +12,30 @@ vi.mock('next/navigation', () => ({
     throw new Error(NOT_FOUND)
   },
 }))
+
+// React's `cache` as a server renders it: memoized per request, and not at all outside one. Each
+// test's render runs inside `inRequest`, as a Next request does.
+const server = vi.hoisted(() => ({ request: undefined as AsyncLocalStorage<object> | undefined }))
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>()
+  const { AsyncLocalStorage: Storage } = await import('node:async_hooks')
+  const requests = (server.request ??= new Storage<object>())
+  const cache = <A extends unknown[], R>(fn: (...args: A) => R) => {
+    const memo = new WeakMap<object, R>()
+    return (...args: A): R => {
+      const request = requests.getStore()
+      if (!request) return fn(...args)
+      if (!memo.has(request)) memo.set(request, fn(...args))
+      return memo.get(request) as R
+    }
+  }
+  return { ...actual, cache }
+})
+const inRequest = <R,>(fn: () => R): R => server.request!.run({}, fn)
+
+const RAW_BASE = '/api/canopycms/assets/raw'
+const CROP = { src: '/assets/t/orig/0123456789abcdef0123456789abcdef/photo.jpg' }
+const CROP_AT_320 = '/assets/t/w=320/0123456789abcdef0123456789abcdef/photo.jpg'
 
 const { createPreviewPageFor, previewView } = await import('./preview-page')
 
@@ -35,10 +60,12 @@ const entry = (
 })
 
 const render = (path: string[] | undefined, query: Record<string, string | string[]> = {}) =>
-  createPreviewPageFor(getCanopy, { views })({
-    params: Promise.resolve(path === undefined ? {} : { path }),
-    searchParams: Promise.resolve(query),
-  })
+  inRequest(() =>
+    createPreviewPageFor(getCanopy, { views })({
+      params: Promise.resolve(path === undefined ? {} : { path }),
+      searchParams: Promise.resolve(query),
+    }),
+  )
 
 const anonymously = () => {
   getCanopy.mockResolvedValueOnce({
@@ -63,7 +90,11 @@ describe('createPreviewPageFor', () => {
 
     expect(readByUrlPath).toHaveBeenCalledWith('/posts/hello', { branch: 'feature/x' })
     expect(element.type).toBe(PostView)
-    expect(element.props).toEqual({ initialData: { title: 'Hello' }, editorOrigin: undefined })
+    expect(element.props).toEqual({
+      initialData: { title: 'Hello' },
+      editorOrigin: undefined,
+      previewAssetBase: RAW_BASE,
+    })
   })
 
   it('hands the client only the entry data, never the server-only meta', async () => {
@@ -119,7 +150,7 @@ describe('createPreviewPageFor', () => {
 
   it("is a 404 on a deployedAs: 'static' deployment, without reading", async () => {
     readByUrlPath.mockResolvedValue(entry('post'))
-    const page = createPreviewPageFor(getCanopy, { views }, 'static')
+    const page = createPreviewPageFor(getCanopy, { views }, { deployedAs: 'static' })
 
     await expect(
       page({
@@ -150,7 +181,7 @@ describe('createPreviewPageFor with a loader', () => {
     createPreviewPageFor(
       getCanopy,
       { views: { post: previewView({ view: ExtrasView, load }), doc: DocView } },
-      deployedAs,
+      { deployedAs },
     )
   const props = (path: string[], query: Record<string, string | string[]> = {}) => ({
     params: Promise.resolve({ path }),
@@ -184,6 +215,7 @@ describe('createPreviewPageFor with a loader', () => {
       initialData: { title: 'Hello' },
       editorOrigin: undefined,
       extras: { related: ['a', 'b'] },
+      previewAssetBase: RAW_BASE,
     })
   })
 
@@ -301,5 +333,127 @@ describe('createPreviewPageFor with a loader', () => {
     readByUrlPath.mockResolvedValue(entry('post'))
 
     await expect(pageWith(() => notFound())(props(['posts', 'hello']))).rejects.toThrow(NOT_FOUND)
+  })
+})
+
+describe("a preview request's server-rendered asset URLs", () => {
+  const plainRender = (): Promise<string> =>
+    inRequest(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return assetUrl(CROP, { width: 320 })
+    })
+
+  it('go behind the signed-in route, from the loader and from what renders after the page', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+    const fromLoad: string[] = []
+
+    const afterPage = await inRequest(async () => {
+      await createPreviewPageFor(getCanopy, {
+        views: {
+          post: previewView({
+            view: (props: { extras?: { related: string[] } }) => <>{props.extras?.related}</>,
+            load: () => {
+              fromLoad.push(assetUrl(CROP, { width: 320 }))
+              return { related: [] }
+            },
+          }),
+        },
+      })({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve({}),
+      })
+      return {
+        transform: assetUrl(CROP, { width: 320, baseUrl: 'https://assets.example.com' }),
+        file: assetUrl({ src: '/assets/0123456789abcdef0123456789abcdef/report.pdf' }),
+      }
+    })
+
+    expect(fromLoad).toEqual([`${RAW_BASE}${CROP_AT_320}`])
+    // The prefix wins over `baseUrl`, and only for `/assets/t/` srcs.
+    expect(afterPage.transform).toBe(`${RAW_BASE}${CROP_AT_320}`)
+    expect(afterPage.file).toBe('/assets/0123456789abcdef0123456789abcdef/report.pdf')
+  })
+
+  it('follow basePath', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const [element, url] = await inRequest(async () => [
+      (await createPreviewPageFor(
+        getCanopy,
+        { views },
+        { basePath: '/docs' },
+      )({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve({}),
+      })) as ReactElement<Record<string, unknown>>,
+      assetUrl(CROP, { width: 320 }),
+    ])
+
+    expect(element.props.previewAssetBase).toBe(`/docs${RAW_BASE}`)
+    expect(url).toBe(`/docs${RAW_BASE}${CROP_AT_320}`)
+  })
+
+  it('stay public when basePath would put the prefix off-origin', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const [element, url] = await inRequest(async () => [
+      (await createPreviewPageFor(
+        getCanopy,
+        { views },
+        { basePath: '//evil.example' },
+      )({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve({}),
+      })) as ReactElement<Record<string, unknown>>,
+      assetUrl(CROP, { width: 320 }),
+    ])
+
+    expect(element.props.previewAssetBase).toBeUndefined()
+    expect(url).toBe(CROP_AT_320)
+  })
+
+  it.each([
+    ['an anonymous request', anonymously, {}],
+    ['a read that finds nothing', () => readByUrlPath.mockResolvedValue(null), {}],
+    ['an entry type with no view', () => readByUrlPath.mockResolvedValue(entry('author')), {}],
+    ["a deployedAs: 'static' deployment", () => {}, { deployedAs: 'static' as const }],
+  ])('stay public after %s', async (_, arrange, config) => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+    arrange()
+
+    const url = await inRequest(async () => {
+      await createPreviewPageFor(
+        getCanopy,
+        { views },
+        config,
+      )({
+        params: Promise.resolve({ path: ['posts', 'hello'] }),
+        searchParams: Promise.resolve({}),
+      }).catch(() => undefined)
+      return assetUrl(CROP, { width: 320 })
+    })
+
+    expect(url).toBe(CROP_AT_320)
+  })
+
+  it('stay public in a request rendered alongside a preview, and outside any request', async () => {
+    readByUrlPath.mockResolvedValue(entry('post'))
+
+    const [preview, ...plain] = await Promise.all([
+      inRequest(async () => {
+        await createPreviewPageFor(getCanopy, { views })({
+          params: Promise.resolve({ path: ['posts', 'hello'] }),
+          searchParams: Promise.resolve({}),
+        })
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return assetUrl(CROP, { width: 320 })
+      }),
+      plainRender(),
+      plainRender(),
+    ])
+
+    expect(preview).toBe(`${RAW_BASE}${CROP_AT_320}`)
+    expect(plain).toEqual([CROP_AT_320, CROP_AT_320])
+    expect(assetUrl(CROP, { width: 320 })).toBe(CROP_AT_320)
   })
 })

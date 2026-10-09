@@ -15,6 +15,7 @@ export {
   isTrustedEditorMessage,
   resolveMessageOrigin,
   useCanopyPreview,
+  usePreviewAssetBaseGate,
   usePreviewData,
   usePreviewFocusEmitter,
   usePreviewHighlight,

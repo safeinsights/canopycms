@@ -1,7 +1,8 @@
 'use client'
 
 import type { ReactElement, ReactNode } from 'react'
-import { useCanopyPreview } from 'canopycms/preview'
+import { useCanopyPreview, usePreviewAssetBaseGate } from 'canopycms/preview'
+import type { PreviewRouteProps } from './preview-route'
 
 /** What a preview view renders from: the editor's live draft, plus `useCanopyPreview`'s helpers. */
 export type CanopyPreviewViewProps<T> = ReturnType<typeof useCanopyPreview<T>>
@@ -21,7 +22,9 @@ export interface CanopyPreviewProps<T, X = undefined> {
 
 /**
  * Wraps a view so it renders the editor's live draft of `initialData`, through `useCanopyPreview`;
- * outside an editor frame it renders `initialData` unchanged.
+ * outside an editor frame it renders `initialData` unchanged. On `createPreviewPage`'s route the
+ * view is not server-rendered: it renders right after hydration, with images behind the signed-in
+ * asset route.
  *
  * Call it in your own `'use client'` module and pass the result to `createPreviewPage`'s `views`,
  * or render it on a public page. The wrapping lives in your module, not in `createPreviewPage`,
@@ -35,10 +38,15 @@ export interface CanopyPreviewProps<T, X = undefined> {
 export function withCanopyPreview<T, X = undefined>(
   View: (props: CanopyPreviewViewProps<T> & { extras: X | undefined }) => ReactNode,
 ): (props: CanopyPreviewProps<T, X>) => ReactElement {
-  return function CanopyPreview({ initialData, editorOrigin, extras }: CanopyPreviewProps<T, X>) {
+  return function CanopyPreview(props: CanopyPreviewProps<T, X>) {
+    const { initialData, editorOrigin, extras } = props
+    const { previewAssetBase } = props as CanopyPreviewProps<T, X> & PreviewRouteProps
     const preview = useCanopyPreview<T>({ initialData, editorOrigin })
+    // On `createPreviewPage`'s route the view renders only once the gate has set the asset
+    // prefix; see `usePreviewAssetBaseGate`.
+    const open = usePreviewAssetBaseGate(previewAssetBase)
     // `extras` is a prop of its own, never spread into the hook's result, so it cannot shadow
     // `data` or `fieldProps`.
-    return <View {...preview} extras={extras} />
+    return open ? <View {...preview} extras={extras} /> : <></>
   }
 }

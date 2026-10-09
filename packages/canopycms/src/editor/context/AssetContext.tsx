@@ -10,20 +10,9 @@
 
 import React, { createContext, useContext, useMemo } from 'react'
 
-import { joinUrlPrefix } from '../../utils/url-prefix'
+import { authenticatedAssetBase } from '../raw-asset-base'
 
-/** The raw asset route (`api/assets.ts`'s `assetRawRoute`) under the default API base. */
-const RAW_ASSET_ROUTE = '/api/canopycms/assets/raw'
-
-/**
- * Where the editor loads asset bytes from: the authenticated raw route under `basePath`, never the
- * public `/assets` space. An editor asks for derivatives no build has seen (a fresh crop, a
- * thumbnail), which the public path need not serve, and the raw route computes them on demand.
- * Also handed to the live preview, through `PreviewFrame`.
- */
-export function authenticatedAssetBase(basePath?: string): string {
-  return joinUrlPrefix(basePath, RAW_ASSET_ROUTE)
-}
+export { authenticatedAssetBase }
 
 export interface AssetContextValue {
   /** The `baseUrl` to pass to `assetUrl` for every asset URL the editor renders. */

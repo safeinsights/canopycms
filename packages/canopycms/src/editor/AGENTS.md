@@ -56,7 +56,7 @@ or example-app styling, and do not leak editor CSS outward.
 preview iframe (draft updates, click-to-focus, highlight) plus the host-page hooks;
 `PreviewFrame.tsx` is the editor's side. _Adopters' public pages_ import the bridge via
 `canopycms/preview`, so its message names and payload shapes are a public contract. `isTrustedEditorMessage`/`resolveMessageOrigin` are the origin checks —
-do not weaken them. Drafts carry `assetUrl`'s preview prefix (`preview-asset-base.ts`).
+do not weaken them. `preview-asset-base.ts` holds `assetUrl`'s preview prefix; see its header.
 
 ## Data loading: SWR for three resources, hand-rolled for the rest
 

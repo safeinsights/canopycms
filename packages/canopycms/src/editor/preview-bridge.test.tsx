@@ -1,6 +1,8 @@
-import React from 'react'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import React, { memo } from 'react'
+import { hydrateRoot } from 'react-dom/client'
+import { renderToString } from 'react-dom/server'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   CANOPY_PREVIEW_ERROR,
@@ -11,11 +13,12 @@ import {
   isTrustedEditorMessage,
   resolveMessageOrigin,
   useCanopyPreview,
+  usePreviewAssetBaseGate,
 } from './preview-bridge'
 import { PreviewFrame } from './PreviewFrame'
 import { buildPreviewSrc } from './editor-utils'
 import { assetUrl } from '../assets/asset-url'
-import { getPreviewAssetBase } from './preview-asset-base'
+import { getPreviewAssetBase, setServerPreviewAssetBaseGetter } from './preview-asset-base'
 
 /**
  * Simulate running inside an editor iframe: window.parent becomes a real
@@ -600,6 +603,137 @@ describe('useCanopyPreview - the asset base from a draft drives assetUrl', () =>
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     expect(getPreviewAssetBase()).toBeUndefined()
+  })
+})
+
+describe('usePreviewAssetBaseGate - a createPreviewPage view', () => {
+  const HASH = 'b'.repeat(32)
+  const crop = { src: `/assets/t/orig/${HASH}/photo.png` }
+  const RAW = '/api/canopycms/assets/raw'
+  const atWidth = (width: number) => `/assets/t/w=${width}/${HASH}/photo.png`
+
+  // Every src ever rendered, so a public first render cannot hide behind a later fix.
+  let rendered: string[] = []
+  const Img = ({ width }: { width: number }) => {
+    const src = assetUrl(crop, { width })
+    rendered.push(src)
+    return <img data-testid={`w${width}`} alt="" src={src} />
+  }
+  // Memoized with props that never change, so it renders exactly once.
+  const MemoSibling = memo(function MemoSibling() {
+    return <Img width={640} />
+  })
+
+  const GatedView = ({ assetBase }: { assetBase?: unknown }) => {
+    const { data } = useCanopyPreview<{ title: string }>({
+      initialData: { title: 'Saved' },
+      path: '/posts/gated',
+    })
+    const open = usePreviewAssetBaseGate(assetBase)
+    return open ? (
+      <main>
+        <h1>{data.title}</h1>
+        <Img width={320} />
+        <MemoSibling />
+      </main>
+    ) : (
+      <></>
+    )
+  }
+
+  afterEach(() => {
+    rendered = []
+  })
+
+  it('renders nothing on the server, then hydrates cleanly with every image behind the route', async () => {
+    const consoleError = vi.spyOn(console, 'error')
+    vi.stubGlobal('window', undefined)
+    let html: string
+    try {
+      html = renderToString(<GatedView assetBase={RAW} />)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('/assets/t/')
+    expect(rendered).toEqual([])
+
+    const container = document.createElement('div')
+    container.innerHTML = html
+    document.body.appendChild(container)
+    const onRecoverableError = vi.fn()
+    const root = await act(async () =>
+      hydrateRoot(container, <GatedView assetBase={RAW} />, { onRecoverableError }),
+    )
+    onTestFinished(() => {
+      act(() => root.unmount())
+      container.remove()
+    })
+
+    expect(onRecoverableError).not.toHaveBeenCalled()
+    expect(consoleError).not.toHaveBeenCalled()
+    expect(rendered).toEqual([`${RAW}${atWidth(320)}`, `${RAW}${atWidth(640)}`])
+    expect(container.querySelector('[data-testid="w640"]')?.getAttribute('src')).toBe(
+      `${RAW}${atWidth(640)}`,
+    )
+  })
+
+  it('renders on the server at once with no asset base, as on a public page', () => {
+    vi.stubGlobal('window', undefined)
+    let html: string
+    try {
+      html = renderToString(<GatedView />)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    expect(html).toContain(`src="${atWidth(320)}"`)
+    expect(html).toContain(`src="${atWidth(640)}"`)
+  })
+
+  it.each([
+    ['an off-origin URL', 'https://evil.example/raw'],
+    ['a protocol-relative path', '//evil.example/raw'],
+    ['a backslash spelling of one', '/\\evil.example/raw'],
+    ['a relative path', 'api/canopycms/assets/raw'],
+    ['a non-string', 42],
+  ])('ignores %s, rendering public URLs', async (_label, assetBase) => {
+    const { findByTestId } = render(<GatedView assetBase={assetBase} />)
+
+    expect((await findByTestId('w320')).getAttribute('src')).toBe(atWidth(320))
+    expect(getPreviewAssetBase()).toBeUndefined()
+  })
+
+  it('is never steered by a server-side getter in a browser', () => {
+    setServerPreviewAssetBaseGetter(() => '/server/raw')
+    onTestFinished(() => setServerPreviewAssetBaseGetter(undefined))
+
+    expect(assetUrl(crop, { width: 320 })).toBe(atWidth(320))
+  })
+
+  it("gives way to a later draft's asset base", async () => {
+    const parentWin = simulateFramed()
+    const { findByTestId, getByTestId, rerender } = render(<GatedView assetBase={RAW} />)
+    expect((await findByTestId('w320')).getAttribute('src')).toBe(`${RAW}${atWidth(320)}`)
+
+    window.dispatchEvent(
+      trustedEvent(
+        {
+          type: CANOPY_PREVIEW_MESSAGE,
+          path: '/posts/gated',
+          data: { title: 'Draft' },
+          assetBase: '/other/raw',
+        },
+        parentWin,
+      ),
+    )
+
+    await waitFor(() =>
+      expect(getByTestId('w320').getAttribute('src')).toBe(`/other/raw${atWidth(320)}`),
+    )
+    // And keeps it through a re-render the draft did not cause.
+    rerender(<GatedView assetBase={RAW} />)
+    expect(getByTestId('w320').getAttribute('src')).toBe(`/other/raw${atWidth(320)}`)
   })
 })
 

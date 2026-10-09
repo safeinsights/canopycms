@@ -1203,7 +1203,7 @@ Stored asset URLs are always root-relative (`/assets/…`), because the stored v
 
 `baseUrl` is the **one** prefix concept for asset URLs, and the two non-empty shapes are alternatives rather than things you compose: a cross-origin asset host serves at its own root and does not also live under your site's `basePath`. The prefix is applied at render time only and is **never** written into content.
 
-In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the editor's signed-in route instead of `baseUrl`, so drafts can show crops and widths no build produced. Only a same-origin framed page is affected, from its first draft on; an off-origin preview shows only stored derivatives.
+In the editor's live preview, `assetUrl` puts `/assets/t/…` URLs behind the signed-in route instead of `baseUrl`, so drafts show crops and widths no build produced: from the first request in a `createPreviewPage` view, otherwise from the first draft. An off-origin preview shows only stored derivatives.
 
 ### Storing a build's images before it is released
 
@@ -1581,6 +1581,8 @@ export default createPreviewPage({ views: { post: PostPreview, doc: DocPreview }
 ```
 
 It reads from the editor's `?branch=` under the request's ACLs, never creating a branch. Anonymous requests, anything unreadable, an entry type with no view, and every request on a `deployedAs: 'static'` deployment are 404s. Public pages render the same `<PostPreview initialData={data} />`. Wrap views in a `'use client'` module, never in server code. Serve the route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY`, so the editor can frame it.
+
+Views on this route render after hydration, not on the server, so their images and those in `load`'s server components use the signed-in asset route from the first request. Server output rendered during a preview request carries that prefix; keep it out of cross-request caches (`unstable_cache`, module memos).
 
 A view that needs more than its entry pairs with a server `load` in that page file; `previewView` checks its result against the view's `extras` type:
 

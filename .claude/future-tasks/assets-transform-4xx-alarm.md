@@ -18,5 +18,5 @@ behaviour, so this needs either additional metrics on a dedicated distribution, 
 real-time or standard logs, or a CloudFront Function that counts misses. Pick the cheapest that can
 name the failing path, and let `AssetSupport` create it behind an opt-in prop.
 
-Preview sessions are a standing source of that 4xx rate until
+Previews of pages that call the preview hooks themselves are a standing source of that 4xx rate until
 [preview-first-paint-public-asset-urls.md](preview-first-paint-public-asset-urls.md) is fixed.

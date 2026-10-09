@@ -310,7 +310,7 @@ What each construct creates, the `deploymentName` prop, and the operational deta
 - `static.ts` — `collectStaticParams`, `generateContentSitemap`, `entryToMetadata`
 - `client.tsx` — `NextCanopyEditorPage`, reads URL search params itself
 - `preview.tsx` — `withCanopyPreview(View)` renders `useCanopyPreview`'s live draft plus server `extras`
-- `preview-page.tsx` — `createPreviewPageFor`, behind `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` or a `previewView`, else `notFound()`; types only from `preview.tsx` (`server-entry-client-boundary.test.ts`)
+- `preview-page.tsx` — `createPreviewPageFor`, behind `createPreviewPage`: path + `?branch=` → request-scoped `readByUrlPath` → `views[entryType]` or a `previewView`, else `notFound()`; passes `previewAssetBase`; types only from `preview.tsx` (`server-entry-client-boundary.test.ts`)
 - `config.ts` — CJS-compatible `canopycms-next/config` entry re-exporting `withCanopy`
 - `test-utils.ts` — `createMockAuthPlugin` and `createRejectingAuthPlugin`
 - `index.ts` — package main exports
@@ -479,7 +479,8 @@ Top-level components and helpers:
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
 - `editor-utils.ts` — `buildPreviewSrc`; see [Preview URL Construction](#preview-url-construction)
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
-- `preview-asset-base.ts` — the draft's asset-route prefix `assetUrl` reads
+- `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
+- `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
 - `client-reference-resolver.ts` — resolves reference display values through the context API client
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
@@ -494,7 +495,7 @@ Context providers, in `editor/context/`:
 - `ApiClientProvider` (`ApiClientContext.tsx`) — injects the API client, built with `basePath`-prefixed `baseUrl`; `useOnUnauthorized` subscribes to its 401s
 - `EditorIdentityContext.ts` — `EditorIdentityContext` / `useEditorIdentity()`, the gate's resolved identity, null outside it
 - `EditorStateContext.tsx` — loading, modal and preview state
-- `AssetContext.tsx` — `authenticatedAssetBase`, the editor's asset-URL prefix
+- `AssetContext.tsx` — editor asset-URL prefix
 - `index.ts` — context exports
 
 Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it

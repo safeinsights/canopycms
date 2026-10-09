@@ -6,12 +6,12 @@
  * (`pnpm lint:bundle`); the editor's side is `PreviewFrame.tsx`.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 
-import { toSameOriginPath } from '../utils/url-prefix'
 import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
 import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
+import { readAssetBase } from './raw-asset-base'
 
 export const CANOPY_PREVIEW_MESSAGE = 'canopycms:draft:update'
 export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
@@ -27,12 +27,6 @@ export interface DraftUpdateMessage {
   /** The editor's authenticated asset route; see `PreviewFrame`'s `assetBase`. */
   assetBase?: unknown
 }
-
-/** `assetBase` from a draft, only if it is a same-origin path: nothing else may steer `<img>`s. */
-const readAssetBase = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.startsWith('/') && toSameOriginPath(value) === value
-    ? value
-    : undefined
 
 /**
  * Resolve a (possibly relative) URL to an origin for postMessage targeting.
@@ -187,6 +181,28 @@ export const usePreviewData = <T,>(
   }, [path, editorOrigin])
 
   return { data, isLoading }
+}
+
+/** React 18 warns about a layout effect in a server render, where no effect runs. */
+const useBrowserLayoutEffect: typeof useLayoutEffect = (effect, deps) =>
+  (typeof window === 'undefined' ? useEffect : useLayoutEffect)(effect, deps)
+
+/**
+ * Holds a `createPreviewPage` view back until hydration commits, then stores `assetBase` and opens
+ * before paint: the server HTML has no public `/assets/t/` URL and nothing to mismatch. A draft's
+ * prefix still wins, since drafts follow the ready message `usePreviewData` posts from a passive
+ * effect. With no `assetBase` (a public page) it is open from the start.
+ * @internal `withCanopyPreview` is its only caller.
+ */
+export const usePreviewAssetBaseGate = (assetBase: unknown): boolean => {
+  const held = assetBase !== undefined
+  const [open, setOpen] = useState(!held)
+  useBrowserLayoutEffect(() => {
+    if (open) return
+    setPreviewAssetBase(readAssetBase(assetBase))
+    setOpen(true)
+  }, [open, assetBase])
+  return open
 }
 
 /**
