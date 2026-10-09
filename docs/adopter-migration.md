@@ -40,6 +40,14 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `collect-asset-refs` reads a page's inline RSC payload whole
+
+**What changed.** A URL Next splits across inline scripts is no longer truncated into a random
+failure or a wrong key (`logo.sv`). A script naming `self.__next_f` that is not Next's own push now
+fails, naming the file and offset.
+
+**To adopt.** Nothing.
+
 ### `createPreviewPage` views render after hydration — **behaviour change on the preview route**
 
 **What changed.** On that route a `withCanopyPreview` view is not server-rendered. It renders right

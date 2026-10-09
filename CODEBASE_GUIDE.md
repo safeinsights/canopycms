@@ -833,8 +833,9 @@ per entry for every format and appends its returned markdown after the body and 
 Static generation lives in `packages/canopycms/src/build/` —
 [AGENTS.md](packages/canopycms/src/build/AGENTS.md):
 
-- `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content to disk and prunes what a previous run produced
-- `asset-refs.ts` — `collectAssetRefs()` / `readAssetRefsFile`, the asset URLs a build references
+- `generate-ai-content.ts` — `generateAIContentFiles()`, writes AI content, pruning a previous run's output
+- `asset-refs.ts` — `collectAssetRefs()` / `readAssetRefsFile`, a build's asset URLs
+- `inline-flight.ts` — `extractInlineFlight()`, rejoins a page's split RSC payload
 - `index.ts` — module exports
 
 ## HTTP Module
