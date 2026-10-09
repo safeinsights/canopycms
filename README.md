@@ -390,6 +390,7 @@ Schema references are validated at startup: a missing schema, or an invalid meta
 - `mode` (`'dev' | 'prod'`, **required**) — see [Operating Modes](#operating-modes). No default: a deploy that omits it fails config validation at startup rather than silently running insecure dev auth semantics in production.
 - `contentRoot` (`string`, default `'content'`) — root directory for content files, relative to the project root.
 - `basePath` (`string`, optional) — the deployment prefix your Next app is served under (`'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. **Not** `contentStaticParams`'s `basePath`, and not necessarily right for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath).
+- `danglingReferences` (`'error' | 'warn'`, default `'error'`) — see [No dangling references](#no-dangling-references).
 - `unauthenticatedStatus` (`401 | 419`, default `401`) — the HTTP status of an unauthenticated API response. Use `419` when your pages sit behind HTTP Basic auth on the editor's origin: on a 401, Chrome drops a root-cached Basic credential.
 - `defaultBaseBranch` (`string`, default `'main'`) — the fork point for CMS content branches. It can never be submitted for review, and in `prod` it is read-only in the editor; see [Submitting for Review](#submitting-for-review).
 - `defaultActiveBranch` (`string`, optional) — which workspace the dev server serves content from and which branch the editor opens by default. Auto-detected from the current git branch in dev; falls back to `defaultBaseBranch` in prod.
@@ -677,11 +678,11 @@ const schema = defineEntrySchema([
 ])
 ```
 
-Delete a referenced entry and you get validation errors on the entries pointing at it.
+Deleting a referenced entry asks first: the dialog lists the entries pointing at it, and **Delete anyway** leaves their references dangling, which fails a production build ([No dangling references](#no-dangling-references)).
 
 ### How References Work in the Editor
 
-The editor loads the available options from the configured scope and validates that a reference always points at a valid entry. Open the dropdown to see every matching entry, search by the display field's value, and select one — CanopyCMS stores the UUID while showing `displayField`.
+The editor loads options from the configured scope and validates that each reference points at a valid entry. Open the dropdown, search by the display field, and select one — CanopyCMS stores the entry's content id while showing `displayField`.
 
 ### Using References in Your Code
 
@@ -700,6 +701,8 @@ if (data.author?.unavailable) return <a href={data.author.urlPath}>{data.author.
 ```
 
 Path rules decide it at request time, exactly as for a direct `read()` of the target, and the editor's live preview receives the same value; a static build resolves every reference in full (see [Permission Model](#permission-model)). A reference the user may read never carries `unavailable`. Saving an entry keeps every reference's id, restricted or not.
+
+**A reference to a deleted entry resolves to its id only**, `{ id, unavailable: true, reason: 'missing' }`, so check `reason` before reading a title or URL. Saving keeps the id.
 
 Pass `resolveReferences: false` to get the bare ids instead. Declare `resolvedSchema` on the field to have the inferred type match the resolved shape (see [Typed References with `resolvedSchema`](#typed-references-with-resolvedschema)). A **listing** is the opposite default — it resolves nothing unless asked; see [Resolving References in a Listing](#resolving-references-in-a-listing).
 
@@ -821,10 +824,11 @@ type Post = TypeFromEntrySchema<typeof postSchema>
 // With resolvedSchema:    Post['author'] is
 //   | ({ name: string; bio: string } & ResolvedReferenceMeta & { unavailable?: undefined })
 //   | RestrictedReference
+//   | MissingReference
 //   | null
 ```
 
-`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives. Narrow on `unavailable` before reading the target's own fields.
+`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives, `MissingReference` the id-only value for a deleted target, and `UnavailableReference` either. Narrow on `unavailable`, then on `reason`.
 
 `resolvedSchema` is used only for type inference — it does not affect how content is read, written or validated at runtime, and is stripped from API responses. It accepts any schema created with `defineEntrySchema`, so the same schema objects can be shared between entry type definitions and reference fields.
 
@@ -889,7 +893,7 @@ So `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry
 
 Each entry gets exactly one `urlPath`, but nothing stops two _different_ entries computing the same one — and then only one can be served while the other silently has no route at all. A **production build** therefore fails, listing the contested URLs and their claimants. (`next dev` and the admin UI are unaffected: mid-edit trees may be temporarily broken.)
 
-The usual causes: an entry whose slug matches a sibling collection **that also has an `index` entry**, since the index collapses onto the collection's path, which is the entry's path too (a sibling collection with no index entry is fine — a landing page plus a folder of children is a normal shape); two slugs differing only by case, since URL paths are lowercased; and two entries with the same slug in one collection, which the write boundary refuses but which still arrives by merge, by PR, and by retrofit onto an existing repo.
+The usual causes: an entry whose slug matches a sibling collection **that also has an `index` entry**, which collapses onto the collection's path (a sibling with no index entry is fine); two slugs differing only by case, since URL paths are lowercased; and two same-slug entries in one collection, which the write boundary refuses but a merge, PR or retrofit still delivers.
 
 `findDuplicateUrlPaths` (from `canopycms/server`) is the same scan the build runs. Give it `listEntries()` rather than `collectRoutableEntries()`, which drops the `entryPath` that names the offenders:
 
@@ -898,11 +902,20 @@ const duplicates = findDuplicateUrlPaths(await (await getCanopyForBuild()).listE
 // [{ urlPath: '/docs/guides', entryPaths: ['content/docs/guides', 'content/docs/guides/index'] }]
 ```
 
+### No dangling references
+
+A reference naming no entry renders as nothing, such as a byline with no author, so a **production build** fails on one, listing the entry, the field path and the missing id. References at any depth are checked against the whole content tree; `danglingReferences: 'warn'` prints the list and passes instead. The editor refuses a new dangling id, so these come from deletes, merges, hand edits and `sync pull`. `findDanglingReferences` (from `canopycms/server`) is the same scan:
+
+```typescript
+const dangling = findDanglingReferences(await (await getCanopyForBuild()).listEntries())
+// [{ entryPath: 'content/articles/hello', fieldPath: 'blocks[2].author', id: 'a1b2c3d4e5f6' }]
+```
+
 ### Every slug must round-trip through a URL
 
-Content file names follow `{type}.{slug}.{id}.{ext}`, and the `slug` segment may contain dots, since the type and ID anchor the parse: `post.getting.started.guide.<id>.md` parses fine and lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` accepts only slugs of lowercase letters, numbers and hyphens, starting with a letter or number, because that is the rule it runs every URL-resolution candidate through before attempting a read. A slug outside that shape builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit, silently breaking the round-trip guarantee above — so a **production build** fails loudly instead, listing every offending entry by path.
+Content file names follow `{type}.{slug}.{id}.{ext}`, and the slug may contain dots: `post.getting.started.guide.<id>.md` lists with `slug: 'getting.started.guide'`. But `readByUrlPath()` accepts only slugs of lowercase letters, numbers and hyphens, starting with a letter or number, so such an entry builds, gets a `generateStaticParams` entry and a sitemap `<loc>`, and then 404s on every visit. A **production build** fails instead, listing every offending entry.
 
-The write API refuses to create one: a `PUT` that would mint an entry with a non-conforming slug is rejected with `400`, as is a rename to one, so this applies to any client and not just the editor UI. That enforcement is **create-only by design** — an entry already carrying a non-conforming slug (hand-authored, script-imported, merged in over git) stays readable, saveable and renameable, because renaming it is the only way to clear the build failure.
+The write API refuses (`400`) to create one or rename to one, for any client. That is **create-only by design**: an entry already carrying such a slug stays readable, saveable and renameable, because renaming it is the only way to clear the build failure.
 
 ### Static Export with generateStaticParams
 
@@ -1469,7 +1482,7 @@ const entries = await canopy.listEntries({ resolveReferences: true })
 
 **What it costs.** Resolution needs the content ID index, so an opted-in call adds one index scan plus one read per _distinct_ referenced entry, not per referencing entry: all resolution in one call shares a cache, so a block referenced from 40 pages is read once. With the option off, none of that machinery is built. The cache saves the read, not the copy — each referencing entry still gets its own copy of the resolved value.
 
-**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). Both come from one shared function, so a link built from a resolved reference reaches the entry the listing enumerates, with no second pass to build an id → URL table. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
+**Every resolved reference carries a `urlPath`** — the referenced entry's URL, by the same rule `listEntries` uses for `item.urlPath` (an `index` entry collapses to its parent path). A link built from it reaches the entry the listing enumerates. Alongside it, **`id`, `slug` and `collection` are reserved**: if the target models one of those as a real content field, the resolution value wins and the content field is not visible here. `unavailable`, the restricted marker, is reserved outright: a schema declaring a top-level field (or inline-group field) with that name is rejected.
 
 **A target's body is opt-in, per field.** By default a resolved **md/mdx** target gives you its frontmatter, not its prose. Set `includeBody: true` on the reference field and the body arrives too, under that target entry type's own body field name — a no-op for json/yaml targets, whose whole document is already their data. The distinction is embed-vs-link, and it belongs on the field because it is a property of your content model rather than of any one call: a reference that **embeds** its target (a shared CTA rendered inline) wants the prose, while one that **links** to it (related posts, an author byline) wants `urlPath` and a title, not the target's whole body inlined into every page read. Turning it on makes the body part of every referencing entry's resolved value, so a long document embedded by many pages is copied once per page.
 

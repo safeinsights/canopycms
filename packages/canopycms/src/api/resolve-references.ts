@@ -55,15 +55,15 @@ const resolveReferencesHandler = async (
   const access = (logicalPath: LogicalPath) => checkAccess(logicalPath, 'read').allowed
 
   // The resolution `read()` applies to a reference field, so live preview shows this user what
-  // `read()` would: the target's data, or a `RestrictedReference` for a target they may not
-  // read. The target's own references stay ids, as in `read()`.
+  // `read()` would: the target's data, a `RestrictedReference` for a target they may not read,
+  // or a `MissingReference` for an id naming no entry. The target's own references stay ids, as
+  // in `read()`.
   const resolved: Record<string, unknown> = {}
   for (const id of ids) {
     try {
-      const value = await store.resolveReferenceTarget(id, access)
-      if (value) resolved[id] = value
+      resolved[id] = await store.resolveReferenceTarget(id, access)
     } catch (error) {
-      // An id that fails to resolve is omitted rather than failing the whole request.
+      // An id whose lookup throws is omitted rather than failing the whole request.
       console.error(`Failed to resolve reference ID ${id}:`, error)
     }
   }
@@ -77,7 +77,8 @@ const resolveReferencesHandler = async (
 
 /**
  * Resolve reference IDs as a reference field would: full target data, or title + URL tagged
- * `unavailable` for a target the user may not read. An id naming no entry is omitted.
+ * `unavailable` for a target the user may not read, or `{ id, unavailable: true, reason: 'missing' }`
+ * for an id naming no entry.
  * POST /:branch/resolve-references
  * Body: { ids: string[] }
  */

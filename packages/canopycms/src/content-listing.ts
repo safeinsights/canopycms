@@ -272,6 +272,7 @@ export const resolveCollectionItemReferences = async (
           fields,
           resolver.cache,
           resolver.access,
+          item.logicalPath,
         ),
       }
     }),

@@ -26,7 +26,7 @@ import type {
 import { fieldTypes } from '../config'
 import { isValidCropRect, roundCropRect } from '../assets/transform-directives'
 import { BLOCK_STRUCTURAL_KEYS } from './block-structural-keys'
-import { resolveBlockItem, traverseFields } from './field-traversal'
+import { referenceValueId, resolveBlockItem, traverseFields } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isDataOnlyFormat } from '../utils/format'
@@ -116,19 +116,6 @@ function validateImageValue(
   }
 
   return errors
-}
-
-/**
- * Extract the id from a reference value. The editor holds references either
- * as an id string or as a resolved object `{ id, slug, collection, ... }`
- * (content reads resolve references by default). Returns undefined for any
- * other shape.
- * @internal Exported for tests.
- */
-export function referenceValueId(value: unknown): string | undefined {
-  if (typeof value === 'string') return value
-  if (isPlainRecord(value) && typeof value.id === 'string') return value.id
-  return undefined
 }
 
 const selectOptionValues = (field: SelectFieldConfig): string[] =>

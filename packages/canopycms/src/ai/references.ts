@@ -18,7 +18,7 @@ import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { resolveEntryTitle } from '../utils/title-field'
 import { traverseFields } from '../validation/field-traversal'
 import type { ReferenceRendering } from './json-to-markdown'
-import type { AIEntry, AIReferenceValue, AIUnavailableReference } from './types'
+import type { AIEntry, AIExcludedReference, AIReferenceValue } from './types'
 
 export type ReferenceTargetResolver = (id: string) => Promise<AIReferenceValue>
 
@@ -27,20 +27,19 @@ export type ReferenceTargetResolver = (id: string) => Promise<AIReferenceValue>
  *
  * Create one per `generateAIContent` call and never keep it: the route handler is long-lived in
  * prod, and a memo held across calls would serve a target as it was when first read.
- * `resolveReferenceTarget` embeds no body, which keeps the target's content out of the export.
+ * `resolveReferenceTarget` embeds no body, which keeps the target's content out of the export,
+ * and resolves an id naming no readable entry to a `MissingReference`, which keeps the id.
  */
 export function createReferenceTargetResolver(store: ContentStore): ReferenceTargetResolver {
-  const reads = new Map<string, Promise<Record<string, unknown> | null>>()
+  const reads = new Map<string, Promise<Record<string, unknown>>>()
   return async (id) => {
     let read = reads.get(id)
     if (!read) {
       read = store.resolveReferenceTarget(id)
       reads.set(id, read)
     }
-    const target = await read
-    if (target === null) return { id, unavailable: true, reason: 'missing' }
     // Each occurrence gets its own copy, since masking and adopter transforms may mutate it.
-    return structuredClone(target) as AIReferenceValue
+    return structuredClone(await read) as AIReferenceValue
   }
 }
 
@@ -62,8 +61,8 @@ function referenceSlots(
 }
 
 /**
- * A copy of `data` with every reference id replaced by its target, or by an
- * {@link AIUnavailableReference} when the id names no entry, so the id survives into the output.
+ * A copy of `data` with every reference id replaced by its target, or by a `MissingReference`
+ * when the id names no readable entry, so the id survives into the output.
  * A `list: true` field resolves each string element; any other shape is left as stored.
  */
 export async function resolveReferenceFields(
@@ -99,7 +98,7 @@ function isShownTarget(value: unknown): value is Record<string, unknown> & { id:
 
 /**
  * Replace, in place, every resolved target that is not itself in this export with an
- * {@link AIUnavailableReference}, so no title, URL or field of an excluded entry reaches the
+ * {@link AIExcludedReference}, so no title, URL or field of an excluded entry reaches the
  * output. Runs before entry transforms and rendering, which therefore never see such a target.
  * Returns whether it replaced anything.
  */
@@ -111,7 +110,7 @@ export function maskUnexportedTargets(
   const mask = (value: unknown): unknown => {
     if (!isShownTarget(value) || exported.has(value.id)) return value
     masked = true
-    return { id: value.id, unavailable: true, reason: 'excluded' } satisfies AIUnavailableReference
+    return { id: value.id, unavailable: true, reason: 'excluded' } satisfies AIExcludedReference
   }
   for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
     const value = record[field.name]

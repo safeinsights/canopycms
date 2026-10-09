@@ -31,6 +31,7 @@ export type {
   AIManifestBundle,
   AIEntry,
   AIEntryMeta,
+  AIExcludedReference,
   AIReferenceValue,
   AIResolvedReference,
   AIUnavailableReference,

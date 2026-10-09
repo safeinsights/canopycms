@@ -6,20 +6,24 @@
  */
 
 import type { FieldConfig } from '../config'
-import type { ResolvedReferenceMeta, RestrictedReference } from '../entry-schema'
+import type { MissingReference, ResolvedReferenceMeta } from '../entry-schema'
 
 /** A reference whose target this export shows: the target's own data plus where it lives. */
 export type AIResolvedReference = Record<string, unknown> &
   ResolvedReferenceMeta & { unavailable?: undefined }
 
 /**
- * A reference whose target this export does not show: `missing` when the id names no entry,
- * `excluded` when the target is left out of the export by `exclude`. Carries the id and nothing
- * of the target, so an excluded entry's title cannot reach the output.
+ * A reference whose target exists but is not in this export (left out by `exclude`, or its own
+ * markdown failed to render). Carries the id and nothing of the target, so no title of it can
+ * reach the output.
  */
-export interface AIUnavailableReference extends Pick<RestrictedReference, 'id' | 'unavailable'> {
-  reason: RestrictedReference['reason'] | 'missing' | 'excluded'
-}
+export type AIExcludedReference = { id: string; unavailable: true; reason: 'excluded' }
+
+/**
+ * A reference whose target this export does not show: a `MissingReference` when the id names no
+ * readable entry, an {@link AIExcludedReference} when the export leaves the target out.
+ */
+export type AIUnavailableReference = MissingReference | AIExcludedReference
 
 /**
  * What a `reference` field holds in {@link AIEntryMeta.data} (an array of these for
