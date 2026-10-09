@@ -406,7 +406,7 @@ Schemas are not a config key: declare them with `defineEntrySchema`, register th
 
 ### Save-Time Validation (`validateEntry`)
 
-Schema validation cannot know that a markdown body must compile as MDX for your build to succeed. The optional `validateEntry` hook lets the site refuse, or flag, such a save:
+Schema validation cannot know that a markdown body must compile as MDX for your build. The optional `validateEntry` hook lets the site refuse, or flag, such a save:
 
 ```typescript
 // canopycms.config.ts
