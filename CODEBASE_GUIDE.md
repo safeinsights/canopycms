@@ -80,7 +80,7 @@ Content, git and branch files have their own sections below; the rest:
 - `user.ts` — user utilities
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
 - `comment-store.ts` — field, entry and branch comment persistence under layered concurrency; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
-- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`
+- `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `isResolvedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types
 - `entry-link-resolver.ts` — resolves `entry:ID` patterns in markdown; see [Entry Links](#entry-links)
@@ -482,7 +482,7 @@ Top-level components and helpers:
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
-- `client-reference-resolver.ts` — resolves reference display values through the context API client
+- `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
 - `utils/env.ts` — `getNotificationDuration`, longer under test
@@ -514,7 +514,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `useEditorLayout.ts` — panel layout
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and user metadata
-- `useReferenceResolution.ts` — resolves reference IDs to display values
+- `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import

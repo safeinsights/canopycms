@@ -307,16 +307,7 @@ A reference field scopes what it can point at with `collections` (at least one r
 
 ### Live Reference Resolution in the Editor
 
-The editor's live preview must show full referenced content, not IDs, while rendering synchronously. `FormRenderer.tsx` does this with a render-time `useMemo` over a `useRef` cache plus a debounced background fetch:
-
-1. **Cache** — a `Map` keyed `"<branch>:<id>"`, scoped by branch so a branch switch cannot show stale cross-branch data, cleared when the branch changes, and persisted across form edits for instant re-renders.
-2. **Synchronous transform** — `useMemo` builds the resolved value during render, using the cache where present and keeping the raw ID otherwise. It always returns complete, valid data, never an empty object, so there is no async gap to race.
-3. **Background resolution** — a `useEffect` fetches only uncached IDs through `apiClient.content.resolveReferences`, debounced 300ms, then bumps a `resolutionTrigger` state to re-run the memo.
-4. **Parent notification** — compare a serialized copy against a ref before calling `onResolvedValueChange`, or the notification loops.
-
-**Never pass an empty object as the form value.** The parent must render conditionally (`{effectiveValue && <FormRenderer value={effectiveValue} />}`) rather than `value={effectiveValue ?? {}}`, which errors during transitions.
-
-`POST /:branch/resolve-references` takes `{ ids: [...] }` and returns `{ ok, data: { resolved: { [id]: entry } } }`. See `FormRenderer.test.tsx`.
+The live preview must show referenced content, not ids, from its first frame. `useReferenceResolution`, called in `Editor.tsx` rather than inside the form, computes the preview value during render from a cache keyed `"<branch>:<id>"`, so a reference is its target or `null` and never a bare id. A debounced effect fetches the ids the cache lacks through `POST /:branch/resolve-references` in batches of 100. `client-reference-resolver.ts` walks the draft with `traverseFields` and each container's `dataPath`, reaching every position the server resolves. An id the endpoint omits caches as `null` until `MISSING_REFERENCE_TTL_MS` passes, and a failed request caches nothing. See `client-reference-resolver.test.ts` and `Editor.preview-references.test.tsx`.
 
 ## Working with Assets
 

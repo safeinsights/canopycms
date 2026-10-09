@@ -446,11 +446,12 @@ export function PostView({ data }: { data: PostContent }) {
 
 **Reference fields and loading states:**
 
-When using reference fields (foreign key relationships to other content), the editor resolves these references asynchronously. Use the `isLoading` object to show loading states for reference fields:
+In the preview, a reference field holds what `read()` would give it: the referenced entry's data, or its title and URL marked `unavailable` when this editor may not read it. The editor re-resolves references after every edit at every position `read()` resolves them: top-level fields, inline groups, objects, lists of objects and block templates, nested to any depth. A reference the editor has not resolved yet is `null`, never its id, with `isLoading` `true` at the same path. So a view can receive three things where a reference sits: the resolved entry, `null`, or an `unavailable` reference. Narrow with `isResolvedReference` from `canopycms`:
 
 ```tsx
 'use client'
 
+import { isResolvedReference } from 'canopycms'
 import { useCanopyPreview } from 'canopycms/preview'
 
 export function PostView({ data }: { data: PostContent }) {
@@ -461,42 +462,31 @@ export function PostView({ data }: { data: PostContent }) {
   return (
     <article>
       <h1>{liveData.title}</h1>
-      <AuthorCard author={liveData.author} isLoading={isLoading.author} />
+      <AuthorCard author={liveData.byline?.author} isLoading={isLoading.byline?.author} />
     </article>
   )
 }
 
-// Component receives clean types - no framework coupling
 interface AuthorCardProps {
-  author: AuthorContent | null
-  isLoading?: boolean // Optional - only needed if you want loading UI
+  author: NonNullable<PostContent['byline']>['author'] // typed by its `resolvedSchema`
+  isLoading?: boolean
 }
 
 function AuthorCard({ author, isLoading }: AuthorCardProps) {
-  if (isLoading) {
-    return <p>Loading author...</p>
-  }
-  if (!author) {
-    return null // Render nothing when no author
-  }
+  if (isLoading) return <p>Loading author...</p>
+  if (!isResolvedReference(author)) return null // empty, or an unavailable reference
   return <p>By {author.name}</p>
 }
 ```
 
 **Loading state structure:**
 
-The `isLoading` object mirrors your data structure:
+`isLoading` (typed `PreviewLoadingState<T>`) has an entry only at reference positions, at the same path as the reference:
 
 - Single reference field: `isLoading.author` is a `boolean`
-- Array of references: `isLoading.relatedPosts` is an array of `boolean[]` values
-- Non-reference fields: Always `false` (no loading state needed)
-
-**Benefits:**
-
-- ✅ Zero framework types in your components - just your content types + optional `isLoading: boolean`
-- ✅ Works for nested reference fields at any depth
-- ✅ Optional - only check loading state if you want to show loading UI
-- ✅ Familiar pattern - mirrors React Query's `{ data, isLoading }` API
+- Array of references: `isLoading.relatedPosts` is a `boolean[]`
+- Inside an object, an object list or a block: `isLoading.byline.author`, `isLoading.credits[0].people`, `isLoading.blocks[2].value.speaker`
+- Anything that is not a reference: absent
 
 ## Modes (pick per environment)
 

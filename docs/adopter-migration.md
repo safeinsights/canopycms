@@ -40,6 +40,17 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
+
+**What changed.** The preview resolves references inside objects, object lists and blocks too. One
+still resolving is `null`, even in an entry's first draft. `isLoading` mirrors the data at depth,
+typed `PreviewLoadingState<T>`, so its keys read `boolean | undefined`. New: `isResolvedReference`.
+
+**To adopt.** Make a prop fed from `isLoading` optional if it was a required `boolean`.
+
+**Now deletable.** Hand-written reference narrowing (string id, `null`, `unavailable` checks), and
+top-level-only reference fields kept for the preview's sake.
+
 ### The markdown editor runs MDXEditor 4.3
 
 **What changed.** `@mdxeditor/editor` is `^4.3.2` (Lexical 0.48), up from `^3.52.4`. Two-paragraph
