@@ -124,10 +124,11 @@ function run(cmd, args, { cwd, env, capture = false, allowFailure = false } = {}
 }
 
 // Registry errors meaning a release is still propagating, the only failures retried: the app
-// resolves unpinned, as an adopter's fresh install does.
+// resolves unpinned, as an adopter's fresh install does. The last retry comes after the 300 s
+// the registry lets a CDN or npm's cache serve a stale packument.
 const REGISTRY_LAG =
   /\b(?:code (?:ETARGET|E404|ENOTFOUND)|ERR_PNPM_(?:NO_MATCHING_VERSION|FETCH_404))\b/
-const REGISTRY_RETRY_DELAYS_S = [30, 60, 120]
+const REGISTRY_RETRY_DELAYS_S = [60, 120, 240]
 
 /** `run`, retried on registry lag; `tee` keeps output streaming while saving it to match. */
 function runRetryingRegistryLag(cmd, args, { cwd, env } = {}) {
@@ -246,7 +247,8 @@ function patchOnce(file, anchor, replacement) {
 function packageManager(pm) {
   if (pm === 'npm') {
     return {
-      install: ['npm', ['install', '--no-audit', '--no-fund']],
+      // Without --prefer-online a retry reads the cached packument that just failed.
+      install: ['npm', ['install', '--prefer-online', '--no-audit', '--no-fund']],
       exec: (bin, args) => ['npm', ['exec', '--no', '--', bin, ...args]],
     }
   }

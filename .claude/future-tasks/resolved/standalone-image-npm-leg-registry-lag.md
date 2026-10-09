@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  RESOLVED: `scripts/smoke/standalone-image.mjs` retries the scaffold's install and the image's `docker build` after 30, 60 and 120 s when their output shows npm's ETARGET/E404/ENOTFOUND or pnpm's NO_MATCHING_VERSION/FETCH_404, logging the matched code; any other failure fails at once. The leg still resolves unpinned. Originally: CI's "Standalone CMS Image (npm, ubuntu-latest)" leg failed three times on PR #452 during an AWS SDK release (ETARGET twice, then a 404 on a listed tarball).
+  RESOLVED: `scripts/smoke/standalone-image.mjs` retries the scaffold's install (npm with `--prefer-online`) and the image's `docker build` after 60, 120 and 240 s when their output shows npm's ETARGET/E404/ENOTFOUND or pnpm's NO_MATCHING_VERSION/FETCH_404, logging the matched code; any other failure fails at once. The leg still resolves unpinned. Originally: CI's "Standalone CMS Image (npm, ubuntu-latest)" leg failed three times on PR #452 during an AWS SDK release (ETARGET twice, then a 404 on a listed tarball).
 ---
 # The standalone-image npm leg fails while a dependency is mid-publish
 
