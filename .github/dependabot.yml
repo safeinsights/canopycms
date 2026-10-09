@@ -21,7 +21,7 @@ updates:
           - '*'
 
   - package-ecosystem: github-actions
-    # `/` covers .github/workflows only; local composite actions are listed by directory.
+    # `/` reads .github/workflows; a composite action elsewhere needs its own entry.
     directories:
       - /
       - /.github/actions/*

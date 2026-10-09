@@ -843,11 +843,12 @@ jobs:
 
       # The packages `install-deps` fetches are mostly fonts, ~20 MB, and the
       # runner's Ubuntu mirror sometimes serves them at ~150 kB/s, which adds
-      # two to three minutes to one shard. apt keeps the downloaded .debs in
-      # the cached directory below and checks each against its package index,
-      # so a stale file is fetched again rather than installed. The directory
-      # is under /tmp because apt downloads as the unprivileged `_apt` user,
-      # which cannot enter the runner's home directory.
+      # two to three and a half minutes to one shard. apt keeps the downloaded
+      # .debs in the cached directory below and installs a cached file only
+      # when it matches the current package index; a superseded one stays in
+      # the cache unused. The directory is under /tmp because apt downloads
+      # as the unprivileged `_apt` user, which cannot enter the runner's home
+      # directory.
       - name: Cache Playwright system packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -862,7 +863,7 @@ jobs:
           echo 'Dir::Cache::Archives "/tmp/playwright-apt";' |
             sudo tee /etc/apt/apt.conf.d/99playwright-deb-cache
           pnpm exec playwright install-deps chromium
-          # apt leaves root- and _apt-owned files that the cache save could not read.
+          # The cache save runs as the runner user; apt's files are root's and _apt's.
           sudo chown -R "$(id -u):$(id -g)" /tmp/playwright-apt
 
       - name: Run E2E tests
