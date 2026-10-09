@@ -150,6 +150,7 @@ with the in-flight ACL chips.
 
 | File | Summary |
 | ---- | ------- |
+| [next-react-cache-import-react18-esm.md](next-react-cache-import-react18-esm.md) | New 2026-10-08, from the preview first-paint fix's review. `import { cache } from 'react'` is a link-time SyntaxError under unbundled Node ESM on React 18, which the peer range allows; App Router pages are unaffected [BOTH] |
 | [crashed-field-fallback-not-editable.md](crashed-field-fallback-not-editable.md) | New 2026-10-08, from #434's review. A crashed non-markdown field shows read-only and doesn't block Save, so a value that fails validation leaves the author unable to save. Consider an editable raw-value fallback [BOTH] |
 | [dev-init-temp-remote-left-in-source-repo.md](dev-init-temp-remote-left-in-source-repo.md) | New 2026-10-08. Dev-mode init adds a temporary `__canopycms_init_*` remote to the source repo and removes it in a `finally` that ignores errors, so killed or failed runs leave strays (3 found in this repo). Push by path instead, with no named remote [BOTH] |
 | [prettier-on-edited-markdown-blocks.md](prettier-on-edited-markdown-blocks.md) | New 2026-10-08, deferred from adopter request 85. Untouched body blocks keep their text and new text uses Prettier's markers, but an edited block is still MDXEditor's serialisation, whose escapes (`a\_b`) Prettier rewrites. Format edited blocks with `prettier/standalone` server-side inside the splice, with Prettier's defaults [BOTH] |
