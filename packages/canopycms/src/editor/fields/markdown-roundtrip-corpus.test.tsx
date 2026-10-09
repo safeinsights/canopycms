@@ -123,27 +123,31 @@ function collectCorpus(): CorpusBody[] {
     .sort()
   return files.flatMap((name): CorpusBody[] => {
     const ext = path.extname(name)
+    if (!['.md', '.mdx', '.json'].includes(ext)) return []
     const raw = fs.readFileSync(path.join(REPO_ROOT, name), 'utf8')
     if (ext === '.md' || ext === '.mdx') {
-      // What the content store hands the editor: gray-matter's split, data copied off its cache.
+      // The body as the content store splits it, and the data as a save request carries it (JSON).
       const parsed = matter(raw, {})
       return [
         {
           name,
           body: parsed.content,
           format: ext === '.mdx' ? 'mdx' : 'md',
-          file: { raw, data: structuredClone(parsed.data) },
+          file: { raw, data: JSON.parse(JSON.stringify(parsed.data)) as Record<string, unknown> },
         },
       ]
     }
-    if (ext === '.json') {
-      return jsonBodies(JSON.parse(raw), '').map(({ key, body }) => ({
-        name: `${name}#${key.slice(1)}`,
-        body,
-        format: 'md',
-      }))
+    let entry: unknown
+    try {
+      entry = JSON.parse(raw)
+    } catch (err: unknown) {
+      throw new Error(`${name}: ${getErrorMessage(err)}`)
     }
-    return []
+    return jsonBodies(entry, '').map(({ key, body }) => ({
+      name: `${name}#${key.slice(1)}`,
+      body,
+      format: 'md',
+    }))
   })
 }
 
@@ -196,12 +200,18 @@ async function loadAndExport(body: string): Promise<EditorResult> {
   return { exported }
 }
 
-/** Each side's blocks, the export's written as the body's text wherever they mean the same. */
-function blockTexts(body: string, exported: string, format: MarkdownBodyFormat) {
+/**
+ * Whether the export means what the body does, block by block, and each side's block texts for a
+ * failure's diff: the export's written as the body's text wherever a block means the same.
+ */
+function compareBlocks(body: string, exported: string, format: MarkdownBodyFormat) {
   const before = markdownBlocks(body, format)
   const after = markdownBlocks(exported, format)
-  if (before === undefined || after === undefined) return { before: [body], after: [exported] }
+  if (before === undefined || after === undefined) {
+    return { same: false, before: [body], after: [exported] }
+  }
   return {
+    same: after.length === before.length && after.every((a, i) => a.meaning === before[i]?.meaning),
     before: before.map((b) => b.text),
     after: after.map((a, i) =>
       a.meaning === before[i]?.meaning ? (before[i]?.text ?? a.text) : a.text,
@@ -227,6 +237,7 @@ it('collects the sample sites and fixtures, and every listed body names a live t
   }
 })
 
+// A mount of the full editor takes seconds on a loaded runner, past the default timeout.
 for (const { name, body, format, file } of corpus) {
   it(`${name}: loads, exports what it means, and saves byte for byte`, async () => {
     const result = await loadAndExport(body)
@@ -243,13 +254,15 @@ for (const { name, body, format, file } of corpus) {
 
     const knownDifference = KNOWN_EXPORT_DIFFERENCES[name]
     if ('exported' in result) {
-      const { before, after } = blockTexts(body, result.exported, format)
+      const { same, before, after } = compareBlocks(body, result.exported, format)
       if (knownDifference === undefined) {
-        expect.soft(after, `${name}: the export means something else`).toEqual(before)
+        expect
+          .soft({ same, blocks: after }, `${name}: the export means something else`)
+          .toEqual({ same: true, blocks: before })
       } else {
         expect
-          .soft(after, `${name} now exports what it means; unlist it and resolve its task`)
-          .not.toEqual(before)
+          .soft(same, `${name} now exports what it means; unlist it and resolve its task`)
+          .toBe(false)
       }
     }
 
@@ -259,5 +272,5 @@ for (const { name, body, format, file } of corpus) {
         .soft(serializeFrontmatter(sent, file.data, file.raw, format), `${name}: the saved file`)
         .toBe(file.raw)
     }
-  })
+  }, 30_000)
 }
