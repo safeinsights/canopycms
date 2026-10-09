@@ -1,6 +1,6 @@
 'use client'
 
-import { assetUrl } from 'canopycms'
+import { assetUrl, isResolvedReference } from 'canopycms'
 import { useCanopyPreview } from 'canopycms/preview'
 import { heroRef, type HomeData } from './hero-ref'
 
@@ -10,6 +10,7 @@ const HERO_WIDTHS = Array.from({ length: 24 }, (_, i) => 160 * (i + 1))
 export default function HomeView({ initialData = {} }: { initialData?: HomeData }) {
   const { data, fieldProps } = useCanopyPreview<HomeData>({ initialData })
   const hero = heroRef(data?.heroImage)
+  const spotlight = data?.spotlight?.post
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8">
@@ -19,6 +20,11 @@ export default function HomeView({ initialData = {} }: { initialData?: HomeData 
       <p className="text-gray-600 mb-8" {...fieldProps('tagline')}>
         {data?.tagline ?? 'This app is for Playwright E2E testing'}
       </p>
+      {isResolvedReference(spotlight) && typeof spotlight.title === 'string' && (
+        <p className="mb-8" data-testid="spotlight" {...fieldProps('spotlight.post')}>
+          Spotlight: {spotlight.title}
+        </p>
+      )}
       {hero && (
         <div
           className="flex flex-wrap gap-1 mb-8"

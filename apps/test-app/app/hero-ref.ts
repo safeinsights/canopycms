@@ -5,6 +5,8 @@ export interface HomeData {
   tagline?: string
   published?: boolean
   heroImage?: AssetRef & { alt?: string }
+  /** A reference arrives resolved, as `null` while it resolves, or marked `unavailable`. */
+  spotlight?: { post?: unknown }
 }
 
 const STORED_RASTER_SRC = /^\/assets\/t\/orig\/([0-9a-f]{32})\/([a-z0-9-]+)\.([a-z0-9]+)$/

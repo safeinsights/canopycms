@@ -85,6 +85,33 @@ test.describe('Preview Bridge', () => {
     })
   })
 
+  test('preview resolves a reference inside an object without saving', async ({ page }) => {
+    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+    const spotlight = previewFrame.locator('[data-testid="spotlight"]')
+
+    await test.step('create a post, then open Home Page', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.createPost('spotlight-target', 'Spotlight Target Post')
+      await editorPage.openEntryNavigator()
+      await editorPage.selectEntry('Home Page')
+      await page.keyboard.press('Escape')
+      await expect(previewFrame.locator('[data-canopy-path="title"]')).toContainText('Home Page', {
+        timeout: 15000,
+      })
+    })
+
+    await test.step('pick the post in the nested reference field', async () => {
+      await expect(spotlight).toHaveCount(0)
+      await editorPage.selectReferenceOption('spotlight.post', 'Spotlight Target Post')
+    })
+
+    await test.step('preview shows the resolved post, unsaved', async () => {
+      await expect(spotlight).toHaveText('Spotlight: Spotlight Target Post', { timeout: 10000 })
+      await expect(editorPage.saveButton).toBeEnabled()
+    })
+  })
+
   test('an entry with no page shows no preview and frames nothing', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
