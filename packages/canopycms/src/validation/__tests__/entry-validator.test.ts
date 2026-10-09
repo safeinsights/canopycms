@@ -5,10 +5,10 @@ import {
   findUnknownKeys,
   mergeBodyIntoData,
   normalizeReferenceValues,
-  referenceValueId,
   validateEntryData,
   validateEntryFormValue,
 } from '../entry-validator'
+import { referenceValueId } from '../field-traversal'
 import { buildMissingReference } from '../../entry-schema'
 
 const schema: EntrySchema = [
