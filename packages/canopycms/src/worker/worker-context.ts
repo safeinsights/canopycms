@@ -109,11 +109,15 @@ export interface WorkerContext {
    * aborts (simple-git's `abort` option).
    */
   pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void>
-  /**
-   * Whether the worker is still running. False from the moment `stop()` begins
-   * draining: every loop checks it before starting new work, never mid-step.
-   */
+  /** Whether the worker is running; both poll loops bail when false. */
   isRunning(): boolean
+  /**
+   * Whether `stop()` has been called. Every loop checks it at its boundaries
+   * (before a claim, a sync stage, a branch rebase), never mid-step. Distinct
+   * from `!isRunning()`, which is also true of a worker never started, as the
+   * test entry points drive it.
+   */
+  isDraining(): boolean
   /**
    * Aborts when a draining `stop()` reaches its deadline: in-flight work that
    * observes it is cut off so the worker can exit. See `CmsWorker.stop`.

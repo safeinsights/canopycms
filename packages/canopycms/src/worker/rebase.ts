@@ -72,7 +72,7 @@ export type RebaseContext = Pick<
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
-  | 'isRunning'
+  | 'isDraining'
 >
 
 /**
@@ -567,7 +567,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
   for (const branchDir of branchDirs) {
     // A draining worker finishes the branch it is rebasing and starts no other:
     // a rebase killed mid-branch is recovered lossily on the next boot.
-    if (!ctx.isRunning()) {
+    if (ctx.isDraining()) {
       workerLog('  Rebase cycle stopped: the worker is draining')
       break
     }

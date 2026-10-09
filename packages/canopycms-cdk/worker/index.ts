@@ -201,18 +201,28 @@ async function main() {
   // heartbeat times out). Exiting with EXIT_DRAINED_FOR_TERMINATION stops
   // Restart=always from starting a fresh worker on the departing instance.
   void watchForTermination({ watchSpot: process.env[WORKER_CAPACITY_ENV] === 'spot' }).then(
-    async (notice) => {
-      workerLog(`Instance terminating: ${notice.reason}`)
-      await worker.stop({ reason: notice.reason })
-      if (notice.kind === 'auto-scaling') await completeTerminationLifecycleAction()
-      process.exit(EXIT_DRAINED_FOR_TERMINATION)
+    (notice) => {
+      terminating = (async () => {
+        workerLog(`Instance terminating: ${notice.reason}`)
+        await worker.stop({ reason: notice.reason })
+        if (notice.kind === 'auto-scaling') await completeTerminationLifecycleAction()
+        process.exit(EXIT_DRAINED_FOR_TERMINATION)
+      })()
     },
   )
 
   await worker.start()
 }
 
-main().catch((err) => {
+/**
+ * Set once a termination drain begins. A startup failure meanwhile must not
+ * exit 1 under it: systemd would restart the worker on the departing instance,
+ * and the lifecycle hook would wait out its heartbeat.
+ */
+let terminating: Promise<void> | undefined
+
+main().catch(async (err) => {
   workerLogError('Fatal error:', getErrorMessage(err))
+  if (terminating) await terminating
   process.exit(1)
 })

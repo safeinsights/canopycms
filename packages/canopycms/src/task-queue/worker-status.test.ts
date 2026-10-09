@@ -110,6 +110,7 @@ describe('readCarriedOverStatus', () => {
     const lastShutdown = {
       reason: 'SIGTERM',
       at: '2026-01-01T00:01:00.000Z',
+      workerStartedAt: '2026-01-01T00:00:00.000Z',
       outcome: 'deadline' as const,
       drainMs: 90_000,
       abandoned: ['git sync'],
@@ -124,6 +125,43 @@ describe('readCarriedOverStatus', () => {
     })
 
     expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError, lastShutdown })
+  })
+
+  it('reports a worker that stopped without recording a shutdown as not drained', async () => {
+    // The file's writer started after the recorded shutdown's worker: it inherited
+    // that record and then died without replacing it.
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown: {
+        reason: 'SIGTERM',
+        at: '2026-01-01T00:01:00.000Z',
+        workerStartedAt: '2026-01-01T00:00:00.000Z',
+        outcome: 'drained',
+        drainMs: 10,
+      },
+    })
+    const written = JSON.parse(
+      await fs.readFile(path.join(tmpDir, WORKER_STATUS_FILE), 'utf-8'),
+    ) as WorkerStatusReport
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown).toEqual({
+      reason: 'stopped without draining',
+      at: written.updatedAt,
+      workerStartedAt: '2026-01-02T00:00:00.000Z',
+      outcome: 'not-drained',
+    })
+  })
+
+  it('reports not drained when the previous worker recorded no shutdown at all', async () => {
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+    })
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown?.outcome).toBe('not-drained')
   })
 
   it('returns nothing when there is no readable status file', async () => {

@@ -82,6 +82,7 @@ export type GitSyncContext = Pick<
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
+  | 'isDraining'
   | 'shutdownSignal'
 > &
   // syncGit hands its own context straight to runRebaseCycle, so the rebase
@@ -520,8 +521,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
  * mid-stage. The early return leaves the previous cycle's `lastGitSync` in
  * worker-status.json; the shutdown itself is recorded as `lastShutdown`.
  */
-function stoppedForDrain(ctx: Pick<GitSyncContext, 'isRunning'>, nextStage: string): boolean {
-  if (ctx.isRunning()) return false
+function stoppedForDrain(ctx: Pick<GitSyncContext, 'isDraining'>, nextStage: string): boolean {
+  if (!ctx.isDraining()) return false
   workerLog(`Git sync stopped before ${nextStage}: the worker is draining`)
   return true
 }

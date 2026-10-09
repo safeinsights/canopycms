@@ -192,9 +192,8 @@ export interface WorkerStatusReport {
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
   /**
-   * How the previous worker stopped, written by `CmsWorker.stop()` and carried
-   * into each new worker's snapshot. `deadline` means in-flight work was still
-   * running when the drain deadline hit; `abandoned` names it.
+   * How the previous worker stopped, carried into each new worker's snapshot
+   * (task-queue/worker-status.ts's `readCarriedOverStatus`).
    */
   lastShutdown?: WorkerShutdownRecord
 }
@@ -203,7 +202,14 @@ export interface WorkerShutdownRecord {
   /** Why the worker stopped, as its entrypoint described it (e.g. 'SIGTERM'). */
   reason: string
   at: string
-  outcome: 'drained' | 'deadline'
-  drainMs: number
+  /** The stopped worker's `startedAt`, which ties the record to that worker. */
+  workerStartedAt: string
+  /**
+   * `deadline`: in-flight work was still running at the drain deadline, and
+   * `abandoned` names it. `not-drained`: the worker stopped without recording
+   * a shutdown (a crash or a forced kill); `at` is its last status write.
+   */
+  outcome: 'drained' | 'deadline' | 'not-drained'
+  drainMs?: number
   abandoned?: string[]
 }

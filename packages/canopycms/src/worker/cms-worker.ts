@@ -314,6 +314,7 @@ export class CmsWorker {
       executeTask: (task, signal) => this.executeTask(task, signal),
       pushBranchToGitHub: (branch, signal) => this.pushBranchToGitHub(branch, signal),
       isRunning: () => this.running,
+      isDraining: () => this.stopping !== null,
       shutdownSignal: () => this.shutdownController.signal,
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
@@ -322,25 +323,34 @@ export class CmsWorker {
     }
   }
 
-  async start(): Promise<void> {
+  /**
+   * Take the worker lock, provision, run the first sync, then schedule the
+   * loops. All of it is tracked as an operation, so a stop() that lands
+   * mid-startup -- during the lock acquisition, a first-boot clone, the first
+   * sync -- drains it before releasing the lock, and start() then resolves
+   * without scheduling anything.
+   */
+  start(): Promise<void> {
+    const starting = this.startUnderLock()
+    this.trackOperation('startup', starting)
+    return starting
+  }
+
+  private async startUnderLock(): Promise<void> {
     this.running = true
     workerLog('CMS Worker starting...')
     this.ensureStatusReport()
 
     await this.acquireLock()
-    // stop() ran while the lock was being acquired, and found nothing to release.
-    if (!this.running) {
-      await this.releaseLock()
-      return
-    }
+    if (this.stopping) return
 
     // Replace the previous holder's status file now: the first sync can take
     // minutes, and until then System health would report the old worker's
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears
-    // it. `lastShutdown` is kept on the report itself, until this worker's own
-    // stop() replaces it.
+    // it. `lastShutdown` describes the previous worker, so it stays on the report
+    // until this worker's own stop() replaces it.
     try {
       const { lastFatalError, lastShutdown } = await readCarriedOverStatus(this.taskDir)
       const report = this.ensureStatusReport()
@@ -402,6 +412,11 @@ export class CmsWorker {
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
+      // A drain cut startup short: stop() owns the lock and the status file now.
+      if (this.stopping) {
+        workerLog(`Startup ended by the drain: ${redactCredentials(getErrorMessage(err))}`)
+        return
+      }
       // Surface a startup failure (e.g. the empty-remote guard's poisoned
       // remote.git) to the admin panel via worker-status.json, not only
       // journald/CloudWatch. Best-effort and BEFORE releaseLock(): a
@@ -427,7 +442,7 @@ export class CmsWorker {
       throw err
     }
 
-    if (!this.running) return
+    if (this.stopping) return
 
     const taskInterval = this.config.taskPollInterval ?? 5_000
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
@@ -454,10 +469,11 @@ export class CmsWorker {
    * Drain, then release the worker lock. Idempotent: a second call returns the
    * first call's promise.
    *
-   * 1. Stop taking work: `running` goes false, so no loop starts another
-   *    iteration and no loop claims another task or starts another sync stage
-   *    or branch rebase (each checks `isRunning()` at its boundaries).
-   * 2. Wait up to `drainDeadlineMs` for what is already in flight.
+   * 1. Stop taking work: no loop starts another iteration, and none claims
+   *    another task or starts another sync stage or branch rebase (each checks
+   *    `isDraining()` at its boundaries).
+   * 2. Wait up to the deadline (`drainDeadlineMs`, or `deadlineMs` for this
+   *    call) for what is already in flight, startup included.
    * 3. At the deadline, abort it through `shutdownSignal()`: a task's git push
    *    and GitHub calls are killed and the task is released to pending with no
    *    retry spent; a sync's fetch or settings push is killed. A branch rebase
@@ -469,12 +485,15 @@ export class CmsWorker {
    *    file -- and release the lock. Release comes LAST, so no successor can
    *    start while this worker's work is still running.
    */
-  stop(options: { reason?: string } = {}): Promise<void> {
-    this.stopping ??= this.drainAndStop(options.reason ?? 'stop requested')
+  stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
+    this.stopping ??= this.drainAndStop(
+      options.reason ?? 'stop requested',
+      options.deadlineMs ?? this.drainDeadlineMs,
+    )
     return this.stopping
   }
 
-  private async drainAndStop(reason: string): Promise<void> {
+  private async drainAndStop(reason: string, deadlineMs: number): Promise<void> {
     const startedAt = Date.now()
     this.running = false
     for (const t of this.activeTimeouts) {
@@ -485,16 +504,14 @@ export class CmsWorker {
     const inFlight = [...this.activeOperations.values()]
     workerLog(
       inFlight.length > 0
-        ? `Draining (${reason}): waiting up to ${this.drainDeadlineMs / 1000}s for ${inFlight.join(', ')}`
+        ? `Draining (${reason}): waiting up to ${deadlineMs / 1000}s for ${inFlight.join(', ')}`
         : `Draining (${reason}): nothing in flight`,
     )
 
     let abandoned: string[] = []
-    if (!(await settlesWithin([...this.activeOperations.keys()], this.drainDeadlineMs))) {
+    if (!(await settlesWithin([...this.activeOperations.keys()], deadlineMs))) {
       abandoned = [...new Set(this.activeOperations.values())]
-      workerLogWarn(
-        `Drain deadline (${this.drainDeadlineMs / 1000}s) hit, aborting: ${abandoned.join(', ')}`,
-      )
+      workerLogWarn(`Drain deadline (${deadlineMs / 1000}s) hit, aborting: ${abandoned.join(', ')}`)
       this.shutdownController.abort()
       const graceMs = Math.min(ABORT_GRACE_MS, this.drainDeadlineMs)
       if (!(await settlesWithin([...this.activeOperations.keys()], graceMs))) {
@@ -512,6 +529,7 @@ export class CmsWorker {
       report.lastShutdown = {
         reason,
         at: new Date().toISOString(),
+        workerStartedAt: report.startedAt,
         outcome: abandoned.length > 0 ? 'deadline' : 'drained',
         drainMs,
         ...(abandoned.length > 0 ? { abandoned } : {}),
@@ -558,11 +576,11 @@ export class CmsWorker {
         stale: this.lockStaleMs,
         onCompromised: (err) => {
           // The heartbeat could not be maintained (lock deleted or taken over),
-          // so another worker may now be consuming the queue: stop processing
-          // to preserve the single-consumer invariant.
+          // so another worker may now be consuming the queue: abort at once,
+          // with no drain, to restore the single-consumer invariant.
           workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
-          void this.stop({ reason: 'worker lock compromised' })
+          void this.stop({ reason: 'worker lock compromised', deadlineMs: 0 })
         },
       })
     } catch (err) {

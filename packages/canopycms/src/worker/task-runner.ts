@@ -66,6 +66,7 @@ export type TaskRunnerContext = Pick<
   | 'executeTask'
   | 'pushBranchToGitHub'
   | 'isRunning'
+  | 'isDraining'
   | 'shutdownSignal'
   | 'ensureStatusReport'
 >
@@ -217,11 +218,11 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
 
   let processed = 0
   let task: Task | null
-  // isRunning before every claim: a draining worker finishes the task it holds
+  // Checked before every claim: a draining worker finishes the task it holds
   // and claims no other.
   while (
     processed < ctx.maxTasksPerCycle &&
-    ctx.isRunning() &&
+    !ctx.isDraining() &&
     (task = await dequeueTask(ctx.taskDir, ctx.log)) !== null
   ) {
     try {

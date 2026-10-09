@@ -30,20 +30,32 @@ export const WORKER_STATUS_FILE = 'worker-status.json'
 
 /**
  * What a new worker carries from the previous status file into its first
- * snapshot: `lastFatalError`, so a crash loop keeps its alert, and
- * `lastShutdown`. Tolerant like every reader: a missing or unreadable file
- * yields neither.
+ * snapshot: `lastFatalError`, so a crash loop keeps its alert, and how the
+ * previous worker stopped. A `lastShutdown` written by an earlier worker than
+ * the file's own means the last one stopped without draining. Tolerant like
+ * every reader: a missing or unreadable file yields neither.
  */
 export async function readCarriedOverStatus(
   taskDir: string,
 ): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown'>> {
+  let previous: Partial<WorkerStatusReport>
   try {
     const content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
-    const { lastFatalError, lastShutdown } = JSON.parse(content) as Partial<WorkerStatusReport>
-    return { lastFatalError, lastShutdown }
+    previous = JSON.parse(content) as Partial<WorkerStatusReport>
   } catch {
     return {}
   }
+  const { lastFatalError, startedAt, updatedAt } = previous
+  let { lastShutdown } = previous
+  if (startedAt && updatedAt && lastShutdown?.workerStartedAt !== startedAt) {
+    lastShutdown = {
+      reason: 'stopped without draining',
+      at: updatedAt,
+      workerStartedAt: startedAt,
+      outcome: 'not-drained',
+    }
+  }
+  return { lastFatalError, lastShutdown }
 }
 
 /**

@@ -193,6 +193,7 @@ describe('SystemHealthPanel', () => {
               lastShutdown: {
                 reason: 'ASG termination',
                 at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
                 outcome: 'deadline',
                 drainMs: 90_000,
                 abandoned: ['task queue'],
@@ -207,6 +208,32 @@ describe('SystemHealthPanel', () => {
         const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
         expect(text).toContain('ASG termination')
         expect(text).toContain('drain deadline hit, aborted task queue')
+      })
+
+      it('says when the previous worker stopped without draining', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'stopped without draining',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'not-drained',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('stopped without draining')
+        expect(text).toContain('a crash or a forced stop')
+        expect(text).not.toContain('drained in')
       })
 
       it('shows no shutdown line when the status file has none', async () => {

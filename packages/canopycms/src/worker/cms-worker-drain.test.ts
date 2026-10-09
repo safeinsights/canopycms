@@ -146,6 +146,31 @@ describe('CmsWorker.stop() drains the task queue', () => {
     await successor.stop()
   })
 
+  it('aborts at once, with no drain, when the worker lock is compromised', async () => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      drainDeadlineMs: 60_000,
+      lockStaleMs: 2000,
+    })
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    void w.trackOperation('task queue', new Promise<void>(() => {}))
+
+    // The heartbeat's next refresh finds the lock gone.
+    await fs.rm(path.join(taskDir, '.worker-lock'), { recursive: true, force: true })
+
+    expect(
+      await waitFor(
+        () => consoleSpy.all().warn.some((line) => line.includes('Drain deadline (0s) hit')),
+        5000,
+      ),
+    ).toBe(true)
+  })
+
   it('returns the same drain to a second caller', async () => {
     const worker = makeWorker(200)
     const first = worker.stop({ reason: 'SIGTERM' })
@@ -268,10 +293,10 @@ describe('CmsWorker.syncGit() while draining', () => {
   const hasUpstreamCommit = async (branchGit: ReturnType<typeof simpleGit>) =>
     (await branchGit.raw(['log', '--format=%s'])).includes('advance main')
 
-  /** Flips `running` off the instant the first branch's rebase succeeds. */
+  /** Starts draining the instant the first branch's rebase succeeds. */
   class DrainMidCycleWorker extends CmsWorker {
     protected override async afterRebaseCompletedForTesting(): Promise<void> {
-      ;(this as unknown as DrainInternals).running = false
+      void this.stop({ reason: 'test' })
     }
   }
 
@@ -308,7 +333,7 @@ describe('CmsWorker.syncGit() while draining', () => {
     })
     // The drain begins while the GitHub fetch is under way.
     internals(worker).buildGitHubUrl = async () => {
-      internals(worker).running = false
+      void worker.stop({ reason: 'test' })
       return fixtureRemote
     }
     internals(worker).running = true
@@ -319,6 +344,21 @@ describe('CmsWorker.syncGit() while draining', () => {
     await expect(
       fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'),
     ).rejects.toThrow()
+  })
+
+  it('kills its GitHub fetch once the drain deadline aborts', async () => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: 'main',
+    })
+    internals(worker).buildGitHubUrl = async () => fixtureRemote
+    internals(worker).running = true
+    ;(worker as unknown as { shutdownController: AbortController }).shutdownController.abort()
+
+    await expect(worker.syncGit()).rejects.toThrow(/[Aa]bort/)
   })
 })
 
@@ -362,6 +402,44 @@ describe('lastShutdown across a worker replacement', () => {
     internals(worker).buildGitHubUrl = async () => githubFixture
     return worker
   }
+
+  it('a stop during startup waits for it, then releases the lock', async () => {
+    const old = makeWorker()
+    let finishClone!: () => void
+    let cloning = false
+    ;(old as unknown as { ensureRemoteGit(): Promise<void> }).ensureRemoteGit = () =>
+      new Promise<void>((resolve) => {
+        cloning = true
+        finishClone = resolve
+      })
+
+    const starting = old.start()
+    expect(await waitFor(() => cloning)).toBe(true)
+    let stopped = false
+    const stopping = old.stop({ reason: 'SIGTERM' }).then(() => (stopped = true))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(stopped).toBe(false)
+
+    finishClone()
+    await stopping
+    await starting
+
+    const successor = makeWorker()
+    await internals(successor).acquireLock()
+    await successor.stop()
+    expect(consoleSpy).not.toHaveLogged('CMS Worker started')
+  })
+
+  it('a stop before the lock is taken leaves no lock behind once it resolves', async () => {
+    const old = makeWorker()
+    const starting = old.start()
+    await old.stop({ reason: 'SIGTERM' })
+
+    const successor = makeWorker()
+    await internals(successor).acquireLock()
+    await successor.stop()
+    await starting
+  })
 
   it("the successor starts once the old worker has drained, and reports the old worker's shutdown", async () => {
     const old = makeWorker()

@@ -373,13 +373,16 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         {lastShutdown && (
           <Text
             size="xs"
-            c={lastShutdown.outcome === 'deadline' ? 'orange' : 'dimmed'}
+            c={lastShutdown.outcome === 'drained' ? 'dimmed' : 'orange'}
             data-testid="build-last-shutdown"
           >
-            Last worker shutdown: {lastShutdown.reason} at {lastShutdown.at} ·{' '}
-            {lastShutdown.outcome === 'deadline'
-              ? `drain deadline hit, aborted ${lastShutdown.abandoned?.join(', ') ?? 'in-flight work'}`
-              : `drained in ${(lastShutdown.drainMs / 1000).toFixed(1)}s`}
+            Last worker shutdown: {lastShutdown.reason} at {lastShutdown.at}
+            {lastShutdown.outcome === 'deadline' &&
+              ` · drain deadline hit, aborted ${lastShutdown.abandoned?.join(', ') ?? 'in-flight work'}`}
+            {lastShutdown.outcome === 'drained' &&
+              lastShutdown.drainMs !== undefined &&
+              ` · drained in ${(lastShutdown.drainMs / 1000).toFixed(1)}s`}
+            {lastShutdown.outcome === 'not-drained' && ' (a crash or a forced stop)'}
           </Text>
         )}
         <Text size="xs" c="dimmed" data-testid="build-media">
