@@ -501,7 +501,7 @@ A `CannotFindAsset` in `canopycms-cdk` is a real failure. Its `test` script chai
 
 ```bash
 gh api repos/OWNER/REPO/actions/runs/RUN_ID/logs > logs.zip
-# then read: "Validate, Typecheck & Test/13_Run tests.txt"
+# then read: "Unit Tests (…)/*_Run tests.txt"
 ```
 
 For the state of a PR's checks, run the watcher rather than reading `gh pr checks` yourself — it distinguishes conflicts, stale green and a never-registered workflow from "still pending". See [Waiting on PR Checks](#waiting-on-pr-checks).
@@ -975,7 +975,7 @@ Read the file in full before extending it, or before writing another "shell out 
 
 ### `apps/example1` Build Verification (`example1-build` CI Gate)
 
-`apps/example1` is the reference app most doc snippets and e2e expectations are written against, and `validate` only type-checks and lints it while `dual-build` builds a different app. The path-gated `example1-build` job runs the app's own `verify:build` script (`apps/example1/build-verify.test.ts`):
+`apps/example1` is the reference app most doc snippets and e2e expectations are written against, and the `lint`/`typecheck` jobs only check it while `dual-build` builds a different app. The path-gated `example1-build` job runs the app's own `verify:build` script (`apps/example1/build-verify.test.ts`):
 
 ```bash
 pnpm --filter canopycms-example-one run verify:build
@@ -1345,8 +1345,8 @@ When you add a new top-level public symbol re-exported from `packages/canopycms/
 
 When adding a step to `.github/workflows/*.yml`, or to the generated adopter deploy workflow template:
 
-- **Pin third-party actions to a full commit SHA, with the version tag as a trailing comment** — `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`, not `@v7`. A movable tag can be repointed (the `tj-actions/changed-files` supply-chain incident is the canonical example); a pinned SHA cannot run different code without the diff showing up in this repo's history. This applies to every workflow and matters most in `publish.yml`, which mints a token that can bypass branch protection and holds `id-token: write` for npm provenance across five public packages. Nothing refreshes these pins for you: `.github/dependabot.yml` raises security updates only and scans only `.github/workflows/`, so it never touches the adopter template or the example, and a stale pin shows up as a warning annotation on every job rather than as a PR.
-- **Give every job an explicit, minimal `permissions:` block** rather than relying on the repo-level default. `ci.yml`'s job needs nothing but `contents: read` (plus `pull-requests: read`, for `dorny/paths-filter`) even though it runs `pnpm install`, which executes untrusted dependency lifecycle scripts alongside whatever credentials `actions/checkout` persisted on disk — an explicit read-only block means that scope cannot silently widen if the repo-level default ever does. Jobs that need to write (`publish.yml`'s `contents: write`/`id-token: write`) scope permissions per job, not workflow-wide, so an unrelated job in the same file does not inherit write access it never needed.
+- **Pin third-party actions to a full commit SHA, with the version tag as a trailing comment** — `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1`, not `@v7`. A movable tag can be repointed (the `tj-actions/changed-files` supply-chain incident is the canonical example); a pinned SHA cannot run different code without the diff showing up in this repo's history. This applies to every workflow and matters most in `publish.yml`, which mints a token that can bypass branch protection and holds `id-token: write` for npm provenance across five public packages. Nothing refreshes these pins for you: `.github/dependabot.yml` raises security updates only and scans only `.github/workflows/` and `.github/actions/`, so it never touches the adopter template or the example, and a stale pin shows up as a warning annotation on every job rather than as a PR.
+- **Give every job an explicit, minimal `permissions:` block** rather than relying on the repo-level default. `ci.yml`'s jobs need nothing but `contents: read` (plus `pull-requests: read`, for `dorny/paths-filter`) even though it runs `pnpm install`, which executes untrusted dependency lifecycle scripts alongside whatever credentials `actions/checkout` persisted on disk — an explicit read-only block means that scope cannot silently widen if the repo-level default ever does. Jobs that need to write (`publish.yml`'s `contents: write`/`id-token: write`) scope permissions per job, not workflow-wide, so an unrelated job in the same file does not inherit write access it never needed.
 
 ### Storybook
 

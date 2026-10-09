@@ -123,6 +123,38 @@ function run(cmd, args, { cwd, env, capture = false, allowFailure = false } = {}
   return result
 }
 
+// Registry errors meaning a release is still propagating, the only failures retried: the app
+// resolves unpinned, as an adopter's fresh install does. The last retry comes after the 300 s
+// the registry lets a CDN or npm's cache serve a stale packument.
+const REGISTRY_LAG =
+  /\b(?:code (?:ETARGET|E404|ENOTFOUND)|ERR_PNPM_(?:NO_MATCHING_VERSION|FETCH_404))\b/
+const REGISTRY_RETRY_DELAYS_S = [60, 120, 240]
+
+/** `run`, retried on registry lag; `tee` keeps output streaming while saving it to match. */
+function runRetryingRegistryLag(cmd, args, { cwd, env } = {}) {
+  const teeDir = mkdtempSync(path.join(os.tmpdir(), 'canopy-smoke-tee-'))
+  const teeFile = path.join(teeDir, 'output.log')
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const result = run(
+        'bash',
+        ['-o', 'pipefail', '-c', '"$@" 2>&1 | tee "$SMOKE_TEE_FILE"', 'bash', cmd, ...args],
+        { cwd, env: { ...env, SMOKE_TEE_FILE: teeFile }, allowFailure: true },
+      )
+      if (result.status === 0) return result
+      const lag = REGISTRY_LAG.exec(readFileSync(teeFile, 'utf8'))
+      const delay = REGISTRY_RETRY_DELAYS_S[attempt]
+      if (!lag || delay === undefined) {
+        throw new SmokeError(`\`${cmd} ${args.join(' ')}\` exited with status ${result.status}`)
+      }
+      log(`registry has not caught up (${lag[0]}); retrying in ${delay}s`)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay * 1000)
+    }
+  } finally {
+    rmSync(teeDir, { recursive: true, force: true })
+  }
+}
+
 /** The real path `dir` would have, resolving symlinks through its nearest existing ancestor. */
 function realpathOfNearestExisting(dir) {
   let existing = path.resolve(dir)
@@ -215,7 +247,8 @@ function patchOnce(file, anchor, replacement) {
 function packageManager(pm) {
   if (pm === 'npm') {
     return {
-      install: ['npm', ['install', '--no-audit', '--no-fund']],
+      // Without --prefer-online a retry reads the cached packument that just failed.
+      install: ['npm', ['install', '--prefer-online', '--no-audit', '--no-fund']],
       exec: (bin, args) => ['npm', ['exec', '--no', '--', bin, ...args]],
     }
   }
@@ -328,7 +361,7 @@ function scaffold(appDir, options) {
     'export default function Home() {\n  return <main>CanopyCMS standalone image smoke test</main>\n}\n',
   )
 
-  run(...pmCommands.install, { cwd: appDir, env: COREPACK_ENV })
+  runRetryingRegistryLag(...pmCommands.install, { cwd: appDir, env: COREPACK_ENV })
   run(
     ...pmCommands.exec('canopycms', [
       'init',
@@ -849,9 +882,11 @@ async function main() {
   const container = `canopycms-standalone-smoke-${label}-${process.pid}`
 
   scaffold(appDir, options)
-  run('docker', ['build', '--progress=plain', '-f', 'Dockerfile.cms', '-t', image, '.'], {
-    cwd: appDir,
-  })
+  runRetryingRegistryLag(
+    'docker',
+    ['build', '--progress=plain', '-f', 'Dockerfile.cms', '-t', image, '.'],
+    { cwd: appDir },
+  )
 
   const seedDir = path.join(workDir, 'seed')
   let created = false
