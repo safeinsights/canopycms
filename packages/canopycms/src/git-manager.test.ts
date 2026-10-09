@@ -836,6 +836,36 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
+  // Root reads through any mode bits, so the EACCES case has nothing to prove there.
+  it.skipIf(process.getuid?.() === 0)(
+    'throws, rather than waiting on the worker, when remote.git cannot be stat-ed',
+    async () => {
+      const workspaceRoot = path.join(tmpDir, 'unreadable-workspace')
+      await fs.mkdir(workspaceRoot, { recursive: true })
+      await fs.chmod(workspaceRoot, 0o000)
+
+      const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+      process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+      try {
+        const err = await GitManager.resolveRemoteUrl({ mode: 'prod', baseBranch: 'main' }).catch(
+          (e: unknown) => e,
+        )
+        expect(err).toBeInstanceOf(Error)
+        expect(err).not.toBeInstanceOf(RemoteNotReadyError)
+        expect((err as Error).message).toContain(
+          `cannot read the git remote at ${path.join(workspaceRoot, 'remote.git')}`,
+        )
+      } finally {
+        await fs.chmod(workspaceRoot, 0o755)
+        if (origWorkspace !== undefined) process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+        else delete process.env.CANOPYCMS_WORKSPACE_ROOT
+        clearStrategyCache()
+      }
+    },
+  )
+
   it('initializeWorkspace throws RemoteNotReadyError in prod mode until the worker creates remote.git', async () => {
     const workspaceRoot = path.join(tmpDir, 'booting-workspace')
     await fs.mkdir(workspaceRoot, { recursive: true })

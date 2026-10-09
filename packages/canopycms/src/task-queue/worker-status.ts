@@ -58,6 +58,47 @@ export async function readCarriedOverStatus(
   return { lastFatalError, lastShutdown }
 }
 
+/** A startup failure the worker recorded; see {@link readWorkerStartupFailure}. */
+export interface WorkerStartupFailure {
+  /** Already redacted by the worker. */
+  message: string
+  at: string
+  /**
+   * The attempt that wrote the file is the one that failed. False while a newer worker carries
+   * an older failure forward and is starting again.
+   */
+  current: boolean
+}
+
+/**
+ * The startup failure in `{taskDir}/worker-status.json`, for a request that found no remote to
+ * clone. A failure is current when it is no older than the snapshot's `startedAt`: a worker
+ * that starts again writes its own `startedAt` and carries the previous failure forward, so a
+ * retry in progress (a first clone can take minutes) is not reported as a dead worker. Tolerant
+ * like every reader: a missing or unreadable file yields none.
+ */
+export async function readWorkerStartupFailure(
+  taskDir: string,
+): Promise<WorkerStartupFailure | undefined> {
+  let report: Partial<WorkerStatusReport>
+  try {
+    report = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    ) as Partial<WorkerStatusReport>
+  } catch {
+    return undefined
+  }
+  const fatal = report.lastFatalError
+  if (fatal?.phase !== 'startup' || typeof fatal.message !== 'string') return undefined
+  const failedAt = Date.parse(fatal.at)
+  const startedAt = report.startedAt ? Date.parse(report.startedAt) : NaN
+  return {
+    message: fatal.message,
+    at: fatal.at,
+    current: Number.isNaN(startedAt) || !(failedAt < startedAt),
+  }
+}
+
 /**
  * Write the worker's status report to `{taskDir}/worker-status.json`.
  *
