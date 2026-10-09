@@ -183,6 +183,41 @@ describe('SystemHealthPanel', () => {
         expect(text).toContain('CANOPY_SOURCE_SHA')
       })
 
+      it('shows how the previous worker shut down, in orange when its drain hit the deadline', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'ASG termination',
+                at: '2026-01-01T00:00:00.000Z',
+                outcome: 'deadline',
+                drainMs: 90_000,
+                abandoned: ['task queue'],
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const text = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(text).toContain('ASG termination')
+        expect(text).toContain('drain deadline hit, aborted task queue')
+      })
+
+      it('shows no shutdown line when the status file has none', async () => {
+        mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('build-last-shutdown')).toBeNull()
+      })
+
       it('shows the worker version as unknown when the worker did not report one', async () => {
         mockClient.admin.status.mockResolvedValueOnce(
           mockSuccess(statusWithWorkerVersion(undefined)),

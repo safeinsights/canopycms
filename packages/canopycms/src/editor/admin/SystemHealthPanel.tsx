@@ -253,6 +253,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   // Absent for a worker that predates the field, which is not evidence of skew;
   // nor is a stale or absent worker's leftover status file, which names no running build.
   const workerVersion = status.workerStatus?.workerVersion || undefined
+  const lastShutdown = status.workerStatus?.lastShutdown
   const versionSkew =
     status.worker.state === 'alive' &&
     workerVersion !== undefined &&
@@ -369,6 +370,18 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="dimmed" data-testid="build-worker-version">
           Worker version: {workerVersion ? `canopycms ${workerVersion}` : 'unknown'}
         </Text>
+        {lastShutdown && (
+          <Text
+            size="xs"
+            c={lastShutdown.outcome === 'deadline' ? 'orange' : 'dimmed'}
+            data-testid="build-last-shutdown"
+          >
+            Last worker shutdown: {lastShutdown.reason} at {lastShutdown.at} ·{' '}
+            {lastShutdown.outcome === 'deadline'
+              ? `drain deadline hit, aborted ${lastShutdown.abandoned?.join(', ') ?? 'in-flight work'}`
+              : `drained in ${(lastShutdown.drainMs / 1000).toFixed(1)}s`}
+          </Text>
+        )}
         <Text size="xs" c="dimmed" data-testid="build-media">
           Media storage:{' '}
           {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}
