@@ -2,18 +2,18 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  `store.read()` resolves a reference to a missing or deleted entry as `null`, and the validator skips `null` on write, so saving any entry that references a deleted entry overwrites the ID with `null`, unrecoverably. **Decided:** one shape for a denied or deleted target that keeps the id (`{ id, unavailable: true, … }`), and the write path never stores `null` or a resolved object. The in-flight ACL work on denied references uses the same shape; otherwise it would create a new silent-erasure path for restricted editors
+  RESOLVED 2026-10-09, branch `fix/dangling-reference-integrity`. An id naming no entry resolves to `MissingReference` (`{ id, unavailable: true, reason: 'missing' }`, entry-schema.ts) instead of `null`, so a save posts the id back; `api/content.ts` keeps a dangling id the stored file already holds, with a warning, and still refuses a new one. Option 1 below, with option 3's warning at save time
 ---
 # Saving an entry with a dangling reference replaces the ID with `null`
 
-**Status:** Open. **Priority: P1 [BOTH]** — silent, irreversible loss of which entry was referenced,
+**Status:** Resolved. **Priority: P1 [BOTH]** — silent, irreversible loss of which entry was referenced,
 on a path an editor reaches without doing anything unusual. Any save of an entry that references a
 deleted target overwrites the ID with `null`: `content-store.ts` (`resolveSingleReferenceOnce`)
 returns `null` and `entry-validator.ts` skips nulls on write.
 
 **Decided:** one shape for denied and deleted targets that keeps the id
 (`{ id, unavailable: true, … }`), and the write path never stores `null` or a resolved object. The
-ACL fix ([reference-resolution-bypasses-path-acls.md](resolved/reference-resolution-bypasses-path-acls.md))
+ACL fix ([reference-resolution-bypasses-path-acls.md](reference-resolution-bypasses-path-acls.md))
 shipped that shape for a reference the reader is denied: `RestrictedReference` in
 `entry-schema.ts`, `reason: 'restricted'`, which this file's case joins as another `reason`. This subsumes option 1 below, with `unavailable: true`
 in place of `exists: false`.
@@ -64,9 +64,9 @@ Option 1 also improves the read side: a page rendering a broken reference curren
 
 ## Related
 
-- [resolved-reference-shape.md](resolved/resolved-reference-shape.md) — the write-boundary
+- [resolved-reference-shape.md](resolved-reference-shape.md) — the write-boundary
   normalization this sits beside.
-- [reference-resolution-bypasses-path-acls.md](resolved/reference-resolution-bypasses-path-acls.md) —
+- [reference-resolution-bypasses-path-acls.md](reference-resolution-bypasses-path-acls.md) —
   an ACL-denied target now resolves to a `RestrictedReference` carrying its `id` and tagged
   `unavailable: true, reason: 'restricted'`, never `null`. Option 1's tombstone fits that tag as
   another `reason` (say `'missing'`, with no title or URL), so renderers branch on one key.

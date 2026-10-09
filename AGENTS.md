@@ -61,7 +61,7 @@ is the map of maps.
 | `operating-mode/` | prod/dev strategies; single resolution points for mode + deployment name                              | [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) |
 | `paths/`          | Path utilities with branded types (LogicalPath, PhysicalPath)                                         | see below                                                                   |
 | `schema/`         | Schema loading and resolution                                                                         | —                                                                           |
-| `static/`         | Static-generation helpers and the four build-time guards                                              | [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md)                 |
+| `static/`         | Static-generation helpers and the five build-time guards                                              | [static/AGENTS.md](packages/canopycms/src/static/AGENTS.md)                 |
 | `task-queue/`     | File-backed task queue plus the CMS queue contract the API enqueues to and the worker consumes        | [task-queue/README.md](packages/canopycms/src/task-queue/README.md)         |
 | `utils/`          | Shared utilities, several consolidating a past drift                                                  | [utils/AGENTS.md](packages/canopycms/src/utils/AGENTS.md)                   |
 | `validation/`     | Field traversal, reference/entry validation                                                           | [validation/AGENTS.md](packages/canopycms/src/validation/AGENTS.md)         |
