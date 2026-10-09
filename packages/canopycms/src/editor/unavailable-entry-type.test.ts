@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  unavailableSchemaRefs,
-  unavailableTypeMessage,
-  unavailableTypeMessageParts,
-} from './unavailable-entry-type'
+import { unavailableSchemaRefs, unavailableTypeMessageParts } from './unavailable-entry-type'
 
-describe('unavailableTypeMessage', () => {
+/** The message as `UnavailableTypeMessage` renders it, refs comma-joined, as plain text. */
+const unavailableTypeMessage = (refs: readonly string[]) => {
+  const { before, after } = unavailableTypeMessageParts(refs)
+  return `${before}${refs.join(', ')}${after}`
+}
+
+describe('the unavailable-type message', () => {
   it('names the schema ref in the shared wording', () => {
     expect(unavailableTypeMessage(['widgetSchema'])).toBe(
       "This section uses a content type this editor version doesn't know yet (widgetSchema). It usually appears after the editor finishes updating; reload in a few minutes.",

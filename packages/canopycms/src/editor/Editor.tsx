@@ -25,6 +25,8 @@ import { notifications } from '@mantine/notifications'
 
 type TreeController = ReturnType<typeof useTree>
 
+const noop = (): void => {}
+
 import type { ContentFormat, EntrySchema, EntryTypeUnavailable } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
@@ -480,6 +482,25 @@ const EditorContent: React.FC<EditorProps> = ({
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
   const [schemaUnavailableKeys, setSchemaUnavailableKeys] = useState<ReadonlySet<string>>(new Set())
+  // A refetch of entries and schema is the signal the server's schema may have changed, so every
+  // refusal is forgotten and the next open of each entry reads it once more. Declared before the
+  // load effect so a refetch's retry sees the cleared set in the same commit.
+  useEffect(() => {
+    if (schemaUnavailableRef.current.size === 0) return
+    schemaUnavailableRef.current = new Set()
+    setSchemaUnavailableKeys(new Set())
+  }, [entriesState, collectionsFromApi])
+  // A successful read (File > Reload) of a refused entry ends the refusal.
+  useEffect(() => {
+    if (schemaUnavailableRef.current.size === 0) return
+    const stale = [...schemaUnavailableRef.current].filter((key) => {
+      const [keyBranch, ...id] = key.split(':')
+      return keyBranch === branchNameState && loadedValues[id.join(':')] !== undefined
+    })
+    if (stale.length === 0) return
+    stale.forEach((key) => schemaUnavailableRef.current.delete(key))
+    setSchemaUnavailableKeys(new Set(schemaUnavailableRef.current))
+  }, [loadedValues, branchNameState])
   // The contentId this effect is CURRENTLY targeting, kept in sync every
   // render (not in an effect -- it must be current by the time an in-flight
   // load's `finally`/`catch` runs, which can be after several re-renders).
@@ -830,6 +851,12 @@ const EditorContent: React.FC<EditorProps> = ({
     await updateOrder(collectionPath, newOrder)
   }
 
+  // The entry's type has no schema here, or the API refused its read as unavailable. Its
+  // form is replaced by a notice, so nothing about it can be saved.
+  const isEntryUnavailable = (entry: EditorEntry): boolean =>
+    !!entry.unavailable || schemaUnavailableKeys.has(`${branchNameState}:${entry.contentId}`)
+  const currentEntryUnavailable = !!currentEntry && isEntryUnavailable(currentEntry)
+
   // Determine if we should hide the root collection (but keep its context for ordering)
   const hiddenRootPath = useMemo(() => {
     if (activeCollections?.length === 1 && activeCollections[0].path === contentRoot) {
@@ -853,6 +880,7 @@ const EditorContent: React.FC<EditorProps> = ({
         conflictNotice: !!(
           entry.contentId && currentBranch?.conflictFiles?.includes(entry.contentId)
         ),
+        unavailable: isEntryUnavailable(entry) || undefined,
       })
       grouped.set(entry.collectionPath, list)
     })
@@ -898,6 +926,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleCreateEntry,
     contentRoot,
     currentBranch,
+    schemaUnavailableKeys,
   ])
 
   // Tree expansion state - persists across drawer close/open
@@ -1049,7 +1078,8 @@ const EditorContent: React.FC<EditorProps> = ({
             modifiedCount={modifiedCount}
             unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
             comments={comments}
-            hasUnsavedChanges={isSelectedDirty()}
+            // A draft kept for an unavailable entry stays in storage but cannot be saved.
+            hasUnsavedChanges={!currentEntryUnavailable && isSelectedDirty()}
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
@@ -1079,7 +1109,7 @@ const EditorContent: React.FC<EditorProps> = ({
               loadBranches().catch(console.error)
             }}
             onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
-            onSave={handleSave}
+            onSave={currentEntryUnavailable ? noop : handleSave}
             onSubmit={() => {
               if (branchNameState) handleSubmit(branchNameState).catch(console.error)
             }}
@@ -1122,8 +1152,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             ? 'Loading content…'
                             : 'Select an item to start editing.'}
                       </CenteredMessage>
-                    ) : currentEntry.unavailable ||
-                      schemaUnavailableKeys.has(`${branchNameState}:${currentEntry.contentId}`) ? (
+                    ) : currentEntryUnavailable ? (
                       <UnavailableEntryNotice
                         schemaRefs={
                           currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []

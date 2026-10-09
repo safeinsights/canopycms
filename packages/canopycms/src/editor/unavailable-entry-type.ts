@@ -26,12 +26,6 @@ export function unavailableTypeMessageParts(schemaRefs: readonly string[]): {
   }
 }
 
-/** The message as plain text. */
-export function unavailableTypeMessage(schemaRefs: readonly string[]): string {
-  const { before, after } = unavailableTypeMessageParts(schemaRefs)
-  return `${before}${schemaRefs.join(', ')}${after}`
-}
-
 /** The distinct schema refs of the unavailable entry types in `entryTypes`, in order. */
 export function unavailableSchemaRefs(
   entryTypes: ReadonlyArray<{ unavailable?: { schemaRef: string } }> | undefined,

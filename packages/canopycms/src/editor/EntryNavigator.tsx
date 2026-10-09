@@ -36,6 +36,17 @@ import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
 type TreeController = ReturnType<typeof useTree>
 
+const UnavailableTypeRow: React.FC<{ schemaRefs: readonly string[] }> = ({ schemaRefs }) => (
+  <Group gap={6} wrap="nowrap" align="flex-start" mt={4} data-testid="unavailable-type-message">
+    <Box c="orange.8" style={{ display: 'flex', flexShrink: 0, paddingTop: 2 }}>
+      <IconAlertTriangle size={14} aria-hidden />
+    </Box>
+    <Text size="xs" c="orange.8">
+      <UnavailableTypeMessage schemaRefs={schemaRefs} />
+    </Text>
+  </Group>
+)
+
 export interface EntryNavItem {
   path: LogicalPath
   label: string
@@ -44,6 +55,8 @@ export interface EntryNavItem {
   contentId?: ContentId // 12-char embedded ID for ordering
   /** True when this entry's file conflicted during rebase */
   conflictNotice?: boolean
+  /** True when the entry's type is unavailable; its menu offers nothing that writes. */
+  unavailable?: boolean
 }
 
 export interface EntryNavCollection {
@@ -154,6 +167,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               entryPath: entry.path,
               contentId: entry.contentId,
               conflictNotice: entry.conflictNotice,
+              unavailable: entry.unavailable,
               parentCollectionPath: col.path,
               childIndex: 0, // Will be set below
               totalChildrenCount: totalChildren,
@@ -220,6 +234,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               entryPath: entry.path,
               contentId: entry.contentId,
               conflictNotice: entry.conflictNotice,
+              unavailable: entry.unavailable,
               parentCollectionPath: col.path,
               childIndex: allChildren.length,
               totalChildrenCount: totalChildren,
@@ -283,6 +298,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       nodeProps: { status: item.status, isEntry: true, entryPath: item.path },
     }))
   }, [collections, items, hiddenRootPath])
+
+  // The hidden root's own row never renders, so its message is shown once above the tree.
+  const hiddenRootUnavailableRefs =
+    hiddenRootPath && collections?.length === 1 && collections[0].path === hiddenRootPath
+      ? collections[0].unavailableSchemaRefs
+      : undefined
 
   const tree = useTree({
     initialExpandedState: expandedStateRef?.current ?? {},
@@ -417,7 +438,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // Collections show menu for add/edit/delete actions OR for reordering (subcollections)
     const hasCollectionMenu =
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
-    const hasEntryMenu = isEntry && entryPath && (onDeleteEntry || onRenameEntry || onReorderEntry)
+    // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
+    const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
+    const hasEntryMenu =
+      isEntry &&
+      entryPath &&
+      !entryUnavailable &&
+      (onDeleteEntry || onRenameEntry || onReorderEntry)
 
     return (
       <Box
@@ -642,20 +669,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           </Group>
         </Group>
         {isCollection && unavailableSchemaRefs && unavailableSchemaRefs.length > 0 && (
-          <Group
-            gap={6}
-            wrap="nowrap"
-            align="flex-start"
-            mt={4}
-            data-testid="unavailable-type-message"
-          >
-            <Box c="orange.8" style={{ display: 'flex', flexShrink: 0, paddingTop: 2 }}>
-              <IconAlertTriangle size={14} aria-hidden />
-            </Box>
-            <Text size="xs" c="orange.8">
-              <UnavailableTypeMessage schemaRefs={unavailableSchemaRefs} />
-            </Text>
-          </Group>
+          <UnavailableTypeRow schemaRefs={unavailableSchemaRefs} />
         )}
       </Box>
     )
@@ -669,6 +683,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       data-testid="entry-navigator"
     >
       <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
+        {hiddenRootUnavailableRefs && hiddenRootUnavailableRefs.length > 0 && (
+          <Box pt="sm">
+            <UnavailableTypeRow schemaRefs={hiddenRootUnavailableRefs} />
+          </Box>
+        )}
         {treeData.length === 0 ? (
           loading ? (
             <Group gap="xs" py="sm">

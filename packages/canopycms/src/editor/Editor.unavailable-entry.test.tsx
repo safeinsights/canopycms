@@ -121,7 +121,7 @@ const listedEntry = (collection: string, slug: string, entryType: string, conten
 function stubFetch(options: { flagged: boolean; widgetRead: () => Response }) {
   const flag = options.flagged ? { unavailable } : {}
   const widgetType = { name: 'widget', format: 'json', schemaRef: 'widgetSchema', ...flag }
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.endsWith('/api/canopycms/branches')) {
@@ -346,6 +346,121 @@ describe('Editor: an entry of an unavailable type', () => {
     await screen.findByTestId('unavailable-entry-notice')
 
     expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(1)
+  })
+
+  it('reads a refused entry again after entries are refetched, and shows its form when the read succeeds', async () => {
+    let widgetResponse: () => Response = () =>
+      okJson({ ok: false, status: 503, code: 'SCHEMA_UNAVAILABLE', error: 'unavailable' }, 503)
+    const fetchMock = stubFetch({ flagged: false, widgetRead: () => widgetResponse() })
+    renderEditor('widgets/first')
+    await screen.findByTestId('unavailable-entry-notice')
+    expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(1)
+
+    // Saving another entry refetches entries and schema.
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('entry-nav-item-posts'))
+    fireEvent.click(await screen.findByTestId('entry-nav-item-hello'))
+    const title = await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i, hidden: true })
+      expect(el).not.toBeNull()
+      return el as HTMLInputElement
+    })
+    fireEvent.change(title, { target: { value: 'Edited title' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(false)
+    })
+    const entriesCallsBefore = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes('/entries'),
+    ).length
+    fireEvent.click(screen.getByTestId('save-button'))
+    await waitFor(() => {
+      const entriesCalls = fetchMock.mock.calls.filter(([input]) =>
+        String(input).includes('/entries'),
+      ).length
+      expect(entriesCalls).toBeGreaterThan(entriesCallsBefore)
+    })
+
+    widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('all-files-menu-item'))
+    fireEvent.click(await screen.findByTestId('entry-nav-item-first'))
+
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', {
+        name: /size/i,
+        hidden: true,
+      }) as HTMLInputElement | null
+      expect(el?.value).toBe('large')
+    })
+    expect(screen.queryByTestId('unavailable-entry-notice')).toBeNull()
+    expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(2)
+  })
+
+  it('shows the form when File > Reload reads a refused entry successfully', async () => {
+    let widgetResponse: () => Response = () =>
+      okJson({ ok: false, status: 503, code: 'SCHEMA_UNAVAILABLE', error: 'unavailable' }, 503)
+    stubFetch({ flagged: false, widgetRead: () => widgetResponse() })
+    renderEditor('widgets/first')
+    await screen.findByTestId('unavailable-entry-notice')
+
+    widgetResponse = () => okJson({ ok: true, status: 200, data: { size: 'large', version: 1 } })
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByText('Reload File'))
+
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', {
+        name: /size/i,
+        hidden: true,
+      }) as HTMLInputElement | null
+      expect(el?.value).toBe('large')
+    })
+    expect(screen.queryByTestId('unavailable-entry-notice')).toBeNull()
+  })
+
+  describe('with a stored draft for the entry', () => {
+    const seedDraft = () =>
+      window.localStorage.setItem(
+        'canopycms:drafts:main',
+        JSON.stringify({
+          v: 2,
+          drafts: { widget000001: { size: 'draft size' } },
+          baseVersions: { widget000001: 1 },
+        }),
+      )
+
+    const writeCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
+      fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')
+
+    it('keeps Save disabled and sends no write for an entry whose type is unavailable', async () => {
+      seedDraft()
+      const fetchMock = stubFetch({
+        flagged: true,
+        widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
+      })
+      renderEditor('widgets/first')
+
+      await screen.findByTestId('unavailable-entry-notice')
+      // Let the restored draft settle before asserting on Save.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(writeCalls(fetchMock)).toHaveLength(0)
+      expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
+    })
+
+    it('keeps Save disabled for an entry whose read the API refused', async () => {
+      seedDraft()
+      const fetchMock = stubFetch({
+        flagged: false,
+        widgetRead: () =>
+          okJson({ ok: false, status: 503, code: 'SCHEMA_UNAVAILABLE', error: 'unavailable' }, 503),
+      })
+      renderEditor('widgets/first')
+
+      await screen.findByTestId('unavailable-entry-notice')
+      expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
+      expect(writeCalls(fetchMock)).toHaveLength(0)
+      expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
+    })
   })
 
   it('shows the message once under the affected collection, which offers no Add Entry', async () => {
