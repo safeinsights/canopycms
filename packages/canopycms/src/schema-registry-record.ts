@@ -4,10 +4,10 @@
  * branch while incoming content names a schema this record lacks (worker/schema-gate.ts), so a
  * merge that adds a schema and content using it waits for the image carrying the schema.
  *
- * Last write wins, which tracks the serving image: each process records once, at its first API
- * request, and only the newest image's processes start after a deploy. An old image starting
- * during the rollout leaves the record behind, and the gate then holds until the next new-image
- * start, the safe direction.
+ * Last write wins. Each API process records once, at its first API request, so with one API
+ * deployment per workspace the newest process start names the serving image. An old image
+ * starting during a rollout leaves the record behind, and the gate then holds until the next
+ * new-image start, the safe direction.
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -28,7 +28,7 @@ export interface SchemaRegistryRecord {
   version: 1
   /** The registry's keys, sorted: the names a `.collection.json` entry type may reference. */
   schemas: string[]
-  /** `registryFingerprint` of the registry, the key the branch schema cache is stored under. */
+  /** `registryFingerprint` of the registry, which the branch schema cache is also stamped with. */
   fingerprint: string
   /** Content root relative to the repository root, as the editor resolves it. */
   contentRoot: string

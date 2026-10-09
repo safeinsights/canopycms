@@ -951,15 +951,15 @@ workspace directory name.
 
 ## New schemas wait for the editor deploy
 
-A merge adding an entry schema in code and content using it reaches the editor by
-two routes: the worker's next sync and the image deploy. Each CMS process records
-its schema names in `content-branches/.schema-registry.json` at its first API
-request, and the worker holds the base branch while incoming `.collection.json`
-files name a schema that record lacks. System health then shows "Waiting for editor
-deploy"; the hold lifts at the first sync after someone opens the new editor.
-Content-only merges never wait, and without a record nothing is held. After 30
-minutes the worker advances anyway, and those content types stay unavailable until
-an image defining them is deployed.
+A merge adding a schema and content using it reaches the editor through both
+the worker's sync and the image deploy. Each CMS process records its schema names in
+`content-branches/.schema-registry.json` at its first API request, and the worker
+holds the base branch while incoming `.collection.json` files name a schema that
+record lacks. System health shows "Waiting for editor deploy"; the hold lifts
+at the next sync after the new editor is opened. Merges naming no new schema
+never wait; without a record, nothing waits. Once the oldest missing schema has
+waited 30 minutes the worker advances anyway; those content types stay
+unavailable until an image defining them is deployed.
 
 ## Worker observability
 

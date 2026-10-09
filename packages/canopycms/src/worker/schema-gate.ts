@@ -9,7 +9,7 @@ import { getErrorMessage } from '../utils/error'
 import { MAX_REPORTED_PATHS } from './canopy-state'
 import { workerLogError, workerLogWarn } from './log'
 
-/** How long the base branch may wait for one schema before the worker advances it anyway. */
+/** How long the base branch may wait for its oldest missing schema before the worker advances it anyway. */
 export const DEFAULT_SCHEMA_HOLD_MAX_MS = 30 * 60_000
 
 const COLLECTION_META_FILE = '.collection.json'
@@ -19,7 +19,7 @@ type Git = ReturnType<typeof simpleGit>
 
 export type SchemaGateDecision =
   | { kind: 'advance' }
-  /** Advance anyway: every missing schema has waited its bound. `hold` names them. */
+  /** Advance anyway: the oldest missing schema has waited its bound. `hold` names them all. */
   | { kind: 'advance-expired'; hold: BaseSchemaHold }
   | { kind: 'hold'; hold: BaseSchemaHold }
 
@@ -83,8 +83,9 @@ async function listCollectionMeta(
 }
 
 /**
- * The schema names one meta file references at `commit`. A symlink is followed one hop, as the
- * editor's `fs.readFile` would, to a target inside the repository.
+ * The schema names one meta file references at `commit`. A symlink is followed one hop, to a
+ * relative target inside the repository; the editor's `fs.readFile` follows every hop, so a
+ * longer chain or an absolute target reads as no references and fails open.
  */
 async function metaReferences(
   git: Git,
@@ -160,14 +161,14 @@ export async function readCarriedBaseHold(taskDir: string): Promise<BaseSchemaHo
  * Holds only for a name that a `.collection.json` changed between the two tips references at the
  * incoming one, that the record lacks, and that the current base does not already reference:
  * holding cannot repair a reference already live, and a merge that changes no collection meta
- * passes after one tree diff.
+ * reads no meta blob but those of symlinks.
  *
  * Fails open: with no readable record (an editor too old to write one, one not yet started, a
  * failed write), or when the trees cannot be read, the base advances as if there were no gate.
- * Each name waits at most `maxHoldMs` from when it was first seen missing, carried in
- * `previous.firstSeen` across cycles and worker restarts; once every missing name has waited
- * that long the base advances with an error naming them, since a name no deploy will ever supply
- * would otherwise freeze every content update.
+ * When each name was first seen missing is carried in `previous.firstSeen` across cycles and
+ * worker restarts; once the oldest missing name has waited `maxHoldMs` the base advances with an
+ * error naming them, since a name no deploy will ever supply would otherwise freeze every content
+ * update.
  */
 export async function decideBaseAdvance(input: {
   git: Git
@@ -264,7 +265,7 @@ export async function decideBaseAdvance(input: {
   if (waiting) return { kind: 'hold', hold }
 
   workerLogError(
-    `Schema gate (${baseBranch}): waited ${Math.round(maxHoldMs / 60_000)} min for ${missingSchemas.join(', ')} ` +
+    `Schema gate (${baseBranch}): held since ${hold.since} for ${missingSchemas.join(', ')} ` +
       `(referenced by ${hold.files.join(', ')}${files.length > hold.files.length ? ', …' : ''}), ` +
       `which the serving editor` +
       `${record.build.sourceRevision ? ` (built from ${record.build.sourceRevision})` : ''} ` +

@@ -125,10 +125,6 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
 }
 
 /**
- * Why the base branch needs an operator, or null when its last refresh needs
- * nothing. Shared by the overview and the base row's warning tooltip.
- */
-/**
  * The worker holding the base branch for an editor deploy, or the cycle it stopped waiting.
  * The rule and its bound live in worker/schema-gate.ts.
  */
@@ -167,6 +163,10 @@ function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
   )
 }
 
+/**
+ * Why the base branch needs an operator, or null when its last refresh needs
+ * nothing. Shared by the overview and the base row's warning tooltip.
+ */
 function baseRefreshWarning(report: BaseRefreshReport | undefined): string | null {
   if (!report) return null
   const lines: string[] = []

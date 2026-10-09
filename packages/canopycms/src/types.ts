@@ -148,7 +148,7 @@ export interface BuildIdentity {
 export interface BaseSchemaHold {
   /** The earliest of `firstSeen`. */
   since: string
-  /** When each missing schema was first seen missing; each waits its own bound from here. */
+  /** When each missing schema was first seen missing; the earliest bounds the hold. */
   firstSeen: Record<string, string>
   /** GitHub's base tip the worker is not advancing to. */
   incomingSha: string
