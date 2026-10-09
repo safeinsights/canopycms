@@ -1564,7 +1564,7 @@ describe('content api', () => {
       const ctx = allowedCtx()
       const hook = vi.fn().mockResolvedValue([])
       ctx.services.config.validateEntry = hook
-      await mockStoreOnce({ exists: false, knownIds: [AUTHOR_ID] })
+      const { writeSpy } = await mockStoreOnce({ exists: false, knownIds: [AUTHOR_ID] })
       const res = await writeContent(ctx, writeReq, writeParams, {
         format: 'json',
         expectedVersion: null,
@@ -1572,6 +1572,8 @@ describe('content api', () => {
       })
       expect(res.ok).toBe(true)
       expect(hook).toHaveBeenCalledWith(expect.objectContaining({ entryType: 'post' }))
+      // The store writes as the same type the hook was shown.
+      expect(writeSpy.mock.calls[0][3]).toBe('post')
     })
 
     it('refuses a write to an unavailable entry type before the validateEntry hook runs', async () => {
