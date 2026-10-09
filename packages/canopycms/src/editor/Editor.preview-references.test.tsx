@@ -231,11 +231,14 @@ describe('Editor preview references', () => {
     const fetchMock = stubApi()
     renderEditor()
 
-    await waitFor(() =>
-      expect(referencesOf(frames[frames.length - 1])).toEqual([
-        person(AUTHOR, 'Ada'),
-        person(SPEAKER, 'Grace'),
-      ]),
+    // The entry load, the 300ms debounce and the resolve request all precede this frame.
+    await waitFor(
+      () =>
+        expect(referencesOf(frames[frames.length - 1])).toEqual([
+          person(AUTHOR, 'Ada'),
+          person(SPEAKER, 'Grace'),
+        ]),
+      { timeout: 10_000 },
     )
 
     const withEntry = frames.filter((frame) => (frame.data as PreviewDraft).byline)
@@ -269,11 +272,14 @@ describe('Editor preview references', () => {
       },
     })
 
-    await waitFor(() =>
-      expect(referencesOf(frames[frames.length - 1])).toEqual([
-        person(AUTHOR, 'Ada'),
-        person(SPEAKER, 'Grace'),
-      ]),
+    // The entry load, the 300ms debounce and the resolve request all precede this frame.
+    await waitFor(
+      () =>
+        expect(referencesOf(frames[frames.length - 1])).toEqual([
+          person(AUTHOR, 'Ada'),
+          person(SPEAKER, 'Grace'),
+        ]),
+      { timeout: 10_000 },
     )
     expect(consoleSpy).toHaveErrored('[canopycms] editor error caught (field settings)')
   })

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
 import {
   applyReferenceCache,
+  expireReferences,
   fetchReferences,
   idsToFetch,
   storeReferences,
@@ -15,6 +16,8 @@ export interface UseReferenceResolutionOptions {
   value: FormValue
   fields: EntrySchema
   branch: string
+  /** Identifies the open entry; when it changes every cached target is fetched again. */
+  entryKey?: string
 }
 
 export interface UseReferenceResolutionResult {
@@ -33,6 +36,7 @@ export function useReferenceResolution({
   value,
   fields,
   branch,
+  entryKey,
 }: UseReferenceResolutionOptions): UseReferenceResolutionResult {
   // The context client carries the deployment's basePath. `null` outside an ApiClientProvider
   // (this hook's own unit tests); fetchReferences then falls back to a default client.
@@ -40,37 +44,42 @@ export function useReferenceResolution({
   const cacheRef = useRef<ReferenceCache>(new Map())
   // The cache is a ref, so a fetch that fills it bumps this to recompute the memo below.
   const [cacheVersion, setCacheVersion] = useState(0)
-  // Identifies the current fetch attempt. clearTimeout cannot stop a fetch already awaiting the
-  // network; this check after the await discards one superseded by a newer value or branch, or
-  // by unmount.
-  const resolveGenerationRef = useRef(0)
+  // Ids already requested, so an edit while a request is in flight does not repeat it.
+  const inFlightRef = useRef(new Set<string>())
 
   const { resolvedValue, loadingState } = useMemo(
     () => applyReferenceCache(fields, value, branch, cacheRef.current),
     [fields, value, branch, cacheVersion],
   )
 
+  // Declared before the fetch effect, which therefore sees the entries expired.
   useEffect(() => {
-    const ids = idsToFetch(fields, value, branch, cacheRef.current, Date.now())
+    expireReferences(cacheRef.current)
+  }, [entryKey])
+
+  useEffect(() => {
+    const inFlight = inFlightRef.current
+    const ids = idsToFetch(fields, value, branch, cacheRef.current, Date.now()).filter(
+      (id) => !inFlight.has(`${branch}:${id}`),
+    )
     if (ids.length === 0) return
 
-    const generation = ++resolveGenerationRef.current
     const timeout = setTimeout(async () => {
+      const keys = ids.map((id) => `${branch}:${id}`)
+      keys.forEach((key) => inFlight.add(key))
       try {
         const found = await fetchReferences(ids, branch, apiClient ?? undefined)
-        if (generation !== resolveGenerationRef.current) return
+        // Keyed by branch and id, a result stays valid however the draft changed meanwhile.
         storeReferences(cacheRef.current, branch, found, Date.now())
         setCacheVersion((prev) => prev + 1)
       } catch (error) {
         console.error('Reference resolution failed:', error)
+      } finally {
+        keys.forEach((key) => inFlight.delete(key))
       }
     }, 300)
 
-    return () => {
-      clearTimeout(timeout)
-      // Unmount runs only this cleanup, with no next run to claim a new generation.
-      ++resolveGenerationRef.current
-    }
+    return () => clearTimeout(timeout)
   }, [value, fields, branch, apiClient])
 
   useEffect(() => {

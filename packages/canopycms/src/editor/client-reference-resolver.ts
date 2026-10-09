@@ -1,7 +1,8 @@
-import type { EntrySchema } from '../config'
+import type { EntrySchema, ReferenceFieldConfig } from '../config'
 import { createApiClient } from '../api/client'
 import type { ApiClient } from './context'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
+import { isValidContentId } from '../paths/validation'
 import { traverseFields } from '../validation/field-traversal'
 
 /**
@@ -15,7 +16,6 @@ import { traverseFields } from '../validation/field-traversal'
 
 type FormValue = Record<string, unknown>
 type DataPath = readonly (string | number)[]
-/** An object or array in the draft; both are read and written by key. */
 type Container = Record<string | number, unknown>
 
 /** The resolve-references endpoint's per-request id cap (`MAX_RESOLVE_REFERENCE_IDS`). */
@@ -38,10 +38,10 @@ interface ReferenceCacheEntry {
 /** Resolved targets keyed by `${branch}:${id}`. */
 export type ReferenceCache = Map<string, ReferenceCacheEntry>
 
-/** One reference field in the draft: where it sits and what the form holds there. */
 interface ReferenceSlot {
   path: DataPath
   value: unknown
+  list: boolean
 }
 
 function cacheKey(branch: string, id: string): string {
@@ -60,20 +60,27 @@ function referenceSlots(fields: EntrySchema, value: FormValue): ReferenceSlot[] 
     '',
     ({ fields: containerFields, data, dataPath }) =>
       flattenGroupFields(containerFields)
-        .filter((field) => field.type === 'reference')
-        .map((field) => ({ path: [...dataPath, field.name], value: data[field.name] })),
+        .filter((field): field is ReferenceFieldConfig => field.type === 'reference')
+        .map((field) => ({
+          path: [...dataPath, field.name],
+          value: data[field.name],
+          list: field.list === true,
+        })),
   )
 }
 
-function slotIds(value: unknown): string[] {
-  if (typeof value === 'string') return value ? [value] : []
-  if (Array.isArray(value)) {
-    return value.filter((id): id is string => typeof id === 'string' && id !== '')
-  }
-  return []
+/** A slot's ids, by the server's rule; never a malformed one, which fails the whole request. */
+function slotIds(slot: ReferenceSlot): string[] {
+  const ids =
+    typeof slot.value === 'string'
+      ? [slot.value]
+      : slot.list && Array.isArray(slot.value)
+        ? slot.value.filter((id): id is string => typeof id === 'string')
+        : []
+  return ids.filter(isValidContentId)
 }
 
-/** The ids in the draft with no usable cache entry: never fetched, or missing and expired. */
+/** The ids in the draft with no fresh cache entry: never fetched, or expired. */
 export function idsToFetch(
   fields: EntrySchema,
   value: FormValue,
@@ -83,7 +90,7 @@ export function idsToFetch(
 ): string[] {
   const ids = new Set<string>()
   for (const slot of referenceSlots(fields, value)) {
-    for (const id of slotIds(slot.value)) {
+    for (const id of slotIds(slot)) {
       const entry = cache.get(cacheKey(branch, id))
       if (!entry || (entry.expiresAt !== undefined && entry.expiresAt <= now)) ids.add(id)
     }
@@ -139,6 +146,14 @@ export function storeReferences(
 }
 
 /**
+ * Mark every entry expired, so each id is fetched again while its cached value keeps showing.
+ * Used when the open entry changes, since a target may have been edited in the meantime.
+ */
+export function expireReferences(cache: ReferenceCache): void {
+  for (const entry of cache.values()) entry.expiresAt = 0
+}
+
+/**
  * Write `leaf` at `path`, copying each container on the way the first time it is touched, so
  * the input is never mutated and untouched subtrees keep their identity.
  */
@@ -184,8 +199,9 @@ function setCreating(root: FormValue, path: DataPath, leaf: unknown): void {
 /**
  * The draft as the preview sees it, computed synchronously from the cache.
  *
- * Each reference becomes its cached target, or `null` while it has none (still resolving, or
- * an id that names no entry). A list maps element by element. `loadingState` holds `true` at
+ * Each reference becomes its cached target, or `null` while it has none (still resolving, an
+ * id that names no entry, or a malformed id). A list field's array maps element by element, a
+ * non-string element to `null`; anything else is left as the form holds it, as on the server. `loadingState` holds `true` at
  * each position still resolving, at the same path as the reference (`boolean[]` for a list),
  * and nothing at positions that are not references.
  */
@@ -200,8 +216,7 @@ export function applyReferenceCache(
   const copies = new WeakSet<object>()
 
   const lookup = (id: unknown): { value: unknown; loading: boolean } => {
-    if (typeof id !== 'string') return { value: id, loading: false }
-    if (id === '') return { value: null, loading: false }
+    if (typeof id !== 'string' || !isValidContentId(id)) return { value: null, loading: false }
     const entry = cache.get(cacheKey(branch, id))
     return entry ? { value: entry.value, loading: false } : { value: null, loading: true }
   }
@@ -211,9 +226,9 @@ export function applyReferenceCache(
       const { value: target, loading } = lookup(slot.value)
       resolvedValue = setCopied(resolvedValue, slot.path, target, copies)
       setCreating(loadingState, slot.path, loading)
-    } else if (Array.isArray(slot.value)) {
+    } else if (slot.list && Array.isArray(slot.value)) {
       const items = slot.value.map(lookup)
-      if (slot.value.some((id) => typeof id === 'string')) {
+      if (slot.value.length > 0) {
         resolvedValue = setCopied(
           resolvedValue,
           slot.path,

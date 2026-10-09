@@ -87,29 +87,29 @@ const schema: EntrySchema = [
 
 const draft = {
   title: 'Post',
-  author: 'idTop',
-  contributors: ['idList1', 'idList2'],
-  reviewer: 'idGroup',
-  byline: { person: 'idObject', note: 'kept' },
-  credits: [{ people: ['idCredit'] }],
+  author: 'idTopAAAAAAA',
+  contributors: ['idList1AAAAA', 'idList2AAAAA'],
+  reviewer: 'idGroupAAAAA',
+  byline: { person: 'idxbjectAAAA', note: 'kept' },
+  credits: [{ people: ['idCreditAAAA'] }],
   blocks: [
     {
       template: 'quote',
-      value: { speaker: 'idBlock', panel: [{ members: ['idDeep1', 'idDeep2'] }] },
+      value: { speaker: 'idBxockAAAAA', panel: [{ members: ['idDeep1AAAAA', 'idDeep2AAAAA'] }] },
     },
   ],
 }
 
 const ALL_IDS = [
-  'idTop',
-  'idList1',
-  'idList2',
-  'idGroup',
-  'idObject',
-  'idCredit',
-  'idBlock',
-  'idDeep1',
-  'idDeep2',
+  'idTopAAAAAAA',
+  'idList1AAAAA',
+  'idList2AAAAA',
+  'idGroupAAAAA',
+  'idxbjectAAAA',
+  'idCreditAAAA',
+  'idBxockAAAAA',
+  'idDeep1AAAAA',
+  'idDeep2AAAAA',
 ]
 
 const person = (id: string) => ({ id, name: `Name of ${id}` })
@@ -121,24 +121,24 @@ function cacheOf(ids: string[], branch = 'main'): ReferenceCache {
 describe('idsToFetch', () => {
   it('finds the ids at every reference position, nested at any depth, once each', () => {
     expect(
-      idsToFetch(schema, { ...draft, author: 'idList1' }, 'main', new Map(), 0).sort(),
-    ).toEqual(ALL_IDS.filter((id) => id !== 'idTop').sort())
+      idsToFetch(schema, { ...draft, author: 'idList1AAAAA' }, 'main', new Map(), 0).sort(),
+    ).toEqual(ALL_IDS.filter((id) => id !== 'idTopAAAAAAA').sort())
   })
 
   it('skips cached ids, and a missing id until its entry expires', () => {
-    const cache = cacheOf(ALL_IDS.filter((id) => id !== 'idDeep2'))
-    storeReferences(cache, 'main', new Map([['idDeep2', null]]), 1000)
+    const cache = cacheOf(ALL_IDS.filter((id) => id !== 'idDeep2AAAAA'))
+    storeReferences(cache, 'main', new Map([['idDeep2AAAAA', null]]), 1000)
 
     expect(idsToFetch(schema, draft, 'main', cache, 1000)).toEqual([])
     expect(idsToFetch(schema, draft, 'main', cache, 1000 + MISSING_REFERENCE_TTL_MS)).toEqual([
-      'idDeep2',
+      'idDeep2AAAAA',
     ])
   })
 
   it('treats another branch’s cache entry as absent', () => {
-    expect(idsToFetch(schema, { author: 'idTop' }, 'feature', cacheOf(['idTop']), 0)).toEqual([
-      'idTop',
-    ])
+    expect(
+      idsToFetch(schema, { author: 'idTopAAAAAAA' }, 'feature', cacheOf(['idTopAAAAAAA']), 0),
+    ).toEqual(['idTopAAAAAAA'])
   })
 })
 
@@ -153,17 +153,17 @@ describe('applyReferenceCache', () => {
 
     expect(resolvedValue).toEqual({
       title: 'Post',
-      author: person('idTop'),
-      contributors: [person('idList1'), person('idList2')],
-      reviewer: person('idGroup'),
-      byline: { person: person('idObject'), note: 'kept' },
-      credits: [{ people: [person('idCredit')] }],
+      author: person('idTopAAAAAAA'),
+      contributors: [person('idList1AAAAA'), person('idList2AAAAA')],
+      reviewer: person('idGroupAAAAA'),
+      byline: { person: person('idxbjectAAAA'), note: 'kept' },
+      credits: [{ people: [person('idCreditAAAA')] }],
       blocks: [
         {
           template: 'quote',
           value: {
-            speaker: person('idBlock'),
-            panel: [{ members: [person('idDeep1'), person('idDeep2')] }],
+            speaker: person('idBxockAAAAA'),
+            panel: [{ members: [person('idDeep1AAAAA'), person('idDeep2AAAAA')] }],
           },
         },
       ],
@@ -194,11 +194,11 @@ describe('applyReferenceCache', () => {
 
   it('gives an id the endpoint omitted null, not loading, even after it expires', () => {
     const cache: ReferenceCache = new Map()
-    storeReferences(cache, 'main', new Map([['idTop', null]]), 0)
+    storeReferences(cache, 'main', new Map([['idTopAAAAAAA', null]]), 0)
 
     const { resolvedValue, loadingState } = applyReferenceCache(
       schema,
-      { author: 'idTop' },
+      { author: 'idTopAAAAAAA' },
       'main',
       cache,
     )
@@ -208,24 +208,40 @@ describe('applyReferenceCache', () => {
   })
 
   it('passes an unavailable target through as the endpoint returned it', () => {
-    const missing = { id: 'idTop', unavailable: true, reason: 'missing' }
+    const missing = { id: 'idTopAAAAAAA', unavailable: true, reason: 'missing' }
     const cache: ReferenceCache = new Map()
-    storeReferences(cache, 'main', new Map([['idTop', missing]]), 0)
+    storeReferences(cache, 'main', new Map([['idTopAAAAAAA', missing]]), 0)
 
-    expect(cache.get('main:idTop')).toEqual({ value: missing })
-    expect(applyReferenceCache(schema, { author: 'idTop' }, 'main', cache).resolvedValue).toEqual({
+    expect(cache.get('main:idTopAAAAAAA')).toEqual({ value: missing })
+    expect(
+      applyReferenceCache(schema, { author: 'idTopAAAAAAA' }, 'main', cache).resolvedValue,
+    ).toEqual({
       author: missing,
     })
+  })
+
+  it('follows the server on list shapes: arrays only for list fields, non-strings to null', () => {
+    const { resolvedValue, loadingState } = applyReferenceCache(
+      schema,
+      { author: ['idTopAAAAAAA'], contributors: ['idList1AAAAA', 7, ''] },
+      'main',
+      cacheOf(ALL_IDS),
+    )
+
+    expect(resolvedValue.author).toEqual(['idTopAAAAAAA'])
+    expect(loadingState.author).toBe(false)
+    expect(resolvedValue.contributors).toEqual([person('idList1AAAAA'), null, null])
+    expect(idsToFetch(schema, { author: ['idTopAAAAAAA'] }, 'main', new Map(), 0)).toEqual([])
   })
 
   it('handles inline-shaped block items, whose fields sit beside the template name', () => {
     const { resolvedValue } = applyReferenceCache(
       schema,
-      { blocks: [{ _type: 'quote', speaker: 'idBlock' }] },
+      { blocks: [{ _type: 'quote', speaker: 'idBxockAAAAA' }] },
       'main',
-      cacheOf(['idBlock']),
+      cacheOf(['idBxockAAAAA']),
     )
-    expect(resolvedValue.blocks).toEqual([{ _type: 'quote', speaker: person('idBlock') }])
+    expect(resolvedValue.blocks).toEqual([{ _type: 'quote', speaker: person('idBxockAAAAA') }])
   })
 
   it('never mutates the draft, and leaves subtrees without references as they were', () => {
@@ -262,37 +278,37 @@ describe('fetchReferences', () => {
     mockClient.content.resolveReferences.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { resolved: { idA: person('idA') } },
+      data: { resolved: { idAAAAAAAAAA: person('idAAAAAAAAAA') } },
     } satisfies ResolveResult)
 
-    const found = await fetchReferences(['idA', 'idB'], 'main')
+    const found = await fetchReferences(['idAAAAAAAAAA', 'idBAAAAAAAAA'], 'main')
 
     expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(1)
     expect(mockClient.content.resolveReferences).toHaveBeenCalledWith(
       { branch: 'main' },
-      { ids: ['idA', 'idB'] },
+      { ids: ['idAAAAAAAAAA', 'idBAAAAAAAAA'] },
     )
     expect(found).toEqual(
       new Map<string, unknown>([
-        ['idA', person('idA')],
-        ['idB', null],
+        ['idAAAAAAAAAA', person('idAAAAAAAAAA')],
+        ['idBAAAAAAAAA', null],
       ]),
     )
   })
 
   it('returns an unavailable target as the endpoint sent it, not as missing', async () => {
-    const restricted = { id: 'idA', title: 'A', unavailable: true, reason: 'restricted' }
-    const missing = { id: 'idB', unavailable: true, reason: 'missing' }
+    const restricted = { id: 'idAAAAAAAAAA', title: 'A', unavailable: true, reason: 'restricted' }
+    const missing = { id: 'idBAAAAAAAAA', unavailable: true, reason: 'missing' }
     mockClient.content.resolveReferences.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { resolved: { idA: restricted, idB: missing } },
+      data: { resolved: { idAAAAAAAAAA: restricted, idBAAAAAAAAA: missing } },
     } satisfies ResolveResult)
 
-    const found = await fetchReferences(['idA', 'idB'], 'main')
+    const found = await fetchReferences(['idAAAAAAAAAA', 'idBAAAAAAAAA'], 'main')
 
-    expect(found.get('idA')).toBe(restricted)
-    expect(found.get('idB')).toBe(missing)
+    expect(found.get('idAAAAAAAAAA')).toBe(restricted)
+    expect(found.get('idBAAAAAAAAA')).toBe(missing)
   })
 
   it('splits more ids than the endpoint accepts into batches of 100', async () => {
@@ -301,7 +317,10 @@ describe('fetchReferences', () => {
       status: 200,
       data: { resolved: {} },
     } satisfies ResolveResult)
-    const ids = Array.from({ length: 201 }, (_, i) => `id${i}`)
+    // Base58 has no 0, so each index is spelled in letters.
+    const ids = Array.from({ length: 201 }, (_, i) =>
+      `b${i.toString().replace(/0/g, 'z')}`.padEnd(12, 'A'),
+    )
 
     const found = await fetchReferences(ids, 'main')
 
@@ -314,7 +333,7 @@ describe('fetchReferences', () => {
   it('throws when the endpoint fails, so nothing is cached as missing', async () => {
     mockClient.content.resolveReferences.mockResolvedValueOnce({ ok: false, status: 500 })
 
-    await expect(fetchReferences(['idA'], 'main')).rejects.toThrow('status 500')
+    await expect(fetchReferences(['idAAAAAAAAAA'], 'main')).rejects.toThrow('status 500')
   })
 
   it('uses the client it is given instead of creating one', async () => {
@@ -326,7 +345,7 @@ describe('fetchReferences', () => {
     } satisfies ResolveResult)
 
     await fetchReferences(
-      ['idA'],
+      ['idAAAAAAAAAA'],
       'main',
       given as unknown as Parameters<typeof fetchReferences>[2],
     )

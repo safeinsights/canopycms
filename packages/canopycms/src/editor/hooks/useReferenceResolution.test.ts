@@ -39,7 +39,7 @@ describe('useReferenceResolution', () => {
 
   it('shows an uncached reference as unresolved/loading before the debounce fires', () => {
     const { result } = renderHook(() =>
-      useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' }),
+      useReferenceResolution({ value: { author: 'idAAAAAAAAAA' }, fields: schema, branch: 'main' }),
     )
 
     expect(result.current.resolvedValue.author).toBeNull()
@@ -51,11 +51,11 @@ describe('useReferenceResolution', () => {
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { title: 'Alice' } } },
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
     const { result } = renderHook(() =>
-      useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' }),
+      useReferenceResolution({ value: { author: 'idAAAAAAAAAA' }, fields: schema, branch: 'main' }),
     )
 
     await act(async () => {
@@ -98,14 +98,14 @@ describe('useReferenceResolution', () => {
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { name: 'Alice' }, idB: { name: 'Bob' } } },
+      data: { resolved: { idAAAAAAAAAA: { name: 'Alice' }, idBAAAAAAAAA: { name: 'Bob' } } },
     } satisfies ResolveResult)
 
     const { result } = renderHook(() =>
       useReferenceResolution({
         value: {
-          byline: { person: 'idA' },
-          blocks: [{ template: 'quote', value: { speakers: ['idA', 'idB'] } }],
+          byline: { person: 'idAAAAAAAAAA' },
+          blocks: [{ template: 'quote', value: { speakers: ['idAAAAAAAAAA', 'idBAAAAAAAAA'] } }],
         },
         fields: nestedSchema,
         branch: 'main',
@@ -138,7 +138,7 @@ describe('useReferenceResolution', () => {
     const { result, rerender } = renderHook(
       (props: { value: Record<string, unknown> }) =>
         useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
-      { initialProps: { value: { author: 'idA' } as Record<string, unknown> } },
+      { initialProps: { value: { author: 'idAAAAAAAAAA' } as Record<string, unknown> } },
     )
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
@@ -147,7 +147,7 @@ describe('useReferenceResolution', () => {
     expect(result.current.loadingState.author).toBe(false)
 
     // Within the TTL an edit does not ask again.
-    rerender({ value: { author: 'idA', title: 'one' } })
+    rerender({ value: { author: 'idAAAAAAAAAA', title: 'one' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
@@ -157,12 +157,12 @@ describe('useReferenceResolution', () => {
     mockClient.content.resolveReferences.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { title: 'Alice' } } },
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(MISSING_REFERENCE_TTL_MS)
     })
-    rerender({ value: { author: 'idA', title: 'two' } })
+    rerender({ value: { author: 'idAAAAAAAAAA', title: 'two' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
@@ -175,7 +175,11 @@ describe('useReferenceResolution', () => {
     try {
       mockClient.content.resolveReferences.mockResolvedValueOnce({ ok: false, status: 500 })
       const { result } = renderHook(() =>
-        useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' }),
+        useReferenceResolution({
+          value: { author: 'idAAAAAAAAAA' },
+          fields: schema,
+          branch: 'main',
+        }),
       )
       await act(async () => {
         await vi.advanceTimersByTimeAsync(300)
@@ -191,13 +195,13 @@ describe('useReferenceResolution', () => {
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { title: 'Alice' } } },
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
     const { result, rerender } = renderHook(
       (props: { value: Record<string, unknown> }) =>
         useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
-      { initialProps: { value: { author: 'idA' } as Record<string, unknown> } },
+      { initialProps: { value: { author: 'idAAAAAAAAAA' } as Record<string, unknown> } },
     )
 
     await act(async () => {
@@ -208,7 +212,7 @@ describe('useReferenceResolution', () => {
 
     // Re-render with an unrelated field change, same reference id -- nothing
     // new to resolve.
-    rerender({ value: { author: 'idA', title: 'A new title' } })
+    rerender({ value: { author: 'idAAAAAAAAAA', title: 'A new title' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
@@ -220,13 +224,13 @@ describe('useReferenceResolution', () => {
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { title: 'Alice' } } },
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
     const { rerender } = renderHook(
       (props: { value: Record<string, unknown> }) =>
         useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
-      { initialProps: { value: { author: 'idA' } } },
+      { initialProps: { value: { author: 'idAAAAAAAAAA' } } },
     )
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
@@ -234,27 +238,26 @@ describe('useReferenceResolution', () => {
     expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(1)
 
     // Switch away and back to the same id -- second time should be a cache hit.
-    rerender({ value: { author: 'idB' } })
+    rerender({ value: { author: 'idBAAAAAAAAA' } })
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idB: { title: 'Bob' } } },
+      data: { resolved: { idBAAAAAAAAA: { title: 'Bob' } } },
     } satisfies ResolveResult)
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
     expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2)
 
-    rerender({ value: { author: 'idA' } })
+    rerender({ value: { author: 'idAAAAAAAAAA' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
     expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2) // no new call
   })
 
-  it('a superseded resolve does not overwrite a newer one, regardless of response order', async () => {
-    // Each call to resolveReferences parks on its own hand-held resolver,
-    // keyed by the id being resolved, so we can settle them out of order.
+  it('keeps a result that settles after the draft moved on, without asking again', async () => {
+    // Each request parks on its own hand-held resolver, keyed by the first id it asks for.
     const resolvers: Record<string, (v: ResolveResult) => void> = {}
     mockClient.content.resolveReferences.mockImplementation(
       (_params: Record<string, string>, body: { ids: string[] }) =>
@@ -266,99 +269,145 @@ describe('useReferenceResolution', () => {
     const { result, rerender } = renderHook(
       (props: { value: Record<string, unknown> }) =>
         useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
-      { initialProps: { value: { author: 'idA' } } },
+      { initialProps: { value: { author: 'idAAAAAAAAAA' } as Record<string, unknown> } },
     )
-
-    // First debounce fires, dispatching idA's (soon-to-be-superseded) request.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
-    expect(resolvers.idA).toBeDefined()
 
-    // Value changes to a different reference BEFORE idA settles.
-    rerender({ value: { author: 'idB' } })
+    // The author changes, then changes back, while the first request is in flight: the second
+    // asks only for the new id, and the third asks for nothing.
+    rerender({ value: { author: 'idBAAAAAAAAA' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
-    expect(resolvers.idB).toBeDefined()
-
-    // Settle the NEWER request (idB) first -- it should commit.
+    rerender({ value: { author: 'idAAAAAAAAAA', title: 'typed' } })
     await act(async () => {
-      resolvers.idB({ ok: true, status: 200, data: { resolved: { idB: { title: 'Bob' } } } })
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(mockClient.content.resolveReferences.mock.calls.map(([, body]) => body.ids)).toEqual([
+      ['idAAAAAAAAAA'],
+      ['idBAAAAAAAAA'],
+    ])
+
+    await act(async () => {
+      resolvers['idBAAAAAAAAA']({
+        ok: true,
+        status: 200,
+        data: { resolved: { idBAAAAAAAAA: { title: 'Bob' } } },
+      })
+      resolvers['idAAAAAAAAAA']({
+        ok: true,
+        status: 200,
+        data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
+      })
       await vi.advanceTimersByTimeAsync(0)
     })
+    expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
+
+    rerender({ value: { author: 'idBAAAAAAAAA' } })
     expect(result.current.resolvedValue.author).toEqual({ title: 'Bob' })
-
-    const valueBeforeStaleSettle = result.current.resolvedValue
-
-    // Now settle the STALE request (idA) -- must be discarded entirely: no
-    // cache write, no resolvedValue change, no extra notify call.
-    await act(async () => {
-      resolvers.idA({ ok: true, status: 200, data: { resolved: { idA: { title: 'Alice' } } } })
-      await vi.advanceTimersByTimeAsync(0)
-    })
-
-    expect(result.current.resolvedValue).toBe(valueBeforeStaleSettle)
   })
 
-  it('does not update state after unmount when a debounced resolve settles later', async () => {
-    const resolvers: Record<string, (v: ResolveResult) => void> = {}
-    mockClient.content.resolveReferences.mockImplementation(
-      (_params: Record<string, string>, body: { ids: string[] }) =>
-        new Promise<ResolveResult>((resolve) => {
-          resolvers[body.ids[0]] = resolve
-        }),
-    )
-
-    let renders = 0
-    const { unmount } = renderHook(() => {
-      renders++
-      return useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' })
-    })
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300)
-    })
-    expect(resolvers.idA).toBeDefined()
-
-    const rendersBeforeUnmount = renders
-    unmount()
-
-    // Settle the in-flight request AFTER unmount.
-    await act(async () => {
-      resolvers.idA({ ok: true, status: 200, data: { resolved: { idA: { title: 'Alice' } } } })
-      await vi.advanceTimersByTimeAsync(0)
-    })
-
-    // No render after unmount -- the stale settle was discarded.
-    expect(renders).toBe(rendersBeforeUnmount)
-  })
-
-  it('clears the cache when branch changes, so a resolved id reverts to unresolved', async () => {
+  it('asks again for every target after a branch switch and back', async () => {
     mockClient.content.resolveReferences.mockResolvedValue({
       ok: true,
       status: 200,
-      data: { resolved: { idA: { title: 'Alice' } } },
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
     const { result, rerender } = renderHook(
       (props: { branch: string }) =>
-        useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: props.branch }),
+        useReferenceResolution({
+          value: { author: 'idAAAAAAAAAA' },
+          fields: schema,
+          branch: props.branch,
+        }),
       { initialProps: { branch: 'main' } },
     )
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
     expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
 
-    act(() => {
-      rerender({ branch: 'feature' })
-    })
-
-    // Cache is branch-scoped: the same id under a different branch is unresolved again
-    // (prevents a stale cross-branch resolved value from flashing in the new branch's preview).
+    rerender({ branch: 'feature' })
     expect(result.current.resolvedValue.author).toBeNull()
     expect(result.current.loadingState.author).toBe(true)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    rerender({ branch: 'main' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    // main's entry was cleared by the switch, so returning asks for the id a third time.
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(3)
+  })
+
+  it('refetches cached targets when the open entry changes, showing them meanwhile', async () => {
+    mockClient.content.resolveReferences.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
+    } satisfies ResolveResult)
+
+    const { result, rerender } = renderHook(
+      (props: { entryKey: string }) =>
+        useReferenceResolution({
+          value: { author: 'idAAAAAAAAAA' },
+          fields: schema,
+          branch: 'main',
+          entryKey: props.entryKey,
+        }),
+      { initialProps: { entryKey: 'one' } },
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    mockClient.content.resolveReferences.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice, renamed' } } },
+    } satisfies ResolveResult)
+    rerender({ entryKey: 'two' })
+    expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
+    expect(result.current.loadingState.author).toBe(false)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2)
+    expect(result.current.resolvedValue.author).toEqual({ title: 'Alice, renamed' })
+  })
+
+  it('never sends a malformed id, so the well-formed ones still resolve', async () => {
+    mockClient.content.resolveReferences.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
+    } satisfies ResolveResult)
+    const listSchema: EntrySchema = [
+      { name: 'authors', type: 'reference', label: 'Authors', list: true, collections: ['people'] },
+    ]
+
+    const { result } = renderHook(() =>
+      useReferenceResolution({
+        value: { authors: ['idAAAAAAAAAA', 'some-slug', 42] },
+        fields: listSchema,
+        branch: 'main',
+      }),
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledWith(
+      { branch: 'main' },
+      { ids: ['idAAAAAAAAAA'] },
+    )
+    expect(result.current.resolvedValue.authors).toEqual([{ title: 'Alice' }, null, null])
+    expect(result.current.loadingState.authors).toEqual([false, false, false])
   })
 })

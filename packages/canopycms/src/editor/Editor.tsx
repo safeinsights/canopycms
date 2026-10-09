@@ -151,15 +151,15 @@ export interface EditorProps {
   onLogoutClick?: () => void
 }
 
-/**
- * High-level editor wrapper that wires entry navigation, form rendering,
- * saving/loading, and preview rendering using entry definitions.
- */
 // Stable fallbacks, so reference resolution's memo and effect don't re-run on every render
 // while no entry is open.
 const EMPTY_SCHEMA: EntrySchema = []
 const EMPTY_VALUE: FormValue = {}
 
+/**
+ * High-level editor wrapper that wires entry navigation, form rendering,
+ * saving/loading, and preview rendering using entry definitions.
+ */
 export const Editor: React.FC<EditorProps> = (props) => (
   <EditorCrashBoundary themeOptions={props.themeOptions}>
     <EditorContent {...props} />
@@ -893,6 +893,7 @@ const EditorContent: React.FC<EditorProps> = ({
       value: effectiveValue ?? EMPTY_VALUE,
       fields: schema,
       branch: branchNameState,
+      entryKey: currentEntry?.contentId,
     },
   )
 

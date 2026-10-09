@@ -955,6 +955,7 @@ describe('isResolvedReference', () => {
     expect(isResolvedReference(undefined)).toBe(false)
     expect(isResolvedReference('authAAAAAAAA')).toBe(false)
     expect(isResolvedReference([resolved])).toBe(false)
+    expect(isResolvedReference({ name: 'Ada' })).toBe(false)
   })
 
   it('narrows an inferred reference field to its resolved target', () => {
@@ -974,6 +975,15 @@ describe('isResolvedReference', () => {
     }
     const editor = resolved as NonNullable<Post['editors']>[number]
     if (isResolvedReference(editor)) expectTypeOf(editor).toEqualTypeOf<Author>()
+  })
+
+  it('narrows a reference typed without resolvedSchema to a resolved reference', () => {
+    type Post = TypeFromEntrySchema<readonly [{ name: 'author'; type: 'reference' }]>
+    const value = resolved as unknown as Post['author']
+    if (isResolvedReference(value)) {
+      expectTypeOf(value.urlPath).toEqualTypeOf<string>()
+      expectTypeOf(value.name).toEqualTypeOf<unknown>()
+    }
   })
 
   it('narrows an untyped value to a resolved reference', () => {

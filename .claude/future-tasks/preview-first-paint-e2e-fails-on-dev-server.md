@@ -16,6 +16,9 @@ fails every run, on its base commit too, at the step that fetches `/preview/home
 `"/api/canopycms/assets/raw/assets/t/c=…,w=200/<hash32>/`. The earlier steps of the same test
 pass, including the in-browser check that every preview image loads through the raw route.
 
+It fails when run alone (three runs) but passed inside a full `pnpm test:e2e` run, which points at
+a cold dev server compiling `/preview` and `/hero` under concurrent first requests.
+
 CI runs the suite against `next build && next start`, and a run of this spec against a local
 production build on another branch passed, so the dev server is the likely difference. Not
 confirmed here: this spec against a production build on the base commit.
