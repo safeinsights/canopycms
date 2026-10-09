@@ -24,3 +24,6 @@ nothing in `packages/canopycms/src` removes a stale `index.lock`.
 - Have the interrupted-rebase recovery (`worker/rebase.ts`, the `isRebaseInProgress` block) remove
   an `index.lock` older than a few minutes, while it holds the provisioning and content-write locks.
 - Before exiting, send SIGTERM to the worker's own remaining git children and wait briefly.
+
+The same applies to `remote.git` maintenance: a repack SIGKILLed mid-run can leave `gc.pid`, and
+git then refuses to gc that repository for 12 hours from any host.

@@ -171,6 +171,28 @@ describe('CmsWorker.stop() drains the task queue', () => {
     ).toBe(true)
   })
 
+  it('a compromise during a drain already under way aborts it at once', async () => {
+    const worker = makeWorker(60_000)
+    void internals(worker).trackOperation('task queue', new Promise<void>(() => {}))
+    const signal = (worker as unknown as { shutdownController: AbortController }).shutdownController
+      .signal
+
+    void worker.stop({ reason: 'SIGTERM' })
+    expect(signal.aborted).toBe(false)
+    void worker.stop({ reason: 'worker lock compromised', deadlineMs: 0 })
+    expect(signal.aborted).toBe(true)
+  })
+
+  it('start() after a finished stop() takes no lock', async () => {
+    const worker = makeWorker(200)
+    await worker.stop({ reason: 'SIGTERM' })
+    await worker.start()
+
+    const successor = makeWorker(200)
+    await internals(successor).acquireLock()
+    await successor.stop()
+  })
+
   it('returns the same drain to a second caller', async () => {
     const worker = makeWorker(200)
     const first = worker.stop({ reason: 'SIGTERM' })

@@ -337,6 +337,8 @@ export class CmsWorker {
   }
 
   private async startUnderLock(): Promise<void> {
+    // A stop() that already finished has nothing left to release a lock taken now.
+    if (this.stopping) return
     this.running = true
     workerLog('CMS Worker starting...')
     this.ensureStatusReport()
@@ -486,6 +488,9 @@ export class CmsWorker {
    *    start while this worker's work is still running.
    */
   stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
+    // A later call cannot restart the drain, but deadline 0 (a lock compromise)
+    // still cuts the running one short.
+    if (this.stopping && options.deadlineMs === 0) this.shutdownController.abort()
     this.stopping ??= this.drainAndStop(
       options.reason ?? 'stop requested',
       options.deadlineMs ?? this.drainDeadlineMs,
