@@ -45,6 +45,12 @@ interface ContainerContext {
   data: Record<string, unknown>
   /** Path to the record itself ('' at the top level, e.g. `blocks[0]` inside a block). */
   path: string
+  /**
+   * The keys that lead from the traversed root to this record (`[]` at the top level). Unlike
+   * `path`, it addresses the data rather than the schema: a block item's fields live under its
+   * `value`, so the third block's record is `['blocks', 2, 'value']` where `path` reads `blocks[2]`.
+   */
+  dataPath: readonly (string | number)[]
 }
 
 /**
@@ -121,7 +127,7 @@ export function traverseFields<T>(
   pathPrefix = '',
   onContainer?: ContainerVisitor<T>,
 ): T[] {
-  return walkFields(fields, data, visitor, pathPrefix, onContainer, true)
+  return walkFields(fields, data, visitor, pathPrefix, [], onContainer, true)
 }
 
 /**
@@ -136,13 +142,14 @@ function walkFields<T>(
   data: Record<string, unknown>,
   visitor: FieldVisitor<T>,
   pathPrefix: string,
+  dataPath: readonly (string | number)[],
   onContainer: ContainerVisitor<T> | undefined,
   fireContainer: boolean,
 ): T[] {
   const results: T[] = []
 
   if (onContainer && fireContainer) {
-    results.push(...onContainer({ fields, data, path: pathPrefix }))
+    results.push(...onContainer({ fields, data, path: pathPrefix, dataPath }))
   }
 
   for (const field of fields) {
@@ -158,6 +165,7 @@ function walkFields<T>(
           data,
           visitor,
           pathPrefix,
+          dataPath,
           onContainer,
           false,
         ),
@@ -182,6 +190,7 @@ function walkFields<T>(
                   item as Record<string, unknown>,
                   visitor,
                   `${fieldPath}[${index}]`,
+                  [...dataPath, field.name, index],
                   onContainer,
                   true,
                 ),
@@ -195,6 +204,7 @@ function walkFields<T>(
               value as Record<string, unknown>,
               visitor,
               fieldPath,
+              [...dataPath, field.name],
               onContainer,
               true,
             ),
@@ -214,6 +224,9 @@ function walkFields<T>(
                   resolved.data,
                   visitor,
                   `${fieldPath}[${index}]`,
+                  resolved.data === item
+                    ? [...dataPath, field.name, index]
+                    : [...dataPath, field.name, index, 'value'],
                   onContainer,
                   true,
                 ),
