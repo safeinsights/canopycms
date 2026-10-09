@@ -12,6 +12,11 @@ source repo is the developer's own checkout, and in dev mode the adopter's. Meas
 three stale ones in this repo's shared `.git/config`, from March and June 2026, two pointing at
 `apps/example1/.canopy-dev/remote.git` and one at a deleted temp dir.
 
+The two June strays point at example1's dev server seeding from the monorepo. The March one points
+at a `canopycms-branchws-*` temp dir, the prefix `branch-workspace.test.ts` uses. So that suite's
+seeding once ran with this real checkout as its source repo, not a temp repo. Check that its
+isolation holds now.
+
 ## Suggested shape
 
 Push by path, with no named remote: `git push --no-verify <remotePath> <refspec>`. That needs no
