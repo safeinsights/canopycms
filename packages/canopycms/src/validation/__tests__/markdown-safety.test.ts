@@ -438,6 +438,12 @@ describe('splitByStored', () => {
     expect(split({ summary: '{b()} {a()}' }, { summary: '{a()} {b()}' }).refused).toEqual([])
   })
 
+  it('keeps a stored spread only on the element it was on', () => {
+    const stored = { summary: '<Card {...p} />' }
+    expect(split({ summary: '<a {...p}>x</a>' }, stored).refused).toHaveLength(1)
+    expect(split({ summary: 'Intro\n\n<Card {...p} />' }, stored).refused).toEqual([])
+  })
+
   it('keeps an edit inside a stored element that is not allowed', () => {
     const stored = { summary: '<Tabs.Tab label="a">\n\nold text\n\n</Tabs.Tab>' }
     expect(

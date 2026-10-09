@@ -373,7 +373,7 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         issue(
           node,
           `{…} spread attributes are not allowed on ${tag}`,
-          treeKey('spread', attribute),
+          treeKey('spread', [name, attribute]),
         ),
       )
       continue
