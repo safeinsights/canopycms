@@ -102,9 +102,12 @@ function isShownTarget(value: unknown): value is Record<string, unknown> & { id:
  * {@link AIUnavailableReference}, so no title, URL or field of an excluded entry reaches the
  * output. Runs before entry transforms and rendering, which therefore never see such a target.
  */
-export function maskUnexportedTargets(entry: AIEntry, exportedIds: ReadonlySet<string>): void {
+export function maskUnexportedTargets(
+  entry: AIEntry,
+  exported: { has(id: string): boolean },
+): void {
   const mask = (value: unknown): unknown =>
-    isShownTarget(value) && !exportedIds.has(value.id)
+    isShownTarget(value) && !exported.has(value.id)
       ? ({ id: value.id, unavailable: true, reason: 'excluded' } satisfies AIUnavailableReference)
       : value
   for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
@@ -115,15 +118,18 @@ export function maskUnexportedTargets(entry: AIEntry, exportedIds: ReadonlySet<s
 }
 
 /**
- * Title and URL for a resolved target. The title is `resolveEntryTitle` against the target's own
- * entry type, the chain the entries API labels an entry with. The URL follows the rule body
- * `entry:` links use, so both kinds of link in one document agree.
+ * Title and URLs for a resolved target. The title is `resolveEntryTitle` against the target's own
+ * entry type, the chain the entries API labels an entry with. The page URL follows the rule body
+ * `entry:` links use, so both kinds of link in one document agree. The markdown copy is the file
+ * this export wrote for the target (`files`: content id to output path), under `mountPath`.
  */
 export function createReferenceRendering(
   idIndex: ContentIdIndex,
   flatSchema: readonly FlatSchemaItem[],
-  entryLinkUrl?: EntryLinkUrlResolver,
+  entryLinkUrl: EntryLinkUrlResolver | undefined,
+  markdownCopies: { mountPath: string; files: ReadonlyMap<string, string> },
 ): ReferenceRendering {
+  const mount = `/${markdownCopies.mountPath.replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '')
   const entryTypeOf = (id: unknown): { schema?: readonly FieldConfig[]; label?: string } => {
     const location = typeof id === 'string' ? idIndex.findById(id) : null
     if (!location?.collection) return {}
@@ -158,6 +164,10 @@ export function createReferenceRendering(
         return entryLinkUrl({ collection, slug, id })
       }
       return typeof urlPath === 'string' && urlPath ? urlPath : undefined
+    },
+    markdownUrl: (target) => {
+      const file = typeof target.id === 'string' ? markdownCopies.files.get(target.id) : undefined
+      return file ? `${mount}/${file}` : undefined
     },
   }
 }

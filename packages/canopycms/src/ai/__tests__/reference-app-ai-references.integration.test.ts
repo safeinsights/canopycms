@@ -84,10 +84,12 @@ describe('apps/example1 AI content renders reference fields as links', () => {
     const post = files.get('posts/hello-world.md')
 
     expect(post).toBeDefined()
-    expect(post).toContain('**Author:** [Alice](/authors/alice)')
+    expect(post).toContain(
+      '**Author:** [Alice](/authors/alice) ([markdown version](/ai/authors/alice.md))',
+    )
     expect(post).not.toContain('5NVkkrB1MJUv')
     expect(post).toContain(
-      '### Shared CTA\n\n#### CTA Snippet\n\n[Try CanopyCMS](/snippets/try-canopy)',
+      '### Shared CTA\n\n#### CTA Snippet\n\n[Try CanopyCMS](/snippets/try-canopy) ([markdown version](/ai/snippets/try-canopy.md))',
     )
     // A link, not an inlined copy: the snippet's own button text stays in the snippet's file.
     expect(post).not.toContain('Get started')

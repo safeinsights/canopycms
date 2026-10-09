@@ -297,6 +297,21 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('[T:alice](/people/aliceId00001)')
     })
 
+    it('follows the page link with a labeled link to the markdown copy, when there is one', () => {
+      const md = entryToMarkdown(
+        makeEntry({ fields: [authorField], data: { author: alice } }),
+        undefined,
+        {
+          title: () => 'Alice Example',
+          url: () => '/authors/alice',
+          markdownUrl: () => '/ai/authors/alice (1).md',
+        },
+      )
+      expect(md).toContain(
+        '## Author\n\n[Alice Example](/authors/alice) ([markdown version](/ai/authors/alice%20%281%29.md))',
+      )
+    })
+
     it('renders plain title text when the rendering gives no URL', () => {
       const md = entryToMarkdown(
         makeEntry({ fields: [authorField], data: { author: alice } }),

@@ -21,7 +21,7 @@ import {
 } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
-import { entryToMarkdown, frontmatterTitle } from './json-to-markdown'
+import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
 import {
   createReferenceRendering,
   createReferenceTargetResolver,
@@ -119,24 +119,31 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
 
   // Collection entries first, then root entries: the order every all.md and bundle lists them in
   const allPending = [...collectionNodes.flatMap(subtreeEntries), ...rootEntries]
-  const exportedIds = new Set(
-    allPending.map((p) => p.contentId).filter((id): id is string => id !== null),
-  )
-  const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl)
-  // An entry whose own render throws below is dropped but stays in `exportedIds`: references to
-  // it still link. That failure is an adopter transform throwing, not an exclusion.
+  // Content id -> output file of every exported entry: the export set, and where each
+  // reference's markdown copy lives
+  const exported = new Map<string, string>()
   for (const pending of allPending) {
-    maskUnexportedTargets(pending.entry, exportedIds)
+    if (pending.contentId !== null) exported.set(pending.contentId, pending.filePath)
+  }
+  const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl, {
+    mountPath: config?.mountPath ?? '/ai',
+    files: exported,
+  })
+  for (const pending of allPending) {
+    maskUnexportedTargets(pending.entry, exported)
     // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
     await runEntryTransform(pending.entry, pending.absolutePath, pending.contentId, config)
-    try {
-      pending.markdown = entryToMarkdown(pending.entry, config, references)
-    } catch (err) {
-      console.warn(
-        `AI content: skipping entry "${pending.entry.slug}" in ${pending.collectionPath}:`,
-        getErrorMessage(err),
-      )
+  }
+  const failed = renderAll(allPending, config, references)
+  // An entry that failed to render is not in the export after all, so references to it are
+  // masked like any other left-out target, and the rest render once more against that set.
+  if (failed.length > 0) {
+    for (const pending of failed) {
+      if (pending.contentId !== null) exported.delete(pending.contentId)
     }
+    const rendered = allPending.filter(isRendered)
+    for (const pending of rendered) maskUnexportedTargets(pending.entry, exported)
+    renderAll(rendered, config, references)
   }
 
   const manifestCollections = collectionNodes.map((node) => emitCollection(node, files))
@@ -182,6 +189,28 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   files.set('manifest.json', JSON.stringify(manifest, null, 2))
 
   return { manifest, files }
+}
+
+/** Render each entry's markdown, returning those whose render threw (left without markdown). */
+function renderAll(
+  entries: PendingEntry[],
+  config: AIContentConfig | undefined,
+  references: ReferenceRendering,
+): PendingEntry[] {
+  const failed: PendingEntry[] = []
+  for (const pending of entries) {
+    try {
+      pending.markdown = entryToMarkdown(pending.entry, config, references)
+    } catch (err) {
+      pending.markdown = undefined
+      failed.push(pending)
+      console.warn(
+        `AI content: skipping entry "${pending.entry.slug}" in ${pending.collectionPath}:`,
+        getErrorMessage(err),
+      )
+    }
+  }
+  return failed
 }
 
 /** What reading one entry needs, shared by every collection in a run. */

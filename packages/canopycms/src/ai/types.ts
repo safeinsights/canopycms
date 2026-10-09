@@ -215,6 +215,12 @@ export type EntryTransforms = Record<string, EntryTransformFn>
  * Main AI content configuration. Shared by route handler and build utility.
  */
 export interface AIContentConfig {
+  /**
+   * Site-relative URL path the generated files are served under, without the deployment
+   * `basePath`, as page links are. A reference links its target's markdown copy beneath it.
+   * Default `/ai`: where `canopycms init` mounts the route and `generate-ai-content` writes.
+   */
+  mountPath?: string
   /** Opt-out exclusions — content to skip */
   exclude?: ExcludeConfig
   /** Custom bundles — filtered content subsets */

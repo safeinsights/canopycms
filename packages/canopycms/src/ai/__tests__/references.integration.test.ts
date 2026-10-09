@@ -104,6 +104,10 @@ const schema = {
   ],
 } as const
 
+/** A reference as the export renders it: the page link, then the labeled markdown copy. */
+const link = (title: string, page: string, base = '/ai') =>
+  `[${title}](${page}) ([markdown version](${base}${page}.md))`
+
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-refs-'))
 
 async function idOf(store: ContentStore, collection: string, slug: string): Promise<string> {
@@ -193,23 +197,54 @@ describe('generateAIContent: reference fields', () => {
   it('renders an md byline as a link titled by the target schema, and a list as one line', async () => {
     const { files } = await generate()
     const post = files.get('posts/first.md') ?? ''
-    expect(post).toContain('**Author:** [Alice Example](/people/alice)')
+    expect(post).toContain(`**Author:** ${link('Alice Example', '/people/alice')}`)
     expect(post).toContain(
-      `**Reviewers:** [Bob Example](/people/bob), (missing entry ${missingId}), [Secret Draft Person](/drafts/secret)`,
+      `**Reviewers:** ${link('Bob Example', '/people/bob')}, (missing entry ${missingId}), ${link('Secret Draft Person', '/drafts/secret')}`,
     )
+    expect(files.has('people/alice.md')).toBe(true)
     expect(post).not.toContain(`**Author:** ${ids.alice}`)
   })
 
   it('renders a reference inside a block the same way, missing target included', async () => {
     const { files } = await generate()
     const page = files.get('pages/about.md') ?? ''
-    expect(page).toContain('[Bob Example](/people/bob)')
+    expect(page).toContain(link('Bob Example', '/people/bob'))
     expect(page).toContain(`(missing entry ${missingId})`)
   })
 
   it('links a reference with entryLinkUrl when one is configured, like body entry links', async () => {
     const { files } = await generate(undefined, { entryLinkUrl: () => '/custom-url' })
-    expect(files.get('posts/first.md')).toContain('**Author:** [Alice Example](/custom-url)')
+    expect(files.get('posts/first.md')).toContain(
+      '**Author:** [Alice Example](/custom-url) ([markdown version](/ai/people/alice.md))',
+    )
+  })
+
+  it('links the markdown copy under the configured mountPath, with or without slashes', async () => {
+    for (const mountPath of ['llm', '/llm/']) {
+      const { files } = await generate({ mountPath })
+      expect(files.get('posts/first.md')).toContain(
+        `**Author:** ${link('Alice Example', '/people/alice', '/llm')}`,
+      )
+    }
+  })
+
+  it('masks a target whose own markdown failed to render, so no link points at a missing file', async () => {
+    const config: AIContentConfig = {
+      fieldTransforms: {
+        person: {
+          fullName: (value) => {
+            if (value === 'Secret Draft Person') throw new Error('transform failed')
+            return String(value)
+          },
+        },
+      },
+    }
+    const { files } = await generate(config)
+    expect(files.has('drafts/secret.md')).toBe(false)
+    expect(files.get('posts/second.md')).toContain(`**Author:** (unavailable entry ${ids.secret})`)
+    for (const [file, content] of files) {
+      expect(content, file).not.toContain('/drafts/secret')
+    }
   })
 
   describe('a target the export leaves out', () => {
@@ -249,7 +284,7 @@ describe('generateAIContent: reference fields', () => {
       const { files } = await generate({ exclude: { collections: ['drafts'] } })
       const page = files.get('pages/nested.md') ?? ''
       expect(page.match(new RegExp(`\\(unavailable entry ${ids.secret}\\)`, 'g'))).toHaveLength(3)
-      expect(page).toContain('[Alice Example](/people/alice)')
+      expect(page).toContain(link('Alice Example', '/people/alice'))
       expect(page).not.toContain('Secret Draft Person')
     })
 
@@ -298,6 +333,8 @@ describe('generateAIContent: reference fields', () => {
       data: { fullName: 'Alice Renamed' },
     })
     const { files } = await generate()
-    expect(files.get('posts/first.md')).toContain('**Author:** [Alice Renamed](/people/alice)')
+    expect(files.get('posts/first.md')).toContain(
+      `**Author:** ${link('Alice Renamed', '/people/alice')}`,
+    )
   })
 })

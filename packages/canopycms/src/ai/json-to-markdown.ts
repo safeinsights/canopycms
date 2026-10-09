@@ -28,6 +28,8 @@ export interface ReferenceRendering {
   title(target: Record<string, unknown>): string
   /** Where the link points, or undefined to render the title as plain text. */
   url(target: Record<string, unknown>): string | undefined
+  /** URL of the target's own file in this export, linked after the page as its markdown copy. */
+  markdownUrl?(target: Record<string, unknown>): string | undefined
 }
 
 const DEFAULT_REFERENCE_RENDERING: ReferenceRendering = {
@@ -512,8 +514,9 @@ function formatImageMarkdown(value: unknown, altFallback: string): string {
 }
 
 /**
- * One reference value as inline markdown: a target the export shows becomes `[title](url)`, one it
- * does not becomes its id with a marker, so the copy shows the break instead of hiding it. An
+ * One reference value as inline markdown: a target the export shows becomes `[title](url)`, its
+ * page, then its markdown copy labeled as such, so a reader can tell the two apart; one it does
+ * not becomes its id with a marker, so the copy shows the break instead of hiding it. An
  * unavailable target renders from its id alone, whatever else it carries, so no title can leak.
  * A bare string is an id that resolution never replaced.
  */
@@ -543,7 +546,11 @@ function formatReference(
         : references.title(target),
     ) || id
   const url = references.url(target)
-  return url ? `[${title}](${encodeMarkdownLinkDestination(url)})` : title
+  const page = url ? `[${title}](${encodeMarkdownLinkDestination(url)})` : title
+  const markdownUrl = references.markdownUrl?.(target)
+  return markdownUrl
+    ? `${page} ([markdown version](${encodeMarkdownLinkDestination(markdownUrl)}))`
+    : page
 }
 
 function renderObjectField(
