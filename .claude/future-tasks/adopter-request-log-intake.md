@@ -20,6 +20,25 @@ Until 2026-08-20 nothing in this backlog referenced it, so items sat unread for 
 That is the gap this file closes: **whenever we pick up adopter-driven work, read their Open
 section first**, and record the disposition of anything acted on back into this file.
 
+## Still open on 2026-10-09 (log at the site's `f29cc81`, package at `fecc04a0`)
+
+Everything else in their Open section is fixed and published (through int.103). The sections
+below this one are the August triage, kept as history.
+
+| Item | Backlog file |
+| ---- | ------------ |
+| 16 (`listEntries` reference resolution, shared blocks) | deferred by the site until real content lands; no file |
+| 32 (`canopycms-next` under unbundled Node ESM) | the site keeps a vitest workaround; no file |
+| 47 | [skip-set-active-action-readme-condition.md](skip-set-active-action-readme-condition.md) |
+| 48 | [init-github-app-org-install-url.md](init-github-app-org-install-url.md) |
+| 49 | [worker-spot-only-capacity.md](worker-spot-only-capacity.md) |
+| 51 (who saved each edit; the submitter half shipped) | [submission-editor-tracking.md](submission-editor-tracking.md) |
+| 53 (deployed timing breakdown still owed) | [editor-api-latency.md](editor-api-latency.md) |
+| 66 | [editor-renders-inside-root-layout-docs.md](editor-renders-inside-root-layout-docs.md) |
+| 70 | [validate-entry-gets-request-entry-type.md](validate-entry-gets-request-entry-type.md) |
+| 77 | [rich-text-component-in-list-item-glued.md](rich-text-component-in-list-item-glued.md) |
+| 87 item 5 (`onClientError`) | [editor-client-error-reporting-hook.md](editor-client-error-reporting-hook.md) |
+
 ## Triage of 2026-08-20 — all 16 open items
 
 **Status refreshed 2026-08-22.** This table had gone stale — it still listed #16, #24, #26, #27 and #28
