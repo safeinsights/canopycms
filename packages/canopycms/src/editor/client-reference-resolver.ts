@@ -24,10 +24,11 @@ const MAX_IDS_PER_REQUEST = 100
 /**
  * How long an id the endpoint omitted (it names no entry) stays cached as `null`. Its target can
  * be created afterwards, so the id is asked for again on the first edit after this.
+ * @internal Exported for tests.
  */
 export const MISSING_REFERENCE_TTL_MS = 10_000
 
-export interface ReferenceCacheEntry {
+interface ReferenceCacheEntry {
   /** What the endpoint returned for the id, or `null` when it omitted the id. */
   value: unknown
   /** Set only on a `null` entry: from then on the id is fetched again. */
