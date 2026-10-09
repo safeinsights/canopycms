@@ -30,8 +30,7 @@ export function referencedDeleteMessage({ entries, hiddenCount }: EntryReference
 /** The entries a delete would leave pointing at nothing, as far as the user may see them. */
 export function ReferencedByList({ referencedBy, onOpenEntry }: ReferencedByListProps) {
   const { entries, hiddenCount } = referencedBy
-  // Not Mantine's `List`: its items are `white-space: nowrap` around a column
-  // `inline-flex`, which cannot narrow to the dialog and splits a title from its label.
+  // Not Mantine's `List`: its `nowrap` column `inline-flex` items cannot narrow to the dialog.
   return (
     <Stack
       component="ul"
@@ -39,6 +38,8 @@ export function ReferencedByList({ referencedBy, onOpenEntry }: ReferencedByList
       m={0}
       p={0}
       style={{ listStyle: 'none' }}
+      // WebKit drops the list role from a `ul` styled `list-style: none`.
+      role="list"
       data-testid="referenced-by-list"
     >
       {entries.map((entry) => {

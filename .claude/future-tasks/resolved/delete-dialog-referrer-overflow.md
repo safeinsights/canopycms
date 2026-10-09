@@ -24,9 +24,11 @@ Mantine's `List.Item` sets `white-space: nowrap` on the `li` and wraps its child
 `ReferencedByList` renders a `Stack` `ul` of `Box` `li` rows. In each row the title link sits
 over its label, which is a dimmed line. Both use `overflow-wrap: anywhere`, which, unlike
 `break-word`, also lowers the min-content width. The link also uses `ta="start"`, because a
-`<button>` centres its text by default and a wrapped title shows it. In Chromium, a 440 px
-container with a 200-character title went from `scrollWidth` 1893 to 438.
+`<button>` centres its text by default and a wrapped title shows it. The `ul` has
+`role="list"`, since WebKit drops the list role from a `ul` styled `list-style: none`. In a
+one-off Chromium check (not in the suite), a 440 px container holding a 200-character title
+went from `scrollWidth` 1893 to 438.
 
-No e2e covers this dialog. The component test injects Mantine's `List`, `Anchor`, `Text`,
-`UnstyledButton` and `Stack` CSS into jsdom and checks that no element in the list is `nowrap`,
+No e2e covers this dialog. The component test injects Mantine's `List`, `Anchor`, `Text` and
+`Stack` CSS into jsdom and checks that no element in the list is `nowrap`,
 `inline-flex` or fixed-width.

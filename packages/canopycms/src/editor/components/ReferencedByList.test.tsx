@@ -94,7 +94,7 @@ describe('ReferencedByList', () => {
 describe('ReferencedByList layout', () => {
   // jsdom applies only the stylesheets in the document, so the layout is checked
   // against Mantine's own CSS for every component the list can render.
-  const mantineCss = ['List', 'Anchor', 'Text', 'UnstyledButton', 'Stack']
+  const mantineCss = ['List', 'Anchor', 'Text', 'Stack']
     .map((name) =>
       readFileSync(
         createRequire(import.meta.url).resolve(`@mantine/core/styles/${name}.css`),
@@ -156,6 +156,7 @@ describe('ReferencedByList layout', () => {
     const via = screen.getByText('(author, reviewers)')
     expect(via.tagName).not.toBe('SPAN')
     expect(anchor.nextElementSibling).toBe(via)
+    expect(screen.getByTestId('referenced-by-list').getAttribute('role')).toBe('list')
   })
 })
 
