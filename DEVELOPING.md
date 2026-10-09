@@ -1122,9 +1122,11 @@ Output lands in gitignored `lambda/asset-transform/dist/`, where `lambda.Code.fr
 
 ```bash
 pnpm --filter canopycms-cdk run build:lambda   # the Lambda asset must exist before synth
-cd packages/canopycms-cdk/canary && npx cdk synth
-cd packages/canopycms-cdk/canary && npx cdk deploy --profile sandbox-admin
+cd packages/canopycms-cdk/canary && CANARY_ACCOUNT=<sandbox account id> npx cdk synth
+cd packages/canopycms-cdk/canary && CANARY_ACCOUNT=<sandbox account id> npx cdk deploy --profile sandbox-admin
 ```
+
+The account comes only from `CANARY_ACCOUNT`, and synth refuses without it; the entrypoint's header says why there is no `CDK_DEFAULT_ACCOUNT` fallback.
 
 The stack sets `RemovalPolicy.DESTROY` and `autoDeleteObjects: true` — deploy it, check it, tear it down.
 
@@ -1219,6 +1221,10 @@ Both budgets run in CI and in the pre-commit hook. Each script's header comment 
 - `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
 - `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message.
 - For a comment-only change, `node scripts/diff-comments-only.mjs <git-range>` proves nothing but TypeScript comments changed by comparing parser token streams on both sides; its header lists what else must match.
+
+### Account-ID Check
+
+`pnpm lint:account-ids` fails on any twelve-digit run in a tracked file that could be an AWS account id, because this repository is public. It runs in CI and in the pre-commit hook. Name an account by its role, read it from the environment, or use one of the placeholders in [scripts/check-account-ids.mjs](scripts/check-account-ids.mjs), whose header states the two exemptions.
 
 ### Published-Package ESM Import Check
 

@@ -178,6 +178,12 @@ jobs:
       - name: Lint future-tasks backlog
         run: pnpm lint:tasks
 
+      # This repository is public: no twelve-digit run that could be an AWS
+      # account id, in any tracked file. The script's header holds the two
+      # exemptions. Also runs in pre-commit via lint-staged.
+      - name: Lint for AWS account ids
+        run: pnpm lint:account-ids
+
       # Doc factual drift: backticked repo paths that do not exist, and
       # `canopycms*` import specifiers in code fences that are not in any
       # exports map. Both classes shipped -- AGENTS.md documented a

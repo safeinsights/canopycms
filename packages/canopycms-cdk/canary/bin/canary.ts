@@ -8,9 +8,10 @@
  *
  * Deploy via the CDK bootstrap exec role, qualifier `canopy` (bootstrap stack
  * `CDKToolkit-canopy`) - the human SSO role cannot create CloudFront
- * distributions/OACs directly. Account/region are hardcoded here ON PURPOSE:
- * this file only ever deploys to the one sandbox canary account, unlike every
- * other construct in this package.
+ * distributions/OACs directly. The account comes from `CANARY_ACCOUNT` and
+ * nothing else: pinning `env.account` makes a deploy under the wrong profile
+ * fail instead of landing in another account, which a `CDK_DEFAULT_ACCOUNT`
+ * fallback (set from whatever profile is active) would defeat.
  *
  * Build the transform Lambda's asset first, with NO flags: `AssetSupport`
  * refuses to synth in lazy mode without the `.deployable` marker a full build
@@ -18,8 +19,8 @@
  *
  *   pnpm --filter canopycms-cdk run build:lambda
  *   cd packages/canopycms-cdk/canary
- *   npx cdk synth
- *   npx cdk deploy --profile sandbox-admin
+ *   CANARY_ACCOUNT=<sandbox account id> npx cdk synth
+ *   CANARY_ACCOUNT=<sandbox account id> npx cdk deploy --profile sandbox-admin
  */
 
 import { App, RemovalPolicy, Stack, aws_cloudfront as cloudfront } from 'aws-cdk-lib'
@@ -27,7 +28,13 @@ import { DefaultStackSynthesizer } from 'aws-cdk-lib'
 
 import { AssetSupport } from '../../src/index'
 
-const CANARY_ACCOUNT = '905418271997'
+const CANARY_ACCOUNT = process.env.CANARY_ACCOUNT
+if (!CANARY_ACCOUNT || !/^\d{12}$/.test(CANARY_ACCOUNT)) {
+  throw new Error(
+    'CANARY_ACCOUNT must be set to the twelve-digit sandbox account id at synth time; ' +
+      'the canary takes its account from nothing else.',
+  )
+}
 const CANARY_REGION = 'us-east-1'
 const CANARY_QUALIFIER = 'canopy'
 

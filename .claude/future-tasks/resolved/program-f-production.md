@@ -41,10 +41,10 @@ accounts from `iac/lib/definitions.ts`:
 
 | Role | Account |
 | ---- | ------- |
-| build | `767397792557` (Security) |
-| preview / dev | `872515273917` (Dev) |
-| staging | `867344442985` (Staging) |
-| production | `533267019973` (Production) |
+| build | Security |
+| preview / dev | Dev |
+| staging | Staging |
+| production | Production |
 
 Domain `safeinsights.org`, docs at the `docs` subdomain.
 
