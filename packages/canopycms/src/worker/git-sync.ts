@@ -421,6 +421,9 @@ async function reconcileTrackedBranches(
   // trackedNames is returned alongside the summary rather than folded into it:
   // it is a working set for pushSettingsBranches' stranded-branch check, and
   // listing every branch on GitHub would bloat worker-status.json for no reader.
+  // A base GitHub no longer has can be held for nothing.
+  if (!tracked.has(ctx.baseBranch)) baseHold = { hold: undefined }
+
   return {
     summary: { created, fastForwarded, ahead, diverged, rewritten },
     trackedNames: new Set(tracked.keys()),

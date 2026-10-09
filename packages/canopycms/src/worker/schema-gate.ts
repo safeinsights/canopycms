@@ -235,19 +235,25 @@ export async function decideBaseAdvance(input: {
   if (missing.size === 0) return { kind: 'advance' }
 
   const missingSchemas = [...missing.keys()].sort()
-  const firstSeen: Record<string, string> = {}
-  let waiting = false
-  for (const name of missingSchemas) {
-    const carried = previous?.firstSeen[name]
-    // An unparseable carried time restarts that name's wait rather than ending or freezing it.
-    const at = carried && Number.isFinite(Date.parse(carried)) ? carried : now.toISOString()
-    firstSeen[name] = at
-    if (now.getTime() - Date.parse(at) < maxHoldMs) waiting = true
-  }
+  const carried = previous?.firstSeen ?? {}
+  const firstSeenAt = missingSchemas.map((name): [string, number] => {
+    const at = Object.prototype.hasOwnProperty.call(carried, name)
+      ? Date.parse(carried[name])
+      : Number.NaN
+    // An unparseable or future carried time restarts that name's wait, never freezes it.
+    return [name, Number.isFinite(at) && at <= now.getTime() ? at : now.getTime()]
+  })
+  // The oldest missing name bounds the hold: past its bound, holding cannot help it, and
+  // waiting on newer names as well would let a stream of schema merges hold the base for good.
+  const sinceMs = Math.min(...firstSeenAt.map(([, at]) => at))
+  const waiting = now.getTime() - sinceMs < maxHoldMs
   const files = [...new Set([...missing.values()].flat())].sort()
   const hold: BaseSchemaHold = {
-    since: Object.values(firstSeen).sort()[0] ?? now.toISOString(),
-    firstSeen,
+    since: new Date(sinceMs).toISOString(),
+    // fromEntries defines own properties, so a name like `__proto__` is recorded as itself.
+    firstSeen: Object.fromEntries(
+      firstSeenAt.map(([name, at]) => [name, new Date(at).toISOString()]),
+    ),
     incomingSha,
     missingSchemas,
     files: files.slice(0, MAX_REPORTED_PATHS),

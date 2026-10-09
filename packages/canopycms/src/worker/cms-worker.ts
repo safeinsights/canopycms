@@ -199,12 +199,6 @@ export class CmsWorker {
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
     this.contentRoot = config.contentRoot ?? 'content'
     this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
-    // NaN would never expire a hold, which is the one thing the bound exists to prevent.
-    if (!Number.isFinite(this.schemaHoldMaxMs) || this.schemaHoldMaxMs < 0) {
-      throw new Error(
-        `CmsWorker: schemaHoldMaxMs must be a finite, non-negative number of milliseconds (got ${config.schemaHoldMaxMs})`,
-      )
-    }
   }
 
   /**
@@ -344,6 +338,14 @@ export class CmsWorker {
       // inside the try, rather than out of `new CmsWorker(...)` where nothing
       // could record it.
       this.ensureGitHubAuth()
+
+      // Same again. NaN would never expire a schema hold, which is the one
+      // thing the bound exists to prevent.
+      if (!Number.isFinite(this.schemaHoldMaxMs) || this.schemaHoldMaxMs < 0) {
+        throw new Error(
+          `CmsWorker: schemaHoldMaxMs must be a finite, non-negative number of milliseconds (got ${this.schemaHoldMaxMs})`,
+        )
+      }
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
       // credential, and its catch blames the repository rather than the

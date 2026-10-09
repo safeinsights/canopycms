@@ -237,8 +237,8 @@ describe('CmsWorker.syncGit() schema gate', () => {
     })
   })
 
-  it('times each schema from when it was first seen missing', async () => {
-    await editorDefines(['pageSchema', 'postSchema'])
+  it('times a missing schema from its own first sighting, not an earlier one since deployed', async () => {
+    await editorDefines(['pageSchema', 'postSchema', 'personSchema'])
     await commitOnto(tmpDir, githubPath, 'main', {
       'content/people/.collection.json': collectionMeta('people', ['personSchema']),
       'content/teams/.collection.json': collectionMeta('teams', ['teamSchema']),
@@ -250,10 +250,66 @@ describe('CmsWorker.syncGit() schema gate', () => {
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
     const hold = (await readStatus()).baseHold
-    expect(hold?.firstSeen.personSchema).toBe(LONG_AGO)
-    expect(hold?.firstSeen.teamSchema).not.toBe(LONG_AGO)
-    expect(hold?.since).toBe(LONG_AGO)
+    expect(hold?.missingSchemas).toEqual(['teamSchema'])
+    expect(hold?.since).not.toBe(LONG_AGO)
     expect(hold?.expired).toBeUndefined()
+  })
+
+  it('advances once the oldest missing schema has waited, even while a newer one waits', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const incoming = await commitOnto(tmpDir, githubPath, 'main', {
+      'content/people/.collection.json': collectionMeta('people', ['personSchema']),
+      'content/teams/.collection.json': collectionMeta('teams', ['teamSchema']),
+    })
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { personSchema: LONG_AGO })
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
+    expect((await readStatus()).baseHold).toMatchObject({ since: LONG_AGO, expired: true })
+  })
+
+  it('times a schema named __proto__ like any other', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const incoming = await commitOnto(tmpDir, githubPath, 'main', {
+      'content/odd/.collection.json': collectionMeta('odd', ['__proto__']),
+    })
+    await makeWorker().syncGit()
+    const raw = await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8')
+    expect(raw).toMatch(/"firstSeen": \{\s*"__proto__": "/)
+
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, JSON.parse(`{"__proto__":"${LONG_AGO}"}`) as Record<string, string>)
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
+    expect((await readStatus()).baseHold?.expired).toBe(true)
+  })
+
+  it('restarts the wait for a carried time in the future', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { personSchema: '2999-01-01T00:00:00.000Z' })
+
+    await worker.syncGit()
+
+    const since = Date.parse((await readStatus()).baseHold?.since ?? '')
+    expect(since).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('clears a hold when GitHub no longer has the base branch', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await openBareRepo(githubPath).raw(['branch', 'other', 'main'])
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/main'])
+    const worker = makeWorker()
+    seedHold(worker, { personSchema: LONG_AGO })
+
+    await worker.syncGit()
+
+    expect((await readStatus()).baseHold).toBeUndefined()
   })
 
   it('starts a new schema afresh after an earlier one expired', async () => {
@@ -343,9 +399,10 @@ describe('CmsWorker.syncGit() schema gate', () => {
     expect(hold?.fileCount).toBe(12)
   })
 
-  it('rejects a hold bound that would never expire', () => {
-    expect(() => makeWorker(Number.NaN)).toThrow(/schemaHoldMaxMs/)
-    expect(() => makeWorker(-1)).toThrow(/schemaHoldMaxMs/)
+  it('refuses to start with a hold bound that would never expire, recording why', async () => {
+    await expect(makeWorker(Number.NaN).start()).rejects.toThrow(/schemaHoldMaxMs/)
+    expect((await readStatus()).lastFatalError?.message).toMatch(/schemaHoldMaxMs/)
+    await expect(makeWorker(-1).start()).rejects.toThrow(/schemaHoldMaxMs/)
   })
 
   it('reads a symlinked meta file through to its target', async () => {
@@ -369,6 +426,35 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker().syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect((await readStatus()).baseHold?.missingSchemas).toEqual(['personSchema'])
+  })
+
+  it('holds when only the target of a symlinked meta file changed', async () => {
+    const scratch = path.join(tmpDir, 'scratch-symlink-target')
+    await simpleGit().clone(githubPath, scratch, ['--branch', 'main'])
+    const git = simpleGit({ baseDir: scratch })
+    await git.addConfig('user.name', 'Test Bot')
+    await git.addConfig('user.email', 'test@canopycms.test')
+    await fs.mkdir(path.join(scratch, 'content/_meta'), { recursive: true })
+    await fs.mkdir(path.join(scratch, 'content/people'), { recursive: true })
+    await fs.writeFile(
+      path.join(scratch, 'content/_meta/people.json'),
+      collectionMeta('people', ['postSchema']),
+    )
+    await fs.symlink('../_meta/people.json', path.join(scratch, 'content/people/.collection.json'))
+    await git.add(['.'])
+    await git.commit('symlinked meta')
+    await git.raw(['push', githubPath, 'main:main'])
+    await openBareRepo(remoteGitPath).raw(['fetch', githubPath, '+refs/heads/main:refs/heads/main'])
+    const linkedBase = await refSha(remoteGitPath, 'refs/heads/main')
+    await editorDefines(['pageSchema', 'postSchema'])
+    await commitOnto(tmpDir, githubPath, 'main', {
+      'content/_meta/people.json': collectionMeta('people', ['personSchema']),
+    })
+
+    await makeWorker().syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(linkedBase)
     expect((await readStatus()).baseHold?.missingSchemas).toEqual(['personSchema'])
   })
 
