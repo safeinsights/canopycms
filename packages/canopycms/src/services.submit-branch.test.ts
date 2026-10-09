@@ -213,6 +213,22 @@ describe('services submitBranch', () => {
       expect(tree.staged).toEqual([])
     })
 
+    it('moves nothing when the commit step committed nothing', async () => {
+      // Staged, then deleted: status lists the path, but staging leaves the index at HEAD, so
+      // git's commit succeeds without creating one.
+      await fs.writeFile(path.join(localPath, 'c.txt'), 'c', 'utf8')
+      await simpleGit({ baseDir: localPath }).add(['c.txt'])
+      await fs.rm(path.join(localPath, 'c.txt'))
+      const before = await localSha()
+
+      await expect(services.submitBranch({ context, message: 'no-op commit' })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect(await localSha()).toBe(before)
+      expect((await simpleGit({ baseDir: localPath }).status()).files).toEqual([])
+    })
+
     it('submits when the changes cannot be listed', async () => {
       mockConsole()
       vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockRejectedValue(

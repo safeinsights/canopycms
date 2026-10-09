@@ -367,6 +367,7 @@ async function _createCanopyServicesInternal(
       // canopycms's own state under .canopy-meta/ is never content, so it neither
       // makes a commit worth creating nor gets staged into one.
       let committed = false
+      const preCommitSha = await git.headSha()
       if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
         await git.addAllExceptCanopyState()
         const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
@@ -395,7 +396,7 @@ async function _createCanopyServicesInternal(
         )
       }
       if (changedPaths?.length === 0) {
-        if (committed) await git.undoLastCommit()
+        if (committed) await git.resetKeepingChanges(preCommitSha)
         throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
       }
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
