@@ -20,8 +20,11 @@
  *
  * A body is parsed with and without GFM and the issues of both kept, so a site's choice of
  * `remark-gfm` cannot hide a construct from the check, and an MDX body that does not parse is
- * refused, since it cannot be checked. Pure and isomorphic: the editor runs it before a save and
- * the server at the write boundary.
+ * refused, since it cannot be checked.
+ *
+ * A save may keep code the stored entry already holds in the same field, which came from outside
+ * the CMS or from before this policy, so an author is never stuck: `splitByStored` matches each
+ * construct by its source, and refuses one that is new, changed, copied or moved to another field.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -43,6 +46,14 @@ interface MarkdownSafetyIssue {
   message: string
   /** 1-based line in the checked source, when known. */
   line?: number
+  /** The construct's identity, its source with no position; none when it cannot be kept. */
+  key?: string
+}
+
+/** One field's issues. */
+export interface MarkdownSafetyFinding {
+  fieldPath: string
+  issues: MarkdownSafetyIssue[]
 }
 
 /** HTML tags an MDX body may use: content elements whose attributes carry no code. */
@@ -156,7 +167,10 @@ const FORBIDDEN_ATTRIBUTES = new Set(['dangerouslysetinnerhtml', 'srcdoc'])
 interface MdNode {
   readonly type: string
   readonly children?: readonly MdNode[]
-  readonly position?: { readonly start: { readonly line: number } }
+  readonly position?: {
+    readonly start: { readonly line: number; readonly offset?: number }
+    readonly end: { readonly offset?: number }
+  }
   readonly name?: string | null
   readonly url?: string
   /** An MDX JSX element's attributes; other node types use the key for other shapes. */
@@ -256,8 +270,16 @@ const COMPONENT_NAME = /^[A-Z_$][\w$]*$/
 /** Where an issue sits, as the editor shows it. */
 const at = (node: MdNode) => (node.position ? ` (line ${node.position.start.line})` : '')
 
-function issue(node: MdNode, message: string): MarkdownSafetyIssue {
-  return { message: `${message}${at(node)}`, line: node.position?.start.line }
+function issue(node: MdNode, message: string, key: string | undefined): MarkdownSafetyIssue {
+  return { message: `${message}${at(node)}`, line: node.position?.start.line, key }
+}
+
+/** A node's source text, the identity `splitByStored` matches it by. */
+function sourceKey(kind: string, node: MdNode, source: string): string | undefined {
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
+  if (start === undefined || end === undefined) return undefined
+  return `${kind}\0${source.slice(start, end)}`
 }
 
 function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue | undefined {
@@ -266,10 +288,11 @@ function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue
   return issue(
     node,
     `The URL scheme "${scheme}:" is not allowed in ${where}; use http(s), mailto, tel, an entry link or a path on the site`,
+    `url\0${url}`,
   )
 }
 
-function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
+function checkJsxElement(node: MdNode, source: string): MarkdownSafetyIssue[] {
   const name = node.name
   // A fragment (`<>…</>`) renders its children and nothing else.
   if (name === null || name === undefined) return []
@@ -281,6 +304,7 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
         name.includes('.')
           ? `${tag} is not allowed: use a component by its plain name`
           : `${tag} is not allowed: it is not one of the HTML tags a body may use, so use one of the site's components instead`,
+        sourceKey('tag', node, source),
       ),
     ]
   }
@@ -292,27 +316,43 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
       attribute.type !== 'mdxJsxAttribute' ||
       typeof attribute.name !== 'string'
     ) {
-      issues.push(issue(node, `{…} spread attributes are not allowed on ${tag}`))
+      const spread = isRecord(attribute) ? String(attribute.value) : ''
+      issues.push(
+        issue(
+          node,
+          `{…} spread attributes are not allowed on ${tag}`,
+          `spread\0${name}\0${spread}`,
+        ),
+      )
       continue
     }
     const attributeName = attribute.name
+    const value = attribute.value
+    const key = `attribute\0${name}\0${attributeName}\0${
+      isRecord(value) ? `{${String(value.value)}}` : String(value)
+    }`
     const lower = attributeName.toLowerCase()
     if (/^on/.test(lower)) {
-      issues.push(issue(node, `${attributeName} on ${tag} is not allowed: event handlers run code`))
+      issues.push(
+        issue(node, `${attributeName} on ${tag} is not allowed: event handlers run code`, key),
+      )
       continue
     }
     if (FORBIDDEN_ATTRIBUTES.has(lower)) {
-      issues.push(issue(node, `${attributeName} on ${tag} is not allowed`))
+      issues.push(issue(node, `${attributeName} on ${tag} is not allowed`, key))
       continue
     }
-    const value = attribute.value
     const isUrl = URL_ATTRIBUTES.has(lower.replace(/[^a-z]/g, ''))
     if (isRecord(value)) {
       if (isUrl) {
-        issues.push(issue(node, `${attributeName} on ${tag} must be a plain "string"`))
+        issues.push(issue(node, `${attributeName} on ${tag} must be a plain "string"`, key))
       } else if (!isInertProgram(estreeOf(value))) {
         issues.push(
-          issue(node, `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`),
+          issue(
+            node,
+            `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
+            key,
+          ),
         )
       }
       continue
@@ -328,11 +368,17 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
   return issues
 }
 
-function checkNode(node: MdNode, dialect: MarkdownDialect): MarkdownSafetyIssue[] {
+function checkNode(node: MdNode, source: string): MarkdownSafetyIssue[] {
   const issues: MarkdownSafetyIssue[] = []
   switch (node.type) {
     case 'mdxjsEsm':
-      issues.push(issue(node, 'import/export statements are not allowed: they run as code'))
+      issues.push(
+        issue(
+          node,
+          'import/export statements are not allowed: they run as code',
+          sourceKey('esm', node, source),
+        ),
+      )
       break
     case 'mdxFlowExpression':
     case 'mdxTextExpression':
@@ -341,13 +387,14 @@ function checkNode(node: MdNode, dialect: MarkdownDialect): MarkdownSafetyIssue[
           issue(
             node,
             '{…} expressions are not allowed: they run as code. A comment {/* … */} or a plain value such as {" "} is fine',
+            sourceKey('expression', node, source),
           ),
         )
       }
       break
     case 'mdxJsxFlowElement':
     case 'mdxJsxTextElement':
-      issues.push(...checkJsxElement(node))
+      issues.push(...checkJsxElement(node, source))
       break
     case 'link':
     case 'image':
@@ -357,7 +404,7 @@ function checkNode(node: MdNode, dialect: MarkdownDialect): MarkdownSafetyIssue[
       break
     }
   }
-  for (const child of node.children ?? []) issues.push(...checkNode(child, dialect))
+  for (const child of node.children ?? []) issues.push(...checkNode(child, source))
   return issues
 }
 
@@ -389,7 +436,7 @@ export function findUnsafeMarkdown(
         { message: `This MDX does not parse, so it cannot be checked: ${getErrorMessage(err)}` },
       ]
     }
-    for (const found of checkNode(tree, dialect)) {
+    for (const found of checkNode(tree, source)) {
       if (seen.has(found.message)) continue
       seen.add(found.message)
       issues.push(found)
@@ -398,7 +445,7 @@ export function findUnsafeMarkdown(
   return issues
 }
 
-/** The field's one error: its first issue, and how many more there are. */
+/** The field's one message: its first issue, and how many more there are. */
 function toFieldError(fieldPath: string, issues: MarkdownSafetyIssue[]): EntryFieldError {
   const [first, ...rest] = issues
   const more = rest.length === 0 ? '' : ` (and ${rest.length} more)`
@@ -412,50 +459,95 @@ function dialectOfField(field: FieldConfig): MarkdownDialect | undefined {
   return undefined
 }
 
-function checkValue(
+function findInValue(
   fieldPath: string,
   value: unknown,
   dialect: MarkdownDialect,
-): EntryFieldError[] {
+): MarkdownSafetyFinding[] {
   const values = Array.isArray(value) ? value : [value]
-  const errors: EntryFieldError[] = []
+  const findings: MarkdownSafetyFinding[] = []
   values.forEach((item, index) => {
     if (typeof item !== 'string' || item === '') return
     const issues = findUnsafeMarkdown(item, dialect)
     if (issues.length === 0) return
-    errors.push(toFieldError(Array.isArray(value) ? `${fieldPath}[${index}]` : fieldPath, issues))
+    findings.push({
+      fieldPath: Array.isArray(value) ? `${fieldPath}[${index}]` : fieldPath,
+      issues,
+    })
   })
-  return errors
+  return findings
 }
 
 /**
- * The policy's errors for one entry's on-disk-shaped data, the body merged in under the schema's
+ * The policy's issues in one entry's on-disk-shaped data, the body merged in under the schema's
  * body field name. The body of an `md`/`mdx` entry is checked in the entry's format whatever its
  * field's type, and is checked when the schema declares no body field; it is exempt only when
  * its field is `executable`.
  */
-export function validateMarkdownSafety(
+export function findMarkdownSafetyIssues(
   fields: EntrySchema,
   format: ContentFormat | undefined,
   data: Record<string, unknown>,
-): EntryFieldError[] {
+): MarkdownSafetyFinding[] {
   const hasBody = format === 'md' || format === 'mdx'
   const bodyName = hasBody ? findBodyFieldName(fields) : undefined
-  const errors: EntryFieldError[] = []
+  const findings: MarkdownSafetyFinding[] = []
 
   if (hasBody && bodyName !== undefined) {
     const bodyField = flattenGroupFields(fields).find((field) => field.name === bodyName)
     const executable =
       bodyField !== undefined && 'executable' in bodyField && bodyField.executable === true
-    if (!executable) errors.push(...checkValue(bodyName, data[bodyName], format))
+    if (!executable) findings.push(...findInValue(bodyName, data[bodyName], format))
   }
 
-  errors.push(
-    ...traverseFields<EntryFieldError>(fields, data, ({ field, value, path }) => {
+  findings.push(
+    ...traverseFields<MarkdownSafetyFinding>(fields, data, ({ field, value, path }) => {
       if (path === bodyName) return []
       const dialect = dialectOfField(field)
-      return dialect === undefined ? [] : checkValue(path, value, dialect)
+      return dialect === undefined ? [] : findInValue(path, value, dialect)
     }),
   )
-  return errors
+  return findings
+}
+
+/** A field with list and block positions dropped, so reordering items keeps a match. */
+const site = (fieldPath: string) => fieldPath.replace(/\[\d+\]/g, '')
+
+/**
+ * Splits a save's issues into those it adds, which refuse it, and those the stored entry already
+ * held in the same field, which it keeps. Constructs are matched by source and counted, so a copy
+ * of a stored construct is refused, as is one moved to a field of another name. An issue with no
+ * key, such as a body that does not parse, is never kept.
+ */
+export function splitByStored(
+  found: readonly MarkdownSafetyFinding[],
+  stored: readonly MarkdownSafetyFinding[],
+): { refused: EntryFieldError[]; kept: EntryFieldError[] } {
+  const available = new Map<string, number>()
+  for (const finding of stored) {
+    for (const { key } of finding.issues) {
+      if (key === undefined) continue
+      const id = `${site(finding.fieldPath)}\0${key}`
+      available.set(id, (available.get(id) ?? 0) + 1)
+    }
+  }
+  const refused: EntryFieldError[] = []
+  const kept: EntryFieldError[] = []
+  for (const finding of found) {
+    const added: MarkdownSafetyIssue[] = []
+    const held: MarkdownSafetyIssue[] = []
+    for (const item of finding.issues) {
+      const id = item.key === undefined ? undefined : `${site(finding.fieldPath)}\0${item.key}`
+      const count = id === undefined ? 0 : (available.get(id) ?? 0)
+      if (id !== undefined && count > 0) {
+        available.set(id, count - 1)
+        held.push(item)
+      } else {
+        added.push(item)
+      }
+    }
+    if (added.length > 0) refused.push(toFieldError(finding.fieldPath, added))
+    if (held.length > 0) kept.push(toFieldError(finding.fieldPath, held))
+  }
+  return { refused, kept }
 }

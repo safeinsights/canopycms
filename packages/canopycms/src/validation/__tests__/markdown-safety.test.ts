@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { EntrySchema } from '../../config'
 import { validateEntryFormValue } from '../entry-validator'
-import { findUnsafeMarkdown, validateMarkdownSafety } from '../markdown-safety'
+import { findMarkdownSafetyIssues, findUnsafeMarkdown, splitByStored } from '../markdown-safety'
 
 const mdx = (source: string) => findUnsafeMarkdown(source, 'mdx')
 const md = (source: string) => findUnsafeMarkdown(source, 'md')
@@ -192,7 +192,7 @@ describe('findUnsafeMarkdown: markdown dialect', () => {
   })
 })
 
-describe('validateMarkdownSafety', () => {
+describe('findMarkdownSafetyIssues', () => {
   const schema: EntrySchema = [
     { name: 'title', type: 'string' },
     { name: 'summary', type: 'mdx' },
@@ -213,7 +213,7 @@ describe('validateMarkdownSafety', () => {
   ]
 
   it('checks mdx fields wherever they nest, and names each offending field', () => {
-    const errors = validateMarkdownSafety(schema, 'json', {
+    const errors = findMarkdownSafetyIssues(schema, 'json', {
       title: '{not markdown, a string field}',
       summary: '{a()}',
       callouts: ['fine', '{b()}'],
@@ -227,23 +227,17 @@ describe('validateMarkdownSafety', () => {
 
   it('leaves an executable field alone', () => {
     expect(
-      validateMarkdownSafety(schema, 'json', { trusted: 'import x from "y"\n\n{x()}' }),
+      findMarkdownSafetyIssues(schema, 'json', { trusted: 'import x from "y"\n\n{x()}' }),
     ).toEqual([])
   })
 
   it('checks a markdown field as markdown: links only', () => {
-    expect(validateMarkdownSafety(schema, 'json', { notes: '{x()}' })).toEqual([])
+    expect(findMarkdownSafetyIssues(schema, 'json', { notes: '{x()}' })).toEqual([])
     expect(
-      validateMarkdownSafety(schema, 'json', { notes: '[x](javascript:alert(1))' }).map(
+      findMarkdownSafetyIssues(schema, 'json', { notes: '[x](javascript:alert(1))' }).map(
         (e) => e.fieldPath,
       ),
     ).toEqual(['notes'])
-  })
-
-  it('folds every issue in one field into one error that counts the rest', () => {
-    const [error] = validateMarkdownSafety(schema, 'json', { summary: '{a()}\n\n{b()}\n\n{c()}' })
-    expect(error?.message).toMatch(/line 1/)
-    expect(error?.message).toMatch(/2 more/)
   })
 
   describe('the body', () => {
@@ -253,34 +247,107 @@ describe('validateMarkdownSafety', () => {
     ]
 
     it('is MDX in an mdx entry even when its field is typed markdown', () => {
-      const errors = validateMarkdownSafety(withBody('markdown'), 'mdx', { content: '{x()}' })
+      const errors = findMarkdownSafetyIssues(withBody('markdown'), 'mdx', { content: '{x()}' })
       expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
     })
 
     it('is markdown in an md entry even when its field is typed mdx', () => {
-      expect(validateMarkdownSafety(withBody('mdx'), 'md', { content: '{x()}' })).toEqual([])
+      expect(findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: '{x()}' })).toEqual([])
     })
 
     it('is checked when the schema declares no body field', () => {
-      const errors = validateMarkdownSafety([{ name: 'title', type: 'string' }], 'mdx', {
+      const errors = findMarkdownSafetyIssues([{ name: 'title', type: 'string' }], 'mdx', {
         body: 'import x from "y"',
       })
       expect(errors.map((e) => e.fieldPath)).toEqual(['body'])
     })
 
     it('is left alone when its field is executable', () => {
-      expect(validateMarkdownSafety(withBody('mdx', true), 'mdx', { content: '{x()}' })).toEqual([])
+      expect(findMarkdownSafetyIssues(withBody('mdx', true), 'mdx', { content: '{x()}' })).toEqual(
+        [],
+      )
     })
 
     it('is not a body in a json entry, where an isBody field is an ordinary field', () => {
-      const errors = validateMarkdownSafety(withBody('markdown'), 'json', { content: '{x()}' })
+      const errors = findMarkdownSafetyIssues(withBody('markdown'), 'json', { content: '{x()}' })
       expect(errors).toEqual([])
     })
   })
 
-  it('runs in the editor through validateEntryFormValue, on the body the editor keeps under `body`', () => {
+  it('is left to the server: the editor does not block a save on it', () => {
+    // A save may keep code the stored entry already holds, which only the server can tell.
     const fields: EntrySchema = [{ name: 'content', type: 'mdx', isBody: true }]
-    const errors = validateEntryFormValue(fields, 'mdx', { body: '<script>x</script>' })
-    expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
+    expect(validateEntryFormValue(fields, 'mdx', { body: '<script>x</script>' })).toEqual([])
+  })
+})
+
+describe('splitByStored', () => {
+  const fields: EntrySchema = [
+    { name: 'summary', type: 'mdx' },
+    { name: 'aside', type: 'mdx' },
+    { name: 'callouts', type: 'mdx', list: true },
+  ]
+  const find = (data: Record<string, unknown>) => findMarkdownSafetyIssues(fields, 'json', data)
+  const split = (saved: Record<string, unknown>, stored: Record<string, unknown>) =>
+    splitByStored(find(saved), find(stored))
+
+  it('refuses every issue of a new entry, folded into one error per field', () => {
+    const { refused, kept } = split({ summary: '{a()}\n\n{b()}\n\n{c()}' }, {})
+    expect(kept).toEqual([])
+    expect(refused).toHaveLength(1)
+    expect(refused[0]?.message).toMatch(/line 1/)
+    expect(refused[0]?.message).toMatch(/2 more/)
+  })
+
+  it('keeps code the stored entry held in the same field, wherever it moved in the field', () => {
+    const stored = { summary: 'Intro\n\n{legacy()}\n\n<iframe src="/x" />' }
+    const saved = { summary: '<iframe src="/x" />\n\nIntro, edited\n\n{legacy()}' }
+    const { refused, kept } = split(saved, stored)
+    expect(refused).toEqual([])
+    expect(kept.map((e) => e.fieldPath)).toEqual(['summary'])
+    expect(kept[0]?.message).toMatch(/1 more/)
+  })
+
+  it('keeps code across list items of one field', () => {
+    const { refused } = split({ callouts: ['ok', '{x()}'] }, { callouts: ['{x()}', 'ok'] })
+    expect(refused).toEqual([])
+  })
+
+  it('refuses code it changes', () => {
+    const { refused } = split({ summary: '{legacy(1)}' }, { summary: '{legacy()}' })
+    expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
+  })
+
+  it('refuses a second copy of stored code', () => {
+    const { refused, kept } = split(
+      { summary: '{legacy()}\n\n{legacy()}' },
+      { summary: '{legacy()}' },
+    )
+    expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
+    expect(kept.map((e) => e.fieldPath)).toEqual(['summary'])
+  })
+
+  it('refuses stored code moved to a field of another name', () => {
+    const { refused } = split({ aside: '{legacy()}' }, { summary: '{legacy()}' })
+    expect(refused.map((e) => e.fieldPath)).toEqual(['aside'])
+  })
+
+  it('refuses a changed attribute or URL, and keeps an unchanged one', () => {
+    const stored = { summary: '<a href="javascript:a()">x</a> <Btn onClick="b()" />' }
+    expect(
+      split({ summary: '<a href="javascript:a()">y</a> <Btn onClick="b()" />' }, stored).refused,
+    ).toEqual([])
+    expect(
+      split({ summary: '<a href="javascript:c()">x</a> <Btn onClick="b()" />' }, stored).refused,
+    ).toHaveLength(1)
+    expect(
+      split({ summary: '<a href="javascript:a()">x</a> <Btn onClick="c()" />' }, stored).refused,
+    ).toHaveLength(1)
+  })
+
+  it('never keeps a body that does not parse, which cannot be checked', () => {
+    const { refused, kept } = split({ summary: '<A>{x()}' }, { summary: '<A>{x()}' })
+    expect(kept).toEqual([])
+    expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
   })
 })

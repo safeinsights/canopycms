@@ -119,6 +119,30 @@ describe('collectStaticPaths', () => {
       await expect(collectStaticPaths(ctx)).rejects.toThrow('CanopyCMS static build:')
     })
 
+    it('warns, without throwing, about an entry holding code in a non-executable mdx body', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const consoleSpy = mockConsole()
+      try {
+        const ctx = fakeCtx([
+          {
+            urlPath: '/posts/legacy',
+            slug: 'legacy' as never,
+            entryType: 'post',
+            entryPath: 'content/posts/legacy' as never,
+            format: 'mdx',
+            schema: [{ name: 'title', type: 'string' }],
+            data: { title: 'Legacy', body: 'Intro\n\n{legacy()}' },
+          },
+        ])
+
+        await expect(collectStaticPaths(ctx)).resolves.toHaveLength(1)
+        expect(consoleSpy).toHaveWarned('content/posts/legacy')
+        expect(consoleSpy).toHaveWarned('markdown or MDX that runs code')
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
     it('does not throw when CANOPY_BUILD_MODE is unset, even with an invalid entry', async () => {
       vi.stubEnv('CANOPY_BUILD_MODE', '')
       const ctx = fakeCtx([

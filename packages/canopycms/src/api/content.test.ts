@@ -722,7 +722,7 @@ describe('content api', () => {
       path: unsafeAsLogicalPath('posts/hello'),
     }
 
-    const mockStoreOnce = async (existingEntryType: 'article' | 'trusted') => {
+    const mockStoreOnce = async (existingEntryType: 'article' | 'trusted', storedBody = '') => {
       const { ContentStore } = await import('../content-store')
       const writeSpy = vi
         .fn()
@@ -754,7 +754,12 @@ describe('content api', () => {
           getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
           countEntriesOfType: vi.fn().mockResolvedValue(0),
           idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
-          read: vi.fn().mockResolvedValue({ data: {} }),
+          read: vi.fn().mockResolvedValue({
+            format: 'mdx',
+            data: {},
+            body: storedBody,
+            bodyFieldName: 'content',
+          }),
           write: writeSpy,
         } as any
       })
@@ -785,6 +790,46 @@ describe('content api', () => {
         },
       ])
       expect(hook).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps code the saved entry already held, with a warning', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', codeBody)
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: `${codeBody}\nAn edited paragraph.\n`,
+      })
+
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalledTimes(1)
+      expect(res.data?.validationWarnings).toEqual([
+        {
+          level: 'warning',
+          fieldPath: 'content',
+          message: expect.stringMatching(/kept because the saved entry already had it/),
+        },
+      ])
+    })
+
+    it('refuses code added beside code the saved entry already held', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce('article', codeBody)
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        expectedVersion: EXISTING_VERSION,
+        data: {},
+        body: `${codeBody}\n{more()}\n`,
+      })
+
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'content', message: expect.stringMatching(/line 5/) },
+      ])
       expect(writeSpy).not.toHaveBeenCalled()
     })
 

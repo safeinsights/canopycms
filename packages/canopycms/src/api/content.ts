@@ -23,7 +23,8 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
-import { validateMarkdownSafety } from '../validation/markdown-safety'
+import { findMarkdownSafetyIssues, splitByStored } from '../validation/markdown-safety'
+import type { MarkdownSafetyFinding } from '../validation/markdown-safety'
 import { collectReferenceIds } from '../validation/field-traversal'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import { entryLogicalPath, parseSlug, type LogicalPath, type Slug } from '../paths'
@@ -241,6 +242,18 @@ const storedReferenceSites = async (
   )
 }
 
+/** The policy's issues in the stored entry, which a save may keep. */
+const storedMarkdownSafetyIssues = async (
+  store: ContentStore,
+  collectionPath: LogicalPath,
+  slug: Slug,
+  fields: EntrySchema,
+): Promise<MarkdownSafetyFinding[]> => {
+  const doc = await store.read(collectionPath, slug, { resolveReferences: false })
+  const data = 'body' in doc ? mergeBodyIntoData(fields, doc.data, doc.body) : doc.data
+  return findMarkdownSafetyIssues(fields, doc.format, data)
+}
+
 const writeContentHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -359,7 +372,7 @@ const writeContentHandler = async (
       ? `An entry with slug "${slug}" already exists`
       : `An entry with slug "${slug}" already exists; an update must send the expectedVersion from its last read`
 
-  const danglingWarnings: EntryValidationIssue[] = []
+  const keptWarnings: EntryValidationIssue[] = []
   try {
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
@@ -418,10 +431,26 @@ const writeContentHandler = async (
       // Pure rules (shared with the editor). For md/mdx the body is validated
       // as the schema's isBody field.
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
-      const fieldErrors: EntryFieldError[] = [
-        ...validateEntryData(fields, dataForValidation),
-        ...validateMarkdownSafety(fields, body.format, dataForValidation),
-      ]
+      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+
+      // Code in markdown or MDX (validation/markdown-safety.ts). What the stored entry already
+      // held in the same field is kept with a warning, so an author is never stuck; anything this
+      // save adds, changes, copies or moves is refused.
+      const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation)
+      if (unsafe.length > 0) {
+        const stored = exists
+          ? await storedMarkdownSafetyIssues(store, schemaItem.logicalPath, slug, fields)
+          : []
+        const { refused, kept } = splitByStored(unsafe, stored)
+        fieldErrors.push(...refused)
+        for (const e of kept) {
+          keptWarnings.push({
+            level: 'warning',
+            fieldPath: e.fieldPath,
+            message: `holds code that runs when the page renders, kept because the saved entry already had it: ${e.message}. Ask a developer to move it into a component.`,
+          })
+        }
+      }
 
       // Reference existence (server-only: reads the content ID index). Editor
       // payloads may still carry resolved `{ id, ... }` objects from a prior
@@ -444,7 +473,7 @@ const writeContentHandler = async (
             : new Set<string>()
         for (const e of refResult.errors) {
           if (e.dangling && storedSites.has(referenceSite(e.fieldPath, e.id))) {
-            danglingWarnings.push({
+            keptWarnings.push({
               level: 'warning',
               fieldPath: e.fieldPath,
               message: `references a missing entry (${e.id}). It is kept as it was; repoint or clear it.`,
@@ -476,7 +505,7 @@ const writeContentHandler = async (
   // refuse the save (e.g. a body that would break the site's production build),
   // 'warning' issues are returned alongside the successful write.
   let validationWarnings: EntryValidationIssue[] | undefined =
-    danglingWarnings.length > 0 ? danglingWarnings : undefined
+    keptWarnings.length > 0 ? keptWarnings : undefined
   const validateEntry = ctx.services.config.validateEntry
   // Collapse resolved reference objects back to bare ID strings before persisting (the reference
   // validator above gets its own copy). The editor's GET resolves references by default, so form
