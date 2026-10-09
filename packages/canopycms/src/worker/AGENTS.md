@@ -41,6 +41,7 @@ lint and still break the layering above. Keep the direction by review.
   retries: `task-runner.ts`, `pushBranchToGitHub`'s rejection branches.
 - Sync-cycle order, upkeep ahead of the GitHub fetch: `git-sync.ts`'s top comment.
 - Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
+- The drain's rules: `cms-worker.ts`'s `stop()`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
   function (it is part of provisioning, so it stays there).
 - `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
@@ -60,8 +61,8 @@ lint and still break the layering above. Keep the direction by review.
   here inherits.
 - The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
   `canopycms-cdk/worker/index.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
-- github-auth's own invariants (fail-closed boot classification, mint-timeout bounds, never
-  caching a resolved token, never re-wrapping a mint rejection): `github-auth.ts`, at each rule.
+- github-auth's invariants (fail-closed boot, mint timeouts, no token caching, no re-wrapped
+  mint rejection): `github-auth.ts`, at each rule.
 
 ## `github-auth.ts`: the one cross-file rule
 

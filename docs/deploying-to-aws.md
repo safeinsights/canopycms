@@ -11,7 +11,7 @@ Editor browser
 CloudFront (cms.docs.example.org)
     │
     ▼
-Lambda (VPC, no internet)               EC2 Worker (t4g.nano spot)
+Lambda (VPC, no internet)               EC2 Worker (t4g.nano)
     │                                        │
     ├── JWT verification (networkless)       ├── git push/pull ↔ GitHub
     ├── User metadata (EFS cache)            ├── GitHub API (PRs)
@@ -454,7 +454,7 @@ publishes it to the CDK bootstrap assets repository, and points the Lambda at
 it as part of the change set. It also rolls the EC2 worker, because
 `CanopyCmsService` gives the worker Auto Scaling Group a rolling
 `UpdatePolicy`; without that, a changed worker bundle would sit unused in a
-launch template until the next spot interruption.
+launch template until something else replaced the instance.
 
 > **Do not add an ECR push plus `aws lambda update-function-code` alongside
 > it.** That builds the image twice and leaves the function's image URI out of
@@ -970,7 +970,7 @@ Lambda get their own log groups on the same convention.
   stack from colliding.
 
 - **Log streams**: one per instance id for the worker — a new stream appears
-  every time the spot worker is replaced (including by the rolling update
+  every time the worker instance is replaced (including by the rolling update
   described in [Redeploying updates the worker too](#redeploying-updates-the-worker-too)
   below). The Lambdas use their usual per-container-instance streams.
 - **Timestamps**: every worker line starts with an ISO-8601 UTC timestamp and a
@@ -983,56 +983,66 @@ Lambda get their own log groups on the same convention.
 - **Org tagging**: stack-wide tag aspects (`Tags.of(stack).add(...)`) reach every
   log group like any other CDK resource.
 
+## Worker capacity
+
+The worker is one on-demand `t4g.nano` (about $3 a month) unless
+`workerCapacity` says otherwise:
+
+```ts
+workerCapacity: { type: 'on-demand', instanceType: new ec2.InstanceType('t4g.micro') }
+workerCapacity: { type: 'spot' } // t4g.nano, t4g.micro or t4g.small, price-capacity-optimized
+```
+
+Spot costs about half as much but **can leave you with no worker**: with no spot
+capacity in either zone the group keeps retrying, `cdk deploy` still succeeds,
+and `/edit` answers 500 on a first deploy (nothing has created `remote.git`).
+Auto Scaling has no fallback from spot to on-demand; spreading across three
+sizes makes a shortage less likely, not impossible. Instance types must be
+Graviton (arm64).
+
 ## Redeploying updates the worker too
 
-The worker's Auto Scaling Group has an `UpdatePolicy` (`rollingUpdate` with
-`minInstancesInService: 0`, since the ASG's `minCapacity`/`maxCapacity` are
-both 1), so `cdk deploy` actually terminates and relaunches the EC2 instance
-whenever anything in its launch template changes — most commonly a new
-worker code bundle, but also an AMI refresh, instance-role change, or
-user-data edit. Without this, CloudFormation's default behavior for an ASG
-behind a changed launch template is to update the template resource and stop
-there: the running instance keeps its old user-data, and therefore the old
-worker bundle, until a spot interruption or a manual terminate happens to
-replace it — so a plain `cdk deploy` would silently ship every other change
-except the one to the worker.
+The worker's Auto Scaling Group has a rolling `UpdatePolicy` with
+`minInstancesInService: 0` (the group holds exactly one instance), so
+`cdk deploy` replaces the instance whenever its launch template changes: a new
+worker bundle (every canopycms upgrade, since the bundle carries the version),
+an AMI refresh, a role or user-data change. Without it, CloudFormation would
+update the template and leave the old worker running.
 
-Because `minInstancesInService` must be `0` here, every such deploy causes a
-short worker outage — replacement boot time, installing packages and mounting
-EFS, is typically 2-4 minutes. This is expected and safe:
+Because `minInstancesInService` must be `0` here, every such deploy leaves no
+worker while the replacement boots (installing packages and mounting EFS,
+typically about 2 minutes). This is expected and safe:
 
 - The task queue and branch workspaces live on EFS, not on the instance, so
   the replacement worker picks up exactly where the old one left off.
 - The Lambda's Save/Publish paths only enqueue task files onto EFS and never
   talk to the worker directly, so they queue up normally during the outage
   instead of failing.
-- A task that was actually being processed when the old instance was
-  terminated is recovered automatically: the worker re-checks
-  `.tasks/processing/` for stranded tasks on every task-queue poll cycle, not
-  only at its own boot, so a task orphaned by the termination is moved back to
-  `pending/` and retried once it is old enough (5 minutes by default).
+- **The old worker drains first.** A terminating lifecycle hook holds the
+  instance while the worker claims nothing new and finishes its push, pull
+  request or branch rebase. Work still running after 90 seconds (or a spot
+  notice's two minutes) is aborted, and an aborted task returns to `pending/`
+  without spending a retry. A hung worker delays termination by at most
+  `workerTerminationHeartbeat` (default 5 minutes). System health shows how the
+  last worker stopped.
+- A worker that died without draining leaves its task in `.tasks/processing/`,
+  which the next worker requeues once it is 5 minutes old.
+- The replacement waits for the worker lock on EFS, so two workers never run
+  at once.
 
-**The boot script fails fast on anything the worker needs.** A failure in a
-prerequisite step — package installs, the EFS mount, unpacking the worker
-bundle, starting the systemd service — shuts the instance down immediately so
-the ASG replaces it, which is the only automatic recovery this topology has and
-a deliberate choice over doing nothing: a half-booted instance passes the ASG's
-EC2-only health check indefinitely while doing nothing useful. That behavior is
-then explicitly turned off before the best-effort CloudWatch log-shipping setup,
-so a package-mirror hiccup while installing the logging agent cannot take down
-an otherwise-healthy worker and hand it straight back into the same outage on
-relaunch. Node installs from the OS package repository rather than a piped
-third-party script for the same reason: a routine unattended replacement should
-not depend on a third party being reachable just to boot.
+**The boot script fails fast on anything the worker needs.** A failed package
+install, EFS mount, bundle unpack or service start shuts the instance down so
+the ASG replaces it — the only automatic recovery here, since a half-booted
+instance passes the EC2-only health check forever. The best-effort CloudWatch
+agent setup runs after fail-fast is turned off, so a mirror hiccup there cannot
+take down a healthy worker. Node comes from the OS package repository, not a
+third-party script, so a replacement never depends on a third party to boot.
 
-There is deliberately no `cfn-signal`/readiness gate on this update: the
-worker's systemd unit is `Type=simple` with `Restart=always`, so
-`systemctl start` reports success the instant the process execs, regardless of
-whether it then crash-loops, and a real readiness signal would need to poll
-`worker-status.json` or `systemctl is-active` first. So to confirm a redeploy
-actually took, check the new instance's log stream (see
-[Worker observability](#worker-observability) above) rather than relying on
-`cdk deploy` exiting cleanly as proof.
+There is deliberately no `cfn-signal` readiness gate: the unit is `Type=simple`
+with `Restart=always`, so `systemctl start` succeeds the instant the process
+execs, crash-loop or not. To confirm a redeploy took, check the new instance's
+log stream (see [Worker observability](#worker-observability)), not
+`cdk deploy`'s exit code.
 
 ## Security Model
 

@@ -37,7 +37,7 @@ below this one are the August triage, kept as history.
 | 32 (`canopycms-next` under unbundled Node ESM) | the site keeps a vitest workaround; no file |
 | 47 | [skip-set-active-action-readme-condition.md](skip-set-active-action-readme-condition.md) |
 | 48 | [init-github-app-org-install-url.md](init-github-app-org-install-url.md) |
-| 49 | [worker-spot-only-capacity.md](worker-spot-only-capacity.md) |
+| 49 | [worker-spot-only-capacity.md](resolved/worker-spot-only-capacity.md) |
 | 51 (who saved each edit; the submitter half shipped) | [submission-editor-tracking.md](submission-editor-tracking.md) |
 | 53 (deployed timing breakdown still owed) | [editor-api-latency.md](editor-api-latency.md) |
 | 66 | [editor-renders-inside-root-layout-docs.md](editor-renders-inside-root-layout-docs.md) |
