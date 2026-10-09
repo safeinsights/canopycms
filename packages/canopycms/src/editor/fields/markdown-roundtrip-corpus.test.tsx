@@ -73,9 +73,6 @@ const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
 /** Bodies whose export means something else, each with its task. Their saves are not checked. */
 const KNOWN_EXPORT_DIFFERENCES: Record<string, string> = {
   [`${FIXTURES}/adjacent-lists.md`]: `${TASKS}/rich-text-merges-adjacent-lists.md`,
-  [`${FIXTURES}/ordered-list-start.md`]: `${TASKS}/rich-text-ordered-list-start-reset.md`,
-  [`${FIXTURES}/strong-link.md`]: `${TASKS}/rich-text-inline-formatting-split.md`,
-  [`${FIXTURES}/code-span-url.md`]: `${TASKS}/rich-text-autolinks-code-spans.md`,
 }
 
 interface CorpusBody {

@@ -6,3 +6,13 @@ Steps one and two are on the previous page.
 
 3. Pick a branch.
 4. Save the entry.
+
+A list can start at zero:
+
+0. Open the editor.
+1. Choose an entry.
+
+A list nested in a list item can start anywhere too:
+
+- 5. Review the change.
+  6. Publish it.
