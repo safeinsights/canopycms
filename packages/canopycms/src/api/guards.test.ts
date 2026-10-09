@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
+import { loadBranchContext } from '../branch-metadata'
 import { executeGuards } from './guards'
 import type { GuardId } from './guards'
 import { createMockApiContext, createMockBranchContext, createMockUser } from '../test-utils'
@@ -438,11 +444,10 @@ describe('executeGuards', () => {
       },
     )
 
-    // Fail-closed regression guard. branch.json is parsed with a bare cast and
-    // no schema (branch-metadata.ts), so a hand-repaired or partially-written
-    // file yields no status at runtime -- exactly the state the corrupt-metadata
-    // quarantine exists for. If this ever flips to allowing the write, a branch
-    // whose review state is unknown becomes editable.
+    // Fail-closed regression guard for a context with no status. From disk,
+    // such a branch.json is refused as corrupt (the describe block at the end
+    // of this file). If this ever flips to allowing the write, a branch whose
+    // review state is unknown becomes editable.
     it('blocks a branch whose status is missing at runtime (fails closed)', async () => {
       const bc = createMockBranchContext({ branchName: 'feature/x' })
       // Simulate damaged metadata: the type says status is required, the file disagrees.
@@ -787,4 +792,75 @@ describe('executeGuards', () => {
       }
     })
   })
+})
+
+// ---------------------------------------------------------------------------
+// Corrupt branch.json, read from a real file
+// ---------------------------------------------------------------------------
+
+describe('guards over a corrupt branch.json on disk', () => {
+  let workspaceRoot: string
+
+  beforeEach(async () => {
+    workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-guards-corrupt-'))
+    vi.stubEnv('CANOPYCMS_WORKSPACE_ROOT', workspaceRoot)
+  })
+
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    await fs.rm(workspaceRoot, { recursive: true, force: true })
+  })
+
+  const writeBranchJson = async (raw: string) => {
+    const metaDir = path.join(workspaceRoot, 'content-branches', 'feature-x', '.canopy-meta')
+    await fs.mkdir(metaDir, { recursive: true })
+    await fs.writeFile(path.join(metaDir, 'branch.json'), raw, 'utf8')
+  }
+
+  const realContext = () =>
+    createMockApiContext({
+      services: { config: { ...baseConfig, mode: 'prod', defaultBaseBranch: 'main' } },
+      getBranchContext: (branchName: string) => loadBranchContext({ branchName, mode: 'prod' }),
+    })
+
+  const corruptFiles = [
+    ['invalid JSON', '{ "branch": '],
+    [
+      'no status',
+      JSON.stringify({ schemaVersion: 1, version: 3, branch: { name: 'feature-x', access: {} } }),
+    ],
+    [
+      'an unknown status',
+      JSON.stringify({
+        schemaVersion: 1,
+        version: 3,
+        branch: { name: 'feature-x', status: 'open', access: {} },
+      }),
+    ],
+    ['no branch object', JSON.stringify({ schemaVersion: 1, version: 3, committed: true })],
+  ] as const
+
+  const branchGuards = [
+    'branch',
+    'branchAccess',
+    'branchAccessWithSchema',
+    'writableBranch',
+    'submittableBranch',
+  ] as const
+
+  for (const [label, raw] of corruptFiles) {
+    it.each(branchGuards)(`%s denies a branch whose branch.json has ${label}`, async (guard) => {
+      await writeBranchJson(raw)
+
+      const result = await executeGuards([guard] as const, realContext(), makeReq('admin'), {
+        branch: 'feature-x',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response.status).toBe(500)
+        expect(result.response.error).toBe(BRANCH_METADATA_CORRUPT_MESSAGE)
+      }
+    })
+  }
 })

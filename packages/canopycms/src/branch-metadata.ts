@@ -82,18 +82,15 @@ export class BranchMetadataFileManager {
     return new BranchMetadataFileManager(branchRoot, baseRoot, options)
   }
 
+  /**
+   * The file the save cycle merges over. A corrupt one throws
+   * {@link BranchMetadataCorruptError} rather than reading as absent, so a save
+   * never lays defaults (status 'editing', no ACL) over a branch whose real
+   * state is unknown; repair-metadata archives the file before it saves.
+   */
   private async load(): Promise<{ meta: BranchMetadataFile | null; version: number | null }> {
-    try {
-      const raw = await fs.readFile(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw) as BranchMetadataFile
-      const version = parsed.version ?? 0
-      return { meta: parsed, version }
-    } catch (err: unknown) {
-      if (isNotFoundError(err)) {
-        return { meta: null, version: null }
-      }
-      throw err
-    }
+    const meta = await readBranchMetadataFile(this.branchRoot)
+    return { meta, version: meta?.version ?? null }
   }
 
   /**
@@ -221,6 +218,8 @@ function mergeBranchMetadata(
   }
 
   return {
+    // Envelope keys this code does not know survive, as unknown branch keys do below.
+    ...existing,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     version: version ?? 0,
     branch: {

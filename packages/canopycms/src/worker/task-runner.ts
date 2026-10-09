@@ -488,8 +488,8 @@ export async function executeTask(
       }
       // A branch that reused the name after this task was queued (a requeued task can run long
       // after) owns the GitHub branch once it recorded a different PR or GitHub push. Without
-      // either, the ref is taken to be the deleted branch's. Unparseable metadata keeps the
-      // GitHub branch; other read errors retry.
+      // either, the ref is taken to be the deleted branch's. Corrupt metadata (no branch record
+      // included) keeps the GitHub branch; other read errors retry.
       const deletedPr =
         typeof payload.pullRequestNumber === 'number' ? payload.pullRequestNumber : undefined
       const deletedPushedAt =
@@ -502,10 +502,7 @@ export async function executeTask(
         if (!(err instanceof BranchMetadataCorruptError)) throw err
         unreadable = true
       }
-      if (
-        unreadable ||
-        (live !== null && (typeof live.branch !== 'object' || live.branch === null))
-      ) {
+      if (unreadable) {
         workerLog(
           `Not deleting GitHub branch ${branch}: the branch now under that name is unreadable`,
         )
