@@ -256,7 +256,7 @@ describe('useReferenceResolution', () => {
     expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2) // no new call
   })
 
-  it('keeps a result that settles after the draft moved on, without asking again', async () => {
+  it('keeps a result that settles after the draft moved on', async () => {
     // Each request parks on its own hand-held resolver, keyed by the first id it asks for.
     const resolvers: Record<string, (v: ResolveResult) => void> = {}
     mockClient.content.resolveReferences.mockImplementation(
@@ -275,8 +275,7 @@ describe('useReferenceResolution', () => {
       await vi.advanceTimersByTimeAsync(300)
     })
 
-    // The author changes, then changes back, while the first request is in flight: the second
-    // asks only for the new id, and the third asks for nothing.
+    // The author changes, then changes back, while the first request is in flight.
     rerender({ value: { author: 'idBAAAAAAAAA' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
@@ -288,6 +287,7 @@ describe('useReferenceResolution', () => {
     expect(mockClient.content.resolveReferences.mock.calls.map(([, body]) => body.ids)).toEqual([
       ['idAAAAAAAAAA'],
       ['idBAAAAAAAAA'],
+      ['idAAAAAAAAAA'],
     ])
 
     await act(async () => {
@@ -352,46 +352,37 @@ describe('useReferenceResolution', () => {
     expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
   })
 
-  it('retries a failed request at once when an edit was waiting on it', async () => {
-    const consoleSpy = mockConsole()
-    try {
-      let fail: (error: Error) => void = () => {}
-      mockClient.content.resolveReferences
-        .mockImplementationOnce(
-          () =>
-            new Promise<ResolveResult>((_resolve, reject) => {
-              fail = reject
-            }),
-        )
-        .mockResolvedValue({
-          ok: true,
-          status: 200,
-          data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
-        } satisfies ResolveResult)
+  it('resolves on returning to a branch while its request is still in flight', async () => {
+    const pending: Array<(v: ResolveResult) => void> = []
+    mockClient.content.resolveReferences.mockImplementation(
+      () =>
+        new Promise<ResolveResult>((resolve) => {
+          pending.push(resolve)
+        }),
+    )
+    const value = { author: 'idAAAAAAAAAA' }
 
-      const { result, rerender } = renderHook(
-        (props: { value: Record<string, unknown> }) =>
-          useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
-        { initialProps: { value: { author: 'idAAAAAAAAAA' } as Record<string, unknown> } },
-      )
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(300)
-      })
-      rerender({ value: { author: 'idAAAAAAAAAA', title: 'typed' } })
-      await act(async () => {
-        fail(new Error('network down'))
-        await vi.advanceTimersByTimeAsync(0)
-      })
-      // No edit follows: the retry is the failure's own doing.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(300)
-      })
+    const { result, rerender } = renderHook(
+      (props: { branch: string }) =>
+        useReferenceResolution({ value, fields: schema, branch: props.branch }),
+      { initialProps: { branch: 'main' } },
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    rerender({ branch: 'feature' })
+    rerender({ branch: 'main' })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    await act(async () => {
+      for (const resolve of pending) {
+        resolve({ ok: true, status: 200, data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } } })
+      }
+      await vi.advanceTimersByTimeAsync(0)
+    })
 
-      expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2)
-      expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
-    } finally {
-      consoleSpy.restore()
-    }
+    expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
   })
 
   it('asks again for every target after a branch switch and back', async () => {

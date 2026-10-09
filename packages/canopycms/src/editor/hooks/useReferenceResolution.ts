@@ -45,11 +45,6 @@ export function useReferenceResolution({
   const cacheRef = useRef<ReferenceCache>(new Map())
   // The cache is a ref, so a fetch that fills it bumps this to recompute the memo below.
   const [cacheVersion, setCacheVersion] = useState(0)
-  // Ids already requested, so an edit while a request is in flight does not repeat it.
-  const inFlightRef = useRef(new Set<string>())
-  // An edit skipped in-flight ids, so a failed request retries instead of awaiting an edit.
-  const skippedRef = useRef(false)
-  const [retryTick, setRetryTick] = useState(0)
 
   const { resolvedValue, loadingState } = useMemo(
     () => applyReferenceCache(fields, value, branch, cacheRef.current),
@@ -66,36 +61,25 @@ export function useReferenceResolution({
     expireReferences(cacheRef.current)
   }, [entryKey])
 
+  // Asks for all the cache lacks, even ids still in flight; the next edit retries a failure.
   useEffect(() => {
     const cache = cacheRef.current
-    const inFlight = inFlightRef.current
-    const needed = idsToFetch(fields, value, branch, cache, Date.now())
-    const ids = needed.filter((id) => !inFlight.has(`${branch}:${id}`))
-    if (ids.length < needed.length) skippedRef.current = true
+    const ids = idsToFetch(fields, value, branch, cache, Date.now())
     if (ids.length === 0) return
 
     const timeout = setTimeout(async () => {
-      const keys = ids.map((id) => `${branch}:${id}`)
-      keys.forEach((key) => inFlight.add(key))
       try {
         const found = await fetchReferences(ids, branch, apiClient ?? undefined)
         // Keyed by branch and id, a result stays valid however the draft changed meanwhile.
         storeReferences(cache, branch, found, Date.now())
-        skippedRef.current = false
         setCacheVersion((prev) => prev + 1)
       } catch (error) {
         console.error('Reference resolution failed:', error)
-        if (skippedRef.current) {
-          skippedRef.current = false
-          setRetryTick((prev) => prev + 1)
-        }
-      } finally {
-        keys.forEach((key) => inFlight.delete(key))
       }
     }, 300)
 
     return () => clearTimeout(timeout)
-  }, [value, fields, branch, apiClient, retryTick])
+  }, [value, fields, branch, apiClient])
 
   return { resolvedValue, loadingState }
 }

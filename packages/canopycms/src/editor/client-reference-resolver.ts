@@ -9,9 +9,6 @@ import { traverseFields } from '../validation/field-traversal'
  * Resolves the reference fields of a draft for live preview, at every position the server's
  * `ContentStore.resolveReferencesInData` resolves them: top level, inline groups, objects,
  * object lists and blocks, nested to any depth. `useReferenceResolution` drives it.
- *
- * Plain functions rather than a hook: the fetch runs inside a debounced `setTimeout`, where a
- * hook cannot be called, so the caller passes in the context's API client.
  */
 
 type FormValue = Record<string, unknown>
