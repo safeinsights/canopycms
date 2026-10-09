@@ -25,7 +25,7 @@ import { notifications } from '@mantine/notifications'
 
 type TreeController = ReturnType<typeof useTree>
 
-import type { ContentFormat, EntrySchema } from '../config'
+import type { ContentFormat, EntrySchema, EntryTypeUnavailable } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
@@ -55,6 +55,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
@@ -63,6 +64,8 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
+import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
+import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -84,6 +87,8 @@ export interface EditorEntry {
   entryType?: string // Entry type name (e.g. 'post', 'settings') — used when saving to collections with multiple types
   type?: 'entry'
   canEdit?: boolean
+  /** Set when the entry's type has no schema in the running code; `schema` is then empty. */
+  unavailable?: EntryTypeUnavailable
 }
 
 /**
@@ -96,6 +101,8 @@ export interface EditorEntryType {
   format: ContentFormat
   default?: boolean
   maxItems?: number
+  /** Set when the type has no schema in the running code; it cannot be created or edited. */
+  unavailable?: EntryTypeUnavailable
 }
 
 export interface EditorCollection {
@@ -329,6 +336,7 @@ const EditorContent: React.FC<EditorProps> = ({
         format: et.format,
         default: et.default,
         maxItems: et.maxItems,
+        unavailable: et.unavailable,
       })) ?? [],
     [createModalCollection],
   )
@@ -468,6 +476,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // that same id. Qualifying the key lets both loads coexist; the branch check
   // at settle time decides which one is allowed to write.
   const loadingEntryIdsRef = useRef<Set<string>>(new Set())
+  // Entries (keyed like `loadingEntryIdsRef`) whose read the API refused as SCHEMA_UNAVAILABLE.
+  // The ref stops the load effect retrying them; the state re-renders the notice.
+  const schemaUnavailableRef = useRef<Set<string>>(new Set())
+  const [schemaUnavailableKeys, setSchemaUnavailableKeys] = useState<ReadonlySet<string>>(new Set())
   // The contentId this effect is CURRENTLY targeting, kept in sync every
   // render (not in an effect -- it must be current by the time an in-flight
   // load's `finally`/`catch` runs, which can be after several re-renders).
@@ -495,6 +507,8 @@ const EditorContent: React.FC<EditorProps> = ({
     const inFlightKey = `${requestBranch}:${contentId ?? ''}`
     const load = async () => {
       if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
+      // An unavailable type has no schema to read it against; the server would refuse the read.
+      if (currentEntry.unavailable || schemaUnavailableRef.current.has(inFlightKey)) return
       // Guard against overlapping renders re-firing the same in-flight load
       // (e.g. `currentEntry` getting a new object reference from an entries
       // refresh while the fetch below is still pending).
@@ -536,6 +550,11 @@ const EditorContent: React.FC<EditorProps> = ({
       }
     }
     load().catch((err) => {
+      if (err instanceof EntrySchemaUnavailableError) {
+        schemaUnavailableRef.current.add(inFlightKey)
+        setSchemaUnavailableKeys((prev) => new Set(prev).add(inFlightKey))
+        return
+      }
       console.error(err)
       // Same staleness guard as above: don't tell the user an entry failed
       // to load when they've already navigated to a different one (or to a
@@ -841,6 +860,11 @@ const EditorContent: React.FC<EditorProps> = ({
     const build = (node: EditorCollection): EntryNavCollection => {
       const entries = grouped.get(node.path) ?? []
       const children = node.children?.map((child) => build(child)) ?? []
+      const unavailableRefs = unavailableSchemaRefs(node.entryTypes)
+      // No entry can be created where every entry type is unavailable.
+      const allUnavailable =
+        !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
+      const canAddEntry = node.type !== 'entry' && !allUnavailable
 
       return {
         path: node.path,
@@ -853,10 +877,10 @@ const EditorContent: React.FC<EditorProps> = ({
         conflictNotice: !!(
           node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)
         ),
-        onAdd:
-          node.type !== 'entry'
-            ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
-            : undefined,
+        unavailableSchemaRefs: unavailableRefs.length > 0 ? unavailableRefs : undefined,
+        onAdd: canAddEntry
+          ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
+          : undefined,
         onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
         onAddSubCollection:
           node.type === 'collection'
@@ -1098,6 +1122,13 @@ const EditorContent: React.FC<EditorProps> = ({
                             ? 'Loading content…'
                             : 'Select an item to start editing.'}
                       </CenteredMessage>
+                    ) : currentEntry.unavailable ||
+                      schemaUnavailableKeys.has(`${branchNameState}:${currentEntry.contentId}`) ? (
+                      <UnavailableEntryNotice
+                        schemaRefs={
+                          currentEntry.unavailable ? [currentEntry.unavailable.schemaRef] : []
+                        }
+                      />
                     ) : currentEntry.canEdit === false ? (
                       <NoEditPermissionNotice entryPath={currentEntry.path} />
                     ) : schema.length > 0 && effectiveValue ? (

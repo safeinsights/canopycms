@@ -1,3 +1,4 @@
+import type React from 'react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
@@ -144,5 +145,85 @@ describe('EntryCreateModal - existing-slug pre-check', () => {
 
     await user.click(createButton())
     expect(onCreate).toHaveBeenCalledWith('free-slug', 'post')
+  })
+})
+
+describe('EntryCreateModal - unavailable entry types', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  const unavailable = {
+    reason: 'unknown-schema' as const,
+    schemaRef: 'widgetSchema',
+    metaFile: 'content/widgets/.collection.json',
+  }
+
+  const createButton = () => screen.getByTestId('create-entry-submit') as HTMLButtonElement
+
+  const renderModal = (
+    entryTypes: EntryType[],
+    extra: Partial<React.ComponentProps<typeof EntryCreateModal>> = {},
+  ) => {
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MantineProvider>
+        <EntryCreateModal
+          isOpen
+          collectionLabel="Widgets"
+          entryTypes={entryTypes}
+          onCreate={onCreate}
+          onClose={vi.fn()}
+          {...extra}
+        />
+      </MantineProvider>,
+    )
+    return { onCreate }
+  }
+
+  it('does not offer an unavailable type, and never defaults to one', async () => {
+    const user = userEvent.setup()
+    // The unavailable type comes first and is flagged default: the worst case for a default pick.
+    const { onCreate } = renderModal([
+      { name: 'widget', format: 'json', default: true, unavailable },
+      { name: 'note', label: 'Note', format: 'md' },
+    ])
+
+    expect(screen.queryByText('widget')).toBeNull()
+    expect(screen.getByText('Note')).toBeTruthy()
+    await user.click(createButton())
+    expect(onCreate).toHaveBeenCalledWith('untitled', 'note')
+  })
+
+  it('ignores a pre-selected type that is unavailable', async () => {
+    const user = userEvent.setup()
+    const { onCreate } = renderModal(
+      [
+        { name: 'widget', format: 'json', unavailable },
+        { name: 'note', format: 'md' },
+        { name: 'memo', format: 'md' },
+      ],
+      { selectedEntryTypeName: 'widget' },
+    )
+
+    await user.click(createButton())
+    expect(onCreate).toHaveBeenCalledWith('untitled', 'note')
+  })
+
+  it('makes creating impossible when every type is unavailable, and says why', async () => {
+    const user = userEvent.setup()
+    const { onCreate } = renderModal([{ name: 'widget', format: 'json', unavailable }])
+
+    expect(screen.getByTestId('no-creatable-types').textContent).toContain('widgetSchema')
+    expect(createButton().disabled).toBe(true)
+    await user.click(createButton())
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('shows no unavailable-type message when every type is available', () => {
+    renderModal([{ name: 'note', format: 'md' }])
+
+    expect(screen.queryByTestId('no-creatable-types')).toBeNull()
+    expect(createButton().disabled).toBe(false)
   })
 })

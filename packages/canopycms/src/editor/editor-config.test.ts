@@ -360,4 +360,35 @@ describe('editor-config helpers', () => {
     const empty = collections[0].children![0]
     expect(empty.entryTypes).toBeUndefined()
   })
+
+  it('carries an unavailable entry type onto the collection, leaving healthy types bare', () => {
+    const unavailable = {
+      reason: 'unknown-schema' as const,
+      schemaRef: 'widgetSchema',
+      metaFile: 'content/widgets/.collection.json',
+    }
+    const flat = flattenSchema(
+      {
+        collections: [
+          {
+            name: 'widgets',
+            path: 'widgets',
+            entries: [
+              { name: 'note', format: 'md' as const, schema: [] },
+              { name: 'widget', format: 'json' as const, schema: [], unavailable },
+            ],
+          },
+        ],
+      },
+      'content',
+    )
+    const widgets = buildEditorCollections(flat)[0].children!.find(
+      (c) => c.path === 'content/widgets',
+    )
+
+    expect(widgets?.entryTypes?.find((et) => et.name === 'widget')?.unavailable).toEqual(
+      unavailable,
+    )
+    expect(widgets?.entryTypes?.find((et) => et.name === 'note')).not.toHaveProperty('unavailable')
+  })
 })

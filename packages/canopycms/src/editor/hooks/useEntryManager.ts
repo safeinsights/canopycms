@@ -10,6 +10,7 @@ import { isDataOnlyFormat } from '../../utils/format'
 import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
+import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { entriesKey, fetchEntriesAndSchema } from './useEntriesData'
 
 // Re-exported so existing imports of `listAllEntries` from this module keep
@@ -32,6 +33,17 @@ export class SaveApiError extends Error {
   ) {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
+  }
+}
+
+/**
+ * Thrown by a read for editing when the API answers `SCHEMA_UNAVAILABLE`: the entry's type
+ * names a schema the running code lacks, so the entry cannot be opened until that changes.
+ */
+export class EntrySchemaUnavailableError extends Error {
+  constructor(serverMessage?: string) {
+    super(serverMessage || 'Entry type unavailable')
+    this.name = 'EntrySchemaUnavailableError'
   }
 }
 
@@ -300,8 +312,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       branch: requestBranch,
       path,
     })
-    if (!result.ok)
+    if (!result.ok) {
+      if (result.code === SCHEMA_UNAVAILABLE_CODE)
+        throw new EntrySchemaUnavailableError(result.error)
       throw new Error(`Load failed: ${result.status}${result.error ? ` — ${result.error}` : ''}`)
+    }
     return result.data
   }
 

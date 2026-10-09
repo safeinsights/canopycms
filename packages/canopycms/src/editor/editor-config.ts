@@ -38,6 +38,7 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
           format: et.format,
           default: et.default,
           maxItems: et.maxItems,
+          ...(et.unavailable && { unavailable: et.unavailable }),
         }))
         results.push({
           path: item.logicalPath,

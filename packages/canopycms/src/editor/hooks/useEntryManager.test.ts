@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager, listAllEntries, SaveApiError } from './useEntryManager'
+import {
+  useEntryManager,
+  listAllEntries,
+  SaveApiError,
+  EntrySchemaUnavailableError,
+} from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import type { ContentId } from '../../paths/types'
@@ -253,6 +258,23 @@ describe('useEntryManager', () => {
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toThrow(
       'Load failed: 503 — CMS worker not ready',
+    )
+  })
+
+  it('throws EntrySchemaUnavailableError, not a generic load failure, on a SCHEMA_UNAVAILABLE refusal', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'Entry type widget is unavailable',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await expect(result.current.loadEntry(mockEntry)).rejects.toBeInstanceOf(
+      EntrySchemaUnavailableError,
     )
   })
 

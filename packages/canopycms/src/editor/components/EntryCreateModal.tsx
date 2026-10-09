@@ -6,7 +6,10 @@ import { useState, useEffect, useRef } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text, Select } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
+import type { EntryTypeUnavailable } from '../../config'
 import { parseSlug } from '../../paths/validation'
+import { unavailableSchemaRefs } from '../unavailable-entry-type'
+import { UnavailableTypeMessage } from './UnavailableTypeMessage'
 
 /** Slug the form is seeded with each time the modal opens. */
 const DEFAULT_SLUG = 'untitled'
@@ -17,6 +20,8 @@ export interface EntryType {
   format: 'json' | 'md' | 'mdx' | 'yaml'
   default?: boolean
   maxItems?: number
+  /** An unavailable type is never offered: it has no schema to create an entry against. */
+  unavailable?: EntryTypeUnavailable
 }
 
 export interface EntryCreateModalProps {
@@ -24,7 +29,7 @@ export interface EntryCreateModalProps {
   isOpen: boolean
   /** Collection name for display */
   collectionLabel: string
-  /** Available entry types (if multiple, show selector) */
+  /** The collection's entry types (if more than one is available, show selector) */
   entryTypes: EntryType[]
   /** Pre-selected entry type (if specified) */
   selectedEntryTypeName?: string
@@ -49,7 +54,7 @@ export interface EntryCreateModalProps {
 export function EntryCreateModal({
   isOpen,
   collectionLabel,
-  entryTypes,
+  entryTypes: allEntryTypes,
   selectedEntryTypeName,
   onCreate,
   onClose,
@@ -57,8 +62,16 @@ export function EntryCreateModal({
   error = null,
   existingSlugs,
 }: EntryCreateModalProps) {
+  const entryTypes = allEntryTypes.filter((et) => !et.unavailable)
+  const skippedSchemaRefs = unavailableSchemaRefs(allEntryTypes)
+  // Only when nothing is left to create: a collection with some usable types shows them alone.
+  const nothingToCreate = entryTypes.length === 0 && skippedSchemaRefs.length > 0
+
   const getDefaultEntryTypeName = () => {
-    if (selectedEntryTypeName) return selectedEntryTypeName
+    const selectedIsUnavailable = allEntryTypes.some(
+      (et) => et.name === selectedEntryTypeName && et.unavailable,
+    )
+    if (selectedEntryTypeName && !selectedIsUnavailable) return selectedEntryTypeName
     if (entryTypes.length === 1) return entryTypes[0].name
     const defaultType = entryTypes.find((et) => et.default)
     return defaultType?.name || entryTypes[0]?.name || ''
@@ -159,6 +172,16 @@ export function EntryCreateModal({
         <Text size="sm" c="dimmed">
           Creating in: {collectionLabel}
         </Text>
+
+        {nothingToCreate && (
+          <Alert
+            color="yellow"
+            icon={<IconAlertCircle size={16} />}
+            data-testid="no-creatable-types"
+          >
+            <UnavailableTypeMessage schemaRefs={skippedSchemaRefs} />
+          </Alert>
+        )}
 
         {entryTypes.length > 1 && (
           <Select

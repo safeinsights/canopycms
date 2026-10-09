@@ -22,6 +22,7 @@ import {
 } from '@mantine/core'
 import {
   IconArrowDown,
+  IconAlertTriangle,
   IconArrowUp,
   IconDots,
   IconEdit,
@@ -31,6 +32,7 @@ import {
 } from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
+import { UnavailableTypeMessage } from './components/UnavailableTypeMessage'
 
 type TreeController = ReturnType<typeof useTree>
 
@@ -54,6 +56,8 @@ export interface EntryNavCollection {
   children?: EntryNavCollection[]
   /** True when this collection's .collection.json conflicted during rebase */
   conflictNotice?: boolean
+  /** Registry keys of this collection's unavailable entry types; non-empty shows the message once. */
+  unavailableSchemaRefs?: readonly string[]
   onAdd?: () => void
   onEdit?: () => void
   onAddSubCollection?: () => void
@@ -252,6 +256,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             type: col.type,
             collectionPath: col.path,
             conflictNotice: col.conflictNotice,
+            unavailableSchemaRefs: col.unavailableSchemaRefs,
             onAdd: col.onAdd,
             onEdit: col.onEdit,
             onAddSubCollection: col.onAddSubCollection,
@@ -392,6 +397,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const isCollection = node.nodeProps?.isCollection as boolean | undefined
     const isEntry = node.nodeProps?.isEntry as boolean | undefined
     const conflictNotice = node.nodeProps?.conflictNotice as boolean | undefined
+    const unavailableSchemaRefs = node.nodeProps?.unavailableSchemaRefs as
+      | readonly string[]
+      | undefined
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
 
@@ -633,6 +641,22 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             )}
           </Group>
         </Group>
+        {isCollection && unavailableSchemaRefs && unavailableSchemaRefs.length > 0 && (
+          <Group
+            gap={6}
+            wrap="nowrap"
+            align="flex-start"
+            mt={4}
+            data-testid="unavailable-type-message"
+          >
+            <Box c="orange.8" style={{ display: 'flex', flexShrink: 0, paddingTop: 2 }}>
+              <IconAlertTriangle size={14} aria-hidden />
+            </Box>
+            <Text size="xs" c="orange.8">
+              <UnavailableTypeMessage schemaRefs={unavailableSchemaRefs} />
+            </Text>
+          </Group>
+        )}
       </Box>
     )
   }

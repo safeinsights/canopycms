@@ -285,6 +285,39 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('unavailable entry types', () => {
+    const widgets = (extra: Partial<EntryNavCollection> = {}): EntryNavCollection => ({
+      path: unsafeAsLogicalPath('widgets'),
+      label: 'Widgets',
+      type: 'collection',
+      entries: [{ path: unsafeAsLogicalPath('widgets/first'), label: 'First' }],
+      ...extra,
+    })
+
+    it('shows the shared message once for a collection that has unavailable entry types', () => {
+      renderEntryNavigator({
+        collections: [widgets({ unavailableSchemaRefs: ['widgetSchema', 'gadgetSchema'] })],
+      })
+
+      const messages = screen.getAllByTestId('unavailable-type-message')
+      expect(messages).toHaveLength(1)
+      expect(messages[0].textContent).toBe(
+        "This section uses a content type this editor version doesn't know yet (widgetSchema, gadgetSchema). It usually appears after the editor finishes updating; reload in a few minutes.",
+      )
+    })
+
+    it('renders a collection without unavailable types with no message', () => {
+      renderEntryNavigator({
+        collections: [
+          widgets(),
+          widgets({ path: unsafeAsLogicalPath('other'), unavailableSchemaRefs: [] }),
+        ],
+      })
+
+      expect(screen.queryByTestId('unavailable-type-message')).toBeNull()
+    })
+  })
+
   describe('onAdd in menu', () => {
     it('shows Add Entry in collection menu when onAdd is provided', async () => {
       const user = userEvent.setup()
