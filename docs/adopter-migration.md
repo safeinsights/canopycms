@@ -40,6 +40,13 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
+
+**What changed.** Submit answers 400 when a branch's saved content matches its base.
+`BranchMetadata` gains optional `submittedAt` and `pushedToGitHubAt`.
+
+**To adopt.** Scripts calling submit: save a change first, or handle the 400.
+
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
 **What changed.** When synced content names an entry schema the running code lacks, only that

@@ -37,6 +37,18 @@ export interface BranchMetadata {
   baseBranch?: string
   pullRequestUrl?: string
   pullRequestNumber?: number
+  /**
+   * ISO timestamp of the branch's latest submit. A queued PR task carries it, so the worker's
+   * failure handling acts only on the submit that queued it.
+   */
+  submittedAt?: string
+  /**
+   * ISO timestamp of the CMS's latest push of this branch to GitHub: a worker push GitHub
+   * accepted, or a direct-path submit. Branch delete takes it as
+   * proof that a same-named GitHub branch is this branch's, since a submit whose PR GitHub refused
+   * leaves no PR number. Absent on branches the CMS never pushed there.
+   */
+  pushedToGitHubAt?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
   /** Whether this branch has unresolved merge conflicts with the base branch */
@@ -78,12 +90,11 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
-   * Short, sanitized reason the worker's last GitHub sync task failed permanently,
-   * set alongside `syncStatus: 'sync-failed'` by
-   * CmsWorker.updateBranchMetadataOnFailure -- e.g. a non-fast-forward push
-   * rejection naming the branch. Absent until a task has failed permanently, and
-   * reset to undefined by the next successful sync task, so a stale reason never
-   * survives a later successful push.
+   * Short, sanitized reason the last GitHub sync failed, set alongside
+   * `syncStatus: 'sync-failed'` by the worker's updateBranchMetadataOnFailure or a
+   * direct-path submit -- e.g. a non-fast-forward push rejection naming the branch.
+   * Shown on the branch's row in the editor. Reset to undefined by the next submit
+   * and the next successful sync task, so a stale reason never outlives it.
    */
   syncFailureReason?: string
 }

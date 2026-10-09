@@ -188,3 +188,21 @@ export async function createApiClient(options: ApiClientOptions) {
 }
 
 export type ApiClient = ReturnType<typeof createApiClient>
+
+/**
+ * Save one BLOG_SCHEMA post on `branchSlug`, so the branch has something to submit: submit
+ * refuses a branch whose saved content matches its base.
+ */
+export async function saveSamplePost(
+  client: Awaited<ApiClient>,
+  branchSlug: string,
+): Promise<void> {
+  const res = await client.put(`/api/canopycms/${branchSlug}/content/posts/sample-post`, {
+    collection: 'content/posts',
+    slug: 'sample-post',
+    format: 'mdx',
+    data: { title: 'Sample Post', author: 'Test Editor', date: '2024-01-01', tags: ['test'] },
+    body: 'Sample body',
+  })
+  if (res.status !== 200) throw new Error(`saveSamplePost: save returned ${res.status}`)
+}

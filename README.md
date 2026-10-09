@@ -1759,7 +1759,7 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 **Switching branches:** click the branch selector and choose from the available branches. The base branch is marked with a "Protected" badge — it cannot be submitted for review, and in production it cannot be edited directly. The selector and Branches panel also show `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
 
-**Deleting a branch** also deletes its GitHub branch if it has a pull request, which closes that PR if open.
+**Deleting a branch** also deletes its GitHub branch if the CMS pushed it there, which closes any open PR.
 
 ### Editing Content
 
@@ -1767,7 +1767,7 @@ Browse collections in the sidebar and click an entry to open it; create new entr
 
 ### Submitting for Review
 
-When your changes are ready, click "Submit for Review" in the header: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. A PR closed without merging leaves the branch showing a "PR closed" badge, still submitted, until an admin follows up.
+When your changes are ready, click "Submit for Review" in the header: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
 
 **A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw" in the branch selector or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. Someone with review access clicking "Request changes" does the same thing, and signals that revisions are needed.
 

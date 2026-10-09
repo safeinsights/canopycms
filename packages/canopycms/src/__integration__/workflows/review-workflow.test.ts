@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient } from '../test-utils/api-client'
+import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
 import type { ApiResponse } from '../../api/types'
@@ -164,6 +164,8 @@ describe('Review Workflow Integration', () => {
       title: 'Multi Reviewer Test',
     })
 
+    await saveSamplePost(editorClient, 'feature-multi-reviewer')
+
     await editorClient.post('/api/canopycms/feature-multi-reviewer/submit', {
       message: 'Ready for review',
     })
@@ -199,6 +201,8 @@ describe('Review Workflow Integration', () => {
       title: 'Permission Test',
     })
 
+    await saveSamplePost(editorClient, 'feature-permission-test')
+
     await editorClient.post('/api/canopycms/feature-permission-test/submit', {
       message: 'Ready',
     })
@@ -220,6 +224,8 @@ describe('Review Workflow Integration', () => {
       branch: 'feature/comment-threads',
       title: 'Comment Threads Test',
     })
+
+    await saveSamplePost(editorClient, 'feature-comment-threads')
 
     await editorClient.post('/api/canopycms/feature-comment-threads/submit', {
       message: 'Ready',
@@ -249,12 +255,31 @@ describe('Review Workflow Integration', () => {
     expect(resolveData.data?.resolved).toBe(true)
   })
 
+  it('refuses to submit a branch with no saved changes, leaving it editable', async () => {
+    await editorClient.post('/api/canopycms/branches', {
+      branch: 'feature/empty-submit',
+      title: 'Empty Submit',
+    })
+
+    const submitResponse = await editorClient.post('/api/canopycms/feature-empty-submit/submit', {
+      message: 'Ready',
+    })
+
+    expect(submitResponse.status).toBe(400)
+    const body = await submitResponse.json<BranchResponse>()
+    expect(body.error).toMatch(/^Nothing to submit yet: "feature-empty-submit"/)
+    const status = await editorClient.get('/api/canopycms/feature-empty-submit/status')
+    expect((await status.json<BranchResponse>()).data?.branch.status).toBe('editing')
+  })
+
   it('allows withdrawal from review', async () => {
     // Create and submit branch
     await editorClient.post('/api/canopycms/branches', {
       branch: 'feature/withdraw-test',
       title: 'Withdraw Test',
     })
+
+    await saveSamplePost(editorClient, 'feature-withdraw-test')
 
     const submitResponse = await editorClient.post('/api/canopycms/feature-withdraw-test/submit', {
       message: 'Ready',
