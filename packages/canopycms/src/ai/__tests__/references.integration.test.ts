@@ -79,6 +79,24 @@ const schema = {
               label: 'Sections',
               templates: [{ name: 'byline', label: 'Byline', fields: [authorRef] }],
             },
+            {
+              name: 'meta',
+              type: 'object' as const,
+              label: 'Meta',
+              fields: [
+                authorRef,
+                {
+                  name: 'credits',
+                  type: 'object' as const,
+                  label: 'Credits',
+                  list: true,
+                  fields: [
+                    { name: 'role', type: 'string' as const, label: 'Role' },
+                    { ...authorRef, name: 'people', label: 'People', list: true },
+                  ],
+                },
+              ],
+            },
           ],
         },
       ],
@@ -138,6 +156,17 @@ describe('generateAIContent: reference fields', () => {
       format: 'md',
       data: { title: 'Second', author: ids.secret, reviewers: [ids.alice] },
       body: 'Second body.',
+    })
+    await store.write(unsafeAsLogicalPath('content/pages'), unsafeAsSlug('nested'), {
+      format: 'json',
+      data: {
+        title: 'Nested',
+        sections: [{ template: 'byline', value: { author: ids.secret } }],
+        meta: {
+          author: ids.secret,
+          credits: [{ role: 'Editor', people: [ids.alice, ids.secret] }],
+        },
+      },
     })
     await store.write(unsafeAsLogicalPath('content/pages'), unsafeAsSlug('about'), {
       format: 'json',
@@ -212,6 +241,17 @@ describe('generateAIContent: reference fields', () => {
         }
       })
     }
+
+    it('is masked inside blocks, objects and object lists too', async () => {
+      const shown = (await generate()).files.get('pages/nested.md') ?? ''
+      expect(shown.match(/\[Secret Draft Person\]\(\/drafts\/secret\)/g)).toHaveLength(3)
+
+      const { files } = await generate({ exclude: { collections: ['drafts'] } })
+      const page = files.get('pages/nested.md') ?? ''
+      expect(page.match(new RegExp(`\\(unavailable entry ${ids.secret}\\)`, 'g'))).toHaveLength(3)
+      expect(page).toContain('[Alice Example](/people/alice)')
+      expect(page).not.toContain('Secret Draft Person')
+    })
 
     it('reaches entry transforms and field transforms already masked', async () => {
       const seen: unknown[] = []

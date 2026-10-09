@@ -37,6 +37,17 @@ const DEFAULT_REFERENCE_RENDERING: ReferenceRendering = {
     typeof target.urlPath === 'string' && target.urlPath ? target.urlPath : undefined,
 }
 
+/**
+ * The entry's `title` as frontmatter carries it. Only a scalar qualifies: a `reference` field
+ * named `title` holds an object and renders as a field instead.
+ */
+export function frontmatterTitle(data: Record<string, unknown>): string | undefined {
+  const { title } = data
+  return (typeof title === 'string' || typeof title === 'number') && title !== ''
+    ? String(title)
+    : undefined
+}
+
 interface RenderOptions {
   config?: AIContentConfig
   references: ReferenceRendering
@@ -56,9 +67,10 @@ export function entryToMarkdown(
   const opts: RenderOptions = { config, references }
   const parts: string[] = []
 
+  const title = frontmatterTitle(entry.data)
   parts.push('---')
-  if (entry.data.title) {
-    parts.push(`title: ${yamlValue(String(entry.data.title))}`)
+  if (title !== undefined) {
+    parts.push(`title: ${yamlValue(title)}`)
   }
   parts.push(`slug: ${yamlValue(entry.slug)}`)
   parts.push(`collection: ${yamlValue(entry.collection)}`)
@@ -68,7 +80,7 @@ export function entryToMarkdown(
 
   // Fields already in frontmatter — skip from body rendering to avoid duplication
   const skipFields = new Set<string>()
-  if (entry.data.title) skipFields.add('title')
+  if (title !== undefined) skipFields.add('title')
 
   if (entry.format === 'md' || entry.format === 'mdx') {
     parts.push(...renderMarkdownEntry(entry, opts, skipFields))
@@ -126,9 +138,9 @@ function renderMarkdownEntry(
       continue
     }
 
-    parts.push(
-      `**${field.label || field.name}:** ${formatInlineValue(field, value, opts.references)}`,
-    )
+    const inline = formatInlineValue(field, value, opts.references)
+    if (inline === '' && field.type === 'reference') continue
+    parts.push(`**${field.label || field.name}:** ${inline}`)
   }
 
   endBlock()
@@ -304,8 +316,11 @@ function renderListField(
     return `${heading} ${label}${descriptionLine}\n\n${items.join('\n\n')}`
   }
 
-  const items = values.map((v) => `- ${formatInlineValue(field, v, opts.references)}`).join('\n')
-  return `${heading} ${label}${descriptionLine}\n\n${items}`
+  const items = values
+    .map((v) => formatInlineValue(field, v, opts.references))
+    .filter((item) => item !== '' || field.type !== 'reference')
+  if (items.length === 0) return ''
+  return `${heading} ${label}${descriptionLine}\n\n${items.map((item) => `- ${item}`).join('\n')}`
 }
 
 /** Subfield types that render to a single line and so fit cleanly in a table cell. */
@@ -434,11 +449,12 @@ function renderReferenceField(
   descriptionLine: string,
   references: ReferenceRendering,
 ): string {
-  if (Array.isArray(value)) {
-    const items = value.map((v) => `- ${formatReference(field, v, references)}`).join('\n')
-    return `${heading} ${label}${descriptionLine}\n\n${items}`
-  }
-  return `${heading} ${label}${descriptionLine}\n\n${formatReference(field, value, references)}`
+  const items = (Array.isArray(value) ? value : [value])
+    .map((v) => formatReference(field, v, references))
+    .filter(Boolean)
+  if (items.length === 0) return ''
+  const body = Array.isArray(value) ? items.map((item) => `- ${item}`).join('\n') : items[0]
+  return `${heading} ${label}${descriptionLine}\n\n${body}`
 }
 
 function isImageValueLike(value: unknown): value is { src: string; alt?: unknown } {
@@ -506,6 +522,8 @@ function formatReference(
   value: unknown,
   references: ReferenceRendering,
 ): string {
+  // `''` is what the editor saves when a reference is cleared: no value, not a broken one.
+  if (value === '') return ''
   if (typeof value === 'string') return `(missing entry ${sanitizeMarkdownAltText(value)})`
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return '(missing entry)'
   const target = value as Record<string, unknown>
@@ -626,7 +644,10 @@ function formatInlineValue(
   if (field.type === 'boolean') return value ? 'Yes' : 'No'
   if (field.type === 'reference') {
     return Array.isArray(value)
-      ? value.map((v) => formatReference(field, v, references)).join(', ')
+      ? value
+          .map((v) => formatReference(field, v, references))
+          .filter(Boolean)
+          .join(', ')
       : formatReference(field, value, references)
   }
   // Without this, an `image` field falls through to `String(value)` below,

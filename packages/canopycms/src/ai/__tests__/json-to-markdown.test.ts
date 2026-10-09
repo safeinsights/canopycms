@@ -455,6 +455,44 @@ describe('entryToMarkdown', () => {
       expect(md).not.toMatch(/\n\n\n/)
     })
 
+    it('renders a cleared reference as no value, not as a missing entry', () => {
+      const fields: FieldConfig[] = [
+        authorField,
+        { ...authorField, name: 'reviewers', label: 'Reviewers', list: true },
+        {
+          name: 'credits',
+          type: 'object',
+          label: 'Credits',
+          list: true,
+          fields: [{ name: 'role', type: 'string', label: 'Role' }, authorField],
+        },
+      ]
+      const data = { author: '', reviewers: ['', bob], credits: [{ role: 'Writer', author: '' }] }
+      const json = entryToMarkdown(makeEntry({ fields, data }))
+      const md = entryToMarkdown(makeEntry({ format: 'md', fields, data, body: 'Body.' }))
+      for (const out of [json, md]) {
+        expect(out).not.toContain('missing entry')
+        expect(out).not.toContain('## Author')
+        expect(out).not.toContain('**Author:**')
+        expect(out).toContain('[Bob Example](/authors/bob)')
+      }
+      expect(json).toContain('## Reviewers\n\n- [Bob Example](/authors/bob)\n\n')
+      expect(md).toContain('**Reviewers:** [Bob Example](/authors/bob)\n')
+      expect(json).toContain('| Writer |  |')
+    })
+
+    it('renders a reference field named title as a field, not as the frontmatter title', () => {
+      const md = entryToMarkdown(
+        makeEntry({
+          fields: [{ ...authorField, name: 'title', label: 'Title' }],
+          data: { title: alice },
+        }),
+      )
+      expect(md).not.toContain('[object Object]')
+      expect(md).not.toMatch(/^title:/m)
+      expect(md).toContain('## Title\n\n[Alice Example](/authors/alice)')
+    })
+
     it('keeps a crafted title or URL from breaking out of the link', () => {
       const md = entryToMarkdown(
         makeEntry({

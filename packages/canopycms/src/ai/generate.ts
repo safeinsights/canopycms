@@ -21,7 +21,7 @@ import {
 } from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
-import { entryToMarkdown } from './json-to-markdown'
+import { entryToMarkdown, frontmatterTitle } from './json-to-markdown'
 import {
   createReferenceRendering,
   createReferenceTargetResolver,
@@ -123,6 +123,8 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     allPending.map((p) => p.contentId).filter((id): id is string => id !== null),
   )
   const references = createReferenceRendering(idIndex, flatSchema, entryLinkUrl)
+  // An entry whose own render throws below is dropped but stays in `exportedIds`: references to
+  // it still link. That failure is an adopter transform throwing, not an exclusion.
   for (const pending of allPending) {
     maskUnexportedTargets(pending.entry, exportedIds)
     // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
@@ -298,7 +300,7 @@ function emitEntries(entries: PendingEntry[], files: Map<string, string>): AIMan
     files.set(pending.filePath, pending.markdown)
     return {
       slug: pending.entry.slug,
-      title: pending.entry.data.title ? String(pending.entry.data.title) : undefined,
+      title: frontmatterTitle(pending.entry.data),
       file: pending.filePath,
     }
   })
