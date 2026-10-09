@@ -16,6 +16,7 @@ import { clearStrategyCache } from '../operating-mode/client-unsafe-strategy'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { mockConsole, type MockConsole } from '../test-utils'
 import { createCanopyRequestHandlerFromConfig } from './handler'
+import { isCanopyBinaryResponse } from './types'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 
 const authPlugin: AuthPlugin = {
@@ -50,10 +51,10 @@ describe('the not-ready 503 under real prod provisioning', () => {
 
   const getBranches = async () => {
     const handler = await createCanopyRequestHandlerFromConfig({
-      config: defineCanopyTestConfig({ schema: [], mode: 'prod' }),
+      config: defineCanopyTestConfig({ schema: {}, mode: 'prod' }),
       authPlugin,
     })
-    return handler(
+    const response = await handler(
       {
         method: 'GET',
         url: 'http://localhost/api/canopycms/branches',
@@ -62,6 +63,8 @@ describe('the not-ready 503 under real prod provisioning', () => {
       },
       ['branches'],
     )
+    if (isCanopyBinaryResponse(response)) throw new Error('expected a JSON response')
+    return response
   }
 
   const recordStatus = (startedAt: string, fatalAt: string) =>
