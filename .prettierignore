@@ -18,6 +18,8 @@ pnpm-lock.yaml
 apps/example1/content
 apps/test-app/content
 apps/dual-build-fixture/content
+# Round-trip corpus input: its bytes are what the test compares against.
+packages/canopycms/src/editor/fields/__fixtures__
 packages/canopycms/src/api/client.ts
 packages/canopycms/src/api/__test__/mock-client.ts
 

@@ -702,6 +702,7 @@ Mocking `'../api'` will not intercept it. See `useReferenceResolution.test.ts`, 
 
 - **Preload the chunk** its `React.lazy` loader imports, in every test file that renders `MarkdownField` (directly or via `FormRenderer`): `import '@mdxeditor/editor'`. Rationale is in the comment in `MarkdownField.test.tsx`.
 - **Type with `@testing-library/user-event`** (`user.click(paragraph)`, `user.keyboard(...)`); `src/editor/test-setup.ts` stubs the `Range.prototype.getBoundingClientRect` this needs. Edits inside a JSX element's nested editor reach `onChange` only after focus leaves it, so click elsewhere before asserting.
+- **Cover a new markdown construct** with a file in `src/editor/fields/__fixtures__/markdown-corpus/`; `markdown-roundtrip-corpus.test.tsx` round-trips it with every `apps/*/content` body. A body the editor gets wrong is listed there with its future-task, and unlisted once fixed.
 
 ### Testing with Real Git Operations
 
