@@ -6,6 +6,27 @@
  */
 
 import type { FieldConfig } from '../config'
+import type { ResolvedReferenceMeta, RestrictedReference } from '../entry-schema'
+
+/** A reference whose target this export shows: the target's own data plus where it lives. */
+export type AIResolvedReference = Record<string, unknown> &
+  ResolvedReferenceMeta & { unavailable?: undefined }
+
+/**
+ * A reference whose target this export does not show: `missing` when the id names no entry,
+ * `excluded` when the target is left out of the export by `exclude`. Carries the id and nothing
+ * of the target, so an excluded entry's title cannot reach the output.
+ */
+export interface AIUnavailableReference extends Pick<RestrictedReference, 'id' | 'unavailable'> {
+  reason: RestrictedReference['reason'] | 'missing' | 'excluded'
+}
+
+/**
+ * What a `reference` field holds in {@link AIEntryMeta.data} (an array of these for
+ * `list: true`), at any depth: never the bare id stored on disk. Branch on `unavailable` before
+ * reading anything but `id`.
+ */
+export type AIReferenceValue = AIResolvedReference | AIUnavailableReference
 
 /**
  * Metadata about an entry, provided to filter/predicate functions.
@@ -19,7 +40,11 @@ export interface AIEntryMeta {
   collectionName: string
   entryType: string
   format: string
-  /** The entry's parsed data (frontmatter for MD/MDX, full data for JSON) */
+  /**
+   * The entry's parsed data (frontmatter for MD/MDX, full data for JSON), with every `reference`
+   * field holding an {@link AIReferenceValue} rather than the stored id. `exclude.where` sees a
+   * target the export leaves out in full; everything after it sees that target as unavailable.
+   */
   data: Record<string, unknown>
 }
 
@@ -63,7 +88,8 @@ export interface BundleConfig {
 
 /**
  * Per-field markdown override function.
- * Return a markdown string to replace the default conversion for this field.
+ * Return a markdown string to replace the default conversion for this field. A `reference`
+ * field's value is an {@link AIReferenceValue}, or an array of them.
  */
 export type FieldTransformFn = (value: unknown, fieldConfig: FieldConfig) => string
 
