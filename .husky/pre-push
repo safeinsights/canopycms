@@ -1,1 +1,3 @@
 pnpm exec prettier --check .
+# Merges, rebases and --no-verify commits skip pre-commit; the push is the last local stop.
+pnpm lint:account-ids

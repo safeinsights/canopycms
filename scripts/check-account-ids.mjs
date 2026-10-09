@@ -7,9 +7,11 @@
  * fixtures and backlog records name the account by its role ("the sandbox
  * account") or use a placeholder below.
  *
- * A match is exactly twelve digits with no letter or digit on either side, so
- * hex digests and longer numbers never match. Two exemptions, neither of which
- * can ever name a real account:
+ * A match is exactly twelve digits, or the console's dddd-dddd-dddd, with no
+ * letter or digit on either side, so hex digests and longer numbers never
+ * match. Percent-escapes are blanked first, since the hex digit ending `%3A`
+ * would otherwise hide an id in a URL-encoded ARN. Two exemptions, neither of
+ * which can ever name a real account:
  *
  * - PLACEHOLDERS: AWS's own documentation placeholder and two repeated-digit
  *   values for multi-account examples. This set never grows to hold a real id;
@@ -25,7 +27,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,14 +35,18 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const PLACEHOLDERS = new Set(['123456789012', '111111111111', '222222222222'])
 
-const TWELVE_DIGITS = /(?<![0-9A-Za-z])[0-9]{12}(?![0-9A-Za-z])/g
+const ACCOUNT_ID =
+  /(?<![0-9A-Za-z-])[0-9]{4}-[0-9]{4}-[0-9]{4}(?![0-9A-Za-z-])|(?<![0-9A-Za-z])[0-9]{12}(?![0-9A-Za-z])/g
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/g
 const UUID_HEAD = /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-$/
 
 /** Columns (1-based) of every non-exempt twelve-digit run in one line. */
-function findAccountIds(line) {
+function findAccountIds(rawLine) {
+  // Same length, so columns still point into the original line.
+  const line = rawLine.replace(PERCENT_ESCAPE, '   ')
   const columns = []
-  for (const match of line.matchAll(TWELVE_DIGITS)) {
-    if (PLACEHOLDERS.has(match[0])) continue
+  for (const match of line.matchAll(ACCOUNT_ID)) {
+    if (PLACEHOLDERS.has(match[0].replaceAll('-', ''))) continue
     if (UUID_HEAD.test(line.slice(Math.max(0, match.index - 24), match.index))) continue
     columns.push(match.index + 1)
   }
@@ -54,8 +60,8 @@ function scanTree() {
   const findings = []
   for (const rel of files) {
     const abs = path.join(ROOT, rel)
-    // A tracked file deleted in the working tree is still listed.
-    if (!existsSync(abs)) continue
+    // Skips a tracked file deleted in the working tree, a symlink and a submodule.
+    if (!lstatSync(abs, { throwIfNoEntry: false })?.isFile()) continue
     const buffer = readFileSync(abs)
     if (buffer.includes(0)) continue
     buffer
@@ -81,7 +87,9 @@ function scanTree() {
 
 function selfTest() {
   // Assembled at runtime so this file holds no unexempted twelve-digit literal.
-  const fake = ['2109', '8765', '4321'].join('')
+  const fakeGroups = ['2109', '8765', '4321']
+  const fake = fakeGroups.join('')
+  const fakeDashed = fakeGroups.join('-')
   const cases = [
     [`account: '${fake}'`, 1],
     [`arn:aws:iam::${fake}:role/deploy`, 1],
@@ -89,6 +97,11 @@ function selfTest() {
     [`snake_${fake}_case`, 1],
     [`x-${fake}`, 1],
     [`${fake} and ${fake}`, 2],
+    [`arn%3Aaws%3Aiam%3A%3A${fake}%3Arole`, 1],
+    [`account ${fakeDashed}`, 1],
+    [`account 1234-5678-9012`, 0],
+    [`'00000000-${fakeDashed}-${'0'.repeat(12)}'`, 0],
+    [`${fakeDashed}-0000`, 0],
     [`account: '123456789012'`, 0],
     [`account: '111111111111', other: '222222222222'`, 0],
     [`'00000000-0000-4000-8000-${fake}'`, 0],
@@ -100,7 +113,8 @@ function selfTest() {
   const failures = cases
     .filter(([line, expected]) => findAccountIds(line).length !== expected)
     .map(
-      ([line, expected]) => `  expected ${expected} match(es) in: ${line.replace(fake, '<fake>')}`,
+      ([line, expected]) =>
+        `  expected ${expected} match(es) in: ${line.replaceAll(fake, '<fake>').replaceAll(fakeDashed, '<fake>')}`,
     )
   if (failures.length > 0) {
     console.error('check-account-ids self-test FAILED:')
