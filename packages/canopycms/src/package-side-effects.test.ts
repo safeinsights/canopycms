@@ -10,12 +10,15 @@
  * List each shipped module twice, as `./src/<path>` for workspace consumers (whose dev `exports`
  * resolve to src) and `./dist/<path>.js` for the published tarball.
  *
- * The last test below enforces the list: every module `tsconfig.build.json` compiles, plus the
- * listed src-only ones, is parsed, and the modules with a top-level statement that runs code (an
- * expression, `if`, `try`, a bare `import './x'`, a class static block or decorator) must be
- * exactly the listed ones. So a new registration, global getter or polyfill written as a statement
- * fails until its module is listed. A call inside a `const` initializer is not counted: it
- * constructs a value, and a module that holds one is kept whenever the value is used.
+ * The last test below enforces the list. It parses every src module the `tsconfig.build.json`
+ * program reaches, plus the listed src-only ones, and requires the modules with a top-level
+ * statement that runs code to be exactly the listed ones: an expression, `if`/`try`/loop, a bare
+ * `import './x'`, `import x = require()`, a non-ambient namespace, `using`, a non-trivial
+ * `export default`, or a class with a decorator, static block, static field initializer, computed
+ * key or computed `extends`. So a new registration, global getter or polyfill fails until its
+ * module is listed. A call inside a `const` initializer is not counted: it constructs a value, and
+ * a module that holds one is kept whenever the value is used. Write an import-time effect as a
+ * statement, never as `const _ = install()`.
  *
  * What is deliberately absent:
  * - `defineEndpoint` pushes into `ROUTE_REGISTRY` from a `const` initializer, but only
@@ -116,18 +119,23 @@ describe('sideEffects declaration', () => {
   it('lists exactly the modules with top-level statements that run code', async () => {
     const declared = await declaredSideEffects()
     const listedSrc = declared.filter((entry) => entry.startsWith('./src/'))
-    const files = new Set([
-      ...compiledSources(),
-      ...listedSrc.map((entry) => path.join(packageDir, entry)),
-    ])
+    const compiled = compiledSourceFiles()
+    expect(compiled.map((file) => file.fileName)).toContain(path.join(srcDir, 'index.ts'))
+
+    const sourceFiles = new Map(compiled.map((file) => [path.resolve(file.fileName), file]))
+    for (const entry of listedSrc) {
+      const file = path.join(packageDir, entry)
+      if (!sourceFiles.has(file)) sourceFiles.set(file, parse(file, await readFile(file, 'utf8')))
+    }
 
     const effectful: Record<string, string[]> = {}
-    for (const file of files) {
+    for (const [file, sourceFile] of sourceFiles) {
       const key = `./${path.relative(packageDir, file).split(path.sep).join('/')}`
       const allowed = MODULE_LOCAL_EFFECTS[key] ?? []
-      const effects = topLevelEffects(file, await readFile(file, 'utf8')).filter(
-        (statement) => !allowed.includes(statement),
-      )
+      const effects = sourceFile.statements
+        .filter(runsCode)
+        .map((statement) => statement.getText(sourceFile).split('\n')[0].trim())
+        .filter((statement) => !allowed.includes(statement))
       if (effects.length > 0) effectful[key] = effects
     }
 
@@ -137,13 +145,15 @@ describe('sideEffects declaration', () => {
   })
 })
 
+const srcDir = path.join(packageDir, 'src')
+
 /** Top-level statements a module may run without anything outside it ever observing them. */
 const MODULE_LOCAL_EFFECTS: Record<string, string[]> = {
   './src/config/schemas/field.ts': ['fieldHolder[0] = fieldSchema'],
 }
 
-/** The src files `tsconfig.build.json` compiles into dist. */
-function compiledSources(): string[] {
+/** Every src module the `tsconfig.build.json` program reaches, so every module tsc emits to dist. */
+function compiledSourceFiles(): ts.SourceFile[] {
   const parsed = ts.getParsedCommandLineOfConfigFile(
     path.join(packageDir, 'tsconfig.build.json'),
     {},
@@ -155,39 +165,81 @@ function compiledSources(): string[] {
     },
   )
   if (!parsed) throw new Error('tsconfig.build.json did not parse')
-  return parsed.fileNames.filter((file) => /\.tsx?$/.test(file) && !file.endsWith('.d.ts'))
+  expect(parsed.errors.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([])
+  return ts
+    .createProgram(parsed.fileNames, parsed.options)
+    .getSourceFiles()
+    .filter((file) => path.resolve(file.fileName).startsWith(srcDir + path.sep))
+    .filter((file) => !file.isDeclarationFile)
 }
 
-function topLevelEffects(file: string, source: string): string[] {
+function parse(file: string, source: string): ts.SourceFile {
   const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
-  return sourceFile.statements
-    .filter(runsCode)
-    .map((statement) => statement.getText(sourceFile).split('\n')[0].trim())
+  return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
 }
 
 function runsCode(statement: ts.Statement): boolean {
   if (ts.isImportDeclaration(statement)) return statement.importClause === undefined
   // A string-literal statement is a directive (`'use client'`) or a no-op.
   if (ts.isExpressionStatement(statement)) return !ts.isStringLiteral(statement.expression)
-  if (ts.isClassDeclaration(statement)) {
-    return (
-      statement.members.some(ts.isClassStaticBlockDeclaration) ||
-      (ts.getDecorators(statement)?.length ?? 0) > 0
-    )
+  if (ts.isClassDeclaration(statement)) return classRunsCode(statement)
+  if (ts.isExportAssignment(statement)) return !isInertExpression(statement.expression)
+  if (ts.isImportEqualsDeclaration(statement)) {
+    return ts.isExternalModuleReference(statement.moduleReference)
   }
-  if (ts.isExportAssignment(statement)) {
-    return ts.isCallExpression(statement.expression) || ts.isNewExpression(statement.expression)
+  if (ts.isModuleDeclaration(statement)) {
+    const ambient = ts.getCombinedModifierFlags(statement) & ts.ModifierFlags.Ambient
+    return statement.body !== undefined && !ambient
+  }
+  if (ts.isVariableStatement(statement)) {
+    // `using` disposes at module teardown. Any other initializer constructs a value the module
+    // is kept for whenever that value is used.
+    return (statement.declarationList.flags & ts.NodeFlags.Using) !== 0
   }
   return !(
-    ts.isVariableStatement(statement) ||
     ts.isFunctionDeclaration(statement) ||
     ts.isInterfaceDeclaration(statement) ||
     ts.isTypeAliasDeclaration(statement) ||
-    ts.isModuleDeclaration(statement) ||
     ts.isEnumDeclaration(statement) ||
     ts.isExportDeclaration(statement) ||
-    ts.isImportEqualsDeclaration(statement) ||
     ts.isEmptyStatement(statement)
+  )
+}
+
+function classRunsCode(declaration: ts.ClassDeclaration): boolean {
+  const heritageRuns = (declaration.heritageClauses ?? []).some((clause) =>
+    clause.types.some(
+      (type) => clause.token === ts.SyntaxKind.ExtendsKeyword && !isEntityName(type.expression),
+    ),
+  )
+  const memberRuns = declaration.members.some(
+    (member) =>
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.canHaveDecorators(member) && (ts.getDecorators(member)?.length ?? 0) > 0) ||
+      (member.name !== undefined && ts.isComputedPropertyName(member.name)) ||
+      (ts.isPropertyDeclaration(member) &&
+        member.initializer !== undefined &&
+        (ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Static) !== 0),
+  )
+  return heritageRuns || memberRuns || (ts.getDecorators(declaration)?.length ?? 0) > 0
+}
+
+function isEntityName(expression: ts.Expression): boolean {
+  return (
+    ts.isIdentifier(expression) ||
+    (ts.isPropertyAccessExpression(expression) && isEntityName(expression.expression))
+  )
+}
+
+function isInertExpression(expression: ts.Expression): boolean {
+  return (
+    ts.isIdentifier(expression) ||
+    ts.isArrowFunction(expression) ||
+    ts.isFunctionExpression(expression) ||
+    ts.isClassExpression(expression) ||
+    ts.isLiteralExpression(expression) ||
+    expression.kind === ts.SyntaxKind.TrueKeyword ||
+    expression.kind === ts.SyntaxKind.FalseKeyword ||
+    expression.kind === ts.SyntaxKind.NullKeyword
   )
 }
