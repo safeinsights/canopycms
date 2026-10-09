@@ -2,12 +2,12 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  New 2026-10-09. The worker fast-forwards base to content whose `.collection.json` names a schema the running editor image lacks, and every `/edit` page fails until the redeploy lands. Decided: the editor records its schema-name set on EFS at start; the worker holds base (bounded, fail-open) while the incoming tip adds a name the record lacks
+  RESOLVED 2026-10-09. Each CMS process records its schema names and registry fingerprint in `content-branches/.schema-registry.json`; the worker's git sync holds the base branch while incoming collection meta names a schema that record lacks (fail-open, bounded at 30 min), and System health shows "Waiting for editor deploy"
 ---
 
 # Sync waits for the editor's schema registry
 
-**Status:** Open. **Priority: P1.** Filed 2026-10-09 from adopter request 96, part (a).
+**Status:** Resolved 2026-10-09 (`worker/schema-gate.ts`, `schema-registry-record.ts`). **Priority: P1.** Filed 2026-10-09 from adopter request 96, part (a).
 Part (b), per-collection degradation on an unknown schema, is a separate change.
 
 ## Problem

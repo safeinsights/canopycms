@@ -377,7 +377,7 @@ content/
 
 ### Schema Validation
 
-A missing schema or an invalid meta file fails a build or static deploy; a missing schema's error lists what is available (`Schema reference "post" in entry type "post" (collection "posts") not found in registry. Available schemas: author, home, doc`). In the editor, a missing schema marks only that entry type unavailable until code registering it is deployed, and System health lists it.
+A missing schema or an invalid meta file fails a build or static deploy; a missing schema's error lists what is available (`Schema reference "post" in entry type "post" (collection "posts") not found in registry. Available schemas: author, home, doc`). In the editor, a missing schema marks only that entry type unavailable until code registering it is deployed, and System health lists it. On AWS the worker first waits up to 30 minutes for that deploy (see [New schemas wait for the editor deploy](docs/deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy)).
 
 ## Configuration Reference
 

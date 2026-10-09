@@ -142,6 +142,26 @@ export interface BuildIdentity {
 }
 
 /**
+ * The worker holding the base branch at its current tip because the incoming tip references
+ * entry schemas the serving editor does not define (worker/schema-gate.ts).
+ */
+export interface BaseSchemaHold {
+  /** When the base branch was first held, continuously, across sync cycles. */
+  since: string
+  /** GitHub's base tip the worker is not advancing to. */
+  incomingSha: string
+  /** Schema names the incoming tip references and the serving editor's registry lacks. */
+  missingSchemas: string[]
+  /** `.collection.json` files referencing them, repo-relative. */
+  files: string[]
+  /** The build that recorded the registry the gate checked against. */
+  editorBuild: BuildIdentity
+  editorRecordedAt: string
+  /** Set on the cycle the hold outlived its bound and the worker advanced anyway. */
+  expired?: true
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -170,6 +190,8 @@ export interface WorkerStatusReport {
     failed: { branch: string; error: string }[]
     /** Optional for the same reason as `tracked` below. */
     baseRefresh?: BaseRefreshReport
+    /** Present while the schema gate holds the base branch, and on the cycle a hold expires. */
+    baseHold?: BaseSchemaHold
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's fetched
      * tips, non-destructively (worker/git-sync.ts's `reconcileTrackedBranches`).

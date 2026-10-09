@@ -41,7 +41,7 @@ import type { WorkerLiveness } from '../../api/admin'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry } from '../../branch-health'
-import type { BaseRefreshReport } from '../../types'
+import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
 
 // ============================================================================
 // Small pure helpers
@@ -128,6 +128,44 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
  * Why the base branch needs an operator, or null when its last refresh needs
  * nothing. Shared by the overview and the base row's warning tooltip.
  */
+/**
+ * The worker holding the base branch for an editor deploy, or the cycle it stopped waiting.
+ * The rule and its bound live in worker/schema-gate.ts.
+ */
+function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
+  const names = hold.missingSchemas.map((name, i) => (
+    <span key={name}>
+      {i > 0 && ', '}
+      <Code>{name}</Code>
+    </span>
+  ))
+  const editor = hold.editorBuild.sourceRevision ? (
+    <>
+      the running editor (built from <Code>{hold.editorBuild.sourceRevision.slice(0, 12)}</Code>)
+    </>
+  ) : (
+    'the running editor'
+  )
+  return (
+    <Alert
+      color={hold.expired ? 'orange' : 'blue'}
+      icon={<IconAlertTriangle size={16} />}
+      title={hold.expired ? 'Stopped waiting for the editor deploy' : 'Waiting for editor deploy'}
+      data-testid="base-hold-alert"
+    >
+      <Text size="sm">
+        Newly merged content names {names}, which {editor} does not define.{' '}
+        {hold.expired
+          ? 'The worker updated the base branch anyway; content types using them are unavailable until an editor image defining them is deployed.'
+          : 'The worker keeps the base branch at its current version until an editor image defining them handles a request.'}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Held since {hold.since} · {hold.files.join(', ')}
+      </Text>
+    </Alert>
+  )
+}
+
 function baseRefreshWarning(report: BaseRefreshReport | undefined): string | null {
   if (!report) return null
   const lines: string[] = []
@@ -319,6 +357,8 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           </Stack>
         </Alert>
       )}
+
+      {lastGitSync?.baseHold && <BaseHoldAlert hold={lastGitSync.baseHold} />}
 
       {status.statusReadError && (
         <Text size="xs" c="orange">

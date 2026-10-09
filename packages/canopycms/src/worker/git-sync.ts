@@ -22,7 +22,7 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
-import type { BaseRefreshReport } from '../types'
+import type { BaseRefreshReport, BaseSchemaHold } from '../types'
 import {
   MAX_REPORTED_PATHS,
   TRACKED_CANOPY_STATE_FIX,
@@ -39,6 +39,7 @@ import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { maintainRemoteGit } from './remote-git-maintenance'
+import { decideBaseAdvance } from './schema-gate'
 import { reapplySparseCones } from './sparse-cone'
 import type { WorkerContext } from './worker-context'
 
@@ -51,8 +52,9 @@ import type { WorkerContext } from './worker-context'
  * the branches root (`repairBranchDirResidue`), move sparse clones to a changed
  * content root's cone (sparse-cone.ts), repack `remote.git` when it needs it
  * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
- * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`),
- * push this deployment's own settings branch, fast-forward the base branch's
+ * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`,
+ * which holds the base branch while schema-gate.ts says the serving editor lacks a
+ * schema the incoming content names), push this deployment's own settings branch, fast-forward the base branch's
  * workspace, rebase every branch that is behind it (rebase.ts), then sweep old
  * tasks and expired trashed branch directories.
  *
@@ -75,6 +77,7 @@ export type GitSyncContext = Pick<
   | 'sanitizedBaseBranch'
   | 'contentBranchesPath'
   | 'remoteGitPath'
+  | 'schemaHoldMaxMs'
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'log'
@@ -256,13 +259,18 @@ export async function pushSettingsBranches(
 async function reconcileTrackedBranches(
   ctx: GitSyncContext,
   git: ReturnType<typeof simpleGit>,
-): Promise<{ summary: TrackedBranchSummary; trackedNames: Set<string> }> {
+): Promise<{
+  summary: TrackedBranchSummary
+  trackedNames: Set<string>
+  baseHold: BaseSchemaHold | undefined
+}> {
   const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
   const created: string[] = []
   const fastForwarded: string[] = []
   const ahead: string[] = []
   const diverged: string[] = []
   const rewritten: string[] = []
+  let baseHold: BaseSchemaHold | undefined
 
   // One invocation enumerates both namespaces: refs/heads/<name> (what the
   // Lambda pushes into and branch clones read from) and
@@ -338,6 +346,27 @@ async function reconcileTrackedBranches(
       }
 
       if (localAheadCount === 0 && localBehindCount > 0) {
+        // The base branch's fast-forward is the one source of new content for the base
+        // workspace, every rebased branch and every new clone, so the schema gate sits here.
+        if (name === ctx.baseBranch) {
+          const previous = ctx.ensureStatusReport().lastGitSync?.baseHold
+          const decision = await decideBaseAdvance({
+            git,
+            contentBranchesPath: ctx.contentBranchesPath,
+            baseBranch: name,
+            currentSha: localSha,
+            incomingSha: trackedSha,
+            previous: previous?.expired ? undefined : previous,
+            maxHoldMs: ctx.schemaHoldMaxMs,
+          })
+          if (decision.kind !== 'advance') baseHold = decision.hold
+          if (decision.kind === 'hold') {
+            workerLog(
+              `  Tracked-branch reconcile: holding ${name} for an editor deploy defining ${decision.hold.missingSchemas.join(', ')}`,
+            )
+            continue
+          }
+        }
         try {
           await git.raw(['update-ref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
@@ -386,6 +415,7 @@ async function reconcileTrackedBranches(
   return {
     summary: { created, fastForwarded, ahead, diverged, rewritten },
     trackedNames: new Set(tracked.keys()),
+    baseHold,
   }
 }
 
@@ -444,7 +474,11 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     ])
     workerLog('Fetched from GitHub')
 
-    const { summary: trackedSummary, trackedNames } = await reconcileTrackedBranches(ctx, git)
+    const {
+      summary: trackedSummary,
+      trackedNames,
+      baseHold,
+    } = await reconcileTrackedBranches(ctx, git)
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
     // Ensures settings reach GitHub even if a task queue entry is lost.
@@ -484,6 +518,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
           : rebaseSummary.skippedLocked,
       failed: rebaseSummary.failed,
       baseRefresh,
+      ...(baseHold ? { baseHold } : {}),
       tracked: trackedSummary,
     }
     await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>

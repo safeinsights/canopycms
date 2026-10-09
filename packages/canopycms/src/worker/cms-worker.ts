@@ -22,6 +22,7 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
+import { DEFAULT_SCHEMA_HOLD_MAX_MS } from './schema-gate'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
@@ -115,6 +116,11 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   maxRetries?: number
   /** Content root directory name relative to repo root (default: 'content') */
   contentRoot?: string
+  /**
+   * Longest the git sync holds the base branch for content naming entry schemas the serving
+   * editor does not define, before advancing anyway (default: 30 minutes). See worker/schema-gate.ts.
+   */
+  schemaHoldMaxMs?: number
   /**
    * Worker lock staleness TTL in ms (default 60000, minimum 2000). The holder
    * refreshes the heartbeat at half this interval; a lock whose heartbeat is
@@ -264,6 +270,7 @@ export class CmsWorker {
       remoteGitPath: this.remoteGitPath,
       contentBranchesPath: this.contentBranchesPath,
       contentRoot: this.contentRoot,
+      schemaHoldMaxMs: this.config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS,
       taskTimeoutMs: this.taskTimeoutMs,
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
