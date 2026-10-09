@@ -13,6 +13,9 @@ entry has the same three parts:
   upgrade that adds the new API without removing the code it replaces leaves two implementations to
   drift apart, which is the failure mode most of these changes exist to end.
 
+An entry's description of a hand-rolled version's bug is often the fastest way to find that code
+in your repo.
+
 ## Picking a target version
 
 Resolve your target with `npm view canopycms version`, never from a number in this document:
@@ -61,13 +64,25 @@ $1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot i
 A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat `workerTerminationHeartbeat`,
 default 5 minutes) lets the old worker finish in-flight work for up to 90 seconds and requeue the
 rest with no retry spent. The systemd unit gains `KillMode=mixed`, `TimeoutStopSec=120` and exit
-status 75 handling.
+status 75 handling; the worker role may complete its own group's hook.
 
 **To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
 or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
 drain applies from the deploy after this one.
 
 **Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
+### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
+
+**What changed.** After the worker records a failed start, the prod not-ready 503 is `WORKER_FAILED`:
+no `Retry-After`, the failure named, account ids masked. `CmsWorker.selfStopped` settles when the
+worker stops itself (a lost EFS lock); the `canopycms-cdk` entrypoint then exits 69 for a restart.
+`recordWorkerStartupFailure` records a failure before `start()`.
+
+**To adopt.** A hand-written entrypoint calls `recordWorkerStartupFailure` on a pre-`start()`
+failure and exits non-zero on `selfStopped`, with a code outside `RestartPreventExitStatus=`.
+
+**Now deletable.** A watchdog that restarts an idle worker process.
 
 ### `canopycms-cdk`: optional worker-down alarm — **new prop `alarmTopic`**
 

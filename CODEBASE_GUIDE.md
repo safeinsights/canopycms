@@ -218,7 +218,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
@@ -287,7 +287,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
-- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, runs `CmsWorker`
+- `worker/index.ts` — EC2 worker entrypoint; boots through `worker/run.ts`'s injectable `runWorker`
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
@@ -855,7 +855,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
 - `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
 - `handler.ts` — the request handler factory; answers anonymous callers `unauthenticatedStatus` before base-branch provisioning
-- `worker-not-ready.ts` — `workerNotReadyResponse`: the retriable 503 for worker-not-ready, provisioning-busy and `SchemaUnavailableError`
+- `worker-not-ready.ts` — `workerNotReadyResponse`: the 503 for worker-not-ready or failed, provisioning-busy and `SchemaUnavailableError`
 - `index.ts` — module exports
 
 ## Test Utilities
