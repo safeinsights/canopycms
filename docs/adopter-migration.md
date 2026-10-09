@@ -108,7 +108,7 @@ recovers a create that timed out instead of reporting an HTTP 504.
 
 ### The editor and its live preview load images through the signed-in asset route
 
-**What changed.** The editor loads every image from `GET /api/canopycms/assets/raw/…` under your `basePath`, which transforms on demand and, on S3, answers with a short-lived redirect to a presigned S3 read. `CanopyClientConfig.assetBaseUrl` is gone. Inside a same-origin live preview, `assetUrl` puts `/assets/t/…` URLs behind that route instead of your `baseUrl`.
+**What changed.** The editor loads asset-store images from `GET /api/canopycms/assets/raw/…` under your `basePath`, which transforms on demand and, on S3, answers with a short-lived redirect to a presigned S3 read. `CanopyClientConfig.assetBaseUrl` is gone. Inside a same-origin live preview, `assetUrl` puts `/assets/t/…` URLs behind that route instead of your `baseUrl`.
 
 **To adopt.** Usually nothing. The `<img>` requests authenticate with the editor's session cookie, so the editor and its preview must share an origin with `/api/canopycms`. A Content-Security-Policy on those pages must allow `img-src` from your bucket's S3 endpoint, and a bucket policy denying requests that bypass CloudFront blocks the presigned reads. An off-origin preview gets no route prefix, so under `AssetSupport`'s S3-only default it shows only stored derivatives; serve it same-origin or set `lazyPublicTransforms: true`.
 

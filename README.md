@@ -1134,7 +1134,7 @@ media: {
 }
 ```
 
-The editor needs no asset mount point: it loads every image through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
+The editor needs no asset mount point: it loads asset-store images through the signed-in `/api/canopycms/assets/raw/…` route under your `basePath`, which transforms on demand and, on S3, redirects to a short-lived presigned read. `uploadUrl` is where the browser POSTs a presigned upload, defaulting to the S3 REST endpoint — see "Routing uploads through your own CDN" below.
 
 For local development, omit `media` (uploads go to `.canopy-dev/assets/` via the built-in local adapter), use `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket.
 
