@@ -1020,15 +1020,14 @@ typically about 2 minutes). This is expected and safe:
   instead of failing.
 - **The old worker drains first.** A terminating lifecycle hook holds the
   instance while the worker claims nothing new and finishes its push, pull
-  request or branch rebase. Work still running after 90 seconds (or a spot
+  request or branch rebase. Work still running after 90 seconds (inside a spot
   notice's two minutes) is aborted, and an aborted task returns to `pending/`
   without spending a retry. A hung worker delays termination by at most
   `workerTerminationHeartbeat` (default 5 minutes). System health shows how the
   last worker stopped.
 - A worker that died without draining leaves its task in `.tasks/processing/`,
   which the next worker requeues once it is 5 minutes old.
-- The replacement waits for the worker lock on EFS, so two workers never run
-  at once.
+- No worker starts until the old one releases the worker lock on EFS.
 
 **The boot script fails fast on anything the worker needs.** A failed package
 install, EFS mount, bundle unpack or service start shuts the instance down so

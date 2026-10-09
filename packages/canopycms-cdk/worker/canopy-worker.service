@@ -15,8 +15,8 @@ Restart=always
 RestartSec=5
 TimeoutStartSec=300
 # Stopping drains: SIGTERM reaches node ONLY (mixed), so the git children it
-# is waiting for are not killed with it, and systemd waits past the worker's
-# 90s drain deadline before its SIGKILL.
+# waits for keep running. Whatever is left when node exits, or at
+# TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s drain and its abort grace.
 KillMode=mixed
 TimeoutStopSec=120
 # A worker that drained for an instance termination exits with 75; restarting

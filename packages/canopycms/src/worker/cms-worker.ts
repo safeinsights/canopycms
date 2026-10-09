@@ -124,7 +124,8 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /**
    * How long `stop()` waits for in-flight work before aborting it, in ms
    * (default {@link DEFAULT_DRAIN_DEADLINE_MS}). An entrypoint's process
-   * manager must allow longer than this before it kills the process.
+   * manager must allow this plus {@link ABORT_GRACE_MS} before it kills the
+   * process.
    */
   drainDeadlineMs?: number
 }
@@ -484,8 +485,8 @@ export class CmsWorker {
    *    the process exit.
    * 4. Record `lastShutdown` in worker-status.json -- only while this worker
    *    still holds the lock, since after a compromise another worker owns the
-   *    file -- and release the lock. Release comes LAST, so no successor can
-   *    start while this worker's work is still running.
+   *    file -- and release the lock. Release comes last, so a successor starts
+   *    only once this worker's work has settled or been abandoned.
    */
   stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
     // A later call cannot restart the drain, but deadline 0 (a lock compromise)

@@ -231,9 +231,8 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       await updateBranchMetadata(ctx, task, result)
     } catch (err) {
       if (err instanceof TaskAbortedForShutdownError) {
-        // Every action is safe to re-run from the start (pushes are atomic per
-        // ref, PR creation finds an existing PR, close/delete tolerate "already
-        // done"), so the next worker simply runs it again.
+        // The next worker runs it again from the start, exactly as a retry
+        // after a timed-out attempt does.
         await releaseTask(ctx.taskDir, task.id, ctx.log)
         workerLogWarn(
           `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,

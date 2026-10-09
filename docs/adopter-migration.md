@@ -48,7 +48,7 @@ $1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot i
 A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat `workerTerminationHeartbeat`,
 default 5 minutes) lets the old worker finish in-flight work for up to 90 seconds and requeue the
 rest with no retry spent. The systemd unit gains `KillMode=mixed`, `TimeoutStopSec=120` and exit
-status 75 handling; the worker role gains two `autoscaling:` actions on its own group.
+status 75 handling; the worker role may complete its own group's hook.
 
 **To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
 or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The

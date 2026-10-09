@@ -11,7 +11,7 @@
  * (utils/atomic-write.ts), never a read-modify-write, so whichever write lands
  * last is one writer's complete, self-consistent snapshot. That covers the one
  * window where two holders overlap -- after a lock compromise the old holder's
- * `stop()` drains for up to its deadline while a new holder is already
+ * `stop()` aborts its in-flight work while a new holder may already be
  * running against the same workspace.
  *
  * Readers are stale-tolerant by design: this is a liveness signal, not

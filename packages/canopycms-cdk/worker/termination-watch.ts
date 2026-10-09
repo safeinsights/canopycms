@@ -42,7 +42,7 @@ export interface TerminationWatchOptions {
 
 const DEFAULT_IMDS_ENDPOINT = 'http://169.254.169.254'
 const IMDS_TIMEOUT_MS = 2_000
-/** Per Auto Scaling call: the SDK's default client arms no timer at all (see secrets.ts). */
+/** Per Auto Scaling call, our own bound, as secrets.ts sets one for its client. */
 const AUTO_SCALING_CALL_TIMEOUT_MS = 15_000
 
 /** One IMDSv2 session: a token per read is cheap (link-local) and never goes stale. */

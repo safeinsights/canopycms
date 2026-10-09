@@ -603,8 +603,8 @@ export interface CanopyCmsServiceProps {
    *
    * `{ type: 'spot' }` costs less but can leave the deployment with NO worker:
    * when no spot capacity is available in either zone the group keeps
-   * retrying, the editor's first branch fails (no `remote.git` yet) and queued
-   * publishes wait, while `cdk deploy` reports success. An Auto Scaling group
+   * retrying, `/edit` answers 500 on a first deploy (nothing has created
+   * `remote.git`) and later publishes wait, while `cdk deploy` reports success. An Auto Scaling group
    * has no automatic fallback from spot to on-demand. Spot uses a
    * mixed-instances policy over several Graviton sizes, price-capacity-optimized,
    * which makes a shortage less likely but cannot rule it out.
@@ -920,9 +920,10 @@ export type WorkerCapacity =
       /** USD per hour. Default: each type's on-demand price. */
       maxPrice?: string
       /**
-       * Launch a replacement when EC2 signals a spot instance is at elevated
-       * risk of interruption, before it is interrupted (default true). The two
-       * instances never both run a worker: the second waits for the worker lock.
+       * Auto Scaling Capacity Rebalancing: replace a spot instance EC2 marks at
+       * elevated risk of interruption (default true). A replacement that starts
+       * before the old instance stops cannot run a worker until the old one
+       * releases the worker lock.
        */
       capacityRebalance?: boolean
     }
@@ -1645,8 +1646,9 @@ export class CanopyCmsService extends Construct {
       'RestartSec=5',
       'TimeoutStartSec=300',
       '# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git',
-      '# children it is waiting for are not killed with it, and systemd',
-      "# waits past the worker's 90s drain deadline before its SIGKILL.",
+      '# children it waits for keep running. Whatever is left when node',
+      '# exits, or at TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s',
+      '# drain and its abort grace.',
       'KillMode=mixed',
       'TimeoutStopSec=120',
       '# A worker that drained for an instance termination exits with this;',
