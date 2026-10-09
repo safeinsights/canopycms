@@ -26,4 +26,30 @@ export interface SchemaResolutionResult {
   schema: RootCollectionConfig
   /** Information about schema sources for debugging */
   sources: SchemaSourceInfo[]
+  /** What a degraded resolve left out; always empty for a strict one. */
+  issues: SchemaIssue[]
 }
+
+/**
+ * A part of a branch's schema the running code could not resolve, contained rather than thrown
+ * (see `BranchSchemaCache` for where that applies). `unknown-schema` marks one entry type
+ * unavailable; `reference-entry-type` leaves a reference field scoped to a type the content does
+ * not declare, which offers no options until it does.
+ */
+export type SchemaIssue =
+  | {
+      kind: 'unknown-schema'
+      /** The collection's path relative to the content root; '' for the root collection. */
+      collectionPath: string
+      entryType: string
+      schemaRef: string
+      metaFile: string
+      message: string
+    }
+  | {
+      kind: 'reference-entry-type'
+      message: string
+    }
+
+/** How resolution treats a `.collection.json` naming an entry schema the registry lacks. */
+export type UnknownSchemaPolicy = 'throw' | 'degrade'

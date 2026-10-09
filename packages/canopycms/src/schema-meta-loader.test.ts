@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from './schema'
+import { resolveCollectionMetaFiles } from './schema/meta-loader'
 import type { FieldConfig } from './config'
 
 describe('schema-meta-loader', () => {
@@ -382,6 +383,92 @@ describe('schema-meta-loader', () => {
       expect(() => {
         resolveCollectionReferences(metaFiles, mockSchemaRegistry)
       }).toThrow('Schema reference "nonexistentSchema"')
+    })
+
+    describe("under the 'degrade' policy", () => {
+      const metaFiles = {
+        root: {
+          entries: [{ name: 'home', format: 'json' as const, schema: 'missingRootSchema' }],
+        },
+        collections: [
+          {
+            name: 'blog',
+            path: 'blog',
+            entries: [{ name: 'post', format: 'mdx' as const, schema: 'postSchema' }],
+            order: [],
+          },
+          {
+            name: 'people',
+            path: 'blog/people',
+            entries: [
+              { name: 'author', format: 'json' as const, schema: 'authorSchema' },
+              { name: 'person', format: 'md' as const, schema: 'missingSchema', default: true },
+            ],
+            order: [],
+          },
+        ],
+      }
+
+      it('marks each entry type naming an unregistered schema, and resolves the rest', () => {
+        const { schema } = resolveCollectionMetaFiles(metaFiles, mockSchemaRegistry, 'degrade')
+
+        expect(schema.entries?.[0]).toMatchObject({
+          name: 'home',
+          schema: [],
+          unavailable: {
+            reason: 'unknown-schema',
+            schemaRef: 'missingRootSchema',
+            metaFile: '.collection.json',
+          },
+        })
+        const blog = schema.collections?.[0]
+        expect(blog?.entries?.[0].schema).toBe(mockSchemaRegistry.postSchema)
+        const [author, person] = blog?.collections?.[0].entries ?? []
+        expect(author.schema).toBe(mockSchemaRegistry.authorSchema)
+        expect(author.unavailable).toBeUndefined()
+        expect(person).toMatchObject({
+          name: 'person',
+          format: 'md',
+          default: true,
+          schema: [],
+          schemaRef: 'missingSchema',
+          unavailable: {
+            reason: 'unknown-schema',
+            schemaRef: 'missingSchema',
+            metaFile: 'blog/people/.collection.json',
+          },
+        })
+      })
+
+      it('reports one issue per unavailable entry type', () => {
+        const { issues } = resolveCollectionMetaFiles(metaFiles, mockSchemaRegistry, 'degrade')
+
+        expect(issues).toEqual([
+          expect.objectContaining({
+            kind: 'unknown-schema',
+            collectionPath: '',
+            entryType: 'home',
+            schemaRef: 'missingRootSchema',
+            metaFile: '.collection.json',
+          }),
+          expect.objectContaining({
+            kind: 'unknown-schema',
+            collectionPath: 'blog/people',
+            entryType: 'person',
+            schemaRef: 'missingSchema',
+            metaFile: 'blog/people/.collection.json',
+          }),
+        ])
+      })
+
+      it("still throws under 'throw', which resolveCollectionReferences always uses", () => {
+        expect(() => resolveCollectionMetaFiles(metaFiles, mockSchemaRegistry, 'throw')).toThrow(
+          /"missingRootSchema".*Available schemas: homeSchema, postSchema, authorSchema/,
+        )
+        expect(() => resolveCollectionReferences(metaFiles, mockSchemaRegistry)).toThrow(
+          'Schema reference "missingRootSchema"',
+        )
+      })
     })
 
     it('should handle multiple collections', () => {

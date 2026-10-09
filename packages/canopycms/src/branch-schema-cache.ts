@@ -4,8 +4,14 @@ import path from 'node:path'
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem } from './config/types'
 import type { OperatingMode } from './operating-mode'
-import type { EntrySchemaRegistry, SchemaResolutionResult } from './schema/types'
+import type {
+  EntrySchemaRegistry,
+  SchemaIssue,
+  SchemaResolutionResult,
+  UnknownSchemaPolicy,
+} from './schema/types'
 import { resolveSchema, isValidSchema } from './schema/resolver'
+import { registryFingerprint } from './schema/registry-fingerprint'
 import { flattenSchema } from './config/flatten'
 import { validateReferenceEntryTypes } from './validation/entry-type-reference-validator'
 import { isBuildMode } from './build-mode'
@@ -17,9 +23,10 @@ import {
 } from './resource-generation'
 import { timeRequestPhase } from './utils/request-timing'
 import { CANOPY_META_DIR } from './utils/git'
+import { canopyLogWarn } from './utils/logger'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
-const SCHEMA_CACHE_VERSION = 3
+const SCHEMA_CACHE_VERSION = 4
 
 /** Minimum interval between mtime staleness checks (ms) */
 const MTIME_CHECK_DEBOUNCE_MS = 1000
@@ -42,6 +49,39 @@ export interface BranchSchemaCacheEntry {
    * isGenerationCurrent) to decide freshness.
    */
   generation: string | null
+  /**
+   * {@link registryFingerprint} of the registry this snapshot was resolved
+   * against. A deploy bumps no marker, so without it a new image would keep
+   * serving schemas resolved by the old image's registry.
+   */
+  registryFingerprint: string
+  issues: SchemaIssue[]
+}
+
+/** A branch's resolved schema, plus what a degraded resolve left out of it. */
+export interface ResolvedBranchSchema {
+  schema: RootCollectionConfig
+  flatSchema: FlatSchemaItem[]
+  issues: SchemaIssue[]
+}
+
+const reportedIssues = new Set<string>()
+
+/** Log each schema issue once per process, whether it was resolved here or read from a snapshot. */
+function reportSchemaIssues(issues: readonly SchemaIssue[]): void {
+  for (const issue of issues) {
+    const line =
+      issue.kind === 'unknown-schema'
+        ? `CanopyCMS: ${issue.metaFile} names entry schema "${issue.schemaRef}", which this ` +
+          `deployment's entry schema registry does not define, so entry type ` +
+          `"${issue.entryType}" is unavailable until code defining it is deployed or the ` +
+          `content stops naming it.`
+        : `CanopyCMS: ${issue.message} That reference field offers no options until the ` +
+          `content declares the entry type.`
+    if (reportedIssues.has(line)) continue
+    reportedIssues.add(line)
+    canopyLogWarn(line)
+  }
 }
 
 /**
@@ -103,6 +143,15 @@ async function schemaCacheDir(branchRoot: string): Promise<string> {
  * Callers that bypass SchemaOps (api/schema.ts's invalidate endpoint, and the
  * bulk git-op bump in invalidateBranchContentCaches) accept the lazy
  * next-read regen instead.
+ *
+ * The owner of the strict/degrade split. Content read from the checkout (a
+ * build, a static deployment) shares a commit with the code, so a schema
+ * reference the registry lacks is a real bug and resolution throws. A branch
+ * workspace's content arrives by sync, which can land before the image whose
+ * registry it needs, or after an image that needs content it lacks; there an
+ * unknown schema marks only its entry type `unavailable`, an unknown reference
+ * `entryTypes` value only empties that field's options, and both are returned
+ * as `issues`.
  */
 export class BranchSchemaCache {
   /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */
@@ -115,14 +164,15 @@ export class BranchSchemaCache {
   }
 
   /**
-   * Whether to skip the on-disk cache for this branchRoot.
+   * Whether this branchRoot is the checkout rather than a branch workspace,
+   * which skips the on-disk cache and resolves strictly (see the class doc).
    *
    * Never write a schema cache at the project root, whichever entrypoint
    * produced the cwd branchRoot. branchRoot equals process.cwd() only in the
    * synthetic contexts static deployments and build phases use; a real branch
    * root is always nested under the workspace.
    */
-  private skipDiskCache(branchRoot: string): boolean {
+  private readsCheckout(branchRoot: string): boolean {
     return isBuildMode() || path.resolve(branchRoot) === path.resolve(process.cwd())
   }
 
@@ -131,7 +181,7 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
-  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
+  ): Promise<ResolvedBranchSchema> {
     return timeRequestPhase('schema', () =>
       this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName),
     )
@@ -145,20 +195,21 @@ export class BranchSchemaCache {
   protected async resolveFresh(
     contentRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
+    unknownSchema: UnknownSchemaPolicy,
   ): Promise<SchemaResolutionResult> {
-    return resolveSchema(contentRoot, entrySchemaRegistry)
+    return resolveSchema(contentRoot, entrySchemaRegistry, { unknownSchema })
   }
 
   private async loadFromCacheOrResolve(
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string,
-  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
+  ): Promise<ResolvedBranchSchema> {
     const contentRoot = path.join(branchRoot, contentRootName)
 
-    const skipDiskCache = this.skipDiskCache(branchRoot)
+    const fromCheckout = this.readsCheckout(branchRoot)
 
-    if (!skipDiskCache) {
+    if (!fromCheckout) {
       const cachePath = path.join(await schemaCacheDir(branchRoot), SCHEMA_CACHE_FILE)
 
       let cacheData: BranchSchemaCacheEntry | null = null
@@ -173,7 +224,11 @@ export class BranchSchemaCache {
       // Strict version check, not truthiness: a snapshot from an older version
       // left on EFS by a rolling deploy has no `generation` field, and an
       // `undefined` token breaks the freshness comparison below.
-      if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
+      if (
+        cacheData &&
+        cacheData.version === SCHEMA_CACHE_VERSION &&
+        cacheData.registryFingerprint === registryFingerprint(entrySchemaRegistry)
+      ) {
         const read = await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
         if (isGenerationCurrent(cacheData.generation, read)) {
           // Dev also walks mtimes, debounced, to catch edits made outside the CMS.
@@ -188,7 +243,12 @@ export class BranchSchemaCache {
             cacheData = null
           } else {
             if (this.devMode) this.lastMtimeCheck.set(contentRoot, now)
-            return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+            reportSchemaIssues(cacheData.issues)
+            return {
+              schema: cacheData.schema,
+              flatSchema: cacheData.flatSchema,
+              issues: cacheData.issues,
+            }
           }
         } else {
           // Marker mismatch (or unreadable) — treat as a cache miss.
@@ -200,7 +260,7 @@ export class BranchSchemaCache {
     }
 
     return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
-      skipDiskCache,
+      fromCheckout,
     })
   }
 
@@ -214,21 +274,21 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string,
-    options: { skipDiskCache: boolean },
-  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    const { skipDiskCache } = options
+    options: { fromCheckout: boolean },
+  ): Promise<ResolvedBranchSchema> {
+    const { fromCheckout } = options
     const contentRoot = path.join(branchRoot, contentRootName)
 
     // Capture the marker strictly BEFORE resolving, so a bump landing
     // mid-resolve differs from the token persisted below and forces a
     // re-resolve on the next read.
-    const read: GenerationReadResult | null = skipDiskCache
+    const read: GenerationReadResult | null = fromCheckout
       ? null
       : await readResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE)
 
     // Nested under `schema`, so a request summary names a cache miss (`…schema>resolve`).
     const result = await timeRequestPhase('resolve', () =>
-      this.resolveFresh(contentRoot, entrySchemaRegistry),
+      this.resolveFresh(contentRoot, entrySchemaRegistry, fromCheckout ? 'throw' : 'degrade'),
     )
 
     // Validate schema has content
@@ -240,20 +300,24 @@ export class BranchSchemaCache {
     }
 
     // Reference fields may only scope themselves to entry types that exist.
-    // Checked here, before anything is cached, so a typo fails loudly and
-    // consistently instead of silently resolving to zero reference options.
+    // Checked here, before anything is cached, so a typo fails a build loudly
+    // instead of silently resolving to zero reference options.
     const entryTypeIssues = validateReferenceEntryTypes(result.schema)
-    if (entryTypeIssues.length > 0) {
+    if (entryTypeIssues.length > 0 && fromCheckout) {
       throw new Error(
         `Invalid reference field entryTypes in ${contentRoot}:\n` +
           entryTypeIssues.map((issue) => `  - ${issue}`).join('\n'),
       )
     }
+    const issues: SchemaIssue[] = [
+      ...result.issues,
+      ...entryTypeIssues.map((message) => ({ kind: 'reference-entry-type' as const, message })),
+    ]
 
     // Use configured contentRoot name as base path for logical paths
     const flatSchema = flattenSchema(result.schema, contentRootName)
 
-    if (!skipDiskCache) {
+    if (!fromCheckout) {
       const cacheDir = await schemaCacheDir(branchRoot)
       const cachePath = path.join(cacheDir, SCHEMA_CACHE_FILE)
 
@@ -268,6 +332,8 @@ export class BranchSchemaCache {
           flatSchema,
           cachedAt: new Date().toISOString(),
           generation: read.token,
+          registryFingerprint: registryFingerprint(entrySchemaRegistry),
+          issues,
         }
 
         // Temp file then rename, with the temp file unlinked on a failed
@@ -288,7 +354,8 @@ export class BranchSchemaCache {
       // future reader. Serve the fresh result without persisting it.
     }
 
-    return { schema: result.schema, flatSchema }
+    reportSchemaIssues(issues)
+    return { schema: result.schema, flatSchema, issues }
   }
 
   /**
@@ -304,10 +371,10 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
-  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    const skipDiskCache = this.skipDiskCache(branchRoot)
+  ): Promise<ResolvedBranchSchema> {
+    const fromCheckout = this.readsCheckout(branchRoot)
     return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
-      skipDiskCache,
+      fromCheckout,
     })
   }
 
@@ -320,7 +387,7 @@ export class BranchSchemaCache {
    * No eager re-resolve here; it lives in SchemaOps (see the class doc).
    */
   async invalidate(branchRoot: string): Promise<void> {
-    if (this.skipDiskCache(branchRoot)) return
+    if (this.readsCheckout(branchRoot)) return
 
     await bumpResourceGeneration(branchRoot, SCHEMA_GENERATION_RESOURCE, { mustSucceed: true })
   }
