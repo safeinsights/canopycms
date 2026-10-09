@@ -147,7 +147,7 @@
     "@mantine/hooks": "^7.14.2",
     "@mantine/modals": "^7.14.2",
     "@mantine/notifications": "^7.14.2",
-    "@mdxeditor/editor": "^3.52.4",
+    "@mdxeditor/editor": "^4.3.2",
     "@octokit/auth-token": "^4.0.0",
     "@octokit/plugin-throttling": "^8.2.0",
     "@octokit/rest": "^20.0.2",

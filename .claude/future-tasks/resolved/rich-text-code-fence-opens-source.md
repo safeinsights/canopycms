@@ -1,5 +1,9 @@
 # [P2] A code block in an unlisted language, or with a title, opens the whole body as source
 
+**RESOLVED 2026-10-08** by the MDXEditor 4.3.2 upgrade (branch `chore/mdxeditor-4`): a fence in any
+language, with or without a meta string, opens in rich text and saves byte for byte (measured;
+the four corpus bodies left `ROUTED_TO_SOURCE`).
+
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).
 
 ## The gap

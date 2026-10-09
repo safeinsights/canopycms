@@ -92,7 +92,7 @@ function unsupportedJsx(mdx: MdxEditorModule, node: MdastNode): string | null {
 
 // Blocks that run into the block before them in a list item, by that block's type.
 const RUNS_INTO: Partial<Record<string, readonly string[]>> = {
-  paragraph: ['paragraph', 'thematicBreak'],
+  paragraph: ['thematicBreak'],
   blockquote: ['paragraph', 'blockquote', 'table'],
   table: ['paragraph', 'table'],
 }
@@ -105,24 +105,18 @@ const BLOCK_NAMES: Partial<Record<string, string>> = {
 }
 
 /**
- * Why MDXEditor would change what this list item or quote says, or null. Its import joins a list
- * item's adjacent paragraphs and moves a nested list into a new item after its own, so what follows
- * the list comes out before it; its export writes an item tight, so `---` underlines a paragraph and
- * a line continues a quote or table (`RUNS_INTO`); and 3.53 exports a quote as one paragraph.
+ * Why MDXEditor would change what this list item says, or null. Its import moves a nested list into
+ * a new item after its own, so what follows the list comes out before it; its export writes an item
+ * tight, so `---` underlines a paragraph and a line continues a quote or table (`RUNS_INTO`).
  */
 function rearrangedBlocks(node: MdastNode): string | null {
-  if (node.type === 'blockquote') {
-    return node.children.length > 1 ? 'a quote with more than one paragraph or block' : null
-  }
   if (node.type !== 'listItem') return null
   for (let i = 1; i < node.children.length; i++) {
     const before = node.children[i - 1].type
     const after = node.children[i].type
     if (before === 'list') return 'a list item with content after its nested list'
     if (RUNS_INTO[before]?.includes(after)) {
-      return before === 'paragraph' && after === 'paragraph'
-        ? 'a list item with more than one paragraph'
-        : `a list item with a ${BLOCK_NAMES[before] ?? before} followed by a ${BLOCK_NAMES[after] ?? after}`
+      return `a list item with a ${BLOCK_NAMES[before] ?? before} followed by a ${BLOCK_NAMES[after] ?? after}`
     }
   }
   return null
@@ -198,7 +192,6 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
           node.type === ESM_NODE_TYPE ||
           node.type === 'table' ||
           node.type === 'listItem' ||
-          node.type === 'blockquote' ||
           isMdastJsxNode(node),
         visitNode({ mdastNode, descriptors, actions }) {
           if (mdastNode.type === ESM_NODE_TYPE) {
@@ -215,7 +208,7 @@ export function createMdxJsxPlugins(mdx: MdxEditorModule): () => MdxEditor.Realm
             }
           }
           reject(mdastNode)
-          if (mdastNode.type === 'listItem' || mdastNode.type === 'blockquote') {
+          if (mdastNode.type === 'listItem') {
             actions.nextVisitor()
             return
           }
