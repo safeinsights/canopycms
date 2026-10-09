@@ -74,11 +74,11 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 ### A markdown body save rewrites only the blocks that changed
 
-**What changed.** An md/mdx body save keeps every block the edit left alone verbatim (markers,
-escapes, JSX, blank lines, CRLF), so `prettier --check` no longer fails on untouched lines. New and
-edited blocks use Prettier's markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a
-blank line. Blocks the editor cannot round-trip (a hard break, an ordered list's start, a bare URL
-before punctuation) still change on the first edit.
+**What changed.** An md/mdx body save keeps every untouched block verbatim (markers, escapes, JSX,
+blank lines, CRLF), so `prettier --check` passes. New and edited blocks use Prettier's
+markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break, an
+ordered list's start or a bare URL before punctuation still changes on the first edit. A body
+with a multi-paragraph list item or quote opens as source.
 
 **To adopt.** Nothing.
 

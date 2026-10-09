@@ -22,7 +22,8 @@ page's first render, never through an in-app navigation that lazily loads the ed
   error.
 - Or move the e2e app to Next 16 and add that navigation to `mdx-jsx-body.spec.ts`.
 - Decide whether the unit tests should also run against the newest versions in the dependency
-  ranges.
+  ranges. The skew changes editor behaviour: a quote with two paragraphs merges on 3.53.1 and
+  round-trips on 3.55.0, so the round-trip guard's quote rule fits only the older one.
 - A real-browser corpus pass in that job: open every markdown and MDX entry of the sample sites in
   `/edit` and fail on any page error. It's slow (seconds per entry), so run it nightly or per
   release, not per PR. The fast headless corpus test,

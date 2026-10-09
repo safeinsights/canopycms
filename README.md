@@ -486,16 +486,16 @@ npx canopycms migrate --entry-type doc --format md --schema docSchema
 ```
 
 - `--dry-run` prints the full rename/create plan without touching anything; omitted flags are prompted for.
-- Only files of the chosen format are migrated; assets, other formats, and directories without matching content are left untouched.
+- Only files of the chosen format are migrated; everything else is left untouched.
 - Re-running is a no-op: already-conforming names are skipped.
-- Entry order is left unset (alphabetical). Source-specific ordering conventions (e.g. Nextra `_meta.json`) are out of scope — apply those with a follow-up script.
+- Entry order is left unset (alphabetical); apply source-specific ordering (e.g. Nextra `_meta.json`) with a follow-up script.
 
 Afterwards, make sure the schema key you chose exists in your entry schema registry.
 
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; unsupported or crashing bodies open as source
+- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would change on save (e.g. a list item with two paragraphs) or crash on open as source
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`

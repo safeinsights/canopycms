@@ -465,7 +465,7 @@ boundary and the known state.
 
 Top-level components and helpers:
 
-- `CanopyEditor.tsx` — the provider wrapper adopters mount
+- `CanopyEditor.tsx` — provider wrapper adopters mount
 - `CanopyEditorPage.tsx` — page-level shell resolving branch and entry from the URL
 - `EditorAuthGate.tsx` — between `ApiClientProvider` and `Editor`; signed-out decided by API 401s, sign-in full-screen before mount, overlay after
 - `Editor.tsx` — the composition root
@@ -526,7 +526,7 @@ Field components, in `editor/fields/`:
 - `MarkdownField.tsx` — MDXEditor-backed markdown and MDX
 - `rich-text-failures.ts` — markdown that failed rich text, reopened as source
 - `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
-- `mdx-jsx-support.tsx` — JSX plugins
+- `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object field, with a Clear control when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
