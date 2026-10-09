@@ -342,8 +342,10 @@ false` because all tests share one workspace + server). CI runners are slower
   - Model that fits the observed data: `wall ≈ 118s + 1.09 × local_test_time`
     (predicts 3.9m for the slowest shard vs 3.92m measured).
   - Consequence: **validate is the floor.** 5–6 shards, or pinning specs to
-    shards by duration, all land on it and buy nothing further. Don't shard
-    past 4 without first speeding up validate.
+    shards by duration, all land on it and buy nothing further. Validate now
+    runs as parallel jobs and is no longer the floor; a fifth shard still does
+    not pay, for the reason in
+    `.claude/future-tasks/e2e-build-once-share-artifact.md` ("Related").
   - **CONFIRMED at 4 shards (run 30590540192; re-verified via `gh` 2026-07-31
     — the run id originally recorded here, 30590565843, resolves to nothing on
     GitHub):** shards 2.57 / 2.58 / 2.62 / 3.05m, merge 0.57m, validate 3.88m.

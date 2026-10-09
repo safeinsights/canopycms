@@ -26,9 +26,11 @@ sharding 3 → 4 buys ~16s of wall-clock and spends another ~70s of build.
 
 ## Why it matters now
 
-Post-coverage-sweep the suite is 97 tests, total PR CI latency ~4.2m, and
-`Validate, Typecheck & Test` (4.1m) is the floor. Sharding cannot go below that
-floor, so the only remaining e2e lever is the fixed overhead.
+The e2e shards are now the floor of PR CI latency: in run 37990964730 the
+validate jobs, split and run in parallel, finished at 2.4m, and the four shards
+took 3.2–3.7m, plus 0.4m to merge the report. The fixed overhead is the remaining
+lever, but a prep job serializes ahead of the shards, so it shortens the critical
+path only if each shard's own ~48s of setup overlaps the prep build.
 
 Model that fits the measured data: `wall ≈ 118s + 1.09 × local_test_time`.
 Removing the build from each shard would take the constant from ~118s to ~48s —
@@ -53,6 +55,7 @@ only `next start`. Points to get right:
 
 ## Related
 
-Do not raise shard count past 4 to work around this — see the re-measurement
-note in `apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md` §7. Validate's 4.1m floors
-total PR latency, so extra shards past 4 are invisible.
+Do not raise shard count past 4 to work around this: each shard runs only
+37–78s of tests against 60–90s of building and starting the test app, so a
+fifth shard adds a full build to save ~15s.
+See `apps/test-app/e2e/E2E-FAILURE-ANALYSIS.md` §7 for the earlier measurements.
