@@ -40,6 +40,15 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### An unknown schema reference costs one entry type, not the editor — **behaviour change**
+
+**What changed.** When content synced into a branch names an entry schema the running code lacks,
+only that entry type goes unavailable: the editor says so, and its entries answer 503 with
+`code: 'SCHEMA_UNAVAILABLE'`. Builds and static deploys still fail. Public types gain optional
+fields: `EntryTypeConfig.unavailable`, `SchemaResolutionResult.issues` and `ApiResponse.code`.
+
+**To adopt.** Nothing; code that builds a `SchemaResolutionResult` must add `issues`.
+
 ### AI content links a reference to its target — **behaviour change for `/ai` output and AI config callbacks**
 
 **What changed.** A `reference` field renders as a link to its target, not the stored id: a
