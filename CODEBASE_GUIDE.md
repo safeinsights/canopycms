@@ -218,7 +218,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle, worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
@@ -241,7 +241,7 @@ behaviour and conflict tracking are in
 
 **Location**: `packages/canopycms/src/task-queue/` — the generic queue (zero Canopy dependencies, EFS-safe) and the CMS contract on top of it.
 
-- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
+- `task-queue.ts` — enqueue, dequeue, complete, fail, retry, release, recover, cleanup, query, `requeueFailedTask`, `listCorruptTaskFiles`
 - `types.ts` — `Task`, `TaskStatus`, `QueueStats`, `TaskQueueLogger`, `CorruptTaskFile`
 - `index.ts` — public re-exports
 - `cms-task-queue.ts` — the CMS contract: `TaskAction`, `WorkerTask`, `cmsTaskQueueLogger`; the `canopycms/worker/task-queue` entrypoint
@@ -283,11 +283,12 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
 - `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny
 - `src/constructs/lambda-execution-role.ts` — `attachLambdaExecutionPolicies`, the single home for re-attaching a caller-supplied role's managed policies
-- `src/worker.ts` — re-exports `CmsWorker` from core for convenience
+- `src/worker.ts` — re-exports `CmsWorker`
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
-- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, starts `CmsWorker`
+- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, runs `CmsWorker`
+- `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot

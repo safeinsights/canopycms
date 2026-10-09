@@ -59,11 +59,12 @@ if (task) {
 
 | Function                                                 | Description                                                |
 | -------------------------------------------------------- | ---------------------------------------------------------- |
-| `enqueueTask(taskDir, { action, payload, maxRetries? })` | Create a pending task. Returns the task ID.                |
+| `enqueueTask(taskDir, { action, payload, maxRetries? })` | Create a pending task; returns its ID.                     |
 | `dequeueTask(taskDir)`                                   | Move the oldest ready task to processing; `null` if empty. |
-| `completeTask(taskDir, taskId, result)`                  | Mark a task as completed with a result object.             |
-| `failTask(taskDir, taskId, error)`                       | Mark a task as permanently failed.                         |
-| `retryTask(taskDir, taskId, error)`                      | Move a task back to pending with exponential backoff.      |
+| `completeTask(taskDir, taskId, result)`                  | Mark a task completed with a result.                       |
+| `failTask(taskDir, taskId, error)`                       | Mark a task permanently failed.                            |
+| `retryTask(taskDir, taskId, error)`                      | Back to pending with exponential backoff.                  |
+| `releaseTask(taskDir, taskId)`                           | Back to pending unchanged, no retry spent.                 |
 
 ### Recovery & maintenance
 
@@ -77,7 +78,7 @@ if (task) {
 | Function                             | Description                                                                    |
 | ------------------------------------ | ------------------------------------------------------------------------------ |
 | `getTask(taskDir, taskId)`           | Find a task by ID in any status directory.                                     |
-| `listTasks(taskDir, status, limit?)` | List tasks in a status directory, sorted by createdAt.                         |
+| `listTasks(taskDir, status, limit?)` | List a status directory's tasks by createdAt.                                  |
 | `getQueueStats(taskDir)`             | Task counts per status: `{ pending, processing, completed, failed, corrupt }`. |
 
 ## Retry behavior

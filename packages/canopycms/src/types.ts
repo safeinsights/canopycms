@@ -231,4 +231,25 @@ export interface WorkerStatusReport {
    * into a restarted worker's first snapshot, so the bound survives restarts.
    */
   baseHold?: BaseSchemaHold
+  /**
+   * How the previous worker stopped, carried into each new worker's snapshot
+   * (task-queue/worker-status.ts's `readCarriedOverStatus`).
+   */
+  lastShutdown?: WorkerShutdownRecord
+}
+
+export interface WorkerShutdownRecord {
+  /** Why the worker stopped, as its entrypoint described it (e.g. 'SIGTERM'). */
+  reason: string
+  at: string
+  /** The stopped worker's `startedAt`, which ties the record to that worker. */
+  workerStartedAt: string
+  /**
+   * `deadline`: in-flight work was still running at the drain deadline, and
+   * `abandoned` names it. `not-drained`: the worker stopped without recording
+   * a shutdown (a crash or a forced kill); `at` is its last status write.
+   */
+  outcome: 'drained' | 'deadline' | 'not-drained'
+  drainMs?: number
+  abandoned?: string[]
 }

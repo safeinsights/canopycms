@@ -14,6 +14,15 @@ ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
+# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git children it
+# waits for keep running. Whatever is left when node exits, or at
+# TimeoutStopSec, is SIGKILLed; 120s outlasts the 90s drain and its abort grace.
+KillMode=mixed
+TimeoutStopSec=120
+# A worker that drained for an instance termination exits with 75; restarting
+# it would start work on an instance about to disappear.
+RestartPreventExitStatus=75
+SuccessExitStatus=75
 # File output, not journal: the CloudWatch agent cannot read journald,
 # so it tails this file instead (agent config lives in the cms-service.ts
 # user-data, which writes the deployed copy of this unit).

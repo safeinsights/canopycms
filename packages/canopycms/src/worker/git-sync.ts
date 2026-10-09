@@ -86,6 +86,8 @@ export type GitSyncContext = Pick<
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
+  | 'isDraining'
+  | 'shutdownSignal'
 > &
   // syncGit hands its own context straight to runRebaseCycle, so the rebase
   // loop's own requirements are part of this cluster's surface.
@@ -437,17 +439,25 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
-  const git = simpleGit({
+  const gitOptions = {
     baseDir: ctx.remoteGitPath,
     // DEP-H1: a hung fetch/push would stall the sync loop forever
     // (scheduleLoop only reschedules after completion). The block timeout
     // is inactivity-based, so a slow-but-flowing transfer is unaffected.
     timeout: { block: ctx.taskTimeoutMs },
-  })
+  }
+  const git = simpleGit(gitOptions)
+  // The fetch and the settings push, which reach GitHub, are killed at the drain
+  // deadline; a killed ref update leaves the ref as it was or fully moved.
+  // `reconcileTrackedBranches` gets `git`, which nothing aborts: the schema gate
+  // fails open on a read error, so a killed read could advance a held base and
+  // drop the hold's first-seen times.
+  const networkGit = simpleGit({ ...gitOptions, abort: ctx.shutdownSignal() })
   // gitNetworkChildEnv because the fetch and push here reach GitHub, and
-  // because pushSettingsBranches(git) below needs its stable-English guarantee
+  // because pushSettingsBranches below needs its stable-English guarantee
   // to classify a rejected settings-branch push.
   git.env(gitNetworkChildEnv())
+  networkGit.env(gitNetworkChildEnv())
 
   // The whole cycle is wrapped so both outcomes -- success and hard failure
   // (e.g. the fetch throwing against a poisoned remote.git) -- record a
@@ -475,11 +485,13 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
 
+    if (stoppedForDrain(ctx, 'the GitHub fetch')) return
+
     // Direct URL (no named remote), into the GITHUB_TRACKING_REF_PREFIX
     // remote-tracking namespace rather than refs/heads/* -- see that constant's
     // doc comment for the destructive-fetch bug this avoids. Raw git, because
     // simple-git's fetch() with a URL does not support --prune.
-    await git.raw([
+    await networkGit.raw([
       'fetch',
       await ctx.buildGitHubUrl(),
       '--prune',
@@ -504,11 +516,14 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // Ordering relative to the fetch/reconcile above is no longer a
     // correctness dependency now that the fetch can't clobber refs/heads/*
     // -- this could run before or after them just as safely.
-    await pushSettingsBranches(ctx, git, trackedNames)
+    await pushSettingsBranches(ctx, networkGit, trackedNames)
 
+    if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
 
+    if (stoppedForDrain(ctx, 'the rebase cycle')) return
     const rebaseSummary = await runRebaseCycle(ctx)
+    if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
@@ -556,6 +571,17 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     )
     throw err
   }
+}
+
+/**
+ * A draining worker ends the sync cycle at the next stage boundary, never
+ * mid-stage. The early return leaves the previous cycle's `lastGitSync` in
+ * worker-status.json; the shutdown itself is recorded as `lastShutdown`.
+ */
+function stoppedForDrain(ctx: Pick<GitSyncContext, 'isDraining'>, nextStage: string): boolean {
+  if (!ctx.isDraining()) return false
+  workerLog(`Git sync stopped before ${nextStage}: the worker is draining`)
+  return true
 }
 
 /** Foreign repositories already reported by this process, so each is logged once. */

@@ -11,7 +11,7 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 ## First Supported Deployment
 
 - We will eventually be the first user of the CanopyCMS package for our own websites.
-- Production ('prod' operating mode) deployed to AWS: Lambda (no internet, via Function URL) + EC2 worker (t4g.nano spot) + EFS. No NAT Gateway. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md) and [ARCHITECTURE.md](ARCHITECTURE.md#deployment-architecture) for details.
+- Production ('prod' operating mode) deployed to AWS: Lambda (no internet, via Function URL) + EC2 worker (t4g.nano) + EFS. No NAT Gateway. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md) and [ARCHITECTURE.md](ARCHITECTURE.md#deployment-architecture) for details.
 
 ## End Goals / Requirements
 

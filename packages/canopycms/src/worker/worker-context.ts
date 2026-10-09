@@ -107,11 +107,24 @@ export interface WorkerContext {
    * Push a branch from remote.git to GitHub, read at call time. Routed through
    * the instance for the same reason as `executeTask`: cms-worker.test.ts
    * replaces it with a spy and asserts the spy was NOT called on the
-   * base-branch-refusal path.
+   * base-branch-refusal path. `signal` kills the push's git process when it
+   * aborts (simple-git's `abort` option).
    */
-  pushBranchToGitHub(branch: string): Promise<void>
-  /** Whether the worker is still running; both poll loops bail when false. */
+  pushBranchToGitHub(branch: string, signal?: AbortSignal): Promise<void>
+  /** Whether the worker is running; both poll loops bail when false. */
   isRunning(): boolean
+  /**
+   * Whether `stop()` has been called. Every loop checks it at its boundaries
+   * (before a claim, a sync stage, a branch rebase), never mid-step. Distinct
+   * from `!isRunning()`, which is also true of a worker never started, as the
+   * test entry points drive it.
+   */
+  isDraining(): boolean
+  /**
+   * Aborts when a draining `stop()` reaches its deadline: in-flight work that
+   * observes it is cut off so the worker can exit. See `CmsWorker.stop`.
+   */
+  shutdownSignal(): AbortSignal
   /** The worker's self-reported status object, lazily initialized. */
   ensureStatusReport(): WorkerStatusReport
   /** This deployment's own settings branch name. Throws on an invalid name. */
