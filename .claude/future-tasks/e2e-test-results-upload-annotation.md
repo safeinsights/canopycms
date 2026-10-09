@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-09-11, found while measuring the Node 20 fix. Every passing E2E shard carries "No files were found with the provided path: test-results/", now the only annotation on a green run. "Upload test results" runs under `if: always()`, but in CI Playwright writes `test-results/` only when a test leaves traces or screenshots. Fix: `if: failure()` or `if-no-files-found: ignore`, then confirm a green run has zero annotations.
+---
 # [P3] Every passing E2E shard carries a "No files were found … test-results/" annotation
 
 Found 2026-09-11 while measuring the Node 20 action-runtime fix

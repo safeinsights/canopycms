@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-09. With `sideEffects` declared, the editor's CSS survived webpack and Next 15.5 Turbopack builds, but Next 16 Turbopack (inside `canopycms-next`'s peer range) is unchecked; a dropped CSS import leaves `/edit` unstyled with no build error
+---
 # Smoke-test the editor under Next 16 Turbopack with `sideEffects` declared
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-09 from

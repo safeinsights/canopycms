@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, flagged by review round 3 on PR #321 as pre-existing and out of scope there. `executeTaskWithTimeout`'s `work.catch(() => {})` does nothing — `Promise.race` already subscribes a reject handler to every input, so the loser's late rejection is handled (measured) — and the comment above it states a mechanism that is not real. Not a bug; a comment that gets believed: the same pattern was copied into `worker/github-auth.ts` on #321 because it looked load-bearing, and the test written to guard it passed with the line deleted. That copy is gone; this is the original. Delete the line, rewrite the comment, and check vitest's Unhandled Errors section specifically — it prints separately from the pass count
+---
 # [P3] `executeTaskWithTimeout`'s unhandled-rejection guard is dead code, and its comment claims otherwise
 
 Found 2026-09-12 by review round 3 on PR #321 (GitHub App auth), which flagged it as

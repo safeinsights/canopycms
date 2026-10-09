@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-07. The lazy transform Lambda leaves `@aws-sdk/*` to the managed runtime, so its `IfNoneMatch` (and with `enforceCreateOnlyWrites` on, every lazy write) depends on the runtime's SDK version, not the package floor. Proposal: bundle the S3 client or assert its version at cold start, with a test
+---
 # The lazy transform Lambda's create-only writes depend on the Lambda runtime's AWS SDK
 
 **Status:** Open. **Priority: P2.** Filed 2026-10-07 from the adopting site's review of the

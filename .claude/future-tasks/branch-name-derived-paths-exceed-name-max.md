@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, reasoned from code. Branch names up to 250 chars plus the lock's and admin purge's affixes exceed the 255-byte NAME_MAX (ENAMETOOLONG). Cap names or bound every derived name
+---
 # Paths derived from a branch name can exceed NAME_MAX
 
 ## Priority: P3 [BOTH]

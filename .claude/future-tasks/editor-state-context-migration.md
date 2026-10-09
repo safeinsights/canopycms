@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  Complete migration of `Editor.tsx` inline state to `EditorStateContext` — the context exists but has **zero consumers outside its own barrel**, and Editor.tsx still holds 26 inline `useState`. Refactoring debt, but it carries a live sub-issue: `entriesLoading` has two writers (`useEntryManager.ts:642` mirroring SWR unconditionally, and Editor.tsx's own per-entry effect), a daily spinner glitch that shares a root cause with `entry-navigator-loader-empty-tree` — design them together rather than patching a third time
+---
 # EditorStateContext Migration
 
 Complete the migration from Editor.tsx inline state to the existing EditorStateContext.

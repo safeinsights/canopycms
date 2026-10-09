@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04, from the PR #366 review. Nothing in CI builds with `trailingSlash: true`, so a Next upgrade that stops inlining `withCanopy`'s `env` into canopycms code, or changes the redirect regexes, would silently bring back a 308 on every editor API call. Add one assertion-backed build or e2e variant
+---
 # CI smoke for a `trailingSlash: true` build
 
 ## Priority: P3 [BOTH]

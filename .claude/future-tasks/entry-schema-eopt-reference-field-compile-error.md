@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  `entry-schema.ts`'s `FieldValue` reference-field branch fails to compile under `exactOptionalPropertyTypes: true`. Against the built package with `skipLibCheck: false` the error reproduces inside the shipped `dist/entry-schema.d.ts` (three times), so an adopter combining both flags cannot compile at all. It needs both flags together, and the `skipLibCheck: true` requirement is documented in README and the migration guide
+---
 # `entry-schema.ts` fails to compile under `exactOptionalPropertyTypes` (reference fields)
 
-## Priority: P1 [BOTH] — raised from P2: confirmed to break compilation against the built package, not just the source
+## Priority: P3 [BOTH]. Confirmed to break compilation against the built package, not just the source
 
 Found 2026-08-14 while verifying an independent code review's SUSPECTED
 finding on `meta.entryType`/`meta.entryId` (unrelated — see

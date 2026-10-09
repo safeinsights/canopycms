@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-08-15 — from PR #235's human review, noted as a "second, unrelated consequence" of that session's `isAbsoluteUrl` fix. `generateContentSitemap` requires an absolute `siteUrl` and throws otherwise, but `extraUrls[].path` reuses the same absolute-URL check, so a literal protocol-relative value (`//cdn.example.com/x`) passes through verbatim and lands in the sitemap as a non-absolute `<loc>` — the exact invalidity the `siteUrl` guard exists to prevent, reachable through a different field. Adopter misconfiguration, not attacker-reachable
+---
 # `generateContentSitemap`'s `extraUrls` can emit a non-absolute `<loc>`
 
 **Priority:** P3 — narrow, sitemap-spec correctness issue, not a security bug

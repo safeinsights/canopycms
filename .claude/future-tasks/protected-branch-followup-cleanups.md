@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Two small cleanups. **A** is live: `deleteBranch` returns 400 (`api/branch.ts:609`) where the guards use 403 (`:617`) for the same protected refusal, in one handler. **B is now a decide-don't-implement**: its literal fix (required wire flags) is undone, but the risk it named — a caller silently getting "not protected" — was closed by fail-closed client defaults (`useBranchManager.tsx:308-317`), and its stated justification is stale, since the doc comment now argues deliberate wire-versioning rather than legacy compat
+---
 # Protected-branch small cleanups: delete status code + wire-flag optionality
 
 ## Priority: P3

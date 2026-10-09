@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  README's Quick Start claims `canopycms init` interactively prompts for operating mode, but `cli/cli.ts:123` hardcodes `mode = 'dev'` with no prompt and `InitOptions.mode` is typed as the literal `'dev'` only. Needs a decision (drop the doc claim, or add real prod-mode scaffolding). Neither adopter goes through `init`, and the substantive prod-mode gap was fixed separately by PR #224
+---
 # init README claims an interactive "Operating mode" prompt that no longer exists
 
 **Status**: proposed

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  The worker-console ban is a **hand-curated list of four files**, and `eslint.config.mjs` admits it: *"This list is a standing hazard: it is maintained by hand."* ~40 bare `console.*` remain in server-side code against 38 `canopyLog*`, several on worker-reachable paths the list does not name (`services.ts`'s settings-branch push path, `api/github-sync.ts`). `http/handler.ts` uses both **in the same function**, three lines after a comment saying not to. The half that matters is deriving the eslint scope from the import graph rather than sweeping again
+---
 # Logging: the ban list is hand-curated, so its coverage is a snapshot
 
 ## Priority: P3

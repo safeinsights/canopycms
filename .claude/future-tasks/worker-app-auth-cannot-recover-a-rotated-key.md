@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Under GitHub App auth a rotated private key or an early-revoked installation token is never recovered without a restart. Also holds two defects of the same `refreshCredential` that apply on the PAT path: core's 60 s floor stacking on the provider's 5-minute floor (worst-case pickup about 10 minutes), and a re-read adopting an unvalidated token and never going back. P3 while a site authenticates with a PAT
+---
 # [P2] Under GitHub App auth, a rotated private key or an early-revoked installation token is never recovered without a restart
 
 **Priority: P2 [BOTH]; P3 while a site authenticates with a PAT** (the App-auth parts do not apply).

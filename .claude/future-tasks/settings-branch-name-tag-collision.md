@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-05. A git tag named exactly like a branch shadows bare-name lookups. The settings path now uses full refs; still bare: `hasUnpushedCommits` (silent: a submit retry can skip the push and report success), the base-branch fetches, and the worker's GitHub pushes (loud). Sweep every site to `refs/heads/<name>`
+---
 # Bare branch names a same-named git tag can shadow (sweep)
 
 ## Priority: P2 [BOTH] — one silent case; needs an adopter tag named exactly like a branch

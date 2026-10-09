@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. Deleting a branch on GitHub leaves two narrow windows. A double fault (a newer same-named branch whose PR number was never recorded) lets a stale delete close that branch's PR. A failed or late delete lets git-sync recreate the deleted branch's local head from the tracking ref
+---
 # Two narrow windows left around deleting a branch on GitHub
 
 ## Priority: P3

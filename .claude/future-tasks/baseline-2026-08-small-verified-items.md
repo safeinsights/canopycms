@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Seven independent small defects from the August baseline review (duplicate-slug check in `createCollection`, an RMW whose read sits outside the lock, a crash window wedging `syncStatus`, crash-leftover `*.tmp` staged by submit, an entry slugged `all`, `flattenSchema` dropping the root label, `sync push --force` exiting 0); the corrupt-`branches.json` item is its own task, `branch-registry-corrupt-snapshot`
+---
 # Small verified defects from the August 2026 baseline review
 
 ## Priority: P3

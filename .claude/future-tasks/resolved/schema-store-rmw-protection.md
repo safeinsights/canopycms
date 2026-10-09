@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — every SchemaOps mutator holds `withLock`+`withOccFileLock` on the `.canopy-meta/schema` surrogate across its full RMW; no OCC fields in the git-committed `.collection.json` (approved deviation); busy → 409; migrate takes the lock in branch clones (2026-07-24)
+---
 # schema-store.ts: .collection.json read-modify-write has no OCC/lockfile protection
 
 ## Priority: P2

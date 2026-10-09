@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  The write-boundary contested-URL guard accepts all four content extensions; `listCollectionEntries` accepts only the collection's OWN configured entry-type formats. So a `doc.index.{id}.json` in an md-only collection publishes no URL, is skipped SILENTLY (the extension filter precedes the malformed-entry guard), yet still blocks a sibling write — an over-block, the failure mode this guard most needs to avoid. Not fixed where found: the claimant lives in a different collection than the write, so the guard would have to map a physical dir back to a schema item at three call sites inside a deliberately schema-free module
+---
 # The contested-URL guard's claimant set is a strict superset of the listing's, in three ways
 
 **Status:** Open. **Priority: P3.** Found 2026-08-21 by round 2 of the review of

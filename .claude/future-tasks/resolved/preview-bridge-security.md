@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — source + origin checks landed in preview-bridge.tsx (verified at 2026-07 baseline re-review)
+---
 # Preview Bridge `postMessage` Origin Validation
 
 ## Problem

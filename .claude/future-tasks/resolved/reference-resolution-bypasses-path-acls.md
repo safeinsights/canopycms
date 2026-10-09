@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05 (request-time half), branch `fix/reference-resolution-acl`, base `int-202610-a`. A reference target the reader may not read now resolves to `{ id, slug, collection, urlPath, title, unavailable: true, reason: 'restricted' }` and nothing else, at every request-time surface: `read()`/`readByUrlPath()`, the editor's content read, the live-preview endpoint and opted-in listings, all through the request's `createContentAccessChecker`. The id survives a save by a denied editor. Static builds stay public by design (JP, 2026-10-05); see [static-build-reference-acl.md](../static-build-reference-acl.md)
+---
 # Reference resolution embeds a referenced entry's data without checking access to it
 
 ## Status: RESOLVED 2026-10-05, branch `fix/reference-resolution-acl`

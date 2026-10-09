@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: MKT
+summary: >-
+  Editor navigator loads all entries up front; move to collection-scoped/lazy loading (+ keyset cursor). **Index wording corrected 2026-08-13** — this row used to say "the hard 10,000 ceiling is gone", which was misleading enough to read as resolved. What changed in June was a *silent 50-entry truncation* becoming a paginated, notice-bearing cap; `useEntriesData.ts:28-30` still hard-caps at 50 pages × 200 = 10,000 with a yellow "Entry list truncated" notice. the KB is ~200× under it
+---
 # Entry navigator scales to a hard 10,000-entry ceiling
 
 ## Problem

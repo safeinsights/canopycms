@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, from review. `remote.git` repack follow-ups: sweep `objects/tmp_objdir-incoming-*` left by a killed push, measure repack cost (a full `repack -a` about every five pushes) and consider `--geometric`, a clone retry on a mid-read unlink doubles its time, and the worker's remote path must match the clones' `origin` for residue repair
+---
 # remote.git repack: leftovers, frequency, and the worker's remote path
 
 ## Priority: P3 [BOTH]

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  Resolved comment threads are **terminal** — `comment-store.ts:219-227` has `resolveThread` and no inverse anywhere in the store, API or UI, and both thread components hide Reply once resolved with no counterpart action. Add the unresolve primitive (store + API + UI). Promoted from P3: comments are the KB's daily review mechanism and a mis-click is currently unrecoverable
+---
 # Allow Unresolving a Resolved Comment Thread
 
 Resolved comment threads are terminal today: the panel hides Reply on resolved threads and offers no way to reopen one resolved by mistake (observed in the 2026-07-24 deployed-editor UX review; see [resolved/ux-review-deploy-test-findings.md](resolved/ux-review-deploy-test-findings.md)).

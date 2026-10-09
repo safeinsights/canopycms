@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07, branch `feat/s3-only-public-assets`. An identity (`orig`) transform is exempt from the 10 MiB output cap (one per asset, bounded by the upload and pixel caps; measured: any noisy PNG over ~10 MiB re-encoded past it), so a serialized `orig` no longer blocks a release. The one-copy-per-serialized-image storage cost is accepted
+---
 # Serialized image values make the materializer store every full-size `orig`
 
 **Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of

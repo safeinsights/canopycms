@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: KB
+summary: >-
+  Adopter-side sequencing for moving a live site from permissive defaults to `defaultBranchAccess: 'deny'` + `defaultPathAccess: { read: 'allow' }`: upgrade first, add an `edit` rule for the editors group before the flip, then verify as a non-admin (the admin bypass hides every path-layer mistake). The marketing site already runs group path rules; what is left is the KB's sequencing
+---
 # Migrating a live site off permissive ACL defaults
 
 ## Priority: P2 [KB]

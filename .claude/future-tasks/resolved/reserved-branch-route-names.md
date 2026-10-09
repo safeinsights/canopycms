@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12, `fix/adopter-config-correctness`) — branch creation rejects the 7 names that collide with a static top-level API namespace (`admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`). Enforced on the creation path only, alongside the existing `RESERVED_SETTINGS_BRANCH_PREFIX` guard, so a pre-existing reserved branch stays addressable and therefore still deletable — a `branchNameSchema` guard would have made it un-removable. The list lives in dependency-free `paths/branch-name.ts` (api/validators.ts is imported BY the route modules, so deriving it at runtime would be a cycle) and `http/router.test.ts` pins it against the live route table
+---
 # Reserved branch names: `admin` / `assets` shadow /:branch routes
 
 ## RESOLVED — 2026-08-12 (`fix/adopter-config-correctness`)

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, narrowed 2026-10-07 to `AssetSupport`'s opt-in `lazyPublicTransforms` mode (the materialized default has no transform Lambda). A page whose first visitor needs more than 10 not-yet-made image derivatives at once overruns the transform Lambda's cap of 10; the excess 429s show as broken images until a reload. Measure a real page first, or leave lazy mode
+---
 # A page's first render can throttle the transform Lambda (`lazyPublicTransforms` only)
 
 ## Priority: P3 [BOTH]

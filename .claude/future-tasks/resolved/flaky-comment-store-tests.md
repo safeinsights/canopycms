@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — layered locking in epic PR #114; {retry:1} workarounds removed, 20/20 clean runs
+---
 # Investigate flaky concurrent tests in comment-store.test.ts
 
 ## Status: RESOLVED (2026-07-21, epic PR #114)

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-14, from the docs-consolidation PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `check-docs.mjs` resolves a link's file but not its `#anchor`, so a renamed heading breaks links silently; the consolidation renamed over a hundred
+---
 # [P3] Docs guard: verify heading anchors, not just file links
 
 **Status:** Open. Filed 2026-09-14 from the docs-consolidation PR in

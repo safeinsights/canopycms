@@ -1,3 +1,8 @@
+---
+priority: P1
+summary: >-
+  New 2026-08-21, filed at JP's request as the epic closed. Several infra-review fixes are **inert until a `cdk deploy`**, and two fail SILENTLY if the deploy does not take — which is how the defects went unnoticed originally. A checklist to run against the first prod deploy carrying the epic: the `current` symlink is relative AND editors render with names rather than raw Clerk ids AND a Clerk-org ACL actually grants; the worker comes up on `/usr/bin/node-22` with the unit active; a >30s request completes instead of 504ing at the edge; an unreferenced `/assets/t/` URL is a miss that writes nothing; the worker reads secrets with no AccessDenied; and on the next release, publish.yml waits for CI while a `workflow_dispatch` prerelease still goes straight through. Close the file once run
+---
 # [P1] Post-deploy checklist for the 2026-08 infra-review fixes
 
 **Priority: P1 [BOTH], one session, then close.** A real deployed stack exists now, and two of the

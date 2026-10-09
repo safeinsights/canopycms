@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: KB
+summary: >-
+  A collection with no entry types (valid config) still shows "Add Entry" and opens the create modal, where Create is permanently disabled (`canCreate` requires `entryTypeName !== ''`, which is `''` when the list is empty) and the "select an entry type" message is unreachable because it only fires from the disabled button's handler — with `entryTypes.length === 0` neither the Select nor the label renders, so there is no control and no explanation. Either gate the menu item or give the empty case a defined behaviour
+---
 # "Add Entry" on a container-only collection opens a modal that can never submit
 
 **Priority:** P2 — reachable UI dead-end with no explanation shown

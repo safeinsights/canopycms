@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-04. Submit commits and PR bodies name the submitting user, but nothing records who saved what on a branch. Edits other users made are attributed to whoever pressed Submit. The trailer and PR-body builders already take a list of editors; what's missing is a per-branch record of content-save authors (a `.canopy-meta/` read-modify-write, so read docs/concurrency.md first)
+---
 # Record every editor who touched a branch, not just the submitter
 
 ## Priority: P2

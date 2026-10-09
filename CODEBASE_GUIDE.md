@@ -29,7 +29,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/prerelease-version.mjs` — computes an integration publish's `X.Y.Z-int.N` version
 - `scripts/check-docs.mjs` — doc word budgets, list-item length, backticked-path and link resolution
 - `scripts/check-comment-budget.mjs` — source-comment volume ratchet, budgets in `scripts/comment-budget.json`
-- `scripts/check-future-tasks.mjs` — backlog index and task-file link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
+- `scripts/check-future-tasks.mjs` — task frontmatter and link integrity; see [DEVELOPING.md](DEVELOPING.md#future-tasks-backlog-check)
 - `scripts/check-action-pins.mjs` — fails on a third-party Action pinned by a mutable tag
 - `scripts/check-account-ids.mjs` — fails on AWS account ids
 - `scripts/diff-comments-only.mjs` — proves a git range changed only comments in TypeScript files

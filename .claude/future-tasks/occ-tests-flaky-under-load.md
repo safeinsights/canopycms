@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04. Under a full local `CI=1 pnpm test`, three OCC tests failed with timing signatures: `occ-json-write`'s mid-settle conflict resolved instead of rejecting, and `occ-version-less-write`'s setup hook timed out at 10s. Both files pass alone. Make the interleaving deterministic instead of wall-clock dependent
+---
 # OCC tests fail under full-suite load and pass alone
 
-## Priority: P2
+## Priority: P3
 
 Observed 2026-10-04 on a local `CI=1 pnpm test` run of the whole monorepo, at int-202610-a
 4b027e8a plus an unrelated branch. Three tests failed with timing signatures. Both files then

@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: MKT
+summary: >-
+  SHELVED: per-entry `isUrlPath` marker to route entries by a field value (vanity / multi-segment / decoupled URLs). Correctly shelved — the root-collection restructure covers single-segment slug URLs today with no new code. **Now also the recommended home for the consolidated URL-routing design**, with `url-mapping-system` folded in as the heavier alternative. One stale claim corrected: `maxItems` **is** enforced (`api/content.ts:360-373`, PR #106)
+---
 # isUrlPath field marker — route entries by a schema field value (SHELVED)
 
-**Status:** Shelved 2026-05-31. Designed in full (below); not implemented. Revisit when a real decoupled/vanity/multi-segment URL need appears. **Priority: P2.**
+**Status:** Shelved 2026-05-31. Designed in full (below); not implemented. Revisit when a real decoupled/vanity/multi-segment URL need appears. **Priority: P3.**
 
 **Why shelved:** The only requester (the `safeinsights/website` adopter) no longer needs it. Their need is single-segment, slug-equals-URL pages (`/privacy`, `/solutions`, …), which the **root-collection restructure** (below) satisfies natively with zero new package code. `isUrlPath` only earns its keep for the strictly broader class the restructure can't do — so we defer it (YAGNI) rather than add surface area now. This is right-sizing, not a shortcut: the restructure is the correct native solution for slug-equals-URL.
 

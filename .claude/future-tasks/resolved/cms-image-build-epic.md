@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-09-14. The 6-PR epic (plus follow-ups #332, #335, #336, #341, #342) that fixed the CMS editor image build: `next build` now reads the working tree for every build-time read in every mode; sharp loads lazily and `withCanopy` traces its libvips `.so` into standalone output; `CanopyCmsService` always passes a resolved architecture (arm64 by default) so CDK's image platform matches; a `standalone-image` CI job smoke-tests the built image; and adopter docs cover the runtime Clerk key and `NEXT_PUBLIC_CANOPY_MODE`. Integration PR #331 merged into `int-202609-a` (`c25035d2`); published in `0.0.67-int.90` (all five packages). The end-to-end check against the first adopter's editor image on that version passed, with the remaining 500s traced to adopter-side causes, not CanopyCMS's.
+---
 # CMS editor image: base branch, sharp tracing, image architecture
 
 **Status:** Resolved 2026-09-14. All PRs merged; integration PR

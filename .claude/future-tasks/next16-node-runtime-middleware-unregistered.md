@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-09-09, MEASURED across two sessions (three real `next build` arms, not source reads). A middleware declaring `runtime: 'nodejs'` registers correctly on Next 15.5.21 under both webpack and turbopack, and on **16.1.7 registers nowhere** — the edge registration is removed, a Node bundle is emitted, and `functions-config-manifest` stays empty, which is exactly what `loadNodeMiddleware()` reads in production. So on 16.1.7 the build and the server disagree and middleware **silently stops running** with the build exiting 0. Bundler exonerated (turbopack populates it fine on 15.5.21; the 234 B `middleware.js` is its signature in both turbopack arms). Two consequences: adding `runtime: 'nodejs'` to our generated middleware template would ship auth-silently-off to 16.x adopters, and anything needing a Node-only module in middleware is blocked there. Not Clerk-specific; `canopycms-next` peers on 16.x. Right action is guard + report upstream to Vercel, not internal diagnosis
+---
 # [P2] Node-runtime middleware does not register on Next 16.1.7
 
 Measured 2026-09-09 across two sessions while investigating an unrelated Clerk

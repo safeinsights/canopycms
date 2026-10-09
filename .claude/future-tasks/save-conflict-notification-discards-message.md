@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  `useDraftManager`'s save path sends every 409 to a FIXED "modified by another editor" notification and discards `err.message`, so a `BranchSyncingError` (branch is rebasing, nobody edited anything) and the [SYNC-C1] compromise case (the write LANDED, reload before retrying) are both misattributed — and a blind retry resends a stale `expectedVersion` and bounces off the user's own write. Other statuses already pass the message through; the rename path and admin repair surface it correctly. P3: drafts are retained and the fixed text does say "reload"
+---
 # [P3] The save path shows a fixed conflict message and discards the server's
 
 **Found:** 2026-08-20, by the independent review of `fix/test-suite-unhandled-errors`.

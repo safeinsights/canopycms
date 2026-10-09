@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, from Phase 2 of the image-materialization epic. `generate-ai-content`, `init`'s `detectMode` and `materialize-assets` each import and unwrap `canopycms.config.ts` themselves and validate different subsets. Proposal: one loader validated by `CanopyConfigSchema`
+---
 # Three CLI commands each load `canopycms.config.ts` their own way
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-06 from Phase 2 of

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  `store-local.ts:220`'s `putMetaIfAbsent` creates asset meta with `writeFile({flag:'wx'})` — the one exclusive-create primitive `docs/concurrency.md` Layer 2 explicitly says never to use, because a crash mid-write leaves a partial file that breaks every later `JSON.parse`. Its comment rules out rename-based `atomicWriteFile` (correctly) but never considers temp+`link()`, which gives the same clean-loser `EEXIST` semantics *and* crash atomicity — and that pattern already exists in `occ-json-write.ts`. Prod uses S3, so only local-filesystem mode exercises this path
+---
 # `putMetaIfAbsent` uses `wx`, the one exclusive-create primitive concurrency.md tells us not to use
 
 Found 2026-08-12 while auditing exclusive-create primitives for the Workstream D

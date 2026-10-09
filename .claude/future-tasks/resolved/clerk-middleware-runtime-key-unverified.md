@@ -1,3 +1,7 @@
+---
+summary: >-
+  DUPLICATE 2026-10-05, backlog curation. The live proof is item 1 of [clerk-signed-out-followups.md](../clerk-signed-out-followups.md).
+---
 # DUPLICATE: merged into clerk-signed-out-followups
 
 The one-image-per-Clerk-tier shape (publishable key read at runtime in a `force-dynamic` layout, no

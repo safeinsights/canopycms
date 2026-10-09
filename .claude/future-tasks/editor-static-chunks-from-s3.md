@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-06, split out of the editor chunk-throttling fix by decision. The editor's chunks come from the CMS Lambda on every CloudFront miss, so a region's first editor load cold-starts one environment per chunk. Serve them from S3 with the Lambda as fallback; the preferred copy is a deploy-time custom resource fetching them serially from the deployed Lambda, not a second build
+---
 # Serve the editor's static chunks from S3, not the CMS Lambda
 
 ## Priority: P2 [BOTH]

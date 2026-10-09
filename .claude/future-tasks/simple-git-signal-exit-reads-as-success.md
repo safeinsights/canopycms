@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-06, measured. simple-git resolves a git process killed by a signal (exit code null, no stderr) as success. `GitManager` and clones now fail on it (`failOnSignalExit`); the worker's, CLI sync's and admin's own simple-git instances still do not, so an OOM-killed worker merge or push reads as done. One shared simple-git factory plus a lint rule
+---
 # simple-git reads a git killed by a signal as success
 
 ## Priority: P2 [BOTH]

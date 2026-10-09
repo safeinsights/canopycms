@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-12, `fix/adopter-config-correctness`) — `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` now honor `config.contentRoot`. The required regression test surfaced a THIRD site the task file didn't know about: `content-store.ts`'s `buildFromFilenames('content')` built the ID index from a nonexistent directory, so every ID-based lookup (reference resolution, entry links, order cleanup, rename) silently missed while path-based reads kept working — fixed via a new `ContentStoreOptions.contentRootName` threaded from all 10 production call sites. Also fixed the latent multi-segment case (`contentRoot: 'cms/content'`, documented as valid): `SchemaOps` derived `branchRoot` as `dirname(contentRoot)` and the root-collection path as `basename(contentRoot)`, both wrong beyond one segment; `branchRoot` is now passed explicitly and `contentRootName` derived by `relative()`
+---
 # Schema mutation/invalidation paths hardcode 'content' instead of honoring config.contentRoot
 
 ## RESOLVED — 2026-08-12 (`fix/adopter-config-correctness`)

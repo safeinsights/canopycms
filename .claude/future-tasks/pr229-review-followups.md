@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  The two open items from PR #229's review: the Dockerfile template's `ARG NEXT_PUBLIC_CANOPY_MODE=dev` means a hand-built image ships a dev-mode editor bundle against a prod server with nothing detecting the mismatch, and `branch-health.ts` scans every branch's whole content tree on every admin health request inside a 60 s Lambda, reporting a timed-out scan as "no duplicates"
+---
 # [P2] PR #229 review follow-ups: image mode check, bounded health scan
 
 **Priority: P2 [BOTH].** The two open items from the human review of

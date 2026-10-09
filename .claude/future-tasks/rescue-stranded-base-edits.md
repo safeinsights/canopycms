@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Admin capability (CLI/API) to move stranded uncommitted edits from a protected branch clone onto a new editing branch; replaces the manual EFS runbook in deploying-to-aws.md. Confirmed nothing exists — no rescue command, no rescue endpoint. Matters once editors can't be handed shell/EFS access.
+---
 # Rescue tooling for stranded edits on a protected branch clone
 
-## Priority: P2
+## Priority: P3
 
 Surfaced by the protected-base-branch work (2026-07-24). The first deployed prod
 instance let editors save directly on `main` before protection existed; recovery is

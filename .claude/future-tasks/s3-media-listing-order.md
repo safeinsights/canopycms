@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  MediaLibrary listing is newest-first in dev but hash-ordered in prod (`store-s3.ts:214-244` has no sort where `store-local.ts:239-269` sorts explicitly); revisit when "find my recent upload after reload" becomes a real complaint
+---
 # Future Task: S3 media-library listing order (dev vs prod divergence)
 
 Status: **captured from the assets epic final review (finding #4), 2026-07-22.** Low

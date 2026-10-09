@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  The `repair-content-duplicates` endpoint and its generated client method exist; no UI invokes either. System Health shows a read-only `N duplicate IDs` badge per branch, deliberately with no button, because its row also holds **Purge** (which trashes the whole branch directory). The action needs its own confirmed surface; unit suites mock `@mantine/modals`, so a confirmation is assertable only in e2e
+---
 # [P2] No UI triggers the duplicate-content-ID repair action
 
 Raised by the human review of

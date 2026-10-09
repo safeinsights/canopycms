@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-09. `package-side-effects.test.ts` does not count a call in a `const` initializer, so `const _ = install()` passes it, and bundlers then drop that module's effect. Measure an "unused const with a call" heuristic, or keep the convention
+---
 # The side-effects guard does not see an import-time call hidden in an unused `const`
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-09 from

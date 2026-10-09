@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Found 2026-08-21 reviewing the resolved-reference-shape work. The entry-URL rule (strip content root, collapse `index`, lowercase) now has two implementations: `computeEntryUrl` (listings, resolved references, `entry:ID` links) and `content-tree.ts`'s exported `defaultBuildPath`. Verified to agree across every edge case tried, so nothing is broken — but consolidating two copies into one was the stated reasoning for the listing half, and a third undercuts it. Not folded in because `defaultBuildPath` also handles the `kind: 'collection'` case and is adopter-extensible API. Carries a real undocumented edge either way: a custom `buildPath` replaces node paths but not a resolved reference's `urlPath`, so the two can disagree inside one tree
+---
 # `defaultBuildPath` is a third copy of the entry-URL rule
 
 **Status:** Open. **Priority: P3** — no known divergence today; this is drift insurance plus

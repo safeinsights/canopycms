@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-10-05, left by the content-write-lock coverage fix. The `.canopy-meta/schema` surrogate lock is now redundant (every holder already holds the per-branch content-write lock first) and costs EFS round-trips per schema mutation; and `GitManager.pullBase`/`rebaseOntoBase` have no callers yet rewrite the tree unlocked — delete or lock them
+---
 # [P3] Content-write lock follow-ups
 
 Left after [content-write-lock-coverage-gaps.md](resolved/content-write-lock-coverage-gaps.md)

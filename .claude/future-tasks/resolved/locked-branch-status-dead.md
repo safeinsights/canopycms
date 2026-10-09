@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — decided delete, not implement. `'submitted'` already means "locked while a reviewer looks at the PR" and is enforced; the `'locked'` literal had zero writers and no way to be set, so it was removed from `BranchStatus` (plus three badge maps). Removes the worker incoherence (rebase-but-never-poll) the file flagged. A real admin-freeze feature should reintroduce a status with full semantics
+---
 # BranchStatus 'locked' is a dead state — implement or remove
 
 ## RESOLVED (2026-08-12) — deleted the literal

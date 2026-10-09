@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Withdraw detects a closed PR from metadata that can be up to `gitSyncInterval` stale; in the lag window it enqueues a convert-to-draft task that 422s and trips `sync-failed` on a *successful* withdraw. `isPermanentTaskFailure` treats any 4xx as permanent, so it fails straight through rather than retrying. Fix by making the worker treat "PR already closed" as a benign no-op.
+---
 # Withdraw uses metadata-cached `pullRequestState` for closed-PR detection
 
 Found by the human review of PR #149 (2026-07-24, LOW). Deferred: cosmetic, self-heals.

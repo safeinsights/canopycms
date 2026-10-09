@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-04. `vitest.config.ts` raises `testTimeout` to 30000 for git-heavy suites but leaves `hookTimeout` at 10000, and the `src/__integration__/` suites do their `createTestWorkspace` git setup in `beforeEach`. One loaded local run timed out `occ-version-less-write.test.ts`'s setup (3 failures, 2 unhandled errors); the file alone and the next full run passed. Fix: set `hookTimeout` too
+---
 # [P3] Integration-suite setup hooks run under vitest's 10s default
 
 New 2026-10-04, seen while re-running gates for the workflow-push fix.

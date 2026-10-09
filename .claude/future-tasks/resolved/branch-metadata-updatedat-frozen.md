@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24, PR #149) — `save()` stamps `updatedAt: now` after the merge spreads (was frozen at creation by spread order); strictly-greater regression test added. Taken on the PR #149 human review's recommendation.
+---
 # BranchMetadata.updatedAt never advances after creation
 
 Found by the Fable review of PR #144 (2026-07-24), verified against the code.

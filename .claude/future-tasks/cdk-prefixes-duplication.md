@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-08-22, from the human review of PR #257. `asset-support.ts` re-declares the five S3 prefixes as literals, and the epic's new `expire-transform-outputs` lifecycle rule keys off that copy — while the transform Lambda **in the same package** imports the canonical `ASSET_PREFIXES`. They agree today; if they diverge the lifecycle rule silently matches NOTHING, a deploy-time no-op with no error anywhere, which is exactly the failure class the infra-review epic exists to eliminate. The stated reason for duplicating ("canopycms is not resolvable from CDK code") is weaker since #272 made `canopycms` a declared peer dependency of `canopycms-cdk`. Fix: import the constants, or add a two-line parity assertion — the suite already reaches across that boundary for the same kind of drift check
+---
 # [P3] `canopycms-cdk`'s `PREFIXES` is a duplicated literal with no parity test
 
 Found by the human review of PR #257 (2026-08-22), rated low.

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  The package-level mitigation is in place (the `next` peer range excludes 16.2.x; README documents it). Left: reproduce in a minimal repo, file or find the upstream issue, and re-check 16.3.x
+---
 # Next 16.2.x + PostCSS fork-bomb on adopter dev servers: upstream issue not filed
 
 **Priority: P3 [BOTH].** The package-level mitigation is in place. `canopycms-next`'s `next` peer range

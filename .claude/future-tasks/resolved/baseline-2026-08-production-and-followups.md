@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED as a record (2026-08-13) — **split, not finished**. Part A (production blockers) is genuinely closed: prod mode is reachable and documented (#224), the settings-workspace init lock and the `pullCurrentBranch` refspec that had never worked in prod are fixed (#222), an approved branch can no longer be destroyed by one unconfirmed click (#221), a duplicate content ID no longer bricks a branch (#226), and three of A2's four advisories were cleared by #228. Its still-open remainder was split into [acl-defaults-and-dead-path-checker.md](acl-defaults-and-dead-path-checker.md) (B4+B8), [authorization-enforcement-consolidation.md](../authorization-enforcement-consolidation.md) (B5 + three B7 items), [branch-namespace-validation-gaps.md](../branch-namespace-validation-gaps.md) (B2+B3), [baseline-2026-08-small-verified-items.md](../baseline-2026-08-small-verified-items.md) (ten B7 items) and [image-size-dos-accepted-risk.md](../image-size-dos-accepted-risk.md) (A2's accepted risk). The audit also found B5 **undercounted** (five matchers, not four — the fifth is client-side) and one B7 item already fixed but unstruck
+---
 # Baseline review 2026-08: production-readiness blockers and follow-ups
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at

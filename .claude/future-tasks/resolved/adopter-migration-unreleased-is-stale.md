@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-01. The ~1,150 lines covering `0.0.64`-`0.0.66` that were still filed under `## Unreleased` are now under their release headings: 10 entries to `0.0.64`, 11 to `0.0.66`, 7 genuinely unreleased, nothing to `0.0.65` (tagged two hours after `0.0.64`, so it gets a heading saying it is empty rather than looking absent). Each entry was mapped by the commit that introduced its heading, then the earliest tag containing it; validated against the code via `b91b60a9` (#44 CDK half, lands on `v0.0.66`). Recurrence guard is check 9 in `scripts/check-docs.mjs` — `lint:docs` fails on a release tag reachable from HEAD with no `### <version>` section
+---
 # `docs/adopter-migration.md`'s Unreleased section covers three shipped releases
 
 **Status: RESOLVED 2026-10-01.** Found 2026-09-11 while adding an entry for

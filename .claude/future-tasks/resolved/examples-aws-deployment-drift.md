@@ -1,3 +1,7 @@
+---
+summary: >-
+  DUPLICATE, closed 2026-09-13 in the base merge (#341). Filed on `int-202609-cms-image` on 2026-09-12 by the round-1 review of PR #323, the same day as two other filings of the same drift. Every fact in it is merged into [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), which stays open.
+---
 # [P3] `examples/aws-deployment/` lags the `init-deploy aws` scaffold it claims to mirror
 
 **Duplicate of [example-aws-deployment-drift-from-template.md](../example-aws-deployment-drift-from-template.md), merged during the base merge (#341).**

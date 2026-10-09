@@ -1,3 +1,8 @@
+---
+priority: program
+summary: >-
+  Append-only findings log of the production-readiness program
+---
 # Production-Readiness Program — Log
 
 Append-only. Newest entries at the bottom. One entry per working session that

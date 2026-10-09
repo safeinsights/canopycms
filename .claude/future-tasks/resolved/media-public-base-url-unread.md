@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07, branch `feat/s3-only-public-assets`. `media.publicBaseUrl` is removed outright (no compat shim), with `assetMountUrlSchema` and the `allowProtocolRelative` option that existed only for it; a leftover key fails the strict schema at startup, and the adopter migration guide says to delete it
+---
 # `media.publicBaseUrl` is validated but nothing reads it
 
 **Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of

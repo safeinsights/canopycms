@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, from review of the image-materialization epic's Phase 1. On S3 the raw route's presigned 302 is `no-store` and every URL is freshly signed, so each preview or editor reload sends every image back through the concurrency-capped CMS Lambda. Proposal: a short private cache on the redirect (well under the 5-minute expiry), after measuring
+---
 # Raw-route presigned redirects are never cached by the browser
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-06 from review round 2 of

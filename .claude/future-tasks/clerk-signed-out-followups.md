@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  The editor handles signed-out users itself, so `clerkMiddleware` is optional. Left: the live proof of the no-middleware shape on a real Clerk instance (sign-in from `/edit`, idle-token recovery, the per-request publishable key on Next 16.x; absorbs `clerk-middleware-runtime-key-unverified`), README's custom-renderers example passing no auth config, and a late 401 that can reopen the sign-in overlay once
+---
 # Clerk signed-out follow-ups: live Clerk proof, README example, late 401
 
 **Priority: P1 [BOTH]** while the live proof is unrecorded.

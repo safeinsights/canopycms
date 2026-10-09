@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-06, branch `fix/worker-efs-mount-parity`, base `int-202610-a`. The worker now mounts EFS with `tls`, as a side effect of mounting the `WorkspaceAP` access point (efs-utils requires `tls` for one) at `/mnt/efs` like the Lambda, in both the boot mount and the fstab line. Its verification deploy is the next deploy of that int prerelease
+---
 # EFS worker mount: enable TLS in transit
 
 **RESOLVED 2026-10-06** (branch `fix/worker-efs-mount-parity`). The worker mounts the

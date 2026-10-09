@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  `useReferenceResolution`'s background resolve compares form values, not branch — `client-reference-resolver.ts`'s `findChangedFields` takes no `branch` argument at all — so a branch switch that doesn't also change the reference field's value leaves it **permanently unresolved**. Masked in practice by entries usually reloading with new content on switch; the one branch-change test asserts only the immediate post-switch state and never advances the timer, so the stuck case is untested
+---
 # Reference Resolution: Branch Switch Without a Value Change Leaves a Field Permanently Unresolved
 
 Discovered 2026-07-30 while writing regression tests for

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  `useBranchManager` declares an `operatingMode` option that `Editor.tsx` passes and the hook never reads. Remove it and run the typecheck
+---
 # [P3] `useBranchManager`'s `operatingMode` option is unused
 
 `packages/canopycms/src/editor/hooks/useBranchManager.tsx` declares `operatingMode: OperatingMode`

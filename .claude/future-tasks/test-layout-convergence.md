@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  `DEVELOPING.md` documents the layout **11%** of the suite uses (colocated won 206–27). Four directories are mixed, and `paths/` has the **same filename in both layouts** — `branch.test.ts` and `validation.test.ts` each exist twice, testing different functions, so adding a `parseSlug` test requires guessing. Two `__test__/` directories contain no tests at all. Test helpers live in six homes, one of which (`config-test.ts`) is test-only code at package root that compiles into `dist`. Start with the `paths/` collision; it is 15 minutes
+---
 # Test files live in three layouts, helpers in six homes, and the doc describes the layout 11% use
 
 ## Priority: P3 — low risk, and the `paths/` half is a 15-minute fix

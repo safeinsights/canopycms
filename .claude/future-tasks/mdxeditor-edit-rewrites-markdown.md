@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-06, measured. The first edit to a markdown body re-serializes it through MDXEditor, which turns hard breaks into soft ones, renumbers ordered lists from 1, merges a lone span's class into its parent, writes loose lists tight, and autolinks a bare URL's trailing period into its target. Valid but different markdown, so no error fires. Override the export visitors or upstream the fixes
+---
 # Editing a markdown body rewrites constructs MDXEditor does not preserve
 
 **Priority: P2 [BOTH].** The first edit to a body silently changes parts nobody touched; nothing

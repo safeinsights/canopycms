@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from adopter request 87. Editor crashes reach only the author's console. Add an adopter `onClientError` hook in the client config (errors caught by the field boundaries, window errors, failed API calls; context without field values). New adopter touchpoint, so it needs JP's approval
+---
 # Editor crashes reach no one but the console
 
 ## Priority: P2 [BOTH]

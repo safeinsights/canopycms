@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-09-13, filed while landing `canopycms init-github-app` (PR #333) and deliberately scoped OUT of it — it needs account-owner rights and a live deployment, so folding it in would make a testable PR depend on a manual one. **Adopter request #45/#329 shipped GitHub App auth that has never authenticated to github.com**: every test mocks Octokit. Unproven in particular are the `x-access-token:<installation token>@github.com` URL for clone/fetch/`--force-with-lease` (`cms-worker.ts:823-826`), the `@octokit/auth-app@6` -> `universal-github-app-jwt@1` resolution the worker actually bundles, `preflightGitHubAppAuth`'s boot mint, and whether `contents: write` + `pull_requests: write` really covers the two **GraphQL** mutations — the single entry in `CANOPY_APP_PERMISSIONS` derived by analogy rather than from GitHub's permissions reference, which enumerates REST endpoints only. The failure mode is why it is P2 rather than P3: `convert-to-draft`'s GraphQL failure carries no HTTP status, so `isPermanentTaskFailure` reads a permission denial as TRANSIENT and wedges the branch in `sync-failed` naming no permission. Plan is to run `init-github-app create`/`verify` against the `canopycms` org's `deploy-test` repo — the run is itself half the test, since the manifest conversion, the name limit and the 422-on-unapproved-permission behaviour are browser- and owner-gated and can never run in CI — then **narrow the installation deliberately** and confirm `verify` catches it. Afterwards re-measure `APP_NAME_MAX_LENGTH` (34) and `APP_SUMMARY_MAX_LENGTH` (37), both carried over from a sibling project rather than measured here
+---
 # [P2] The GitHub App auth path has never run against real GitHub — exercise it with `init-github-app`
 
 Filed 2026-09-13 while landing `canopycms init-github-app` (PR #333). Scoped **out** of that

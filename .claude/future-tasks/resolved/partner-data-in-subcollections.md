@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — done in the KB's live content, verified 2026-08-13. Partner YAML is now the index entry of its own sub-collection (e.g. `content/data-catalog.o3ANExzM56Zg/quill.eGN4Z8vim7mo/partner.index.cEn5WK44i6Vy.yaml`), the pattern the file called its "desired end state", across all 8 partner sub-collections; `content/partners/` is gone. The Canopy capability that made it possible is `reference-resolver.ts:100-128`, which scans the ID index and filters by entry type across sub-collections — exactly what the file said didn't exist. The file's "Current setup" section had been describing a directory layout that no longer exists
+---
 # Partner data entries co-located with their content collections
 
 ## Problem

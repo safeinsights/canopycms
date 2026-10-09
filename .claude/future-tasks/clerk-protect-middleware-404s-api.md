@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from PR #428's claim check, unreproduced. The opt-in `auth.protect()` snippet in example1's middleware and the init template reportedly answers a signed-out API call 404, so a lapsed session shows an error instead of the sign-in overlay and `unauthenticatedStatus` does not apply. Reproduce, then keep the API routes out of the snippet's matcher
+---
 # The opt-in `auth.protect()` middleware answers a signed-out API call 404
 
 ## Priority: P3 [BOTH]

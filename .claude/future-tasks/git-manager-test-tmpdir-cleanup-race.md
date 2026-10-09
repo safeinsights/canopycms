@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  `git-manager.test.ts`'s `afterEach` `fs.rm(tmpDir, {recursive, force})` intermittently throws `ENOTEMPTY` on `.git/info` — `force` suppresses ENOENT but not a concurrent writer, most likely a detached `git gc --auto` still writing after simple-git resolved. Fix direction: `gc.auto=0` in the test repos and/or `fs.rm`'s native `maxRetries`; probably one shared helper for every suite that shells out to git under mkdtemp. **Second instance logged 2026-08-14**: a `proper-lockfile` `ECOMPROMISED` on `api-editing-workflow.test.ts`'s provisioning lock, raised asynchronously after its tmpdir was removed — every test file passed and only the exit code went non-zero, so it reads as green under `| tail`. Twice in ~7 full runs, both under `pnpm -r`
+---
 # `git-manager.test.ts` tmpdir cleanup races with lingering git processes
 
 Observed on CI 2026-08-12 (PR #186, run 31648351324), on a branch that touches

@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  New 2026-10-09, from marketing-site request 70. `validateEntry` gets the request's `entryType`, not the resolved one, so a save that omits it skips a type-gated rule. The marketing site's refusal of executable MDX is such a rule. One-line fix plus a doc line
+---
 # `validateEntry` receives the request's `entryType`, not the resolved one
 
 **Priority:** P1 [BOTH]. **Found:** 2026-10-06, marketing-site request 70; still true at `fecc04a0`.

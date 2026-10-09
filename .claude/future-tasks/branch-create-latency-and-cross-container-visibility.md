@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-06, reasoned from code. The editor now switches to a created branch at once, but the POST still provisions the clone synchronously (its latency is the user's wait), and per-branch requests for the new branch can land on a container whose NFS caches lag it. Read the `createBranch` timing spans, then decide
+---
 # Branch create: slow POST, and a new branch other containers cannot see yet
 
 ## Priority: P2 [BOTH]

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-09-09, branch `feat/cross-account-role-props`) — adopter request #42. Shipped as `transformRole?: iam.Role` on `AssetSupportProps` and `lambdaRole?: iam.Role` on `CanopyCmsServiceProps`, so a deterministically-named role makes the principal ARN computable from literals in the bucket's own stack — no construct reference, and so no `Fn::GetStackOutput`. **This file's own shape (1) proposed `iam.IRole` and would have shipped the bug it was meant to fix**: `addManagedPolicy` is a silent no-op on every imported role (`ImmutableRole.addManagedPolicy(_policy) {}` is an empty body; the mutable `ImportedRole` attaches only policies exposing `attachToRole`, which `ManagedPolicy.fromAwsManagedPolicyName` does not), and no runtime guard exists because `addToPrincipalPolicy` returns `statementAdded: true` while emitting nothing — so the concrete `iam.Role` moves it to a compile error. New `packages/canopycms-cdk/src/constructs/lambda-execution-role.ts` re-attaches what CDK discards for a passed role; the VPC-ENI half is load-bearing (without it the CMS Lambda cannot create ENIs and cannot start, having deployed clean) and basic-execution is parity-not-necessity, since both Lambdas log to custom-named groups the managed policy does not cover. Shape (2) (`roleName`) dropped over `CAPABILITY_NAMED_IAM`; the named-role replacement trap moves to the adopter, who accepted it. Five tests, each verified by mutation. Worker needed nothing, as filed
+---
 # [P1] No way to compute the Lambda role ARNs without a construct reference
 
 **RESOLVED** (2026-09-09, branch `feat/cross-account-role-props`) — shipped as

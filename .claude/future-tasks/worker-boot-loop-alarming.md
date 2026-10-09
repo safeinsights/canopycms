@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Nothing pages anyone when the worker is down, including a deterministic boot loop: the fail-fast `ERR` trap turns one dead instance into churning ones, and the admin panel's "absent" state needs someone looking. **Decided:** an optional alarm-topic prop (`alarmTopic?: ITopic`) in `canopycms-cdk`, with a CloudWatch alarm on worker log-event rate or ASG launch churn. Part of the worker-down cluster with `worker-not-ready-permanent-failure` and `worker-secret-errors-before-start-are-invisible`
+---
 # [P2] Nothing pages a human when the worker is down, including a boot loop
 
 **Priority: P2 [BOTH], due now:** the worker is live on a deployed site. Part of the worker-down

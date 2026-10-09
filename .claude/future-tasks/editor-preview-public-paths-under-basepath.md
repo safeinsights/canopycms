@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. Editor previews of a `public/` image src use the bare path, which misses under a Next `basePath`. Carry `basePath` in `AssetContext` and prefix non-store root-relative srcs as the public site does
+---
 # Editor previews of `public/` image paths miss under a Next `basePath`
 
 **Priority:** P3. **Found:** 2026-10-08, claims pass on the image-field `public/` preview fix.

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, from the image-materialization epic's final review. The collector takes any `/assets/<hash>/<name>.<ext>` text as a static key, so a third-party lookalike fails the release; and nothing flags a width the lazy Lambda's allowlist refuses. Proposal: origin-aware statics and a `--width-policy allowlist` check
+---
 # `collect-asset-refs`: third-party static lookalikes, and no lazy-mode width check
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from the final review of

@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `fix/unauthenticated-status`, base `int-202610-b` — adopter request #60. `unauthenticatedStatus: 401 | 419` (default 401) sets the HTTP status of the handler's two unauthenticated responses; the body keeps `status: 401`, and the client now fires `onUnauthorized` on HTTP 401 OR a handler body (`isApiResponseBody`) saying 401, so sign-out detection survives 419 while a proxy's 403 still does not trigger it. 419, not 403: a CloudFront custom error response can match 403 (S3-behind-OAC sites commonly map it to an error page) and would replace the body, but cannot match 401 or 419. Declined: holding API calls until the auth provider settles — the gate trusts only the server by design, and the status switch covers mid-session expiry too, which gating would not
+---
 # Unauthenticated API requests can only be answered with a bare 401
 
 ## Priority: P3 [BOTH]

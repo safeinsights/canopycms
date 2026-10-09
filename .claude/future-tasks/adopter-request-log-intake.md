@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Standing pointer to the marketing site's own log of package bugs and gaps — the closest thing we have to an external adopter's view of this package, re-verified per release against the installed tarball, and referenced by stable item number from `docs/adopter-migration.md`. Nothing here referenced it until 2026-08-20, so items sat unread for releases. Carries the full triage of all 16 open items and the six places our verification disagreed with theirs
+---
 # Adopter request log — standing intake
 
 **Status:** Standing pointer + the 2026-08-20 triage, extended 2026-08-30 with items 35-36. **Priority: P2** (the log itself; individual

@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-05, backlog curation, as a decision record: not building one blessed renderer. The README warning about `react-markdown` in a server component ships (README.md:523).
+---
 # One blessed markdown renderer — decided NOT to build
 
 **RESOLVED 2026-10-05, as a decision record:** not building. The README warning about `react-markdown` in a server component ships (README.md:523).

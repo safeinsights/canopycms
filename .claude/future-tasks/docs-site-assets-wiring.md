@@ -1,3 +1,9 @@
+---
+priority: adopter-side
+adopters: KB
+summary: >-
+  Wire the assets system into the KB's infrastructure (BYO bucket, behaviors, media config). Carries a co-requisite fix in the KB's own deploy script, which stamps `OriginPath` onto every CloudFront origin with no match on `Id`, so adding an asset origin would 404 assets
+---
 # Future Task: Wire the assets system into docs-site-proto (deferred)
 
 **Adopter-side work, tracked here for visibility. No priority level: the adopter schedules it.**

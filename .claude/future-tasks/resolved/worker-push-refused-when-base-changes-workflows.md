@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-04, branch `fix/worker-push-workflow-permission`. The P1's premise did not hold: measured against real GitHub with an App token and a `repo`-only OAuth token, rebasing, merging or fast-forwarding across a base-branch workflow change is accepted, and only workflow content GitHub does not already hold is refused. No permission added. The narrow real case (a workflow edit made outside the editor) now fails the push task at once with the workflow file named
+---
 # [P1→resolved] Publishing a rebased branch is refused once the base branch changes a workflow file
 
 ## Status: RESOLVED 2026-10-04 — the premise did not hold; the narrow real case now fails legibly

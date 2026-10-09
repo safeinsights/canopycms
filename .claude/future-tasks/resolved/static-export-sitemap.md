@@ -1,3 +1,7 @@
+---
+summary: >-
+  Static-export sitemap helper
+---
 # Static-export sitemap helper
 
 **RESOLVED (2026-08-14, epic `integration-202608-b`)** — shipped together with

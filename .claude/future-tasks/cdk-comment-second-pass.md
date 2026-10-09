@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-14, deferred from [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `canopycms-cdk` is the only package whose comment/code ratio is still above 1.0 (1.279 after chip A3); about 380 more comment lines can go with no rule lost (`worker/credential-refresh.ts` header, `lambda-execution-role.ts`, `asset-support.ts`, `cms-service.ts` prop docs), landing near 1.1. Opus tier: the IAM, OAC and secrets reasons stay
+---
 # [P3] canopycms-cdk: second comment-compression pass
 
 **Status:** Open. Filed 2026-09-14, deferred from the comment-compression chip A3 in

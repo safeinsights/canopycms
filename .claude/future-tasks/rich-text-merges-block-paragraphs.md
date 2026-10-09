@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, contained the same day. A list item with content after its nested list, or with blocks MDXEditor's tight export runs together, opens as source (two paragraphs and multi-block quotes round-trip from MDXEditor 4.3). Next: export such items loose, or source islands for every guard rejection
+---
 # [P3] A list item with content after its nested list opens as source
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b). The data loss is contained;

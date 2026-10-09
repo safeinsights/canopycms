@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus test. MDXEditor has no import visitor for reference-style links and definitions, so `[text][ref]` opens the body as source
+---
 # [P2] A reference-style link opens the whole body as source
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).

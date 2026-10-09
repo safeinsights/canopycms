@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  `withTrailingSlash` has shipped; left: a thin router/href wrapper in `canopycms-next` for internal links on static exports. Cluster note: `seo-trailing-slash-default-from-withcanopy` and `trailing-slash-build-smoke` are the other open follow-ups of #366, applying the same rule to other surfaces
+---
 # Trailing-slash-safe router/href helpers for `deployedAs: 'static'`
 
 ## Priority: P3 [BOTH]

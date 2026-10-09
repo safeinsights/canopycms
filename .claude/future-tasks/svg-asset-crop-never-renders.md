@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. `ImageField` offers Crop for an svg asset, but `assetUrl` applies a crop only to `/assets/t/` srcs, so the stored crop never renders. Gate Crop on an exported transform-src predicate
+---
 # An svg asset gets a Crop button whose crop never renders
 
 **Priority:** P3. **Found:** 2026-10-08, review of the image-field `public/` preview fix.

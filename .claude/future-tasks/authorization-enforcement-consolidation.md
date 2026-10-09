@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Five diverging ACL matchers that already disagree (one is client-side, so a shared matcher must be browser-safe); comment threads that ignore path ACLs (**Decided:** filter per entry with `createContentAccessChecker`, no new matcher; P1 the moment any read-deny path rule exists, and the marketing site runs group path rules); and Clerk `authorizedParties` optional in prod
+---
 # Five diverging ACL matchers, comment threads that ignore path ACLs, optional Clerk `authorizedParties`
 
 ## Priority: P2 [BOTH]

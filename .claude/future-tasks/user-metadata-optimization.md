@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Every user badge in Permissions or Groups costs one Lambda call plus one uncached Clerk `users.getUser`: hundreds of calls per page. A batch endpoint is the substantive work; the former caching task is absorbed (SWR on the client, a short-TTL per-process cache server-side). Admins hit this on the live site, with Clerk rate-limit risk
+---
 # User Metadata Optimization - Bulk Fetching & API Reorganization
 
 **Priority: P2 [BOTH].** Every badge in the Permissions or Groups panels costs one Lambda call plus one

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from #434's review. A crashed non-markdown field shows read-only and doesn't block Save, so a value that fails validation leaves the author unable to save. Consider an editable raw-value fallback
+---
 # A crashed non-markdown field can leave Save stuck
 
 ## Priority: P3 [BOTH]

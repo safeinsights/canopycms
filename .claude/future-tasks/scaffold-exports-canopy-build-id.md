@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-08-30, from adopter requests #35/#36. `withCanopy` and `generate-ai-content` now both honor `CANOPY_BUILD_ID`, but no scaffolded pipeline sets it, so reproducible static exports are opt-in-if-you-read-the-README. That discovery cost is most of what the requesting adopter actually paid. Not a template one-liner: the value must be a **tree** hash (a commit SHA or date differs across a rebase of an identical tree), and narrowing it to build-relevant paths is an open config-vs-recipe question
+---
 # Scaffolded deploy pipelines should export `CANOPY_BUILD_ID`
 
 **Status:** Open. **Priority: P3** (enhancement; the capability works, the default does not use it).

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06, from review. Settings publish still waits on the patient lock (~90 s after a kill), `.sparse-cone.json` is last-write-wins during a `contentRoot` change, the busy message is wrong for the admin-only state, the idempotent 200 drops a deliberate second create, a first settings init clones once per container, and settings quarantine skips the inode check
+---
 # Branch provisioning: smaller residuals from review
 
 ## Priority: P3 [BOTH]

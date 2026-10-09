@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `chore/public-repo-private-ids`, base `int-202610-b`. Fixed forward, no history rewrite: the CDK canary reads its account only from `CANARY_ACCOUNT`, backlog records name accounts and the adopter's stacks by role, and `pnpm lint:account-ids` guards text and paths in CI and pre-commit
+---
 # The public repo carries a sandbox AWS account id and an adopter's stack names
 
 **Status:** RESOLVED 2026-10-08, branch `chore/public-repo-private-ids`, base `int-202610-b`.

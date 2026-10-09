@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-08-14 — from the site audits. Both sites independently built a heading-attrs rehype pass; the marketing site's TOC builder hand-mirrors rehype-slug's dedup counter as a second, unsynced piece of state, and desyncs the first time a heading contains `#`/`####`. Ship one canonical heading-ID pass plus an `extractToc()` that reads it, not a second slugger
+---
 # `extractToc()` + a stable heading-ID contract
 
-## Priority: P2 [BOTH]
+## Priority: P3 [BOTH]
 
 From the 2026-08-13/14 adopter site audits, triaged as part of the
 2026-08-14 go-live backlog re-baseline. No existing task file covered this.

@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  The two of PR #172's nine review findings deferred **by decision**, split out when the other seven were fixed; both re-verified live at `78e4ca8b`. #5: `workflow_dispatch` publishes provenance-signed npm artifacts from unreviewed branches — main's branch protection does not bound what reaches npm — logged by JP's call as a risk-acceptance question about the `int` channel, with a GitHub `environment:` + required reviewers as the one-line lever. #8: `setBusy` is a shared boolean written by two hooks with no ref-count, so a revalidation settling mid-save clears the save's busy state — spinner flicker, wants a `beginBusy`/`endBusy` counter
+---
 # PR #172's two deferred-by-decision findings
 
 ## Priority: P3

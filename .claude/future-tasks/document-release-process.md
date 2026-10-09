@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  No doc anywhere describes how CanopyCMS is released, and there are now two channels (stable `latest` on push to main; `int` prereleases on manual dispatch) — confirmed absent from README, DEVELOPING, ARCHITECTURE and AGENTS. The trap worth writing down: npm allows one trusted publisher per package bound to a workflow filename, so any new publish workflow must route through `publish.yml` or fail auth opaquely
+---
 # Document the release process (two channels, one non-obvious constraint)
 
 **Priority:** P2 · **Size:** S

@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-05. The prod 503 "CMS worker not ready" is right before the worker's first boot, but a worker that failed at startup, was never deployed, or whose `remote.git` cannot be stat'd gets the same retry-later answer forever. Read `lastFatalError` from `worker-status.json` and answer with it; treat only ENOENT as "absent". Also: handler tests inject the typed error through mocks
+---
 # A permanently missing worker reads as "still starting"
 
 ## Priority: P2 [BOTH]

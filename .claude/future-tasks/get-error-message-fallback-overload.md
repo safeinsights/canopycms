@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  The single highest return-per-line item from the 2026-08-23 structural review. `getErrorMessage()` is at 120 call sites and **44 hand-roll it** — but almost all 44 supply a domain-specific fallback (`'Rename failed'`) that the helper structurally cannot express, so the stated rule is unfollowable there. One optional second parameter takes compliance from 73% to ~99% and deletes 44 copies of a conditional that already varies in its non-Error handling
+---
 # `getErrorMessage(err, fallback?)` — the 27% is a signature gap, not laziness
 
-## Priority: P2
+## Priority: P3
 
 Found 2026-08-23 by the [baseline structural evaluation](../../docs/reviews/2026-08-structure.md).
 

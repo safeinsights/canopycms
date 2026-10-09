@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  **Decided:** remove the unused `approved` status. Nothing in the editor calls `workflow.approve`, so branches reach it only by a direct API call or a hand-edited `branch.json`; the file lists every place that reads it
+---
 # Remove the unused `approved` branch status
 
 **Priority: P3 [BOTH].**

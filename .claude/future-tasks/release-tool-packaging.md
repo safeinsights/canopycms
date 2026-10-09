@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. A bundled materialize release tool carries the whole `canopycms/server` graph (~2.9 MB) into a credentialed job, re-derives the CLI's exit codes, and nothing tests a CommonJS bundle that runs a transform. Proposal: a bundle-and-transform test, an exported `exitCodeFor`; a narrow `canopycms/materialize` entry point needs JP's approval
+---
 # Make a bundled materialize release tool smaller and testable
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from the adopting site's review of the

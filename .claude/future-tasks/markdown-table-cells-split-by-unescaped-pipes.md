@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  A pipe character inside a code span in a markdown table row splits the cell, and the text after it silently disappears. The root docs are clean; add a pipe-count check per table to `scripts/check-docs.mjs` and cover this index
+---
 # Unescaped `|` inside code spans silently splits markdown table cells
 
 **Priority: P3 [NEITHER].** Docs render wrong and lose text; nothing executable breaks.

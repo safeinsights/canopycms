@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07, follow-up of the image-materialization epic. Only if an adopter can't add the materialize release step: a lazy mode whose Lambda fills only keys a published refs manifest names, bounding the anonymous key space
+---
 # A lazy transform mode that only fills keys a refs manifest names
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 as a follow-up of

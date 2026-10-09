@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-14) — server changed to match the client, as the prerequisite half of the ACL-defaults task. The divergence was broader than filed: `checkBranchAccessWithDefault` gates every content check, so a creator under `'deny'` could not read or write a single file on their own branch, not just hit a 403 on Submit. Fixed at the access checker rather than in `canPerformWorkflowAction` (which needed no logic change — it already tested `userIsCreator`; the gate above it was swallowing creators first). Choosing the server side matched the three places already granting on creator-ownership independently (`listBranchesHandler`, `canDeleteBranch`, `canModifyBranchAccess`) — an internal inconsistency, not a chosen policy
+---
 # Client permission model grants the branch creator unconditionally; the server requires general branch access first
 
 ## Status: RESOLVED 2026-08-14 — server changed to match the client

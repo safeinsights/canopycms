@@ -1,4 +1,9 @@
-# [P3] `cleanupOldSnapshots` can delete the snapshot `current` points at
+---
+priority: P2
+summary: >-
+  New 2026-08-21, from the round-2 Fable review of the infra-review epic, which flagged it as **pre-existing** (the epic changed the symlink target, not this retention logic) — filed separately to keep that epic's diff honest. `cleanupOldSnapshots` keeps the 2 newest snapshots **by name**, i.e. by timestamp string, and never consults what `current` targets. A BACKWARDS clock step on the worker (an NTP correction, which long-lived EC2 instances do experience) makes the just-written `snapshot-<smaller-ts>` sort oldest, so cleanup deletes the directory `current` was just swapped to — leaving a dangling link and an EMPTY auth cache until the next refresh. Same user-visible symptom as the absolute-symlink defect this epic fixed (raw Clerk ids, Clerk-org ACLs denying), so if it ever fires it will look exactly like a regression of that fix. Self-heals in 15 minutes. Fix: resolve `current` and exclude its target from the deletion set, making "never delete the live snapshot" structural rather than a consequence of monotonic clocks
+---
+# [P2] `cleanupOldSnapshots` can delete the snapshot `current` points at
 
 Found by the round-2 independent Fable review of `epic/infra-review-2026-08`
 (2026-08-21), which flagged it explicitly as **pre-existing, not an epic

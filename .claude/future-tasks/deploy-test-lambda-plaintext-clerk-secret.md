@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  `deploy-test` passes `CLERK_SECRET_KEY` to its CMS Lambda as a plaintext environment variable, and the shipped `clerkMiddleware` throws without it, so the reference deployment and the documented Security Model disagree; the options (drop the middleware, plaintext, or fetch at init over a Secrets Manager VPC endpoint) are in the file. **Pending check:** JP checks the live Lambda environment in the console for `CLERK_SECRET_KEY`; P1 if it is there, P2 otherwise
+---
 # [P1, pending check] `deploy-test` passes `CLERK_SECRET_KEY` to the CMS Lambda in plaintext
 
 **Pending check:** JP checks the live Lambda environment in the AWS console for `CLERK_SECRET_KEY`.

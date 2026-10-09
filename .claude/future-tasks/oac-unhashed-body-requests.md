@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-01, left over from the Clerk `setActive` fix. Behind `CanopyCmsDistribution`'s OAC, a body without a client-computed `x-amz-content-sha256` 403s. CanopyCMS's API client hashes its JSON bodies, and nothing hashes an adopter's own Server Actions on the CMS build or proxied-store `FormData` uploads (S3 uploads never reach the Function URL). Candidates: a payload-hash Lambda@Edge (1 MB body cap, us-east-1, unverified that OAC signs after it) or a same-origin fetch shim. No known adopter is affected today
+---
 # Body-carrying requests the API client does not sign still 403 behind CloudFront OAC
 
 New 2026-10-01, left over from

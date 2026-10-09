@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-13, from the review rounds of PR #332. The scaffolded CDK app's `tsc --noEmit -p infrastructure` runs in CI only against workspace `src/`, never the published `.d.ts` adopters install (checked once by hand on `pnpm pack` tarballs). A project `tsconfig.json` with a `typeRoots` that leaves out `node_modules/@types` (TS2688) or a narrower `rootDir` (TS6059) fails the check loudly on code tsx runs
+---
 # [P3] The scaffolded CDK app's type-check is not run against published packages, and two project tsconfig shapes fail it
 
 **Priority:** P3. Neither lets a type error deploy, and neither affects a create-next-app project.

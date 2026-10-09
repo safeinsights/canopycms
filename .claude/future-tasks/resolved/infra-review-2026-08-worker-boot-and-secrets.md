@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — all three EC2-side defects. (1) Boot no longer pipes a third-party installer into bash: Node comes from AL2023's own `dnf install -y nodejs22`, and the systemd unit runs the **namespaced** `/usr/bin/node-22` rather than the `alternatives`-managed `/usr/bin/node`, whose selection AWS documents as able to change at any time. Verified against AWS's AL2023 docs, not assumed. **Bonus finding**: the worker was on Node **20**, EOL 2026-04-30 and below this repo's own `engines.node: ">=22"`/.nvmrc `v22` — so it ran an untested EOL runtime; 22 now matches CI and the transform Lambda's NODEJS_22_X. An `ERR` trap echoes the failing line to the console log and `shutdown -h now`s, so the ASG replaces a half-booted instance instead of leaving one that passes EC2 health checks forever while doing nothing; network steps get a bounded retry. (2) The GitHub bot token can no longer persist on EFS: `remote.git` is cloned under a staging name and renamed into place only after `remote.origin.url` is removed **and verified gone** (the old scrub swallowed its own failure), and the already-exists path now re-checks and scrubs on every start, so a historic leak self-heals. Nothing needed the remote — every push passes the URL explicitly. (3) `githubTokenSecretArn`/`clerkSecretKeySecretArn` are now unioned into the worker's IAM policy (deduped), so setting them without `secretsArns` can no longer deploy clean and crash-loop on AccessDenied every 5s forever
+---
 # [P2] Worker boot and secret-handling defects on the EC2 side
 
 Three findings from the 2026-08-20 three-round infrastructure review (round 1),

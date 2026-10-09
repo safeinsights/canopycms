@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  **~20 lines, silent-404 failure class.** Two independent registries of the API surface — `ROUTE_REGISTRY` (feeds the generated client) and `buildCanopyRoutes()` (14 hand-maintained maps, does the dispatch) — agree today at 53 each, and **nothing asserts they match**. An endpoint added via `defineEndpoint` but omitted from its `*_ROUTES` map ships a typed client method that 404s at runtime, with green CI
+---
 # Two sources of truth for "what endpoints exist", with no parity check
 
-## Priority: P2 — cheap fix, silent-404 failure class
+## Priority: P3 — cheap fix, silent-404 failure class
 
 Found 2026-08-23 by the [baseline structural evaluation](../../docs/reviews/2026-08-structure.md).
 

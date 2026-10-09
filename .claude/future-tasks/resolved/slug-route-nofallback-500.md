@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24) — `withCanopy(..., { staticBuild })` adds `static.ts`/`static.tsx` (vs. `server.ts`/`server.tsx`) to `pageExtensions`, enabling the documented split-page convention (`page.static.tsx` prerenders with `dynamicParams=false`; `page.server.tsx` is `force-dynamic` with no `generateStaticParams`) so CMS-build requests render at request time, ACL-enforced, and unknown slugs 404 instead of throwing NoFallbackError. Two dead ends verified and recorded in the file: conditional `dynamicParams` (Next statically parses segment config) and `dynamicParams=true` with prerender (on-demand SSG throws DYNAMIC_SERVER_USAGE; prerender bypasses ACLs).
+---
 # `/[slug]` dynamic route throws NoFallbackError (500) for unknown slugs instead of 404
 
 ## Status: RESOLVED (2026-07-24, server-mode-500-errors branch)

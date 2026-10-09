@@ -1,3 +1,8 @@
+---
+adopters: KB
+summary: >-
+  RESOLVED (2026-08-14, epic `integration-202608-b`) — briefing finding 2. `defaultBuildPath` was module-private while `buildContentTree` was exported, so the KB had reimplemented it verbatim in its own helper module — a silent URL-drift risk. Now exported from `canopycms/server` alongside `buildContentTree`
+---
 # Export `defaultBuildPath`
 
 ## RESOLVED (2026-08-14, epic `integration-202608-b`)

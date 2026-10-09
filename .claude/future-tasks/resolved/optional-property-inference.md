@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, epic `integration-202608-b`, commit `8da62672`) — adopter request #14, shipped as proposed. `InferContentShape`/`RequiredValue` now infer a field as an optional property (`subheading?: string`) iff its schema entry has an explicit `required: false`; README's two previously-contradicting sections reconciled; covered by `entry-schema.test.ts`'s three-way required/optional/omitted distinction
+---
 # Optional-property inference for schema fields (`subheading?: string`)
 
 ## RESOLVED (2026-08-14, epic `integration-202608-b`, commit `8da62672`)

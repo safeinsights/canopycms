@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  `EntryNavigator` shows its loader only when the whole tree is empty, but `Editor.tsx`'s `activeCollections` falls back to the adopter's build-time `collections` prop — so since the branch-switch fix the navigator shows a loader mid-switch for adopters who pass no `collections`, and a silent folder-only tree for those who do. Cosmetic; the editor pane shows "Loading content…" either way. Fix: key the loader on "no entry items" rather than "no tree nodes" — and see `editor-state-context-migration`, which shares the root cause
+---
 # EntryNavigator's loader keys on "empty tree", so it shows or hides depending on adopter shape
 
 Found while fixing the branch-switch stale-mirror bug

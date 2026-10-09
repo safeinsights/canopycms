@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `read({ entryPath })` with no slug resolves by entry-type **name** (`content-store.ts`, `effectiveSlug = slug || schemaItem.name`), so a slug rename silently breaks the documented singleton-read shape — the one the reference app itself uses. Compounds badly: the break surfaces as a 404 or blank page rather than an error, and it **ships green**, since a Next build prerenders the 404 boundary and reports success (see [example1-next-build-not-in-ci.md](resolved/example1-next-build-not-in-ci.md), now resolved). Renaming a slug is ordinary editorial work, and is exactly what the `index`-entry modelling advice asks adopters to do
+---
 # A slugless `read({ entryPath })` resolves by entry-type NAME, so a slug rename silently breaks it
 
 **Status:** Open. **Priority: P2.** Found 2026-08-21 while re-modelling `apps/example1`'s `home`

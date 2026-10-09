@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  `lint:tasks` checks links between backlog files only, so a source comment or doc that cites a `.claude/future-tasks/<name>.md` path goes stale when that file is resolved and moved. Extend the checker to scan the repository for such citations
+---
 # Nothing checks `.claude/future-tasks/<name>.md` references outside the backlog tree
 
 **Priority: P2 [NEITHER].**

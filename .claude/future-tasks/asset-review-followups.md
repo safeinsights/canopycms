@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: MKT
+summary: >-
+  Deferred non-blocking items from PR #126 review. The two that matter for a real editorial team: the **`altOptional`-omitted-`alt` bug** (`entry-validator.ts:103-107` fails validation for an omitted `alt` regardless of the flag) and **no upload abort** (`editor/media/xhr-upload.ts` takes no `AbortSignal` and never calls `xhr.abort()`). Also: post-delete blob GC, a dropError slot, multipart filename validation, `isValidStagingKey`'s hardcoded prefix, a CropStep null guard, a URL-tab scheme check. Byte-cap and transform-status items verified done
+---
 # Future Task: Asset system review follow-ups (deferred from PR #126)
 
 Status: **captured from debshila's PR #126 review, 2026-07-23.** The 11 actionable

@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: MKT
+summary: >-
+  New 2026-10-06. Edits inside a JSX element in a markdown/mdx body reach the draft, preview and Save button only when focus leaves the element (MDXEditor's nested-editor design); a per-keystroke sync via the active-editor subscription was tried and reverted after it intermittently stopped the editor seeing keystrokes in e2e. No data loss
+---
 # Edits inside a JSX element in a body reach the form only on blur
 
 **Priority: P2 [MKT].** No data loss; the draft, the preview and the Save button lag behind typing.

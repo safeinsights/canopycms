@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-10. A failed direct upload rejects with `Upload failed (HTTP ${xhr.status})` and nothing else, which was fine posting straight to S3 but is thin through a CDN: CloudFront’s `CustomErrorResponses` are distribution-wide, so a site mapping 403→404 makes the editor report a status S3 never sent (measured by the adopter). The actionable S3 codes — `Policy Condition failed`, `SignatureDoesNotMatch`, the field-order `InvalidArgument` — are exactly the ones hit while wiring this up. Cheaper now than when filed: `xhr-upload.test.ts` exists and pins the current message
+---
 # A failed direct upload reports a status code and nothing else
 
 **Status:** Open. **Priority: P3.** Filed 2026-09-10 alongside the change that added

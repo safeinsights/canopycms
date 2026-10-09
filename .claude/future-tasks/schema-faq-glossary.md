@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: KB
+summary: >-
+  Dedicated FAQ and glossary schema collections for reuse across pages. Mostly the KB's content modelling; the file **undersells what already works** — `listEntries`' filter/extract callbacks already receive `item.data`, so tag-filtered FAQ queries need no new Canopy code. Only cross-page embedding and glossary auto-linking are real package gaps
+---
 # Schema-Based FAQ and Glossary Collections
 
 ## Problem

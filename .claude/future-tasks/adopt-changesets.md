@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Replace auto-patch publishing with changesets for deliberate semantic versioning. Correctly gated on a milestone that has not happened (a real adopter deployment); premature to start
+---
 # Adopt changesets for deliberate semver
 
 ## When

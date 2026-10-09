@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-21, epic `epic/infra-review-2026-08`) — all three. `CanopyCmsDistribution` now throws at SYNTH when the stack region is known, is not us-east-1, and no `certificate` was supplied, naming both workarounds; the restriction is also documented in the deploy doc's variables table, where it was previously nowhere. Guarded on `Token.isUnresolved` so region-agnostic stacks still synth. The task queue's `corrupt/` quarantine is now swept by `cleanupOldTasks` under the same 30-day retention, instead of growing forever with manual per-file deletion as the only remedy. `worker run-once` validates `CANOPY_AUTH_MODE` against the known set and warns + sets `exitCode = 1` on anything else — a typo like `Clerk` previously selected no plugin, skipped the auth refresh entirely and exited 0, so a cron'd refresh silently did nothing while the cache aged and removed users kept editor access
+---
 # [P3] Three small verified infrastructure defects
 
 From the 2026-08-20 three-round infrastructure review, all **CONFIRMED** at HEAD

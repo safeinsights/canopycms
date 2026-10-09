@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07, branch `feat/s3-only-public-assets`. The lazy transform Lambda calls `storeTransform` on an `S3AssetStore` (both now exported from `canopycms/server`) instead of repeating its checks and Cache-Control; it keeps only the canonical 301, the generic 404 body and its inline/302 response shaping. Bundle about +17 KB
+---
 # The transform Lambda repeats `storeTransform`'s checks instead of calling it
 
 **Status:** RESOLVED 2026-10-07, branch `feat/s3-only-public-assets` (Phase 3 of

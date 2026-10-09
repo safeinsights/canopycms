@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus review. `date: 2024-01-15` in md frontmatter reaches the save as an ISO timestamp and `serializeFrontmatter` rewrites the line; confirm end to end through the editor, then make the reconciler treat the two as equal
+---
 # [P2] A YAML date in md/mdx frontmatter may be rewritten as a timestamp on save
 
 Found 2026-10-08 by a reviewer of the round-trip corpus test (adopter request 87b). Reproduced at

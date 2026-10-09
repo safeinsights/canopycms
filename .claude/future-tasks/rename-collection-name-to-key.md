@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  Rename `collection.name` → `collection.key` to clarify its machine-readable role. Cost is higher than the file states: both adopter repos have live `.collection.json` files keyed on `name`, so this now needs an adopter-data migration story, not just a package rename
+---
 ## Consider renaming `collection.name` to `key` (or similar)
 
 ### Problem

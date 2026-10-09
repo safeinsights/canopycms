@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. A hard crash mid-write leaves `.asset-tmp/` files forever and can leave an orphan headers sidecar that the next writer's blob inherits; `link()` throws `EXDEV` if a prefix directory is a separate mount. Proposal: sweep old temps on startup, `copyFile` fallback on `EXDEV`. Dev/local stores only
+---
 # Local asset store leaves temp files and orphan sidecars after a hard crash
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-07 from review round 1 of

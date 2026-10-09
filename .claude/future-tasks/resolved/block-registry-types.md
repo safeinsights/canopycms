@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic) — adopter request #13, shipped as decided: types, not a component. `BlockValueOf<Blocks, N>` and `BlockComponentRegistry<Blocks, ExtraProps>` added to `entry-schema.ts`, exported off the `canopycms` root entry, with type-level tests proving exhaustiveness in both directions (missing template, unknown extra key). README's new "Block Component Registries" section documents the recipe, including the one contained type assertion the dispatch loop needs. `apps/example1/app/components/PostView.tsx` now uses the registry instead of the if-chain this file originally flagged
+---
 # Block registry: ship the types, not a component
 
 ## RESOLVED (2026-08-14, branch `feat/block-registry-types-and-recipes`, `integration-202608-b` epic)

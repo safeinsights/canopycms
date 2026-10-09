@@ -1,3 +1,8 @@
+---
+priority: program
+summary: >-
+  Hub of the production-readiness program: workstream status, decisions taken, protection rules and open decisions
+---
 # Production-Readiness Program
 
 **Status:** active — started 2026-07-30. The first deployed editor went live 2026-10-05

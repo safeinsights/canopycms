@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-05, backlog curation. ARCHITECTURE.md and README no longer mention `canopycms/config` (grep returns 0).
+---
 # ARCHITECTURE.md lists a `canopycms/config` entrypoint that does not exist
 
 **RESOLVED 2026-10-05:** ARCHITECTURE.md and README no longer mention `canopycms/config` (grep returns 0).

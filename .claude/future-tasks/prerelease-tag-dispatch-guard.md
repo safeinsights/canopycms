@@ -1,4 +1,9 @@
-# [P3] The prerelease main-guard checks a branch ref, so a tag dispatch slips past it
+---
+priority: P2
+summary: >-
+  New 2026-08-21, from the whole-branch review of the infra-review epic (rated INFO). `publish-prerelease.yml`'s "refuse to publish from main" guard compares `$GITHUB_REF` to `refs/heads/main`, but a `workflow_dispatch` can select a **tag** — and every release tag points at main's tip — so `refs/tags/v0.0.63` sails past it. Harmless in outcome (manual-only; publishes under `int`, never moves `latest`; the version is still derived from main, so no collision) but the guard's stated intent, "must not be able to touch main even by accident", is not met. Fix: compare the resolved commit against `origin/main` rather than the ref name, which also catches a branch merely pointing at main's tip
+---
+# [P2] The prerelease main-guard checks a branch ref, so a tag dispatch slips past it
 
 Found by the whole-branch independent review of `epic/infra-review-2026-08`
 (2026-08-21), rated INFO. Filed rather than fixed because it is manual-only,

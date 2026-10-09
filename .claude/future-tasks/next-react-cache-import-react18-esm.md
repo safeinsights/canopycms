@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the preview first-paint fix's review. `import { cache } from 'react'` is a link-time SyntaxError under unbundled Node ESM on React 18, which the peer range allows; App Router pages are unaffected
+---
 # `canopycms-next` cannot be imported by unbundled Node ESM on React 18
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08 from a review of the preview first-paint fix

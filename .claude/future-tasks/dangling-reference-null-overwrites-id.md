@@ -1,3 +1,9 @@
+---
+priority: P1
+adopters: BOTH
+summary: >-
+  `store.read()` resolves a reference to a missing or deleted entry as `null`, and the validator skips `null` on write, so saving any entry that references a deleted entry overwrites the ID with `null`, unrecoverably. **Decided:** one shape for a denied or deleted target that keeps the id (`{ id, unavailable: true, … }`), and the write path never stores `null` or a resolved object. The in-flight ACL work on denied references uses the same shape; otherwise it would create a new silent-erasure path for restricted editors
+---
 # Saving an entry with a dangling reference replaces the ID with `null`
 
 **Status:** Open. **Priority: P1 [BOTH]** — silent, irreversible loss of which entry was referenced,

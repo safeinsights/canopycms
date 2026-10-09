@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-09-13, `init-github-app` LOWs from the worker-credential epic's review, rounds 1 and 3. From round 1: Ctrl-D during the key hand-off loses the key and leaves the form directory behind; a failed manifest conversion is never retried and its status is thrown away; a buffered Enter triggers the install check too early; and the drift test's call-site backstop misses five realistic call shapes. From round 3: text then Ctrl-D skips the install wait; origin detection misreads a `host:port` remote and accepts look-alike hosts; `create` accepts an empty name and an `owner/repo` value for `--repo`; and a rate-limited account-type lookup blocks `create`, with no override. From the post-merge review of #331: `init`'s `.gitignore` block does not ignore `*.pem`
+---
 # [P3] `init-github-app` LOW findings from the worker-credential epic's review
 
 Found 2026-09-13 by review round 1 of the worker-credential epic, in PR #333's CLI. The two

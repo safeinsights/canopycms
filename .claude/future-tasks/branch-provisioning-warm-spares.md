@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-06. The worker keeps 1–2 pre-built `.spare-*` clones; create claims one by atomic rename, branches on the same commit (no file writes) and publishes, about 1 s at any repo size. Build it if the `step=checkout` log line is still slow after packing and sparse
+---
 # Warm spare clones so branch create skips the checkout
 
 ## Priority: P3 [BOTH]

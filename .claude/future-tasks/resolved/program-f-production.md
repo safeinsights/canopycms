@@ -1,3 +1,7 @@
+---
+summary: >-
+  RETIRED 2026-10-05, resolved by events: its ordering premise no longer holds; multi-account `official` mode and a shared static-site CDK are unscheduled.
+---
 # Program F — Production, and the second site
 
 **Closed 2026-10-05, resolved by events:** its ordering premise (the docs site first, then the second site) no longer holds; multi-account `official` mode and a shared static-site CDK are unscheduled and would be filed as new tasks if needed.

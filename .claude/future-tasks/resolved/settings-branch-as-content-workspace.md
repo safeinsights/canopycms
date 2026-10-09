@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-05, branch `fix/settings-branch-not-content`, base `int-202610-a` (raised to P1). The settings branch is never a content branch: the `/:branch` routes answer 404 for it, no content workspace is provisioned or listed under its name, the worker's rebase loop skips one, and settings provisioning refuses a remote settings branch that holds content (a non-settings file, or a root shared with the base). Reproduced before the fix: an editor request plus a submit seeded the remote with content history that re-provisioning adopted
+---
 # A request naming the settings branch provisions it as a content-branch workspace
 
 **Status:** RESOLVED 2026-10-05 on branch `fix/settings-branch-not-content` (see "Resolution"

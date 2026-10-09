@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-08-22, from the human review of PR #257. The conflict-resolution table handles `UD`/`DU`; `AU` ("added by us") and `DD` ("both deleted") have no stage-3 blob either, so `checkout --theirs` fails on them too. Since the epic's fix they no longer WEDGE the clone — any per-file failure routes to abort-and-record — but for both codes keep-branch-version has the same `git rm` answer `UD` already gets, so the branch takes an avoidable failed sync. Also records the one path where the P1 fix is detection-only: a clone wedged mid-rebase whose status then leaves `editing` is never revisited, surfaced by `rebaseInProgress` and fixed by nothing
+---
 # [P3] `AU` and `DD` conflict codes take the abort path where keep-branch-version has an answer
 
 Found by the human review of PR #257 (2026-08-22), rated low. Successor to the

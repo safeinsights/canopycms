@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, left open by the build-reads-working-tree fix. A build reads the working tree only when `NEXT_PHASE` or `CANOPY_BUILD_MODE` says it is a build, so for `deployedAs: 'server'` three entry points still provision and read a branch clone: `createBuildCanopy` (whose own doc comment says it "reads the filesystem directly" for scripts outside a build), the `generate-ai-content` CLI, and a content read from `next.config.*`, which Next evaluates before it sets `NEXT_PHASE`. The generated Dockerfile sets `CANOPY_BUILD_MODE=true` in its builder, so the exposure is local runs, CI steps and adopter scripts. Needs a decision: read the checkout unconditionally there, or document the env var
+---
 # [P2] Content-reading entry points outside `next build` still read a branch clone
 
 **Priority:** P2 — silent stale reads for whoever hits it; an explicit env var works around it today

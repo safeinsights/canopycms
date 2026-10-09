@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, found while landing GitHub App auth (PR #321) and worked around there. `tsconfig.base.json` sets `target: "ES2021"` with no `lib` override, so `Error.cause` is not in TypeScript's `Error` type and every read of it is a TS2550 — even though `package.json` requires node >= 22.12 and the property has existed since Node 16.9. `worker/github-auth.ts`'s `networkErrorCode` has to read it through a cast to find the errno a `fetch()` DNS failure puts one level down (`TypeError: fetch failed`, own `.code` undefined, `.cause.code` ENOTFOUND — measured on Node 24), and its two tests build errors with `Object.assign` for the same reason. Fix is `"lib": ["ES2022"]` in the base tsconfig; verify across all eight typecheck projects, then drop the cast. Carries one process note: the original failure reached a PR body as "clean" because typecheck was piped through `grep | head -3` and sandbox warnings filled the slots — check exit status
+---
 # [P3] `Error.cause` is untyped repo-wide, so every reader of it needs a cast
 
 Found 2026-09-12 while landing GitHub App auth (PR #321). Worked around there; filed

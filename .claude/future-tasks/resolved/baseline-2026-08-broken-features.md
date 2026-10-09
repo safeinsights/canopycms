@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-13, PRs #213/#214/#217/#219/#220/#231) — kept as the analysis record. **Five shipped features that did not work**, all five re-verified fixed in code: schema-editor mutations against content-root-prefixed paths (a single `normalizeCollectionPath` at the `SchemaOps` boundary, `schema-store.ts:405`, with a table-driven guard test); group grants/revocations taking effect (new shared `resolve-canopy-user.ts`, wired into both read pipelines); `sanitizeHref` returning `'#'` for every relative URL (`utils/sanitize-href.ts`, including the `/\evil.com` backslash bypass closed by #231); `submitBranch` retried after a failed push (`services.ts:334-342` separates `committed` from the unpushed-commits gate); and `number`/`datetime`/`rich-text` rendering "Unsupported field" (`FormRenderer.tsx:267,294,314`). Common cause worth remembering: **each was a seam where one layer was mocked and the layer beneath was tested with different inputs**, which is why the suite was green throughout
+---
 # Baseline review 2026-08: five shipped features that do not work
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at

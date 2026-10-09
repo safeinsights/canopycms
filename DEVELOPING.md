@@ -1293,22 +1293,24 @@ CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` 
 
 ### Future-Tasks Backlog Check
 
-`.claude/future-tasks/` is the durable backlog, and AGENTS.md requires every deferred issue to exist as a task file **plus** an `index.md` row.
+`.claude/future-tasks/` is the durable backlog. Each task file starts with frontmatter that is the record of its `priority` (P0 to P3, `adopter-side` or `program`), optional `adopters` (KB, MKT, BOTH or NEITHER) and `summary`; [index.md](.claude/future-tasks/index.md) shows the format. `index.md` holds only the hand-ranked lists, so filing or resolving a task does not edit a shared file and parallel PRs do not conflict.
 
 ```bash
 pnpm lint:tasks
+pnpm tasks:index   # every task as P0-P3, adopter-side, program and resolved tables
 ```
 
-It runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) — plain node, no dependencies. It enforces four things:
+`lint:tasks` runs in CI right after `lint:bundle`, and in the pre-commit hook whenever a commit touches `.claude/future-tasks/`. The script is [scripts/check-future-tasks.mjs](scripts/check-future-tasks.mjs) — plain node, no dependencies, so its frontmatter parser accepts a strict subset of YAML (`key: value`, and `summary: >-` with indented text). It enforces five things:
 
-- **Dead links** — every `.md` link target must resolve **relative to the linking file's own directory**. Task files cross-link with relative paths, so moving a file into `resolved/` breaks inbound links in files that did not change, and a repo-root-relative check would call those clean.
-- **Stale open rows** — a row in an open priority table whose file already lives in `resolved/`. The open tables claim to list open work only, and program sequencing reads them.
-- **Orphans, both directions** — a task file no `index.md` row points at, and a row pointing at a file that does not exist.
+- **Frontmatter** — present, only known keys, a valid `priority` on every open file, a non-empty `summary` on every file.
+- **Priority agreement** — when a body restates the priority in its opening lines (`# [P2] …`, `**Priority:** P2`), it must match the frontmatter.
+- **Dead links** — every `.md` link target must resolve **relative to the linking file's own directory**, including links inside a summary. Moving a file into `resolved/` breaks inbound links in files that did not change, and a repo-root-relative check would call those clean.
+- **Stale ranked rows** — a table row in `index.md` linking a file that lives in `resolved/`, whether by its old bare name or by the `resolved/` path `--fix` rewrites it to.
 - **`[[wikilinks]]`** — they render as literal `[[text]]` on GitHub and are invisible to the dead-link check, so they rot silently. Kebab-case slugs only, so `[[...slug]]` (Next.js catch-all routes) and `[[:space:]]` (POSIX class) stay legal in prose.
 
 Only `.md` targets are checked. Task files also cite source files as prose written relative to the repo root rather than as navigable links; checking those would be pure false positives.
 
-When you retire a task, do all three things together or the check will name the one you missed: `git mv` the file into `resolved/`, move its `index.md` row to the Resolved section, and fix any inbound links. One deliberate exception is documented in the backlog itself — `program-b-final-review-followups.md` strikes items ~~in place~~ rather than moving them, because the file still holds open work.
+To retire a task, `git mv` the file into `resolved/`, rewrite its `summary` as `RESOLVED <date>, <branch>. <what shipped>`, take it out of any ranked list in `index.md`, and run `--fix` for the links. One deliberate exception is documented in the backlog itself — `program-b-final-review-followups.md` strikes items ~~in place~~ rather than moving them, because the file still holds open work.
 
 **Use `--fix` for the mechanical half.** Moving a file into `resolved/` invalidates relative paths in two directions at once — links _inside_ the moved file (siblings are now one level up, repo-root docs one further) and links _pointing at_ it (now behind `resolved/`) — and the checker already knows where the target went:
 
@@ -1316,7 +1318,7 @@ When you retire a task, do all three things together or the check will name the 
 pnpm lint:tasks --fix
 ```
 
-It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically, so a path that also appears as prose is left alone. Two things it deliberately will **not** fix, because both need judgment: a **stale open row** (moving it to the Resolved section usually means rewriting the summary too) and an **orphan file** (its row has to be written by whoever knows what the task is).
+It repairs only paths whose target exists somewhere unambiguous, refuses when a basename is ambiguous across directories, and rewrites the `](target)` form specifically, so a path that also appears as prose is left alone. It deliberately does **not** take a resolved task out of a ranked list or write a missing summary; both need judgment.
 
 ### Trojan Source (Bidirectional Unicode) Check
 

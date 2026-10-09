@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14) — decided by JP and implemented. `canopycms init` now scaffolds fail-closed `defaultBranchAccess: 'deny'` (and states `defaultPathAccess` explicitly), and `services.checkPathAccess` — bound with an empty rules array, zero consumers — is deleted. The flip was **not** a one-liner: verification found `'deny'` was unusable, not merely strict. Branch access is ANDed into every content check, so a no-ACL branch was **inert for its own creator** (no reads, writes or comments — the Submit 403 was just the visible symptom), and the protected base branch takes no ACL and has no creator, leaving the branch every user lands on unreachable with no way to configure around it. Fixed by two grants in `checkBranchAccessWithDefault`, both scoped to branches with no ACL so an explicit ACL still restricts — including against a creator, which is how an admin locks down someone else's branch. Bonus: public read on a server deployment no longer needs `defaultBranchAccess: 'allow'`, so README's "not read-scoped" caveat was deleted rather than reworded. Live-site migration split to [live-site-acl-migration.md](../live-site-acl-migration.md)
+---
 # Scaffolded ACL default vs. schema default, and a dead path checker that answers "allow"
 
 ## Status: RESOLVED 2026-08-14 — decided and implemented

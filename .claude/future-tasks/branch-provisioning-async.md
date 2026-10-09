@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-06. Branch create still clones inside the request, now fast and crash-safe. If the per-step `provision` logs show creates near the timeout, move provisioning to the worker: one atomic provisioning record as the commit point, a level-triggered worker, expiring claims, bounded attempts; only branch-context resolution, list, poll, delete, admin health and the editor need the state
+---
 # Provision branch workspaces outside the create request
 
 ## Priority: P2 [BOTH]

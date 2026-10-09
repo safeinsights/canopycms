@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED 2026-10-06, branch `feat/authenticated-editor-assets`. The editor loads every image through the authenticated raw route under `basePath`, so it has no asset mount point to infer; `publicBaseUrl ?? basePath` is gone, and the client config no longer carries `assetBaseUrl`
+---
 # The editor's asset mount point is inferred, and the inference is wrong on CloudFront
 
 **Status:** Resolved 2026-10-06 by the image-materialization epic's Phase 1 (branch

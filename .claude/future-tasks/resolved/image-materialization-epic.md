@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07, integration branch `int-image-materialization` (#406, #409, #412, #413, #414 and the final-review PR). The public `/assets/*` and `/assets/t/*` paths are S3-only with an optional replica; `collect-asset-refs` and `materialize-assets` store a build's derivatives before release; the editor and live preview load through the authenticated raw route; widths are any integer to 8192 outside the opt-in lazy Lambda; uploads to 24 MP. Its ARCHITECTURE.md design-decision entry holds the rejected alternatives; follow-ups are filed
+---
 # [P1] Epic: the public image path serves only what a build referenced
 
 **RESOLVED 2026-10-07.** Phases 0 to 3 and the docs PR merged into `int-image-materialization`, and

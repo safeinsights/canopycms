@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Four things found *while implementing* the August baseline-review fixes. The one with teeth: the mock-services fixture is **copy-pasted across four handler-pipeline test files**, so adding one dependency to the real pipeline broke five tests across three of them. **Its fix direction was corrected 2026-08-13** — a canonical `CanopyServices`-typed `createMockServices` already exists at `test-utils/api-test-helpers.ts:166` and is already used by `schema-store.test.ts`, so this is a migration, not a build. **Item 2 closed 2026-08-14**: `rich-text` was indistinguishable from `markdown`/`mdx` in the validator, link scanner and AI renderer, and is now **deleted** — it was unreleased (integration branch only) and used by no adopter, example or fixture, so removal was free; its `FormRenderer` test block was retargeted to `markdown` rather than dropped, being the only direct coverage of that renderer. Still open: sibling submit/withdraw confirmations lack testids; and unit suites mock `@mantine/modals` wholesale, making confirmation changes **structurally invisible** to them
+---
 # Baseline review 2026-08: follow-ups discovered while implementing the fixes
 
 These were not review findings. Each was found by a worker while fixing something else, and

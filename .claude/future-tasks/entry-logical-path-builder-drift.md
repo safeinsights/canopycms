@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-10-05. Three non-ACL sites (`useEntryManager`, `ai/generate.ts`, `ContentStore.renameEntry`'s `newPath`) still hand-build `collection/slug` instead of calling `entryLogicalPath`, and `buildPaths`'s doc overstates what runs before file I/O
+---
 # Entry logical paths are still hand-built in three places
 
 ## Priority: P3 [NEITHER]

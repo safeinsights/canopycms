@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  Under `allowNetworkRemoteInProd`, `GitManager`'s remote fetch/push run with the restricted `gitChildEnv` allowlist (drops `HTTPS_PROXY`/`GIT_SSL_*`/`GIT_SSH_COMMAND`) — would fail behind a proxy while the worker's full-env pushes succeed. The constructor comment names this file and says it is open. Not the planned website-v2 topology
+---
 # Network escape-hatch git ops run with the restricted env allowlist
 
 Flagged by PR #141 review (LOW).

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, split from the resolved image smoke-test task. `init-deploy aws` writes install lines for Yarn classic and Berry and warns they are untested, and the new `standalone-image` CI job builds the image for npm and pnpm only. Decide: drop Yarn with a clear "use npm or pnpm", or add Yarn legs to the smoke test. No current adopter uses Yarn
+---
 # [P3] Keep or drop Yarn in `init-deploy aws`
 
 **Priority:** P3 — no current adopter uses Yarn; the cost is a path that looks supported and is not

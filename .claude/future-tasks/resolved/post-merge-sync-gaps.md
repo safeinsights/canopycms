@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-07-24, fix/post-merge-sync-gaps) — worker's `rebaseActiveBranches()` now polls GitHub for submitted/approved branches' PR state (auto-archives on merge via new shared `buildMergedBranchUpdate()`) and a new `refreshBaseBranchWorkspace()` fast-forwards `content-branches/<base>` every sync cycle so editors see current base content (the original "new branches fork from stale main" claim was disproven — forks clone fresh from `remote.git`).
+---
 # Post-merge sync gaps: branch stays "submitted" and base-branch workspace goes stale
 
 ## Status: RESOLVED (2026-07-24, fix/post-merge-sync-gaps)

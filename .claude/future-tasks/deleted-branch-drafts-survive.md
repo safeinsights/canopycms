@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. A deleted branch's `localStorage` drafts are never removed, so a later branch with the same name restores them, though the delete dialog says unsaved changes are discarded
+---
 # A deleted branch's unsaved drafts come back on a new branch with the same name
 
 ## Priority: P3

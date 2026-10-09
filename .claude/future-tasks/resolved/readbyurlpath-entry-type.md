@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED (2026-08-14, epic `integration-202608-b`, commit `4a8992fe`) — shipped as proposed, widened to also return `entryId`. `read()` and `readByUrlPath()` both surface `meta.entryType`/`meta.entryId`, closing the gap that forced adopters into per-content-type Next.js routes or a separate `listEntries` lookup for catch-all routing
+---
 # Return entryType from readByUrlPath
 
 **RESOLVED (2026-08-14, epic `integration-202608-b` / PR #235, commit

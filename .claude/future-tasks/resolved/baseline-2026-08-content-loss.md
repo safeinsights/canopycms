@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED (2026-08-13, PRs #215/#216/#218) — kept as the analysis record. **Four ways the product destroyed work it said it saved**, from the August 2026 baseline review. All four re-verified **in code** during the 2026-08-13 audit rather than taken on their strikethroughs: creating an entry over an existing slug no longer wipes it (`content-store.ts:997-1011` enforces `expectedVersion === null` inside the per-entry lock against a fresh stat, plus the naming 409 at `api/content.ts:352`); the worker's rebase no longer deletes acknowledged saves (`utils/content-write-lock.ts` gives cross-host exclusion, taken asymmetrically by `content-store.ts:13,289` and `cms-worker.ts:33,2244`, and the comment that wrongly asserted the race was safe is corrected); the branch-switch load race is closed (`Editor.tsx:455` keys in-flight requests `${requestBranch}:${contentId}` and `:503` re-checks after the await); and pristine drafts are no longer seeded on entry open (`Editor.tsx:505-512`, with `handleReload` now confirming at `useDraftManager.ts:694`). Residual coverage gaps tracked in [content-write-lock-coverage-gaps.md](content-write-lock-coverage-gaps.md)
+---
 # Baseline review 2026-08: four ways the product destroys work it said it saved
 
 Found by the August 2026 whole-codebase baseline review (5 independent Fable reviews at

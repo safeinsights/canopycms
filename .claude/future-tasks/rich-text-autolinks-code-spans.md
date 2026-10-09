@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus test. `linkPlugin()`'s auto-link turns a URL inside inline code into a link, splitting the code span; a save after any edit writes it. Skip code-formatted text when auto-linking
+---
 # [P2] The rich-text editor turns a URL inside inline code into a link
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).

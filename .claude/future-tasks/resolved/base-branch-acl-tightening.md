@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — `updateBranchAccess` now 403s on the protected base branch, closing the path where a base-branch ACL entry fed `canPerformWorkflowAction`'s `allowed_by_acl` grant and handed arbitrary users Withdraw rights there. Consistent with the delete/submit rails
+---
 # branches.updateAccess allows editing the base branch's ACL
 
 ## RESOLVED (2026-08-12)

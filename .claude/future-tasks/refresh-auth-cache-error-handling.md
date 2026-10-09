@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-12, spotted while confirming that `CmsWorker.refreshAuthCache()` swallows errors (it does — which is why adopter request #45/#46's reactive secret re-read has to live in the adopter callback instead). Its catch at `cms-worker.ts:1084-1085` hand-rolls `err instanceof Error ? err.message : 'Unknown error'` rather than the `getErrorMessage()` CLAUDE.md mandates — the worker loop's catch at `:510` hand-rolls a similar but not identical check (`err instanceof Error ? err.message : err`) — while that helper is imported at `:20` and used at eight other sites in the same file — and skips `redactCredentials()`, unlike `:380`, `:707`, `:868` and `:1047`. The redaction half is the one that matters: the wrapped callback is adopter-supplied and on AWS builds a Clerk client from the **secret key**. Bounded today only incidentally (this message reaches the log and CloudWatch, not `worker-status.json` or a task file, so it is never served to a browser). Note a Clerk `sk_live_…` matches none of `redactCredentials`'s current rules, so redacting here is necessary but not sufficient
+---
 # [P3] `refreshAuthCache` hand-rolls its error message, skipping both `getErrorMessage()` and `redactCredentials()`
 
 `packages/canopycms/src/worker/cms-worker.ts:978-981`:

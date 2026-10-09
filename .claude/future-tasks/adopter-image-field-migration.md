@@ -1,3 +1,9 @@
+---
+priority: adopter-side
+adopters: MKT
+summary: >-
+  Migrate the adopters' string image paths to the structured `image` field and optimize the large unoptimized images; nothing in this repo changes. The marketing site's heaviest images are on its critical path
+---
 # Future Task / Kickoff Prompt: Adopter image-field migration
 
 **Adopter-side work, tracked here for visibility. No priority level: the adopter schedules it.**

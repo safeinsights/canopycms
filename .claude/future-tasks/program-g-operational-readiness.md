@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Workstream G of the production-readiness program ([hub](production-readiness-program.md), [log](program-log.md)): runbooks, a standing smoke test, ownership boundaries, release-channel wind-down and a documentation sweep, so people other than the original authors can deploy, verify, diagnose and recover the deployments
+---
 # Program G — Operational readiness
 
 **Part of:** [production-readiness-program.md](production-readiness-program.md)

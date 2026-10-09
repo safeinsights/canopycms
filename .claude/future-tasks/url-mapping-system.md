@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: MKT
+summary: >-
+  Flexible URL-to-content mapping: date-based URLs, custom slug transforms, multiple patterns per collection. The heaviest and most speculative of the URL designs — keep shelved unless the marketing site needs pattern-based URLs (a dated blog) that a per-entry override can't express. Treat as an appendix to `isurlpath-field-marker`
+---
 # Future Task: Flexible URL-to-Content Mapping System
 
 ## Problem

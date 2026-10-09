@@ -1,6 +1,12 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Found 2026-08-21 by a consumer-side review of the resolved-reference work. The server honors the new `ReferenceFieldConfig.includeBody` everywhere; the editor's live preview does not, because `api/resolve-references.ts` takes bare ids and cannot know which field an id came from. So a shared CTA with `includeBody: true` renders its prose on the published site and nothing in preview — and inconsistently *within one session*, since the initial form value comes from a resolving `read()` and shows the prose until the user changes the target. Needs a wire-shape change carrying the flag per id, plus the same `includeBody` cache-key dimension the server cache already has
+---
 # `includeBody` never reaches the editor's live preview
 
-**Status:** Open. **Priority: P2** — the embed case is the marquee use of a brand-new opt-in
+**Status:** Open. **Priority: P3** — the embed case is the marquee use of a brand-new opt-in
 flag, and in the editor it looks broken.
 
 ## What happens

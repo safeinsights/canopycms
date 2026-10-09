@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-08-22, from the packaging-guard-blind-spots review. `check-esm-imports.mjs`'s `PACKAGES` list now fails loudly if a non-private `packages/*/package.json` is missing from it, but `ci.yml`'s "Build other published packages" step and both `publish*.yml` workflows still hardcode the same 5 names independently. A forgotten CI build step surfaces as a confusing (but real) `check:esm` failure; a forgotten publish step is the dangerous half — the release silently ships incomplete with every other guard green. Deliberately not fixed here: pointing CI at the recursive root `pnpm build` would also silently absorb apps/example1 and apps/test-app, which `ci.yml`'s own comment says this job intentionally excludes
+---
 # CI's build/publish steps still hardcode the 5-package list, separately from PACKAGES
 
 Found 2026-08-22 by an independent review of `scripts/check-esm-imports.mjs`, while fixing

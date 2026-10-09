@@ -1,3 +1,7 @@
+---
+summary: >-
+  RESOLVED — 2026-07-24 deployed-editor UX review; all code findings fixed on claude/ux-review-fixes (branch-name unification, draft lifecycle, submitted-branch lock, menus/timestamps/media/alt/comments); fix map + deliberate non-fixes inside
+---
 # UX Review Findings — Deployed Editor (2026-07-24) — RESOLVED
 
 Source: interactive UX review of the AWS test deployment as an admin (2026-07-24), re-checked against `integration-202607-a`, then fixed on branch `claude/ux-review-fixes`. The original capture lived on branch `claude/canopycms-ui-ux-review-66e834` (now superseded by this file).

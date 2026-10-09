@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  Found 2026-08-21, **pre-existing** (base branch byte-identical), exposure raised by resolution reaching listings. `resolveReferencesInData`'s block branch guards on `typeof b.value !== 'object'`, which `null` and arrays both pass. `value: null` under a known template throws out of `read()` — the editor GET 500s and the entry becomes **permanently unopenable**, and a resolving production build crashes the same way; `value:` as a YAML array is silently spread into an index-keyed object and an editor round-trip freezes that into the file. One-line fix at each site using the `isPlainRecord` helper `resolveBlockItem` already uses. P1-shaped symptom, P2 likelihood — needs hand-edited or merged content to reach
+---
 # A block whose `value` is null or a YAML array crashes or corrupts reference resolution
 
 **Status:** Open. **Priority: P2**, with a P1-shaped symptom — read it before triaging.

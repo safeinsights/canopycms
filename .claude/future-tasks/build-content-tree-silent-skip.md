@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: NEITHER
+summary: >-
+  New 2026-08-14 — from a static-generation review fix session. `listEntries()` now fails an actual production build when a collection directory holds a content-extension file whose name doesn't parse (previously silent unless `CANOPYCMS_DEBUG=true`), but the fix was scoped to `listEntries()` only — `content-tree.ts`'s `buildContentTree` and `api/entries.ts`'s admin listing still silently skip such files via the same underlying `listCollectionEntries`
+---
 # `buildContentTree` still silently drops unparseable-filename entries at build time
 
 **Priority:** P2 — same failure class as a fixed P1, narrower blast radius

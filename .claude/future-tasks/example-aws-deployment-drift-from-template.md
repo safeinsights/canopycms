@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  `examples/aws-deployment/` and the scaffold templates hold five files in two copies and nothing compares them whole: the example workflow lacks the `next.config.*`/`middleware.ts`/`public/**` triggers and two of the template's six dependency checks. The incident that made it P1 (the example omitting `NEXT_PUBLIC_CANOPY_MODE: 'prod'`) was fixed in #322. Prefer generating the example over pinning it
+---
 # `examples/aws-deployment/` has drifted from the scaffold templates it mirrors, and nothing compares the two
 
 **Status: open. Priority: P2 [BOTH].** Filed three times, independently, on 2026-09-12, and merged into

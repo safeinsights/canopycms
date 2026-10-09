@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-10-04, from review of the `hasUnpushedCommits` `--verify` fix. The method resolves and fetches a short branch name, so a tag with the same name wins on both sides, the SHAs match, and a clean-tree submit retry reports success without pushing. Fix: use `refs/heads/<name>`, as the worker sites already do
+---
 # `hasUnpushedCommits` resolves a short name, so a same-named tag hides an unpushed branch
 
 ## Priority: P3

@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-05, measured by review, pre-existing. `read` loads the active branch's schema before checking access, so a user denied on that branch can tell existing collections (`FORBIDDEN`) from missing ones (`NO_SCHEMA_ITEM`). Other branches are already checked first
+---
 # `read` resolves the active branch's schema before its access check
 
 ## Priority: P3 [BOTH]

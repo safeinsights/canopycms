@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-07. `syncSubmitPr`, `syncConvertToDraft` and `syncDeleteRemoteBranch` in `api/github-sync.ts` each repeat the "githubService if present, else enqueue for the worker" split and each turn failures into a different shape. Decide whether that choice belongs behind the operating-mode strategy
+---
 # Each `sync*` function in `api/github-sync.ts` repeats the githubService-vs-queue split
 
 ## Priority: P3

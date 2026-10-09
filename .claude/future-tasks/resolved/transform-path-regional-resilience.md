@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-07 by the image-materialization epic: its option 3. Both public behaviours fail over to `replicaBucket` on 5xx; in lazy mode only `/assets/*` does
+---
 # [P2] The `/assets/t/*` origin group has no room for a cross-region fallback
 
 > **RESOLVED 2026-10-07 by [image-materialization-epic.md](image-materialization-epic.md)**, which took option 3. Kept for its analysis.

@@ -1,4 +1,10 @@
-# [P2] Worker tests reach through instances; inject collaborators instead
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  New 2026-09-13, deferred by decision from [baseline-quality-202609.md](resolved/baseline-quality-202609.md). Tests reach through `CmsWorker` instances: 51 instance-method replacements, 100 `vi.spyOn`, 166 `as unknown as`, 18 `*ForTesting` seams, and `worker/worker-context.ts` documents an interface shaped by tests monkey-patching the worker. Fix shape: inject octokit, the GitHub URL builder and the push function via constructor options, and stop replacing instance methods in the ten `cms-worker*.test.ts` files
+---
+# [P3] Worker tests reach through instances; inject collaborators instead
 
 **Status:** Open. Deferred by decision on 2026-09-13 from the baseline-quality epic
 ([baseline-quality-202609.md](resolved/baseline-quality-202609.md)), whose encapsulation PR tags

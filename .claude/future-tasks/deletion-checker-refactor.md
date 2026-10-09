@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  Refactor `DeletionChecker`'s `findIdInData` (`deletion-checker.ts:120-210`, still hand-rolled) to use `traverseFields` — the duplicated block-shape logic has bitten three times. **Its secondary ask is now resolved** and struck: PR #88 added a shared `resolveBlockItem()` (`field-traversal.ts:60-81`) called by both traversals, so `_type` vs `template` is reconciled. The structural duplication that caused the recurrences remains
+---
 # DeletionChecker: Use traverseFields Instead of Manual Traversal
 
 ## Problem

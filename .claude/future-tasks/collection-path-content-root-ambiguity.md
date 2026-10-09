@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: NEITHER
+summary: >-
+  From PR #229's human review (#11). `normalizeCollectionPath` (`schema-store.ts:405`) strips one leading `"{contentRoot}/"`, so a sub-collection literally named after the content root (`content/content`) normalizes to `content` and the `=== contentRootName` checks then treat it as the **root** collection — failure mode is "mutates a different collection", not "not found". It also means the function is not idempotent for the nested case, contrary to what its comment claimed (comment corrected, behaviour not). Unreachable today since each entry point calls it exactly once; the real fix is a distinct branded type or an explicit prefixed-or-not flag from the editor
+---
 # [P3] `normalizeCollectionPath` cannot distinguish a prefix from a sub-collection named after the content root
 
 Raised by the human review of

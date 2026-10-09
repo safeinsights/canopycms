@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08, accepted and documented. Server output rendered in a `createPreviewPage` request carries the signed-in asset prefix, so an adopter's `unstable_cache` or module memo shared with public pages in the same process serves anonymous visitors broken images. Remedy: an explicit `assetBase` on `load`'s context
+---
 # The preview's server asset prefix can poison cross-request caches
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08 from two reviews of the preview first-paint

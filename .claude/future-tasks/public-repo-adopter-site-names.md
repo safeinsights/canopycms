@@ -1,3 +1,9 @@
+---
+priority: P3
+adopters: BOTH
+summary: >-
+  New 2026-10-08. An adopter's site name appears in two dozen backlog files, and its live docs hostname in four; the account ids and stack names are already gone. Decide whether the site name counts as private, then scrub to role wording; a name-list guard would need its list kept outside the repo. JP's call
+---
 # The public repo names an adopter's site and its live docs hostname
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08, split out of

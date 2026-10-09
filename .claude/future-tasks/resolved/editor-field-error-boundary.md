@@ -1,3 +1,8 @@
+---
+adopters: BOTH
+summary: >-
+  RESOLVED 2026-10-08, branch `fix/editor-field-crash-containment`, base `int-202610-b` — adopter request 87a. Each form field has its own error boundary: a crashed field shows its value read-only with "Copy error details" and emits no edits, markdown/mdx fields fall back to editable source, and Save is not blocked. A crash screen inside `Editor` (Reload, Back to entries, Copy error details) replaces Next's "Application error". Every caught error goes through `reportEditorError`
+---
 # Should a crashing field take the whole editor down?
 
 **RESOLVED 2026-10-08, branch `fix/editor-field-crash-containment`, base `int-202610-b` (adopter request 87a).** See the resolution at the end.

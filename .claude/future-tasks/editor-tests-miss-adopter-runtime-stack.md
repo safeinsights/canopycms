@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the MDX JSX editor crash. Editor unit tests run React 18 and e2e builds with Next 15.5's default bundler; adopters run React 19 and Next 16 Turbopack. A Turbopack-only crash passed every CI layer. Add a Next 16 Turbopack production fixture that opens a markdown entry with JSX in-app
+---
 # Editor tests never run the stack adopters run
 
 ## Priority: P2 [BOTH]

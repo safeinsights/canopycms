@@ -1,3 +1,8 @@
+---
+priority: P3
+summary: >-
+  New 2026-08-22, split out of the request-34 fix so its invariant could be stated honestly rather than over-claimed. A legacy `{slug}.{ext}` content file is resolvable by `readByUrlPath` but invisible to `listEntries`, `generateContentStaticParams`, `buildContentTree` and the sitemap — and `looksLikeMalformedEntry` deliberately does not flag a two-segment name, so the build-mode failure never fires on it either. Same class as the two families closed in [resolved/readbyurlpath-entry-type-candidate-phantom-url.md](resolved/readbyurlpath-entry-type-candidate-phantom-url.md); left open for COST, not doubt — the third rule is one line under the existing `urlAddressableOnly` flag, but ~20 fixtures in `context.test.ts` write untyped filenames and read them back by URL, so it needs a separate mechanical migration commit first. Worth deciding the opposite fix at the same time (make legacy files VISIBLE to enumeration), which is kinder to a retrofitting adopter but has to invent a type and an ID **[NEITHER]**
+---
 # A legacy untyped content file is readable by URL but invisible to every enumerating surface
 
 **Priority:** P3 — a real enumeration/resolution disagreement, but it can only affect content that

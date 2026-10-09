@@ -1,3 +1,9 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-08, from the round-trip corpus test. MDXEditor drops an ordered list's `start` on import and export, so `3.` saves as `1.` after any edit. Carry `start` through import and export visitors
+---
 # [P2] The rich-text editor renumbers an ordered list that does not start at 1
 
 Found 2026-10-08 by the round-trip corpus test (adopter request 87b).

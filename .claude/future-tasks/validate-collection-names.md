@@ -1,6 +1,12 @@
+---
+priority: P2
+adopters: KB
+summary: >-
+  Reference fields' `collections` values are still unvalidated (silently zero results on a typo); the sibling `entryTypes` check shipped 2026-08-12 — reuse `forEachReferenceField` (`config/validation.ts:68-87`) + the branch-schema-cache hook. **Promoted P3→P2**: all five reference fields in the KB's schemas use `collections` today, so a typo fails silently in the KB right now
+---
 # Validate reference fields' `collections` names against the schema
 
-## Priority: P3
+## Priority: P2
 
 Spun out of [validate-entry-type-names.md](resolved/validate-entry-type-names.md)
 when that shipped on `fix/adopter-config-correctness` (2026-08-12).
