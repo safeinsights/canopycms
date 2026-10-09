@@ -3,7 +3,7 @@ import { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
 import type { EditorEntry } from '../Editor'
-import { normalizeCanopyPath } from '../canopy-path'
+import { formatCanopyPath, parseCanopyPath } from '../canopy-path'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
@@ -58,6 +58,25 @@ export interface UseCommentSystemReturn {
   handleJumpToField: (entryPath: string, canopyPath: string, threadId: string) => void
   handleJumpToEntry: (entryPath: string, threadId: string) => void
   handleJumpToBranch: (threadId: string) => void
+}
+
+/**
+ * The form element for a preview path, else for its nearest ancestor that has one: a list item or
+ * block (`tags[1]`) has no field of its own. Compares values, not a selector: the path is untrusted.
+ */
+const findFieldTarget = (path: string): { element: HTMLElement; path: string } | undefined => {
+  const byField = new Map<string, HTMLElement>()
+  for (const element of document.querySelectorAll<HTMLElement>('[data-canopy-field]')) {
+    const field = element.getAttribute('data-canopy-field')
+    if (field && !byField.has(field)) byField.set(field, element)
+  }
+  const segments = parseCanopyPath(path)
+  for (let length = segments.length; length > 0; length--) {
+    const candidate = formatCanopyPath(segments.slice(0, length))
+    const element = byField.get(candidate)
+    if (element) return { element, path: candidate }
+  }
+  return undefined
 }
 
 /**
@@ -209,11 +228,9 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           !isSamePreviewPath(msg.entryPath, currentPath))
       )
         return
-      const normalizedPath = msg.fieldPath ? normalizeCanopyPath(msg.fieldPath) : undefined
-      const target = normalizedPath
-        ? document.querySelector<HTMLElement>(`[data-canopy-field="${normalizedPath}"]`)
-        : null
-      if (target) {
+      const found = typeof msg.fieldPath === 'string' ? findFieldTarget(msg.fieldPath) : undefined
+      if (found) {
+        const target = found.element
         target.scrollIntoView({ behavior: 'smooth', block: 'center' })
         const previous = target.style.boxShadow
         target.style.boxShadow = '0 0 0 3px rgba(79, 70, 229, 0.35)'
@@ -221,12 +238,9 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           target.style.boxShadow = previous
         }, 1200)
 
-        // Set focused field path to trigger FieldWrapper auto-focus
-        if (normalizedPath) {
-          setFocusedFieldPath(normalizedPath)
-          // Clear after brief delay to allow FieldWrapper to detect the change
-          later(() => setFocusedFieldPath(undefined), 100)
-        }
+        // Cleared shortly after, once FieldWrapper has seen it and focused the field.
+        setFocusedFieldPath(found.path)
+        later(() => setFocusedFieldPath(undefined), 100)
       }
     }
     window.addEventListener('message', handleFocus)
