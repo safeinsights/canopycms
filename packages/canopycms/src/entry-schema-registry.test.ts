@@ -194,6 +194,48 @@ describe('createEntrySchemaRegistry', () => {
     },
   )
 
+  it.each([
+    ['all digits', [{ type: 'string', name: '2024' }], '2024'],
+    ['containing a dot', [{ type: 'string', name: 'meta.title' }], 'meta.title'],
+    [
+      'inside an object, containing a bracket',
+      [{ type: 'object', name: 'stats', fields: [{ type: 'number', name: 'q[1]' }] }],
+      'q[1]',
+    ],
+    [
+      'inside a block template',
+      [
+        {
+          type: 'block',
+          name: 'sections',
+          templates: [{ name: 'hero', fields: [{ type: 'string', name: '0' }] }],
+        },
+      ],
+      '0',
+    ],
+    [
+      'inside an inline group',
+      [{ type: 'group', name: 'seo', fields: [{ type: 'string', name: 'og.title' }] }],
+      'og.title',
+    ],
+  ] as const)('throws for a field name %s, which no path can spell', (_, fields, name) => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
+      }),
+    ).toThrow(
+      `Field "${name}": field names can't be all digits or contain '.', '[' or ']'; they're used in field paths`,
+    )
+  })
+
+  it("allows an inline group's own name to be anything, since no path spells it", () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [{ type: 'group', name: 'seo.v2', fields: [{ type: 'string', name: 'metaTitle' }] }],
+      }),
+    ).not.toThrow()
+  })
+
   it('allows unavailable nested inside an object field, which is not a top-level key', () => {
     expect(() =>
       createEntrySchemaRegistry({
