@@ -129,21 +129,26 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     mountPath: config?.mountPath ?? '/ai',
     files: exported,
   })
-  for (const pending of allPending) {
-    maskUnexportedTargets(pending.entry, exported)
-    // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
-    await runEntryTransform(pending.entry, pending.absolutePath, pending.contentId, config)
-  }
-  const failed = renderAll(allPending, config, references)
-  // An entry that failed to render is not in the export after all, so references to it are
-  // masked like any other left-out target, and the rest render once more against that set.
-  if (failed.length > 0) {
+  // An entry whose render throws is not in the export after all, so references to it are masked
+  // like any other left-out target, and the entries that changed run their transforms and render
+  // again. That can fail another entry, so this repeats until a round fails none; each round
+  // removes at least one entry, so it ends.
+  let round: PendingEntry[] = allPending
+  for (;;) {
+    for (const pending of round) {
+      maskUnexportedTargets(pending.entry, exported)
+      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), on data as masked
+      pending.entry.appendedSections = undefined
+      await runEntryTransform(pending.entry, pending.absolutePath, pending.contentId, config)
+    }
+    const failed = renderAll(round, config, references)
+    if (failed.length === 0) break
     for (const pending of failed) {
       if (pending.contentId !== null) exported.delete(pending.contentId)
     }
-    const rendered = allPending.filter(isRendered)
-    for (const pending of rendered) maskUnexportedTargets(pending.entry, exported)
-    renderAll(rendered, config, references)
+    round = allPending.filter(
+      (pending) => isRendered(pending) && maskUnexportedTargets(pending.entry, exported),
+    )
   }
 
   const manifestCollections = collectionNodes.map((node) => emitCollection(node, files))

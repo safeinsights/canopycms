@@ -59,6 +59,7 @@ const schema = {
             { name: 'title', type: 'string' as const },
             authorRef,
             { ...authorRef, name: 'reviewers', label: 'Reviewers', list: true },
+            { ...authorRef, name: 'related', label: 'Related', collections: ['posts'] },
           ],
         },
       ],
@@ -121,7 +122,7 @@ describe('generateAIContent: reference fields', () => {
   let root: string
   let flat: ReturnType<typeof flattenSchema>
   let store: ContentStore
-  let ids: { alice: string; bob: string; secret: string }
+  let ids: { alice: string; bob: string; secret: string; second: string }
   const missingId = 'zzzzzzzzzzzz'
 
   beforeEach(async () => {
@@ -149,17 +150,24 @@ describe('generateAIContent: reference fields', () => {
       alice: await idOf(store, 'content/people', 'alice'),
       bob: await idOf(store, 'content/people', 'bob'),
       secret: await idOf(store, 'content/drafts', 'secret'),
+      second: '',
     }
 
-    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('first'), {
-      format: 'md',
-      data: { title: 'First', author: ids.alice, reviewers: [ids.bob, missingId, ids.secret] },
-      body: 'First body.',
-    })
     await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second'), {
       format: 'md',
       data: { title: 'Second', author: ids.secret, reviewers: [ids.alice] },
       body: 'Second body.',
+    })
+    ids.second = await idOf(store, 'content/posts', 'second')
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('first'), {
+      format: 'md',
+      data: {
+        title: 'First',
+        author: ids.alice,
+        reviewers: [ids.bob, missingId, ids.secret],
+        related: ids.second,
+      },
+      body: 'First body.',
     })
     await store.write(unsafeAsLogicalPath('content/pages'), unsafeAsSlug('nested'), {
       format: 'json',
@@ -228,23 +236,79 @@ describe('generateAIContent: reference fields', () => {
     }
   })
 
-  it('masks a target whose own markdown failed to render, so no link points at a missing file', async () => {
-    const config: AIContentConfig = {
-      fieldTransforms: {
-        person: {
-          fullName: (value) => {
-            if (value === 'Secret Draft Person') throw new Error('transform failed')
-            return String(value)
-          },
+  describe('a target whose own markdown fails to render', () => {
+    const failSecret: AIContentConfig['fieldTransforms'] = {
+      person: {
+        fullName: (value) => {
+          if (value === 'Secret Draft Person') throw new Error('transform failed')
+          return String(value)
         },
       },
     }
-    const { files } = await generate(config)
-    expect(files.has('drafts/secret.md')).toBe(false)
-    expect(files.get('posts/second.md')).toContain(`**Author:** (unavailable entry ${ids.secret})`)
-    for (const [file, content] of files) {
-      expect(content, file).not.toContain('/drafts/secret')
-    }
+    let warn: ReturnType<typeof vi.spyOn>
+    beforeEach(() => {
+      warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    const warnedAbout = (slug: string) =>
+      warn.mock.calls.filter((call: unknown[]) => String(call[0]).includes(`"${slug}"`)).length
+
+    it('is masked, so no link points at a file the export did not write', async () => {
+      const { files } = await generate({ fieldTransforms: failSecret })
+      expect(files.has('drafts/secret.md')).toBe(false)
+      expect(warnedAbout('secret')).toBe(1)
+      expect(files.get('posts/second.md')).toContain(
+        `**Author:** (unavailable entry ${ids.secret})`,
+      )
+      for (const [file, content] of files) {
+        expect(content, file).not.toContain('/drafts/secret')
+        expect(content, file).not.toContain('Secret Draft Person')
+      }
+    })
+
+    it('masks in turn an entry that then fails because of that masking', async () => {
+      const { files } = await generate({
+        fieldTransforms: {
+          ...failSecret,
+          post: {
+            author: (value) => {
+              if ((value as AIReferenceValue).unavailable) throw new Error('needs an author')
+              return 'AUTHOR'
+            },
+          },
+        },
+      })
+      expect(files.has('posts/second.md')).toBe(false)
+      expect(warnedAbout('second')).toBe(1)
+      const first = files.get('posts/first.md') ?? ''
+      expect(first).toContain(`**Related:** (unavailable entry ${ids.second})`)
+      for (const [file, content] of files) {
+        expect(content, file).not.toContain('/posts/second')
+      }
+    })
+
+    it('reruns the entry transforms of entries it masks in, and only theirs', async () => {
+      const transformed: string[] = []
+      const { files } = await generate({
+        fieldTransforms: failSecret,
+        entryTransforms: {
+          post: (entry) => {
+            transformed.push(entry.slug)
+            const author = entry.data.author as AIReferenceValue | undefined
+            return author && !author.unavailable
+              ? `Written by ${String(author.fullName)}`
+              : undefined
+          },
+          page: (entry) => void transformed.push(entry.slug),
+        },
+      })
+      expect(files.get('posts/first.md')).toContain('Written by Alice Example')
+      for (const [file, content] of files) {
+        expect(content, file).not.toContain('Secret Draft Person')
+      }
+      // `about` references nothing that failed, so its transform runs once
+      expect(transformed.filter((slug) => slug === 'about')).toHaveLength(1)
+      expect(transformed.filter((slug) => slug === 'second')).toHaveLength(2)
+    })
   })
 
   describe('a target the export leaves out', () => {

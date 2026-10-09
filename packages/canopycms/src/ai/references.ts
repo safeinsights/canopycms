@@ -101,20 +101,24 @@ function isShownTarget(value: unknown): value is Record<string, unknown> & { id:
  * Replace, in place, every resolved target that is not itself in this export with an
  * {@link AIUnavailableReference}, so no title, URL or field of an excluded entry reaches the
  * output. Runs before entry transforms and rendering, which therefore never see such a target.
+ * Returns whether it replaced anything.
  */
 export function maskUnexportedTargets(
   entry: AIEntry,
   exported: { has(id: string): boolean },
-): void {
-  const mask = (value: unknown): unknown =>
-    isShownTarget(value) && !exported.has(value.id)
-      ? ({ id: value.id, unavailable: true, reason: 'excluded' } satisfies AIUnavailableReference)
-      : value
+): boolean {
+  let masked = false
+  const mask = (value: unknown): unknown => {
+    if (!isShownTarget(value) || exported.has(value.id)) return value
+    masked = true
+    return { id: value.id, unavailable: true, reason: 'excluded' } satisfies AIUnavailableReference
+  }
   for (const { record, field } of referenceSlots(entry.fields, entry.data)) {
     const value = record[field.name]
     if (value === undefined) continue
     record[field.name] = Array.isArray(value) ? value.map(mask) : mask(value)
   }
+  return masked
 }
 
 /**
