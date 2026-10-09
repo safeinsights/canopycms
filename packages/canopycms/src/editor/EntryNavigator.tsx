@@ -55,7 +55,7 @@ export interface EntryNavItem {
   contentId?: ContentId // 12-char embedded ID for ordering
   /** True when this entry's file conflicted during rebase */
   conflictNotice?: boolean
-  /** True when the entry's type is unavailable; its menu offers nothing that writes. */
+  /** True when the entry's type is unavailable; it shows no menu, since every item in it writes. */
   unavailable?: boolean
 }
 

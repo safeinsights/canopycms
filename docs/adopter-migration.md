@@ -42,12 +42,13 @@ which entries belong to it is still a read of `git log`.
 
 ### An unknown schema reference costs one entry type, not the editor — **behaviour change**
 
-**What changed.** When content synced into a branch names an entry schema the running code lacks,
-only that entry type goes unavailable: the editor says so, and its entries answer 503 with
-`code: 'SCHEMA_UNAVAILABLE'`. Builds and static deploys still fail. Public types gain optional
-fields: `EntryTypeConfig.unavailable`, `SchemaResolutionResult.issues` and `ApiResponse.code`.
+**What changed.** When synced content names an entry schema the running code lacks, only that
+entry type goes unavailable: the editor says so, and its entries answer 503 with
+`code: 'SCHEMA_UNAVAILABLE'`. Builds, static deploys and `generate-ai-content` still fail. Public
+types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, optional
+`ApiResponse.code`, and a required `SchemaResolutionResult.issues`.
 
-**To adopt.** Nothing; code that builds a `SchemaResolutionResult` must add `issues`.
+**To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`.
 
 ### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
 

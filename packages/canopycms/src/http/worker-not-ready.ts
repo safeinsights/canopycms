@@ -7,7 +7,11 @@ import { jsonResponse, type CanopyResponse } from './types'
 /** Seconds a client should wait before retrying while the worker boots. */
 const RETRY_AFTER_SECONDS = '30'
 
-/** Seconds before retrying an unavailable entry type: about one deploy. */
+/**
+ * Seconds before retrying an unavailable entry type. The editor's client never resends a 503
+ * (api/client.ts resends only a 429), so this informs other clients; the editor tells authors to
+ * reload.
+ */
 const SCHEMA_RETRY_AFTER_SECONDS = '60'
 
 export const WORKER_NOT_READY_MESSAGE =

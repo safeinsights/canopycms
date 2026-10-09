@@ -481,7 +481,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
   const [schemaUnavailableKeys, setSchemaUnavailableKeys] = useState<ReadonlySet<string>>(new Set())
-  // A refetch of entries and schema is the signal the server's schema may have changed, so every
+  // A refetch of entries or schema is the signal the server's schema may have changed, so every
   // refusal is forgotten and the next open of each entry reads it once more. Declared before the
   // load effect so a refetch's retry sees the cleared set in the same commit.
   useEffect(() => {

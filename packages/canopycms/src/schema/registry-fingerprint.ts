@@ -9,10 +9,12 @@ const fingerprints = new WeakMap<EntrySchemaRegistry, string>()
  * is stable across cold starts of one image, and different when any definition differs.
  *
  * Object keys are sorted, so declaration order cannot change it. Every value is tagged with
- * its type and every string carries its length, so no two distinct shapes write the same bytes.
- * A custom field may hold anything, so a function contributes its source text rather than being
- * dropped the way JSON drops it, and a value already on the walk's path is written as a cycle
- * marker rather than recursed into. Memoized per registry object, which the code builds once.
+ * its type and every string carries its length, so distinct JSON-shaped values never write the
+ * same bytes. A custom field may hold anything, so a function contributes its source text rather
+ * than being dropped the way JSON drops it; any other object is walked by its own enumerable
+ * keys (a Date, Map or Set writes like `{}`), and a value already on the walk's path is written
+ * as a cycle marker rather than recursed into. Memoized per registry object, which the code
+ * builds once.
  */
 export function registryFingerprint(registry: EntrySchemaRegistry): string {
   const memo = fingerprints.get(registry)

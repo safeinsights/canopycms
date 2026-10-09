@@ -349,8 +349,9 @@ export interface ReadOptions {
   referenceAccess?: ReferenceTargetAccess
   /**
    * Read an entry of an `unavailable` entry type as raw data instead of throwing
-   * {@link SchemaUnavailableError}: for reads that only label or link it, like reference
-   * resolution, never for one an author edits.
+   * {@link SchemaUnavailableError}: for reads of it as another entry's reference target
+   * (resolution embeds that raw data; the picker takes a label from it), never for one an
+   * author edits.
    */
   allowUnavailableEntryType?: boolean
 }
