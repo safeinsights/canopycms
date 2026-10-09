@@ -31,6 +31,23 @@ vi.mock('../task-queue/cms-task-queue', async (importOriginal) => {
   }
 })
 
+/** Runs once, inside the schema gate's registry read, then clears itself. */
+const insideGate = vi.hoisted(() => ({ fn: undefined as (() => void) | undefined }))
+vi.mock('../schema-registry-record', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../schema-registry-record')>()
+  return {
+    ...actual,
+    readSchemaRegistryRecord: async (
+      ...args: Parameters<typeof actual.readSchemaRegistryRecord>
+    ) => {
+      const fn = insideGate.fn
+      insideGate.fn = undefined
+      fn?.()
+      return actual.readSchemaRegistryRecord(...args)
+    },
+  }
+})
+
 function collectionMeta(name: string, schemas: string[]): string {
   return JSON.stringify({
     name,
@@ -195,6 +212,45 @@ describe('CmsWorker.syncGit() schema gate', () => {
     } finally {
       await successor.stop()
     }
+  })
+
+  it('an abort while the gate decides neither advances the held base nor drops the hold', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    const worker = makeWorker()
+    const internals = worker as unknown as {
+      trackOperation(label: string, operation: Promise<void>): Promise<void>
+      shutdownController: AbortController
+      ensureStatusReport(): WorkerStatusReport
+    }
+    // A compromise aborts at once, while the reconcile is mid-decision.
+    insideGate.fn = () => void worker.stop({ reason: 'worker lock compromised', deadlineMs: 0 })
+
+    await internals.trackOperation('git sync', worker.syncGit()).catch(() => {})
+    await worker.stop()
+
+    expect(insideGate.fn).toBeUndefined()
+    expect(internals.shutdownController.signal.aborted).toBe(true)
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect(internals.ensureStatusReport().baseHold?.missingSchemas).toEqual(['personSchema'])
+  })
+
+  it('a stop during the lock acquisition keeps the hold the previous worker left', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    const previous = makeWorker()
+    await previous.syncGit()
+    const held = (await readStatus()).baseHold
+    expect(held).toBeDefined()
+
+    const next = makeWorker()
+    const starting = next.start()
+    await next.stop({ reason: 'SIGTERM' })
+    await starting
+
+    const status = await readStatus()
+    expect(status.lastShutdown?.reason).toBe('SIGTERM')
+    expect(status.baseHold?.firstSeen).toEqual(held?.firstSeen)
   })
 
   it('advances once the editor records a registry defining it, and clears the hold', async () => {

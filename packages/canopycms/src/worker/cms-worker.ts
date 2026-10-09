@@ -354,7 +354,6 @@ export class CmsWorker {
     this.ensureStatusReport()
 
     await this.acquireLock()
-    if (this.stopping) return
 
     // Replace the previous holder's status file now: the first sync can take
     // minutes, and until then System health would report the old worker's
@@ -381,6 +380,9 @@ export class CmsWorker {
         getErrorMessage(err),
       )
     }
+    // After the carry-over, not before: a stop() during the lock acquisition
+    // writes this report, which must still hold what the previous worker left.
+    if (this.stopping) return
 
     // Everything below runs while holding the cross-host worker lock. A failure
     // here (most notably the empty-remote guard inside ensureRemoteGit) means
