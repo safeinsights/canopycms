@@ -21,10 +21,15 @@ import {
 import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
+import {
+  EXIT_DRAINED_FOR_TERMINATION,
+  WORKER_CAPACITY_ENV,
+} from '../src/constructs/worker-lifecycle'
 import { getSecret } from './secrets'
 import { buildGitHubAppAuth } from './github-app-auth'
 import { createReactiveSecret } from './credential-refresh'
 import { createClerkAuthCacheRefresher } from './clerk-refresh'
+import { completeTerminationLifecycleAction, watchForTermination } from './termination-watch'
 
 async function main() {
   // FIRST, before anything that could log. The imports above only cover code
@@ -181,14 +186,28 @@ async function main() {
     ),
   })
 
-  // Graceful shutdown — stop() waits for in-flight operations to drain
-  const shutdown = async () => {
-    workerLog('Shutting down...')
-    await worker.stop()
+  // stop() drains (see CmsWorker.stop); the unit's KillMode=mixed keeps
+  // systemd's SIGTERM off the git children it is waiting for, and its
+  // TimeoutStopSec outlasts the drain deadline.
+  const shutdown = async (signal: string) => {
+    await worker.stop({ reason: signal })
     process.exit(0)
   }
-  process.on('SIGTERM', shutdown)
-  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', () => void shutdown('SIGTERM'))
+  process.on('SIGINT', () => void shutdown('SIGINT'))
+
+  // Drain BEFORE the instance goes: the construct's terminating lifecycle hook
+  // holds it in Terminating:Wait until this completes the action (or the
+  // heartbeat times out). Exiting with EXIT_DRAINED_FOR_TERMINATION stops
+  // Restart=always from starting a fresh worker on the departing instance.
+  void watchForTermination({ watchSpot: process.env[WORKER_CAPACITY_ENV] === 'spot' }).then(
+    async (notice) => {
+      workerLog(`Instance terminating: ${notice.reason}`)
+      await worker.stop({ reason: notice.reason })
+      if (notice.kind === 'auto-scaling') await completeTerminationLifecycleAction()
+      process.exit(EXIT_DRAINED_FOR_TERMINATION)
+    },
+  )
 
   await worker.start()
 }

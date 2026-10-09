@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
   Annotations,
+  ArnFormat,
   Duration,
   RemovalPolicy,
   Stack,
@@ -20,6 +21,11 @@ import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
+import {
+  EXIT_DRAINED_FOR_TERMINATION,
+  WORKER_CAPACITY_ENV,
+  WORKER_DRAIN_HOOK_NAME,
+} from './worker-lifecycle'
 
 // This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
 // is real ESM and `__dirname` is not a global there - the worker asset path
@@ -592,8 +598,27 @@ export interface CanopyCmsServiceProps {
    */
   architecture?: lambda.Architecture
 
-  /** EC2 spot max price (default: on-demand rate for t4g.nano) */
-  spotMaxPrice?: string
+  /**
+   * What the single worker instance runs on. Default: one on-demand t4g.nano.
+   *
+   * `{ type: 'spot' }` costs less but can leave the deployment with NO worker:
+   * when no spot capacity is available in either zone the group keeps
+   * retrying, the editor's first branch fails (no `remote.git` yet) and queued
+   * publishes wait, while `cdk deploy` reports success. An Auto Scaling group
+   * has no automatic fallback from spot to on-demand. Spot uses a
+   * mixed-instances policy over several Graviton sizes, price-capacity-optimized,
+   * which makes a shortage less likely but cannot rule it out.
+   */
+  workerCapacity?: WorkerCapacity
+
+  /**
+   * How long a terminating worker instance may wait for its worker to drain
+   * before termination continues anyway (default 5 minutes, at least
+   * {@link MIN_WORKER_TERMINATION_HEARTBEAT}, at most 2 hours). The worker
+   * completes the hook as soon as it has drained, normally within seconds, so
+   * this bounds only a worker that hangs.
+   */
+  workerTerminationHeartbeat?: Duration
 
   /**
    * ADDITIONAL Secrets Manager ARNs the worker may read.
@@ -878,6 +903,64 @@ export interface CanopyCmsServiceProps {
 }
 
 /**
+ * The worker instance's capacity: one on-demand instance, or spot through a
+ * mixed-instances policy. Every instance type must be Graviton (arm64), since
+ * the launch template's AMI is.
+ */
+export type WorkerCapacity =
+  | {
+      type: 'on-demand'
+      /** Default t4g.nano. */
+      instanceType?: ec2.InstanceType
+    }
+  | {
+      type: 'spot'
+      /** The pools to choose from, most preferred first. Default t4g.nano, t4g.micro, t4g.small. */
+      instanceTypes?: readonly ec2.InstanceType[]
+      /** USD per hour. Default: each type's on-demand price. */
+      maxPrice?: string
+      /**
+       * Launch a replacement when EC2 signals a spot instance is at elevated
+       * risk of interruption, before it is interrupted (default true). The two
+       * instances never both run a worker: the second waits for the worker lock.
+       */
+      capacityRebalance?: boolean
+    }
+
+const DEFAULT_SPOT_INSTANCE_TYPES = ['t4g.nano', 't4g.micro', 't4g.small']
+
+/** The worker's internal drain deadline (core's DEFAULT_DRAIN_DEADLINE_MS) plus two minutes. */
+export const MIN_WORKER_TERMINATION_HEARTBEAT = Duration.seconds(210)
+const MAX_WORKER_TERMINATION_HEARTBEAT = Duration.hours(2)
+
+/** Graviton families: `a1`, or a generation digit followed by `g` (t4g, c7gn, m8gd). */
+function assertGravitonInstanceType(instanceType: ec2.InstanceType): void {
+  const name = instanceType.toString()
+  if (Token.isUnresolved(name)) return
+  if (!/^(a1|[a-z]+\d+g[a-z]*)\./.test(name)) {
+    throw new Error(
+      `workerCapacity: instance type "${name}" is not Graviton (arm64). The worker's AMI is ` +
+        'Amazon Linux 2023 for arm64, so an x86 instance cannot boot it.',
+    )
+  }
+}
+
+function assertWorkerTerminationHeartbeat(heartbeat: Duration): void {
+  if (Token.isUnresolved(heartbeat.toSeconds({ integral: false }))) return
+  const seconds = heartbeat.toSeconds()
+  if (
+    seconds < MIN_WORKER_TERMINATION_HEARTBEAT.toSeconds() ||
+    seconds > MAX_WORKER_TERMINATION_HEARTBEAT.toSeconds()
+  ) {
+    throw new Error(
+      `workerTerminationHeartbeat must be between ${MIN_WORKER_TERMINATION_HEARTBEAT.toSeconds()} ` +
+        `and ${MAX_WORKER_TERMINATION_HEARTBEAT.toSeconds()} seconds (got ${seconds}): shorter ` +
+        "cuts off the worker's 90-second drain, and Auto Scaling allows at most two hours.",
+    )
+  }
+}
+
+/**
  * Core CDK construct for CanopyCMS deployment.
  *
  * Creates:
@@ -885,7 +968,8 @@ export interface CanopyCmsServiceProps {
  * - EFS filesystem with access point at /workspace
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
- * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd) -
+ * - EC2 Worker (on-demand t4g.nano by default, in an ASG, public subnet, EFS
+ *   mount, systemd, a terminating lifecycle hook it completes once drained) -
  *   rolled via the ASG's UpdatePolicy by every deploy that changes its launch
  *   template, so a changed worker bundle reaches the instance instead of
  *   sitting unused in a launch template until the next spot interruption (see
@@ -977,6 +1061,30 @@ export class CanopyCmsService extends Construct {
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
+
+    const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
+    const workerInstanceTypes =
+      workerCapacity.type === 'spot'
+        ? (workerCapacity.instanceTypes ??
+          DEFAULT_SPOT_INSTANCE_TYPES.map((name) => new ec2.InstanceType(name)))
+        : [
+            workerCapacity.instanceType ??
+              ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+          ]
+    if (workerInstanceTypes.length === 0) {
+      throw new Error('workerCapacity.instanceTypes must name at least one instance type')
+    }
+    workerInstanceTypes.forEach(assertGravitonInstanceType)
+    if (workerCapacity.type === 'spot' && workerCapacity.maxPrice !== undefined) {
+      const price = Number(workerCapacity.maxPrice)
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new Error(
+          `workerCapacity.maxPrice must be a positive USD-per-hour amount (got "${workerCapacity.maxPrice}")`,
+        )
+      }
+    }
+    const workerTerminationHeartbeat = props.workerTerminationHeartbeat ?? Duration.minutes(5)
+    assertWorkerTerminationHeartbeat(workerTerminationHeartbeat)
 
     // Checked at the top so a misconfigured pair fails `cdk synth` rather than
     // `cdk deploy`-then-restart-loop.
@@ -1414,6 +1522,9 @@ export class CanopyCmsService extends Construct {
     if (props.clerkSecretKeySecretJsonField) {
       envEntries.push(['CLERK_SECRET_KEY_SECRET_JSON_FIELD', props.clerkSecretKeySecretJsonField])
     }
+    if (workerCapacity.type === 'spot') {
+      envEntries.push([WORKER_CAPACITY_ENV, 'spot'])
+    }
     if (settingsBranch !== undefined) {
       // Only when explicitly set - an absent prop must keep today's behavior
       // (the worker falls through to the computed `canopycms-settings-<name>`),
@@ -1533,6 +1644,15 @@ export class CanopyCmsService extends Construct {
       'Restart=always',
       'RestartSec=5',
       'TimeoutStartSec=300',
+      '# Stopping drains: SIGTERM reaches node ONLY (mixed), so the git',
+      '# children it is waiting for are not killed with it, and systemd',
+      "# waits past the worker's 90s drain deadline before its SIGKILL.",
+      'KillMode=mixed',
+      'TimeoutStopSec=120',
+      '# A worker that drained for an instance termination exits with this;',
+      '# restarting it would start work on an instance about to disappear.',
+      `RestartPreventExitStatus=${EXIT_DRAINED_FOR_TERMINATION}`,
+      `SuccessExitStatus=${EXIT_DRAINED_FOR_TERMINATION}`,
       '# File output, not journal: the CloudWatch agent cannot read journald,',
       '# so it tails this file instead (see the agent config below).',
       '# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd',
@@ -1646,23 +1766,37 @@ export class CanopyCmsService extends Construct {
     // fresh adopter account. An explicit LaunchTemplate synthesizes
     // AWS::EC2::LaunchTemplate instead, which every account can use.
     const launchTemplate = new ec2.LaunchTemplate(this, 'WorkerLaunchTemplate', {
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
+      instanceType: workerInstanceTypes[0],
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
       role: workerRole,
       securityGroup: workerSg,
       userData,
-      spotOptions: {
-        requestType: ec2.SpotRequestType.ONE_TIME, // required for ASG-managed spot
-        maxPrice: parseFloat(props.spotMaxPrice ?? '0.0042'), // On-demand rate for t4g.nano
-      },
     })
 
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
-      launchTemplate,
+      // Spot goes through a mixed-instances policy rather than spot options on
+      // the launch template, so the group can choose among several pools.
+      ...(workerCapacity.type === 'spot'
+        ? {
+            mixedInstancesPolicy: {
+              launchTemplate,
+              launchTemplateOverrides: workerInstanceTypes.map((instanceType) => ({
+                instanceType,
+              })),
+              instancesDistribution: {
+                onDemandBaseCapacity: 0,
+                onDemandPercentageAboveBaseCapacity: 0,
+                spotAllocationStrategy: autoscaling.SpotAllocationStrategy.PRICE_CAPACITY_OPTIMIZED,
+                spotMaxPrice: workerCapacity.maxPrice,
+              },
+            },
+            capacityRebalance: workerCapacity.capacityRebalance ?? true,
+          }
+        : { launchTemplate }),
       minCapacity: 1,
       maxCapacity: 1,
       // `healthChecks`, not the deprecated `healthCheck`/`HealthCheck.ec2({ grace })`:
@@ -1677,8 +1811,8 @@ export class CanopyCmsService extends Construct {
       // and do NOTHING else - the running instance keeps its old user-data
       // (and therefore the old worker code: the worker bundle is a CDK S3
       // asset whose hash is interpolated into user-data's `aws s3 cp
-      // s3://...`) until a spot interruption or a manual terminate happens
-      // to replace it. `cdk deploy` would then silently deploy everything
+      // s3://...`) until an interruption or a manual terminate happens to
+      // replace it. `cdk deploy` would then silently deploy everything
       // EXCEPT the worker. `rollingUpdate` makes CloudFormation actually
       // terminate-and-relaunch the instance on every deploy that changes the
       // launch template, so a worker code change actually reaches it.
@@ -1691,10 +1825,14 @@ export class CanopyCmsService extends Construct {
       // That outage is acceptable: the task queue and branch workspaces live on
       // EFS, not on the instance, so the new instance picks up where the old one
       // left off, and the Lambda's Save/Publish paths only enqueue task files
-      // onto EFS and never talk to the worker directly. A task mid-flight at
-      // termination is handled by orphan recovery on every task-queue cycle, not
-      // only at worker boot (recoverOrphanedTasks in
-      // CmsWorker.processTaskQueue(), packages/canopycms/src/worker/cms-worker.ts).
+      // onto EFS and never talk to the worker directly. The old worker drains
+      // first, behind the terminating lifecycle hook below. Orphan recovery on
+      // every task-queue cycle (CmsWorker.processTaskQueue) covers a worker
+      // that died without draining.
+      //
+      // Single-writer does not rest on this ordering: the worker lock on EFS
+      // keeps a second worker from starting until the first has released it,
+      // which a draining worker does last.
       //
       // `waitOnResourceSignals` therefore defaults to false here - see the
       // no-cfn-signal note below.
@@ -1725,6 +1863,43 @@ export class CanopyCmsService extends Construct {
     // `mount -t efs` failure kills the whole bootstrap and the
     // EC2-health-checked ASG never notices.
     this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
+
+    // Holds a terminating instance in Terminating:Wait until its worker has
+    // drained and completed the action (worker/termination-watch.ts). CONTINUE
+    // on timeout, so a hung worker delays termination by at most the heartbeat.
+    //
+    // A separate resource that depends on the group, so an upgrade that adds it
+    // rolls the group first: the outgoing instance, whose worker predates the
+    // drain, is never held for a heartbeat it cannot complete.
+    this.workerAsg.addLifecycleHook('WorkerDrainHook', {
+      lifecycleHookName: WORKER_DRAIN_HOOK_NAME,
+      lifecycleTransition: autoscaling.LifecycleTransition.INSTANCE_TERMINATING,
+      heartbeatTimeout: workerTerminationHeartbeat,
+      defaultResult: autoscaling.DefaultResult.CONTINUE,
+    })
+    // A standalone policy rather than the role's default one: it names the
+    // group, and the group depends (through the launch template) on the role.
+    new iam.Policy(this, 'WorkerLifecyclePolicy', {
+      roles: [workerRole],
+      statements: [
+        new iam.PolicyStatement({
+          // Describe actions support no resource-level permissions.
+          actions: ['autoscaling:DescribeAutoScalingInstances'],
+          resources: ['*'],
+        }),
+        new iam.PolicyStatement({
+          actions: ['autoscaling:CompleteLifecycleAction'],
+          resources: [
+            Stack.of(this).formatArn({
+              service: 'autoscaling',
+              resource: 'autoScalingGroup',
+              resourceName: `*:autoScalingGroupName/${this.workerAsg.autoScalingGroupName}`,
+              arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+            }),
+          ],
+        }),
+      ],
+    })
   }
 
   /**
