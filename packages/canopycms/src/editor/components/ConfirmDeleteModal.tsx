@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { Modal, Button, Text, Group, Stack } from '@mantine/core'
 
 export interface ConfirmDeleteModalProps {
@@ -10,6 +11,8 @@ export interface ConfirmDeleteModalProps {
   onConfirm: () => void
   onClose: () => void
   loading?: boolean
+  /** Rendered between the message and the buttons. */
+  children?: ReactNode
 }
 
 /**
@@ -24,11 +27,13 @@ export function ConfirmDeleteModal({
   onConfirm,
   onClose,
   loading = false,
+  children,
 }: ConfirmDeleteModalProps) {
   return (
     <Modal opened={isOpen} onClose={onClose} title={title} centered size="md">
       <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>
+        {children}
 
         <Group justify="flex-end" gap="sm">
           <Button variant="default" onClick={onClose} disabled={loading}>

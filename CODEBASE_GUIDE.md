@@ -747,12 +747,12 @@ parse-versus-create-versus-cast conventions.
 **Location**: `packages/canopycms/src/validation/` —
 [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
 
-- `field-traversal.ts` — schema-aware traversal of nested data: `traverseFields`, `findFieldsByType`, the `onContainer` hook
+- `field-traversal.ts` — schema-aware traversal of nested data: `traverseFields`, `findFieldsByType`, `collectReferenceIds`, the `onContainer` hook
 - `entry-validator.ts` — `validateEntryData`, `findUnknownKeys` and `normalizeReferenceValues`, shared by the editor and the write boundary
 - `reference-validator.ts` — reference field validation: ID format, existence, collection and entry-type constraints
 - `entry-type-reference-validator.ts` — `validateReferenceEntryTypes`, checks a reference's `entryTypes` against the resolved schema
 - `entry-link-validator.ts` — `validateEntryLinks`, warns on broken `entry:ID` links at save time
-- `deletion-checker.ts` — referential-integrity checking before a delete
+- `deletion-checker.ts` — `findReferencingEntries`, the entries a delete would orphan
 - `block-structural-keys.ts` — which keys of a block item are structure rather than content
 
 ## Entry Links
