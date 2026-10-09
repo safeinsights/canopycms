@@ -1,6 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import React from 'react'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import matter from 'gray-matter'
 import { format } from 'prettier'
 import { afterEach, expect, it, vi } from 'vitest'
 
@@ -129,4 +132,36 @@ it('writes an edited block in a Prettier-clean style', async () => {
   const changed = saved.split('\n').filter((line, i) => line !== before[i])
   expect(changed).toEqual([expect.stringContaining('an _inserted_ word')])
   expect(await format(saved, { parser: 'markdown' })).toBe(saved)
+}, 30000)
+
+it('saves a one-line edit to a body that opens as source as a one-line diff', async () => {
+  const file = fs.readFileSync(
+    path.join(__dirname, '__fixtures__/markdown-corpus/list-item-paragraphs.md'),
+    'utf8',
+  )
+  const { content, data } = matter(file, {})
+  const Wrapper = createApiClientWrapper(await setupMockApiClient())
+  const onChange = vi.fn()
+  render(
+    <CanopyCMSProvider>
+      <Wrapper>
+        <MarkdownField label="Body" value={content} onChange={onChange} />
+      </Wrapper>
+    </CanopyCMSProvider>,
+  )
+  await screen.findByTestId('markdown-source-fallback')
+  const source = screen.getByTestId('markdown-source-editor')
+  const line = 'Text after the nested list, still in the second item.'
+  const end = content.indexOf(line) + line.length
+  await userEvent
+    .setup()
+    .type(source, 'Z', { initialSelectionStart: end, initialSelectionEnd: end })
+
+  const sent: unknown = onChange.mock.calls[onChange.mock.calls.length - 1]?.[0]
+  if (typeof sent !== 'string') throw new Error('edit not emitted')
+  const saved = serializeFrontmatter(sent, data, file, 'md')
+  const before = file.split('\n')
+  const after = saved.split('\n')
+  expect(after).toHaveLength(before.length)
+  expect(after.filter((text, i) => text !== before[i])).toEqual([`  ${line}Z`])
 }, 30000)

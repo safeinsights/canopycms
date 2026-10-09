@@ -5,7 +5,8 @@
  * other body's export has the same top-level blocks by `markdownBlocks` (the save splice's
  * comparison, which ignores marker and escape style); and the export saved by
  * `serializeFrontmatter` writes its md/mdx file byte for byte. A listed body fails the run once it
- * comes out right.
+ * comes out right. List-item and quote shapes follow: those MDXEditor merges or reorders open as
+ * source (`rearrangedBlocks` in `mdx-jsx-support.tsx`), and the rest export what they mean.
  *
  * Bundling bugs are out of reach: request 86 crashed only under Turbopack's chunking. See
  * `.claude/future-tasks/editor-tests-miss-adopter-runtime-stack.md`.
@@ -77,12 +78,18 @@ const ROUTED_TO_SOURCE: Record<string, { reason: string; task?: string }> = {
     reason: 'Unexpected character `!`',
     task: `${TASKS}/rich-text-md-body-parsed-as-mdx.md`,
   },
+  [`${FIXTURES}/list-item-paragraphs.md`]: {
+    reason: 'a list item with more than one paragraph',
+    task: `${TASKS}/rich-text-merges-block-paragraphs.md`,
+  },
+  [`${FIXTURES}/quote-paragraphs.md`]: {
+    reason: 'a quote with more than one paragraph or block',
+    task: `${TASKS}/rich-text-merges-block-paragraphs.md`,
+  },
 }
 
 /** Bodies whose export means something else, each with its task. Their saves are not checked. */
 const KNOWN_EXPORT_DIFFERENCES: Record<string, string> = {
-  [`${FIXTURES}/list-item-paragraphs.md`]: `${TASKS}/rich-text-merges-block-paragraphs.md`,
-  [`${FIXTURES}/quote-paragraphs.md`]: `${TASKS}/rich-text-merges-block-paragraphs.md`,
   [`${FIXTURES}/adjacent-lists.md`]: `${TASKS}/rich-text-merges-adjacent-lists.md`,
   [`${FIXTURES}/ordered-list-start.md`]: `${TASKS}/rich-text-ordered-list-start-reset.md`,
   [`${FIXTURES}/strikethrough-code.md`]: `${TASKS}/rich-text-inline-formatting-split.md`,
@@ -277,5 +284,164 @@ for (const { name, body, format, file } of corpus) {
         .soft(serializeFrontmatter(sent, file.data, file.raw, format), `${name}: the saved file`)
         .toBe(file.raw)
     }
+  }, 30_000)
+}
+
+const FENCE = '```'
+const TABLE = '| x |\n  | - |\n  | 1 |'
+
+/** List items and quotes MDXEditor merges or reorders, with a fragment of the reason. */
+const REARRANGED_SHAPES: Record<string, { body: string; reason: string }> = {
+  'two paragraphs in a list item': {
+    body: '- a\n\n  b\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'two paragraphs in an ordered item': {
+    body: '1. a\n\n   b\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'two paragraphs in a task item': {
+    body: '- [ ] a\n\n  b\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'two paragraphs in a nested item': {
+    body: '- a\n  - b\n\n    c\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'a paragraph, then an element on a line of its own.mdx': {
+    body: '1. a\n\n   <Badge>new</Badge>\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'a paragraph, a nested list, a paragraph': {
+    body: '- a\n  - b\n\n  c\n',
+    reason: 'list item with content after its nested list',
+  },
+  'a nested list, then a paragraph': {
+    body: '- - a\n\n  c\n',
+    reason: 'list item with content after its nested list',
+  },
+  'two nested lists': {
+    body: '- a\n  - b\n\n  * c\n',
+    reason: 'list item with content after its nested list',
+  },
+  'a paragraph, then a horizontal rule': {
+    body: '- a\n\n  ***\n',
+    reason: 'list item with a paragraph followed by a horizontal rule',
+  },
+  'a quote, then a paragraph': {
+    body: '- > q\n\n  c\n',
+    reason: 'list item with a quote followed by a paragraph',
+  },
+  'a quote, then a quote': {
+    body: '- > a\n\n  > b\n',
+    reason: 'list item with a quote followed by a quote',
+  },
+  'a quote, then a table': {
+    body: `- > q\n\n  ${TABLE}\n`,
+    reason: 'list item with a quote followed by a table',
+  },
+  'a table, then a paragraph': {
+    body: `- ${TABLE}\n\n  c\n`,
+    reason: 'list item with a table followed by a paragraph',
+  },
+  'a table, then a table': {
+    body: `- ${TABLE}\n\n  ${TABLE}\n`,
+    reason: 'list item with a table followed by a table',
+  },
+  'a quote with two paragraphs': {
+    body: '> a\n>\n> b\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote with a paragraph and a list': {
+    body: '> a\n>\n> - b\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote with a list and a paragraph': {
+    body: '> - a\n>\n> c\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote with a code block and a paragraph': {
+    body: `> ${FENCE}\n> x\n> ${FENCE}\n>\n> c\n`,
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote with a paragraph and a horizontal rule': {
+    body: '> a\n>\n> ***\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote in a quote, with two paragraphs': {
+    body: '> > a\n> >\n> > b\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  'a quote with two paragraphs in a list item': {
+    body: '- > a\n  >\n  > b\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+  // A nested editor imports an element's children only once they are edited.
+  'a list item with two paragraphs inside an element.mdx': {
+    body: '<Callout>\n\n- a\n\n  b\n\n</Callout>\n',
+    reason: 'list item with more than one paragraph',
+  },
+  'a quote with two paragraphs inside an element.mdx': {
+    body: '<Callout>\n\n> a\n>\n> b\n\n</Callout>\n',
+    reason: 'quote with more than one paragraph or block',
+  },
+}
+
+/** List items and quotes MDXEditor keeps, but for `spread`: it writes every list tight. */
+const KEPT_SHAPES: Record<string, string> = {
+  'a tight list': '- a\n- b\n',
+  'a loose list': '- a\n\n- b\n',
+  'a task list': '- [ ] a\n- [x] b\n',
+  'a paragraph, then a nested list': '- a\n  - b\n  - c\n',
+  'a paragraph, then a nested list, loose': '- a\n\n  - b\n\n- d\n',
+  'a paragraph, then a nested ordered list': '1. a\n   - b\n2. c\n',
+  'a nested list alone': '- - a\n  - b\n',
+  'a paragraph, then a code block': `- a\n\n  ${FENCE}\n  x\n  ${FENCE}\n`,
+  'a code block, then a paragraph': `- ${FENCE}\n  x\n  ${FENCE}\n\n  c\n`,
+  'a paragraph, a code block, a paragraph': `- a\n\n  ${FENCE}\n  x\n  ${FENCE}\n\n  c\n`,
+  'a paragraph, then an element.mdx': '- a\n\n  <Callout>\n    x\n  </Callout>\n',
+  'an element, then a paragraph.mdx': '- <Callout>\n    x\n  </Callout>\n\n  c\n',
+  'a paragraph, an element, a paragraph.mdx': '- a\n\n  <Callout>\n    x\n  </Callout>\n\n  c\n',
+  'a paragraph, then a quote': '- a\n\n  > q\n',
+  'a quote, then a list': '- > q\n\n  - b\n',
+  'a quote, then a heading': '- > q\n\n  # h\n',
+  'a paragraph, then a table': `- a\n\n  ${TABLE}\n`,
+  'a table, then a quote': `- ${TABLE}\n\n  > q\n`,
+  'a table, then a horizontal rule': `- ${TABLE}\n\n  ***\n`,
+  'a horizontal rule, then a paragraph': '- ***\n\n  c\n',
+  'a heading, then a paragraph': '- # h\n\n  c\n',
+  'a quote with one paragraph': '> a\n',
+  'a quote with a list': '> - a\n> - b\n',
+  'a quote with a code block': `> ${FENCE}\n> x\n> ${FENCE}\n`,
+  'a quote with a heading': '> # h\n',
+  'a quote in a quote': '> > a\n',
+  'a quote with a table': '> | x |\n> | - |\n> | 1 |\n',
+  'a quote with an element.mdx': '> <Callout>\n>   x\n> </Callout>\n',
+  'an empty quote': '>\n',
+  'a list inside an element.mdx': '<Callout>\n\n- a\n- b\n\n</Callout>\n',
+  'a quote inside an element.mdx': '<Callout>\n\n> a\n\n</Callout>\n',
+}
+
+const formatOf = (name: string): MarkdownBodyFormat => (name.endsWith('.mdx') ? 'mdx' : 'md')
+
+const withoutSpread = (meaning: string) =>
+  JSON.stringify(
+    JSON.parse(meaning, (key, value: unknown) => (key === 'spread' ? undefined : value)),
+  )
+
+for (const [name, { body, reason }] of Object.entries(REARRANGED_SHAPES)) {
+  it(`opens ${name} as source`, async () => {
+    const result = await loadAndExport(body)
+    expect('routedToSource' in result ? result.routedToSource : result.exported).toContain(reason)
+  }, 30_000)
+}
+
+for (const [name, body] of Object.entries(KEPT_SHAPES)) {
+  it(`opens ${name} in rich text, and exports what it means`, async () => {
+    const result = await loadAndExport(body)
+    if (!('exported' in result)) throw new Error(`opens as source: ${result.routedToSource}`)
+    const meanings = (text: string) =>
+      markdownBlocks(text, formatOf(name))?.map((block) => withoutSpread(block.meaning))
+    expect(meanings(result.exported)).toEqual(meanings(body))
   }, 30_000)
 }
