@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftManager } from './useDraftManager'
-import { SaveApiError } from './useEntryManager'
+import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
@@ -555,6 +555,28 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
 
+    it("shows the server's message when the save is refused as SCHEMA_UNAVAILABLE", async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(
+        new SaveApiError(503, 'not known yet', undefined, 'SCHEMA_UNAVAILABLE'),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Not saved yet', message: 'not known yet' }),
+      )
+      expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+      consoleErrorSpy.mockRestore()
+    })
+
     it('falls back to the generic "Save failed" for a non-SaveApiError failure', async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       mockSaveEntry.mockRejectedValueOnce(new Error('network exploded'))
@@ -869,6 +891,24 @@ describe('useDraftManager', () => {
 
     expect(mockSetBusy).toHaveBeenCalledWith(false)
     consoleErrorSpy.mockRestore()
+  })
+
+  it('explains a reload refused as SCHEMA_UNAVAILABLE instead of reporting a failure', async () => {
+    mockLoadEntry.mockRejectedValueOnce(new EntrySchemaUnavailableError('not known yet'))
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    await act(async () => {
+      await result.current.handleReload()
+    })
+
+    const { notifications } = await import('@mantine/notifications')
+    expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Not available yet', message: 'not known yet' }),
+    )
+    expect(vi.mocked(notifications.show)).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Reload failed' }),
+    )
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false)
   })
 
   it('does not reload when no currentEntry', async () => {

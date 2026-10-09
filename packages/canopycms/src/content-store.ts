@@ -2016,15 +2016,16 @@ export class ContentStore {
 
   /**
    * Throw {@link SchemaUnavailableError} when the entry type an entry is read or written as --
-   * `entryTypeName`, else the collection's default, as `read()` falls back -- is `unavailable`.
+   * `entryTypeName`, else the collection's default -- is `unavailable`. A name the collection
+   * does not declare is never charged to the default type, which it was not written as.
    */
   private assertEntryTypeAvailable(schemaItem: FlatSchemaItem, entryTypeName?: string): void {
     const entryType =
       schemaItem.type === 'entry-type'
         ? schemaItem
-        : ((entryTypeName
-            ? schemaItem.entries?.find((e) => e.name === entryTypeName)
-            : undefined) ?? getDefaultEntryType(schemaItem.entries))
+        : entryTypeName
+          ? schemaItem.entries?.find((e) => e.name === entryTypeName)
+          : getDefaultEntryType(schemaItem.entries)
     if (entryType?.unavailable) {
       throw new SchemaUnavailableError(entryType.name, entryType.unavailable)
     }

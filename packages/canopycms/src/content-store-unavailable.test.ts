@@ -135,6 +135,16 @@ describe('ContentStore with an unavailable entry type', () => {
     expect(isNotFoundError(err)).toBe(true)
   })
 
+  it('does not charge an undeclared type to the unavailable default', async () => {
+    await fs.writeFile(
+      path.join(path.dirname(await findFile('contributor.ada.')), 'ghost.casper.cAsPeRcAsPe1.json'),
+      '{"name":"Casper"}',
+    )
+    const casper = unsafeAsSlug('casper')
+    await store.assertEntryAvailable(people, casper)
+    expect((await store.read(people, casper)).data).toEqual({ name: 'Casper' })
+  })
+
   it('leaves entries of the collection’s other types alone', async () => {
     const grace = unsafeAsSlug('grace')
     await store.assertEntryAvailable(people, grace)

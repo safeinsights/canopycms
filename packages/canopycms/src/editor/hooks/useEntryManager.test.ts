@@ -403,6 +403,26 @@ describe('useEntryManager', () => {
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
   })
 
+  it('carries the response code on a refused save', async () => {
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      error: 'not known yet',
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await loadForSave(result)
+    await expect(result.current.saveEntry(mockEntry, {})).rejects.toMatchObject({
+      status: 503,
+      code: 'SCHEMA_UNAVAILABLE',
+      message: 'not known yet',
+    })
+  })
+
   it('refreshes entries successfully', async () => {
     const mockRefreshed = [
       mockCollectionItem,

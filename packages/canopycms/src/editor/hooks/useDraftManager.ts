@@ -7,7 +7,8 @@ import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
-import { SaveApiError } from './useEntryManager'
+import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
+import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -452,6 +453,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     const id = job.entry.contentId as string
     const read = latestOptionsRef.current.readEntryValue
     if (!read) return
+    // The server refuses to read an entry of an unavailable type, so it settles unread at once.
+    if (job.entry.unavailable) {
+      setUnreadableIds((prev) => new Set(prev).add(id))
+      return
+    }
     try {
       const server = await read(job.entry)
       if (latestOptionsRef.current.branchName !== job.branch) return
@@ -714,6 +720,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // the moment the user is most confused, so surface the server's own
       // message instead, the same way the 422 branch already does.
       const isForbidden = err instanceof SaveApiError && err.status === 403
+      // The entry's type has no schema in the running code; the server's message says why.
+      const isUnavailable = err instanceof SaveApiError && err.code === SCHEMA_UNAVAILABLE_CODE
       if (
         err instanceof SaveApiError &&
         err.status === 422 &&
@@ -725,12 +733,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (isConflict) {
         showConflictNotification()
       } else {
+        const explained = isValidation || isForbidden || isUnavailable
         notifications.show({
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
-          message: isValidation || isForbidden ? err.message : 'Save failed',
-          color: 'red',
-          autoClose: getNotificationDuration(isValidation || isForbidden ? 8000 : 6000),
+          ...(isUnavailable ? { title: 'Not saved yet' } : {}),
+          message: explained ? err.message : 'Save failed',
+          color: isUnavailable ? 'yellow' : 'red',
+          autoClose: getNotificationDuration(explained ? 8000 : 6000),
           withCloseButton: true,
         })
       }
@@ -853,6 +863,16 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         withCloseButton: true,
       })
     } catch (err) {
+      if (err instanceof EntrySchemaUnavailableError) {
+        notifications.show({
+          title: 'Not available yet',
+          message: err.message,
+          color: 'yellow',
+          autoClose: getNotificationDuration(8000),
+          withCloseButton: true,
+        })
+        return
+      }
       console.error(err)
       notifications.show({
         message: 'Reload failed',

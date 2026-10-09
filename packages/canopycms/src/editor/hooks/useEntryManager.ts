@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
+import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -30,6 +31,7 @@ export class SaveApiError extends Error {
     public readonly status: number,
     serverMessage?: string,
     public readonly fieldErrors?: EntryFieldError[],
+    public readonly code?: ApiErrorCode,
   ) {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
@@ -376,7 +378,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       expectedVersion,
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
+    if (!result.ok)
+      throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
     // Update stored version token from write response
     if (typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)

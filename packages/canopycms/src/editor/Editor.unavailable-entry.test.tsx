@@ -445,6 +445,24 @@ describe('Editor: an entry of an unavailable type', () => {
       expect(screen.getByTestId('save-button').hasAttribute('disabled')).toBe(true)
       expect(writeCalls(fetchMock)).toHaveLength(0)
       expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
+      // The draft would otherwise frame a page the site cannot read.
+      expect(document.querySelector('iframe')).toBeNull()
+      // Its value is never read: the server would refuse it.
+      expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(0)
+    })
+
+    it('keeps the draft of an unselected unavailable entry without reading it to verify', async () => {
+      seedDraft()
+      const fetchMock = stubFetch({
+        flagged: true,
+        widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
+      })
+      renderEditor('posts/hello')
+
+      await waitFor(() => expect(readCalls(fetchMock, '/content/posts/hello')).toHaveLength(1))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(readCalls(fetchMock, '/content/widgets/first')).toHaveLength(0)
+      expect(window.localStorage.getItem('canopycms:drafts:main')).toContain('draft size')
     })
 
     it('keeps Save disabled for an entry whose read the API refused', async () => {

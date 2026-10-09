@@ -995,8 +995,10 @@ const EditorContent: React.FC<EditorProps> = ({
     </div>
   )
 
+  // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
+  // otherwise mount the frame at a page that answers not-found.
   const defaultPreview =
-    currentEntry?.previewSrc && previewFrameData ? (
+    currentEntry?.previewSrc && previewFrameData && !currentEntryUnavailable ? (
       <Box pos="relative" w="100%" h="100%">
         {previewError && (
           <Alert
@@ -1139,7 +1141,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   layout={layout}
                   onLayoutChange={(next) => setLayout(next)}
                   preview={
-                    renderPreview && currentEntry
+                    renderPreview && currentEntry && !currentEntryUnavailable
                       ? renderPreview(currentEntry, effectiveValue)
                       : defaultPreview
                   }
