@@ -524,12 +524,56 @@ function bodyToWrite(
   return lead + spliced
 }
 
+/** `value` as JSON carries it, or undefined when it cannot be serialised. */
+function asJson(value: unknown): unknown {
+  const key = identityKey(value)
+  return key === undefined || key === 'undefined' ? undefined : (JSON.parse(key) as unknown)
+}
+
+/** Frontmatter data as the read path hands it over the API, or undefined when it cannot split. */
+function frontmatterAsRead(raw: string): unknown {
+  try {
+    return asJson(matter(raw, {}).data)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * `value` with every part it carries unchanged from `read` replaced by `disk`'s value for that
+ * part. The read path parses frontmatter with gray-matter's js-yaml, which reads YAML 1.1 (a bare
+ * date is a `Date`, sent back as a timestamp string; `014` is octal), and the reconciler compares
+ * against `yaml`'s YAML 1.2 reading; so a value the editor sent back as it read it would otherwise
+ * count as changed and rewrite its line.
+ */
+function withUnchangedAsOnDisk(value: unknown, read: unknown, disk: unknown): unknown {
+  const sent = identityKey(value)
+  if (sent !== undefined && sent === identityKey(read)) return disk
+  if (isPlainRecord(value) && isPlainRecord(read) && isPlainRecord(disk)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        withUnchangedAsOnDisk(child, read[key], disk[key]),
+      ]),
+    )
+  }
+  if (Array.isArray(value) && Array.isArray(read) && Array.isArray(disk)) {
+    if (read.length !== disk.length) return value
+    return value.map((child, i) =>
+      i < read.length ? withUnchangedAsOnDisk(child, read[i], disk[i]) : child,
+    )
+  }
+  return value
+}
+
 /**
  * Serialise an md/mdx entry, carrying the comments of `existingRaw`'s frontmatter and the source
  * text of its unchanged body blocks through. The reconciled YAML goes back through
  * `matter.stringify` via a custom stringify engine rather than being spliced between
  * hand-written `---` lines, so delimiters and the trailing newline stay exactly what gray-matter
- * would have produced.
+ * would have produced. The result is kept only if the read path reads `data` back from it: a
+ * changed value whose text `yaml` and js-yaml read differently (a date-like string, or 14
+ * where the file has `014`) is written by gray-matter instead, without the comments.
  */
 export function serializeFrontmatter(
   editorBody: string,
@@ -545,10 +589,19 @@ export function serializeFrontmatter(
   const existingFrontmatter = extractRawFrontmatter(existingRaw)
   if (existingFrontmatter === undefined) return matter.stringify(file, data)
 
-  const reconciled = reconcileYamlSource(existingFrontmatter, data, true)
+  const onDisk = parseDocument(existingFrontmatter)
+  const toReconcile =
+    onDisk.errors.length === 0
+      ? withUnchangedAsOnDisk(data, frontmatterAsRead(existingRaw), onDisk.toJS())
+      : data
+  const reconciled = reconcileYamlSource(
+    existingFrontmatter,
+    isPlainRecord(toReconcile) ? toReconcile : data,
+    true,
+  )
   if (reconciled === undefined) return matter.stringify(file, data)
 
-  return matter.stringify(file, data, {
+  const written = matter.stringify(file, data, {
     engines: {
       yaml: {
         parse: () => ({}),
@@ -556,4 +609,10 @@ export function serializeFrontmatter(
       },
     },
   })
+  if (isDeepStrictEqual(frontmatterAsRead(written), asJson(data))) return written
+  log.debug(
+    'content-serialize',
+    'reconciled frontmatter reads back differently; writing as gray-matter prints it',
+  )
+  return matter.stringify(file, data)
 }
