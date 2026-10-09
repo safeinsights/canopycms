@@ -2,12 +2,14 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  Deferred 2026-10-06. Adopter-registered MDX components (`editor.mdxComponents` with typed props → MDXEditor descriptors: prop editors, toolbar insert). Bodies already edit any JSX through the catch-all; design it with the preview trust-model task, whose component allowlist this list would be
+  Deferred 2026-10-06. Adopter-registered MDX components (`editor.mdxComponents` with typed props → MDXEditor descriptors: prop editors, toolbar insert). Bodies already edit any JSX through the catch-all; design it with the non-executing preview renderer, whose component allowlist this list would be
 ---
 # Adopter-registered MDX components for markdown/mdx body fields
 
 **Priority: P3 [BOTH]. Deferred 2026-10-06.** Design this together with
-[mdx-preview-executes-editor-code.md](mdx-preview-executes-editor-code.md), not on its own.
+[mdx-non-executing-preview-renderer.md](mdx-non-executing-preview-renderer.md), not on its own. The
+trust model it waited on is settled: see
+[resolved/mdx-preview-executes-editor-code.md](resolved/mdx-preview-executes-editor-code.md).
 
 ## Where things stand
 
@@ -38,10 +40,10 @@ prop editors and an insert-from-toolbar entry. Unlisted tags keep the catch-all.
 - **Plain data, shared config.** The list holds names, kinds and prop types, not React components, so
   it can live in the shared config and reach the editor through `config.client()`. It does not belong
   in `ClientOnlyFields`: the server needs the same list for the uses below.
-- **One registry, three consumers.** The preview task proposes a fixed component allowlist for a
-  non-executing preview renderer, plus an optional save-time rejection of unlisted tags, `{expressions}`
-  and ESM. This list is that allowlist. Settle that task's trust-model decision first; it decides
-  fields this config needs, for example whether a component may render in the preview.
+- **One registry, three consumers.** The editor, the non-executing preview renderer
+  ([mdx-non-executing-preview-renderer.md](mdx-non-executing-preview-renderer.md)), and the
+  save-time policy in `validation/markdown-safety.ts`. That policy accepts any plainly named component
+  today, and this list could narrow it to the registered ones.
 - **Attribute fidelity.** MDXEditor's prop editing rebuilds an element's attributes from the
   descriptor's props, so expression, spread or boolean attributes not declared as props would be
   dropped on edit. Registered components need either complete prop declarations or a guard that
