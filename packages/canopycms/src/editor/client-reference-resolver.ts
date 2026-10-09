@@ -19,8 +19,8 @@ type Container = Record<string | number, unknown>
 const MAX_IDS_PER_REQUEST = 100
 
 /**
- * How long an id the endpoint omitted (its lookup threw there) stays cached as `null`. The lookup
- * can succeed later, so the id is asked for again on the first edit after this.
+ * How long a `MissingReference`, or an id the endpoint omitted (its lookup threw), stays cached.
+ * The target can appear or the lookup succeed later, so the first edit after this asks again.
  * @internal Exported for tests.
  */
 export const MISSING_REFERENCE_TTL_MS = 10_000
@@ -39,6 +39,10 @@ interface ReferenceSlot {
   path: DataPath
   value: unknown
   list: boolean
+}
+
+function isMissingReference(value: unknown): boolean {
+  return isContainer(value) && value.unavailable === true && value.reason === 'missing'
 }
 
 function cacheKey(branch: string, id: string): string {
@@ -127,7 +131,7 @@ export async function fetchReferences(
   return found
 }
 
-/** Cache what {@link fetchReferences} returned; an omitted id expires after the missing TTL. */
+/** Cache what {@link fetchReferences} returned; a missing or omitted id expires after the TTL. */
 export function storeReferences(
   cache: ReferenceCache,
   branch: string,
@@ -137,7 +141,9 @@ export function storeReferences(
   for (const [id, value] of found) {
     cache.set(
       cacheKey(branch, id),
-      value === null ? { value: null, expiresAt: now + MISSING_REFERENCE_TTL_MS } : { value },
+      value === null || isMissingReference(value)
+        ? { value, expiresAt: now + MISSING_REFERENCE_TTL_MS }
+        : { value },
     )
   }
 }
@@ -201,8 +207,8 @@ function setCreating(root: FormValue, path: DataPath, leaf: unknown, source: For
 /**
  * The draft as the preview sees it, computed synchronously from the cache.
  *
- * Each reference becomes its cached target, or `null` while it has none (still resolving, an
- * id that names no entry, or a malformed id). A list field's array maps element by element, a
+ * Each reference becomes its cached value (the target, or an `unavailable` reference), or `null`
+ * while it has none (still resolving, a failed lookup, or a malformed id). A list field's array maps element by element, a
  * non-string element to `null`; anything else is left as the form holds it, as on the server.
  * `loadingState` holds a boolean only at reference positions, `true` while resolving, at the
  * reference's own path (`boolean[]` for a list).

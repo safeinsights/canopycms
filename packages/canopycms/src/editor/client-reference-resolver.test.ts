@@ -135,6 +135,19 @@ describe('idsToFetch', () => {
     ])
   })
 
+  it('asks again for a missing target once its entry expires, still showing it until then', () => {
+    const missing = { id: 'idTopAAAAAAA', unavailable: true, reason: 'missing' }
+    const cache: ReferenceCache = new Map()
+    storeReferences(cache, 'main', new Map([['idTopAAAAAAA', missing]]), 1000)
+    const value = { author: 'idTopAAAAAAA' }
+
+    expect(idsToFetch(schema, value, 'main', cache, 1000)).toEqual([])
+    expect(idsToFetch(schema, value, 'main', cache, 1000 + MISSING_REFERENCE_TTL_MS)).toEqual([
+      'idTopAAAAAAA',
+    ])
+    expect(applyReferenceCache(schema, value, 'main', cache).resolvedValue.author).toBe(missing)
+  })
+
   it('treats another branch’s cache entry as absent', () => {
     expect(
       idsToFetch(schema, { author: 'idTopAAAAAAA' }, 'feature', cacheOf(['idTopAAAAAAA']), 0),
@@ -208,15 +221,16 @@ describe('applyReferenceCache', () => {
   })
 
   it('passes an unavailable target through as the endpoint returned it', () => {
-    const missing = { id: 'idTopAAAAAAA', unavailable: true, reason: 'missing' }
+    const restricted = { id: 'idTopAAAAAAA', title: 'Top', unavailable: true, reason: 'restricted' }
     const cache: ReferenceCache = new Map()
-    storeReferences(cache, 'main', new Map([['idTopAAAAAAA', missing]]), 0)
+    storeReferences(cache, 'main', new Map([['idTopAAAAAAA', restricted]]), 0)
 
-    expect(cache.get('main:idTopAAAAAAA')).toEqual({ value: missing })
+    // A restricted target is an answer that holds; only a missing one expires.
+    expect(cache.get('main:idTopAAAAAAA')).toEqual({ value: restricted })
     expect(
       applyReferenceCache(schema, { author: 'idTopAAAAAAA' }, 'main', cache).resolvedValue,
     ).toEqual({
-      author: missing,
+      author: restricted,
     })
   })
 

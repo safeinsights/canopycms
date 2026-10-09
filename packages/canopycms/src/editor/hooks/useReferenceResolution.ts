@@ -79,7 +79,7 @@ export function useReferenceResolution({
     }, 300)
 
     return () => clearTimeout(timeout)
-  }, [value, fields, branch, apiClient])
+  }, [value, fields, branch, entryKey, apiClient])
 
   return { resolvedValue, loadingState }
 }

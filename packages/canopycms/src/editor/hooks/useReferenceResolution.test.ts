@@ -128,7 +128,7 @@ describe('useReferenceResolution', () => {
     })
   })
 
-  it('asks again for a missing id once its null entry expires, on the next edit', async () => {
+  it('asks again for an id the endpoint omitted once its null entry expires, on the next edit', async () => {
     mockClient.content.resolveReferences.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -428,10 +428,12 @@ describe('useReferenceResolution', () => {
       data: { resolved: { idAAAAAAAAAA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
+    // One draft object, so only the entry key changes.
+    const value = { author: 'idAAAAAAAAAA' }
     const { result, rerender } = renderHook(
       (props: { entryKey: string }) =>
         useReferenceResolution({
-          value: { author: 'idAAAAAAAAAA' },
+          value,
           fields: schema,
           branch: 'main',
           entryKey: props.entryKey,
