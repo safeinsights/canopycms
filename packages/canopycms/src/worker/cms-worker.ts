@@ -22,7 +22,7 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
-import { DEFAULT_SCHEMA_HOLD_MAX_MS } from './schema-gate'
+import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
@@ -172,6 +172,7 @@ export class CmsWorker {
   private maxRetries: number
   private lockFilePath: string
   private lockStaleMs: number
+  private schemaHoldMaxMs: number
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
@@ -197,6 +198,13 @@ export class CmsWorker {
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
     this.contentRoot = config.contentRoot ?? 'content'
+    this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
+    // NaN would never expire a hold, which is the one thing the bound exists to prevent.
+    if (!Number.isFinite(this.schemaHoldMaxMs) || this.schemaHoldMaxMs < 0) {
+      throw new Error(
+        `CmsWorker: schemaHoldMaxMs must be a finite, non-negative number of milliseconds (got ${config.schemaHoldMaxMs})`,
+      )
+    }
   }
 
   /**
@@ -270,7 +278,7 @@ export class CmsWorker {
       remoteGitPath: this.remoteGitPath,
       contentBranchesPath: this.contentBranchesPath,
       contentRoot: this.contentRoot,
-      schemaHoldMaxMs: this.config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS,
+      schemaHoldMaxMs: this.schemaHoldMaxMs,
       taskTimeoutMs: this.taskTimeoutMs,
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
@@ -301,7 +309,11 @@ export class CmsWorker {
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears it.
+    // The schema gate's hold is carried into the report itself, so its bound
+    // keeps counting from the first worker that saw each schema missing.
     try {
+      const carriedHold = await readCarriedBaseHold(this.taskDir)
+      if (carriedHold) this.ensureStatusReport().baseHold = carriedHold
       const lastFatalError = await readLastFatalError(this.taskDir)
       await writeWorkerStatus(this.taskDir, {
         ...this.ensureStatusReport(),

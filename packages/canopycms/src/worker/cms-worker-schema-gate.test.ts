@@ -7,7 +7,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { recordSchemaRegistry } from '../schema-registry-record'
@@ -17,6 +17,19 @@ import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
 
 const BUILD = { canopycmsVersion: '1.2.3', sourceRevision: 'abc123' }
+
+/** Makes the sync cycle's task sweep, a step after the reconcile, throw while set. */
+const sweepFailure = vi.hoisted(() => ({ error: undefined as Error | undefined }))
+vi.mock('../task-queue/cms-task-queue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../task-queue/cms-task-queue')>()
+  return {
+    ...actual,
+    cleanupOldTasks: async (...args: Parameters<typeof actual.cleanupOldTasks>) => {
+      if (sweepFailure.error) throw sweepFailure.error
+      return actual.cleanupOldTasks(...args)
+    },
+  }
+})
 
 function collectionMeta(name: string, schemas: string[]): string {
   return JSON.stringify({
@@ -137,7 +150,7 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker().syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
-    const hold = (await readStatus()).lastGitSync?.baseHold
+    const hold = (await readStatus()).baseHold
     expect(hold).toMatchObject({
       incomingSha: incoming,
       missingSchemas: ['personSchema'],
@@ -158,7 +171,7 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await worker.syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
-    expect((await readStatus()).lastGitSync?.baseHold).toBeUndefined()
+    expect((await readStatus()).baseHold).toBeUndefined()
   })
 
   it('keeps the first hold time while the base stays held across cycles', async () => {
@@ -166,13 +179,13 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await mergePeopleCollection()
     const worker = makeWorker()
     await worker.syncGit()
-    const firstSince = (await readStatus()).lastGitSync?.baseHold?.since
+    const firstSince = (await readStatus()).baseHold?.since
 
     await commitOnto(tmpDir, githubPath, 'main', { 'content/posts/a.json': '{}' })
     await worker.syncGit()
 
     expect(firstSince).toBeDefined()
-    expect((await readStatus()).lastGitSync?.baseHold?.since).toBe(firstSince)
+    expect((await readStatus()).baseHold?.since).toBe(firstSince)
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
   })
 
@@ -183,40 +196,191 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker(0).syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
-    expect((await readStatus()).lastGitSync?.baseHold).toMatchObject({
+    expect((await readStatus()).baseHold).toMatchObject({
       missingSchemas: ['personSchema'],
       expired: true,
     })
     expect(consoleSpy).toHaveErrored('Advancing anyway')
   })
 
-  it('starts a new hold afresh after an earlier one expired', async () => {
-    await editorDefines(['pageSchema', 'postSchema'])
-    await mergePeopleCollection()
-    const worker = makeWorker(60 * 60_000)
+  /** Seed the worker's in-memory hold, as a previous cycle or a restart would have left it. */
+  const seedHold = (worker: CmsWorker, firstSeen: Record<string, string>, expired?: true) => {
     const report = (
       worker as unknown as { ensureStatusReport(): WorkerStatusReport }
     ).ensureStatusReport()
-    report.lastGitSync = {
-      durationMs: 1,
-      rebased: [],
-      skippedDirty: [],
-      failed: [],
-      baseHold: {
-        since: '2000-01-01T00:00:00.000Z',
-        incomingSha: baseSha,
-        missingSchemas: ['pageSchema'],
-        files: ['content/.collection.json'],
-        editorBuild: BUILD,
-        editorRecordedAt: '2000-01-01T00:00:00.000Z',
-        expired: true,
-      },
+    report.baseHold = {
+      since: Object.values(firstSeen).sort()[0],
+      firstSeen,
+      incomingSha: baseSha,
+      missingSchemas: Object.keys(firstSeen),
+      files: ['content/people/.collection.json'],
+      fileCount: 1,
+      editorBuild: BUILD,
+      editorRecordedAt: '2000-01-01T00:00:00.000Z',
+      ...(expired ? { expired } : {}),
     }
+  }
+  const LONG_AGO = '2000-01-01T00:00:00.000Z'
+
+  it('advances once a carried hold has waited its bound', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const incoming = await mergePeopleCollection()
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { personSchema: LONG_AGO })
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
+    expect((await readStatus()).baseHold).toMatchObject({
+      firstSeen: { personSchema: LONG_AGO },
+      expired: true,
+    })
+  })
+
+  it('times each schema from when it was first seen missing', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await commitOnto(tmpDir, githubPath, 'main', {
+      'content/people/.collection.json': collectionMeta('people', ['personSchema']),
+      'content/teams/.collection.json': collectionMeta('teams', ['teamSchema']),
+    })
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { personSchema: LONG_AGO })
 
     await worker.syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
-    expect((await readStatus()).lastGitSync?.baseHold?.expired).toBeUndefined()
+    const hold = (await readStatus()).baseHold
+    expect(hold?.firstSeen.personSchema).toBe(LONG_AGO)
+    expect(hold?.firstSeen.teamSchema).not.toBe(LONG_AGO)
+    expect(hold?.since).toBe(LONG_AGO)
+    expect(hold?.expired).toBeUndefined()
+  })
+
+  it('starts a new schema afresh after an earlier one expired', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { otherSchema: LONG_AGO }, true)
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect((await readStatus()).baseHold?.expired).toBeUndefined()
+  })
+
+  it('restarts the wait for a name whose carried time does not parse', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    const worker = makeWorker(60 * 60_000)
+    seedHold(worker, { personSchema: 'not a date' })
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect(Number.isNaN(Date.parse((await readStatus()).baseHold?.since ?? ''))).toBe(false)
+  })
+
+  it('carries the hold into a restarted worker, so the bound keeps counting', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    await makeWorker().syncGit()
+    const firstSince = (await readStatus()).baseHold?.since
+
+    const restarted = makeWorker()
+    const internals = restarted as unknown as {
+      ensureRemoteGit(): Promise<void>
+      ensureStatusReport(): WorkerStatusReport
+      running: boolean
+    }
+    internals.ensureRemoteGit = async () => {
+      throw new Error('stop after the start snapshot')
+    }
+    await expect(restarted.start()).rejects.toThrow(/stop after the start snapshot/)
+    expect(internals.ensureStatusReport().baseHold?.since).toBe(firstSince)
+
+    internals.running = true
+    await restarted.syncGit()
+    expect(firstSince).toBeDefined()
+    expect((await readStatus()).baseHold?.since).toBe(firstSince)
+  })
+
+  it('keeps the hold when a later step of the cycle throws', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    await mergePeopleCollection()
+    sweepFailure.error = new Error('task sweep fails')
+    try {
+      await expect(makeWorker().syncGit()).rejects.toThrow(/task sweep fails/)
+    } finally {
+      sweepFailure.error = undefined
+    }
+
+    expect((await readStatus()).baseHold?.missingSchemas).toEqual(['personSchema'])
+  })
+
+  it('clears a hold once the base matches GitHub, as after the held merge is force-pushed away', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const worker = makeWorker()
+    seedHold(worker, { personSchema: LONG_AGO })
+
+    await worker.syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect((await readStatus()).baseHold).toBeUndefined()
+  })
+
+  it('reports at most ten referencing files, with their total', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 12; i++) {
+      files[`content/people${i}/.collection.json`] = collectionMeta(`people${i}`, ['personSchema'])
+    }
+    await commitOnto(tmpDir, githubPath, 'main', files)
+
+    await makeWorker().syncGit()
+
+    const hold = (await readStatus()).baseHold
+    expect(hold?.files).toHaveLength(10)
+    expect(hold?.fileCount).toBe(12)
+  })
+
+  it('rejects a hold bound that would never expire', () => {
+    expect(() => makeWorker(Number.NaN)).toThrow(/schemaHoldMaxMs/)
+    expect(() => makeWorker(-1)).toThrow(/schemaHoldMaxMs/)
+  })
+
+  it('reads a symlinked meta file through to its target', async () => {
+    await editorDefines(['pageSchema', 'postSchema'])
+    const scratch = path.join(tmpDir, 'scratch-symlink')
+    await simpleGit().clone(githubPath, scratch, ['--branch', 'main'])
+    const git = simpleGit({ baseDir: scratch })
+    await git.addConfig('user.name', 'Test Bot')
+    await git.addConfig('user.email', 'test@canopycms.test')
+    await fs.mkdir(path.join(scratch, 'content/_meta'), { recursive: true })
+    await fs.mkdir(path.join(scratch, 'content/people'), { recursive: true })
+    await fs.writeFile(
+      path.join(scratch, 'content/_meta/people.json'),
+      collectionMeta('people', ['personSchema']),
+    )
+    await fs.symlink('../_meta/people.json', path.join(scratch, 'content/people/.collection.json'))
+    await git.add(['.'])
+    await git.commit('symlinked meta')
+    await git.raw(['push', githubPath, 'main:main'])
+
+    await makeWorker().syncGit()
+
+    expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
+    expect((await readStatus()).baseHold?.missingSchemas).toEqual(['personSchema'])
+  })
+
+  it('reads a content root named like pathspec magic as a literal directory', async () => {
+    await editorDefines(['pageSchema', 'postSchema'], ':content')
+    await commitOnto(tmpDir, githubPath, 'main', {
+      ':content/people/.collection.json': collectionMeta('people', ['personSchema']),
+    })
+
+    await makeWorker().syncGit()
+
+    expect((await readStatus()).baseHold?.files).toEqual([':content/people/.collection.json'])
   })
 
   it('fails open with no record: the base advances as it would with no gate', async () => {
@@ -225,7 +389,7 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker().syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(incoming)
-    expect((await readStatus()).lastGitSync?.baseHold).toBeUndefined()
+    expect((await readStatus()).baseHold).toBeUndefined()
   })
 
   it('does not hold for a name the current base already references', async () => {
@@ -264,9 +428,7 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker().syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/main')).toBe(baseSha)
-    expect((await readStatus()).lastGitSync?.baseHold?.files).toEqual([
-      'site/content/people/.collection.json',
-    ])
+    expect((await readStatus()).baseHold?.files).toEqual(['site/content/people/.collection.json'])
   })
 
   it('never holds a branch other than the base', async () => {
@@ -280,6 +442,6 @@ describe('CmsWorker.syncGit() schema gate', () => {
     await makeWorker().syncGit()
 
     expect(await refSha(remoteGitPath, 'refs/heads/feature')).toBe(featureTip)
-    expect((await readStatus()).lastGitSync?.baseHold).toBeUndefined()
+    expect((await readStatus()).baseHold).toBeUndefined()
   })
 })

@@ -414,17 +414,21 @@ describe('SystemHealthPanel', () => {
   describe('Overview tab: base branch held for an editor deploy', () => {
     const hold: BaseSchemaHold = {
       since: '2026-01-01T00:20:00.000Z',
+      firstSeen: {
+        personSchema: '2026-01-01T00:20:00.000Z',
+        teamSchema: '2026-01-01T00:22:00.000Z',
+      },
       incomingSha: 'f00dfeed',
       missingSchemas: ['personSchema', 'teamSchema'],
       files: ['content/people/.collection.json'],
+      fileCount: 1,
       editorBuild: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
       editorRecordedAt: '2026-01-01T00:00:00.000Z',
     }
     const statusWithHold = (baseHold: BaseSchemaHold): AdminStatusData => {
       const status = makeStatusWithSync()
-      const lastGitSync = status.workerStatus?.lastGitSync
-      if (!lastGitSync) throw new Error('expected a last git sync')
-      lastGitSync.baseHold = baseHold
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      status.workerStatus.baseHold = baseHold
       return status
     }
 
@@ -440,6 +444,17 @@ describe('SystemHealthPanel', () => {
       )
       expect(alert.textContent).toContain('keeps the base branch at its current version')
       expect(alert.textContent).toContain('content/people/.collection.json')
+    })
+
+    it('counts the files past the first ten it lists', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithHold({ ...hold, fileCount: 13 })),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('base-hold-alert')
+      expect(alert.textContent).toContain('content/people/.collection.json and 12 more')
     })
 
     it('says the worker stopped waiting once the hold expired', async () => {

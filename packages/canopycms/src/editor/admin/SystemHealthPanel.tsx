@@ -161,6 +161,7 @@ function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
       </Text>
       <Text size="xs" c="dimmed" mt={4}>
         Held since {hold.since} · {hold.files.join(', ')}
+        {hold.fileCount > hold.files.length && ` and ${hold.fileCount - hold.files.length} more`}
       </Text>
     </Alert>
   )
@@ -358,7 +359,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
-      {lastGitSync?.baseHold && <BaseHoldAlert hold={lastGitSync.baseHold} />}
+      {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
 
       {status.statusReadError && (
         <Text size="xs" c="orange">

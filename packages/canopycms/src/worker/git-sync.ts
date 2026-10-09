@@ -262,7 +262,11 @@ async function reconcileTrackedBranches(
 ): Promise<{
   summary: TrackedBranchSummary
   trackedNames: Set<string>
-  baseHold: BaseSchemaHold | undefined
+  /**
+   * The schema gate's state for the base branch, or undefined when this cycle could not classify
+   * the base and the previous state stands.
+   */
+  baseHold: { hold: BaseSchemaHold | undefined } | undefined
 }> {
   const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
   const created: string[] = []
@@ -270,7 +274,7 @@ async function reconcileTrackedBranches(
   const ahead: string[] = []
   const diverged: string[] = []
   const rewritten: string[] = []
-  let baseHold: BaseSchemaHold | undefined
+  let baseHold: { hold: BaseSchemaHold | undefined } | undefined
 
   // One invocation enumerates both namespaces: refs/heads/<name> (what the
   // Lambda pushes into and branch clones read from) and
@@ -314,7 +318,10 @@ async function reconcileTrackedBranches(
       continue
     }
 
-    if (localSha === trackedSha) continue // nothing to do
+    if (localSha === trackedSha) {
+      if (name === ctx.baseBranch) baseHold = { hold: undefined }
+      continue
+    }
 
     // [SYNC-M2] Everything below is per-branch best-effort: one unreadable ref
     // must cost its own branch, not the whole sync cycle. A ref pointing at a
@@ -349,17 +356,16 @@ async function reconcileTrackedBranches(
         // The base branch's fast-forward is the one source of new content for the base
         // workspace, every rebased branch and every new clone, so the schema gate sits here.
         if (name === ctx.baseBranch) {
-          const previous = ctx.ensureStatusReport().lastGitSync?.baseHold
           const decision = await decideBaseAdvance({
             git,
             contentBranchesPath: ctx.contentBranchesPath,
             baseBranch: name,
             currentSha: localSha,
             incomingSha: trackedSha,
-            previous: previous?.expired ? undefined : previous,
+            previous: ctx.ensureStatusReport().baseHold,
             maxHoldMs: ctx.schemaHoldMaxMs,
           })
-          if (decision.kind !== 'advance') baseHold = decision.hold
+          baseHold = { hold: decision.kind === 'advance' ? undefined : decision.hold }
           if (decision.kind === 'hold') {
             workerLog(
               `  Tracked-branch reconcile: holding ${name} for an editor deploy defining ${decision.hold.missingSchemas.join(', ')}`,
@@ -380,15 +386,18 @@ async function reconcileTrackedBranches(
       } else if (localBehindCount === 0 && localAheadCount > 0) {
         // Unpushed local work. Leave it.
         ahead.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       } else if (await hasPendingHistoryRewrite(ctx, name)) {
         // [SYNC-H1] Our own rebase published a rewrite into remote.git and the
         // GitHub push has not landed yet. Ref-level this is identical to a
         // collision, but expected and self-resolving, so it must not fire the
         // collision warning below.
         rewritten.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       } else {
         // Neither side is an ancestor of the other. Leave both alone.
         diverged.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       }
     } catch (err) {
       workerLogWarn(
@@ -479,6 +488,12 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       trackedNames,
       baseHold,
     } = await reconcileTrackedBranches(ctx, git)
+    // Recorded at once, so a step below that throws still persists the hold through the catch.
+    if (baseHold) {
+      const report = ctx.ensureStatusReport()
+      if (baseHold.hold) report.baseHold = baseHold.hold
+      else delete report.baseHold
+    }
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
     // Ensures settings reach GitHub even if a task queue entry is lost.
@@ -518,7 +533,6 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
           : rebaseSummary.skippedLocked,
       failed: rebaseSummary.failed,
       baseRefresh,
-      ...(baseHold ? { baseHold } : {}),
       tracked: trackedSummary,
     }
     await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>

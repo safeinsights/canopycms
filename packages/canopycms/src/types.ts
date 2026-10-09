@@ -146,14 +146,18 @@ export interface BuildIdentity {
  * entry schemas the serving editor does not define (worker/schema-gate.ts).
  */
 export interface BaseSchemaHold {
-  /** When the base branch was first held, continuously, across sync cycles. */
+  /** The earliest of `firstSeen`. */
   since: string
+  /** When each missing schema was first seen missing; each waits its own bound from here. */
+  firstSeen: Record<string, string>
   /** GitHub's base tip the worker is not advancing to. */
   incomingSha: string
   /** Schema names the incoming tip references and the serving editor's registry lacks. */
   missingSchemas: string[]
-  /** `.collection.json` files referencing them, repo-relative. */
+  /** `.collection.json` files referencing them, repo-relative, at most 10. */
   files: string[]
+  /** How many files reference them, `files` being the first 10. */
+  fileCount: number
   /** The build that recorded the registry the gate checked against. */
   editorBuild: BuildIdentity
   editorRecordedAt: string
@@ -190,8 +194,6 @@ export interface WorkerStatusReport {
     failed: { branch: string; error: string }[]
     /** Optional for the same reason as `tracked` below. */
     baseRefresh?: BaseRefreshReport
-    /** Present while the schema gate holds the base branch, and on the cycle a hold expires. */
-    baseHold?: BaseSchemaHold
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's fetched
      * tips, non-destructively (worker/git-sync.ts's `reconcileTrackedBranches`).
@@ -213,4 +215,9 @@ export interface WorkerStatusReport {
     }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+  /**
+   * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
+   * into a restarted worker's first snapshot, so the bound survives restarts.
+   */
+  baseHold?: BaseSchemaHold
 }
