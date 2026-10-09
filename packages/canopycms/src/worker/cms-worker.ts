@@ -22,6 +22,7 @@ import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { readLastFatalError, writeWorkerStatus } from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
+import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
 import {
   executeTask,
@@ -116,6 +117,11 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Content root directory name relative to repo root (default: 'content') */
   contentRoot?: string
   /**
+   * Longest the git sync holds the base branch for content naming entry schemas the serving
+   * editor does not define, before advancing anyway (default: 30 minutes). See worker/schema-gate.ts.
+   */
+  schemaHoldMaxMs?: number
+  /**
    * Worker lock staleness TTL in ms (default 60000, minimum 2000). The holder
    * refreshes the heartbeat at half this interval; a lock whose heartbeat is
    * older than this is abandoned and taken over by the next worker to start.
@@ -166,6 +172,7 @@ export class CmsWorker {
   private maxRetries: number
   private lockFilePath: string
   private lockStaleMs: number
+  private schemaHoldMaxMs: number
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
@@ -191,6 +198,7 @@ export class CmsWorker {
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
     this.contentRoot = config.contentRoot ?? 'content'
+    this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
   }
 
   /**
@@ -264,6 +272,7 @@ export class CmsWorker {
       remoteGitPath: this.remoteGitPath,
       contentBranchesPath: this.contentBranchesPath,
       contentRoot: this.contentRoot,
+      schemaHoldMaxMs: this.schemaHoldMaxMs,
       taskTimeoutMs: this.taskTimeoutMs,
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
@@ -294,7 +303,11 @@ export class CmsWorker {
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears it.
+    // The schema gate's hold is carried into the report itself, so its bound
+    // keeps counting from the first worker that saw each schema missing.
     try {
+      const carriedHold = await readCarriedBaseHold(this.taskDir)
+      if (carriedHold) this.ensureStatusReport().baseHold = carriedHold
       const lastFatalError = await readLastFatalError(this.taskDir)
       await writeWorkerStatus(this.taskDir, {
         ...this.ensureStatusReport(),
@@ -325,6 +338,14 @@ export class CmsWorker {
       // inside the try, rather than out of `new CmsWorker(...)` where nothing
       // could record it.
       this.ensureGitHubAuth()
+
+      // Same again. NaN would never expire a schema hold, which is the one
+      // thing the bound exists to prevent.
+      if (!Number.isFinite(this.schemaHoldMaxMs) || this.schemaHoldMaxMs < 0) {
+        throw new Error(
+          `CmsWorker: schemaHoldMaxMs must be a finite, non-negative number of milliseconds (got ${this.schemaHoldMaxMs})`,
+        )
+      }
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
       // credential, and its catch blames the repository rather than the

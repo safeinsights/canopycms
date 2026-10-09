@@ -949,6 +949,18 @@ fine and expected — `release/v2` and `epic/foo` are ordinary branch names, and
 the worker keeps the raw name for git refs, sanitizing it only when deriving a
 workspace directory name.
 
+## New schemas wait for the editor deploy
+
+A merge adding a schema and content using it reaches the editor through both
+the worker's sync and the image deploy. Each CMS process records its schema names in
+`content-branches/.schema-registry.json` at its first API request, and the worker
+holds the base branch while incoming `.collection.json` files name a schema that
+record lacks. System health shows "Waiting for editor deploy"; the hold lifts
+at the next sync after the new editor is opened. Merges naming no new schema
+never wait; without a record, nothing waits. Once the oldest missing schema has
+waited 30 minutes the worker advances anyway; those content types stay
+unavailable until an image defining them is deployed.
+
 ## Worker observability
 
 The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
