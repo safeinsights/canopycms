@@ -56,6 +56,7 @@ import {
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
+import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
@@ -152,6 +153,11 @@ export interface EditorProps {
   onLogoutClick?: () => void
 }
 
+// Stable fallbacks, so reference resolution's memo and effect don't re-run on every render
+// while no entry is open.
+const EMPTY_SCHEMA: EntrySchema = []
+const EMPTY_VALUE: FormValue = {}
+
 /**
  * High-level editor wrapper that wires entry navigation, form rendering,
  * saving/loading, and preview rendering using entry definitions.
@@ -220,9 +226,6 @@ const EditorContent: React.FC<EditorProps> = ({
     useState<EntryReferencedBy | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
 
-  // Preview data with resolved references for live preview
-  const [previewData, setPreviewData] = useState<FormValue>({})
-  const [previewLoadingState, setPreviewLoadingState] = useState<FormValue>({})
   // Draft compile/render error reported by the preview page (null = renders cleanly)
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
     null,
@@ -336,13 +339,9 @@ const EditorContent: React.FC<EditorProps> = ({
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
 
-  // Reset preview state when switching entries so a stale previous entry's
-  // preview never lingers for entries whose FormRenderer doesn't mount
-  // (still loading, canEdit === false, or empty schema)
+  // A preview error belongs to the entry that reported it.
   useEffect(() => {
     setPreviewError(null)
-    setPreviewData({})
-    setPreviewLoadingState({})
   }, [currentEntry?.contentId])
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
@@ -450,7 +449,7 @@ const EditorContent: React.FC<EditorProps> = ({
     () => buildCollectionLabels(activeCollections),
     [activeCollections],
   )
-  const schema = currentEntry?.schema ?? []
+  const schema = currentEntry?.schema ?? EMPTY_SCHEMA
 
   // Gated on `loadedValues[contentId]` (not `drafts[contentId]`) so a
   // restored-from-localStorage draft never skips the load: skipping left
@@ -905,11 +904,21 @@ const EditorContent: React.FC<EditorProps> = ({
     entryLinkUrl,
   })
 
-  const previewFrameData = useMemo(() => {
-    const data = Object.keys(previewData).length > 0 ? previewData : effectiveValue
-    if (!data) return data
-    return resolveEntryLinks(data)
-  }, [previewData, effectiveValue, resolveEntryLinks])
+  // Resolved here, outside the form and its per-field crash boundaries, and during render, so
+  // the preview never receives a bare reference id: a reference is its target or `null`.
+  const { resolvedValue: previewValue, loadingState: previewLoadingState } = useReferenceResolution(
+    {
+      value: effectiveValue ?? EMPTY_VALUE,
+      fields: schema,
+      branch: branchNameState,
+      entryKey: currentEntry?.contentId,
+    },
+  )
+
+  const previewFrameData = useMemo(
+    () => (effectiveValue ? resolveEntryLinks(previewValue) : effectiveValue),
+    [previewValue, effectiveValue, resolveEntryLinks],
+  )
 
   // Entry link context for the InsertEntryLink toolbar button
   const entryLinkContextValue = useMemo(
@@ -1113,8 +1122,6 @@ const EditorContent: React.FC<EditorProps> = ({
                           }}
                           customRenderers={customRenderers}
                           branch={branchNameState}
-                          onResolvedValueChange={setPreviewData}
-                          onLoadingStateChange={setPreviewLoadingState}
                           comments={comments}
                           currentEntryPath={selectedPath}
                           currentUserId={currentUser}

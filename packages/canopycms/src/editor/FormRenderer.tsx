@@ -35,7 +35,6 @@ import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
-import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 
@@ -134,8 +133,6 @@ export interface FormRendererProps {
     threadId?: string,
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
-  onResolvedValueChange?: (resolved: FormValue) => void
-  onLoadingStateChange?: (loadingState: FormValue) => void
   /** True when this entry's content conflicts with a recent change on the base branch */
   conflictNotice?: boolean
   /**
@@ -161,19 +158,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   highlightThreadId,
   onAddComment,
   onResolveThread,
-  onResolvedValueChange,
-  onLoadingStateChange,
   conflictNotice = false,
   fieldErrors,
 }) => {
-  useReferenceResolution({
-    value,
-    fields,
-    branch,
-    onResolvedValueChange,
-    onLoadingStateChange,
-  })
-
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
 
   // Object-list item keys. An object listed once keeps the key it was first shown with, so an

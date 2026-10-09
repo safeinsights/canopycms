@@ -43,6 +43,21 @@ export const homeSchema = defineEntrySchema([
     collections: ['posts'],
     displayField: 'title',
   },
+  // A reference inside an object: live preview resolves it like a top-level one.
+  {
+    name: 'spotlight',
+    type: 'object',
+    label: 'Spotlight',
+    fields: [
+      {
+        name: 'post',
+        type: 'reference',
+        label: 'Spotlight Post',
+        collections: ['posts'],
+        displayField: 'title',
+      },
+    ],
+  },
   seoGroup,
   // `aspect` opens the crop step; HomeView renders this at many widths for the asset e2e.
   { name: 'heroImage', type: 'image', label: 'Hero Image', aspect: '16:9' },

@@ -828,7 +828,7 @@ type Post = TypeFromEntrySchema<typeof postSchema>
 //   | null
 ```
 
-`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives, `MissingReference` the id-only value for a deleted target, and `UnavailableReference` either. Narrow on `unavailable`, then on `reason`.
+`RestrictedReference` is the [title-and-URL value](#using-references-in-your-code) a reader who may not read the target receives, `MissingReference` the id-only value for a deleted target, and `UnavailableReference` either. Narrow with `isResolvedReference`, or on `unavailable` then `reason`.
 
 `resolvedSchema` is used only for type inference — it does not affect how content is read, written or validated at runtime, and is stripped from API responses. It accepts any schema created with `defineEntrySchema`, so the same schema objects can be shared between entry type definitions and reference fields.
 

@@ -47,15 +47,11 @@ test.describe('Reference Fields', () => {
       const field = editorPage.getReferenceField('relatedPost')
       await expect(field).toBeVisible({ timeout: STANDARD_TIMEOUT })
 
-      // Open the dropdown to see available options
-      const input = field.locator('input:not([type="hidden"])')
-      await input.click()
-
-      // Both post titles should appear as options (scope to Select dropdown)
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Alpha Post' })).toBeVisible({
+      const options = await editorPage.openReferenceOptions('relatedPost')
+      await expect(options.filter({ hasText: 'Alpha Post' })).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Beta Post' })).toBeVisible({
+      await expect(options.filter({ hasText: 'Beta Post' })).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
 
@@ -212,17 +208,14 @@ test.describe('Reference Fields', () => {
 
     await test.step('open dropdown and type to filter', async () => {
       await editorPage.waitForReferenceOptions('relatedPost')
-      const field = editorPage.getReferenceField('relatedPost')
-      const input = field.locator('input:not([type="hidden"])')
-      await input.click()
-      await input.fill('Ban')
+      const options = await editorPage.openReferenceOptions('relatedPost')
+      await expect(options).toHaveCount(3, { timeout: STANDARD_TIMEOUT })
+      await editorPage
+        .getReferenceField('relatedPost')
+        .locator('input:not([type="hidden"])')
+        .fill('Ban')
 
-      // Only Banana should be visible (scope to Select dropdown)
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Banana' })).toBeVisible({
-        timeout: STANDARD_TIMEOUT,
-      })
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Apple' })).not.toBeVisible()
-      await expect(page.locator('.mantine-Select-option', { hasText: 'Cherry' })).not.toBeVisible()
+      await expect(options).toHaveText(['Banana'], { timeout: STANDARD_TIMEOUT })
     })
   })
   test('deleting a referenced post names the referencing entry, then deletes on confirm', async ({
