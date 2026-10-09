@@ -2,9 +2,11 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-08, from the round-trip corpus review. `date: 2024-01-15` in md frontmatter reaches the save as an ISO timestamp and `serializeFrontmatter` rewrites the line; confirm end to end through the editor, then make the reconciler treat the two as equal
+  RESOLVED 2026-10-09, branch `fix/save-fidelity-edited-blocks`, base `int-202610-b`. Confirmed end to end: the read path's js-yaml (YAML 1.1) reads `date: 2024-01-15` as a Date, the API carries it as a timestamp, the editor sends it back untouched, and the reconciler compared against `yaml`'s YAML 1.2 reading, so every md/mdx save rewrote the line (and `014` as `12`). `serializeFrontmatter` now reconciles a value sent back unchanged from the read as the disk's own value, and keeps a reconciled file only if gray-matter reads `data` back from it, else gray-matter writes it.
 ---
 # [P2] A YAML date in md/mdx frontmatter may be rewritten as a timestamp on save
+
+**Status: RESOLVED 2026-10-09**, branch `fix/save-fidelity-edited-blocks`. A value the editor sends back as gray-matter read it keeps its text; a changed value is written, and one whose new text the two YAML parsers would read differently (a date-like string, `014` set to 14) falls back to gray-matter's own output. Pinned in `utils/content-serialize.test.ts`, through `ContentStore` in `content-store.test.ts`, and by `frontmatter-date.md` in the corpus.
 
 Found 2026-10-08 by a reviewer of the round-trip corpus test (adopter request 87b). Reproduced at
 `serializeFrontmatter` only; not yet checked end to end through the editor's form state.
