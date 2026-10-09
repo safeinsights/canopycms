@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ImageFieldValue } from '../config/types'
-import { setPreviewAssetBase } from '../editor/preview-asset-base'
+import { setPreviewAssetBase, setServerPreviewAssetBaseGetter } from '../editor/preview-asset-base'
 import { assetSrcSet, assetUrl } from './asset-url'
 
 const HASH32 = 'a'.repeat(32)
@@ -58,7 +58,10 @@ describe('module purity', () => {
 })
 
 describe('assetUrl - the preview asset base on the server', () => {
-  afterEach(() => setPreviewAssetBase(undefined))
+  afterEach(() => {
+    setPreviewAssetBase(undefined)
+    setServerPreviewAssetBaseGetter(undefined)
+  })
 
   it('is ignored where there is no window (server render, static build)', () => {
     const src = `/assets/t/orig/${'a'.repeat(32)}/photo.png`
@@ -67,6 +70,22 @@ describe('assetUrl - the preview asset base on the server', () => {
     expect(typeof window).toBe('undefined')
     expect(assetUrl({ src }, { width: 320, baseUrl: 'https://cdn.example.com' })).toBe(
       `https://cdn.example.com/assets/t/w=320/${'a'.repeat(32)}/photo.png`,
+    )
+  })
+
+  it("is the registered getter's, for transform srcs only, over baseUrl", () => {
+    let requestBase: string | undefined = '/api/canopycms/assets/raw'
+    setServerPreviewAssetBaseGetter(() => requestBase)
+    const opts = { width: 320, baseUrl: 'https://cdn.example.com' }
+
+    expect(assetUrl({ src: identitySrc }, opts)).toBe(
+      `/api/canopycms/assets/raw/assets/t/w=320/${HASH32}/photo.png`,
+    )
+    expect(assetUrl({ src: staticSvgSrc }, opts)).toBe(`https://cdn.example.com${staticSvgSrc}`)
+
+    requestBase = undefined
+    expect(assetUrl({ src: identitySrc }, opts)).toBe(
+      `https://cdn.example.com/assets/t/w=320/${HASH32}/photo.png`,
     )
   })
 })

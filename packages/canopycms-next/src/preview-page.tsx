@@ -1,8 +1,14 @@
-import type { ReactElement, ReactNode } from 'react'
+import { cache, type ReactElement, type ReactNode } from 'react'
 import { notFound } from 'next/navigation'
 import type { CanopyConfig } from 'canopycms'
-import type { CanopyContext } from 'canopycms/server'
+import {
+  authenticatedAssetBase,
+  readAssetBase,
+  setServerPreviewAssetBaseGetter,
+  type CanopyContext,
+} from 'canopycms/server'
 import type { CanopyPreviewProps } from './preview'
+import type { PreviewRouteProps } from './preview-route'
 
 type ReadEntry = NonNullable<Awaited<ReturnType<CanopyContext['readByUrlPath']>>>
 
@@ -97,6 +103,16 @@ export interface CreatePreviewPageOptions {
   editorOrigin?: string
 }
 
+/**
+ * The asset prefix of the request being rendered, set once it is known to be a preview. React's
+ * `cache` scopes it to one server request, and outside one it is a fresh, empty object, so a
+ * render that is not a preview, or a static build, reads `undefined`.
+ */
+let previewRequestScope: (() => { assetBase?: string }) | undefined
+// Created on first use, because React 18 has no `cache`; it must be one instance for every request.
+const previewRequest = () => (previewRequestScope ??= cache(() => ({})))()
+const readPreviewRequestAssetBase = (): string | undefined => previewRequest().assetBase
+
 /** The props Next passes a `[[...path]]` page. */
 export interface PreviewPageProps {
   params: Promise<{ path?: string[] }>
@@ -119,10 +135,10 @@ export interface PreviewPageProps {
 export function createPreviewPageFor(
   getCanopy: () => Promise<CanopyContext>,
   options: CreatePreviewPageOptions,
-  deployedAs: CanopyConfig['deployedAs'] = 'server',
+  config: Partial<Pick<CanopyConfig, 'deployedAs' | 'basePath'>> = {},
 ): (props: PreviewPageProps) => Promise<ReactElement> {
   return async function CanopyPreviewPage({ params, searchParams }) {
-    if (deployedAs === 'static') notFound()
+    if (config.deployedAs === 'static') notFound()
     const [{ path = [] }, query] = await Promise.all([params, searchParams])
     const branch = query.branch
     if (Array.isArray(branch)) notFound()
@@ -137,9 +153,20 @@ export function createPreviewPageFor(
       ? options.views[entryType]
       : undefined
     if (!viewEntry) notFound()
+    // From here the response is a preview, so its `/assets/t/` URLs go behind the signed-in route:
+    // server components (a `load`, `extras`) through the getter, the view through its prop.
+    const previewAssetBase = readAssetBase(authenticatedAssetBase(config.basePath))
+    previewRequest().assetBase = previewAssetBase
+    setServerPreviewAssetBaseGetter(readPreviewRequestAssetBase)
     if (!hasLoader(viewEntry)) {
-      const View = viewEntry
-      return <View initialData={result.data} editorOrigin={options.editorOrigin} />
+      const View: (props: CanopyPreviewProps<never> & PreviewRouteProps) => ReactNode = viewEntry
+      return (
+        <View
+          initialData={result.data}
+          editorOrigin={options.editorOrigin}
+          previewAssetBase={previewAssetBase}
+        />
+      )
     }
     const { meta } = result
     const entry: PreviewEntry = {
@@ -153,7 +180,16 @@ export function createPreviewPageFor(
     const extras = await viewEntry.load({ entry, canopy, branch })
     // The record erases `view` to `extras?: never`, so it cannot check `load`'s result against the
     // view; `previewView` does, where a pair is written.
-    const View = viewEntry.view as (props: CanopyPreviewProps<never, unknown>) => ReactNode
-    return <View initialData={result.data} editorOrigin={options.editorOrigin} extras={extras} />
+    const View = viewEntry.view as (
+      props: CanopyPreviewProps<never, unknown> & PreviewRouteProps,
+    ) => ReactNode
+    return (
+      <View
+        initialData={result.data}
+        editorOrigin={options.editorOrigin}
+        extras={extras}
+        previewAssetBase={previewAssetBase}
+      />
+    )
   }
 }
