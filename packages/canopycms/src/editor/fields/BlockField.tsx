@@ -54,8 +54,10 @@ const findTemplate = (templates: BlockConfig[], name: string) =>
 
 const SortableBlock: React.FC<{
   id: string
+  /** The block's own path (`blocks[2]`), which preview focus lands on for the block as a whole. */
+  canopyPath: string
   children: React.ReactNode
-}> = ({ id, children }) => {
+}> = ({ id, canopyPath, children }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
   })
@@ -67,7 +69,15 @@ const SortableBlock: React.FC<{
   }
 
   return (
-    <Paper ref={setNodeRef} withBorder radius="md" p="sm" shadow="xs" style={style}>
+    <Paper
+      ref={setNodeRef}
+      withBorder
+      radius="md"
+      p="sm"
+      shadow="xs"
+      style={style}
+      data-canopy-field={canopyPath}
+    >
       <Group align="flex-start" gap="sm">
         <ActionIcon
           key="drag-handle"
@@ -204,7 +214,11 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                 const currentPath = [...path, idx]
 
                 return (
-                  <SortableBlock key={itemKeys[idx]} id={itemKeys[idx]}>
+                  <SortableBlock
+                    key={itemKeys[idx]}
+                    id={itemKeys[idx]}
+                    canopyPath={formatCanopyPath(currentPath)}
+                  >
                     <Stack gap="xs">
                       <Group justify="space-between" align="flex-start">
                         <Text size="sm" fw={600}>

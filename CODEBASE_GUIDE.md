@@ -614,7 +614,7 @@ Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 exported via `canopycms/preview`) and `PreviewFrame.tsx` (editor side, via `canopycms/client`)
 
 Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:preview:highlight`,
-`canopycms:preview:ready`, `canopycms:preview:error`.
+`canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
 - `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
