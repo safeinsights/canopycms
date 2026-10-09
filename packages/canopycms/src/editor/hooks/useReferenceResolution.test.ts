@@ -4,6 +4,8 @@ import { useReferenceResolution } from './useReferenceResolution'
 import type { EntrySchema } from '../../config'
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
 import type { ApiResponse } from '../../api/types'
+import { MISSING_REFERENCE_TTL_MS } from '../client-reference-resolver'
+import { mockConsole } from '../../test-utils/console-spy'
 
 // client-reference-resolver.ts (which this hook calls) uses createApiClient()
 // directly (not context DI) -- mock the same resolved module the hook's
@@ -25,7 +27,9 @@ describe('useReferenceResolution', () => {
   beforeEach(async () => {
     mockClient = createMockApiClient()
     const { createApiClient } = await import('../../api/client')
-    vi.mocked(createApiClient).mockReturnValue(mockClient as any)
+    vi.mocked(createApiClient).mockReturnValue(
+      mockClient as unknown as ReturnType<typeof createApiClient>,
+    )
     vi.useFakeTimers()
   })
 
@@ -50,14 +54,8 @@ describe('useReferenceResolution', () => {
       data: { resolved: { idA: { title: 'Alice' } } },
     } satisfies ResolveResult)
 
-    const onResolvedValueChange = vi.fn()
     const { result } = renderHook(() =>
-      useReferenceResolution({
-        value: { author: 'idA' },
-        fields: schema,
-        branch: 'main',
-        onResolvedValueChange,
-      }),
+      useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' }),
     )
 
     await act(async () => {
@@ -66,9 +64,127 @@ describe('useReferenceResolution', () => {
 
     expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
     expect(result.current.loadingState.author).toBe(false)
-    expect(onResolvedValueChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({ author: { title: 'Alice' } }),
+  })
+
+  it('resolves references nested in objects and blocks, in one request', async () => {
+    const nestedSchema: EntrySchema = [
+      {
+        name: 'byline',
+        type: 'object',
+        label: 'Byline',
+        fields: [{ name: 'person', type: 'reference', label: 'Person', collections: ['people'] }],
+      },
+      {
+        name: 'blocks',
+        type: 'block',
+        label: 'Blocks',
+        templates: [
+          {
+            name: 'quote',
+            label: 'Quote',
+            fields: [
+              {
+                name: 'speakers',
+                type: 'reference',
+                label: 'Speakers',
+                list: true,
+                collections: ['people'],
+              },
+            ],
+          },
+        ],
+      },
+    ]
+    mockClient.content.resolveReferences.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { resolved: { idA: { name: 'Alice' }, idB: { name: 'Bob' } } },
+    } satisfies ResolveResult)
+
+    const { result } = renderHook(() =>
+      useReferenceResolution({
+        value: {
+          byline: { person: 'idA' },
+          blocks: [{ template: 'quote', value: { speakers: ['idA', 'idB'] } }],
+        },
+        fields: nestedSchema,
+        branch: 'main',
+      }),
     )
+    expect(result.current.resolvedValue.byline).toEqual({ person: null })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(1)
+    expect(result.current.resolvedValue).toEqual({
+      byline: { person: { name: 'Alice' } },
+      blocks: [{ template: 'quote', value: { speakers: [{ name: 'Alice' }, { name: 'Bob' }] } }],
+    })
+    expect(result.current.loadingState).toEqual({
+      byline: { person: false },
+      blocks: [{ value: { speakers: [false, false] } }],
+    })
+  })
+
+  it('asks again for a missing id once its null entry expires, on the next edit', async () => {
+    mockClient.content.resolveReferences.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { resolved: {} },
+    } satisfies ResolveResult)
+
+    const { result, rerender } = renderHook(
+      (props: { value: Record<string, unknown> }) =>
+        useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
+      { initialProps: { value: { author: 'idA' } as Record<string, unknown> } },
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(result.current.resolvedValue.author).toBeNull()
+    expect(result.current.loadingState.author).toBe(false)
+
+    // Within the TTL an edit does not ask again.
+    rerender({ value: { author: 'idA', title: 'one' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(1)
+
+    // The target is created; after the TTL the next edit picks it up.
+    mockClient.content.resolveReferences.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { resolved: { idA: { title: 'Alice' } } },
+    } satisfies ResolveResult)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MISSING_REFERENCE_TTL_MS)
+    })
+    rerender({ value: { author: 'idA', title: 'two' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300)
+    })
+    expect(mockClient.content.resolveReferences).toHaveBeenCalledTimes(2)
+    expect(result.current.resolvedValue.author).toEqual({ title: 'Alice' })
+  })
+
+  it('leaves a reference pending, not missing, when the request fails', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      mockClient.content.resolveReferences.mockResolvedValueOnce({ ok: false, status: 500 })
+      const { result } = renderHook(() =>
+        useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' }),
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(result.current.resolvedValue.author).toBeNull()
+      expect(result.current.loadingState.author).toBe(true)
+    } finally {
+      consoleSpy.restore()
+    }
   })
 
   it('does not re-fetch when only a non-reference field changes', async () => {
@@ -147,15 +263,9 @@ describe('useReferenceResolution', () => {
         }),
     )
 
-    const onResolvedValueChange = vi.fn()
     const { result, rerender } = renderHook(
       (props: { value: Record<string, unknown> }) =>
-        useReferenceResolution({
-          value: props.value,
-          fields: schema,
-          branch: 'main',
-          onResolvedValueChange,
-        }),
+        useReferenceResolution({ value: props.value, fields: schema, branch: 'main' }),
       { initialProps: { value: { author: 'idA' } } },
     )
 
@@ -179,7 +289,7 @@ describe('useReferenceResolution', () => {
     })
     expect(result.current.resolvedValue.author).toEqual({ title: 'Bob' })
 
-    const callsBeforeStaleSettle = onResolvedValueChange.mock.calls.length
+    const valueBeforeStaleSettle = result.current.resolvedValue
 
     // Now settle the STALE request (idA) -- must be discarded entirely: no
     // cache write, no resolvedValue change, no extra notify call.
@@ -188,8 +298,7 @@ describe('useReferenceResolution', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
 
-    expect(result.current.resolvedValue.author).toEqual({ title: 'Bob' })
-    expect(onResolvedValueChange.mock.calls.length).toBe(callsBeforeStaleSettle)
+    expect(result.current.resolvedValue).toBe(valueBeforeStaleSettle)
   })
 
   it('does not update state after unmount when a debounced resolve settles later', async () => {
@@ -201,22 +310,18 @@ describe('useReferenceResolution', () => {
         }),
     )
 
-    const onResolvedValueChange = vi.fn()
-    const { unmount } = renderHook(() =>
-      useReferenceResolution({
-        value: { author: 'idA' },
-        fields: schema,
-        branch: 'main',
-        onResolvedValueChange,
-      }),
-    )
+    let renders = 0
+    const { unmount } = renderHook(() => {
+      renders++
+      return useReferenceResolution({ value: { author: 'idA' }, fields: schema, branch: 'main' })
+    })
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300)
     })
     expect(resolvers.idA).toBeDefined()
 
-    const callsBeforeUnmount = onResolvedValueChange.mock.calls.length
+    const rendersBeforeUnmount = renders
     unmount()
 
     // Settle the in-flight request AFTER unmount.
@@ -225,8 +330,8 @@ describe('useReferenceResolution', () => {
       await vi.advanceTimersByTimeAsync(0)
     })
 
-    // No further notifications after unmount -- the stale settle was discarded.
-    expect(onResolvedValueChange.mock.calls.length).toBe(callsBeforeUnmount)
+    // No render after unmount -- the stale settle was discarded.
+    expect(renders).toBe(rendersBeforeUnmount)
   })
 
   it('clears the cache when branch changes, so a resolved id reverts to unresolved', async () => {

@@ -9,6 +9,7 @@ import {
   type BlockComponentRegistry,
   type BlockValueOf,
   buildResolvedReference,
+  isResolvedReference,
   RESOLVED_REFERENCE_KEYS,
   type EntryTypesFromRegistry,
   type ResolvedReferenceMeta,
@@ -932,5 +933,54 @@ describe('buildResolvedReference', () => {
     const data = { title: 'Sign up' }
     buildResolvedReference(data, meta, { fieldName: 'prose', value: 'THE PROSE' })
     expect(data).toEqual({ title: 'Sign up' })
+  })
+})
+
+describe('isResolvedReference', () => {
+  const meta: ResolvedReferenceMeta = {
+    id: 'authAAAAAAAA',
+    slug: 'ada',
+    collection: 'content/people',
+    urlPath: '/people/ada',
+  }
+  const resolved = { name: 'Ada', ...meta }
+
+  it('is true only for a resolved target', () => {
+    expect(isResolvedReference(resolved)).toBe(true)
+    expect(
+      isResolvedReference({ ...meta, title: 'Ada', unavailable: true, reason: 'restricted' }),
+    ).toBe(false)
+    expect(isResolvedReference({ id: meta.id, unavailable: true, reason: 'missing' })).toBe(false)
+    expect(isResolvedReference(null)).toBe(false)
+    expect(isResolvedReference(undefined)).toBe(false)
+    expect(isResolvedReference('authAAAAAAAA')).toBe(false)
+    expect(isResolvedReference([resolved])).toBe(false)
+  })
+
+  it('narrows an inferred reference field to its resolved target', () => {
+    type AuthorFields = readonly [{ name: 'name'; type: 'string'; required: true }]
+    type Post = TypeFromEntrySchema<
+      readonly [
+        { name: 'author'; type: 'reference'; resolvedSchema: AuthorFields },
+        { name: 'editors'; type: 'reference'; list: true; resolvedSchema: AuthorFields },
+      ]
+    >
+    type Author = Exclude<NonNullable<Post['author']>, RestrictedReference>
+
+    const value = resolved as Post['author']
+    if (isResolvedReference(value)) {
+      expectTypeOf(value).toEqualTypeOf<Author>()
+      expect(value.name).toBe('Ada')
+    }
+    const editor = resolved as NonNullable<Post['editors']>[number]
+    if (isResolvedReference(editor)) expectTypeOf(editor).toEqualTypeOf<Author>()
+  })
+
+  it('narrows an untyped value to a resolved reference', () => {
+    const value: unknown = resolved
+    if (isResolvedReference(value)) {
+      expectTypeOf(value.urlPath).toEqualTypeOf<string>()
+      expectTypeOf(value.name).toEqualTypeOf<unknown>()
+    }
   })
 })

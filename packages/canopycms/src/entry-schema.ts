@@ -152,6 +152,31 @@ export function buildRestrictedReference(
 }
 
 /**
+ * The resolved-target member of a reference field's value type `T`: the object members that
+ * are not marked `unavailable`. For an untyped `T` (`unknown`), any resolved reference.
+ */
+export type ResolvedReferenceOf<T> = unknown extends T
+  ? Record<string, unknown> & ResolvedReferenceMeta
+  : Exclude<Extract<T, object>, { unavailable: true }>
+
+/**
+ * Whether a reference field's value is its resolved target, narrowing it to that target's type.
+ *
+ * False for everything else a reference can hold: `null` or `undefined` (empty, or in live
+ * preview, still resolving), a bare id string (a reference that was not resolved), an array, and
+ * a reference marked `unavailable` (a target the reader may not see, or one that no longer
+ * exists).
+ */
+export function isResolvedReference<T>(value: T): value is T & ResolvedReferenceOf<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { [RESTRICTED_REFERENCE_MARKER]?: unknown })[RESTRICTED_REFERENCE_MARKER] !== true
+  )
+}
+
+/**
  * Recursively flatten inline groups (type: 'group') out of a field tuple: they contribute
  * no key to the content shape, so their children merge into the parent level and
  * InferContentShape sees only data-carrying fields.
