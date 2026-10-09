@@ -154,10 +154,11 @@ keep it out of cross-request caches (`unstable_cache`, module memos).
 
 ### A save rewrites only the lines whose values changed
 
-**What changed.** In YAML entries and md/mdx frontmatter, untouched values, comments, blank lines
-and (in `.yaml` files) CRLF line endings stay as written, and an edited `>-`, `|` or quoted value
-keeps that style where it can hold the new value; the first save re-wrapped long values at 80
-columns. Anchors, aliases and rare layouts still re-serialise the whole file.
+**What changed.** In YAML and JSON entries and md/mdx frontmatter, untouched values, comments,
+blank lines and (in `.yaml` and `.json` files) CRLF line endings stay as written, and an edited
+`>-`, `|` or quoted value keeps that style where it can. The first save re-wrapped YAML,
+restyled JSON and rewrote dates. Anchors, aliases and rare layouts still re-serialise the whole
+file.
 
 **To adopt.** Nothing.
 
@@ -167,8 +168,8 @@ columns. Anchors, aliases and rare layouts still re-serialise the whole file.
 
 **What changed.** An md/mdx body save keeps every untouched block verbatim (markers, escapes, JSX,
 blank lines, CRLF), so `prettier --check` passes. New and edited blocks use Prettier's
-markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break, an
-ordered list's start or a bare URL before punctuation still changes on the first edit. A body
+markers (`-`, `_emphasis_`, `---`); a new entry's body starts after a blank line. A hard break or
+a bare URL before punctuation still changes on the first edit. A body
 with text after a nested list in a list item opens as source.
 
 **To adopt.** Nothing.

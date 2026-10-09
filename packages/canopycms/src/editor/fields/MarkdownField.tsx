@@ -7,6 +7,7 @@ import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
 import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
+import { createMarkdownFidelityPlugin } from './markdown-fidelity-visitors'
 import { MdxImageDialog } from './MdxImageDialog'
 import { createMdxJsxPlugins } from './mdx-jsx-support'
 import { useApiClient, useAssetContext } from '../context'
@@ -72,6 +73,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     lexical: { $getNodeByKey },
   } = mdx
   const mdxJsxPlugins = createMdxJsxPlugins(mdx)
+  const markdownFidelityPlugin = createMarkdownFidelityPlugin(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
     onInsert: (insert: () => void, markdown: string) => void
@@ -148,6 +150,7 @@ export const MDXEditorLazy = React.lazy(async () => {
           }),
           tablePlugin(),
           ...mdxJsxPlugins(),
+          markdownFidelityPlugin(),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {
