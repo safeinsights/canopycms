@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Nothing pages anyone when the worker is down, including a deterministic boot loop: the fail-fast `ERR` trap turns one dead instance into churning ones, and the admin panel's "absent" state needs someone looking. **Decided:** an optional alarm-topic prop (`alarmTopic?: ITopic`) in `canopycms-cdk`, with a CloudWatch alarm on worker log-event rate or ASG launch churn. Part of the worker-down cluster with `worker-not-ready-permanent-failure` and `worker-secret-errors-before-start-are-invisible`
+  RESOLVED (2026-10-09). `CanopyCmsService` takes an optional `alarmTopic`: a metric filter counts the worker's per-cycle `Syncing git...` line, and an alarm notifies the topic (and on recovery) when 3 consecutive 10-minute periods have none, missing data included. A normal replacement stays inside the window; a boot loop, crash loop or idle worker does not. A cdk test pins the phrase against the line the real `syncGit` logs
 ---
 # [P2] Nothing pages a human when the worker is down, including a boot loop
 

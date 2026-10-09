@@ -61,7 +61,7 @@ The test that matters is not "the provider was called" but that a task **which w
 otherwise have exhausted its retries** now succeeds on a later attempt after a rotation —
 otherwise the assertion passes with the fix doing nothing useful.
 
-Related: [worker-app-env-var-check-untested.md](../worker-app-env-var-check-untested.md),
+Related: [worker-app-env-var-check-untested.md](worker-app-env-var-check-untested.md),
 [refresh-auth-cache-error-handling.md](../refresh-auth-cache-error-handling.md).
 
 ## Resolution — 2026-09-13, branch `fix/task-failure-credential-refresh`, base `int-202609-a`

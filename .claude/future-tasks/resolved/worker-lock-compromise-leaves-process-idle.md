@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  When the worker's EFS lock is compromised, `onCompromised` calls `stop()` and the worker stops working, but the process stays alive, so systemd never restarts it. The deployment then has no working worker until someone restarts the service or the instance.
+  RESOLVED (2026-10-09). `CmsWorker.selfStopped` settles once the worker stops itself after a lock compromise, never for a requested stop. Before settling, the drain retakes the lock (waiting out its staleness) and records `lastFatalError` (phase `run`) and `lastShutdown`; a worker that took the lock over owns the file and nothing is written. The entrypoint exits 69 (`EXIT_WORKER_SELF_STOPPED`) so systemd restarts it
 ---
 # [P2] A compromised worker lock leaves a live process doing nothing
 
