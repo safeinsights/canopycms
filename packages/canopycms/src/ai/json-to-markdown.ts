@@ -5,11 +5,55 @@
  * Handles all CanopyCMS field types including nested objects and blocks.
  */
 
-import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig, SelectFieldConfig } from '../config'
+import type {
+  FieldConfig,
+  ObjectFieldConfig,
+  BlockFieldConfig,
+  ReferenceFieldConfig,
+  SelectFieldConfig,
+} from '../config'
+import { RESTRICTED_REFERENCE_MARKER } from '../entry-schema'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
+import { resolveEntryTitle } from '../utils/title-field'
 import { stripMdxImports } from './strip-mdx'
 import { applyComponentTransforms } from './transform-components'
 import type { AIEntry, AIContentConfig } from './types'
+
+/**
+ * How a resolved reference becomes link text and a link target. generate.ts supplies one that
+ * knows every target's schema and the adopter's `entryLinkUrl`; the default needs neither.
+ */
+export interface ReferenceRendering {
+  /** Display title of a resolved target, used unless the field's `displayField` holds text. */
+  title(target: Record<string, unknown>): string
+  /** Where the link points, or undefined to render the title as plain text. */
+  url(target: Record<string, unknown>): string | undefined
+  /** URL of the target's own file in this export, linked after the page as its markdown copy. */
+  markdownUrl?(target: Record<string, unknown>): string | undefined
+}
+
+const DEFAULT_REFERENCE_RENDERING: ReferenceRendering = {
+  title: (target) =>
+    resolveEntryTitle(target, { slug: typeof target.slug === 'string' ? target.slug : undefined }),
+  url: (target) =>
+    typeof target.urlPath === 'string' && target.urlPath ? target.urlPath : undefined,
+}
+
+/**
+ * The entry's `title` as frontmatter carries it. Only a scalar qualifies: a `reference` field
+ * named `title` holds an object and renders as a field instead.
+ */
+export function frontmatterTitle(data: Record<string, unknown>): string | undefined {
+  const { title } = data
+  return (typeof title === 'string' || typeof title === 'number') && title !== ''
+    ? String(title)
+    : undefined
+}
+
+interface RenderOptions {
+  config?: AIContentConfig
+  references: ReferenceRendering
+}
 
 /**
  * Convert an entry to clean markdown suitable for AI consumption.
@@ -17,12 +61,18 @@ import type { AIEntry, AIContentConfig } from './types'
  * For MD/MDX entries: renders frontmatter fields as metadata, appends body verbatim.
  * For JSON entries: full schema-driven conversion of all fields.
  */
-export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): string {
+export function entryToMarkdown(
+  entry: AIEntry,
+  config?: AIContentConfig,
+  references: ReferenceRendering = DEFAULT_REFERENCE_RENDERING,
+): string {
+  const opts: RenderOptions = { config, references }
   const parts: string[] = []
 
+  const title = frontmatterTitle(entry.data)
   parts.push('---')
-  if (entry.data.title) {
-    parts.push(`title: ${yamlValue(String(entry.data.title))}`)
+  if (title !== undefined) {
+    parts.push(`title: ${yamlValue(title)}`)
   }
   parts.push(`slug: ${yamlValue(entry.slug)}`)
   parts.push(`collection: ${yamlValue(entry.collection)}`)
@@ -32,12 +82,12 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
 
   // Fields already in frontmatter — skip from body rendering to avoid duplication
   const skipFields = new Set<string>()
-  if (entry.data.title) skipFields.add('title')
+  if (title !== undefined) skipFields.add('title')
 
   if (entry.format === 'md' || entry.format === 'mdx') {
-    parts.push(...renderMarkdownEntry(entry, config, skipFields))
+    parts.push(...renderMarkdownEntry(entry, opts, skipFields))
   } else {
-    parts.push(...renderJsonEntry(entry, config, skipFields))
+    parts.push(...renderJsonEntry(entry, opts, skipFields))
   }
 
   // Markdown appended by an entry transform (e.g. a folded-in sibling artifact). Computed once
@@ -55,9 +105,10 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
  */
 function renderMarkdownEntry(
   entry: AIEntry,
-  config: AIContentConfig | undefined,
+  opts: RenderOptions,
   skipFields: Set<string>,
 ): string[] {
+  const { config } = opts
   const parts: string[] = []
 
   // Render frontmatter fields (excluding body-like fields and already-rendered fields)
@@ -66,24 +117,35 @@ function renderMarkdownEntry(
     (f) => !bodyFieldTypes.has(f.type) && !skipFields.has(f.name),
   )
 
+  // Blocks of output are separated by exactly one blank line, which is what Prettier leaves.
+  const endBlock = () => {
+    if (parts.length > 0 && parts[parts.length - 1] !== '') parts.push('')
+  }
+
   for (const field of metadataFields) {
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
 
-    const transformed = applyFieldTransform(entry, field, value, config)
+    // A structured field has no one-line form, so it gets a section as in a JSON entry.
+    const transformed =
+      field.type === 'object' || field.type === 'block'
+        ? renderField(field, value, 2, entry, opts)
+        : applyFieldTransform(entry, field, value, config)
     if (transformed !== undefined) {
-      parts.push(transformed)
-      parts.push('')
+      if (transformed) {
+        endBlock()
+        parts.push(transformed)
+        parts.push('')
+      }
       continue
     }
 
-    const label = field.label || field.name
-    parts.push(`**${label}:** ${formatInlineValue(field, value)}`)
+    const inline = formatInlineValue(field, value, opts.references)
+    if (inline === '' && field.type === 'reference') continue
+    parts.push(`**${field.label || field.name}:** ${inline}`)
   }
 
-  if (parts.length > 0) {
-    parts.push('')
-  }
+  endBlock()
 
   if (entry.body) {
     let body = entry.format === 'mdx' ? stripMdxImports(entry.body) : entry.body
@@ -107,11 +169,7 @@ function renderMarkdownEntry(
 /**
  * Render a JSON entry: full schema-driven conversion of all fields.
  */
-function renderJsonEntry(
-  entry: AIEntry,
-  config: AIContentConfig | undefined,
-  skipFields: Set<string>,
-): string[] {
+function renderJsonEntry(entry: AIEntry, opts: RenderOptions, skipFields: Set<string>): string[] {
   const parts: string[] = []
 
   for (const field of flattenGroupFields(entry.fields)) {
@@ -119,7 +177,7 @@ function renderJsonEntry(
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
 
-    const rendered = renderField(field, value, 2, entry, config)
+    const rendered = renderField(field, value, 2, entry, opts)
     if (rendered) {
       parts.push(rendered)
       parts.push('')
@@ -139,9 +197,9 @@ function renderField(
   value: unknown,
   depth: number,
   entry: AIEntry,
-  config?: AIContentConfig,
+  opts: RenderOptions,
 ): string {
-  const transformed = applyFieldTransform(entry, field, value, config)
+  const transformed = applyFieldTransform(entry, field, value, opts.config)
   if (transformed !== undefined) {
     return transformed
   }
@@ -156,7 +214,7 @@ function renderField(
     'description' in field && field.description ? `\n\n_${field.description}_` : ''
 
   if ('list' in field && field.list && Array.isArray(value)) {
-    return renderListField(field, value, depth, label, heading, descriptionLine, entry, config)
+    return renderListField(field, value, depth, label, heading, descriptionLine, entry, opts)
   }
 
   switch (field.type) {
@@ -182,7 +240,7 @@ function renderField(
       return renderSelectField(field as SelectFieldConfig, value, heading, label, descriptionLine)
 
     case 'reference':
-      return renderReferenceField(value, heading, label, descriptionLine)
+      return renderReferenceField(field, value, heading, label, descriptionLine, opts.references)
 
     case 'object':
       return renderObjectField(
@@ -193,7 +251,7 @@ function renderField(
         label,
         descriptionLine,
         entry,
-        config,
+        opts,
       )
 
     case 'block':
@@ -205,7 +263,7 @@ function renderField(
         label,
         descriptionLine,
         entry,
-        config,
+        opts,
       )
 
     default:
@@ -224,7 +282,7 @@ function renderListField(
   heading: string,
   descriptionLine: string,
   entry: AIEntry,
-  config?: AIContentConfig,
+  opts: RenderOptions,
 ): string {
   if (values.length === 0) return ''
 
@@ -233,7 +291,7 @@ function renderListField(
   // headings. Genuinely nested items (subfields that are lists/objects/blocks/long text) keep the
   // heading-per-item fallback below.
   if (field.type === 'object' && isFlatObjectList(field)) {
-    return renderObjectListTable(field, values, label, heading, descriptionLine)
+    return renderObjectListTable(field, values, label, heading, descriptionLine, opts.references)
   }
 
   const isComplex = field.type === 'object' || field.type === 'block'
@@ -249,7 +307,7 @@ function renderListField(
             .map((f) => {
               const v = (item as Record<string, unknown>)[f.name]
               if (v === undefined || v === null) return ''
-              return renderField(f, v, depth + 2, entry, config)
+              return renderField(f, v, depth + 2, entry, opts)
             })
             .filter(Boolean)
           return `${itemHeading} ${itemLabel}\n\n${subFields.join('\n\n')}`
@@ -260,8 +318,11 @@ function renderListField(
     return `${heading} ${label}${descriptionLine}\n\n${items.join('\n\n')}`
   }
 
-  const items = values.map((v) => `- ${formatInlineValue(field, v)}`).join('\n')
-  return `${heading} ${label}${descriptionLine}\n\n${items}`
+  const items = values
+    .map((v) => formatInlineValue(field, v, opts.references))
+    .filter((item) => item !== '' || field.type !== 'reference')
+  if (items.length === 0) return ''
+  return `${heading} ${label}${descriptionLine}\n\n${items.map((item) => `- ${item}`).join('\n')}`
 }
 
 /** Subfield types that render to a single line and so fit cleanly in a table cell. */
@@ -299,6 +360,7 @@ function renderObjectListTable(
   label: string,
   heading: string,
   descriptionLine: string,
+  references: ReferenceRendering,
 ): string {
   const columns = field.fields
   const headerRow = `| ${columns.map((f) => escapeTableCell(f.label || f.name)).join(' | ')} |`
@@ -309,7 +371,7 @@ function renderObjectListTable(
     const cells = columns.map((f) => {
       const v = record[f.name]
       if (v === undefined || v === null) return ''
-      return escapeTableCell(formatCellValue(f, v))
+      return escapeTableCell(formatCellValue(f, v, references))
     })
     return `| ${cells.join(' | ')} |`
   })
@@ -318,12 +380,16 @@ function renderObjectListTable(
 }
 
 /** Render a single scalar subfield value to its one-line table-cell form. */
-function formatCellValue(field: FieldConfig, value: unknown): string {
+function formatCellValue(
+  field: FieldConfig,
+  value: unknown,
+  references: ReferenceRendering,
+): string {
   switch (field.type) {
     case 'boolean':
       return value ? 'Yes' : 'No'
     case 'reference':
-      return formatReference(value)
+      return formatReference(field, value, references)
     case 'select':
       return Array.isArray(value)
         ? value.map((v) => resolveSelectLabel(field as SelectFieldConfig, v)).join(', ')
@@ -378,16 +444,19 @@ function resolveSelectLabel(field: SelectFieldConfig, value: unknown): string {
 }
 
 function renderReferenceField(
+  field: FieldConfig,
   value: unknown,
   heading: string,
   label: string,
   descriptionLine: string,
+  references: ReferenceRendering,
 ): string {
-  if (Array.isArray(value)) {
-    const items = value.map((v) => `- ${formatReference(v)}`).join('\n')
-    return `${heading} ${label}${descriptionLine}\n\n${items}`
-  }
-  return `${heading} ${label}${descriptionLine}\n\n${formatReference(value)}`
+  const items = (Array.isArray(value) ? value : [value])
+    .map((v) => formatReference(field, v, references))
+    .filter(Boolean)
+  if (items.length === 0) return ''
+  const body = Array.isArray(value) ? items.map((item) => `- ${item}`).join('\n') : items[0]
+  return `${heading} ${label}${descriptionLine}\n\n${body}`
 }
 
 function isImageValueLike(value: unknown): value is { src: string; alt?: unknown } {
@@ -400,8 +469,8 @@ function isImageValueLike(value: unknown): value is { src: string; alt?: unknown
 }
 
 /**
- * Sanitizes `alt` for the `[...]` span of `![alt](src)`: unescaped, a crafted alt like
- * `x](/a) [pwn](https://evil.com)` injects a second attacker-chosen link/image. Strips
+ * Sanitizes text for the `[...]` span of `![alt](src)` or `[title](url)`: unescaped, a crafted
+ * value like `x](/a) [pwn](https://evil.com)` injects a second attacker-chosen link/image. Strips
  * (rather than escapes) `[`, `]`, backslash, and newlines — losing a stray bracket from
  * descriptive text is harmless, and escaping would break under `escapeTableCell`'s blind
  * backslash-doubling once this lands in a table cell (formatCellValue's image case).
@@ -445,17 +514,43 @@ function formatImageMarkdown(value: unknown, altFallback: string): string {
 }
 
 /**
- * References may be resolved (objects with data) or unresolved (string IDs).
+ * One reference value as inline markdown: a target the export shows becomes `[title](url)`, its
+ * page, then its markdown copy labeled as such, so a reader can tell the two apart; one it does
+ * not becomes its id with a marker, so the copy shows the break instead of hiding it. An
+ * unavailable target renders from its id alone, whatever else it carries, so no title can leak.
+ * A bare string is an id that resolution never replaced.
  */
-function formatReference(value: unknown): string {
-  if (typeof value === 'object' && value !== null) {
-    const ref = value as Record<string, unknown>
-    // Resolved reference — use title, name, or slug
-    const display = ref.title || ref.name || ref.slug || ref.id
-    if (display) return String(display)
+function formatReference(
+  field: FieldConfig,
+  value: unknown,
+  references: ReferenceRendering,
+): string {
+  // `''` is what the editor saves when a reference is cleared: no value, not a broken one.
+  if (value === '') return ''
+  if (typeof value === 'string') return `(missing entry ${sanitizeMarkdownAltText(value)})`
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '(missing entry)'
+  const target = value as Record<string, unknown>
+  const id = typeof target.id === 'string' ? sanitizeMarkdownAltText(target.id) : ''
+
+  if (target[RESTRICTED_REFERENCE_MARKER] === true) {
+    const marker = target.reason === 'missing' ? 'missing entry' : 'unavailable entry'
+    return id ? `(${marker} ${id})` : `(${marker})`
   }
-  // Unresolved — raw ID or string
-  return String(value)
+
+  const displayField = (field as ReferenceFieldConfig).displayField
+  const displayValue = displayField ? target[displayField] : undefined
+  const title =
+    sanitizeMarkdownAltText(
+      typeof displayValue === 'string' && displayValue.trim()
+        ? displayValue
+        : references.title(target),
+    ) || id
+  const url = references.url(target)
+  const page = url ? `[${title}](${encodeMarkdownLinkDestination(url)})` : title
+  const markdownUrl = references.markdownUrl?.(target)
+  return markdownUrl
+    ? `${page} ([markdown version](${encodeMarkdownLinkDestination(markdownUrl)}))`
+    : page
 }
 
 function renderObjectField(
@@ -466,7 +561,7 @@ function renderObjectField(
   label: string,
   descriptionLine: string,
   entry: AIEntry,
-  config?: AIContentConfig,
+  opts: RenderOptions,
 ): string {
   if (typeof value !== 'object' || value === null) {
     return `${heading} ${label}${descriptionLine}\n\n${String(value)}`
@@ -477,7 +572,7 @@ function renderObjectField(
     .map((f) => {
       const v = obj[f.name]
       if (v === undefined || v === null) return ''
-      return renderField(f, v, depth + 1, entry, config)
+      return renderField(f, v, depth + 1, entry, opts)
     })
     .filter(Boolean)
 
@@ -496,7 +591,7 @@ function renderBlockField(
   label: string,
   descriptionLine: string,
   entry: AIEntry,
-  config?: AIContentConfig,
+  opts: RenderOptions,
 ): string {
   if (!Array.isArray(value)) return ''
 
@@ -518,7 +613,7 @@ function renderBlockField(
         .map((f) => {
           const v = blockItem[f.name] ?? (blockItem.value as Record<string, unknown>)?.[f.name]
           if (v === undefined || v === null) return ''
-          return renderField(f, v, depth + 2, entry, config)
+          return renderField(f, v, depth + 2, entry, opts)
         })
         .filter(Boolean)
 
@@ -548,9 +643,20 @@ function applyFieldTransform(
 /**
  * Format a value for inline display (metadata lines, list items).
  */
-function formatInlineValue(field: FieldConfig, value: unknown): string {
+function formatInlineValue(
+  field: FieldConfig,
+  value: unknown,
+  references: ReferenceRendering,
+): string {
   if (field.type === 'boolean') return value ? 'Yes' : 'No'
-  if (field.type === 'reference') return formatReference(value)
+  if (field.type === 'reference') {
+    return Array.isArray(value)
+      ? value
+          .map((v) => formatReference(field, v, references))
+          .filter(Boolean)
+          .join(', ')
+      : formatReference(field, value, references)
+  }
   // Without this, an `image` field falls through to `String(value)` below,
   // which stringifies the structured `{ src, alt }` value object as the
   // useless literal text "[object Object]" - hit by MD/MDX frontmatter

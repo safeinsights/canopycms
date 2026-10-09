@@ -6,6 +6,31 @@
  */
 
 import type { FieldConfig } from '../config'
+import type { MissingReference, ResolvedReferenceMeta } from '../entry-schema'
+
+/** A reference whose target this export shows: the target's own data plus where it lives. */
+export type AIResolvedReference = Record<string, unknown> &
+  ResolvedReferenceMeta & { unavailable?: undefined }
+
+/**
+ * A reference whose target exists but is not in this export (left out by `exclude`, or its own
+ * markdown failed to render). Carries the id and nothing of the target, so no title of it can
+ * reach the output.
+ */
+export type AIExcludedReference = { id: string; unavailable: true; reason: 'excluded' }
+
+/**
+ * A reference whose target this export does not show: a `MissingReference` when the id names no
+ * readable entry, an {@link AIExcludedReference} when the export leaves the target out.
+ */
+export type AIUnavailableReference = MissingReference | AIExcludedReference
+
+/**
+ * What a `reference` field holds in {@link AIEntryMeta.data} (an array of these for
+ * `list: true`), at any depth, in place of the stored id; a cleared reference stays `''`. Branch
+ * on `unavailable` before reading anything but `id`.
+ */
+export type AIReferenceValue = AIResolvedReference | AIUnavailableReference
 
 /**
  * Metadata about an entry, provided to filter/predicate functions.
@@ -19,7 +44,11 @@ export interface AIEntryMeta {
   collectionName: string
   entryType: string
   format: string
-  /** The entry's parsed data (frontmatter for MD/MDX, full data for JSON) */
+  /**
+   * The entry's parsed data (frontmatter for MD/MDX, full data for JSON), with every `reference`
+   * field holding an {@link AIReferenceValue} rather than the stored id. `exclude.where` sees a
+   * target the export leaves out in full; everything after it sees that target as unavailable.
+   */
   data: Record<string, unknown>
 }
 
@@ -63,7 +92,8 @@ export interface BundleConfig {
 
 /**
  * Per-field markdown override function.
- * Return a markdown string to replace the default conversion for this field.
+ * Return a markdown string to replace the default conversion for this field. A `reference`
+ * field's value is an {@link AIReferenceValue}, or an array of them.
  */
 export type FieldTransformFn = (value: unknown, fieldConfig: FieldConfig) => string
 
@@ -157,7 +187,8 @@ export interface EntryTransformContext {
 }
 
 /**
- * Per-entry-type transform. Runs once per entry at generation time (may be async). Return a
+ * Per-entry-type transform. Runs once per entry at generation time (may be async), and again if
+ * an entry it references fails to render and is masked out of its data. Return a
  * markdown string to APPEND after the entry's body/fields, or `undefined` to append nothing.
  * Append-only by design — `entryToMarkdown` remains the sole owner of base serialization.
  *
@@ -189,6 +220,13 @@ export type EntryTransforms = Record<string, EntryTransformFn>
  * Main AI content configuration. Shared by route handler and build utility.
  */
 export interface AIContentConfig {
+  /**
+   * Site-relative URL path the generated files are served under, without the deployment
+   * `basePath`, as page links are. A reference links its target's markdown copy beneath it.
+   * Default `/ai`: where `canopycms init` mounts the route, and where `generate-ai-content`'s
+   * default `--output public/ai` is served. Set it when you serve the files elsewhere.
+   */
+  mountPath?: string
   /** Opt-out exclusions — content to skip */
   exclude?: ExcludeConfig
   /** Custom bundles — filtered content subsets */
