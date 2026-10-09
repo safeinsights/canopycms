@@ -20,7 +20,7 @@ export interface GitHubSyncResult {
   syncFailureReason?: string
   /** GitHub refused the PR because the pushed branch has no commits its base lacks. */
   nothingToSubmit?: boolean
-  /** The submit's push went to GitHub itself (the direct path), whatever the PR call did. */
+  /** The direct path, whose submit pushes to GitHub itself: the branch is there whatever the PR call did. */
   pushedToGitHub?: boolean
 }
 

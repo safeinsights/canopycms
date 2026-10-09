@@ -81,8 +81,8 @@ export class PermanentTaskError extends Error {}
 
 /**
  * GitHub refused a submit's PR because the pushed branch has no commits its base lacks: the API's
- * own check found changes, then the base caught up or the check could not run. The failure
- * handler returns the branch to editing, since nothing is under review.
+ * own check found changes against an older base, or could not run. The failure handler returns
+ * the branch to editing if it is still in that submit, since nothing is under review.
  */
 class NothingToSubmitTaskError extends PermanentTaskError {}
 

@@ -153,9 +153,9 @@ const submitBranchForMergeHandler = async (
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
-  // GitHub found nothing between the pushed branch and its base, though the diff above did (a
-  // racing base update, or a diff that could not be computed). The branch stays editable; the
-  // stamp records that it now exists on GitHub, for delete.
+  // GitHub found nothing between the pushed branch and its base, though the diff above found
+  // changes: GitHub's base can already hold them, or the diff could not be computed. The branch
+  // stays editable; the stamp records that it is now on GitHub, for delete.
   if (prResult.nothingToSubmit) {
     await meta.save({ branch: { name: branchContext.branch.name, ...pushed } })
     const base = branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'

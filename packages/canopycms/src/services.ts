@@ -93,7 +93,8 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 /**
  * Submit found nothing to send: the branch's saved content, committed or not, matches its base
- * as of the fork point. Raised before anything is pushed, so the branch is left as it was.
+ * as of the fork point. Raised before anything is pushed and after undoing any commit the
+ * submit made, so the branch's commits and saved edits are as they were.
  */
 export class NothingToSubmitError extends Error {
   constructor(branch: string, base: string) {
@@ -382,7 +383,8 @@ async function _createCanopyServicesInternal(
       // The diff runs after the commit so it covers saved-but-uncommitted edits too, and
       // before the push so a branch with nothing to submit never reaches the remote. A diff
       // that cannot be computed lets the submit through: the list only feeds the PR body, and
-      // the worker reports a branch GitHub finds empty (task-runner.ts).
+      // GitHub's own refusal of an empty branch is handled on both paths (api/github-sync.ts,
+      // worker/task-runner.ts).
       let changedPaths: string[] | undefined
       try {
         changedPaths = (await git.listChangedPathsSinceBase()).filter(

@@ -43,7 +43,8 @@ export interface BranchMetadata {
    */
   submittedAt?: string
   /**
-   * ISO timestamp of the CMS's latest push of this branch to GitHub. Branch delete takes it as
+   * ISO timestamp of the CMS's latest push of this branch to GitHub: a worker push GitHub
+   * accepted, or a direct-path submit. Branch delete takes it as
    * proof that a same-named GitHub branch is this branch's, since a submit whose PR GitHub refused
    * leaves no PR number. Absent on branches the CMS never pushed there.
    */
