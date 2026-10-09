@@ -168,6 +168,7 @@ describe('findUnsafeMarkdown: MDX that runs no code is accepted', () => {
     ],
     ['relative and fragment links', '[a](/a) [b](../b) [c](#c) [d](?q=1) [e](//cdn.x.test/e)'],
     ['a raster data: image', '![dot](data:image/png;base64,iVBORw0KGgo=)'],
+    ['an entry link, which the site resolves to a path', '[About](entry:abcdefghijkm#team)'],
     ['a path with a colon after the first slash', '[a](/a:b)'],
     ['an underscore-led component', '<_Private />'],
   ]

@@ -126,7 +126,8 @@ const SAFE_HTML_TAGS = new Set([
   'wbr',
 ])
 
-const SAFE_URL_SCHEMES = new Set(['http', 'https', 'mailto', 'tel'])
+/** `entry:` is CanopyCMS's own link to an entry, which the site resolves to a path. */
+const SAFE_URL_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'entry'])
 
 /** A `data:` URL is accepted only as a raster image, which no browser runs as a document. */
 const SAFE_DATA_URL = /^data:image\/(?:png|gif|jpe?g|webp|avif)[;,]/i
@@ -264,7 +265,7 @@ function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue
   if (scheme === undefined) return undefined
   return issue(
     node,
-    `The URL scheme "${scheme}:" is not allowed in ${where}; use http(s), mailto, tel or a path on the site`,
+    `The URL scheme "${scheme}:" is not allowed in ${where}; use http(s), mailto, tel, an entry link or a path on the site`,
   )
 }
 

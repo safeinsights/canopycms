@@ -537,7 +537,7 @@ MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which 
 
 - `{…}` expressions other than comments and plain values (`{/* note */}`, `{300}`), and `import`/`export`;
 - HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and event-handler, `srcdoc` and `dangerouslySetInnerHTML` attributes;
-- URL schemes other than http(s), mailto and tel; React 18 renders a `javascript:` href as given.
+- URL schemes other than http(s), mailto, tel and `entry:`; React 18 renders a `javascript:` href as given.
 
 Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. The editor shows the error, with its line, before saving.
 
