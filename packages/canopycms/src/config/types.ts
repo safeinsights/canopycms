@@ -400,7 +400,7 @@ export interface EntryValidationIssue {
   fieldPath?: string
 }
 
-/** Input passed to the `validateEntry` hook on every editor save. */
+/** Input passed to the `validateEntry` hook on every content save, from the editor or not. */
 export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
