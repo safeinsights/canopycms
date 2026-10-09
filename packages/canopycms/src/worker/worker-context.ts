@@ -52,6 +52,8 @@ export interface WorkerContext {
   readonly contentBranchesPath: string
   /** Content root directory name relative to repo root (default: 'content'). */
   readonly contentRoot: string
+  /** Longest the schema gate holds the base branch before advancing anyway (worker/schema-gate.ts). */
+  readonly schemaHoldMaxMs: number
   /** Per-task timeout in ms; also simple-git's inactivity block timeout. */
   readonly taskTimeoutMs: number
   /** Max tasks to process per `processTaskQueue` cycle. */

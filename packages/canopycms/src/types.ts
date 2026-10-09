@@ -142,6 +142,30 @@ export interface BuildIdentity {
 }
 
 /**
+ * The worker holding the base branch at its current tip because the incoming tip references
+ * entry schemas the serving editor does not define (worker/schema-gate.ts).
+ */
+export interface BaseSchemaHold {
+  /** The earliest of `firstSeen`. */
+  since: string
+  /** When each missing schema was first seen missing; the earliest bounds the hold. */
+  firstSeen: Record<string, string>
+  /** GitHub's base tip the worker is not advancing to. */
+  incomingSha: string
+  /** Schema names the incoming tip references and the serving editor's registry lacks. */
+  missingSchemas: string[]
+  /** `.collection.json` files referencing them, repo-relative, at most 10. */
+  files: string[]
+  /** How many files reference them, `files` being the first 10. */
+  fileCount: number
+  /** The build that recorded the registry the gate checked against. */
+  editorBuild: BuildIdentity
+  editorRecordedAt: string
+  /** Set on the cycle the hold outlived its bound and the worker advanced anyway. */
+  expired?: true
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -191,6 +215,11 @@ export interface WorkerStatusReport {
     }
   }
   lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+  /**
+   * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
+   * into a restarted worker's first snapshot, so the bound survives restarts.
+   */
+  baseHold?: BaseSchemaHold
   /**
    * How the previous worker stopped, carried into each new worker's snapshot
    * (task-queue/worker-status.ts's `readCarriedOverStatus`).

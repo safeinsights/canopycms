@@ -22,7 +22,7 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { CANOPY_META_DIR, isCanopyInternalPath, isNonFastForwardRejection } from '../utils/git'
-import type { BaseRefreshReport } from '../types'
+import type { BaseRefreshReport, BaseSchemaHold } from '../types'
 import {
   MAX_REPORTED_PATHS,
   TRACKED_CANOPY_STATE_FIX,
@@ -39,6 +39,7 @@ import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { maintainRemoteGit } from './remote-git-maintenance'
+import { decideBaseAdvance } from './schema-gate'
 import { reapplySparseCones } from './sparse-cone'
 import type { WorkerContext } from './worker-context'
 
@@ -51,10 +52,12 @@ import type { WorkerContext } from './worker-context'
  * the branches root (`repairBranchDirResidue`), move sparse clones to a changed
  * content root's cone (sparse-cone.ts), repack `remote.git` when it needs it
  * (remote-git-maintenance.ts), fetch every GitHub branch into the tracking namespace,
- * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`),
- * push this deployment's own settings branch, fast-forward the base branch's
- * workspace, rebase every branch that is behind it (rebase.ts), then sweep old
- * tasks and expired trashed branch directories.
+ * bring `refs/heads/*` toward it non-destructively (`reconcileTrackedBranches`,
+ * which holds the base branch while schema-gate.ts says the serving editor lacks
+ * a schema the incoming content names), push this deployment's own settings
+ * branch, fast-forward the base branch's workspace, rebase every branch that is
+ * behind it (rebase.ts), then sweep old tasks and expired trashed branch
+ * directories.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
@@ -75,6 +78,7 @@ export type GitSyncContext = Pick<
   | 'sanitizedBaseBranch'
   | 'contentBranchesPath'
   | 'remoteGitPath'
+  | 'schemaHoldMaxMs'
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'log'
@@ -258,13 +262,22 @@ export async function pushSettingsBranches(
 async function reconcileTrackedBranches(
   ctx: GitSyncContext,
   git: ReturnType<typeof simpleGit>,
-): Promise<{ summary: TrackedBranchSummary; trackedNames: Set<string> }> {
+): Promise<{
+  summary: TrackedBranchSummary
+  trackedNames: Set<string>
+  /**
+   * The schema gate's state for the base branch, or undefined when this cycle could not classify
+   * the base and the previous state stands.
+   */
+  baseHold: { hold: BaseSchemaHold | undefined } | undefined
+}> {
   const GIT_ZERO_OID = '0000000000000000000000000000000000000000'
   const created: string[] = []
   const fastForwarded: string[] = []
   const ahead: string[] = []
   const diverged: string[] = []
   const rewritten: string[] = []
+  let baseHold: { hold: BaseSchemaHold | undefined } | undefined
 
   // One invocation enumerates both namespaces: refs/heads/<name> (what the
   // Lambda pushes into and branch clones read from) and
@@ -308,7 +321,10 @@ async function reconcileTrackedBranches(
       continue
     }
 
-    if (localSha === trackedSha) continue // nothing to do
+    if (localSha === trackedSha) {
+      if (name === ctx.baseBranch) baseHold = { hold: undefined }
+      continue
+    }
 
     // [SYNC-M2] Everything below is per-branch best-effort: one unreadable ref
     // must cost its own branch, not the whole sync cycle. A ref pointing at a
@@ -340,6 +356,26 @@ async function reconcileTrackedBranches(
       }
 
       if (localAheadCount === 0 && localBehindCount > 0) {
+        // The base branch's fast-forward is the one source of new content for the base
+        // workspace, every rebased branch and every new clone, so the schema gate sits here.
+        if (name === ctx.baseBranch) {
+          const decision = await decideBaseAdvance({
+            git,
+            contentBranchesPath: ctx.contentBranchesPath,
+            baseBranch: name,
+            currentSha: localSha,
+            incomingSha: trackedSha,
+            previous: ctx.ensureStatusReport().baseHold,
+            maxHoldMs: ctx.schemaHoldMaxMs,
+          })
+          baseHold = { hold: decision.kind === 'advance' ? undefined : decision.hold }
+          if (decision.kind === 'hold') {
+            workerLog(
+              `  Tracked-branch reconcile: holding ${name} for an editor deploy defining ${decision.hold.missingSchemas.join(', ')}`,
+            )
+            continue
+          }
+        }
         try {
           await git.raw(['update-ref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
@@ -353,15 +389,18 @@ async function reconcileTrackedBranches(
       } else if (localBehindCount === 0 && localAheadCount > 0) {
         // Unpushed local work. Leave it.
         ahead.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       } else if (await hasPendingHistoryRewrite(ctx, name)) {
         // [SYNC-H1] Our own rebase published a rewrite into remote.git and the
         // GitHub push has not landed yet. Ref-level this is identical to a
         // collision, but expected and self-resolving, so it must not fire the
         // collision warning below.
         rewritten.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       } else {
         // Neither side is an ancestor of the other. Leave both alone.
         diverged.push(name)
+        if (name === ctx.baseBranch) baseHold = { hold: undefined }
       }
     } catch (err) {
       workerLogWarn(
@@ -385,9 +424,13 @@ async function reconcileTrackedBranches(
   // trackedNames is returned alongside the summary rather than folded into it:
   // it is a working set for pushSettingsBranches' stranded-branch check, and
   // listing every branch on GitHub would bloat worker-status.json for no reader.
+  // A base GitHub no longer has can be held for nothing.
+  if (!tracked.has(ctx.baseBranch)) baseHold = { hold: undefined }
+
   return {
     summary: { created, fastForwarded, ahead, diverged, rewritten },
     trackedNames: new Set(tracked.keys()),
+    baseHold,
   }
 }
 
@@ -396,21 +439,25 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
-  const git = simpleGit({
+  const gitOptions = {
     baseDir: ctx.remoteGitPath,
     // DEP-H1: a hung fetch/push would stall the sync loop forever
     // (scheduleLoop only reschedules after completion). The block timeout
     // is inactivity-based, so a slow-but-flowing transfer is unaffected.
     timeout: { block: ctx.taskTimeoutMs },
-    // A fetch or settings push still running at the drain deadline is killed.
-    // Each ref update is atomic, so a killed one leaves every ref either as it
-    // was or fully moved, and the next worker's sync carries on from there.
-    abort: ctx.shutdownSignal(),
-  })
+  }
+  const git = simpleGit(gitOptions)
+  // The fetch and the settings push, which reach GitHub, are killed at the drain
+  // deadline; a killed ref update leaves the ref as it was or fully moved.
+  // `reconcileTrackedBranches` gets `git`, which nothing aborts: the schema gate
+  // fails open on a read error, so a killed read could advance a held base and
+  // drop the hold's first-seen times.
+  const networkGit = simpleGit({ ...gitOptions, abort: ctx.shutdownSignal() })
   // gitNetworkChildEnv because the fetch and push here reach GitHub, and
-  // because pushSettingsBranches(git) below needs its stable-English guarantee
+  // because pushSettingsBranches below needs its stable-English guarantee
   // to classify a rejected settings-branch push.
   git.env(gitNetworkChildEnv())
+  networkGit.env(gitNetworkChildEnv())
 
   // The whole cycle is wrapped so both outcomes -- success and hard failure
   // (e.g. the fetch throwing against a poisoned remote.git) -- record a
@@ -444,7 +491,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // remote-tracking namespace rather than refs/heads/* -- see that constant's
     // doc comment for the destructive-fetch bug this avoids. Raw git, because
     // simple-git's fetch() with a URL does not support --prune.
-    await git.raw([
+    await networkGit.raw([
       'fetch',
       await ctx.buildGitHubUrl(),
       '--prune',
@@ -452,14 +499,24 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     ])
     workerLog('Fetched from GitHub')
 
-    const { summary: trackedSummary, trackedNames } = await reconcileTrackedBranches(ctx, git)
+    const {
+      summary: trackedSummary,
+      trackedNames,
+      baseHold,
+    } = await reconcileTrackedBranches(ctx, git)
+    // Recorded at once, so a step below that throws still persists the hold through the catch.
+    if (baseHold) {
+      const report = ctx.ensureStatusReport()
+      if (baseHold.hold) report.baseHold = baseHold.hold
+      else delete report.baseHold
+    }
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
     // Ensures settings reach GitHub even if a task queue entry is lost.
     // Ordering relative to the fetch/reconcile above is no longer a
     // correctness dependency now that the fetch can't clobber refs/heads/*
     // -- this could run before or after them just as safely.
-    await pushSettingsBranches(ctx, git, trackedNames)
+    await pushSettingsBranches(ctx, networkGit, trackedNames)
 
     if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)

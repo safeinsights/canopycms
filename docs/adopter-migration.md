@@ -67,6 +67,14 @@ types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, opt
 
 **To adopt.** Code that builds a `SchemaResolutionResult` adds `issues`.
 
+### Content naming a new schema waits for the editor deploy — **behaviour change**
+
+**What changed.** The worker holds the base branch, for up to 30 minutes, while synced content
+names an entry schema the running editor lacks; see
+[New schemas wait for the editor deploy](deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy).
+
+**To adopt.** Nothing. A custom worker entrypoint can pass `schemaHoldMaxMs` to `CmsWorker`.
+
 ### Preview references resolve at every depth, never as ids — **breaking (types): `isLoading`**
 
 **What changed.** The preview resolves references inside objects, object lists and blocks too. One

@@ -1,6 +1,7 @@
 'use client'
 
-import { Anchor, List, Text } from '@mantine/core'
+import type { CSSProperties } from 'react'
+import { Anchor, Box, Stack, Text } from '@mantine/core'
 import type { EntryReferencedBy } from '../../api/entries'
 import type { LogicalPath } from '../../paths/types'
 
@@ -9,6 +10,10 @@ export interface ReferencedByListProps {
   /** Opens a referencing entry in the editor. */
   onOpenEntry: (entryPath: LogicalPath) => void
 }
+
+// `anywhere`, unlike `break-word`, also lowers the min-content width, so an unbroken
+// title or slug narrows to the dialog instead of widening it into a horizontal scroll.
+const wrapAnywhere: CSSProperties = { overflowWrap: 'anywhere' }
 
 const pluralEntries = (n: number) => `${n} ${n === 1 ? 'entry' : 'entries'}`
 
@@ -25,37 +30,49 @@ export function referencedDeleteMessage({ entries, hiddenCount }: EntryReference
 /** The entries a delete would leave pointing at nothing, as far as the user may see them. */
 export function ReferencedByList({ referencedBy, onOpenEntry }: ReferencedByListProps) {
   const { entries, hiddenCount } = referencedBy
+  // Not Mantine's `List`: its `nowrap` column `inline-flex` items cannot narrow to the dialog.
   return (
-    <List size="sm" spacing={4} data-testid="referenced-by-list">
+    <Stack
+      component="ul"
+      gap={6}
+      m={0}
+      p={0}
+      style={{ listStyle: 'none' }}
+      // WebKit drops the list role from a `ul` styled `list-style: none`.
+      role="list"
+      data-testid="referenced-by-list"
+    >
       {entries.map((entry) => {
         const via = [
           ...(entry.fields.length > 0 ? [entry.fields.join(', ')] : []),
           ...(entry.links.length > 0 ? [`linked from ${entry.links.join(', ')}`] : []),
         ].join('; ')
         return (
-          <List.Item key={entry.entryPath}>
+          <Box component="li" key={entry.entryPath}>
             <Anchor
               component="button"
               type="button"
               size="sm"
+              ta="start"
+              style={wrapAnywhere}
               onClick={() => onOpenEntry(entry.entryPath)}
             >
               {entry.title}
-            </Anchor>{' '}
-            <Text span size="xs" c="dimmed">
+            </Anchor>
+            <Text size="xs" c="dimmed" style={wrapAnywhere}>
               ({via})
             </Text>
-          </List.Item>
+          </Box>
         )
       })}
       {hiddenCount > 0 && (
-        <List.Item>
-          <Text span size="sm" c="dimmed">
+        <Box component="li">
+          <Text size="sm" c="dimmed">
             {entries.length > 0 ? 'and ' : ''}
             {pluralEntries(hiddenCount)} you can&apos;t view
           </Text>
-        </List.Item>
+        </Box>
       )}
-    </List>
+    </Stack>
   )
 }
