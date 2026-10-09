@@ -1140,7 +1140,7 @@ The editor needs no asset mount point: it loads asset-store images through the s
 
 For local development, omit `media` (uploads go to `.canopy-dev/assets/` via the built-in local adapter), use `{ adapter: 'local', directory: '.canopy-dev/assets' }`, or use your real bucket.
 
-Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST, and the server then sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the exported helpers:
+Editors add images through the Media Library (a right-hand drawer from the editor's Settings menu), an `image` field, or the MDX "Insert Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST, and the server then sniffs the real file type, **strips EXIF metadata including GPS, sanitizes SVGs**, hashes the bytes and records the asset. Images are served from `/assets/t/{directives}/…` URLs, stored before release by `materialize-assets` (below) and cached immutably at the CDN; SVGs and PDFs are served statically. Build responsive markup with the client-safe helpers:
 
 ```typescript
 import { assetUrl, assetSrcSet } from 'canopycms'

@@ -11,6 +11,14 @@
   },
   "private": false,
   "type": "module",
+  "sideEffects": [
+    "./src/cli/cli.ts",
+    "./dist/cli/cli.js",
+    "./src/editor/theme.tsx",
+    "./dist/editor/theme.js",
+    "./src/test-utils/console-spy.ts",
+    "./src/test-utils/quiet-provision-log.ts"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -201,6 +209,7 @@
     "react-dom": "^18.3.1",
     "storybook": "^8.6.17",
     "tsx": "^4.19.0",
+    "typescript": "^5.6.3",
     "vite": "^6.4.2",
     "vitest": "^4.1.0"
   }
