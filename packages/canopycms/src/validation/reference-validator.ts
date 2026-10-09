@@ -11,6 +11,8 @@ export interface ValidationError {
   fieldPath: string
   id: string
   error: string
+  /** The id names no entry (a deleted target, or a collection); set by `validate()`. */
+  dangling?: true
 }
 
 export interface ValidationResult {
@@ -85,6 +87,7 @@ export class ReferenceValidator {
             fieldPath,
             id,
             error: 'Referenced entry does not exist',
+            dangling: true,
           })
           continue
         }
@@ -95,6 +98,7 @@ export class ReferenceValidator {
             fieldPath,
             id,
             error: 'ID points to a collection, not an entry',
+            dangling: true,
           })
           continue
         }
