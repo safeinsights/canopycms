@@ -530,6 +530,7 @@ Field components, in `editor/fields/`:
 - `rich-text-failures.ts` — markdown that failed rich text, reopened as source
 - `FieldCrashFallback.tsx` — a crashed field's read-only value, or markdown source
 - `mdx-jsx-support.tsx` — JSX plugins; round-trip guard
+- `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object field, with a Clear control when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
@@ -790,7 +791,8 @@ in `server.ts` and `client.ts`. See
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
-- `yaml-source-splice.ts` — `spliceSource`, writes reconciled YAML into its own source text
+- `yaml-source-splice.ts` — `spliceSource`, its YAML half
+- `json-source-splice.ts` — `serializeJson`, the JSON half
 - `body-field.ts` — `isBody` flag validation, including `findReservedBodyFieldName`
 - `title-field.ts` — `isTitle` flag utilities: `resolveEntryTitle`, `findInvalidTitleFields`, `findTitleFieldsInLists`
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
