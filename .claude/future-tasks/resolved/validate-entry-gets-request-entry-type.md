@@ -2,9 +2,11 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from marketing-site request 70. `validateEntry` gets the request's `entryType`, not the resolved one, so a save that omits it skips a type-gated rule. The marketing site's refusal of executable MDX is such a rule. One-line fix plus a doc line
+  RESOLVED 2026-10-09, branch `fix/validate-entry-resolved-type`, base `int-202610-b` (marketing-site request 70). `validateEntry` now receives the resolved entry type the store writes with (an existing entry's on-disk type, else the requested one, else the collection's default), so a save that omits `entryType` still meets a type-gated rule. The handler is the hook's only caller; renames and deletes never invoke it. A write to an `unavailable` type is still refused with `SchemaUnavailableError` before the hook runs, now pinned by a test.
 ---
 # `validateEntry` receives the request's `entryType`, not the resolved one
+
+**Status: RESOLVED 2026-10-09**, branch `fix/validate-entry-resolved-type`, base `int-202610-b`.
 
 **Priority:** P1 [BOTH]. **Found:** 2026-10-06, marketing-site request 70; still true at `fecc04a0`.
 

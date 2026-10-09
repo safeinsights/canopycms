@@ -844,7 +844,7 @@ Canopy packages export raw TypeScript rather than pre-compiled output, because a
 
 ### Save-Time Validation Hook
 
-The config accepts a `validateEntry` hook for adopter-defined server-side validation of every editor save (see [Save-Time Validation](#save-time-validation)). Unlike auth plugins and framework adapters it needs no separate package: it is a deliberate config-surface extension that stays inside the existing config touchpoint, preserving the config + Editor + one-API-route contract.
+The config accepts a `validateEntry` hook for adopter-defined server-side validation of every content save (see [Save-Time Validation](#save-time-validation)). Unlike auth plugins and framework adapters it needs no separate package: it is a deliberate config-surface extension that stays inside the existing config touchpoint, preserving the config + Editor + one-API-route contract.
 
 ## Key Design Decisions
 

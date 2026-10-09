@@ -406,7 +406,7 @@ Schemas are not a config key: declare them with `defineEntrySchema`, register th
 
 ### Save-Time Validation (`validateEntry`)
 
-Schema validation keeps field shapes clean, but cannot know that a markdown body must compile as MDX for your production build to succeed. The optional `validateEntry` hook lets the site refuse, or flag, a save that would break it:
+Schema validation cannot know that a markdown body must compile as MDX for your build. The optional `validateEntry` hook lets the site refuse, or flag, such a save:
 
 ```typescript
 // canopycms.config.ts
@@ -431,7 +431,7 @@ export default defineCanopyConfig({
 })
 ```
 
-The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every editor content save. `error` issues reject the save and show the message to the editor; `warning` issues let it through as a notification. **It gates content writes only** — renames and deletes do not invoke it. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing.
+The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every content save; `entryType` is the type the entry is written as, even when the request omits it, so a type-gated rule always applies. `error` issues reject the save, showing the editor the message; `warning` issues save with a notification. **It gates content writes only**, not renames or deletes. Pair it with the preview error channel ([Live Preview](#live-preview)) so authors see compile failures while typing.
 
 ### Comments in Content Files Survive Editing
 
