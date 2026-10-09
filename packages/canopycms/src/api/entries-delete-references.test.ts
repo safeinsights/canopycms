@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema, type PathPermission } from '../config'
@@ -12,6 +12,19 @@ import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 import { deleteEntry } from './entries'
+
+const listing = vi.hoisted(() => ({ failure: null as Error | null }))
+vi.mock('../content-listing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../content-listing')>()
+  return {
+    ...actual,
+    listEntries: (...args: Parameters<typeof actual.listEntries>) =>
+      listing.failure ? Promise.reject(listing.failure) : actual.listEntries(...args),
+  }
+})
+afterEach(() => {
+  listing.failure = null
+})
 
 const PEOPLE_DIR = 'people.pEoPLEdir123'
 const POSTS_DIR = 'posts.pstsDir12345'
@@ -227,6 +240,18 @@ describe('deleteEntry: entries other entries reference', () => {
 
     expect(res.status).toBe(403)
     expect(res.data).toBeUndefined()
+    expect(await exists(`person.alice.${ALICE}.json`)).toBe(true)
+  })
+
+  it('reports a failed scan as a failed check, not as this entry missing, and deletes nothing', async () => {
+    const { del, exists } = await setup()
+    listing.failure = Object.assign(new Error('ENOENT: another file vanished mid-scan'), {
+      code: 'ENOENT',
+    })
+    const res = await del('content/people/alice')
+
+    expect(res.status).toBe(500)
+    expect(res.error).toBe('Could not check which entries reference this one; try again')
     expect(await exists(`person.alice.${ALICE}.json`)).toBe(true)
   })
 

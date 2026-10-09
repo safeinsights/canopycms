@@ -512,7 +512,21 @@ const deleteEntryHandler = async (
 
     // Advisory: a reference saved between this scan and the delete below still dangles.
     if (contentId && !params.confirmReferenced) {
-      const referencedBy = await findReferencedBy(branchContext, ctx, req, contentId)
+      let referencedBy: EntryReferencedBy | null
+      try {
+        referencedBy = await findReferencedBy(branchContext, ctx, req, contentId)
+      } catch (err) {
+        // Outside the catch below, which would report a file vanishing mid-scan as this entry.
+        log.warn('delete-entry', 'Reference scan failed', {
+          entryPath,
+          error: getErrorMessage(err),
+        })
+        return {
+          ok: false,
+          status: 500,
+          error: 'Could not check which entries reference this one; try again',
+        }
+      }
       if (referencedBy) {
         const count = referencedBy.entries.length + referencedBy.hiddenCount
         return {

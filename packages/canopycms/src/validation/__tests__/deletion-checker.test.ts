@@ -156,6 +156,16 @@ describe('findReferencingEntries', () => {
       expect(result[0].links).toEqual(['content'])
     })
 
+    it('walks data a YAML alias made cyclic, reporting a shared object once', () => {
+      const shared: Record<string, unknown> = { note: `[x](entry:${TARGET_ID})` }
+      shared.self = shared
+      const result = findReferencingEntries(
+        [entry('yaml', undefined, { a: shared, b: shared })],
+        TARGET_ID,
+      )
+      expect(result[0].links).toEqual(['a.note'])
+    })
+
     it('finds a link in any string the reader resolves, whatever its field type', () => {
       const schema: FieldConfig[] = [
         { name: 'ctaHref', type: 'string', label: 'CTA' },

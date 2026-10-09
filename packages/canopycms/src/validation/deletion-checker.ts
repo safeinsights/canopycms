@@ -38,18 +38,24 @@ export function findReferencingEntries<E extends ReferenceScanEntry>(
   return found
 }
 
-/** Mirrors `resolveEntryLinksInData`, which rewrites a link in any string of an entry's data. */
-function findLinkingPaths(value: unknown, path: string, targetId: string): string[] {
+/** Mirrors `resolveEntryLinksInData` (any string); `seen` stops at a YAML alias cycle. */
+function findLinkingPaths(
+  value: unknown,
+  path: string,
+  targetId: string,
+  seen = new WeakSet<object>(),
+): string[] {
   if (typeof value === 'string') {
     return extractEntryLinkIds(value).some((link) => link.id === targetId) ? [path] : []
   }
+  if (value === null || typeof value !== 'object' || seen.has(value)) return []
+  seen.add(value)
   if (Array.isArray(value)) {
-    return value.flatMap((item, index) => findLinkingPaths(item, `${path}[${index}]`, targetId))
-  }
-  if (value !== null && typeof value === 'object') {
-    return Object.entries(value).flatMap(([key, item]) =>
-      findLinkingPaths(item, path ? `${path}.${key}` : key, targetId),
+    return value.flatMap((item, index) =>
+      findLinkingPaths(item, `${path}[${index}]`, targetId, seen),
     )
   }
-  return []
+  return Object.entries(value).flatMap(([key, item]) =>
+    findLinkingPaths(item, path ? `${path}.${key}` : key, targetId, seen),
+  )
 }

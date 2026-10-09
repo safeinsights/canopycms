@@ -33,7 +33,7 @@
         },
         "packages/canopycms/src/cli": {
           "maxRun": 30,
-          "ratio": 0.317
+          "ratio": 0.315
         },
         "packages/canopycms/src/config": {
           "maxRun": 30,
