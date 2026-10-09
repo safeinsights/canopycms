@@ -92,8 +92,8 @@ describe('ReferencedByList', () => {
 })
 
 describe('ReferencedByList layout', () => {
-  // jsdom applies only the stylesheets in the document, so the layout is checked
-  // against Mantine's own CSS for every component the list can render.
+  // jsdom applies only the stylesheets in the document, so the layout is checked against
+  // Mantine's own CSS for the components the list renders, plus `List`, so a return to it fails.
   const mantineCss = ['List', 'Anchor', 'Text', 'Stack']
     .map((name) =>
       readFileSync(

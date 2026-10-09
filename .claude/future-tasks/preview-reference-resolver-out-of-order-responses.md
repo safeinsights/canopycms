@@ -18,7 +18,8 @@ already answered.
 So when two requests for the same id are in flight and the referenced entry changes between
 them, the older response can settle last and overwrite the newer one. The preview then shows
 the stale target until `entryKey` changes (which expires the cache) or the branch changes
-(which replaces it).
+(which replaces it). Only a missing-target answer expires sooner, after
+`MISSING_REFERENCE_TTL_MS`.
 
 The window is narrow: the target has to change inside one 300 ms debounce window plus network
 latency. Accepted as LOW in #449's review.
