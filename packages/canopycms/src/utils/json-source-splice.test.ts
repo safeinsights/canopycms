@@ -81,7 +81,7 @@ describe('serializeJson', () => {
       '{\n  "a": 1,\n  "c": 3\n}\n',
     ],
     ['the last member', '{\n  "a": [1, 2],\n  "c": 3\n}\n', 'c', '{\n  "a": [1, 2]\n}\n'],
-    ['the only member', '{\n  "a": 1\n}\n', 'a', '{\n}\n'],
+    ['the only member', '{\n  "a": 1\n}\n', 'a', '{}\n'],
     [
       'the first member of a one-line object',
       '{ "a": 1, "b": [1, 2] }\n',
@@ -98,6 +98,14 @@ describe('serializeJson', () => {
     const data = JSON.parse(file) as Record<string, unknown>
     delete data[key]
     expect(serializeJson(data, file)).toBe(expected)
+  })
+
+  it('writes an object emptied of its members as {}', () => {
+    const file = '{\n  "meta": {\n    "x": 1\n  },\n  "tags": ["a", "b"]\n}\n'
+    expect(serializeJson({ meta: {}, tags: ['a', 'b'] }, file)).toBe(
+      '{\n  "meta": {},\n  "tags": ["a", "b"]\n}\n',
+    )
+    expect(serializeJson({}, '{\n  "a": [1, 2]\n}\n')).toBe('{}\n')
   })
 
   it('removes a key set to undefined', () => {

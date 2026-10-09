@@ -95,6 +95,10 @@ function reconcile(
   formattingOptions: FormattingOptions,
 ): string {
   if (isRecord(before) && isRecord(after)) {
+    // Removing every member one by one would leave the braces on their own lines.
+    if (Object.keys(after).length === 0 && Object.keys(before).length > 0) {
+      return applyEdits(text, modify(text, path, {}, { formattingOptions }))
+    }
     let next = text
     for (const key of Object.keys(before)) {
       if (!Object.prototype.hasOwnProperty.call(after, key))
