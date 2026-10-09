@@ -41,7 +41,7 @@ below this one are the August triage, kept as history.
 | 51 (who saved each edit; the submitter half shipped) | [submission-editor-tracking.md](submission-editor-tracking.md) |
 | 53 (deployed timing breakdown still owed) | [editor-api-latency.md](editor-api-latency.md) |
 | 66 | [editor-renders-inside-root-layout-docs.md](editor-renders-inside-root-layout-docs.md) |
-| 70 | [validate-entry-gets-request-entry-type.md](validate-entry-gets-request-entry-type.md) |
+| 70 | [validate-entry-gets-request-entry-type.md](resolved/validate-entry-gets-request-entry-type.md) |
 | 77 | [rich-text-component-in-list-item-glued.md](rich-text-component-in-list-item-glued.md) |
 | 87 item 5 (`onClientError`) | [editor-client-error-reporting-hook.md](editor-client-error-reporting-hook.md) |
 
