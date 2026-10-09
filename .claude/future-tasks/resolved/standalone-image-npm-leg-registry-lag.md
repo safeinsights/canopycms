@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  CI's "Standalone CMS Image (npm, ubuntu-latest)" leg resolves dependencies fresh from the registry, so it fails whenever a dependency family is mid-publish. On 2026-10-09, during an AWS SDK release, it failed three times on PR #452 (ETARGET twice on different `@aws-sdk/*` versions, then a 404 on a tarball whose version was already listed) and passed on re-run once the publish settled. Candidate fix: `npm install --before=<about an hour ago>` in `scripts/smoke/standalone-image.mjs`, or one delayed retry on ETARGET/E404.
+  RESOLVED: `scripts/smoke/standalone-image.mjs` retries the scaffold's install and the image's `docker build` after 30, 60 and 120 s when their output shows npm's ETARGET/E404/ENOTFOUND or pnpm's NO_MATCHING_VERSION/FETCH_404, logging the matched code; any other failure fails at once. The leg still resolves unpinned. Originally: CI's "Standalone CMS Image (npm, ubuntu-latest)" leg failed three times on PR #452 during an AWS SDK release (ETARGET twice, then a 404 on a listed tarball).
 ---
 # The standalone-image npm leg fails while a dependency is mid-publish
 
