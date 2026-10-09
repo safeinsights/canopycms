@@ -639,7 +639,7 @@ const pageSchema = defineEntrySchema([
 
 Reading resolves it automatically: `read()` and `readByUrlPath()` recurse into block templates and resolve any `reference` field there, the same as a top-level one, so `section.value.snippet` on a `sharedCta` section is the full resolved entry rather than an id.
 
-> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export is separate: it disables resolution on purpose, so shared-block content is not duplicated into every referencing page's export.)
+> **In a listing, ask for resolution explicitly.** [`listEntries()`](#listing-entries) and `buildContentTree()` read content files raw off disk and resolve nothing **unless you pass `{ resolveReferences: true }`** — so a surface built from a listing without it sees a shared block's reference as `null` or a bare id, and a search index built that way silently contains nothing for those blocks. See [Resolving References in a Listing](#resolving-references-in-a-listing). (The AI-content export links a reference instead of inlining it; see [AI-Ready Content](#ai-ready-content).)
 
 ## Content Identification & References
 
@@ -1600,6 +1600,8 @@ post: previewView({
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
 All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL follows `entryLinkUrl`, as body `entry:` links do. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
 ### Option 1: Route Handler (Runtime)
 
