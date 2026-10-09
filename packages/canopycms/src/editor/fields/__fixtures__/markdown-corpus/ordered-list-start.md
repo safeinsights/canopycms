@@ -16,3 +16,10 @@ A list nested in a list item can start anywhere too:
 
 - 5. Review the change.
   6. Publish it.
+
+One after a paragraph in its item:
+
+- Then:
+
+  7. Check the preview.
+  8. Publish.

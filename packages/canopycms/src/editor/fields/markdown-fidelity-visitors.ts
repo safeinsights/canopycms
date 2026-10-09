@@ -17,6 +17,7 @@ type LexicalNode = ExportParams['lexicalNode']
 type MdastParent = ExportParams['mdastParent']
 type MdastNode = Parameters<MdxEditorModule['isMdastJsxNode']>[0]
 type MdastList = Extract<MdastNode, { type: 'list' }>
+type MdastListItem = Extract<MdastNode, { type: 'listItem' }>
 type MdastLink = Extract<MdastNode, { type: 'link' }>
 type MdastPhrasing = MdastLink['children'][number]
 
@@ -36,6 +37,10 @@ function isListLike(node: unknown): node is ListLike {
     'setStart' in node &&
     typeof node.setStart === 'function'
   )
+}
+
+function isListItem(node: MdastParent): node is MdastParent & MdastListItem {
+  return node.type === 'listItem'
 }
 
 /** The lexical LinkNode methods used here; an AutoLinkNode is one too. */
@@ -105,8 +110,11 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
     visitNode({ mdastNode, lexicalParent, actions }) {
       actions.nextVisitor()
       // MDXEditor appends the list, or for a nested one, a list item holding it after the parent.
+      // Under an insert, `lexicalParent` is an import point that is no element node.
       const holder =
-        lexicalParent.getType() === 'listitem' ? lexicalParent.getNextSibling() : lexicalParent
+        lexicalParent.getType() === 'listitem' && $isElementNode(lexicalParent)
+          ? lexicalParent.getNextSibling()
+          : lexicalParent
       const list = $isElementNode(holder)
         ? lexicalParent === holder
           ? holder.getLastChild()
@@ -124,6 +132,11 @@ export function createMarkdownFidelityPlugin(mdx: MdxEditorModule): () => MdxEdi
       actions.nextVisitor()
       const list = mdastParent.children.at(-1)
       if (list?.type === 'list' && isListLike(lexicalNode)) list.start = lexicalNode.getStart()
+      // Only a list starting at 1 can interrupt a paragraph, so one after other content in a list
+      // item needs the blank line a loose item writes, or it reads back as that paragraph's text.
+      if (isListItem(mdastParent) && mdastParent.children.length > 1) {
+        mdastParent.spread = true
+      }
     },
   }
 
