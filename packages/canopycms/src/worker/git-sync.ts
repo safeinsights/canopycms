@@ -38,6 +38,7 @@ import { maintainRemoteGit } from './remote-git-maintenance'
 import { decideBaseAdvance } from './schema-gate'
 import {
   SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
   assertSharedRepoConfig,
   fetchFromRemoteGit,
   sharedRepoGit,
@@ -902,6 +903,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
           `Base branch workspace (${ctx.baseBranch}): stopped tracking ${droppedUpstream.join(', ')}, as upstream has`,
         )
       }
+      // Outside the try below: a refusal is not a diverged history.
+      await assertNoIncomingSubmodules(baseGit, basePath, 'HEAD', fetchedTip)
       try {
         await baseGit.merge(['--ff-only', fetchedTip])
       } catch (err) {

@@ -37,6 +37,7 @@ import {
 import { workerLog, workerLogWarn } from './log'
 import {
   SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
   assertSharedRepoConfig,
   fetchFromRemoteGit,
   sharedRepoGit,
@@ -947,6 +948,7 @@ async function rebaseOneBranch(
       // the rebase makes unreadable.
       const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
       const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
       const { completed, conflictedFiles, failureReason } = await runRebaseRounds(
         ctx,

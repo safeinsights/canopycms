@@ -22,6 +22,7 @@ import { initTestRepo } from '../test-utils'
 import {
   SHARED_REPO_STATUS_ARGS,
   UntrustedRepoConfigError,
+  assertNoIncomingSubmodules,
   assertSharedRepoConfig,
   fetchFromRemoteGit,
   mirrorGitOptions,
@@ -85,10 +86,10 @@ async function sharedPair(): Promise<{ remote: string; clone: string; cloneGit: 
 
 /**
  * Embed a repository at `<clone>/sub` whose own config names a filter, record it in the clone's
- * index as a submodule (no `.gitmodules` entry needed), and touch its file the way that makes
+ * index as a submodule unless `register` is false, and touch its file the way that makes
  * `git status` inside it run the filter: same size, newer mtime.
  */
-async function plantSubmodule(clone: string): Promise<void> {
+async function plantSubmodule(clone: string, options: { register?: boolean } = {}): Promise<void> {
   const sub = path.join(clone, 'sub')
   await fs.mkdir(sub)
   const subGit = await initTestRepo(sub)
@@ -101,23 +102,55 @@ async function plantSubmodule(clone: string): Promise<void> {
     `sh -c '${record('submodule')}; cat'`,
   )
   await fs.writeFile(path.join(sub, '.gitattributes'), '* filter=planted\n')
-  const sha = (await subGit.revparse(['HEAD'])).trim()
-  await execFileAsync('git', [
-    '-C',
-    clone,
-    'update-index',
-    '--add',
-    '--cacheinfo',
-    `160000,${sha},sub`,
-  ])
-  // `ignore = none` here outranks a config setting, not a command-line one.
-  await fs.writeFile(
-    path.join(clone, '.gitmodules'),
-    '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
-  )
+  if (options.register !== false) {
+    const sha = (await subGit.revparse(['HEAD'])).trim()
+    await execFileAsync('git', [
+      '-C',
+      clone,
+      'update-index',
+      '--add',
+      '--cacheinfo',
+      `160000,${sha},sub`,
+    ])
+    // `ignore = none` here outranks a config setting, not a command-line one.
+    await fs.writeFile(
+      path.join(clone, '.gitmodules'),
+      '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+    )
+  }
   await fs.writeFile(path.join(sub, 'f'), 'b\n')
   const later = new Date(Date.now() + 60_000)
   await fs.utimes(path.join(sub, 'f'), later, later)
+}
+
+/**
+ * Commit to remote.git's main, as the Lambda could: `files`, plus a submodule at `subPath` and a
+ * `.gitmodules` whose `ignore = none` outranks a config setting. Returns the new tip.
+ */
+async function commitGitlinkInto(
+  remote: string,
+  subPath: string,
+  files: Record<string, string> = {},
+): Promise<string> {
+  const work = path.join(root, `upstream-${subPath}`)
+  await execFileAsync('git', ['clone', '-q', '--branch', 'main', remote, work])
+  const git = simpleGit({ baseDir: work })
+  await git.addConfig('user.name', 'Lambda')
+  await git.addConfig('user.email', 'l@canopycms.test')
+  for (const [name, content] of Object.entries(files)) {
+    await fs.writeFile(path.join(work, name), content)
+  }
+  await fs.writeFile(
+    path.join(work, '.gitmodules'),
+    `[submodule "${subPath}"]\n\tpath = ${subPath}\n\tignore = none\n`,
+  )
+  const sha = (await git.revparse(['HEAD'])).trim()
+  await git.raw(['update-index', '--add', '--cacheinfo', `160000,${sha},${subPath}`])
+  // Not `add .`, which would stage the gitlink's removal: there is no directory for it here.
+  await git.add(['.gitmodules', ...Object.keys(files)])
+  await git.commit('upstream adds a submodule')
+  await git.raw(['push', '-q', 'origin', 'main'])
+  return (await git.revparse(['HEAD'])).trim()
 }
 
 describe('assertSharedRepoConfig: every shape CanopyCMS writes passes', () => {
@@ -279,7 +312,7 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
     await fs.appendFile(path.join(remote, 'config'), '\n[core\n\tbroken\n')
 
     await expect(assertSharedRepoConfig(remote, 'bare')).rejects.toThrow(
-      /^Refusing to run git in \S+remote\.git: .*\(unreadable: .*bad config line/,
+      /^Refusing to run git in \S+remote\.git: git could not read its config \(.*bad config line.*\)\. Check \S+remote\.git\/config and every file it includes\.$/s,
     )
   })
 
@@ -290,7 +323,7 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
     await setConfig(path.join(remote, 'config'), 'include.path', fifo)
 
     await expect(assertSharedRepoConfig(remote, 'bare', { timeoutMs: 500 })).rejects.toThrow(
-      /^Refusing to run git in \S+remote\.git: .*\(unreadable: /,
+      /^Refusing to run git in \S+remote\.git: reading its git config did not finish, which an include\.path naming a pipe or device causes\./,
     )
   })
 
@@ -302,7 +335,9 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
     const notAClone = path.join(outer, 'not-a-clone')
     await fs.mkdir(notAClone)
 
-    await expect(assertSharedRepoConfig(notAClone, 'worktree')).rejects.toThrow(/\(unreadable: /)
+    await expect(assertSharedRepoConfig(notAClone, 'worktree')).rejects.toThrow(
+      /git could not read its config/,
+    )
   })
 })
 
@@ -319,16 +354,41 @@ describe('assertSharedRepoConfig: a repository that is really somewhere else', (
     await expect(assertSharedRepoConfig(linked, 'bare')).rejects.toThrow(/is not a directory/)
   })
 
-  it('refuses a clone whose index holds a submodule, naming it and the fix', async () => {
+  it('refuses a clone with a repository in a submodule, naming it and the fix', async () => {
     const { clone } = await sharedPair()
     await plantSubmodule(clone)
 
     await expect(assertSharedRepoConfig(clone, 'worktree')).rejects.toThrow(
-      `Refusing to run git in ${clone}: its index holds a submodule at "sub", which git status ` +
-        `would run git inside, under that submodule's own config. CanopyCMS never writes one. ` +
-        `Find out how it got there, then remove it: git -C '${clone}' rm --cached 'sub'`,
+      `Refusing to run git in ${clone}: it has a submodule with a repository in it at "sub", ` +
+        `and git runs inside one under its own config. CanopyCMS never populates a submodule. ` +
+        `Find out how it got there, then remove it: rm -rf '${clone}/sub/.git'`,
     )
     expect(await sentinelLines()).toEqual([])
+  })
+
+  it("accepts an unpopulated submodule, as a non-recursive clone of an adopter's repository has", async () => {
+    const { clone, cloneGit } = await sharedPair()
+    const sha = (await cloneGit.revparse(['HEAD'])).trim()
+    await cloneGit.raw(['update-index', '--add', '--cacheinfo', `160000,${sha},themes/theme`])
+    await fs.mkdir(path.join(clone, 'themes', 'theme'), { recursive: true })
+
+    await expect(assertSharedRepoConfig(clone, 'worktree')).resolves.toBeUndefined()
+  })
+
+  it('refuses an incoming commit that adds a submodule where a repository already sits', async () => {
+    const { remote, clone } = await sharedPair()
+    const sub = path.join(clone, 'sub')
+    await fs.mkdir(sub)
+    await initTestRepo(sub)
+    const tip = await commitGitlinkInto(remote, 'sub')
+    const cloneGit = sharedRepoGit(clone, 'worktree')
+    await fetchFromRemoteGit(cloneGit, remote, 'main')
+
+    await expect(assertNoIncomingSubmodules(cloneGit, clone, 'HEAD', tip)).rejects.toThrow(
+      /it has a submodule with a repository in it at "sub"/,
+    )
+    await fs.rm(path.join(sub, '.git'), { recursive: true })
+    await expect(assertNoIncomingSubmodules(cloneGit, clone, 'HEAD', tip)).resolves.toBeUndefined()
   })
 
   it('refuses a .git that names a common directory elsewhere', async () => {
@@ -524,6 +584,27 @@ describe('the pins, with the check skipped (a key planted after it ran)', () => 
     await cloneGit.raw(['merge', '--ff-only', 'FETCH_HEAD'])
 
     expect((await cloneGit.revparse(['HEAD'])).trim()).toBe(signed)
+    expect(await sentinelLines()).toEqual([])
+  })
+
+  it('keep the commit a continued rebase makes out of a submodule, whatever .gitmodules says', async () => {
+    const { remote, clone, cloneGit: plain } = await sharedPair()
+    // Upstream changes a.txt and adds a submodule; the branch changes a.txt too, so the rebase stops.
+    await commitGitlinkInto(remote, 'sub', { 'a.txt': 'upstream\n' })
+    await fs.writeFile(path.join(clone, 'a.txt'), 'branch\n')
+    await plain.commit('branch a', ['a.txt'])
+    await plantSubmodule(clone, { register: false })
+    await fs.appendFile(path.join(clone, '.git', 'info', 'exclude'), '\nsub/\n')
+
+    const cloneGit = sharedRepoGit(clone, 'worktree')
+    await fetchFromRemoteGit(cloneGit, remote, 'main')
+    await expect(cloneGit.raw(['rebase', 'FETCH_HEAD'])).rejects.toThrow(/CONFLICT/)
+    await cloneGit.raw(['checkout', '--theirs', '--', 'a.txt'])
+    await cloneGit.add('a.txt')
+    const later = new Date(Date.now() + 180_000)
+    await fs.utimes(path.join(clone, 'sub', 'f'), later, later)
+    await cloneGit.raw(['rebase', '--continue'])
+
     expect(await sentinelLines()).toEqual([])
   })
 

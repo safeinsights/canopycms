@@ -96,6 +96,9 @@ const SHARED_REPO_PINS: readonly string[] = [
   'push.negotiate=false',
   'submodule.recurse=false',
   'diff.ignoreSubmodules=all',
+  // The commit `rebase --continue` makes would otherwise summarise status, descending into a
+  // submodule under that submodule's own config.
+  'commit.status=false',
   'fetch.recurseSubmodules=false',
   'push.recurseSubmodules=no',
   'gc.auto=0',
@@ -293,6 +296,20 @@ export class UntrustedRepoConfigError extends Error {
   }
 }
 
+/** A shared repository whose config git could not read, or did not finish reading. */
+function unreadableConfig(repoPath: string, configFile: string, err: unknown): Error {
+  const cause = getErrorMessage(err).trim()
+  const timedOut = /block timeout/i.test(cause)
+  return new Error(
+    `Refusing to run git in ${repoPath}: ` +
+      (timedOut
+        ? `reading its git config did not finish, which an include.path naming a pipe or device ` +
+          `causes. Check ${configFile} and every file it includes.`
+        : `git could not read its config (${cause}). Check ${configFile} and every file it ` +
+          `includes.`),
+  )
+}
+
 async function pathExists(file: string): Promise<boolean> {
   return fs.lstat(file).then(
     () => true,
@@ -357,9 +374,7 @@ export async function assertSharedRepoConfig(
       '-z',
     ])
   } catch (err: unknown) {
-    throw new UntrustedRepoConfigError(absolute, [
-      { key: `(unreadable: ${getErrorMessage(err).trim()})`, file: path.join(gitDir, 'config') },
-    ])
+    throw unreadableConfig(absolute, path.join(gitDir, 'config'), err)
   }
 
   const unexpected: UnexpectedConfigKey[] = []
@@ -379,31 +394,70 @@ export async function assertSharedRepoConfig(
 }
 
 /**
- * Refuse a clone whose index holds a submodule (a gitlink). `git status` runs git inside one with
- * that submodule's own config, which no allowlist here reads; content never uses submodules.
- * {@link SHARED_REPO_STATUS_ARGS} keeps status out of one planted after this check.
+ * Refuse a clone whose index holds a submodule with a repository in it. Git runs inside one, under
+ * that repository's own config, which no allowlist here reads; the pins and
+ * {@link SHARED_REPO_STATUS_ARGS} keep the worker's own commands out, and this refuses the plant.
+ * An unpopulated submodule, which a non-recursive clone of a repository that has one leaves, is
+ * harmless and allowed.
  */
 async function assertNoSubmodules(
   clone: string,
   timeout: Partial<SimpleGitOptions>,
 ): Promise<void> {
-  const entries = (
-    await sharedRepoGit(clone, 'worktree', timeout).raw(['ls-files', '--stage', '-z'])
-  ).split('\0')
-  const gitlinks = entries
+  let listing: string
+  try {
+    // --sparse: a sparse index stays collapsed rather than being expanded for every clone.
+    listing = await sharedRepoGit(clone, 'worktree', timeout).raw([
+      'ls-files',
+      '--stage',
+      '--sparse',
+      '-z',
+    ])
+  } catch (err: unknown) {
+    throw unreadableConfig(clone, path.join(clone, '.git', 'index'), err)
+  }
+  const gitlinks = listing
+    .split('\0')
     .filter((entry) => entry.startsWith('160000 '))
     .map((entry) => entry.slice(entry.indexOf('\t') + 1))
-  if (gitlinks.length > 0) {
-    throw new Error(
-      `Refusing to run git in ${clone}: its index holds a submodule at ` +
-        `${gitlinks.map((p) => JSON.stringify(p)).join(', ')}, which git status would run git ` +
-        `inside, under that submodule's own config. CanopyCMS never writes one. Find out how it ` +
-        `got there, then remove it: ` +
-        gitlinks
-          .map((p) => `git -C ${shellQuote(clone)} rm --cached ${shellQuote(p)}`)
-          .join(' && '),
-    )
+  await refusePopulated(clone, gitlinks)
+}
+
+/**
+ * Refuse a rebase or fast-forward from `from` to `to` in `clone` that would bring in a submodule
+ * at a path where a repository already sits, as one planted ahead of it would.
+ */
+export async function assertNoIncomingSubmodules(
+  git: SimpleGit,
+  clone: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  // Raw diff-tree records: `:oldmode newmode oldsha newsha status` NUL path NUL.
+  const fields = (
+    await git.raw(['diff-tree', '-r', '-z', '--no-renames', '--end-of-options', from, to])
+  ).split('\0')
+  const incoming: string[] = []
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const newMode = fields[i].split(' ')[1]
+    if (newMode === '160000') incoming.push(fields[i + 1])
   }
+  await refusePopulated(clone, incoming)
+}
+
+async function refusePopulated(clone: string, gitlinks: string[]): Promise<void> {
+  const populated: string[] = []
+  for (const gitlink of gitlinks) {
+    if (await pathExists(path.join(clone, gitlink, '.git'))) populated.push(gitlink)
+  }
+  if (populated.length === 0) return
+  throw new Error(
+    `Refusing to run git in ${clone}: it has a submodule with a repository in it at ` +
+      `${populated.map((p) => JSON.stringify(p)).join(', ')}, and git runs inside one under its ` +
+      `own config. CanopyCMS never populates a submodule. Find out how it got there, then remove ` +
+      `it: ` +
+      populated.map((p) => `rm -rf ${shellQuote(path.join(clone, p, '.git'))}`).join(' && '),
+  )
 }
 
 /**

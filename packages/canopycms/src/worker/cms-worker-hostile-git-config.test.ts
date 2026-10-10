@@ -372,6 +372,10 @@ describe('config planted in a branch clone', () => {
     await fs.writeFile(path.join(sub, '.gitattributes'), '* filter=planted\n')
     const sha = (await subGit.revparse(['HEAD'])).trim()
     await f.branchGit.raw(['update-index', '--add', '--cacheinfo', `160000,${sha},sub`])
+    await fs.writeFile(
+      path.join(f.branchPath, '.gitmodules'),
+      '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+    )
     await fs.writeFile(path.join(sub, 'f'), 'b\n')
     await f.advanceGitHub('upstream.txt')
 
@@ -380,7 +384,39 @@ describe('config planted in a branch clone', () => {
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
     expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error).toMatch(
-      /its index holds a submodule at "sub"/,
+      /it has a submodule with a repository in it at "sub"/,
+    )
+  })
+
+  it('is refused when upstream brings a submodule in where a repository was planted', async () => {
+    // A commit on GitHub (in production, one the Lambda wrote into remote.git) adds a submodule.
+    const upstream = path.join(f.root, 'upstream')
+    await simpleGit().raw(['clone', '-q', '--branch', BASE, f.githubPath, upstream])
+    const upGit = simpleGit({ baseDir: upstream })
+    await upGit.addConfig('user.name', 'Upstream')
+    await upGit.addConfig('user.email', 'u@canopycms.test')
+    const head = (await upGit.revparse(['HEAD'])).trim()
+    await upGit.raw(['update-index', '--add', '--cacheinfo', `160000,${head},sub`])
+    await upGit.commit('adds a submodule')
+    await upGit.raw(['push', '-q', 'origin', BASE])
+    // The repository it would land on, planted in both clones ahead of it.
+    for (const clone of [f.basePath, f.branchPath]) {
+      const sub = path.join(clone, 'sub')
+      await fs.mkdir(sub)
+      await initTestRepo(sub)
+      await plantConfig(path.join(sub, '.git'), drivers('incoming-submodule'))
+      await fs.appendFile(path.join(clone, '.git', 'info', 'exclude'), '\nsub/\n')
+    }
+
+    await f.worker.syncGit()
+
+    expect(await f.sentinelLines()).toEqual([])
+    const status = await readStatus()
+    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error).toMatch(
+      /it has a submodule with a repository in it at "sub"/,
+    )
+    expect(status?.lastGitSync?.baseRefresh?.message).toMatch(
+      /it has a submodule with a repository in it at "sub"/,
     )
   })
 

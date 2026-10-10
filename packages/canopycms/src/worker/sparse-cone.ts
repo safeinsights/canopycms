@@ -64,7 +64,11 @@ export async function reapplySparseCones(ctx: {
     )
     if (!isClone) continue
     const git = sharedRepoGit(branchPath, 'worktree')
-    const cone = await currentCone(git)
+    // Read before this clone's config check, so a read that never finishes (an include naming a
+    // pipe) must not hold the sync cycle.
+    const cone = await currentCone(
+      sharedRepoGit(branchPath, 'worktree', { timeout: { block: 30_000 } }),
+    )
     if (cone === null || sameCone(cone, recorded.cone)) continue
     try {
       // `sparse-checkout set` checks files out, which runs any filter driver the config names.
