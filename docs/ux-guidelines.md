@@ -1,8 +1,7 @@
 # Editor UX guidelines
 
-The standard every change to the CanopyCMS editor (`packages/canopycms/src/editor/`) is held
-to. Two checks enforce parts of it mechanically, and the `ux-review` agent checks the rest by
-judgment; see [Enforcement](#enforcement).
+The standard for every change to the CanopyCMS editor (`packages/canopycms/src/editor/`).
+[Enforcement](#enforcement) lists what checks it.
 
 ## Vocabulary
 
@@ -29,11 +28,12 @@ Branch status labels are **Editing**, **In review** and **Protected**.
   proper nouns take a capital: "Delete branch", "Open in GitHub".
 - **Buttons start with a verb** and name the result. A confirm button repeats the action's
   verb ("Delete entry"), never "OK" or "Yes".
-- **`…`, the single character,** marks an in-progress state only: "Saving…", "Loading
-  entries…". Never three ASCII dots.
+- **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
+  asks for more before it acts ("Rename…", "Switch branch…"). A command that acts at once
+  has none. Never three ASCII dots.
 - **No "successfully".** The past tense already says it: "Branch created".
 - **Human labels, never internal names.** A message names "Page sections › Hero › Heading",
-  never `blocks[0].title`, and a bot owner reads "CanopyCMS bot".
+  never `blocks[0].title`.
 - **Developer diagnostics** go behind a "Details" disclosure or are shown to admins only.
 - **Dates** are relative, with the absolute date in a tooltip
   (`packages/canopycms/src/editor/relative-time.ts`).
