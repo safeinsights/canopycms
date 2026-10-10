@@ -36,7 +36,12 @@ import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { maintainRemoteGit } from './remote-git-maintenance'
 import { decideBaseAdvance } from './schema-gate'
-import { assertSharedRepoConfig, fetchFromRemoteGit, sharedRepoGit } from './shared-repo-git'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertSharedRepoConfig,
+  fetchFromRemoteGit,
+  sharedRepoGit,
+} from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
 import type { WorkerContext } from './worker-context'
 
@@ -833,14 +838,14 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       }
     }
 
-    let status = await baseGit.status()
+    let status = await baseGit.status([...SHARED_REPO_STATUS_ARGS])
     const lostBeforeRestore = lockLost()
     if (lostBeforeRestore) return lostBeforeRestore
     if (await restoreRetiredSchemaCache(baseGit, status)) {
       workerLog(
         `Base branch workspace (${ctx.baseBranch}): restored the retired in-tree schema cache`,
       )
-      status = await baseGit.status()
+      status = await baseGit.status([...SHARED_REPO_STATUS_ARGS])
     }
 
     // Nothing makes this clone read-only, and a direct edit here wedges every

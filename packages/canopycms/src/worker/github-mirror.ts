@@ -128,8 +128,12 @@ const STAGING_PREFIX = 'refs/canopy/outgoing/'
  */
 async function assertOwnDirectory(dir: string): Promise<void> {
   const stat = await fs.lstat(dir)
+  // Windows has no POSIX owner or mode bits to check.
   const uid = process.getuid?.()
-  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0) {
+  if (
+    !stat.isDirectory() ||
+    (uid !== undefined && (stat.uid !== uid || (stat.mode & 0o022) !== 0))
+  ) {
     throw new Error(
       `${dir} must be a directory this worker owns and no one else can write, for the GitHub ` +
         `credential is used in the repository there`,

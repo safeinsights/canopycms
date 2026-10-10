@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GitManager, REMOTE_GIT_CONFIG, ensureRemoteGitConfig } from '../git-manager'
 import { initTestRepo } from '../test-utils'
 import {
+  SHARED_REPO_STATUS_ARGS,
   UntrustedRepoConfigError,
   assertSharedRepoConfig,
   fetchFromRemoteGit,
@@ -80,6 +81,43 @@ async function sharedPair(): Promise<{ remote: string; clone: string; cloneGit: 
   await seedGit.commit('upstream')
   await seedGit.raw(['push', '-q', remote, 'main:main'])
   return { remote, clone, cloneGit }
+}
+
+/**
+ * Embed a repository at `<clone>/sub` whose own config names a filter, record it in the clone's
+ * index as a submodule (no `.gitmodules` entry needed), and touch its file the way that makes
+ * `git status` inside it run the filter: same size, newer mtime.
+ */
+async function plantSubmodule(clone: string): Promise<void> {
+  const sub = path.join(clone, 'sub')
+  await fs.mkdir(sub)
+  const subGit = await initTestRepo(sub)
+  await fs.writeFile(path.join(sub, 'f'), 'a\n')
+  await subGit.add('f')
+  await subGit.commit('sub')
+  await setConfig(
+    path.join(sub, '.git', 'config'),
+    'filter.planted.clean',
+    `sh -c '${record('submodule')}; cat'`,
+  )
+  await fs.writeFile(path.join(sub, '.gitattributes'), '* filter=planted\n')
+  const sha = (await subGit.revparse(['HEAD'])).trim()
+  await execFileAsync('git', [
+    '-C',
+    clone,
+    'update-index',
+    '--add',
+    '--cacheinfo',
+    `160000,${sha},sub`,
+  ])
+  // `ignore = none` here outranks a config setting, not a command-line one.
+  await fs.writeFile(
+    path.join(clone, '.gitmodules'),
+    '[submodule "sub"]\n\tpath = sub\n\tignore = none\n',
+  )
+  await fs.writeFile(path.join(sub, 'f'), 'b\n')
+  const later = new Date(Date.now() + 60_000)
+  await fs.utimes(path.join(sub, 'f'), later, later)
 }
 
 describe('assertSharedRepoConfig: every shape CanopyCMS writes passes', () => {
@@ -245,6 +283,17 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
     )
   })
 
+  it('refuses, rather than waits for ever on, a config that includes a pipe', async () => {
+    const { remote } = await sharedPair()
+    const fifo = path.join(root, 'fifo')
+    await execFileAsync('mkfifo', [fifo])
+    await setConfig(path.join(remote, 'config'), 'include.path', fifo)
+
+    await expect(assertSharedRepoConfig(remote, 'bare', { timeoutMs: 500 })).rejects.toThrow(
+      /^Refusing to run git in \S+remote\.git: .*\(unreadable: /,
+    )
+  })
+
   it("reads a clone's own .git, never a repository above it", async () => {
     const outer = path.join(root, 'outer')
     await fs.mkdir(outer)
@@ -268,6 +317,18 @@ describe('assertSharedRepoConfig: a repository that is really somewhere else', (
     const linked = path.join(root, 'linked-remote.git')
     await fs.symlink(remote, linked)
     await expect(assertSharedRepoConfig(linked, 'bare')).rejects.toThrow(/is not a directory/)
+  })
+
+  it('refuses a clone whose index holds a submodule, naming it and the fix', async () => {
+    const { clone } = await sharedPair()
+    await plantSubmodule(clone)
+
+    await expect(assertSharedRepoConfig(clone, 'worktree')).rejects.toThrow(
+      `Refusing to run git in ${clone}: its index holds a submodule at "sub", which git status ` +
+        `would run git inside, under that submodule's own config. CanopyCMS never writes one. ` +
+        `Find out how it got there, then remove it: git -C '${clone}' rm --cached 'sub'`,
+    )
+    expect(await sentinelLines()).toEqual([])
   })
 
   it('refuses a .git that names a common directory elsewhere', async () => {
@@ -463,6 +524,21 @@ describe('the pins, with the check skipped (a key planted after it ran)', () => 
     await cloneGit.raw(['merge', '--ff-only', 'FETCH_HEAD'])
 
     expect((await cloneGit.revparse(['HEAD'])).trim()).toBe(signed)
+    expect(await sentinelLines()).toEqual([])
+  })
+
+  it('keep status out of a submodule planted after the check, whatever .gitmodules says', async () => {
+    const { clone } = await sharedPair()
+    await plantSubmodule(clone)
+    // The plant is live: an ordinary status runs the submodule's filter.
+    await simpleGit({ baseDir: clone }).status()
+    expect(await sentinelLines()).toEqual(['submodule'])
+    await fs.rm(sentinel)
+    const later = new Date(Date.now() + 120_000)
+    await fs.utimes(path.join(clone, 'sub', 'f'), later, later)
+
+    await sharedRepoGit(clone, 'worktree').status([...SHARED_REPO_STATUS_ARGS])
+
     expect(await sentinelLines()).toEqual([])
   })
 

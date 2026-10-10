@@ -35,7 +35,12 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
-import { assertSharedRepoConfig, fetchFromRemoteGit, sharedRepoGit } from './shared-repo-git'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertSharedRepoConfig,
+  fetchFromRemoteGit,
+  sharedRepoGit,
+} from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -311,7 +316,7 @@ async function runRebaseRounds(
       completed = true
     } catch (rebaseErr) {
       nextAction = 'continue'
-      const st = await branchGit.status()
+      const st = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
 
       if (st.conflicted.length > 0) {
         await ctx.afterConflictDetectedForTesting()
@@ -777,7 +782,7 @@ async function rebaseOneBranch(
       // happen SILENTLY, so anything modified beyond the rebase's own conflict
       // state is logged by path first. That log is the operator's only record.
       if (await isRebaseInProgress(branchPath)) {
-        const preAbort = await branchGit.status().catch(() => null)
+        const preAbort = await branchGit.status([...SHARED_REPO_STATUS_ARGS]).catch(() => null)
         // Keyed on the WORKING-TREE column ONLY. The two porcelain columns mean
         // different things here, and conflating them reports false data loss on
         // essentially every conflict-wedged recovery (verified against real
@@ -830,10 +835,10 @@ async function rebaseOneBranch(
       // Skip dirty branches — the editor has changes that cannot be rebased.
       // Inside the lock, so no write can land between this check and the rebase
       // below. canopycms's own untracked state is not dirt.
-      let dirtyCheck = await branchGit.status()
+      let dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       if (await restoreRetiredSchemaCache(branchGit, dirtyCheck)) {
         workerLog(`  ${branchDir}: restored the retired in-tree schema cache`)
-        dirtyCheck = await branchGit.status()
+        dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       }
       const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
       if (editorDirt.length > 0) {

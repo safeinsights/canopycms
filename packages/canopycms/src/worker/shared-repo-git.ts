@@ -95,6 +95,7 @@ const SHARED_REPO_PINS: readonly string[] = [
   // Negotiating a push runs the destination's upload-pack, unpinned.
   'push.negotiate=false',
   'submodule.recurse=false',
+  'diff.ignoreSubmodules=all',
   'fetch.recurseSubmodules=false',
   'push.recurseSubmodules=no',
   'gc.auto=0',
@@ -113,6 +114,8 @@ const BARE_PINS: readonly string[] = ['core.bare=true']
 const MIRROR_PINS: readonly string[] = [
   ...SHARED_REPO_PINS.filter((pin) => pin !== 'protocol.https.allow=never'),
   'protocol.https.allow=always',
+  // A host's own core.sharedRepository would make `init` create it group-writable.
+  'core.sharedRepository=umask',
   ...BARE_PINS,
 ]
 
@@ -301,6 +304,12 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+/**
+ * The check is the first git to read a repository's config each cycle, and an `include.path` naming
+ * a pipe or `/dev/stdin` blocks that read for ever; a timeout turns it into a refusal.
+ */
+const CHECK_TIMEOUT_MS = 30_000
+
 /** Scopes the repository itself supplies; `system`, `global` and `command` are the worker's. */
 const REPO_SCOPES = new Set(['local', 'worktree'])
 
@@ -315,7 +324,11 @@ const REPO_SCOPES = new Set(['local', 'worktree'])
 export async function assertSharedRepoConfig(
   repoPath: string,
   kind: SharedRepoKind,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
+  const timeout: Partial<SimpleGitOptions> = {
+    timeout: { block: options.timeoutMs ?? CHECK_TIMEOUT_MS },
+  }
   const absolute = path.resolve(repoPath)
   const gitDir = gitDirOf(absolute, kind)
   let listing: string
@@ -336,7 +349,7 @@ export async function assertSharedRepoConfig(
     if (kind === 'bare' && (await pathExists(path.join(gitDir, '.git')))) {
       throw new Error(`${path.join(gitDir, '.git')} exists, and git would use it instead`)
     }
-    listing = await sharedRepoGit(absolute, kind).raw([
+    listing = await sharedRepoGit(absolute, kind, timeout).raw([
       'config',
       '--list',
       '--show-scope',
@@ -362,4 +375,39 @@ export async function assertSharedRepoConfig(
     unexpected.push({ key, file })
   }
   if (unexpected.length > 0) throw new UntrustedRepoConfigError(absolute, unexpected)
+  if (kind === 'worktree') await assertNoSubmodules(absolute, timeout)
 }
+
+/**
+ * Refuse a clone whose index holds a submodule (a gitlink). `git status` runs git inside one with
+ * that submodule's own config, which no allowlist here reads; content never uses submodules.
+ * {@link SHARED_REPO_STATUS_ARGS} keeps status out of one planted after this check.
+ */
+async function assertNoSubmodules(
+  clone: string,
+  timeout: Partial<SimpleGitOptions>,
+): Promise<void> {
+  const entries = (
+    await sharedRepoGit(clone, 'worktree', timeout).raw(['ls-files', '--stage', '-z'])
+  ).split('\0')
+  const gitlinks = entries
+    .filter((entry) => entry.startsWith('160000 '))
+    .map((entry) => entry.slice(entry.indexOf('\t') + 1))
+  if (gitlinks.length > 0) {
+    throw new Error(
+      `Refusing to run git in ${clone}: its index holds a submodule at ` +
+        `${gitlinks.map((p) => JSON.stringify(p)).join(', ')}, which git status would run git ` +
+        `inside, under that submodule's own config. CanopyCMS never writes one. Find out how it ` +
+        `got there, then remove it: ` +
+        gitlinks
+          .map((p) => `git -C ${shellQuote(clone)} rm --cached ${shellQuote(p)}`)
+          .join(' && '),
+    )
+  }
+}
+
+/**
+ * Arguments for every worker `git status` in a clone. On the command line, unlike in config, the
+ * setting outranks a `.gitmodules` entry's own `ignore`.
+ */
+export const SHARED_REPO_STATUS_ARGS: readonly string[] = ['--ignore-submodules=all']

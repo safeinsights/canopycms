@@ -11,7 +11,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import type { SimpleGit } from 'simple-git'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { initTestRepo } from '../test-utils'
 import { GitHubMirror } from './github-mirror'
@@ -308,6 +308,19 @@ describe('GitHubMirror', () => {
         m.pushToGitHub(githubPath, 'feature', published, { lease: 'refs/heads/main' }),
       ),
     ).rejects.toThrow(/Not a commit ID: "refs\/heads\/main"/)
+  })
+
+  it("creates a mirror only it can write, whatever the host's core.sharedRepository", async () => {
+    const home = path.join(root, 'home')
+    await fs.mkdir(home)
+    await fs.writeFile(path.join(home, '.gitconfig'), '[core]\n\tsharedRepository = group\n')
+    vi.stubEnv('HOME', home)
+    try {
+      await mirror.ensure()
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect((await fs.stat(mirror.gitDir)).mode & 0o077).toBe(0)
   })
 
   it('refuses a state directory others can write', async () => {

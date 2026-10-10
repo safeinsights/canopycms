@@ -1037,11 +1037,12 @@ export class CmsWorker {
     }
 
     if (exists) {
-      // SELF-HEAL, before anything else touches this repo: a remote.git cloned from GitHub by an
+      // At boot, so a refusal lands in worker-status.json as a startup failure, and first: the
+      // scrub is git reading this config too.
+      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+      // SELF-HEAL, before anything else changes this repo: a remote.git cloned from GitHub by an
       // older worker recorded the token-bearing clone URL in its config.
       await this.scrubPersistedRemote(this.remoteGitPath)
-      // At boot, so a refusal lands in worker-status.json as a startup failure.
-      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
 
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)

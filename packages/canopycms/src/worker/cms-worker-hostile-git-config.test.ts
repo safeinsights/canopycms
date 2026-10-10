@@ -361,6 +361,29 @@ describe('config planted in a branch clone', () => {
     )
   })
 
+  it('is refused when its index holds a submodule, which no config check reads', async () => {
+    const sub = path.join(f.branchPath, 'sub')
+    await fs.mkdir(sub)
+    const subGit = await initTestRepo(sub)
+    await fs.writeFile(path.join(sub, 'f'), 'a\n')
+    await subGit.add('f')
+    await subGit.commit('sub')
+    await plantConfig(path.join(sub, '.git'), drivers('submodule'))
+    await fs.writeFile(path.join(sub, '.gitattributes'), '* filter=planted\n')
+    const sha = (await subGit.revparse(['HEAD'])).trim()
+    await f.branchGit.raw(['update-index', '--add', '--cacheinfo', `160000,${sha},sub`])
+    await fs.writeFile(path.join(sub, 'f'), 'b\n')
+    await f.advanceGitHub('upstream.txt')
+
+    await f.worker.syncGit()
+
+    expect(await f.sentinelLines()).toEqual([])
+    const status = await readStatus()
+    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error).toMatch(
+      /its index holds a submodule at "sub"/,
+    )
+  })
+
   it('in the base clone is refused too, and reported on the refresh', async () => {
     const gitDir = path.join(f.basePath, '.git')
     await plantConfig(gitDir, drivers('base'))
