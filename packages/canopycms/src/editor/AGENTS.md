@@ -13,7 +13,7 @@ authoritative**. This file is the map.
 | `hooks/`                                  | 17 hooks — the real logic. Start here, not in the components. Has its own [README.md](hooks/README.md) covering the SWR data-loading architecture. |
 | `fields/`                                 | 17 field components, one per schema field type, plus `entry-link/`.                                                                                |
 | `components/`                             | Presentational pieces used by `Editor.tsx` (header, sidebar, modals).                                                                              |
-| `EditorAuthGate.tsx`                      | Signed-out handling, decided from the API's 401s. See below.                                                                                       |
+| `EditorAuthGate.tsx`                      | Signed-out and mode-mismatch handling, decided from the API's answers. See below.                                                                  |
 | `context/`                                | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |
 | `schema-editor/`                          | The admin schema-editing UI (collections, entry types, ordering).                                                                                  |
 | `permission-manager/`, `group-manager/`   | Admin surfaces, each with its own `hooks/`.                                                                                                        |
@@ -26,7 +26,8 @@ test. Do not split it before reading `hooks/`; what you are looking for is proba
 
 ## Signed-out users
 
-`EditorAuthGate` trusts one signal, a 401 from the API; its header comment holds the rules.
+`EditorAuthGate` trusts the API's answers, a 401 or an `EDITOR_MODE_MISMATCH` 412; its header comment
+holds the rules.
 Two traps outside it:
 
 - A 401 after mount overlays the editor. Never remount it for the same identity; that loses unsaved edits.

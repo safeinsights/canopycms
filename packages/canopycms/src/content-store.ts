@@ -192,15 +192,13 @@ export class DuplicateContentIdError extends ContentConflictError {
   constructor(contentId: string, paths: readonly string[]) {
     const sorted = Array.from(new Set(paths)).sort()
     super(
-      // Names the STATE, not an action: the repair-content-duplicates endpoint
-      // exists but nothing in the editor renders it, and the admin panel's
-      // duplicate list (SystemHealthPanel) is the diagnosis half only. The repair
-      // UI is tracked in .claude/future-tasks/duplicate-content-id-repair-ui.md.
+      // Names where an administrator fixes it, not the endpoint: the editor
+      // reading this cannot run an admin action.
       `Content ID ${contentId} is on more than one file (${sorted
         .map((p) => `"${p}"`)
         .join(' and ')}), so this save was refused rather than risk overwriting or ` +
-        `deleting the wrong one. An administrator needs to resolve the duplicate on the ` +
-        `server before this entry can be saved.`,
+        `deleting the wrong one. An administrator can fix this in System health, on the ` +
+        `Branches tab; until then this entry cannot be saved.`,
     )
     this.name = 'DuplicateContentIdError'
     this.contentId = contentId

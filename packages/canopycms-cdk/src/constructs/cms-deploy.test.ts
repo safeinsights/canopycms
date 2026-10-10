@@ -231,20 +231,17 @@ describe('CanopyCmsService reserved concurrency', () => {
     Annotations.fromStack(stack).hasNoWarning('*', LOW_CONCURRENCY_WARNING)
   })
 
-  it('neither the scaffold template nor the example pins a cap below the minimum', () => {
-    const repoRoot = path.join(__dirname, '..', '..', '..', '..')
+  it('the scaffold template pins no cap below the minimum', () => {
     const PINNED = /reservedConcurrency:\s*(\d+)/g
     // Positive control: an absence of low values proves nothing if the pattern
     // cannot see a pinned one at all.
     expect([...'reservedConcurrency: 10,'.matchAll(PINNED)].map((m) => Number(m[1]))).toEqual([10])
-    for (const relative of [
-      'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
-      'examples/aws-deployment/infrastructure/lib/cms-stack.ts',
-    ]) {
-      const source = readFileSync(path.join(repoRoot, relative), 'utf-8')
-      for (const match of source.matchAll(PINNED)) {
-        expect(Number(match[1]), relative).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
-      }
+    const source = readFileSync(
+      path.join(__dirname, '../../../canopycms/src/cli/template-files/cms-stack.ts.template'),
+      'utf-8',
+    )
+    for (const match of source.matchAll(PINNED)) {
+      expect(Number(match[1])).toBeGreaterThanOrEqual(MIN_CMS_RESERVED_CONCURRENCY)
     }
   })
 })
@@ -2216,26 +2213,19 @@ describe('CanopyCmsService: githubApp* props -> worker .env', () => {
 })
 
 /**
- * The scaffold templates and the checked-in example teach the same wiring, and
- * scaffold-synth.test.ts exercises only the templates -- it runs the real CLI,
- * which never reads `examples/`. So the example is exactly the copy that can
- * rot unnoticed, and it has: the media block in `asset-support.test.ts` grew
- * these same tests because a fix landed in the template while
- * `examples/aws-deployment/` went on teaching a dead API.
- *
- * Textual, and deliberately so -- these are template and example FILES, not
- * modules this suite can import and execute. It catches a copy that was never
- * updated, which is the observed failure; it cannot catch one updated wrongly.
- * The behavioural half lives in scaffold-synth.test.ts, which synthesizes the
- * generated project and asserts the value reaches the worker's .env.
+ * Textual, and deliberately so -- these are template FILES, not modules this
+ * suite can import and execute. It catches wiring that was never added; it
+ * cannot catch wiring added wrongly. The behavioural half lives in
+ * scaffold-synth.test.ts, which synthesizes the generated project and asserts
+ * the value reaches the worker's .env. `examples/aws-deployment/` is rendered
+ * from these templates, and `aws-deploy-example.test.ts` compares it whole.
  */
-describe('secret JSON-field wiring: the scaffold template and the example stay in step', () => {
+describe('secret JSON-field wiring: the scaffold templates carry it', () => {
   const repoRoot = path.join(__dirname, '..', '..', '..', '..')
   const read = (relative: string): string => readFileSync(path.join(repoRoot, relative), 'utf-8')
 
-  const PAIRS: Array<[string, string, string[]]> = [
+  const TEMPLATES: Array<[string, string[]]> = [
     [
-      'infrastructure/lib/cms-stack.ts',
       'packages/canopycms/src/cli/template-files/cms-stack.ts.template',
       [
         'githubTokenSecretJsonField?: string',
@@ -2257,7 +2247,6 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       ],
     ],
     [
-      'infrastructure/bin/app.ts',
       'packages/canopycms/src/cli/template-files/cdk-app.ts.template',
       [
         'githubTokenSecretJsonField: process.env.GITHUB_TOKEN_SECRET_JSON_FIELD || undefined,',
@@ -2281,7 +2270,6 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
       ],
     ],
     [
-      'deploy-cms.yml',
       'packages/canopycms/src/cli/template-files/deploy-cms.yml.template',
       [
         'GITHUB_TOKEN_SECRET_JSON_FIELD: ${{ vars.CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD }}',
@@ -2298,23 +2286,14 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     ],
   ]
 
-  const examplePathFor = (relative: string): string => `examples/aws-deployment/${relative}`
-
-  for (const [exampleRelative, templatePath, required] of PAIRS) {
-    const examplePath = examplePathFor(exampleRelative)
-
+  for (const [templatePath, required] of TEMPLATES) {
     it(`${templatePath} carries the pinned wiring`, () => {
       const source = read(templatePath)
       for (const line of required) expect(source).toContain(line)
     })
-
-    it(`${examplePath} carries the same wiring as its template`, () => {
-      const source = read(examplePath)
-      for (const line of required) expect(source).toContain(line)
-    })
   }
 
-  it('neither copy reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
+  it('no template reaches for the ECS :KEY:: ARN suffix the construct refuses', () => {
     // [A-Za-z0-9_]+, with the digits: a JSON key may contain one, and
     // `GITHUB_TOKEN2` slipped past the first version of this class.
     const ECS_SUFFIX = /:secret:[^:'"`\s]*:[A-Za-z0-9_]+::/
@@ -2331,16 +2310,13 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     }
 
     // The suffix form is the obvious-looking thing to write, and a scaffold
-    // that taught it would hand every adopter a synth error. Both copies, not
-    // just the templates: the example is the one this describe exists for.
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).not.toMatch(ECS_SUFFIX)
-      }
+    // that taught it would hand every adopter a synth error.
+    for (const [templatePath] of TEMPLATES) {
+      expect(read(templatePath), templatePath).not.toMatch(ECS_SUFFIX)
     }
   })
 
-  it('neither copy reads a repository secret or variable named GITHUB_*', () => {
+  it('the workflow template reads no repository secret or variable named GITHUB_*', () => {
     // GitHub refuses to CREATE an Actions secret OR variable whose name starts
     // with GITHUB_, so a workflow referencing one reads an empty string forever
     // and the deploy fails at synth -- or, for an optional value, succeeds with
@@ -2366,26 +2342,9 @@ describe('secret JSON-field wiring: the scaffold template and the example stay i
     // everything it was meant to admit alone.
     expect('token: ${{ secrets.GITHUB_TOKEN }}').not.toMatch(USER_CREATED_GITHUB_REF)
 
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      if (!exampleRelative.endsWith('.yml')) continue
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).not.toMatch(USER_CREATED_GITHUB_REF)
-      }
-    }
-  })
-
-  it("both copies build the image with NEXT_PUBLIC_CANOPY_MODE: 'prod'", () => {
-    // Not JSON-field wiring, but the same drift class and found by the same
-    // review round: the example had lost this line while the template kept it,
-    // so an adopter who copied the example shipped an editor bundle built in
-    // DEV browser mode -- dev auth rather than Clerk -- while the server half
-    // came up prod and the deploy looked clean. scaffold-synth.test.ts pins the
-    // generated path; nothing could see the example.
-    for (const [exampleRelative, templatePath] of PAIRS) {
-      if (!exampleRelative.endsWith('cms-stack.ts')) continue
-      for (const file of [templatePath, examplePathFor(exampleRelative)]) {
-        expect(read(file), file).toContain("NEXT_PUBLIC_CANOPY_MODE: 'prod'")
-      }
+    for (const [templatePath] of TEMPLATES) {
+      if (!templatePath.endsWith('.yml.template')) continue
+      expect(read(templatePath), templatePath).not.toMatch(USER_CREATED_GITHUB_REF)
     }
   })
 })

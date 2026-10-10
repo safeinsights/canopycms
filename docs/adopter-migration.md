@@ -62,7 +62,6 @@ replaces each `next` with its number.
 | 100  | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key              |
 | 101  | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                    |
 | 102  | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites        |
-| next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
 | 105  | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps             |
 | 106  | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config               |
 | 106  | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                 |
@@ -75,6 +74,10 @@ replaces each `next` with its number.
 | 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
 | 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--hand-installed-units-only)                                                                              | Hand-installed units    |
 | 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
+| next | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
+| next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
+| next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
+| next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -504,6 +507,15 @@ editor batches its user-badge lookups.
 **To adopt.** Nothing. A custom auth plugin may implement it; otherwise the server falls back to
 bounded single lookups.
 
+### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
+
+**What changed.** (next int) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
+`dev`, and fails its build on any value but `prod` or `dev`. An editor built for the other mode than its
+server runs now gets a blocking screen naming that variable, not a sign-in that never succeeds.
+
+**To adopt.** A hand-built image running a dev-mode server passes
+`--build-arg NEXT_PUBLIC_CANOPY_MODE=dev`.
+
 ### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
 
 **What changed.** (int.110) Unset, prod reads the base branch from the HEAD of the workspace's `remote.git`,
@@ -541,6 +553,22 @@ worker version, media-storage state) and warns when API and worker versions diff
 (`CANOPY_SOURCE_SHA: ${{ github.sha }}`).
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
+
+### The AWS example workflow gains the template's triggers and dependency checks
+
+**What changed.** (next) Like the one `init-deploy aws` writes, `examples/aws-deployment/deploy-cms.yml`
+now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and checks `canopycms` and
+`aws-cdk` are installed.
+
+**To adopt.** If you copied it by hand, add those `paths:` and packages.
+
+### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
+
+**What changed.** (next int) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
+budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `unknown`), replacing
+`duplicateContentIds`, and `duplicateIdScan.truncated` says whether the budget cut the scan short.
+
+**To adopt.** Scripts reading `duplicateContentIds`: pass `duplicates=1`, read `duplicateIdScan`.
 
 ### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
 

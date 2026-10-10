@@ -38,9 +38,10 @@ import {
   type DeletableTaskStatus,
 } from './useSystemHealth'
 import type { WorkerLiveness } from '../../api/admin'
+import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
-import type { BranchHealthEntry } from '../../branch-health'
+import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
 
 // ============================================================================
@@ -223,6 +224,67 @@ const MARK_MERGED_CONFIRM_TEXT =
 
 const REPAIR_CONFIRM_TEXT =
   "Recreates metadata with defaults: status becomes 'editing', you become the creator, branch ACLs are reset. The corrupt file is archived alongside for forensics."
+
+const DUPLICATE_REPAIR_CONFIRM_TEXT =
+  'These files share a content ID, so the editor uses only the one marked Keep. Archiving renames each other file to a hidden name in the same folder. Nothing is deleted.'
+
+const DUPLICATE_REPAIR_EDITOR_NOTE =
+  'This changes files on the branch, and adds you as one of its editors.'
+
+/**
+ * Why a healthy row's duplicate-ID state is unknown. `null` is a row the last
+ * scan did not include.
+ */
+function duplicateUncheckedReason(scan: DuplicateIdScan | null): string {
+  if (scan?.state === 'unknown' && scan.reason === 'failed') {
+    return 'The duplicate ID check failed on this branch.'
+  }
+  if (scan?.state === 'unknown') {
+    return 'The duplicate ID check ran out of time before reaching this branch.'
+  }
+  return 'This branch was added after the last duplicate ID check.'
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : word.endsWith('h') ? 'es' : 's'}`
+}
+
+/**
+ * One line for the whole Branches tab, so a scan that did not finish never
+ * reads as a clean one: rows without a badge are clean only when this says so.
+ */
+function duplicateScanSummary(
+  health: Pick<
+    UseSystemHealthReturn,
+    'duplicateIdScan' | 'duplicateIdScanLoading' | 'duplicateIdScanError'
+  >,
+  healthyDirNames: string[],
+): { text: string; color: string } {
+  const { duplicateIdScan: scan, duplicateIdScanLoading, duplicateIdScanError } = health
+  if (duplicateIdScanLoading && !scan) {
+    return { text: 'Checking for duplicate content IDs…', color: 'dimmed' }
+  }
+  if (duplicateIdScanError) {
+    return {
+      text: `Could not check for duplicate content IDs: ${duplicateIdScanError}`,
+      color: 'orange',
+    }
+  }
+  if (!scan) return { text: 'Duplicate content IDs not checked yet.', color: 'orange' }
+
+  let found = 0
+  let unchecked = 0
+  for (const dirName of healthyDirNames) {
+    const state = scan.byDir[dirName]?.state
+    if (state === 'found') found++
+    else if (state !== 'none') unchecked++
+  }
+  const parts: string[] = []
+  if (found > 0) parts.push(`Duplicate content IDs found on ${plural(found, 'branch')}.`)
+  if (unchecked > 0) parts.push(`Could not check ${plural(unchecked, 'branch')}.`)
+  if (parts.length === 0) return { text: 'No duplicate content IDs found.', color: 'dimmed' }
+  return { text: parts.join(' '), color: 'orange' }
+}
 
 const PURGE_CONFIRM_TEXT =
   'The directory is moved to a hidden trash name and kept for 30 days, then deleted. Any git work inside was never pushed and will be lost when the trash is swept.'
@@ -741,6 +803,22 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
     })
   }
 
+  // Its own dialog, reachable only from the duplicate badge, whose confirm
+  // calls only the duplicate repair: Purge sits on neighbouring rows and
+  // trashes a whole branch directory.
+  const handleDuplicateIdsClick = (dirName: string, duplicates: DuplicateContentId[]) => {
+    modals.openConfirmModal({
+      title: 'Fix duplicate content IDs',
+      children: <DuplicateRepairDetails dirName={dirName} duplicates={duplicates} />,
+      labels: { confirm: 'Archive duplicates', cancel: 'Cancel' },
+      confirmProps: { color: 'orange' },
+      onConfirm: () => health.repairDuplicateIds(dirName),
+    })
+  }
+
+  const healthyDirNames = entries.filter((e) => e.kind === 'healthy').map((e) => e.dirName)
+  const duplicateSummary = duplicateScanSummary(health, healthyDirNames)
+
   if (branchHealthLoading && entries.length === 0) {
     return (
       <Group justify="center" py="xl">
@@ -761,49 +839,114 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   return (
-    <Table.ScrollContainer minWidth={700}>
-      <Table>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>Name</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>PR</Table.Th>
-            <Table.Th>Sync</Table.Th>
-            <Table.Th>Warnings</Table.Th>
-            <Table.Th>Updated</Table.Th>
-            <Table.Th>Actions</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {entries.map((entry) => (
-            <BranchHealthRow
-              key={entry.dirName}
-              entry={entry}
-              baseWarning={entry.isBaseBranch ? baseWarning : null}
-              onMarkMerged={handleMarkMergedClick}
-              onRepair={handleRepairClick}
-              onPurge={handlePurgeClick}
-            />
+    <Stack gap="xs">
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Text size="xs" c={duplicateSummary.color} data-testid="duplicate-id-summary">
+          {duplicateSummary.text}
+        </Text>
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          loading={health.duplicateIdScanLoading}
+          onClick={() => health.checkDuplicateIds()}
+        >
+          Check again
+        </Button>
+      </Group>
+      <Table.ScrollContainer minWidth={700}>
+        <Table>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Name</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>PR</Table.Th>
+              <Table.Th>Sync</Table.Th>
+              <Table.Th>Warnings</Table.Th>
+              <Table.Th>Updated</Table.Th>
+              <Table.Th>Actions</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {entries.map((entry) => (
+              <BranchHealthRow
+                key={entry.dirName}
+                entry={entry}
+                baseWarning={entry.isBaseBranch ? baseWarning : null}
+                duplicateIdScan={
+                  health.duplicateIdScan
+                    ? (health.duplicateIdScan.byDir[entry.dirName] ?? null)
+                    : undefined
+                }
+                onMarkMerged={handleMarkMergedClick}
+                onRepair={handleRepairClick}
+                onPurge={handlePurgeClick}
+                onDuplicateIds={handleDuplicateIdsClick}
+              />
+            ))}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
+    </Stack>
+  )
+}
+
+function DuplicateRepairDetails({
+  dirName,
+  duplicates,
+}: {
+  dirName: string
+  duplicates: DuplicateContentId[]
+}) {
+  return (
+    <Stack gap="sm">
+      <Text size="sm">
+        Branch <Code>{dirName}</Code>
+      </Text>
+      <Text size="sm">{DUPLICATE_REPAIR_CONFIRM_TEXT}</Text>
+      {duplicates.map((d) => (
+        <Paper key={d.id} withBorder p="xs" radius="sm" data-testid={`duplicate-id-${d.id}`}>
+          <Text size="xs" fw={600}>
+            Content ID <Code>{d.id}</Code>
+          </Text>
+          <Text size="xs">
+            Keep: <Code>{d.keptPath}</Code>
+          </Text>
+          {d.droppedPaths.map((p) => (
+            <Text size="xs" key={p}>
+              Archive: <Code>{p}</Code>
+            </Text>
           ))}
-        </Table.Tbody>
-      </Table>
-    </Table.ScrollContainer>
+        </Paper>
+      ))}
+      <Text size="xs" c="dimmed">
+        {DUPLICATE_REPAIR_EDITOR_NOTE}
+      </Text>
+    </Stack>
   )
 }
 
 function BranchHealthRow({
   entry,
   baseWarning,
+  duplicateIdScan,
   onMarkMerged,
   onRepair,
   onPurge,
+  onDuplicateIds,
 }: {
   entry: BranchHealthEntry
   /** The base branch's last refresh problem, from worker status; null on other rows. */
   baseWarning: string | null
+  /**
+   * This row's result from the last duplicate-ID scan: `undefined` when there
+   * is no scan result (none yet, or the last request failed; the tab summary
+   * says which), `null` when the scan did not include this row.
+   */
+  duplicateIdScan: DuplicateIdScan | null | undefined
   onMarkMerged: (branchName: string) => void
   onRepair: (dirName: string) => void
   onPurge: (dirName: string) => void
+  onDuplicateIds: (dirName: string, duplicates: DuplicateContentId[]) => void
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
@@ -912,34 +1055,34 @@ function BranchHealthRow({
                 </ThemeIcon>
               </Tooltip>
             )}
-            {/*
-              Diagnosis only, deliberately no button: a duplicate-hitting editor
-              sees a 409 saying an admin must resolve it, with no way to see
-              which branch was affected without this. The repair endpoint
-              exists, but putting its trigger here would sit it beside Purge
-              (which trashes the whole branch directory) — a misroute this row
-              cannot afford. Action UI tracked in
-              .claude/future-tasks/duplicate-content-id-repair-ui.md.
-            */}
-            {!!entry.duplicateContentIds?.length && (
-              <Tooltip
-                label={entry.duplicateContentIds
-                  .map((d) => `${d.id}: kept ${d.keptPath}; also on ${d.droppedPaths.join(', ')}`)
-                  .join('\n')}
-                multiline
-                maw={420}
-                style={{ whiteSpace: 'pre-line' }}
-              >
+            {duplicateIdScan?.state === 'found' && (
+              <Tooltip label="Review and fix">
                 <Badge
+                  component="button"
+                  type="button"
                   color="orange"
                   variant="light"
+                  style={{ cursor: 'pointer' }}
                   data-testid={`duplicate-content-ids-${entry.dirName}`}
+                  onClick={() => onDuplicateIds(entry.dirName, duplicateIdScan.duplicates)}
                 >
-                  {entry.duplicateContentIds.length} duplicate ID
-                  {entry.duplicateContentIds.length === 1 ? '' : 's'}
+                  {plural(duplicateIdScan.duplicates.length, 'duplicate ID')}
                 </Badge>
               </Tooltip>
             )}
+            {duplicateIdScan !== undefined &&
+              duplicateIdScan?.state !== 'found' &&
+              duplicateIdScan?.state !== 'none' && (
+                <Tooltip label={duplicateUncheckedReason(duplicateIdScan)} multiline maw={320}>
+                  <Badge
+                    color="gray"
+                    variant="outline"
+                    data-testid={`duplicate-ids-unchecked-${entry.dirName}`}
+                  >
+                    IDs not checked
+                  </Badge>
+                </Tooltip>
+              )}
           </Group>
         </Table.Td>
         <Table.Td>

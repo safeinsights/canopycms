@@ -90,7 +90,7 @@ Port the rename path's existing check to `createCollectionInner`: scan the paren
 
 Worth deciding at the same time whether `resolveCollectionPath`'s `.find()` should stay
 first-wins-silently or surface the ambiguity, given `branch-health.ts` already reports
-`duplicateContentIds` from a comparable schema-free scan — and whether schema discovery should
+`duplicateIdScan` from a comparable schema-free scan — and whether schema discovery should
 reject two collection items resolving to one logical path, which is the actual mechanism above.
 
 ## Related

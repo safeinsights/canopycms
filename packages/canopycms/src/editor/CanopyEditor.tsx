@@ -49,8 +49,12 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   // The gate owns the SWRProvider (keyed by user id), so it sits between the API client and the
   // editor: see EditorAuthGate for what a signed-out or lapsed session renders.
   return (
-    <ApiClientProvider basePath={config.basePath}>
-      <EditorAuthGate SignInComponent={config.editor?.SignInComponent} themeOptions={resolvedTheme}>
+    <ApiClientProvider basePath={config.basePath} editorMode={config.mode}>
+      <EditorAuthGate
+        SignInComponent={config.editor?.SignInComponent}
+        themeOptions={resolvedTheme}
+        editorMode={config.mode}
+      >
         <Editor
           entries={entries}
           title={resolvedTitle}
