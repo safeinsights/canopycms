@@ -242,7 +242,8 @@ export const MDXEditorLazy = React.lazy(async () => {
               markdown: 'Markdown',
             },
           }),
-          // MDXEditor's readOnly leaves its toolbar enabled, and its inserts edit the document.
+          // MDXEditor's readOnly blocks only the toolbar's pointer events; its buttons still take the
+          // keyboard, and their commands edit the document.
           // It reads plugins once, so the editor's key remounts it when `readOnly` changes.
           ...(readOnly
             ? []

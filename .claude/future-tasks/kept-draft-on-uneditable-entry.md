@@ -13,7 +13,7 @@ summary: >-
    `NoEditPermissionNotice` replaces the form when `canEdit === false`. A draft written before
    an admin tightened a path rule still counts in `resolveUnsaved` and `editedFiles`, so a
    branch switch warns about unsaved work the user can neither see nor discard from the pane
-   ("Discard all" in the branch menu still works). Either show the notice alongside
+   ("Discard All File Drafts" in the branch menu still works). Either show the notice alongside
    `NoEditPermissionNotice`, or leave such entries out of the unsaved count.
 2. **Late edits judged by the wrong entry.** The draft writer's `contentId` comes from the
    render that created the callback, while `contentReadOnlyRef` is read when it is called. An

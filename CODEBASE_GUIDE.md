@@ -479,7 +479,7 @@ Top-level components and helpers:
 - `Editor.tsx` — the composition root
 - `EditorPanes.tsx` — pane layout
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
-- `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; `readOnly` fences leaf controls (`ReadOnlyFence`)
+- `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comments
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals

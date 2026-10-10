@@ -215,7 +215,7 @@ export const Default: Story = {
   },
 }
 
-/** A locked branch: every field shows its value disabled, with no add, remove or reorder. */
+/** A locked branch: every field shows its value read-only, with no add, remove or reorder. */
 export const ReadOnly: Story = {
   render: () => (
     <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />

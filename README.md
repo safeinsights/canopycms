@@ -1337,7 +1337,7 @@ Each renderer receives `CustomFieldRenderProps`:
 - `onChange` — call with the new value to update the draft
 - `path` — canonical path to this field, e.g. `['blocks', 0, 'title']`
 - `id` — the id the default control would have used; attach it to your input
-- `readOnly` — true on a locked branch or an entry the user can't edit; show the value only (`onChange` is ignored, native inputs disabled)
+- `readOnly` — true on a locked branch (protected, or in review); show the value only (`onChange` is ignored, native inputs disabled)
 
 Renderers apply **by field type, everywhere**: top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer. `customRenderers` is also accepted by `<CanopyEditor>` and `<Editor>` when you compose the editor yourself.
 

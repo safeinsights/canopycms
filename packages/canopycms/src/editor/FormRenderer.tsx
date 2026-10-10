@@ -53,7 +53,7 @@ export interface CustomFieldRenderProps {
   onChange: (v: unknown) => void
   path: Array<string | number>
   id: string
-  /** The user can't change this content (a locked branch, no edit access); `onChange` is ignored. */
+  /** The branch is locked (protected, or in review): show the value; `onChange` is ignored. */
   readOnly: boolean
 }
 
@@ -186,7 +186,7 @@ export interface FormRendererProps {
   fieldErrors?: Record<string, string>
   /** The entry's format, which decides how its body field is checked. */
   format?: ContentFormat
-  /** Shows the value without accepting edits; `onChange` is never called. Comments stay open. */
+  /** Shows the value without accepting edits. Comments stay open. */
   readOnly?: boolean
 }
 
@@ -744,8 +744,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           title="Page updated since your draft started"
           data-testid="conflict-alert"
         >
-          Someone else has recently changed this page. You can keep editing — a reviewer will
-          reconcile your changes when you submit.
+          {readOnly
+            ? 'Someone else has recently changed this page.'
+            : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
         </Alert>
       )}
 

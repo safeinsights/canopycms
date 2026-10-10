@@ -1,6 +1,6 @@
 /**
- * A read-only form takes no edit through any field type: every built-in control is read-only yet
- * focusable, a custom renderer sits in a disabled fence, no add/remove/reorder affordance
+ * A read-only form takes no edit through any field type: every built-in input is read-only yet
+ * focusable (the Switch is disabled), a custom renderer sits in a disabled fence, no add/remove/reorder affordance
  * renders, and `onChange` is never called, MDXEditor's mount-time normalisation included.
  * Comments stay usable. Each field also refuses edits on its own, without FormRenderer's gate.
  */
