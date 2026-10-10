@@ -277,6 +277,34 @@ describe('GroupManager', () => {
     })
   })
 
+  describe('lifetime', () => {
+    it('starts each opening from the loaded groups, not from what the last opening staged', async () => {
+      const props = {
+        onClose: vi.fn(),
+        internalGroups: mockInternalGroups,
+        canEdit: true,
+        onSave: mockOnSave,
+      }
+      const { rerender } = render(<GroupManager opened {...props} />, { wrapper })
+      fireEvent.click(screen.getByText('Create Group'))
+      const nameInput = await screen.findByPlaceholderText('e.g., Content Editors')
+      fireEvent.change(nameInput, {
+        target: { value: 'Staged Group' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+      await waitFor(() => expect(screen.getByText('Staged Group')).toBeTruthy())
+
+      // Closed by the parent directly, so no discard runs: only the remount can drop it.
+      rerender(<GroupManager opened={false} {...props} />)
+      await waitFor(() => expect(screen.queryByText('Content Editors')).toBeNull())
+      rerender(<GroupManager opened {...props} />)
+
+      await waitFor(() => expect(screen.getByText('Content Editors')).toBeTruthy())
+      expect(screen.queryByText('Staged Group')).toBeNull()
+      expect(screen.queryByText('Save Groups')).toBeNull()
+    })
+  })
+
   describe('creating groups', () => {
     it('creates a new group when form is submitted', async () => {
       render(

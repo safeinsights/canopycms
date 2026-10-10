@@ -108,6 +108,27 @@ describe('PermissionManager', () => {
     mockOnListGroups = vi.fn().mockResolvedValue(mockGroups)
   })
 
+  describe('group loading', () => {
+    it('loads groups only while open, not on re-renders while closed', async () => {
+      const first = vi.fn().mockResolvedValue(mockGroups)
+      const props = { collections: mockCollections, permissions: mockPermissions, canEdit: true }
+      const { rerender } = render(
+        <PermissionManager opened={false} onClose={vi.fn()} {...props} onListGroups={first} />,
+        { wrapper },
+      )
+      // A parent re-render hands over a fresh function each time.
+      const second = vi.fn().mockResolvedValue(mockGroups)
+      rerender(
+        <PermissionManager opened={false} onClose={vi.fn()} {...props} onListGroups={second} />,
+      )
+      expect(first).not.toHaveBeenCalled()
+      expect(second).not.toHaveBeenCalled()
+
+      rerender(<PermissionManager opened onClose={vi.fn()} {...props} onListGroups={second} />)
+      await waitFor(() => expect(second).toHaveBeenCalledTimes(1))
+    })
+  })
+
   describe('rendering', () => {
     it('renders with permissions', () => {
       render(

@@ -49,7 +49,9 @@ export function useGroupState({
     setIsDirty(false)
   }, [initialGroups])
 
+  // Only while dirty: after a save whose reload failed, initialGroups is stale.
   const unsavedGroupIds = useMemo(() => {
+    if (!isDirty) return new Set<CanopyGroupId>()
     const initialById = new Map(initialGroups.map((g) => [g.id, g]))
     return new Set(
       groups
@@ -59,7 +61,7 @@ export function useGroupState({
         })
         .map((g) => g.id),
     )
-  }, [groups, initialGroups])
+  }, [groups, initialGroups, isDirty])
 
   const createGroup = useCallback((name: string, description: string) => {
     const newGroup: InternalGroup = {

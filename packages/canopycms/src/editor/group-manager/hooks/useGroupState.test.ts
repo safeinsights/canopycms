@@ -160,4 +160,21 @@ describe('useGroupState', () => {
     })
     expect(result.current.unsavedGroupIds.has('editors' as CanopyGroupId)).toBe(false)
   })
+
+  it('marks nothing unsaved once a save succeeds, even if the reload after it failed', async () => {
+    const loaded: InternalGroup[] = [
+      { id: 'Admins' as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+    ]
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useGroupState({ initialGroups: loaded, onSave }))
+    act(() => {
+      result.current.createGroup('Group A', '')
+    })
+    expect(result.current.unsavedGroupIds.size).toBe(1)
+
+    // initialGroups never changes here, as when the post-save reload fails.
+    await act(() => result.current.save())
+    expect(result.current.isDirty).toBe(false)
+    expect(result.current.unsavedGroupIds.size).toBe(0)
+  })
 })

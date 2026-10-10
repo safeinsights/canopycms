@@ -8,11 +8,17 @@ import { usePermissionTree } from './hooks/usePermissionTree'
 import { useGroupsAndUsers } from './hooks/useGroupsAndUsers'
 import { PermissionTree } from './PermissionTree'
 import { findTreeNode } from './utils'
-import { StagedChangesDrawer } from '../components/StagedChangesDrawer'
+import { StagedChangesDrawer, useOpeningKey } from '../components/StagedChangesDrawer'
 
-export const PermissionManager: React.FC<PermissionManagerProps> = ({
+export const PermissionManager: React.FC<PermissionManagerProps> = (props) => {
+  const { key, onExited } = useOpeningKey()
+  return <PermissionManagerDrawer key={key} {...props} onExited={onExited} />
+}
+
+const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () => void }> = ({
   opened,
   onClose,
+  onExited,
   collections,
   contentRoot = 'content',
   permissions,
@@ -65,7 +71,8 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     setUserSearchQuery,
     toggleUserSearch,
   } = useGroupsAndUsers({
-    onListGroups,
+    // This panel stays mounted while its drawer is closed; groups load on each opening.
+    onListGroups: opened ? onListGroups : undefined,
     onSearchUsers,
     canEdit,
   })
@@ -89,13 +96,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     resetPermissions()
     setError(null)
   }, [resetPermissions])
-
-  // This component outlives the drawer's content, so closing resets the transient search UI.
-  const handleClose = useCallback(() => {
-    toggleUserSearch(false)
-    setShowGroupSearch(false)
-    onClose()
-  }, [toggleUserSearch, setShowGroupSearch, onClose])
 
   const handleAddUser = useCallback(
     (nodePath: string, level: PermissionLevel, userId: string) => {
@@ -180,7 +180,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   return (
     <StagedChangesDrawer
       opened={opened}
-      onClose={handleClose}
+      onClose={onClose}
       title="Permissions"
       description="Manage content access by path (read, edit, review)"
       size={700}
@@ -190,6 +190,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
       saveLabel="Save Permissions"
       onSave={handleSave}
       onDiscard={handleDiscard}
+      onExited={onExited}
     >
       <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
         {!canEdit && (

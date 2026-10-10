@@ -1,5 +1,5 @@
 import React from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -131,12 +131,27 @@ describe('StagedChangesDrawer', () => {
       expect(openConfirmModal).toHaveBeenCalledTimes(2)
     })
 
+    it('ignores close while a save is in flight', () => {
+      const { props } = renderDrawer({ isDirty: true, isSaving: true })
+      pressEscape()
+      expect(openConfirmModal).not.toHaveBeenCalled()
+      expect(props.onClose).not.toHaveBeenCalled()
+    })
+
     it("yields Escape to the panel's own modal", () => {
       const { props } = renderDrawer({ isDirty: true, childModalOpen: true })
       pressEscape()
       expect(openConfirmModal).not.toHaveBeenCalled()
       expect(props.onClose).not.toHaveBeenCalled()
     })
+  })
+
+  it('reports the end of the close transition through onExited', async () => {
+    const onExited = vi.fn()
+    const { rerenderWith } = renderDrawer({ onExited })
+    expect(onExited).not.toHaveBeenCalled()
+    rerenderWith({ opened: false, onExited })
+    await waitFor(() => expect(onExited).toHaveBeenCalledTimes(1))
   })
 
   describe('beforeunload', () => {

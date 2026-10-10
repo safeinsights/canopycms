@@ -10,11 +10,17 @@ import { useExternalGroupSearch } from './hooks/useExternalGroupSearch'
 import { InternalGroupsTab } from './InternalGroupsTab'
 import { ExternalGroupsTab } from './ExternalGroupsTab'
 import { GroupForm } from './GroupForm'
-import { StagedChangesDrawer } from '../components/StagedChangesDrawer'
+import { StagedChangesDrawer, useOpeningKey } from '../components/StagedChangesDrawer'
 
-export const GroupManager: React.FC<GroupManagerProps> = ({
+export const GroupManager: React.FC<GroupManagerProps> = (props) => {
+  const { key, onExited } = useOpeningKey()
+  return <GroupManagerDrawer key={key} {...props} onExited={onExited} />
+}
+
+const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }> = ({
   opened,
   onClose,
+  onExited,
   internalGroups: initialInternalGroups,
   loading = false,
   canEdit,
@@ -80,12 +86,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setError(null)
   }, [formData, editingGroup, updateGroup, createGroup, setError])
 
-  // This component outlives the drawer's content, so closing resets the transient search UI.
-  const handleClose = useCallback(() => {
-    userSearch.hideSearch()
-    onClose()
-  }, [userSearch, onClose])
-
   const handleFormChange = useCallback((data: Partial<GroupFormData>) => {
     setFormData((prev) => ({ ...prev, ...data }))
   }, [])
@@ -104,7 +104,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   return (
     <StagedChangesDrawer
       opened={opened}
-      onClose={handleClose}
+      onClose={onClose}
       title="Groups"
       description="Manage groups and organizations"
       size={600}
@@ -115,6 +115,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
       onSave={save}
       onDiscard={discard}
       childModalOpen={isModalOpen}
+      onExited={onExited}
     >
       <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
         {!canEdit && (

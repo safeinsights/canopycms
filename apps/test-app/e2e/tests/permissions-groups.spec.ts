@@ -178,6 +178,8 @@ test.describe('Permissions and Groups', () => {
 
     try {
       await test.step('open editor and Manage Groups', async () => {
+        // A short viewport makes the group list overflow, so the save bar is only in view if sticky.
+        await page.setViewportSize({ width: 1280, height: 600 })
         await editorPage.goto()
         await editorPage.waitForReady()
         await groupManager.open()
