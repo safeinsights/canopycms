@@ -15,7 +15,11 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
-import { readCarriedOverStatus, WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStartupFailure,
+  WORKER_STATUS_FILE,
+} from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { Task } from '../task-queue/cms-task-queue'
@@ -541,30 +545,46 @@ describe('lastShutdown across a worker replacement', () => {
   const readStatus = async (): Promise<WorkerStatusReport> =>
     JSON.parse(await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'))
 
-  it('a start() retried on the same worker after a failed one does not keep reporting it', async () => {
+  it('a start() retried on the same worker is a new worker, not the failed start', async () => {
     const old = makeWorker()
     await old.start()
     await old.stop({ reason: 'SIGTERM' })
+    const taskDir = path.join(workspacePath, '.tasks')
 
     const worker = makeWorker()
-    const internalsWithClone = worker as unknown as { ensureRemoteGit(): Promise<void> }
-    const ensureRemoteGit = internalsWithClone.ensureRemoteGit.bind(worker)
-    internalsWithClone.ensureRemoteGit = async () => {
-      internalsWithClone.ensureRemoteGit = ensureRemoteGit
+    const clone = worker as unknown as { ensureRemoteGit(): Promise<void> }
+    const ensureRemoteGit = clone.ensureRemoteGit.bind(worker)
+    let duringRetry:
+      | {
+          status: WorkerStatusReport
+          failure: Awaited<ReturnType<typeof readWorkerStartupFailure>>
+          carried: Awaited<ReturnType<typeof readCarriedOverStatus>>
+        }
+      | undefined
+    clone.ensureRemoteGit = async () => {
+      clone.ensureRemoteGit = async () => {
+        duringRetry = {
+          status: await readStatus(),
+          failure: await readWorkerStartupFailure(taskDir),
+          carried: await readCarriedOverStatus(taskDir),
+        }
+        await ensureRemoteGit()
+      }
       throw new Error('clone failed')
     }
     await expect(worker.start()).rejects.toThrow('clone failed')
+    const failed = await readStatus()
     try {
       await worker.start()
-      const running = await readStatus()
-      expect(running.lastFatalError).toBeUndefined()
-      // Were it to die now, the next worker would report a crash, not a failed start.
-      expect(
-        (await readCarriedOverStatus(path.join(workspacePath, '.tasks'))).lastShutdown,
-      ).toMatchObject({
-        workerStartedAt: running.startedAt,
+      expect(duringRetry?.status.startedAt).not.toBe(failed.startedAt)
+      expect(duringRetry?.status.lastShutdown).toEqual(failed.lastShutdown)
+      expect(duringRetry?.failure).toMatchObject({ message: 'clone failed', current: false })
+      // Were it to die before its first sync, the next worker would report a crash.
+      expect(duringRetry?.carried.lastShutdown).toMatchObject({
+        workerStartedAt: duringRetry?.status.startedAt,
         outcome: 'not-drained',
       })
+      expect((await readStatus()).lastFatalError).toBeUndefined()
     } finally {
       await worker.stop()
     }
