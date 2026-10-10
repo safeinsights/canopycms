@@ -12,6 +12,8 @@ import type { CmsWorkerConfig, WorkerSelfStop } from 'canopycms/worker/cms-worke
 import {
   EXIT_DRAINED_FOR_TERMINATION,
   EXIT_WORKER_SELF_STOPPED,
+  WORKER_CONTRACT_ENV,
+  WORKER_CONTRACT_VERSION,
 } from '../src/constructs/worker-lifecycle'
 import { readGitHubAppEnv, runWorker, type RunWorkerDeps, type WorkerHandle } from './run'
 
@@ -29,6 +31,7 @@ const baseEnv = (): NodeJS.ProcessEnv => ({
   CANOPYCMS_GITHUB_REPO: 'site',
   CANOPYCMS_GITHUB_TOKEN: 'ghp_test_token',
   STATE_DIRECTORY: '/var/lib/canopy-worker',
+  [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION),
 })
 
 function envWithout(...names: string[]): NodeJS.ProcessEnv {
@@ -257,6 +260,70 @@ describe('runWorker: a failure before worker.start()', () => {
     })
     expect(h.exitCodes()).toEqual([1])
     expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('refuses a unit with no contract stamp with the template-too-old line, before the state directory', async () => {
+    const h = harness({ env: envWithout(WORKER_CONTRACT_ENV, 'STATE_DIRECTORY') })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringMatching(
+          new RegExp(
+            `^canopy-worker: template too old for this bundle: needs worker contract ` +
+              `${WORKER_CONTRACT_VERSION}, unit has 0 \\(StateDirectory=canopy-worker[,)]`,
+          ),
+        ),
+      }),
+    })
+    expect(h.exitCodes()).toEqual([1])
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('refuses a unit stamped below the bundle', async () => {
+    const h = harness({
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION - 1) },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          `needs worker contract ${WORKER_CONTRACT_VERSION}, unit has ${WORKER_CONTRACT_VERSION - 1} (`,
+        ),
+      }),
+    })
+    expect(h.exitCodes()).toEqual([1])
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('refuses a contract stamp that is not a whole number', async () => {
+    const h = harness({ env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: '1.0' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: `canopy-worker: ${WORKER_CONTRACT_ENV}="1.0" on the worker unit is not a whole number`,
+      }),
+    })
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('starts under a unit stamped newer than the bundle', async () => {
+    const h = harness({
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION + 1) },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.start).toHaveBeenCalled()
   })
 
   it("hands the worker systemd's state directory, the first of several", async () => {

@@ -1086,6 +1086,22 @@ upload fails the boot rather than running, and the group keeps replacing the ins
 object is there. The bucket refuses deletes, so a rollback's bundle stays downloadable. A change
 set that carries only the hash still re-resolves the AMI parameter, so it can move the AMI too.
 
+**Gate the roll on the worker contract, not the template diff.** A parameter-only change set runs
+the new bundle under the deployed template's unit, and a bundle needing a newer unit exits at
+start. Every canopycms bump changes the template (the fallback bundle's key and hash), so the diff
+cannot tell. Compare the bundle's `index.js.contract` with the stack's `WorkerContract` output, and
+deploy the template first when the bundle needs more:
+
+```bash
+needs=$(cat "$dist/index.js.contract")
+has=$(aws cloudformation describe-stacks --stack-name "$STACK" --output text \
+  --query "Stacks[0].Outputs[?contains(OutputKey, 'WorkerContract')].OutputValue")
+[[ "$has" =~ ^[0-9]+$ ]] || has=0 # no output: a template older than any contract
+((has >= needs)) || { echo "bundle needs worker contract $needs, stack has $has" >&2; exit 1; }
+```
+
+A bundle that slips past logs `template too old for this bundle` and refuses to start.
+
 ## The worker instance
 
 The worker holds the GitHub credential, so `CanopyCmsService` hardens its instance:

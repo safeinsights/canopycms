@@ -78,6 +78,7 @@ replaces each `next` with its number.
 | next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 | next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 | next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| next | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--deploy-the-template-before-the-bundle)                                                   | Template first          |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -472,6 +473,19 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
 worker, and a hand-built alarm on the worker log group.
+
+### `canopycms-cdk`: a worker bundle states the template it needs — **deploy the template before the bundle**
+
+**What changed.** (next int) The worker unit carries a contract version
+(`Environment=CANOPYCMS_WORKER_CONTRACT=<n>`), and a bundle refuses to start under an older or
+unstamped unit, logging `template too old for this bundle`. Parameter mode outputs the version as
+`WorkerContract`; the package ships the bundle's need as `worker/dist/index.js.contract`.
+
+**To adopt.** Parameter mode: `cdk deploy` the template before CI rolls this bundle, then gate
+bundle-only rolls on the contract ([recipe](deploying-to-aws.md#rolling-the-worker-from-ci)). A
+hand-installed unit adds `Environment=CANOPYCMS_WORKER_CONTRACT=1`.
+
+**Now deletable.** Reading the template diff to decide whether a bundle-only roll is safe.
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
