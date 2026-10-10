@@ -209,7 +209,8 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     githubService: options.githubService,
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
-    submitBranch: options.submitBranch ?? vi.fn().mockResolvedValue({ changedPaths: [] }),
+    submitBranch:
+      options.submitBranch ?? vi.fn().mockResolvedValue({ changedPaths: [], editors: [] }),
     commitToSettingsBranch:
       options.commitToSettingsBranch ??
       vi.fn().mockResolvedValue({ committed: true, pushed: true }),
@@ -218,6 +219,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     refreshActiveBranch: options.refreshActiveBranch ?? vi.fn().mockResolvedValue(undefined),
     resolvePendingBaseBranch:
       options.resolvePendingBaseBranch ?? vi.fn().mockResolvedValue(undefined),
+    recordBranchEditor: options.recordBranchEditor ?? vi.fn().mockResolvedValue(undefined),
   }
 }
 

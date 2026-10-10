@@ -2,6 +2,12 @@ import type { ApiContext } from './types'
 import type { OperatingMode } from '../operating-mode'
 import { operatingStrategy } from '../operating-mode'
 import { sanitizeErrorMessage } from '../utils/error'
+import type { CanopyUser } from '../user'
+import {
+  appendTrailers,
+  buildEditorTrailers,
+  submissionEditorFromUser,
+} from '../submission-attribution'
 
 /**
  * Get the appropriate root path for settings (permissions/groups).
@@ -48,7 +54,8 @@ export interface CommitSettingsResult {
 /**
  * Commit and push settings changes based on the mode.
  * Both prod and dev use commitToSettingsBranch.
- * Settings changes are never reviewed through a PR (see commitToSettingsBranch).
+ * Settings changes are never reviewed through a PR (see commitToSettingsBranch), and the bot
+ * authors the commit, so its trailers, not its author line, name who made the change.
  */
 export async function commitSettings(
   ctx: ApiContext,
@@ -57,6 +64,8 @@ export async function commitSettings(
     branchRoot: string
     fileName: string
     message: string
+    /** The user making the change, named in the commit's trailers as a submit names its editors. */
+    actor: CanopyUser
     mode: OperatingMode
   },
 ): Promise<CommitSettingsResult> {
@@ -70,10 +79,16 @@ export async function commitSettings(
 
   // For modes that use separate settings branch, commit to settings branch
   if (strategy.usesSeparateSettingsBranch()) {
+    const actor = submissionEditorFromUser(options.actor)
+    const { config } = ctx.services
+    const trailers = buildEditorTrailers(actor ? [actor] : [], {
+      editedBy: config.gitEditedByTrailers ?? true,
+      coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+    })
     const result = await ctx.services.commitToSettingsBranch({
       branchRoot: options.branchRoot,
       files: options.fileName,
-      message: options.message,
+      message: appendTrailers(options.message, trailers),
     })
 
     if (!result.pushed) {

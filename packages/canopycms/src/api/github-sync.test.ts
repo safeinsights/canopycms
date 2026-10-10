@@ -348,6 +348,34 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(body).not.toContain('`Old`')
     })
 
+    it('lists every recorded editor other than the submitter, on both paths', async () => {
+      const editors = [
+        { userId: 'user_2abc', name: 'Jane Doe' },
+        { userId: 'user_3def', name: 'Raj Patel', email: 'raj@example.com' },
+        { userId: 'user_4ghi' },
+      ]
+      const githubService = makeGitHubService()
+      const branchContext = createMockBranchContext({ branchName: 'feature/new' })
+
+      await syncSubmitPr(
+        createMockApiContext({ services: { config: baseConfig, githubService } }),
+        branchContext,
+        { ...submission, editors },
+      )
+      await syncSubmitPr(
+        createMockApiContext({ services: { config: baseConfig, githubService: undefined } }),
+        branchContext,
+        { ...submission, editors },
+      )
+
+      const direct = vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0]?.body
+      const task = mockEnqueueTask.mock.calls[0]?.[1] as { payload: { body: string } }
+      for (const body of [direct, task.payload.body]) {
+        expect(body).toContain('Also edited by: `Raj Patel` (`user_3def`), `user_4ghi`')
+        expect(body).not.toContain('raj@example.com')
+      }
+    })
+
     it('marks the worker task so the worker merges the section into an existing body', async () => {
       const ctx = createMockApiContext({
         services: { config: baseConfig, githubService: undefined },

@@ -29,7 +29,8 @@ export { listAllEntries } from './useEntriesData'
 export class SaveApiError extends Error {
   constructor(
     public readonly status: number,
-    serverMessage?: string,
+    /** The server's (or saveEntry's own) explanation, if any; `message` falls back to the status. */
+    public readonly serverMessage?: string,
     public readonly fieldErrors?: EntryFieldError[],
     public readonly code?: ApiErrorCode,
   ) {
@@ -369,8 +370,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (expectedVersion === undefined) {
       throw new SaveApiError(
         409,
-        'This entry has not been loaded from the server, so the save cannot be checked ' +
-          "against other editors' changes. Reload it and try again.",
+        "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
       )
     }
     const writeBody: WriteContentBody = {

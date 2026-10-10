@@ -18,7 +18,11 @@ import { createDebugLogger } from '../utils/debug'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
-import { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
+import {
+  MAX_ENTRIES_PER_PAGE,
+  DEFAULT_ENTRIES_LIMIT,
+  ENTRY_CHANGED_MESSAGE,
+} from './entries-constants'
 import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
@@ -634,10 +638,7 @@ const deleteEntryHandler = async (
       return {
         ok: false,
         status: 409,
-        error:
-          err instanceof BranchSyncingError
-            ? err.message
-            : 'Content conflict: entry was modified by another editor',
+        error: err instanceof BranchSyncingError ? err.message : ENTRY_CHANGED_MESSAGE,
       }
     }
     return {

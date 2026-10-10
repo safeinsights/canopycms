@@ -1,4 +1,6 @@
+import type { UserSearchResult } from './auth/types'
 import type { CanopyUser } from './user'
+import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 
 /**
@@ -113,6 +115,34 @@ export function sanitizeEmail(raw: string | undefined): string | undefined {
 export function submissionEditorFromUser(user: CanopyUser): SubmissionEditor | undefined {
   if (user.type !== 'authenticated') return undefined
   return { userId: user.userId, name: user.name, email: user.email }
+}
+
+/** Looks a user up by id, as `AuthPlugin.getUserMetadata` does. */
+export type EditorLookup = (userId: string) => Promise<UserSearchResult | null>
+
+/**
+ * Recorded editor ids as SubmissionEditors, with the name and email the auth provider gives
+ * now. A user the lookup cannot find, or a lookup that throws, keeps just the id.
+ */
+export async function describeEditors(
+  userIds: readonly string[],
+  lookup: EditorLookup | undefined,
+): Promise<SubmissionEditor[]> {
+  return Promise.all(
+    userIds.map(async (userId): Promise<SubmissionEditor> => {
+      if (!lookup) return { userId }
+      try {
+        const found = await lookup(userId)
+        return found ? { userId, name: found.name, email: found.email } : { userId }
+      } catch (err: unknown) {
+        canopyLogWarn(
+          'CanopyCMS: Could not look up an editor; crediting them by id:',
+          getErrorMessage(err),
+        )
+        return { userId }
+      }
+    }),
+  )
 }
 
 interface CleanEditor {

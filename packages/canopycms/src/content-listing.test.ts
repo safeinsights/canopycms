@@ -1103,6 +1103,33 @@ describe('listEntries', () => {
       expect(blocks[0].value.snippet).toMatchObject({ title: 'Sign up today' })
     })
 
+    it('lists a block whose value is null or an array, passing the value through', async () => {
+      const { postsDir, snippetId, schema } = await createSnippetAndPosts({
+        name: 'blocks',
+        type: 'block',
+        templates: [{ name: 'sharedCta', fields: [referenceField] }],
+      })
+      await createEntry(postsDir, 'post', 'hello', 'json', {
+        title: 'Hello',
+        blocks: [
+          { template: 'sharedCta', value: null },
+          { template: 'sharedCta', value: ['item1', 'item2'] },
+          { template: 'sharedCta', value: { snippet: snippetId } },
+        ],
+      })
+
+      const entries = await listEntries(tempDir, flattenSchema(schema, 'content'), 'content', {
+        resolveReferences: true,
+      })
+
+      const blocks = entries.find((e) => e.slug === 'hello')!.data.blocks as Array<{
+        value: unknown
+      }>
+      expect(blocks[0].value).toBeNull()
+      expect(blocks[1].value).toEqual(['item1', 'item2'])
+      expect(blocks[2].value).toMatchObject({ snippet: { title: 'Sign up today' } })
+    })
+
     it('resolves references nested inside object fields and inline groups', async () => {
       const { postsDir, snippetId, schema } = await createSnippetAndPosts({
         name: 'meta',

@@ -9,6 +9,7 @@ import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
 import { EntrySchemaUnavailableError, SaveApiError } from './useEntryManager'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
+import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 
 /** Collapse a list of per-field errors into a path → message map (first error per path wins). */
 const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
@@ -192,6 +193,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //             preceded the entry's first load); treated as safe, matching
   //             the behavior before base versions existed.
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
+  // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
+  // landed, so re-sending the token would bounce off the user's own write; held until re-read.
+  const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
   // The draft ids the reconcile effect below has already accounted for. It
   // prunes on an observed present -> absent TRANSITION rather than on "not
   // currently in drafts": the restore effect stamps base versions for ids
@@ -314,6 +318,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // them across a switch would compare one branch's version against
       // another's.
       draftBaseVersionsRef.current = {}
+      reloadRequiredRef.current = {}
       reconciledDraftIdsRef.current = new Set()
     }
     prevBranchRef.current = options.branchName
@@ -554,15 +559,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }, [effectiveValue, currentId, options.currentEntry?.schema, options.currentEntry?.format])
 
   /**
-   * The 409 presentation, in one place. The client-side stale-base check below
-   * and the server's own 409 response are the same situation from the user's
-   * point of view -- someone else's work is at risk -- so they must read
-   * identically, and "Reload" (now itself confirmed, see `handleReload`) is the
-   * recovery for both.
+   * The 409 presentation. Server 409s differ in cause and recovery (version
+   * moved on, branch syncing, write may have landed), so their own wording is
+   * shown; the default is the version-mismatch wording the stale-base check
+   * below shares.
    */
-  const showConflictNotification = () => {
+  const showConflictNotification = (message: string = ENTRY_CHANGED_MESSAGE) => {
     notifications.show({
-      message: 'Content was modified by another editor. Reload to see the latest changes.',
+      message,
       color: 'yellow',
       autoClose: getNotificationDuration(8000),
       withCloseButton: true,
@@ -637,6 +641,16 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const handleSave = async () => {
     if (!options.currentEntry || !effectiveValue || !currentId) return
+
+    if (currentId in reloadRequiredRef.current) {
+      if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
+        showConflictNotification(
+          'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).',
+        )
+        return
+      }
+      delete reloadRequiredRef.current[currentId]
+    }
 
     // Conflict check first: a stale-based draft must not be schema-validated
     // into a green "Saved" -- and nagging about field errors is noise when the
@@ -731,7 +745,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
       if (isConflict) {
-        showConflictNotification()
+        if (err.code === 'WRITE_OUTCOME_UNKNOWN') {
+          reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
+        }
+        showConflictNotification(err.serverMessage || undefined)
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({
@@ -844,6 +861,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
+      delete reloadRequiredRef.current[currentId]
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`
       // falls back to `loadedValues`, so the rendered value is identical --

@@ -13,7 +13,7 @@ import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
-import { submissionEditorFromUser } from '../submission-attribution'
+import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
 import { baseBranchOf } from '../utils/base-branch'
 
@@ -81,9 +81,15 @@ const submitBranchForMergeHandler = async (
 
   // Commit and push changes
   const submitter = submissionEditorFromUser(req.user)
+  const { authPlugin } = ctx
   let changedPaths: string[]
+  let editors: SubmissionEditor[]
   try {
-    ;({ changedPaths } = await ctx.services.submitBranch({ context: branchContext, submitter }))
+    ;({ changedPaths, editors } = await ctx.services.submitBranch({
+      context: branchContext,
+      submitter,
+      lookupEditor: authPlugin ? (id) => authPlugin.getUserMetadata(id) : undefined,
+    }))
   } catch (err) {
     if (err instanceof NothingToSubmitError) {
       return { ok: false, status: 400, error: err.message }
@@ -147,6 +153,7 @@ const submitBranchForMergeHandler = async (
   const submittedAt = new Date().toISOString()
   const prResult = await syncSubmitPr(ctx, branchContext, {
     submitter,
+    editors,
     changedPaths,
     submittedAt,
   })

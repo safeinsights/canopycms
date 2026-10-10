@@ -18,7 +18,7 @@
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
-import type { BranchContext } from './types'
+import type { BranchContext, BranchMetadata, BranchPaths } from './types'
 import type { CanopyUser } from './user'
 import {
   createCheckBranchAccess,
@@ -43,8 +43,12 @@ import { timeRequestPhase } from './utils/request-timing'
 import {
   appendTrailers,
   buildEditorTrailers,
+  describeEditors,
+  type EditorLookup,
   type SubmissionEditor,
 } from './submission-attribution'
+import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
+import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
 
@@ -107,9 +111,40 @@ export class NothingToSubmitError extends Error {
   }
 }
 
+type RecordedEditors = Pick<BranchMetadata, 'editors' | 'uncommittedEditors'>
+
+/** The branch's recorded editor ids, or undefined, with a warning, when branch.json cannot be read. */
+async function readRecordedEditors(context: BranchContext): Promise<RecordedEditors | undefined> {
+  try {
+    return (await readBranchMetadataFile(context.branchRoot))?.branch
+  } catch (err) {
+    console.warn(
+      `CanopyCMS: Could not read the recorded editors of ${context.branch.name}:`,
+      getErrorMessage(err),
+    )
+    return undefined
+  }
+}
+
+/** One lookup per user per submit, however often the submit asks. */
+function memoizeLookup(lookup: EditorLookup | undefined): EditorLookup | undefined {
+  if (!lookup) return undefined
+  const seen = new Map<string, ReturnType<EditorLookup>>()
+  return (userId) => {
+    let found = seen.get(userId)
+    if (!found) {
+      found = lookup(userId)
+      seen.set(userId, found)
+    }
+    return found
+  }
+}
+
 export interface SubmitBranchResult {
   /** Repo-relative paths the branch changes, excluding canopycms runtime metadata. */
   changedPaths: string[]
+  /** Every recorded editor of the branch, for the PR body. */
+  editors: SubmissionEditor[]
 }
 
 export interface CanopyServices {
@@ -173,6 +208,8 @@ export interface CanopyServices {
   submitBranch: (options: {
     context: BranchContext
     submitter?: SubmissionEditor
+    /** Names the recorded editors; without it they are credited by id. */
+    lookupEditor?: EditorLookup
     message?: string
   }) => Promise<SubmitBranchResult>
   /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
@@ -188,6 +225,8 @@ export interface CanopyServices {
   }>
   /** Get the root path for settings storage (ensures workspace exists) */
   getSettingsBranchRoot: () => Promise<string>
+  /** Records `user` as an editor of the branch for its next submit (branch-metadata.ts). */
+  recordBranchEditor: (context: BranchPaths, user: CanopyUser) => Promise<void>
 }
 
 export interface CreateCanopyServicesOptions {
@@ -344,6 +383,7 @@ async function _createCanopyServicesInternal(
   const submitBranch = async (options: {
     context: BranchContext
     submitter?: SubmissionEditor
+    lookupEditor?: EditorLookup
     message?: string
   }): Promise<SubmitBranchResult> => {
     // Defense-in-depth: refuse to push the base branch to itself even if the
@@ -370,9 +410,23 @@ async function _createCanopyServicesInternal(
     // lands on the branch, and the rebase's `--abort` resets the branch past it
     // after this reported success. The push stays inside so no rebase rewrites
     // the commit between commit and push.
+    const lookupEditor = memoizeLookup(options.lookupEditor)
+    const readRecorded = () => readRecordedEditors(options.context)
+    // Names are looked up before taking the lock, so a slow auth provider never holds it.
+    const named = new Map(
+      (await describeEditors((await readRecorded())?.editors ?? [], lookupEditor)).map((e) => [
+        e.userId,
+        e,
+      ]),
+    )
+    let recorded: RecordedEditors = {}
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
+      // A save records its editor only after releasing this lock, so a save that lands just
+      // before this submit can be committed here while its editor is named by the next commit.
+      recorded = (await readRecorded()) ?? {}
+      const uncommitted = recorded.uncommittedEditors ?? []
       // Commit and push answer two DIFFERENT questions. Committing cleans the
       // working tree, so one combined "tree is dirty" gate makes a retry after a
       // failed push a silent no-op: nothing left to commit, the block is skipped,
@@ -385,10 +439,14 @@ async function _createCanopyServicesInternal(
       const preCommitSha = await git.headSha()
       if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
         await git.addAllExceptCanopyState()
-        const trailers = buildEditorTrailers(options.submitter ? [options.submitter] : [], {
-          editedBy: config.gitEditedByTrailers ?? true,
-          coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
-        })
+        const committers = uncommitted.map((userId) => named.get(userId) ?? { userId })
+        const trailers = buildEditorTrailers(
+          options.submitter ? [options.submitter, ...committers] : committers,
+          {
+            editedBy: config.gitEditedByTrailers ?? true,
+            coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+          },
+        )
         await git.commit(
           appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
         )
@@ -415,13 +473,30 @@ async function _createCanopyServicesInternal(
         if (committed) await git.resetKeepingChanges(preCommitSha)
         throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
       }
+      // A failure here leaves them uncommitted, so the next commit names them again.
+      if (committed && uncommitted.length > 0) {
+        try {
+          await getBranchMetadataFileManager(
+            options.context.branchRoot,
+            options.context.baseRoot,
+          ).markEditorsCommitted(uncommitted)
+        } catch (err) {
+          console.warn(
+            `CanopyCMS: Could not clear the committed editors of ${options.context.branch.name}:`,
+            getErrorMessage(err),
+          )
+        }
+      }
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
         await git.push(options.context.branch.name)
       }
       return changedPaths ?? status.files.map((f) => f.path).filter((p) => !isCanopyInternalPath(p))
     })
 
-    return { changedPaths: submitted }
+    // Re-read after the lock, so the PR body also names an editor recorded after the read above:
+    // one whose save this commit carries, or one whose save will reach the PR with a later push.
+    const editorIds = (await readRecorded())?.editors ?? recorded.editors ?? []
+    return { changedPaths: submitted, editors: await describeEditors(editorIds, lookupEditor) }
   }
 
   // Must be initialized before closures that reference it (commitToSettingsBranch)
@@ -552,6 +627,7 @@ async function _createCanopyServicesInternal(
     submitBranch,
     commitToSettingsBranch,
     getSettingsBranchRoot,
+    recordBranchEditor,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
       // Static deployments and builds serve from the checkout — no git HEAD to track
