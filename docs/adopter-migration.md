@@ -82,6 +82,7 @@ replaces each `next` with its number.
 | next | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first          |
 | next | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                    |
 | next | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                  |
+| next | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub  |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -497,6 +498,20 @@ swap file now goes on first; an upgrade that still fails starts the worker unpat
 not Template first and the worker contract stays at 1.
 
 **Now deletable.** An instance type above `t4g.nano` chosen only to get the boot through.
+
+### The worker never pushes the base or default branch — **security fix**
+
+**What changed.** (next int) The worker now refuses to push to the base branch or to GitHub's
+default branch, whichever task asks, and fails that task permanently. CanopyCMS never queues
+such a push. But the task queue is on the shared workspace, which the CMS Lambda can write, so
+before this a compromised Lambda could have had the worker push to, or overwrite, your base
+branch. The refusal also covers a push that would replace history.
+
+**To adopt.** Nothing to change. Upgrade, and roll the worker. Regardless of this fix, protect
+your base branch on GitHub with a branch protection rule or ruleset that CanopyCMS's credential
+cannot bypass. A classic token belonging to a repository admin often can, so check its bypass
+list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without it, the
+worker protects only GitHub's current default branch and whatever it read as base at startup.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

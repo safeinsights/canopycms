@@ -83,8 +83,8 @@
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
-      "maxSectionWords": 4709,
-      "words": 9586
+      "maxSectionWords": 4878,
+      "words": 9755
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -168,8 +168,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 248,
-      "words": 619
+      "maxSectionWords": 265,
+      "words": 636
     }
   }
 }
