@@ -882,9 +882,20 @@ async function main() {
   const container = `canopycms-standalone-smoke-${label}-${process.pid}`
 
   scaffold(appDir, options)
+  // The container runs a dev server (see the header), so the editor bundle must be dev too.
   runRetryingRegistryLag(
     'docker',
-    ['build', '--progress=plain', '-f', 'Dockerfile.cms', '-t', image, '.'],
+    [
+      'build',
+      '--progress=plain',
+      '--build-arg',
+      'NEXT_PUBLIC_CANOPY_MODE=dev',
+      '-f',
+      'Dockerfile.cms',
+      '-t',
+      image,
+      '.',
+    ],
     { cwd: appDir },
   )
 
