@@ -481,6 +481,12 @@ export interface ResolveRemoteUrlOptions {
   allowNetworkRemoteInProd?: boolean
 }
 
+/** Where prod reads an unset base branch from: the remote a workspace would clone. */
+type BaseBranchRemoteOptions = Pick<
+  CanopyConfig,
+  'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'
+> & { remoteUrl?: string }
+
 export interface InitializeWorkspaceOptions {
   workspacePath: string
   branchName: string
@@ -1150,19 +1156,20 @@ export class GitManager {
    * `BaseBranchUnresolvedError`.
    */
   static async detectBaseBranch(
-    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    config: BaseBranchRemoteOptions,
     whenNoRemote: 'pending',
   ): Promise<string | undefined>
   static async detectBaseBranch(
-    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    config: BaseBranchRemoteOptions,
     whenNoRemote: 'throw',
   ): Promise<string>
   static async detectBaseBranch(
-    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    config: BaseBranchRemoteOptions,
     whenNoRemote: 'pending' | 'throw',
   ): Promise<string | undefined> {
     const options: ResolveRemoteUrlOptions = {
       mode: 'prod',
+      remoteUrl: config.remoteUrl,
       defaultRemoteUrl: config.defaultRemoteUrl,
       sourceRoot: config.sourceRoot,
       allowNetworkRemoteInProd: config.allowNetworkRemoteInProd,
@@ -1182,6 +1189,26 @@ export class GitManager {
     }
     const remoteGitDir = /^file:\/\//i.test(remoteUrl) ? fileURLToPath(remoteUrl) : remoteUrl
     return resolveBaseBranch({ mode: 'prod', remoteGitDir })
+  }
+
+  /**
+   * The base branch a workspace about to be provisioned forks from: the configured one, else
+   * dev's git HEAD (resolveBaseBranch), else prod's remote HEAD ({@link detectBaseBranch}), which
+   * rejects with RemoteNotReadyError while the worker has not created the remote.
+   */
+  static async resolveWorkspaceBaseBranch(
+    options: BaseBranchRemoteOptions & { mode: OperatingMode; baseBranch?: string },
+  ): Promise<string> {
+    if (options.mode === 'prod' && !options.baseBranch) {
+      return GitManager.detectBaseBranch(options, 'throw')
+    }
+    return resolveBaseBranch({
+      defaultBaseBranch: options.baseBranch,
+      mode: options.mode,
+      detectFrom: options.sourceRoot
+        ? path.resolve(process.cwd(), options.sourceRoot)
+        : process.cwd(),
+    })
   }
 
   /**
@@ -1234,15 +1261,7 @@ export class GitManager {
    * Note: Does NOT configure git author - that should be done before commits, not during init.
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
-    // Resolve the fork point through the shared resolver (dev mode detects the
-    // current HEAD when baseBranch is not explicitly set).
-    const baseBranch = await resolveBaseBranch({
-      defaultBaseBranch: options.baseBranch,
-      mode: options.mode,
-      detectFrom: options.sourceRoot
-        ? path.resolve(process.cwd(), options.sourceRoot)
-        : process.cwd(),
-    })
+    const baseBranch = await GitManager.resolveWorkspaceBaseBranch(options)
     const remoteName = options.remoteName ?? 'origin'
 
     const repoExists = await GitManager.repoExistsAt(options.workspacePath)

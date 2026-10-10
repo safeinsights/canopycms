@@ -17,6 +17,7 @@ import { clearStrategyCache } from './operating-mode/client-unsafe-strategy'
 import { createCanopyServices } from './services'
 import { mockConsole, type MockConsole } from './test-utils'
 import type { BranchContext } from './types'
+import type { CanopyUser } from './user'
 import { BaseBranchUnresolvedError } from './utils/base-branch'
 
 const branchSchemaCache = {
@@ -72,7 +73,7 @@ describe('prod base branch resolution', () => {
       branchRoot: path.join(workspaceRoot, 'content-branches', name),
       branch: { name, access: {}, createdBy: 'canopycms-system', status: 'editing' },
     }) as unknown as BranchContext
-  const editor = { type: 'authenticated', userId: 'editor-1', groups: [] } as const
+  const editor: CanopyUser = { type: 'authenticated', userId: 'editor-1', groups: [] }
 
   it('a configured defaultBaseBranch wins over the remote HEAD', async () => {
     await createRemoteGit('production')
