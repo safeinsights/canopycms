@@ -454,8 +454,8 @@ extension in logical form (`content/blog/**`, `content/about`).
 
 ### Commits and pull requests name the editing users
 
-**What changed.** Submit and settings commits gain `Edited-by: Name (id)` trailers naming each
-editing user; PR bodies gain a section that re-submits replace, keeping human text.
+**What changed.** Submit and settings commits gain `Edited-by: Name (id)` trailers naming their
+editors; PR bodies gain a section that re-submits replace, keeping human text.
 
 **To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
 ([reference](../README.md#definecanopyconfig-options)).

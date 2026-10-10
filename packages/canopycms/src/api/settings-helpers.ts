@@ -55,7 +55,7 @@ export interface CommitSettingsResult {
  * Commit and push settings changes based on the mode.
  * Both prod and dev use commitToSettingsBranch.
  * Settings changes are never reviewed through a PR (see commitToSettingsBranch), and the bot
- * authors the commit, so its trailers are the only record in git of who made the change.
+ * authors the commit, so its trailers, not its author line, name who made the change.
  */
 export async function commitSettings(
   ctx: ApiContext,

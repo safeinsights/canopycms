@@ -216,7 +216,7 @@ export class BranchMetadataFileManager {
 
   /**
    * Adds `userId` to `editors` and `uncommittedEditors`. A lock-free read skips the write when
-   * both already hold it, so only a user's first save since the last submit pays for the lock.
+   * both already hold it, so only a user's first save since the last submit commit pays for the lock.
    * Never creates branch.json.
    */
   async recordEditor(userId: CanopyUserId): Promise<void> {

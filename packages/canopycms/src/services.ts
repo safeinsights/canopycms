@@ -479,8 +479,8 @@ async function _createCanopyServicesInternal(
       return changedPaths ?? status.files.map((f) => f.path).filter((p) => !isCanopyInternalPath(p))
     })
 
-    // Re-read after the lock, so the PR body also names an editor whose save this commit carries
-    // but who was recorded after the read above.
+    // Re-read after the lock, so the PR body also names an editor recorded after the read above,
+    // such as one whose save this commit carries.
     const editorIds = (await readRecorded())?.editors ?? recorded.editors ?? []
     return { changedPaths: submitted, editors: await describeEditors(editorIds, lookupEditor) }
   }

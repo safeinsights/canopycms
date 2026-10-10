@@ -103,7 +103,7 @@ export interface BranchMetadata {
    * the whole PR body and credits them all. User ids only: names are looked up at submit.
    */
   editors?: CanopyUserId[]
-  /** The `editors` who saved since the last submit commit, whose trailers name them. */
+  /** The `editors` who saved since the last submit commit; the next one's trailers name them. */
   uncommittedEditors?: CanopyUserId[]
 }
 

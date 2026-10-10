@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-09, branch `feat/submission-editor-attribution`, base `int-202610-b`. branch.json records user ids in `editors` (never reset: each submit rebuilds the whole PR body, which names them all) and `uncommittedEditors` (whom the next submit commit's `Edited-by:` trailers name; that submit removes them). Every successful `writableBranch` endpoint records its user (route-builder.ts), so content saves, renames, deletes and schema changes count, and asset uploads, which change no branch file, do not. A save that later proves a no-op still counts. Names and emails come from the auth plugin at submit.
+  RESOLVED 2026-10-09, branch `feat/submission-editor-attribution`, base `int-202610-b`. branch.json records user ids in `editors` (never reset: each submit rebuilds the whole PR body, which names them all) and `uncommittedEditors` (whom the next submit commit's `Edited-by:` trailers name; that submit removes them). Every successful `writableBranch` endpoint records its user (route-builder.ts), so content saves, renames, deletes and schema changes count, as does the admin duplicate-ID repair, which records its own; asset uploads, which change no branch file, do not. A save that later proves a no-op still counts. Names and emails come from the auth plugin at submit, looked up outside the content-write lock.
 ---
 # Record every editor who touched a branch, not just the submitter
 

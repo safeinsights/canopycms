@@ -525,7 +525,7 @@ export interface CanopyConfigInput {
   gitBotAuthorEmail: string
   /**
    * Add `Edited-by: Name (user id)` to submit commits, for the submitter and each user who saved
-   * since the last submit, and to settings commits for the user making the change. Default true.
+   * since the last submit commit, and to settings commits for the user making the change. Default true.
    */
   gitEditedByTrailers?: boolean
   /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */

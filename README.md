@@ -384,7 +384,7 @@ A missing schema or an invalid meta file fails a build or static deploy; a missi
 ### `defineCanopyConfig` Options
 
 - `gitBotAuthorName` / `gitBotAuthorEmail` (`string`, **required**) — identity used for git commits made by CanopyCMS.
-- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming each editing user (display name and auth user id; the id alone when there is no name) to submit and settings commits. The bot stays the author.
+- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming each user whose edits the commit carries (display name and auth user id; the id alone when there is no name) to submit and settings commits. The bot stays the author.
 - `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author only by an email on their GitHub account.
   On submit, the pull request body also records who edited (names and ids, never emails), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
 - `mode` (`'dev' | 'prod'`, **required**) — see [Operating Modes](#operating-modes). No default: a deploy that omits it fails config validation at startup rather than silently running insecure dev auth semantics in production.

@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Structured audit trail for permission and group changes beyond git history: a queryable log, notifications, structured commit diffs and compliance reports. Git already answers "who changed this rule": each settings commit names the acting user in an `Edited-by:` trailer (`api/settings-helpers.ts`, done 2026-10-09 on `feat/submission-editor-attribution`). What remains needs no git access to query.
+  Structured audit trail for permission and group changes beyond git history: a queryable log, notifications, structured commit diffs and compliance reports. Git already answers "who changed this rule": each settings commit names the acting user in an `Edited-by:` trailer by default (`api/settings-helpers.ts`, done 2026-10-09 on `feat/submission-editor-attribution`). What remains needs no git access to query.
 ---
 # Audit Logging for Permissions and Groups
 
