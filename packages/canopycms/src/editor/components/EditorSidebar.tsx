@@ -1,4 +1,4 @@
-import { ActionIcon, Menu, Paper, Stack, Tooltip } from '@mantine/core'
+import { ActionIcon, Indicator, Menu, Paper, Stack, Tooltip } from '@mantine/core'
 import {
   IconUserCircle,
   IconLogout,
@@ -10,6 +10,7 @@ import {
   IconActivity,
 } from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
+import type { InexactMark } from '../preview-marks'
 
 export interface EditorSidebarProps {
   /**
@@ -24,6 +25,9 @@ export interface EditorSidebarProps {
 
   /** The preview reported marking no elements; unknown (an older bridge) is false. */
   previewMarksNothing?: boolean
+
+  /** The preview's marks that name no field of the entry; see `findInexactMarks`. */
+  previewInexactMarks?: readonly InexactMark[]
 
   /**
    * Width of the sidebar in pixels.
@@ -93,10 +97,18 @@ export interface EditorSidebarProps {
  * Sidebar component for the Editor.
  * Contains layout toggle, highlight toggle, settings menu, account button, and logout button.
  */
+const inexactMarksNote = (marks: readonly InexactMark[]): string => {
+  const shown = marks.slice(0, 3).map((mark) => mark.path || '""')
+  const more = marks.length > shown.length ? `, and ${marks.length - shown.length} more` : ''
+  const noun = marks.length === 1 ? "mark doesn't" : "marks don't"
+  return `${marks.length} preview ${noun} match a field: ${shown.join(', ')}${more}. The browser console names the nearest field of each.`
+}
+
 export function EditorSidebar({
   layout,
   highlightEnabled,
   previewMarksNothing = false,
+  previewInexactMarks = [],
   sidebarWidth,
   headerHeight,
   footerHeight,
@@ -141,24 +153,48 @@ export function EditorSidebar({
         </ActionIcon>
 
         <Tooltip
-          label="This preview page marks no editable elements, so nothing can be highlighted or clicked to focus. The site's developer can mark them with fieldProps."
-          opened={highlightEnabled && previewMarksNothing}
+          label={
+            previewMarksNothing
+              ? "This preview page marks no editable elements, so nothing can be highlighted or clicked to focus. The site's developer can mark them with fieldProps."
+              : inexactMarksNote(previewInexactMarks)
+          }
+          opened={
+            !highlightEnabled
+              ? false
+              : previewMarksNothing
+                ? true
+                : previewInexactMarks.length > 0
+                  ? undefined
+                  : false
+          }
           position="left"
           multiline
           w={240}
           withArrow
         >
-          <ActionIcon
-            variant={highlightEnabled ? 'filled' : 'subtle'}
-            color={highlightEnabled ? 'brand' : 'gray'}
-            size="lg"
-            radius="md"
-            aria-pressed={highlightEnabled}
-            aria-label="Toggle highlights"
-            onClick={onHighlightToggle}
+          <Indicator
+            label={previewInexactMarks.length}
+            size={16}
+            color="orange"
+            disabled={!highlightEnabled || previewInexactMarks.length === 0}
           >
-            <IconMarquee size={18} />
-          </ActionIcon>
+            <ActionIcon
+              variant={highlightEnabled ? 'filled' : 'subtle'}
+              color={highlightEnabled ? 'brand' : 'gray'}
+              size="lg"
+              radius="md"
+              aria-pressed={highlightEnabled}
+              aria-label="Toggle highlights"
+              aria-description={
+                highlightEnabled && previewInexactMarks.length > 0
+                  ? inexactMarksNote(previewInexactMarks)
+                  : undefined
+              }
+              onClick={onHighlightToggle}
+            >
+              <IconMarquee size={18} />
+            </ActionIcon>
+          </Indicator>
         </Tooltip>
       </Stack>
       <Stack gap="xs" align="center">
