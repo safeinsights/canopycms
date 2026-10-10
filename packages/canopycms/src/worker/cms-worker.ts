@@ -773,7 +773,7 @@ export class CmsWorker {
    * the one it took the lock from). A worker that took the lock over keeps it fresh, or has
    * written the file since, and owns it, so nothing is written. A heartbeat this worker merely
    * failed to refresh (an EFS hiccup) goes stale, and the record lands where the restarted
-   * worker carries `lastShutdown` forward. The restart waits for it, at most `lockStaleMs` + 2 s.
+   * worker carries `lastShutdown` forward. The restart waits for it: 65 s at the default `lockStaleMs`.
    */
   private async recordLockLoss(shutdown: WorkerShutdownRecord, message: string): Promise<void> {
     let release: (() => Promise<void>) | undefined
