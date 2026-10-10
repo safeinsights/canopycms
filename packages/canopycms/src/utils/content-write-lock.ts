@@ -72,7 +72,7 @@ export const DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS = 2000
  */
 export class ContentWriteLockBusyError extends Error {
   constructor(
-    message = 'This branch is busy (syncing with the base branch, or another save is in flight); the change was not saved. Try again in a moment.',
+    message = 'This branch is busy syncing or saving another change, so your change was not saved. Try again in a moment.',
     /**
      * `'not-run'`: the lock was never acquired, so nothing happened. `'unknown'`: the work ran
      * but the lock was lost during it (see {@link withContentWriteLock}).
@@ -175,9 +175,10 @@ export async function withContentWriteLock<T>(
     // Deliberately NOT the default "was not saved" message: `fn()` completed, so the write is on
     // disk and only the proof of exclusivity is lost. "Reload, then decide" rather than "retry",
     // which would resend a now-stale expectedVersion and bounce off the caller's own landed write
-    // as a phantom editor collision.
+    // as a phantom editor collision. The API marks this case `WRITE_OUTCOME_UNKNOWN` so the
+    // editor can hold further saves of the entry until it is re-read.
     throw new ContentWriteLockBusyError(
-      'This branch was being synced while your change was written, so the change may or may not have been recorded. Reload the entry to see the current state before saving again.',
+      "This branch was syncing while your change was saved, so we can't tell whether it was recorded. Reload to check before saving again.",
       'unknown',
     )
   }

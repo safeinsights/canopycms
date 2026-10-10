@@ -1,5 +1,6 @@
 import { z } from 'zod'
 
+import { ENTRY_CHANGED_MESSAGE } from './entries-constants'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import {
   BranchSyncingError,
@@ -651,7 +652,12 @@ const writeContentHandler = async (
       // refused outright, but a lock compromised mid-write can still land it — each case carries
       // its own message, so pass `err.message` through rather than the generic conflict below.
       if (err instanceof BranchSyncingError) {
-        return { ok: false, status: 409, error: err.message }
+        return {
+          ok: false,
+          status: 409,
+          error: err.message,
+          ...(err.outcome === 'unknown' ? { code: 'WRITE_OUTCOME_UNKNOWN' as const } : {}),
+        }
       }
       // [F1] Also not an editor collision: this content ID is quarantined on two files
       // (ContentIdIndex's duplicate-ID detection). The generic message below would send the
@@ -671,11 +677,7 @@ const writeContentHandler = async (
       if (expectedVersion === null) {
         return { ok: false, status: 409, error: createConflictError }
       }
-      return {
-        ok: false,
-        status: 409,
-        error: 'Content conflict: entry was modified by another editor',
-      }
+      return { ok: false, status: 409, error: ENTRY_CHANGED_MESSAGE }
     }
     // C2: a ContentStoreError is an expected client fault (bad slug, validation, etc.) and keeps
     // its 400. Anything else — ENOSPC, EACCES, a bug — is a genuine server fault and must not be
@@ -836,7 +838,7 @@ const renameEntryHandler = async (
       return {
         ok: false,
         status: 409,
-        error: passThrough ? err.message : 'Content conflict: entry was modified by another editor',
+        error: passThrough ? err.message : ENTRY_CHANGED_MESSAGE,
       }
     }
     // C2: same rule as writeContentHandler's catch above (ContentStoreError -> 400, everything

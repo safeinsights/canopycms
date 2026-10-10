@@ -1336,7 +1336,8 @@ describe('Editor integration', () => {
       await waitFor(() =>
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
-            message: 'Content was modified by another editor. Reload to see the latest changes.',
+            message:
+              'This entry has not been loaded from the server, so it cannot be saved safely. Reload it and try again.',
           }),
         ),
       )

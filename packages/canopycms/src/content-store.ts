@@ -159,7 +159,11 @@ export class ContentConflictError extends Error {
  * instead of the misleading generic "modified by another editor".
  */
 export class BranchSyncingError extends ContentConflictError {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** As on `ContentWriteLockBusyError`: `'unknown'` means the write ran and may have landed. */
+    readonly outcome: 'not-run' | 'unknown' = 'not-run',
+  ) {
     super(message)
     this.name = 'BranchSyncingError'
   }
@@ -413,7 +417,8 @@ export class ContentStore {
     } catch (err: unknown) {
       // Translate at the boundary, after the bounded wait -- never inside the
       // acquire loop, which would disable its ELOCKED retry predicate.
-      if (err instanceof ContentWriteLockBusyError) throw new BranchSyncingError(err.message)
+      if (err instanceof ContentWriteLockBusyError)
+        throw new BranchSyncingError(err.message, err.outcome)
       throw err
     }
   }

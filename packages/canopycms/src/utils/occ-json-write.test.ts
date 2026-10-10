@@ -1,13 +1,17 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
+import lockfile from 'proper-lockfile'
+import type { LockOptions } from 'proper-lockfile'
 import {
   writeOccJsonFile,
   withOccRetry,
   withOccFileLock,
   OccWriteConflictError,
 } from './occ-json-write'
+import { resetCanopyLogger, setCanopyLogger } from './logger'
+import { mockConsole } from '../test-utils/console-spy'
 
 describe('occ-json-write', () => {
   let tmpDir: string
@@ -303,6 +307,62 @@ describe('occ-json-write', () => {
           await fs.rename(branchDir, path.join(tmpDir, '.trash-branch'))
         }),
       ).resolves.toBeUndefined()
+    })
+
+    describe('lock compromised mid-hold', () => {
+      // A real compromise needs proper-lockfile's refresh heartbeat to fail, so the test captures
+      // the `onCompromised` withOccFileLock passes and fires it from inside the critical section.
+      let fireCompromise: ((err: Error) => void) | undefined
+      const savedDebug = process.env.CANOPYCMS_DEBUG
+
+      beforeEach(() => {
+        delete process.env.CANOPYCMS_DEBUG
+        const realLock = lockfile.lock.bind(lockfile)
+        vi.spyOn(lockfile, 'lock').mockImplementation((file: string, options?: LockOptions) => {
+          fireCompromise = options?.onCompromised
+          return realLock(file, options)
+        })
+      })
+
+      afterEach(() => {
+        vi.restoreAllMocks()
+        resetCanopyLogger()
+        fireCompromise = undefined
+        if (savedDebug === undefined) delete process.env.CANOPYCMS_DEBUG
+        else process.env.CANOPYCMS_DEBUG = savedDebug
+      })
+
+      it('warns with CANOPYCMS_DEBUG off and lets the section finish', async () => {
+        const consoleSpy = mockConsole()
+        try {
+          await expect(
+            withOccFileLock(filePath, async () => {
+              fireCompromise?.(new Error('lock taken over'))
+              return 'done'
+            }),
+          ).resolves.toBe('done')
+          expect(fireCompromise).toBeDefined()
+          expect(consoleSpy).toHaveWarned(/OCC file lock compromised mid-hold.*lock taken over/)
+        } finally {
+          consoleSpy.restore()
+        }
+      })
+
+      it('does not let a throwing logger escape the handler', async () => {
+        const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+        setCanopyLogger({
+          log: () => {},
+          error: () => {},
+          warn: () => {
+            throw new Error('logger down')
+          },
+        })
+        await withOccFileLock(filePath, async () => {
+          expect(() => fireCompromise?.(new Error('lock taken over'))).not.toThrow()
+        })
+        expect(fireCompromise).toBeDefined()
+        expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('lock compromised'))
+      })
     })
 
     it('acquires a lock for a file that does not yet exist on disk', async () => {

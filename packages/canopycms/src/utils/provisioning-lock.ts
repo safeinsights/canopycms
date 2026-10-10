@@ -20,6 +20,38 @@ import { canopyLogWarn } from './logger'
 export type OnLockCompromised = (err: Error) => void
 
 /**
+ * Wrap a compromise handler for proper-lockfile's `onCompromised`, which it invokes from inside
+ * its refresh timer: ANY throw escaping there is an uncaught exception that kills the process.
+ * Call sites are told not to throw (see {@link OnLockCompromised}); this makes it structural
+ * rather than a convention, and also covers the LOGGER throwing -- under `CI=true`, vitest's
+ * `onConsoleLog` turns a console write into a throw.
+ *
+ * Handlers report through `canopyLogWarn`, never the debug logger: "two holders may now be live"
+ * must be visible without CANOPYCMS_DEBUG.
+ */
+export function guardOnCompromised(
+  handler: OnLockCompromised,
+  lockPath: string,
+): OnLockCompromised {
+  return (err) => {
+    try {
+      handler(err)
+    } catch {
+      // Last resort: a raw stderr write goes around both a replaced logger and vitest's console
+      // interception, so the compromise still leaves a trace. Guarded in turn, because nothing
+      // here is allowed to throw out of a refresh timer.
+      try {
+        process.stderr.write(
+          `[canopy] lock compromised for ${lockPath}; its handler or logger threw\n`,
+        )
+      } catch {
+        // Nothing further is safe to attempt.
+      }
+    }
+  }
+}
+
+/**
  * When an acquirer may take a provisioning marker over. Staleness is read from the marker's mtime,
  * which EFS serves from the NFS attribute cache for up to 60s, so a live holder's 15s refreshes
  * can look 60s late; one threshold above that for every acquirer means none reaps a live hold.
@@ -52,38 +84,18 @@ function provisioningLockOptions(
     stale: staleMs,
     // Fixed, not stale/2: every holder refreshes at 15s whatever threshold it judges others by.
     update: 15_000,
-    // proper-lockfile invokes this from inside its refresh timer, so ANY throw escaping here is
-    // an uncaught exception that kills the process. Call sites are told not to throw (see
-    // OnLockCompromised); this makes it structural rather than a convention, and also covers the
-    // LOGGER throwing -- under `CI=true`, vitest's `onConsoleLog` turns a console write into a
-    // throw.
-    onCompromised: (err) => {
-      try {
-        if (onCompromised) {
-          onCompromised(err)
-          return
-        }
-        // Default: log and let the holder finish. proper-lockfile's own default rethrows from
-        // the refresh timer, which protects nothing -- by the time a compromise is reported the
-        // mutual exclusion is already gone. `canopyLogWarn`, not the debug logger, because "two
-        // holders may now be live" must be visible without CANOPYCMS_DEBUG.
-        canopyLogWarn(
-          `[canopy] Provisioning lock compromised mid-hold for ${lockPath}:`,
-          getErrorMessage(err),
-        )
-      } catch {
-        // Last resort: a raw stderr write goes around both a replaced logger and vitest's console
-        // interception, so the compromise still leaves a trace. Guarded in turn, because nothing
-        // here is allowed to throw out of a refresh timer.
-        try {
-          process.stderr.write(
-            `[canopy] lock compromised for ${lockPath}; its handler or logger threw\n`,
-          )
-        } catch {
-          // Nothing further is safe to attempt.
-        }
-      }
-    },
+    onCompromised: guardOnCompromised(
+      onCompromised ??
+        ((err) =>
+          // Default: log and let the holder finish. proper-lockfile's own default rethrows from
+          // the refresh timer, which protects nothing -- by the time a compromise is reported the
+          // mutual exclusion is already gone.
+          canopyLogWarn(
+            `[canopy] Provisioning lock compromised mid-hold for ${lockPath}:`,
+            getErrorMessage(err),
+          )),
+      lockPath,
+    ),
   }
 }
 

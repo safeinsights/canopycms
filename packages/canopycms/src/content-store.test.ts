@@ -3083,6 +3083,7 @@ describe('ContentStore content-write lock', () => {
         // keeps working without a new branch at each call site.
         expect(err).toBeInstanceOf(ContentConflictError)
         expect((err as Error).message).toMatch(/syncing/i)
+        expect((err as BranchSyncingError).outcome).toBe('not-run')
       }
       // Nothing was half-applied.
       const doc = await store.read(posts, unsafeAsSlug('hello'))

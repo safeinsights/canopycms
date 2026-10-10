@@ -507,9 +507,32 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
 
-    it('still shows the generic conflict copy on a 409, unaffected by the 403 branch', async () => {
+    it("shows the server's own message on a 409, untitled", async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409, 'ignored server text'))
+      const busy =
+        'This branch is busy syncing or saving another change, so your change was not saved. Try again in a moment.'
+      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409, busy))
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ message: busy, color: 'yellow' }),
+      )
+      const call = vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
+      expect(call).not.toHaveProperty('title')
+      consoleErrorSpy.mockRestore()
+    })
+
+    it('falls back to the version-mismatch copy on a 409 with no server message', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409))
       const { result } = renderHook(() => useDraftManager(defaultOptions))
 
       act(() => {
@@ -522,14 +545,94 @@ describe('useDraftManager', () => {
       const { notifications } = await import('@mantine/notifications')
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'Content was modified by another editor. Reload to see the latest changes.',
+          message: 'This entry changed since you opened it. Reload to see the latest version.',
           color: 'yellow',
         }),
       )
-      // No title on the 409 branch (matches the pre-existing shape).
-      const call = vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
-      expect(call).not.toHaveProperty('title')
       consoleErrorSpy.mockRestore()
+    })
+
+    describe('a save whose outcome is unknown (WRITE_OUTCOME_UNKNOWN)', () => {
+      const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
+      const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
+      const landed =
+        "This branch was syncing while your change was saved, so we can't tell whether it was recorded. Reload to check before saving again."
+      const held =
+        'Your last save may already have been recorded. Reload this entry before saving again.'
+
+      /** Render with a draft, then make one save that comes back outcome-unknown. */
+      const renderAfterUnknownOutcome = async () => {
+        mockGetEntryVersion.mockReturnValue(100)
+        mockSaveEntry.mockRejectedValueOnce(
+          new SaveApiError(409, landed, undefined, 'WRITE_OUTCOME_UNKNOWN'),
+        )
+        const hook = renderHook(() => useDraftManager(versionedOptions))
+        act(() => {
+          hook.result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await hook.result.current.handleSave()
+        })
+        return hook
+      }
+
+      let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+      beforeEach(() => {
+        mockGetEntryVersion.mockReset()
+        consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      })
+      afterEach(() => {
+        consoleErrorSpy.mockRestore()
+      })
+
+      it("shows the server's message, then holds a re-save that would send the same version", async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({ message: landed, color: 'yellow' }),
+        )
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: held,
+        })
+        expect(result.current.drafts.abc123def456).toEqual({ title: 'Draft' })
+      })
+
+      it('stops holding once the entry was re-read, leaving the draft to the stale-base check', async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        mockGetEntryVersion.mockReturnValue(200)
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: 'This entry changed since you opened it. Reload to see the latest version.',
+        })
+        expect(mockSaveEntry).toHaveBeenCalledTimes(1)
+      })
+
+      it('lets the save through after Reload, even if the version did not move', async () => {
+        const { result } = await renderAfterUnknownOutcome()
+        await act(async () => {
+          await result.current.handleReload()
+        })
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Edited after reload' } })
+        })
+
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        expect(mockSaveEntry).toHaveBeenCalledTimes(2)
+      })
     })
 
     it('still shows the server validation message and "Save rejected" title on a 422, unaffected by the 403 branch', async () => {
@@ -1222,7 +1325,7 @@ describe('useDraftManager', () => {
       const { notifications } = await import('@mantine/notifications')
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'Content was modified by another editor. Reload to see the latest changes.',
+          message: 'This entry changed since you opened it. Reload to see the latest version.',
           color: 'yellow',
         }),
       )
