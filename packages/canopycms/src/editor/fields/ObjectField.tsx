@@ -3,6 +3,7 @@ import React, { useId } from 'react'
 import { Button, Group, Paper, Stack, Text } from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
+import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
@@ -43,7 +44,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
   dataCanopyField,
   onRemove,
 }) => {
-  const current = value ?? {}
+  const current = isPlainRecord(value) ? value : {}
   const descriptionBaseId = useId()
 
   return (
