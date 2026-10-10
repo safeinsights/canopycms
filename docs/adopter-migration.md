@@ -13,8 +13,8 @@ Each entry has up to three parts:
 
 **Find your starting point.** From a stable pin, start at the first version under **Released**
 newer than it, and below `0.0.63` read the notes for `0.0.62 and earlier` too. From an int
-prerelease such as `0.0.68-int.101`, read only the **Unreleased** entries carrying a higher int
-number.
+prerelease such as `0.0.68-int.101`, read only the **Unreleased** entries, or labelled parts of
+entries, carrying a higher int number (the table lists later parts in parentheses).
 
 **Find your target.** `npm view canopycms version` reports the `latest` dist-tag, the newest
 stable release; `main` publishes a patch on every push, so never take a target from this document.
@@ -38,39 +38,39 @@ is still a read of `git log`.
 `(int.N)` the same way; a number in parentheses after a change is a later int that added a part.
 **Action** says who must act.
 
-| int | Area     | Change                                                                                                                                                                                      | Action            |
-| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| 93  | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules      |
-| 93  | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked        |
-| 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required          |
-| 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages       |
-| 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None              |
-| 93  | Branches | [Submit names the user; refuses an empty branch](#submit-names-the-submitting-user-and-refuses-a-branch-with-nothing-to-submit) (108)                                                       | Scripts           |
-| 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers    |
-| 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required          |
-| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required          |
-| 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required          |
-| 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired     |
-| 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional          |
-| 100 | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together  |
-| 100 | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod      |
-| 100 | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required          |
-| 100 | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only      |
-| 100 | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin       |
-| 100 | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`     |
-| 100 | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key        |
-| 101 | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None              |
-| 102 | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites  |
-| 105 | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps       |
-| 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config         |
-| 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts           |
-| 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare              |
-| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109)                                                                                   | Required          |
-| 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set            |
-| 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys       |
-| 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint |
-| 109 | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional          |
-| 109 | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required          |
+| int | Area     | Change                                                                                                                                                                                      | Action                  |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 93  | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules            |
+| 93  | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked              |
+| 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                |
+| 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages             |
+| 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                    |
+| 93  | Branches | [Submit names the user; refuses an empty branch](#submit-names-the-submitting-user-and-refuses-a-branch-with-nothing-to-submit) (108)                                                       | Scripts                 |
+| 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers          |
+| 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                |
+| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                |
+| 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                |
+| 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed |
+| 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                |
+| 100 | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together        |
+| 100 | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod            |
+| 100 | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                |
+| 100 | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only            |
+| 100 | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin             |
+| 100 | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`           |
+| 100 | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key              |
+| 101 | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                    |
+| 102 | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites        |
+| 105 | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps             |
+| 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config               |
+| 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                 |
+| 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                    |
+| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109)                                                                                   | Required                |
+| 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                  |
+| 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys             |
+| 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
+| 109 | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                |
+| 109 | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -158,7 +158,8 @@ as literal segments, or type that component's prop as plain `FieldProps`. Pass `
   still resolving is `null`, even in an entry's first draft. `isLoading` mirrors the data at depth,
   typed `PreviewLoadingState<T>`, so a reference's entry is `boolean | undefined`.
 
-A `resolvedSchema` reference infers as `Target | UnavailableReference | null`.
+A `resolvedSchema` reference infers as `Target | UnavailableReference | null` (`RestrictedReference`
+before int.106).
 
 **To adopt.** Narrow on `unavailable`, then on `reason`; only a restricted reference has a title
 and URL:
@@ -829,7 +830,8 @@ CloudFront behavior it expects.
 that path routes to the bucket, so it 404s under `next dev`.
 
 **Now deletable.** The bucket CORS rule naming your editor's origin, once uploads are same-origin.
-`AssetSupport`'s `editorOrigins` then has no effect but stays required.
+`AssetSupport`'s `editorOrigins` is then unused; standalone mode still needs either it or
+`uploadBehavior`.
 
 #### `media` config rejects unknown keys
 
@@ -1061,7 +1063,8 @@ narrow to `never` silently.
   are reserved: they win over target fields of those names; read the target directly for its own
   field.
 - A save collapses a resolved reference back to its id. A reference saved through the editor on an
-  earlier version may hold an object instead of a 12-character id: replace it with its own `id`.
+  earlier version may hold an object instead of a 12-character id (replace it with its own `id`), or
+  `null` where its target had been deleted (the id is only in git history).
 
 For what a target the reader may not see, or a missing one, resolves to, see
 [References](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build).
@@ -1131,7 +1134,8 @@ empty string throws. `extraUrls` is for URLs with no entry behind them.
 **To adopt.** To re-model a singleton served at its collection's path (such as home at `/`):
 
 1. `git mv home.home.<id>.json home.index.<id>.json`; type and id are unchanged.
-2. Change `read({ entryPath: 'content/home' })` to `readByUrlPath('/')` (or pass `slug: 'index'`).
+2. Change `read({ entryPath: 'content/home' })` to `readByUrlPath('/')` (`'/<collection>'`
+   elsewhere), or pass `slug: 'index'`.
    Otherwise the build is green with a 404 at `/`: check the emitted HTML.
 3. Drop the sitemap workaround and check `sitemap.xml`; redirect the old URL if it was indexed.
 
@@ -1214,7 +1218,7 @@ Exclude entry types with no page of their own. Pass `seo` once to `createNextCan
 per call. With `defineSeoFieldGroup({ group: 'seo' })`, include the same `group` in
 that `seo` option. Add `defineSeoFieldGroup()` to schemas with SEO fields; map an existing group with
 `{ fields: { title: 'yourName' } }` rather than keeping both. Pass a `lastModified` callback for a
-real content date. Write `app/robots.ts` yourself.
+real content date, or return `undefined` from it to omit `<lastmod>`. Write `app/robots.ts` yourself.
 
 **Now deletable.** A sitemap over a hardcoded list of entry types, a hand-written `Metadata` mapper,
 a local `withTrailingSlash`/`absoluteUrl` pair, and a content walk only for sitemap dates.
