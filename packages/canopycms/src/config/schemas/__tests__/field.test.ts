@@ -96,7 +96,7 @@ describe('markdown field options: renderAs and mdxAllow', () => {
 
   it('refuses options that contradict each other', () => {
     expect(messageOf({ name: 'b', type: 'mdx', renderAs: 'mdx' })).toMatch(
-      /renderAs applies to markdown/,
+      /renderAs applies only to markdown/,
     )
     expect(messageOf({ name: 'b', type: 'markdown', mdxAllow: {} })).toMatch(/set renderAs: 'mdx'/)
     expect(messageOf({ name: 'b', type: 'mdx', executable: true, mdxAllow: {} })).toMatch(

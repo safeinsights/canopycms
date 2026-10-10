@@ -3,8 +3,8 @@
  *
  * MDX compiles `{expressions}`, `import`/`export` and JSX into JavaScript that runs wherever a
  * body renders: a preview with the viewer's session, a server render, a CI build. A body this
- * policy accepts runs only the site's own components. An `mdx` field or body, or a `markdown` one
- * with `renderAs: 'mdx'`, accepts:
+ * policy accepts runs only the site's own components. A field or body `markdownPolicyOf` checks as
+ * MDX accepts:
  *
  * - no `import`/`export`, and no `{…}` expression except a comment or a static literal
  *   (`{300}`, `{["a", "b"]}`), in text or as an attribute value; no spread attributes;
@@ -671,7 +671,7 @@ function occurrenceOf(finding: MarkdownSafetyFinding): string | undefined {
  * Splits a save's findings into those it adds, which refuse it, and those of a field saved exactly
  * as the stored entry held it, which it keeps. Fields are matched by site and key, one stored field
  * for one saved field, so a second copy of a stored field is refused, as is one moved to a field of
- * another name. A finding with an unkeyed issue is never kept.
+ * another name or allowlist. A finding with an unkeyed issue is never kept.
  */
 export function splitByStored(
   found: readonly MarkdownSafetyFinding[],

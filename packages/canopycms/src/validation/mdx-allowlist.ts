@@ -133,7 +133,10 @@ export interface ResolvedMdxAllowlist {
   fragments: boolean
 }
 
-/** A string equal for two allowlists exactly when they accept the same MDX. */
+/**
+ * A string two allowlists share only if they accept the same MDX. Two spellings of one allowlist
+ * (value order, the full tag set listed out) can differ, which only ever refuses keeping content.
+ */
 export function allowlistIdentity(allow: ResolvedMdxAllowlist): string {
   const components =
     allow.components === undefined
@@ -212,7 +215,7 @@ export function markdownFieldOptionsError(field: MarkdownFieldConfig): string | 
     return `Field "${field.name}": renderAs must be 'mdx'`
   }
   if (renderAs !== undefined && field.type === 'mdx') {
-    return `Field "${field.name}": renderAs applies to markdown fields; an mdx field always renders as MDX`
+    return `Field "${field.name}": renderAs applies only to markdown fields`
   }
   if (field.mdxAllow === undefined) return undefined
   if (field.executable === true) {

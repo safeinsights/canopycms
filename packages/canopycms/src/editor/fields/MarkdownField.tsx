@@ -102,7 +102,7 @@ export const MDXEditorLazy = React.lazy(async () => {
   /**
    * Refuses adding a format whose tag the field refuses, from the toolbar or a shortcut (Cmd+U), and
    * lets removing one through. Lexical toggles a range off when the selection already has the
-   * format, and passes a nested editor's commands (table cells, component children) up to the
+   * format, and passes a nested editor's input commands (table cells, component children) up to the
    * root's. Content is never rewritten: a stored tag stays for the server's unchanged-field rule,
    * and a pasted one reaches the server, which refuses it.
    */

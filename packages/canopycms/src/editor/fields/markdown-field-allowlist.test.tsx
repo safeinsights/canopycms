@@ -1,6 +1,6 @@
 /**
- * What the rich-text toolbar can write in a field whose MDX allowlist narrows its HTML tags: the
- * editor offers, and saves, no tag the server would refuse.
+ * What the rich-text editor can write in a field whose MDX allowlist narrows its HTML tags: no
+ * toolbar action or shortcut adds a tag the server would refuse, and stored content is left alone.
  */
 import React, { Suspense } from 'react'
 import { act, render } from '@testing-library/react'
@@ -149,8 +149,7 @@ describe('a field whose allowlist leaves out a formatting tag', () => {
   })
 
   describe('in a nested editor', () => {
-    // A nested edit reaches the export only through the parent node's update, which jsdom does not
-    // drive, so these read the nested editor's own state.
+    // Under jsdom a nested edit does not reach the export, so these read the nested editor's state.
     const formatOf = (editor: Editor, text: string) =>
       editor.getEditorState().read(() => {
         const lx = mdx.lexical

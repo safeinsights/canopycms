@@ -472,7 +472,7 @@ export function warnUnsafeMarkdown(
   }
   console.warn(
     `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry holds' : 'entries hold'} markdown or MDX that runs code, or that \`mdxAllow\` excludes, during ${phaseLabel}:\n${lines.join('\n')}\n` +
-      `A save keeps it but refuses adding more. Move code into a component, or set \`executable: true\` on a field whose editors you trust as code authors.`,
+      `A save keeps it but refuses adding more. Move code into a component, allow a component or tag in \`mdxAllow\`, or set \`executable: true\` on a field whose editors you trust as code authors.`,
   )
 }
 

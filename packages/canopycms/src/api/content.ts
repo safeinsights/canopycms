@@ -471,7 +471,7 @@ const writeContentHandler = async (
           keptWarnings.push({
             level: 'warning',
             fieldPath: e.fieldPath,
-            message: `holds content this field refuses, kept because the saved entry already had it: ${e.message}. Ask a developer to move any code into a component.`,
+            message: `holds content this field refuses, kept because the saved entry already had it: ${e.message}. Ask a developer to move it into a component, or to allow it.`,
           })
         }
       }
