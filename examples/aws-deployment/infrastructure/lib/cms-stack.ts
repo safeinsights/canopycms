@@ -142,8 +142,8 @@ export class CmsStack extends Stack {
       // built for the other architecture cannot run on the function (an arm64
       // image on an x86_64 function fails at invoke with
       // Runtime.InvalidEntrypoint). arm64 matches the EC2 worker and is
-      // CanopyCmsService's default. deploy-cms.yml runs on an arm64 runner to
-      // match; see "Where the image is built" in
+      // CanopyCmsService's default. The generated workflow runs on an arm64
+      // runner to match; see "Where the image is built" in
       // docs/deploying-to-aws.md before changing either.
       architecture: lambda.Architecture.ARM_64,
 
@@ -151,8 +151,9 @@ export class CmsStack extends Stack {
       githubRepo: props.githubRepo,
       deploymentName: props.deploymentName,
 
-      // Derived from canopycms.config.ts (imported above), not hardcoded or
-      // left to CanopyCmsService's own 'main' default. A wrong baseBranch
+      // Derived from canopycms.config.ts (imported above), not hardcoded, so the
+      // worker and the Lambda agree. Unset in both, the worker detects the base
+      // branch and the Lambda reads what it chose. A wrong baseBranch
       // crash-loops the worker forever: verifyBaseBranchExists throws when the
       // named branch doesn't exist in the cloned remote, and systemd restarts
       // into the same failure indefinitely. See CanopyCmsServiceProps.baseBranch's

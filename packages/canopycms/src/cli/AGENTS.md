@@ -33,4 +33,4 @@ clean argv for `spawn`; `passthroughArgs(argv)` narrows it without an `any`.
 
 ## `project-detect.ts`
 
-best-effort adopter-project detection (package manager, default branch, GitHub owner/repo, missing CDK deps) consumed by `init-deploy aws`, which now also scaffolds a full CDK app (`cdk.json`, `infrastructure/bin/app.ts`, `infrastructure/lib/cms-stack.ts`, and the `infrastructure/tsconfig.json` the generated workflow type-checks it with) via `templates.ts`
+Best-effort project detection for `init-deploy aws`, which scaffolds a CDK app (`cdk.json`, `infrastructure/bin/app.ts`, `infrastructure/lib/cms-stack.ts`, `infrastructure/tsconfig.json`) via `templates.ts`. `aws-deploy-example.ts` renders `examples/aws-deployment/` through the same functions; `pnpm generate:aws-example` writes it, and its test fails on drift.

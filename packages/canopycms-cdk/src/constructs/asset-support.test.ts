@@ -920,26 +920,17 @@ describe('deployable-bundle guard', () => {
 })
 
 describe('cms-stack template: the media block names a real API', () => {
-  // The scaffold's "uncomment to enable media" block previously named
-  // a member that did not exist, and omitted the then-required
-  // `editorOrigins` prop -- so an adopter who followed the template's
-  // own instructions hit two type errors plus a nonexistent property, then had
-  // to reverse-engineer the construct's real API. Template text cannot be
-  // type-checked while it is commented out, so assert the API surface it
-  // references actually exists.
-  // BOTH copies of this block. The scaffold template and the checked-in
-  // example stack teach the same thing, and a fix applied to only one is how
-  // the dead-API version survived: the template was corrected while
-  // examples/aws-deployment/ went on instructing adopters to wire a member
-  // that does not exist.
-  const repoRoot = path.join(__dirname, '..', '..', '..', '..')
-  const MEDIA_BLOCK_SOURCES = [
-    path.join(repoRoot, 'packages/canopycms/src/cli/template-files/cms-stack.ts.template'),
-    path.join(repoRoot, 'examples/aws-deployment/infrastructure/lib/cms-stack.ts'),
-  ]
+  // Template text cannot be type-checked while it is commented out, so assert
+  // the API surface the "uncomment to enable media" block references actually
+  // exists. `examples/aws-deployment/` is rendered from this template, and
+  // `aws-deploy-example.test.ts` compares it whole.
+  const TEMPLATE = path.join(
+    __dirname,
+    '../../../canopycms/src/cli/template-files/cms-stack.ts.template',
+  )
+  const source = readFileSync(TEMPLATE, 'utf-8')
 
-  it.each(MEDIA_BLOCK_SOURCES)('%s references only members AssetSupport actually has', (file) => {
-    const source = readFileSync(file, 'utf-8')
+  it('references only members AssetSupport actually has', () => {
     const referenced = [...source.matchAll(/assetSupport\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1])
     expect(referenced.length).toBeGreaterThan(0)
 
@@ -949,39 +940,30 @@ describe('cms-stack template: the media block names a real API', () => {
       expect(
         member in assetSupport ||
           member in (Object.getPrototypeOf(assetSupport) as Record<string, unknown>),
-        `${file} references assetSupport.${member}, which AssetSupport does not have`,
+        `the template references assetSupport.${member}, which AssetSupport does not have`,
       ).toBe(true)
     }
   })
 
-  it('both copies carry one media block, which teaches materialize-assets and the lazy opt-in', () => {
-    const mediaBlock = (file: string) => {
-      const source = readFileSync(file, 'utf-8')
-      const start = source.indexOf('// Media support')
-      const end = source.indexOf('// CloudFront + Route53')
-      expect(start, file).toBeGreaterThan(-1)
-      expect(end, file).toBeGreaterThan(start)
-      return source.slice(start, end)
-    }
-    const [template, example] = MEDIA_BLOCK_SOURCES.map(mediaBlock)
-    expect(example).toBe(template)
+  it('its media block teaches materialize-assets and the lazy opt-in', () => {
+    const start = source.indexOf('// Media support')
+    const end = source.indexOf('// CloudFront + Route53')
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const mediaBlock = source.slice(start, end)
     for (const phrase of [
       'canopycms collect-asset-refs',
       'canopycms materialize-assets',
       'lazyPublicTransforms: true',
     ]) {
-      expect(template).toContain(phrase)
+      expect(mediaBlock).toContain(phrase)
     }
   })
 
-  it.each(MEDIA_BLOCK_SOURCES)(
-    '%s passes editorOrigins -- optional to the construct now, but still what the scaffold should teach',
-    (file) => {
-      const source = readFileSync(file, 'utf-8')
-      expect(/new AssetSupport\(/.test(source)).toBe(true)
-      expect(source).toContain('editorOrigins')
-    },
-  )
+  it('passes editorOrigins -- optional to the construct now, but still what the scaffold should teach', () => {
+    expect(/new AssetSupport\(/.test(source)).toBe(true)
+    expect(source).toContain('editorOrigins')
+  })
 })
 
 /**
