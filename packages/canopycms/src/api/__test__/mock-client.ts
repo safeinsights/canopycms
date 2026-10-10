@@ -16,7 +16,7 @@ import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
 import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
-import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
+import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
@@ -91,6 +91,7 @@ export function createMockApiClient(): MockApiClient {
     searchUsers: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
     listGroups: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
     getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"user":null})),
+    batchGetUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
   },
 
   groups: {
@@ -239,6 +240,10 @@ export function mockListGroupsResponse(): ListGroupsResponse {
 
 export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
   return mockSuccess({"user":null})
+}
+
+export function mockBatchGetUserMetadataResponse(): BatchGetUserMetadataResponse {
+  return mockSuccess({"users":[]})
 }
 
 export function mockInternalGroupsResponse(): InternalGroupsResponse {

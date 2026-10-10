@@ -93,12 +93,12 @@ export default {
       name: 'editor-imports-api-only-client-index-constants',
       severity: 'error',
       comment:
-        'editor/ value-imports from api/ only api/client.ts, api/index.ts, api/entries-constants.ts and api/branch-create-window.ts, the modules that are client-safe by construction; every other api/ module reaches node built-ins. Type imports are erased and stay legal. Evaluated by `pnpm lint:cycles`.',
+        'editor/ value-imports from api/ only api/client.ts, api/index.ts, api/entries-constants.ts, api/users-constants.ts and api/branch-create-window.ts, the modules that are client-safe by construction; every other api/ module reaches node built-ins. Type imports are erased and stay legal. Evaluated by `pnpm lint:cycles`.',
       from: { path: '^packages/canopycms/src/editor/', pathNot: TEST_FILES },
       to: {
         path: '^packages/canopycms/src/api/',
         pathNot:
-          '^packages/canopycms/src/api/(client|index|entries-constants|branch-create-window)\\.ts$',
+          '^packages/canopycms/src/api/(client|index|entries-constants|users-constants|branch-create-window)\\.ts$',
       },
     },
     {

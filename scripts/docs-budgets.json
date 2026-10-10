@@ -84,12 +84,12 @@
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 4659,
-      "words": 9014
+      "words": 9115
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1280,
-      "words": 5628
+      "words": 5664
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,

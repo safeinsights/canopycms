@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../authorization'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
 import { useApiClient } from '../context'
+import { createUserMetadataBatcher } from './user-metadata-batcher'
 
 export interface UseGroupManagerOptions {
   /**
@@ -88,16 +89,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
     }
   }, [])
 
-  const handleGetUserMetadata = useCallback(async (userId: string) => {
-    try {
-      const result = await apiClient.permissions.getUserMetadata({ userId })
-      if (!result.ok) return null
-      return result.data?.user ?? null
-    } catch (err) {
-      console.error('Get user metadata failed:', err)
-      return null
-    }
-  }, [])
+  const handleGetUserMetadata = useMemo(() => createUserMetadataBatcher(apiClient), [apiClient])
 
   const handleSearchExternalGroups = useCallback(async (query: string) => {
     try {

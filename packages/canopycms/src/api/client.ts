@@ -18,7 +18,7 @@ import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
 import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from './assets'
-import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
+import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
@@ -233,6 +233,11 @@ export class CanopyApiClient {
     /** GET /users/:userId */
     getUserMetadata: (params: Record<string, string>): Promise<GetUserMetadataResponse> => {
       return this.request('GET', this.buildPath('/users/:userId', params))
+    },
+
+    /** POST /users/batch */
+    batchGetUserMetadata: (body: BatchGetUserMetadataBody): Promise<BatchGetUserMetadataResponse> => {
+      return this.request('POST', '/users/batch', body)
     },
   }
 

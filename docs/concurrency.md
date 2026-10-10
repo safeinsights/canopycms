@@ -359,8 +359,12 @@ Named A/B/C/E for continuity with the original analysis
   above exist.
 - OCC cross-host blind spot (layer 2's non-guarantee) — closed by layer 3 where it
   matters.
+- **User metadata** (`auth/user-metadata-lookup.ts`): a per-process LRU in front of the
+  auth plugin, never persisted or shared, so each warm Lambda can show a renamed user's
+  old name until its 5-minute TTL lapses. `CachingAuthPlugin` bypasses it: its answers
+  already come from the worker-written file cache.
 
-All are bounded by per-request store lifetimes, throttled backstops, and the next
+All are bounded by per-request store lifetimes, throttled backstops, a TTL, and the next
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is
 prevented independently (existence guard, ID locks, server-enforced locks, and the
 duplicate-ID guard below). Read that narrowly: "the right file" is not the same as

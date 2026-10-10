@@ -80,6 +80,19 @@ function mapClerkUserData(clerkUser: ClerkUserData): {
   }
 }
 
+function toUserSearchResult(clerkUser: ClerkUserData): UserSearchResult {
+  const mapped = mapClerkUserData(clerkUser)
+  return {
+    id: clerkUser.id,
+    name: mapped.name,
+    email: mapped.email ?? '',
+    avatarUrl: mapped.avatarUrl,
+  }
+}
+
+/** Most ids Clerk's user list accepts in one `userId` filter. */
+export const CLERK_USER_LIST_MAX_IDS = 100
+
 function getOrgMemberCount(org: ClerkOrganization): number | undefined {
   return org.membersCount ?? org.members_count
 }
@@ -257,16 +270,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
         limit,
       })) as ClerkResponse<ClerkUserData>
 
-      const users = unwrapClerkResponse(response)
-      return users.map((u) => {
-        const mapped = mapClerkUserData(u)
-        return {
-          id: u.id,
-          name: mapped.name,
-          email: mapped.email ?? '',
-          avatarUrl: mapped.avatarUrl,
-        }
-      })
+      return unwrapClerkResponse(response).map(toUserSearchResult)
     } catch (error) {
       console.error('ClerkAuthPlugin: searchUsers failed', error)
       return []
@@ -277,17 +281,27 @@ export class ClerkAuthPlugin implements AuthPlugin {
     const clerkClient = this.getClerkClient()
     try {
       const user = (await clerkClient.users.getUser(userId)) as ClerkUserData
-      const mapped = mapClerkUserData(user)
-      return {
-        id: user.id,
-        name: mapped.name,
-        email: mapped.email ?? '',
-        avatarUrl: mapped.avatarUrl,
-      }
+      return toUserSearchResult(user)
     } catch (error) {
       console.error('ClerkAuthPlugin: getUserMetadata failed', error)
       return null
     }
+  }
+
+  /** Errors propagate, unlike getUserMetadata's, so core never caches a failure as unknown. */
+  async getUsersMetadata(userIds: string[]): Promise<UserSearchResult[]> {
+    const clerkClient = this.getClerkClient()
+    const users: UserSearchResult[] = []
+    for (let i = 0; i < userIds.length; i += CLERK_USER_LIST_MAX_IDS) {
+      const chunk = userIds.slice(i, i + CLERK_USER_LIST_MAX_IDS)
+      // limit defaults to 10, so it must cover the whole chunk.
+      const response = (await clerkClient.users.getUserList({
+        userId: chunk,
+        limit: chunk.length,
+      })) as ClerkResponse<ClerkUserData>
+      users.push(...unwrapClerkResponse(response).map(toUserSearchResult))
+    }
+    return users
   }
 
   async getGroupMetadata(groupId: string): Promise<GroupMetadata | null> {

@@ -26,7 +26,7 @@ vi.mock('@clerk/backend', () => ({
   verifyToken: vi.fn(),
 }))
 
-import { ClerkAuthPlugin } from './clerk-plugin'
+import { ClerkAuthPlugin, CLERK_USER_LIST_MAX_IDS } from './clerk-plugin'
 import { verifyToken, createClerkClient } from '@clerk/backend'
 import type { CanopyRequest } from 'canopycms/http'
 
@@ -353,6 +353,45 @@ describe('ClerkAuthPlugin', () => {
 
       expect(result).toBeNull()
       consoleSpy.restore()
+    })
+  })
+
+  describe('getUsersMetadata', () => {
+    const clerkUserFor = (id: string) => ({
+      id,
+      fullName: `Name ${id}`,
+      primaryEmailAddress: { emailAddress: `${id}@example.com` },
+    })
+
+    it('makes ceil(N / CLERK_USER_LIST_MAX_IDS) list calls, each with a limit covering its chunk', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockImplementation(async ({ userId }: { userId: string[] }) => ({
+        data: userId.map(clerkUserFor),
+        totalCount: userId.length,
+      }))
+      const ids = Array.from({ length: CLERK_USER_LIST_MAX_IDS * 2 + 1 }, (_, i) => `user_${i}`)
+
+      const result = await plugin.getUsersMetadata(ids)
+
+      expect(mockGetUserList.mock.calls.map(([params]) => params)).toEqual([
+        { userId: ids.slice(0, 100), limit: 100 },
+        { userId: ids.slice(100, 200), limit: 100 },
+        { userId: ids.slice(200), limit: 1 },
+      ])
+      expect(mockGetUser).not.toHaveBeenCalled()
+      expect(result).toHaveLength(ids.length)
+      expect(result[0]).toEqual({
+        id: 'user_0',
+        name: 'Name user_0',
+        email: 'user_0@example.com',
+        avatarUrl: undefined,
+      })
+    })
+
+    it('rejects on a Clerk failure, so core never caches it as unknown users', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockRejectedValue(new Error('Too Many Requests'))
+      await expect(plugin.getUsersMetadata(['user_1'])).rejects.toThrow('Too Many Requests')
     })
   })
 

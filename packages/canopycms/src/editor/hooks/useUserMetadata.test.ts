@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
+import { createElement, type ReactNode } from 'react'
+import { SWRConfig } from 'swr'
 import { useUserMetadata } from './useUserMetadata'
 import type { UserSearchResult } from '../../auth/types'
+
+// A fresh SWR cache per hook, so one test's user never answers another's.
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(SWRConfig, { value: { provider: () => new Map() } }, children)
 
 describe('useUserMetadata', () => {
   const mockUser: UserSearchResult = {
@@ -14,7 +20,9 @@ describe('useUserMetadata', () => {
   it('returns cached user immediately if provided', () => {
     const getUserMetadata = vi.fn()
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata, mockUser))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata, mockUser), {
+      wrapper,
+    })
 
     // Should return cached user immediately
     expect(result.current.userMetadata).toEqual(mockUser)
@@ -31,7 +39,7 @@ describe('useUserMetadata', () => {
       return null
     })
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata), { wrapper })
 
     // Should be loading initially
     expect(result.current.isLoading).toBe(true)
@@ -51,7 +59,7 @@ describe('useUserMetadata', () => {
   it('handles anonymous user without API call', async () => {
     const getUserMetadata = vi.fn()
 
-    const { result } = renderHook(() => useUserMetadata('anonymous', getUserMetadata))
+    const { result } = renderHook(() => useUserMetadata('anonymous', getUserMetadata), { wrapper })
 
     // Should return anonymous user immediately
     await waitFor(() => {
@@ -84,7 +92,7 @@ describe('useUserMetadata', () => {
 
     const { result, rerender } = renderHook(
       ({ userId }) => useUserMetadata(userId, getUserMetadata),
-      { initialProps: { userId: 'user-1' } },
+      { initialProps: { userId: 'user-1' }, wrapper },
     )
 
     // Wait for first fetch
@@ -109,7 +117,7 @@ describe('useUserMetadata', () => {
       throw new Error('Network error')
     })
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata), { wrapper })
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
@@ -124,7 +132,7 @@ describe('useUserMetadata', () => {
       throw 'String error'
     })
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata), { wrapper })
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
@@ -142,7 +150,9 @@ describe('useUserMetadata', () => {
       })
     })
 
-    const { result, unmount } = renderHook(() => useUserMetadata('user-1', getUserMetadata))
+    const { result, unmount } = renderHook(() => useUserMetadata('user-1', getUserMetadata), {
+      wrapper,
+    })
 
     // Should be loading
     expect(result.current.isLoading).toBe(true)
@@ -162,7 +172,7 @@ describe('useUserMetadata', () => {
   it('handles null return from getUserMetadata', async () => {
     const getUserMetadata = vi.fn(async () => null)
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata), { wrapper })
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
@@ -181,7 +191,9 @@ describe('useUserMetadata', () => {
 
     const getUserMetadata = vi.fn(async () => differentUser)
 
-    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata, mockUser))
+    const { result } = renderHook(() => useUserMetadata('user-1', getUserMetadata, mockUser), {
+      wrapper,
+    })
 
     // Should use cached user
     expect(result.current.userMetadata).toEqual(mockUser)
