@@ -46,5 +46,5 @@ Two things to carry into that work:
 - Unit suites mock `@mantine/modals` wholesale, so a new confirmation dialog is
   **structurally invisible** to them — this needs an e2e assertion, not just a unit test.
 - `scanDuplicateContentIds` is expensive per request; if it gets gated behind a query flag
-  (see item 2 of [pr229-review-followups.md](../pr229-review-followups.md)), this UI has to
+  (see item 2 of [pr229-review-followups.md](pr229-review-followups.md)), this UI has to
   pass the flag.
