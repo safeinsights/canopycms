@@ -15,7 +15,7 @@ import {
   TextInput,
 } from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import { IconAlertCircle, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
@@ -143,7 +143,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   }
 
   const handleDeleteClick = (asset: AssetRecord) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Remove from library',
       children: (
         <Text size="sm">

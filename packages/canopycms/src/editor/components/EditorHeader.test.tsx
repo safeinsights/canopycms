@@ -263,6 +263,14 @@ describe('EditorHeader - comments indicator', () => {
     expect(screen.getByTestId('comments-unresolved-count').textContent).toBe('2')
   })
 
+  it('names the unresolved count on the button, and lets clicks on the count reach it', async () => {
+    const onCommentsPanelOpen = vi.fn()
+    renderHeader({ comments: [{ resolved: false }, { resolved: false }], onCommentsPanelOpen })
+    expect(screen.getByRole('button', { name: 'Comments, 2 unresolved' })).toBeDefined()
+    const count = screen.getByTestId('comments-unresolved-count').parentElement
+    expect(count && getComputedStyle(count).pointerEvents).toBe('none')
+  })
+
   it('shows no count when every thread is resolved', () => {
     renderHeader({ comments: [{ resolved: true }] })
     expect(screen.queryByTestId('comments-unresolved-count')).toBeNull()

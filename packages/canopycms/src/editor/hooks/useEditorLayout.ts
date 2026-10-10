@@ -130,20 +130,17 @@ export interface UseEditorLayoutReturn {
 }
 
 /**
- * Editor layout state: persisted preferences plus the measured header height.
- *
- * Preferences live in localStorage and are read after mount, so the first render (and SSR) shows
- * the defaults. A blocked or throwing storage leaves them in memory only.
- *
- * `previewWidth` and the `contentPanel*` fields have no UI yet: the preview toolbar and the
- * docked content panel consume them later. They persist now so those features do not each
- * invent storage. `headerRef` and `headerHeight` are measurements and are never persisted.
+ * Editor layout: preferences persisted to localStorage (read after mount, so SSR renders the
+ * defaults; a throwing storage keeps them in memory) plus the measured, unpersisted header height.
+ * `previewWidth` and `contentPanel*` persist ahead of the toolbar and panel that will use them.
  */
 export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayoutReturn {
   const [prefs, setPrefs] = useLocalStorage<EditorLayoutPrefs>({
     key: options?.storageKey ?? editorLayoutStorageKey(),
     defaultValue: DEFAULT_EDITOR_LAYOUT_PREFS,
     deserialize: parseEditorLayoutPrefs,
+    // Each tab keeps its own layout; a change elsewhere reaches only tabs opened later.
+    sync: false,
   })
   const [headerHeight, setHeaderHeight] = useState<number>(80)
   const headerRef = useRef<HTMLDivElement | null>(null)

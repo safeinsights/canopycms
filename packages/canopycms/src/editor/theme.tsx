@@ -8,6 +8,7 @@ import {
   DEFAULT_THEME,
   MantineProvider,
   getDefaultZIndex,
+  mergeThemeOverrides,
   type MantineColorScheme,
   type MantineColorsTuple,
   type MantineThemeOverride,
@@ -88,22 +89,16 @@ export const createCanopyTheme = (
   const neutral = toScale(colors?.neutral, 'gray', defaultCanopyColors.neutral)
   const accent = toScale(colors?.accent, 'teal', defaultCanopyColors.accent)
 
-  return createTheme({
+  const base = createTheme({
     primaryColor: 'brand',
     primaryShade: { light: 6, dark: 5 },
     defaultRadius: 'md',
-    colors: {
-      ...DEFAULT_THEME.colors,
-      brand,
-      primary,
-      neutral,
-      accent,
-      ...(themeOverride?.colors ?? {}),
-    },
+    colors: { ...DEFAULT_THEME.colors, brand, primary, neutral, accent },
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
-    ...themeOverride,
-    components: { ...canopyComponents, ...(themeOverride?.components ?? {}) },
+    components: canopyComponents,
   })
+  // Deep merge, so an override that sets only some colours or one component's props keeps the rest.
+  return mergeThemeOverrides(base, themeOverride ?? {})
 }
 
 export interface CanopyCMSProviderProps extends CanopyThemeOptions {

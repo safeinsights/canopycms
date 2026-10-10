@@ -279,6 +279,17 @@ describe('useEditorLayout persistence', () => {
     expect(stored(editorLayoutStorageKey('/b'))?.layout).toBe('side')
   })
 
+  it("leaves another editor instance's layout alone when one changes it", () => {
+    const key = editorLayoutStorageKey('/shared')
+    const a = renderHook(() => useEditorLayout({ storageKey: key }))
+    const b = renderHook(() => useEditorLayout({ storageKey: key }))
+
+    act(() => a.result.current.setLayout('stacked'))
+
+    expect(stored(key)?.layout).toBe('stacked')
+    expect(b.result.current.layout).toBe('side')
+  })
+
   it('falls back to defaults for corrupt JSON', () => {
     window.localStorage.setItem(KEY, '{not json')
 

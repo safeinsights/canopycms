@@ -30,7 +30,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -608,7 +608,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   const canDelete = taskStatus === 'pending' || taskStatus === 'failed' || taskStatus === 'corrupt'
 
   const handleRetryClick = (task: Task) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Retry task',
       children: <Text size="sm">{RETRY_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Retry', cancel: 'Cancel' },
@@ -618,7 +618,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleDeleteClick = (status: DeletableTaskStatus, fileName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Delete task file',
       children: <Text size="sm">{deleteConfirmText(status)}</Text>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
@@ -764,7 +764,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const baseWarning = baseRefreshWarning(health.status?.workerStatus?.lastGitSync?.baseRefresh)
 
   const handleMarkMergedClick = (branchName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Mark branch as merged',
       children: <Text size="sm">{MARK_MERGED_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Mark merged', cancel: 'Cancel' },
@@ -774,7 +774,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleRepairClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Repair metadata',
       children: <Text size="sm">{REPAIR_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Repair', cancel: 'Cancel' },
@@ -784,7 +784,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handlePurgeClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Purge directory',
       children: <Text size="sm">{PURGE_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Purge', cancel: 'Cancel' },
@@ -797,7 +797,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   // calls only the duplicate repair: Purge sits on neighbouring rows and
   // trashes a whole branch directory.
   const handleDuplicateIdsClick = (dirName: string, duplicates: DuplicateContentId[]) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Fix duplicate content IDs',
       children: <DuplicateRepairDetails dirName={dirName} duplicates={duplicates} />,
       labels: { confirm: 'Archive duplicates', cancel: 'Cancel' },

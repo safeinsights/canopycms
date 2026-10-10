@@ -408,12 +408,16 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     size={18}
                     color="brand"
                     disabled={unresolvedCount === 0}
+                    styles={{ indicator: { pointerEvents: 'none' } }}
                   >
                     <Button
                       variant="outline"
                       color="gray"
                       onClick={onCommentsPanelOpen}
                       data-testid="comments-button"
+                      aria-label={
+                        unresolvedCount > 0 ? `Comments, ${unresolvedCount} unresolved` : undefined
+                      }
                     >
                       Comments
                     </Button>

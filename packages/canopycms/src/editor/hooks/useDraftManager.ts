@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import equal from 'fast-deep-equal'
 import type { EditorEntry } from '../Editor'
 import type { ContentId, LogicalPath } from '../../paths/types'
@@ -621,7 +621,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         decided = true
         resolve(value)
       }
-      modals.openConfirmModal({
+      openConfirm({
         title: 'Unsaved draft from an older editor version',
         children:
           'This draft was saved by an earlier version of the editor, which did not record ' +
@@ -793,7 +793,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       performDiscardDrafts()
       return
     }
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Discard drafts',
       children: `Discard drafts for ${modifiedCount} ${modifiedCount === 1 ? 'file' : 'files'}? Unsaved changes will be lost.`,
       labels: { confirm: 'Discard', cancel: 'Cancel' },
@@ -847,7 +847,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       performDiscardFileDraft()
       return
     }
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Discard draft',
       children: 'Discard unsaved changes for this file?',
       labels: { confirm: 'Discard', cancel: 'Cancel' },
@@ -915,7 +915,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       await performReload()
       return
     }
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Reload file',
       children: 'Reload this file from the server? Unsaved changes for this file will be lost.',
       labels: { confirm: 'Reload', cancel: 'Cancel' },

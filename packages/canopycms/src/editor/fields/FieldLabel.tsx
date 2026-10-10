@@ -5,9 +5,8 @@ import { Group, Input, Stack } from '@mantine/core'
 import { FieldDescription } from './FieldDescription'
 
 /**
- * The label row shared by fields and field groups: label text, a slot for the field's comment
- * control, a right-aligned slot for field actions, and the description beneath. It carries no
- * state, so it renders on the server and the client alike.
+ * The label row shared by fields and field groups: label, comment-control slot, right-aligned
+ * actions slot, and the description beneath.
  */
 export interface FieldLabelProps {
   /** Visible label text. When absent and there are no actions or commentControl, only the description renders. */
