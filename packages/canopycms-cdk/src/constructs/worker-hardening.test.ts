@@ -337,14 +337,17 @@ describe('boot memory', () => {
       '    fallocate -l 1G /swapfile || return 1',
       '  chmod 600 /swapfile || return 1',
       '  mkswap /swapfile || return 1',
-      '  swapon /swapfile || return 1',
       "  grep -qs '^/swapfile ' /etc/fstab || echo '/swapfile none swap defaults 0 0' >> /etc/fstab || return 1",
       '  mkdir -p /etc/sysctl.d || return 1',
       "  echo 'vm.swappiness = 10' > /etc/sysctl.d/90-canopy-worker-swap.conf || return 1",
-      '  sysctl -q -w vm.swappiness=10',
+      '  sysctl -q -w vm.swappiness=10 || return 1',
+      '  swapon /swapfile',
     ]) {
       expect(all).toContain(line)
     }
+    // swapon is the last command, so swap is never on when setup_swap reports failure.
+    const end = all.indexOf('}', all.indexOf('setup_swap() {'))
+    expect(all[end - 1]).toBe('  swapon /swapfile')
   })
 })
 
@@ -495,6 +498,14 @@ describe('a failed boot step, run', () => {
     expect(run.stdout).toContain('REACHED-END')
     expect(run.status).toBe(0)
     expect(run.dnf[0]).toMatch(/^upgrade/)
+  })
+
+  it('makes no swap file when the free space cannot be read', () => {
+    stub('df', 'echo "df: cannot read /" >&2')
+    const run = boot({ SWAP_ACTIVE: '' })
+    expect(run.stderr).toContain("canopy-worker boot: 'swap' setup failed; continuing without swap")
+    expect(() => readFileSync(path.join(stubs, 'swap.calls'))).toThrow()
+    expect(run.status).toBe(0)
   })
 
   it('leaves an active swap file alone', () => {
