@@ -64,7 +64,16 @@ describe('alarmTopic', () => {
   })
 
   it("keeps the metric name within CloudWatch's 255 characters under a deep construct path", () => {
-    const filters = synth(true, 8).findResources('AWS::Logs::MetricFilter')
+    // A path this deep also gives every resource a Name tag past CloudFormation's 256
+    // characters, which synth reports as a template-validation warning.
+    const consoleSpy = mockConsole()
+    let filters: ReturnType<Template['findResources']>
+    try {
+      filters = synth(true, 8).findResources('AWS::Logs::MetricFilter')
+      expect(consoleSpy).toHaveErrored('Template validation found issues')
+    } finally {
+      consoleSpy.restore()
+    }
     const names = Object.values(filters).map(
       (filter) =>
         (filter.Properties as { MetricTransformations: Array<{ MetricName: string }> })
