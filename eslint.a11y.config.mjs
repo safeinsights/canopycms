@@ -1,7 +1,8 @@
 // `pnpm lint:a11y`: the editor's jsx-a11y rules as errors, ratcheted by ESLint's
 // bulk suppressions in scripts/a11y-suppressions.json. An existing violation is
 // suppressed by its per-file, per-rule count; a new one fails, and so does a
-// suppression no longer needed. After fixing one, run
+// suppression a linted file no longer needs (ESLint ignores entries for files
+// it did not lint, such as a deleted one). After fixing one, run
 // `pnpm lint:a11y --prune-suppressions`.
 //
 // A separate config because a suppressions file is keyed by paths relative to

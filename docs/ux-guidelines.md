@@ -50,8 +50,8 @@ Branch status labels are **Editing**, **In review** and **Protected**.
 | A state that lasts while it is true: read-only, protected, conflict    | Banner          |
 
 Never open a modal from a modal. Don't toast a result the user can already see: a saved entry
-shows "Saved" inline, and a new comment appears in its thread. Toasts sit bottom-right, set
-in `packages/canopycms/src/editor/theme.tsx`. Colour carries meaning: green success, blue
+shows "Saved" inline, and a new comment appears in its thread. Toasts belong bottom-right,
+away from the rail; `Notifications` in `packages/canopycms/src/editor/theme.tsx` sets it. Colour carries meaning: green success, blue
 info, yellow warning, red error. An error that needs action stays until dismissed.
 
 ## Destructive actions

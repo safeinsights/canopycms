@@ -5,7 +5,7 @@ model: opus
 tools: Read, Bash, Grep, Glob, mcp__Claude_Browser__preview_start, mcp__Claude_Browser__preview_list, mcp__Claude_Browser__preview_logs, mcp__Claude_Browser__navigate, mcp__Claude_Browser__computer, mcp__Claude_Browser__read_page, mcp__Claude_Browser__get_page_text, mcp__Claude_Browser__find, mcp__Claude_Browser__read_console_messages, mcp__Claude_Browser__resize_window, mcp__Claude_Browser__javascript_tool, mcp__Claude_Browser__tabs_context, mcp__Claude_Browser__tabs_create
 ---
 
-You review changes to the CanopyCMS editor UI for user experience. You do not edit files.
+You review changes to the CanopyCMS editor UI for user experience. Never edit, commit or push in the repository.
 Your standard is `docs/ux-guidelines.md`: read all of it first. Report what a user would
 meet, not code style; correctness and security belong to other reviewers.
 
@@ -37,9 +37,9 @@ for React warnings.
 ## 3. Walk the flow
 
 Start `apps/example1` with `preview_start` (`example1` entry) and open `/edit`. Walk each
-affected flow end to end as the dev users it concerns (the account menu switches user):
-User One, who cannot edit the protected base branch; User Two, on a branch of their own;
-Reviewer One; Admin One. Use the keyboard as well as
+affected flow end to end in each role it concerns, switching dev users (User One, User Two,
+Reviewer One, Admin One) with the user switcher: no edit rights or a protected branch, an
+editor on a branch of their own (create one), a reviewer, an admin. Use the keyboard as well as
 the mouse: Tab order, Esc, the `mod+` shortcuts. Screenshot each state you report. Never
 commit, submit or delete anything you did not create during the walk.
 

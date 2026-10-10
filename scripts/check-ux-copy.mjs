@@ -2,10 +2,10 @@
 /**
  * Copy rules for the editor UI (docs/ux-guidelines.md), ratcheted per file
  * against scripts/ux-copy-baseline.json.
- *
  * Parses every non-test, non-story source file under packages/canopycms/src/editor
  * and checks the text a user can read: string literals, template text and JSX
- * text, skipping module specifiers, literal types and console.* arguments. Three rules:
+ * text, skipping module specifiers, literal and template-literal types, and
+ * console.* arguments. Three rules:
  * - `ellipsis`: three ASCII dots where `…` is meant.
  * - `successfully`: the word, in any casing. A result reads as done without it.
  * - `title-case`: a label written in Title Case. A label is the text of a
@@ -19,8 +19,9 @@
  *
  * The baseline holds each file's count per rule. A count above its baseline
  * fails and lists that file's findings for the rule; a count below it fails
- * too, until `--write-baseline` records the improvement, so a fix cannot
- * leave room for a new violation. A rewrite that would raise a count is
+ * too, until `--write-baseline` records the improvement, so a recorded fix
+ * leaves no room for a later violation; a fix and a new violation in one
+ * file in one change still net out. A rewrite that would raise a count is
  * refused without `--allow-raise`.
  *
  *   node scripts/check-ux-copy.mjs                    # check against the baseline
