@@ -55,9 +55,9 @@ const addCommentBodySchema = z.object({
 
 /**
  * Whether `entryPath` is spelled the way path rules expect an entry's logical path: rooted at
- * the content root, with no empty or `.` segment. Rules are globs over that spelling, so an
- * alias such as `secret/plan` or `content//secret/plan`, which the content API resolves to
- * `content/secret/plan`, would miss a rule written for `content/secret/**`.
+ * the content root, with no empty or `.` segment. Rules are globs over that spelling, so
+ * `secret/plan` (which the content API reads as `content/secret/plan`) and
+ * `content/./secret/plan` both miss a rule written for `content/secret/**`.
  */
 const isCanonicalEntryPath = (entryPath: LogicalPath, contentRoot: string): boolean =>
   entryPath.startsWith(`${normalizeFilesystemPath(contentRoot)}/`) &&
