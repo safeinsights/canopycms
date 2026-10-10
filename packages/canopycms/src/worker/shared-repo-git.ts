@@ -16,14 +16,17 @@ import { getErrorMessage } from '../utils/error'
  * holds against a concurrent writer. Keys whose names the attacker chooses cannot be pinned
  * (`filter.<driver>.*`, `merge.<driver>.driver`, `url.<base>.insteadOf`, `http.<url>.*`), so
  * {@link assertSharedRepoConfig} refuses a repository whose own config holds anything outside
- * {@link ALLOWED_REPO_CONFIG_KEYS}. That check reads the config before git does, so a writer
- * that plants a driver between the two still runs code in a working-tree operation (rebase,
- * merge, checkout). Only moving that git into a process without the credential closes it:
+ * {@link ALLOWED_REPO_CONFIG_KEYS}, or a submodule with a repository in it. That check reads
+ * before git does, so a writer racing it still runs code in a working-tree operation (rebase,
+ * merge, checkout) through a driver it plants in between, as does one that edits a rebase the
+ * worker has stopped at a conflict (an `exec` line in `git-rebase-todo`, the `strategy` file). Only
+ * moving that git into a process without the credential closes those:
  * .claude/future-tasks/worker-shared-repo-git-process-split.md.
  */
 
 /**
- * Every hook event git 2.55 fires (githooks(5)). `hook.<event>.enabled=false` is what stops a
+ * Every hook event in githooks(5) at git 2.55 except git-p4's, which only git-p4 fires and the worker
+ * never runs. `hook.<event>.enabled=false` is what stops a
  * config-defined hook (`hook.<name>.command` + `.event`), which `core.hooksPath` does not; a git
  * without config hooks ignores the key.
  */
@@ -248,7 +251,8 @@ export async function fetchFromRemoteGit(
  * `push --set-upstream`, `sparse-checkout set` (`extensions.worktreeConfig` and the cone keys in
  * `config.worktree`), `REMOTE_GIT_CONFIG`, and the `remote.origin.url` a pre-scrub bare clone of
  * GitHub left in `remote.git`. A named remote's `url` is inert here because the worker addresses
- * remotes by path, and the transport pins hold whatever it says.
+ * remotes by absolute path, which git never reads as a remote's name, and the transport pins hold
+ * whatever it says.
  */
 const ALLOWED_REPO_CONFIG_KEYS: readonly RegExp[] = [
   /^core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|sparsecheckout|sparsecheckoutcone)$/,
@@ -310,6 +314,13 @@ function unreadableConfig(repoPath: string, configFile: string, err: unknown): E
   )
 }
 
+/** A clone whose index git could not list. */
+function unreadableIndex(clone: string, err: unknown): Error {
+  return new Error(
+    `Refusing to run git in ${clone}: git could not list its index (${getErrorMessage(err).trim()}).`,
+  )
+}
+
 async function pathExists(file: string): Promise<boolean> {
   return fs.lstat(file).then(
     () => true,
@@ -322,8 +333,8 @@ function shellQuote(value: string): string {
 }
 
 /**
- * The check is the first git to read a repository's config each cycle, and an `include.path` naming
- * a pipe or `/dev/stdin` blocks that read for ever; a timeout turns it into a refusal.
+ * An `include.path` naming a pipe or `/dev/stdin` blocks every read of the config for ever; the
+ * timeout turns the check's read into a refusal. sparse-cone.ts's earlier read has its own.
  */
 const CHECK_TIMEOUT_MS = 30_000
 
@@ -332,9 +343,9 @@ const REPO_SCOPES = new Set(['local', 'worktree'])
 
 /**
  * Refuse a shared repository whose own config (with its includes, and `config.worktree`) holds a
- * key outside {@link ALLOWED_REPO_CONFIG_KEYS}. Throws {@link UntrustedRepoConfigError}. A config
- * git cannot read is also refused, with git's own message, which names a bad line but not its
- * content.
+ * key outside {@link ALLOWED_REPO_CONFIG_KEYS}, or a submodule with a repository in it. Throws
+ * {@link UntrustedRepoConfigError} for a key. A config git cannot read, or does not finish reading,
+ * is also refused, with git's own message for a bad line, which names the line but not its content.
  *
  * `repoPath` is the bare repository itself for `bare`, the working tree for `worktree`.
  */
@@ -395,8 +406,9 @@ export async function assertSharedRepoConfig(
 
 /**
  * Refuse a clone whose index holds a submodule with a repository in it. Git runs inside one, under
- * that repository's own config, which no allowlist here reads; the pins and
- * {@link SHARED_REPO_STATUS_ARGS} keep the worker's own commands out, and this refuses the plant.
+ * that repository's own config, which no allowlist here reads. `commit.status=false` and
+ * {@link SHARED_REPO_STATUS_ARGS} keep status, and the commit a continued rebase makes, out of one
+ * planted later; this refuses the plant itself.
  * An unpopulated submodule, which a non-recursive clone of a repository that has one leaves, is
  * harmless and allowed.
  */
@@ -414,7 +426,7 @@ async function assertNoSubmodules(
       '-z',
     ])
   } catch (err: unknown) {
-    throw unreadableConfig(clone, path.join(clone, '.git', 'index'), err)
+    throw unreadableIndex(clone, err)
   }
   const gitlinks = listing
     .split('\0')

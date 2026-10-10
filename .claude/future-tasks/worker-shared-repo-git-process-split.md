@@ -2,7 +2,7 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  New 2026-10-09, the gap left by worker-git-config-from-shared-efs.md. A compromised CMS Lambda that adds a filter or merge driver to a branch clone's git config after the worker's allowlist check and before git reads the config runs that command as the worker, in a rebase, base-branch refresh or sparse-cone change, and from there can obtain the GitHub credential. Move the worker's git in shared repositories into a process that has neither the credential nor the network
+  New 2026-10-09, the gap left by worker-git-config-from-shared-efs.md. A compromised CMS Lambda that races the worker can still run a command as it, and from there obtain the GitHub credential: by adding a filter or merge driver to a clone's git config between the worker's allowlist check and git's own read, or by editing a rebase the worker has stopped at a conflict (an exec line in git-rebase-todo, the strategy file). Persistent plants are refused. Move the worker's git in shared repositories into a process that has neither the credential nor the network
 ---
 
 # [P1] Run the worker's shared-repository git without the credential
@@ -20,19 +20,29 @@ github-mirror.ts):
   mirror on the instance's disk, so a planted `url.<x>.insteadOf`, `http.<url>.*` or credential
   helper never sees the token.
 - `-c` pins turn off hooks (including config-defined ones), fsmonitor, credential helpers,
-  signing, submodule recursion and every transport except local paths. They hold even against a
-  key written mid-operation.
-- An allowlist check refuses a repository whose own config holds a key CanopyCMS never writes.
+  signing and signature checks, push negotiation, submodule recursion and status, lazy fetches,
+  and every transport except local paths. They hold even against a key written mid-operation.
+- A check refuses a repository whose own config holds a key CanopyCMS never writes, or with a
+  repository in a submodule, which git would otherwise run inside under that repository's config.
 
-What the pins cannot name is a key whose name the attacker chooses: `filter.<driver>.*` and
-`merge.<driver>.driver`, selected by `.gitattributes` or `.git/info/attributes`. Only the check
-stops those, and it reads the config before git does. So a Lambda that writes a driver between
-the two runs it as the worker user during any working-tree operation in a clone: `rebase`,
-`merge --ff-only` in the base-branch refresh, `checkout --theirs` in conflict resolution,
-`sparse-checkout set`. That user can reach IMDS, so it holds the instance role, which reads the
-GitHub credential from Secrets Manager. The window is narrow, and a
-persistent plant is refused and reported, but an attacker who can retry every sync cycle can
-win it.
+What is left needs a race, and the check cannot win one, because it reads before git does:
+
+- **Keys whose names the attacker chooses:** `filter.<driver>.*` and `merge.<driver>.driver`,
+  selected by `.gitattributes` or `.git/info/attributes`. Written between the check and git's
+  read, a driver runs in any working-tree operation in a clone: `rebase`, `merge --ff-only` in
+  the base-branch refresh, `checkout --theirs`, `sparse-checkout set`.
+- **A rebase's own state.** While the worker's rebase is stopped at a conflict, an `exec` line
+  added to `.git/rebase-merge/git-rebase-todo`, or a `strategy` file naming a program, runs on its
+  `rebase --continue`. No check or pin reaches these files, which git must be able to write. A
+  planted rebase state on its own is harmless: the worker aborts an interrupted rebase, which runs
+  neither.
+- **A submodule populated after the check** is kept out of `status` and the continuing commit by
+  the pins, but `rm --sparse` of a conflicted one runs git inside it to absorb its repository.
+
+Each runs as the worker user, which can reach IMDS, so it holds the instance role, which reads
+the GitHub credential from Secrets Manager. A persistent plant is refused and reported, but an
+attacker who can retry every sync cycle can win a race. An `include.path` naming a pipe, written
+after the check, can also hang a rebase: denial of service only.
 
 ## Fix
 

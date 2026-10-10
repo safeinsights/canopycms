@@ -89,7 +89,8 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * A directory only this worker can write, never on the shared filesystem: it holds the private
    * GitHub mirror, the one repository any git command carrying the credential runs in
    * (worker/github-mirror.ts). The AWS worker passes systemd's `StateDirectory=`. Default: a
-   * directory under `os.tmpdir()`, for dev and tests.
+   * directory under `os.tmpdir()`, which the worker refuses unless it owns it and no one else can
+   * write to it.
    */
   stateDirectory?: string
   /** GitHub owner (e.g., 'acme') */
@@ -387,8 +388,8 @@ export class CmsWorker {
 
   constructor(private config: CmsWorkerConfig) {
     this.taskDir = path.join(config.workspacePath, '.tasks')
-    // Absolute: git honours a `remote.<name>.url` in a clone's config for a relative remote path,
-    // never for one that starts with '/'.
+    // Absolute: git can read a relative path such as `sub/remote.git` as a remote's name and use
+    // that remote's `remote.<name>.url` from a clone's config; never one that starts with '/'.
     this.remoteGitPath = path.join(path.resolve(config.workspacePath), 'remote.git')
     this.stateDirectory = path.resolve(
       config.stateDirectory ?? defaultStateDirectory(config.workspacePath),
@@ -1084,7 +1085,7 @@ export class CmsWorker {
       await this.verifyBaseBranchExists(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
-      workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)
+      workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.

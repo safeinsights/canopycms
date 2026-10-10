@@ -2,7 +2,7 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-09, branch `fix/worker-git-config-isolation`, base `int-202610-b`. Every git command carrying the GitHub credential runs in a worker-private mirror under the unit's `StateDirectory=` (worker/github-mirror.ts), moving objects to and from `remote.git` only through pinned `upload-pack --strict`/`receive-pack` commands. Every other worker git in `remote.git` or a clone runs through `sharedRepoGit` (explicit GIT_DIR, hooks and config hooks, fsmonitor, helpers, signing and non-local transports pinned off) after `assertSharedRepoConfig` refuses any repository-config key CanopyCMS never writes (worker/shared-repo-git.ts). The race that check leaves for filter and merge drivers is filed as worker-shared-repo-git-process-split.md (P1)
+  RESOLVED 2026-10-09, branch `fix/worker-git-config-isolation`, base `int-202610-b`. Every git command carrying the GitHub credential runs in a worker-private mirror under the unit's `StateDirectory=` (worker/github-mirror.ts), moving objects to and from `remote.git` only through pinned `upload-pack --strict`/`receive-pack` commands. Every other worker git in `remote.git` or a clone runs through `sharedRepoGit` (explicit GIT_DIR, hooks and config hooks, fsmonitor, helpers, signing and non-local transports pinned off) after `assertSharedRepoConfig` refuses any repository-config key CanopyCMS never writes, or a submodule with a repository in it (worker/shared-repo-git.ts). The races that check leaves (a driver planted between it and git's read, a stopped rebase's state) are filed as worker-shared-repo-git-process-split.md (P1); the mirror's limits on large repositories as worker-github-mirror-limits.md (P3)
 ---
 # [P1] The worker trusts git config and hooks the Lambda can write
 
@@ -48,7 +48,7 @@ None of the instance hardening helps: the process is doing its normal job.
 Measured at git 2.55: `-c` cannot neutralize `url.<x>.insteadOf` (a prefix match on
 `https://x-access-token` carries the token to another host), url-scoped `http.<url>.*`, or
 filter and merge drivers, and `core.hooksPath` does not stop config-defined hooks
-(`hook.<name>.command`), which `hook.<event>.enabled=false` does. Hence the private mirror for
+(`hook.<name>.command`), which `hook.<event>.enabled=false` does. Review rounds added: submodules (status and a continuing rebase's commit descend into one under its own config), signature verification, push negotiation, lazy fetches, an `include.path` naming a pipe, git's repository discovery (now an explicit `GIT_DIR`) and `remote.git/.git` (`upload-pack --strict`). Hence the private mirror for
 everything that carries the credential, and the pins plus the allowlist check for the rest.
 Decisions: the mirror is on the instance's root volume, not a worker-only EFS path; the CDK
 runner refuses to start without `$STATE_DIRECTORY`, while the core library falls back to

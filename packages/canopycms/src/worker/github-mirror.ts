@@ -21,14 +21,17 @@ import { mirrorGitOptions, pinnedReceivePack, pinnedUploadPack } from './shared-
  * through the pinned `upload-pack`/`receive-pack` commands.
  *
  * `refs/heads/*` mirrors GitHub as of the last fetch. `refs/canopy/outgoing/<branch>` holds a
- * commit being pushed for the length of that push. A cache: deleting it costs one full fetch.
+ * commit being pushed for the length of that push. A cache: deleting it costs a fetch, from
+ * `remote.git` where it can and GitHub for the rest.
  *
  * One process owns it, and {@link GitHubMirror.exclusive} runs one session at a time, so a fetch's
- * `--prune` never meets a push half way. A repack runs beside them: it drops nothing reachable and
- * deletes only packs it listed (git-manager.ts `repackBareRemoteIfNeeded`).
+ * `--prune` never meets a push half way. A repack runs beside them, which is safe because it
+ * expires no cruft, so no object a session is using disappears (git-manager.ts
+ * `repackBareRemoteIfNeeded`); expiring it would mean repacking inside a session.
  *
  * Every transfer runs with `--progress`: simple-git's timeout is inactivity, and a quiet fetch of a
- * whole repository would otherwise be killed for its size rather than for a stall.
+ * whole repository would otherwise be killed for its size. The connectivity walk after a fetch
+ * still prints nothing (.claude/future-tasks/worker-github-mirror-limits.md).
  */
 export class GitHubMirror {
   readonly gitDir: string

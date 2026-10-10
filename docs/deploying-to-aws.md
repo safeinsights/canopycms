@@ -1123,9 +1123,8 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
 - **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
   only in a private mirror in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
   Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
-  off, and a repository whose config holds a key CanopyCMS never writes is refused, naming the
-  key and its fix. The mirror, fetched once per instance, assumes a repository of a few GiB on the
-  8 GiB root volume; past 2 GiB the worker warns.
+  off, and a repository whose config holds a key CanopyCMS never writes, or with a repository in
+  a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB the worker warns.
 - **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
   exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
   their vault refuses deletes until you change its access policy.
@@ -1179,11 +1178,12 @@ What dropping the middleware gives up is under [Dual Build Support](#dual-build-
 shape without it has not been run against a real Clerk instance, so test sign-in early.
 
 If the CMS Lambda is compromised, an attacker can read and write content on EFS, but cannot
-reach GitHub or any external service itself. It can also write the git config of the
-repositories the worker runs git in, and one gap stays open there: a filter or merge driver
-written into a clone between the worker's check and git's own read runs as the worker, which can
-then fetch the credential (`.claude/future-tasks/worker-shared-repo-git-process-split.md`). The
-worker's host, system git config and image stay trusted.
+reach GitHub or any external service itself. It can also write the git state the worker reads,
+and one gap stays open: by racing the worker, writing a filter or merge driver into a clone
+between its check and git's own read, or an `exec` line into a rebase it has stopped, it runs a
+command as the worker, which can then fetch the credential
+(`.claude/future-tasks/worker-shared-repo-git-process-split.md`). The worker's host, system git
+config and image stay trusted.
 
 ### CloudFront OAC and request body signing
 

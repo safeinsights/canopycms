@@ -694,8 +694,8 @@ export async function pushBranchToGitHub(
   // INSIDE the stale-lease catch, and a resolution that threw there would
   // replace the push error being classified, so neither isStaleLeaseRejection
   // nor isNonFastForwardRejection would run and a genuinely diverged branch
-  // would be retried instead of raising PermanentTaskError. It also means all
-  // three pushes provably carry the same credential.
+  // would be retried instead of raising PermanentTaskError. It also means every
+  // push provably carries the same credential.
   const githubUrl = await ctx.buildGitHubUrl()
 
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
