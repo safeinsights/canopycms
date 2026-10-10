@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-09, branch `feat/worker-bundle-parameter`, stacked on `fix/worker-instance-hardening` (request 99). Opt-in `workerCode: { source: 'parameter' }` on `CanopyCmsService`: a `WorkerBundleSha256` parameter (empty by default, which runs the template's own asset) selects `canopy-worker/<sha256>.js` from a construct-owned, versioned, private, delete-denying bucket, and the same value is what user data checks the download against. Stack outputs carry the parameter's logical id and the bucket. The npm package ships `worker/dist/index.js` with `index.js.sha256`, and a test proves the build byte-reproducible. The default stays `'asset'`
+  RESOLVED 2026-10-09, branch `feat/worker-bundle-parameter`, stacked on `fix/worker-instance-hardening` (request 99). Opt-in `workerCode: { source: 'parameter' }` on `CanopyCmsService`: a `WorkerBundleSha256` parameter (empty by default, which runs the template's own asset) selects `canopy-worker/<sha256>.js` from a construct-owned, versioned, private, delete-denying bucket, and the same value is what user data checks the download against. Stack outputs carry the parameter's logical id and the bucket. The npm package ships `worker/dist/index.js` with `index.js.sha256`, and a test proves two builds on one machine byte-identical. The default stays `'asset'`
 ---
 # Let an adopter's CI roll the worker without a template change
 

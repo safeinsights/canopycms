@@ -1069,28 +1069,31 @@ log stream (see [Worker observability](#worker-observability)).
 By default the worker bundle is a CDK asset, so only a template deploy moves it. A pipeline
 that deploys the editor with parameter-only change sets (`--use-previous-template`) leaves the
 worker on its old version after every canopycms upgrade. `workerCode: { source: 'parameter' }`
-makes the bundle a parameter instead. It adds a bucket of bundles, a `WorkerBundleSha256`
-parameter, and two stack outputs: the bucket's name and the parameter's logical id, which a
-change-set gate can allowlist. While the parameter is empty, the worker runs the template's own
+makes the bundle a parameter instead. It adds a bucket of bundles, a sha256 parameter, and two
+stack outputs: the bucket's name and the parameter's logical id, which a change-set gate can
+allowlist. While the parameter is empty, the worker runs the template's own
 bundle, so the first deploy needs nothing uploaded.
 
 **`cdk deploy` keeps a parameter's previous value.** Once CI has set the hash, a human
 `cdk deploy`, even of a newer canopycms, keeps running the bundle CI chose. Pass
 `--parameters <logical id>=<sha256>` to change it.
 
-To roll the worker, upload the bundle your installed package ships, under its hash. Then put the
-hash in the change set beside your image parameter:
+To roll the worker, upload the bundle your installed package ships, under its hash, to the bucket
+the stack output names. Then put the hash in the change set beside your image parameter:
 
 ```bash
 dist=node_modules/canopycms-cdk/worker/dist
-(cd "$dist" && sha256sum -c index.js.sha256)
+(cd "$dist" && sha256sum -c index.js.sha256) # macOS: shasum -a 256 -c
 sha=$(cut -d' ' -f1 "$dist/index.js.sha256")
-aws s3 cp "$dist/index.js" "s3://$WORKER_BUNDLE_BUCKET/canopy-worker/$sha.js"
+key="canopy-worker/$sha.js"
+aws s3api head-object --bucket "$WORKER_BUNDLE_BUCKET" --key "$key" >/dev/null 2>&1 ||
+  aws s3 cp "$dist/index.js" "s3://$WORKER_BUNDLE_BUCKET/$key"
 ```
 
-The parameter both names the object and is the hash it is checked against, so a wrong upload
-fails the boot rather than running. The bucket refuses deletes, so a rollback's bundle stays
-downloadable.
+The parameter both names the object and is the hash it is checked against, so a wrong or missing
+upload fails the boot rather than running, and the group keeps replacing the instance until the
+object is there. The bucket refuses deletes, so a rollback's bundle stays downloadable. A change
+set that carries only the hash still re-resolves the AMI parameter, so it can move the AMI too.
 
 ## The worker instance
 

@@ -1802,8 +1802,9 @@ export class CanopyCmsService extends Construct {
       '# onto the instance disk, invisible to the Lambda.',
       `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
       '',
-      '# The bundle runs only if it is byte-for-byte the file synthesized; a',
-      '# mismatch fails the boot under the trap above.',
+      '# The bundle runs only if its sha256 is the one given here (synthesized,',
+      '# or the workerCode parameter); a mismatch fails the boot under the trap',
+      '# above.',
       `retry aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
       `echo '${workerBundle.sha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
       '# Root-owned, and read-only to the service (ProtectSystem=strict below).',
@@ -2040,9 +2041,9 @@ export class CanopyCmsService extends Construct {
       // Without an updatePolicy, CloudFormation's default behavior for an ASG
       // behind a changed launch template is to update the template resource
       // and do NOTHING else - the running instance keeps its old user-data
-      // (and therefore the old worker code: the worker bundle is a CDK S3
-      // asset whose hash is interpolated into user-data's `aws s3 cp
-      // s3://...`) until an interruption or a manual terminate happens to
+      // (and therefore the old worker code: the bundle's key and sha256,
+      // from the CDK asset or the workerCode parameter, are interpolated into
+      // user data) until an interruption or a manual terminate happens to
       // replace it. `cdk deploy` would then silently deploy everything
       // EXCEPT the worker. `rollingUpdate` makes CloudFormation actually
       // terminate-and-relaunch the instance on every deploy that changes the

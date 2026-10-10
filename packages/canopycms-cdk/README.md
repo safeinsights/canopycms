@@ -13,6 +13,7 @@ AWS CDK constructs and EC2 worker for deploying CanopyCMS.
 - Lambda function (Docker image, EFS mount, private subnet, no internet)
 - Lambda Function URL (for CloudFront origin)
 - EC2 Worker (on-demand t4g.nano in ASG, spot opt-in, public subnet, EFS mount, drained before replacement, replaced weekly, [hardened](../../docs/deploying-to-aws.md#the-worker-instance))
+- `workerCode: { source: 'parameter' }`: lets CI roll the worker with a parameter-only change set; see [Rolling the worker from CI](../../docs/deploying-to-aws.md#rolling-the-worker-from-ci)
 - Security groups and IAM roles (least-privilege)
 - `attachTo(distribution)`: adds the editor's `/edit`, `/edit/*` and `/api/canopycms/*` behaviors (and, optionally, the CMS build's `assetPrefix` and the preview route) to a CloudFront distribution you already own
 
