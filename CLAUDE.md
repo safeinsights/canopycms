@@ -40,18 +40,19 @@ Always do the following **before** proposing next work or providing a commit mes
 
 Only `AGENTS.md` is loaded automatically (below). Everything else you have to go and get:
 
-| Looking for                                                | Read                                                                                      |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| What a module does, and where its invariants live          | that module's own `AGENTS.md` — see the table in [AGENTS.md](AGENTS.md#code-organization) |
-| The precise rule governing a line of code                  | **the code comment at that line.** It is authoritative; the docs are the map to it        |
-| Adopter-facing API, config, integration steps              | [README.md](README.md)                                                                    |
-| System concepts, package boundaries, design decisions      | [ARCHITECTURE.md](ARCHITECTURE.md)                                                        |
-| Contributor patterns, test utilities, workflows            | [DEVELOPING.md](DEVELOPING.md)                                                            |
-| Which file or symbol does X                                | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)                                                    |
-| Locks, caches, anything read-modify-write on the workspace | [docs/concurrency.md](docs/concurrency.md) — **required reading before you add one**      |
-| What to work on next, and known open issues                | [.claude/future-tasks/index.md](.claude/future-tasks/index.md)                            |
-| Deploying to AWS                                           | [docs/deploying-to-aws.md](docs/deploying-to-aws.md)                                      |
-| Findings from a past whole-codebase review                 | `docs/reviews/<YYYY-MM>.md` — dated snapshots, may cite since-moved files                 |
+| Looking for                                                | Read                                                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| What a module does, and where its invariants live          | that module's own `AGENTS.md` — see the table in [AGENTS.md](AGENTS.md#code-organization)   |
+| The precise rule governing a line of code                  | **the code comment at that line.** It is authoritative; the docs are the map to it          |
+| Adopter-facing API, config, integration steps              | [README.md](README.md)                                                                      |
+| System concepts, package boundaries, design decisions      | [ARCHITECTURE.md](ARCHITECTURE.md)                                                          |
+| Contributor patterns, test utilities, workflows            | [DEVELOPING.md](DEVELOPING.md)                                                              |
+| Which file or symbol does X                                | [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md)                                                      |
+| Editor UI copy, dialogs, states, keyboard, accessibility   | [docs/ux-guidelines.md](docs/ux-guidelines.md) — **required reading before editor UI work** |
+| Locks, caches, anything read-modify-write on the workspace | [docs/concurrency.md](docs/concurrency.md) — **required reading before you add one**        |
+| What to work on next, and known open issues                | [.claude/future-tasks/index.md](.claude/future-tasks/index.md)                              |
+| Deploying to AWS                                           | [docs/deploying-to-aws.md](docs/deploying-to-aws.md)                                        |
+| Findings from a past whole-codebase review                 | `docs/reviews/<YYYY-MM>.md` — dated snapshots, may cite since-moved files                   |
 
 ## Project Context
 

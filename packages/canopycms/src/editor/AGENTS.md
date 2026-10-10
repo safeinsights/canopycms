@@ -1,6 +1,6 @@
 # `editor/` — React editor UI
 
-The largest subsystem in the package, by a wide margin.
+UX rules for everything here: [docs/ux-guidelines.md](../../../../docs/ux-guidelines.md).
 
 As everywhere else in this package, **the code comment at the point of a rule is
 authoritative**. This file is the map.

@@ -4,6 +4,49 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks'
 import securityPlugin from 'eslint-plugin-security'
 import typescriptEslint from 'typescript-eslint'
 import eslintConfigPrettier from 'eslint-config-prettier'
+import jsxA11y from 'eslint-plugin-jsx-a11y'
+
+/**
+ * jsx-a11y for the editor UI, at error severity. Mantine renders the mapped
+ * components as native controls, so the rules check them as such.
+ * @type {import('eslint').Linter.Config}
+ */
+export const editorA11yConfig = {
+  files: ['packages/canopycms/src/editor/**/*.tsx'],
+  ignores: ['**/*.test.tsx', '**/*.stories.tsx', '**/__test__/**', '**/__fixtures__/**'],
+  plugins: { 'jsx-a11y': jsxA11y },
+  settings: {
+    'jsx-a11y': {
+      polymorphicPropName: 'component',
+      components: {
+        ActionIcon: 'button',
+        Anchor: 'a',
+        Button: 'button',
+        CloseButton: 'button',
+        Image: 'img',
+        'Menu.Item': 'button',
+        UnstyledButton: 'button',
+      },
+    },
+  },
+  rules: {
+    ...jsxA11y.flatConfigs.recommended.rules,
+    // An icon-only ActionIcon needs an aria-label; a Tooltip does not name it.
+    // The rule assumes a childless component child renders text unless it
+    // matches a `controlComponents` glob, while a control itself must match an
+    // entry exactly, so 'Icon*' marks every Tabler icon as unlabelled content
+    // without making the icons controls.
+    'jsx-a11y/control-has-associated-label': [
+      'error',
+      {
+        controlComponents: ['Icon*'],
+        labelAttributes: ['aria-label', 'aria-labelledby', 'label', 'title'],
+        ignoreElements: ['audio', 'canvas', 'embed', 'input', 'textarea', 'tr', 'video'],
+        depth: 3,
+      },
+    ],
+  },
+}
 
 /** @type {import('eslint').Linter.Config[]} */
 const eslintConfig = [
@@ -82,6 +125,17 @@ const eslintConfig = [
         version: 'detect',
       },
     },
+  },
+  // Editor accessibility, as warnings so they show while editing. `pnpm lint:a11y`
+  // runs the same rules as errors against a ratchet; see eslint.a11y.config.mjs.
+  {
+    ...editorA11yConfig,
+    rules: Object.fromEntries(
+      Object.entries(editorA11yConfig.rules).map(([rule, entry]) => [
+        rule,
+        Array.isArray(entry) ? ['warn', ...entry.slice(1)] : 'warn',
+      ]),
+    ),
   },
   // Project-wide rules (strict by default)
   {
