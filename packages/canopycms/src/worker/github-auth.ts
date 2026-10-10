@@ -30,7 +30,7 @@ type TokenAuth = ReturnType<typeof createTokenAuth>
  *   a year, acts as the person who created it, and dies when they leave the
  *   organisation. The cost is that its installation tokens last about an
  *   hour, so the credential must be minted on demand rather than read once at
- *   boot — which is why `CmsWorker.buildGitHubUrl()` is async.
+ *   boot — which is why the gateway resolves its git URL per use (github-gateway.ts).
  */
 export interface GitHubAuthConfig {
   /**
@@ -80,7 +80,7 @@ export interface GitHubAuthConfig {
    *
    * Core's own backstop, not a substitute for one the provider keeps: a
    * failing publish retries on a 5s/10s/20s backoff (task-queue.ts), and
-   * `CmsWorker` calls `refreshCredential` after every failed task attempt AND
+   * the worker calls `refreshCredential` after every failed task attempt AND
    * every failed git sync, so a burst of failures would otherwise reach an
    * adopter-supplied `refreshGitHubToken` every few seconds. The AWS provider
    * (`packages/canopycms-cdk/worker/credential-refresh.ts`) already enforces
@@ -182,7 +182,7 @@ export interface ResolvedGitHubAuth {
    * `refreshGitHubTokenMinIntervalMs`, and swaps the result in.
    *
    * Nothing needs rebuilding afterwards, on either path. Both consumers read
-   * the credential per use — `resolveGitToken` on every `buildGitHubUrl()`,
+   * the credential per use — `resolveGitToken` on every git URL the gateway builds,
    * and Octokit through a strategy hook that reads it per request — so a
    * swapped token is live at the next use with no cache to invalidate.
    *
@@ -223,7 +223,7 @@ function dynamicTokenAuth(getToken: () => string): TokenAuth {
 /**
  * Choose how this worker authenticates, ONCE, from its config.
  *
- * Called from `CmsWorker.ensureGitHubAuth()`, which start() invokes inside
+ * Called where `CmsWorker` creates its GitHub gateway, which start() does inside
  * its try — NOT from the constructor, so that a half-configured worker still
  * constructs and the throw lands where start()'s catch can record it in
  * worker-status.json. Resolved once, so both consumers (Octokit and the git
@@ -339,7 +339,7 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       // A refresh that STARTED before one already applied read the store
       // earlier, so its value can only be older. Refreshes do overlap: the task
       // loop and the git-sync loop both call this, and
-      // CmsWorker.refreshGitHubCredential stops waiting after `taskTimeoutMs`
+      // the gateway's `refreshCredential` stops waiting after `taskTimeoutMs`
       // without cancelling. Only a refresh that returned a value counts as
       // applied -- one that returned `undefined` (a provider's floor, say) says
       // nothing about how recent it is, so it must not block a slower real read.

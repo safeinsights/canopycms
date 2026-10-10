@@ -12,13 +12,13 @@
  * WHY THIS OBSERVES BEHAVIOUR RATHER THAN GREPPING THE SOURCE
  *
  * The first draft of this guard scanned for `octokit.pulls.*`. It would have
- * been blind, because the call sites are written three different ways:
+ * been blind, because a call site can be written three different ways:
  *
  *     octokit.pulls.list(...)              github-service.ts, module function
- *     this.octokit.git.deleteRef(...)      github-service.ts, class methods
- *     ctx.octokit().pulls.create(...)      worker/task-runner.ts, worker/rebase.ts
+ *     this.octokit.git.deleteRef(...)      github-service.ts, worker/github-gateway.ts
+ *     ctx.octokit().pulls.create(...)      through an accessor
  *
- * and one of them spans lines (`await ctx\n  .octokit()\n  .graphql(`), which no
+ * and one of them can span lines (`await ctx\n  .octokit()\n  .graphql(`), which no
  * single-line regex matches at all. Three spellings is the point at which the
  * instrument is wrong rather than merely incomplete, so this drives the real
  * dispatch table against a recording Proxy and reads back what was actually
@@ -56,6 +56,8 @@ import type { TaskRunnerContext } from '../worker/task-runner'
 import { createOrUpdatePullRequest, GitHubService } from '../github-service'
 import { pollMergeState } from '../worker/rebase'
 import type { RebaseContext } from '../worker/rebase'
+import { resolveWorkerGitHubAuth } from '../worker/github-auth'
+import { createLocalGitHubGateway, type GitHubGateway } from '../worker/github-gateway'
 import type { TaskAction } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/index'
 import { mockConsole, type MockConsole } from '../test-utils'
@@ -168,17 +170,34 @@ function recordingOctokit(seen: Set<string>, responses: Responses = {}): Octokit
   return namespaceProxy('') as Octokit
 }
 
+/**
+ * The worker's real GitHub gateway with `octokit` in place of GitHub: every worker call to GitHub
+ * goes through it, so driving the worker drives the gateway's own Octokit calls.
+ */
+function gatewayWith(octokit: Octokit): GitHubGateway {
+  return createLocalGitHubGateway({
+    githubOwner: 'an-org',
+    githubRepo: 'a-content-site',
+    auth: resolveWorkerGitHubAuth({ githubToken: 'unused' }),
+    githubApp: false,
+    stateDirectory: '/nonexistent/state',
+    workspacePath: '/nonexistent/workspace',
+    remoteGitPath: '/nonexistent/workspace/remote.git',
+    timeoutMs: 1000,
+    octokit,
+  })
+}
+
 /** A TaskRunnerContext stubbed down to what `executeTask` actually touches. */
 function taskContext(octokit: Octokit): TaskRunnerContext {
   const pushed: string[] = []
+  const github = gatewayWith(octokit)
   const context = {
-    githubOwner: 'an-org',
-    githubRepo: 'a-content-site',
     baseBranch: 'main',
     sanitizedBaseBranch: 'main',
     // No workspace exists there, so `delete-remote-branch` goes on to call GitHub.
     branchWorkspacePath: (branch: string) => `/nonexistent/content-branches/${branch}`,
-    octokit: () => octokit,
+    github: () => github,
     // Git-over-HTTPS is covered by `contents: write` and is not an Octokit
     // call, so the push itself is stubbed out — this harness is about the REST
     // and GraphQL surface.
@@ -307,11 +326,10 @@ async function observeEverything(): Promise<Coverage> {
   const rebaseOctokit = recordingOctokit(mergePoll, {
     'pulls.get': { data: { merged: false, merged_at: null, state: 'open' } },
   })
+  const rebaseGitHub = gatewayWith(rebaseOctokit)
   const rebaseContext = {
-    githubOwner: 'an-org',
-    githubRepo: 'a-content-site',
     taskTimeoutMs: 1000,
-    octokit: () => rebaseOctokit,
+    github: () => rebaseGitHub,
   } as unknown as RebaseContext
   await pollMergeState(rebaseContext, 'content-a', '/tmp/nowhere', {
     branch: { pullRequestNumber: 7 },
@@ -492,8 +510,8 @@ describe('the declared App permissions cover every GitHub call this package make
 
 describe('the source-level backstop', () => {
   /**
-   * Matches a call THROUGH an octokit client in any of the three shapes used in
-   * this package, across line breaks. Declarations (`octokit(): Octokit`) and
+   * Matches a call THROUGH an octokit client in any of the three shapes the file header lists,
+   * across line breaks. Declarations (`octokit(): Octokit`) and
    * other identifiers that merely start with "octokit" (`octokitClient()`) do
    * not match, because a `.` must follow.
    *
@@ -550,15 +568,11 @@ describe('the source-level backstop', () => {
     return found.sort()
   }
 
-  it('finds Octokit calls in exactly the three files the behavioural guard drives', () => {
+  it('finds Octokit calls in exactly the files the behavioural guard drives', () => {
     // A set comparison, both directions at once. A FOURTH file appearing means
     // the behavioural guard above is no longer watching everything — it only
     // sees what its harness drives, and this is what notices that.
-    expect(filesWithOctokitCalls()).toEqual([
-      'github-service.ts',
-      'worker/rebase.ts',
-      'worker/task-runner.ts',
-    ])
+    expect(filesWithOctokitCalls()).toEqual(['github-service.ts', 'worker/github-gateway.ts'])
   })
 
   it('matches all three call spellings, including the multi-line one', () => {

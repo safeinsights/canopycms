@@ -11,14 +11,12 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
 
 type Internals = {
   ensureRemoteGit(): Promise<void>
-  buildGitHubUrl(): Promise<string>
-  octokit: unknown
   baseBranch: string
 }
 
@@ -51,7 +49,7 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
-function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
+function makeWorker(extra: Partial<CmsWorkerConfig> = {}, octokit?: object): CmsWorker {
   const worker = new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
@@ -62,7 +60,7 @@ function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
     gitSyncInterval: 60_000,
     ...extra,
   })
-  ;(worker as unknown as Internals).buildGitHubUrl = async () => githubFixture
+  useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture, octokit })
   return worker
 }
 
@@ -70,11 +68,10 @@ const internals = (worker: CmsWorker) => worker as unknown as Internals
 
 /** A worker with no base branch configured, whose GitHub reports `defaultBranch`. */
 function unconfigured(defaultBranch: string, extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
-  const worker = makeWorker({ ...extra, baseBranch: undefined })
-  internals(worker).octokit = {
-    repos: { get: vi.fn(async () => ({ data: { default_branch: defaultBranch } })) },
-  }
-  return worker
+  return makeWorker(
+    { ...extra, baseBranch: undefined },
+    { repos: { get: vi.fn(async () => ({ data: { default_branch: defaultBranch } })) } },
+  )
 }
 
 /** Commit `file` in the seed repo on its current branch and return the commit. */
@@ -284,7 +281,7 @@ describe('a poisoned remote.git that is kept', () => {
 
   it('when GitHub cannot be fetched, and deletes nothing', async () => {
     const worker = makeWorker()
-    internals(worker).buildGitHubUrl = async () => path.join(tmpDir, 'no-such-repo.git')
+    useLocalGitHubGateway(worker, { remoteUrl: async () => path.join(tmpDir, 'no-such-repo.git') })
 
     await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
       /has no branch 'main'.*and it was not replaced/s,
@@ -320,10 +317,12 @@ describe('a poisoned remote.git that is kept', () => {
     await commit('permissions.json')
     const worker = makeWorker()
     // Resolved after the first listing, inside the seed: the Lambda pushing as it runs.
-    internals(worker).buildGitHubUrl = async () => {
-      await push(remoteGitPath, 'HEAD:refs/heads/canopycms-settings-prod')
-      return githubFixture
-    }
+    useLocalGitHubGateway(worker, {
+      remoteUrl: async () => {
+        await push(remoteGitPath, 'HEAD:refs/heads/canopycms-settings-prod')
+        return githubFixture
+      },
+    })
 
     await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
       /refs changed while the worker seeded its replacement/,

@@ -66,8 +66,6 @@ import type { WorkerContext } from './worker-context'
  */
 export type RebaseContext = Pick<
   WorkerContext,
-  | 'githubOwner'
-  | 'githubRepo'
   | 'baseBranch'
   | 'sanitizedBaseBranch'
   | 'contentBranchesPath'
@@ -75,7 +73,7 @@ export type RebaseContext = Pick<
   | 'remoteGitPath'
   | 'taskDir'
   | 'taskTimeoutMs'
-  | 'octokit'
+  | 'github'
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
@@ -136,12 +134,7 @@ export async function pollMergeState(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ctx.taskTimeoutMs)
   try {
-    const { data } = await ctx.octokit().pulls.get({
-      owner: ctx.githubOwner,
-      repo: ctx.githubRepo,
-      pull_number: prNumber,
-      request: { signal: controller.signal },
-    })
+    const data = await ctx.github().getPullRequest(prNumber, controller.signal)
 
     if (data.merged) {
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)

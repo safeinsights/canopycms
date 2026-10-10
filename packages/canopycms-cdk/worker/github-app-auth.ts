@@ -88,13 +88,12 @@ export function gitHubAppAuthFrom(resolveAppAuth: () => InstallationTokenMinter)
  * `main().catch()` only logs and exits: an invisible ~5s systemd crash-loop that
  * `cdk deploy` reports as success, with the admin panel showing the worker
  * absent and no `lastFatalError` to explain it - the one failure mode
- * `CmsWorker.ensureGitHubAuth()` and `preflightGitHubAppAuth()` cannot otherwise
- * see.
+ * the worker's GitHub gateway and its startup preflight cannot otherwise see.
  *
  * Deferred, the first touch of either member happens inside `start()`'s try —
- * `ensureGitHubAuth()` builds the Octokit client (which calls `authStrategy`),
- * and `preflightGitHubAppAuth()` mints immediately after — so the throw is
- * recorded in `worker-status.json` with its message intact.
+ * creating the gateway builds the Octokit client (which calls `authStrategy`),
+ * and its `prepare()` mints immediately after — so the throw is recorded in
+ * `worker-status.json` with its message intact.
  *
  * Memoized, because the single-instance contract above is exactly what a plain
  * lazy getter would break: `createAppAuth` per call is `authStrategy:

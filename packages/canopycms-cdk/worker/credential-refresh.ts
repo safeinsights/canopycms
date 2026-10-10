@@ -35,7 +35,7 @@ import { getSecret, type GetSecretOptions } from './secrets'
  *
  * For the GitHub token it is ACTIVE, and it is what bounds the cost. That token
  * has two triggers in core, a failed task and a failed git sync (see
- * `CmsWorker.refreshGitHubCredential`), and a task retries on a 5s/10s/20s
+ * `GitHubGateway.refreshCredential` in core), and a task retries on a 5s/10s/20s
  * backoff — so a queue of failing publishes reaches this provider at core's own
  * floor, once a minute by default. This floor makes that one read per five
  * minutes, SHARED by both triggers, at the price that a rotation is picked up at
@@ -135,7 +135,7 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
   // the older value can only be stale. Without this a read that stalled past the
   // floor could land after a newer read adopted a rotated value and put the old
   // one back - and a caller that stops waiting
-  // (CmsWorker.refreshGitHubCredential) does not cancel the read it abandoned.
+  // (GitHubGateway.refreshCredential) does not cancel the read it abandoned.
   let readsStarted = 0
   let newestReadFinished = 0
 
@@ -158,7 +158,7 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       //
       // Overlap is real for the GitHub token: its two triggers, a failed task
       // and a failed git sync, run on separate loops that `scheduleLoop` does
-      // not serialise against each other (CmsWorker.refreshGitHubCredential).
+      // not serialise against each other (GitHubGateway.refreshCredential).
       // The Clerk key has one calling loop, which awaits each cycle.
       lastReadAt = at
 

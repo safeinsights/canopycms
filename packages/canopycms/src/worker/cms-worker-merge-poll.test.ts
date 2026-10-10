@@ -15,7 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { CmsWorker } from './cms-worker'
-import { mockConsole, type MockConsole } from '../test-utils'
+import { mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import {
   BranchMetadataFileManager,
   getBranchMetadataFileManager,
@@ -23,11 +23,6 @@ import {
 } from '../branch-metadata'
 
 type MergePollInternals = {
-  octokit: {
-    pulls: {
-      get: ReturnType<typeof vi.fn>
-    }
-  }
   pollMergeState(
     branchDir: string,
     branchPath: string,
@@ -66,8 +61,9 @@ describe('CmsWorker.pollMergeState()', () => {
       taskTimeoutMs: 2000,
     })
     const internals = worker as unknown as MergePollInternals
-    internals.octokit = { pulls: { get: vi.fn() } }
-    return { worker, internals }
+    const octokit = { pulls: { get: vi.fn() } }
+    useLocalGitHubGateway(worker, { octokit })
+    return { worker, internals, octokit }
   }
 
   /** Write branch metadata directly (no git repo needed for these tests). */
@@ -105,13 +101,13 @@ describe('CmsWorker.pollMergeState()', () => {
     BranchMetadataFileManager.loadOnly(branchPath).then((f) => f?.branch)
 
   it('archives the branch when the PR is merged, using GitHub merged_at and preserving PR number/url', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-merged', {
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/test-owner/test-repo/pull/42',
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockResolvedValue({
+    octokit.pulls.get.mockResolvedValue({
       data: { merged: true, state: 'closed', merged_at: '2024-03-15T10:30:00Z' },
     })
 
@@ -130,12 +126,12 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('records closed state without archiving when the PR is closed but not merged', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-closed', {
       pullRequestNumber: 43,
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'closed' } })
+    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'closed' } })
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await internals.pollMergeState('feature-closed', branchPath, metaFile)
@@ -147,9 +143,9 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('records open state on the first poll of an open PR', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-open', { pullRequestNumber: 44 })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(metaFile?.branch.pullRequestState).toBeUndefined()
@@ -161,12 +157,12 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('does not save when the polled state already matches recorded state', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-nochange', {
       pullRequestNumber: 45,
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
 
     const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
@@ -176,12 +172,12 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('does not throw and leaves metadata untouched on an Octokit error', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-error', {
       pullRequestNumber: 46,
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockRejectedValue(new Error('network error'))
+    octokit.pulls.get.mockRejectedValue(new Error('network error'))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await expect(
@@ -195,29 +191,29 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('does not call GitHub when metadata has no pull request number', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-no-pr', {})
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await internals.pollMergeState('feature-no-pr', branchPath, metaFile)
 
-    expect(internals.octokit.pulls.get).not.toHaveBeenCalled()
+    expect(octokit.pulls.get).not.toHaveBeenCalled()
   })
 
   it('does not call GitHub when there is no metadata at all', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     await internals.pollMergeState('feature-missing', path.join(contentBranchesPath, 'x'), null)
 
-    expect(internals.octokit.pulls.get).not.toHaveBeenCalled()
+    expect(octokit.pulls.get).not.toHaveBeenCalled()
   })
 
   it('records a reopen transition from closed back to open', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-reopened', {
       pullRequestNumber: 47,
       pullRequestState: 'closed',
     })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(metaFile?.branch.status).toBe('submitted')
@@ -230,12 +226,12 @@ describe('CmsWorker.pollMergeState()', () => {
   })
 
   it('does not throw when the merged-branch metadata save fails, leaving the file unchanged', async () => {
-    const { internals } = makePollWorker()
+    const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-merge-save-fails', {
       pullRequestNumber: 49,
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: true, state: 'closed' } })
+    octokit.pulls.get.mockResolvedValue({ data: { merged: true, state: 'closed' } })
 
     const saveSpy = vi
       .spyOn(BranchMetadataFileManager.prototype, 'save')
@@ -256,37 +252,33 @@ describe('CmsWorker.pollMergeState()', () => {
 
   describe('dispatch from rebaseActiveBranches()', () => {
     it('polls approved branches for merge state', async () => {
-      const { internals } = makePollWorker()
+      const { internals, octokit } = makePollWorker()
       await setupGitLikeBranchDir('feature-approved', {
         status: 'approved',
         pullRequestNumber: 50,
       })
-      internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+      octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
 
       await internals.rebaseActiveBranches()
 
-      expect(internals.octokit.pulls.get).toHaveBeenCalledWith(
-        expect.objectContaining({ pull_number: 50 }),
-      )
+      expect(octokit.pulls.get).toHaveBeenCalledWith(expect.objectContaining({ pull_number: 50 }))
     })
 
     it('polls submitted branches for merge state (primary production case)', async () => {
-      const { internals } = makePollWorker()
+      const { internals, octokit } = makePollWorker()
       await setupGitLikeBranchDir('feature-submitted', {
         status: 'submitted',
         pullRequestNumber: 52,
       })
-      internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+      octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
 
       await internals.rebaseActiveBranches()
 
-      expect(internals.octokit.pulls.get).toHaveBeenCalledWith(
-        expect.objectContaining({ pull_number: 52 }),
-      )
+      expect(octokit.pulls.get).toHaveBeenCalledWith(expect.objectContaining({ pull_number: 52 }))
     })
 
     it('never polls archived branches', async () => {
-      const { internals } = makePollWorker()
+      const { internals, octokit } = makePollWorker()
       await setupGitLikeBranchDir('feature-archived', {
         status: 'archived',
         pullRequestNumber: 51,
@@ -294,7 +286,7 @@ describe('CmsWorker.pollMergeState()', () => {
 
       await internals.rebaseActiveBranches()
 
-      expect(internals.octokit.pulls.get).not.toHaveBeenCalled()
+      expect(octokit.pulls.get).not.toHaveBeenCalled()
     })
   })
 

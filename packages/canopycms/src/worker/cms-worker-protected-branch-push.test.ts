@@ -2,7 +2,7 @@
  * The worker never pushes the base branch or GitHub's default branch, whatever a task asks.
  * The task queue, `remote.git` and a branch's `historyRewrittenFrom` lease marker are all on the
  * shared workspace, which the CMS Lambda can write, so the refusal cannot depend on any of them.
- * "GitHub" here is a local bare repository; `buildGitHubUrl` points at it.
+ * "GitHub" here is a local bare repository; the worker's GitHub gateway points at it.
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -12,7 +12,7 @@ import { simpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
-import { initTestRepo, mockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 import { GitHubMirror, RefusedPushError } from './github-mirror'
 
@@ -74,7 +74,7 @@ describe('the worker refuses to push protected branches', () => {
       githubToken: 'fake-token',
       baseBranch,
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => github
+    useLocalGitHubGateway(worker, { remoteUrl: () => github })
     ;(worker as unknown as { running: boolean }).running = true
     await worker.processTaskQueue()
   }

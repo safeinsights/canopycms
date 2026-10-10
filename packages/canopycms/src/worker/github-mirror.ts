@@ -293,6 +293,21 @@ export class MirrorSession {
     }
   }
 
+  /** Every branch GitHub had at the last fetch, mapped to its tip. */
+  async branchTips(signal?: AbortSignal): Promise<Map<string, string>> {
+    const out = await this.git(signal).raw([
+      'for-each-ref',
+      '--format=%(objectname) %(refname:strip=2)',
+      'refs/heads/',
+    ])
+    const tips = new Map<string, string>()
+    for (const line of out.split('\n')) {
+      const space = line.indexOf(' ')
+      if (space !== -1) tips.set(line.slice(space + 1), line.slice(0, space))
+    }
+    return tips
+  }
+
   /**
    * Whether a branch GitHub had at the last fetch contains the commit `id`, or the commit an
    * annotated tag `id` points at. False for an object the mirror does not have, or one git cannot

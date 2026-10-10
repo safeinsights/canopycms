@@ -10,28 +10,28 @@ where those rules live.
 Each of the four disjoint call trees under `start()` is its own module, reached through a
 `WorkerContext`.
 
-| File                        | What it owns                                                                                                                                                                                                                                                               |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cms-worker.ts`             | The `CmsWorker` class: fields, constructor, `start`/`stop`, the cross-host worker lock, `scheduleLoop`, `remote.git` provisioning, `buildGitHubUrl`/`refreshGitHubCredential`/`branchWorkspacePath`, `refreshAuthCache`, and one delegating method per cluster entry point |
-| `worker-context.ts`         | `WorkerContext` — the only channel between the class and the extracted clusters                                                                                                                                                                                            |
-| `task-runner.ts`            | The task-queue cluster: `processTaskQueue` and everything below it                                                                                                                                                                                                         |
-| `git-sync.ts`               | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                                                                                                                             |
-| `rebase.ts`                 | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                                                                  |
-| `history-rewrite.ts`        | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                                                              |
-| `canopy-state.ts`           | Sync's handling of tracked `.canopy-meta/` state                                                                                                                                                                                                                           |
-| `provisioned-workspace.ts`  | Zero-retry provisioning-lock hold                                                                                                                                                                                                                                          |
-| `remote-git-maintenance.ts` | `remote.git` repack, logged (rule and gc config: `git-manager.ts`)                                                                                                                                                                                                         |
-| `sparse-cone.ts`            | Re-applying a changed sparse cone                                                                                                                                                                                                                                          |
-| `schema-gate.ts`            | Holding base for an editor deploy                                                                                                                                                                                                                                          |
-| `log.ts`                    | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                                                               |
-| `github-auth.ts`            | GitHub credential selection (token or App), installation-token minting, the PAT swap in `refreshCredential` behind its 60s floor, PEM normalization                                                                                                                        |
-| `github-mirror.ts`          | The private GitHub mirror: the only repository any git command carrying the credential runs in                                                                                                                                                                             |
-| `shared-repo-git.ts`        | How the worker runs git in `remote.git` and the clones: the pins, the pinned pack commands, the config allowlist check                                                                                                                                                     |
+| File                        | What it owns                                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cms-worker.ts`             | The `CmsWorker` class: fields, constructor, `start`/`stop`, the cross-host worker lock, `scheduleLoop`, `remote.git` provisioning, `branchWorkspacePath`, `refreshAuthCache`, and one delegating method per cluster entry point |
+| `worker-context.ts`         | `WorkerContext` — the only channel between the class and the extracted clusters                                                                                                                                                 |
+| `task-runner.ts`            | The task-queue cluster: `processTaskQueue` and everything below it                                                                                                                                                              |
+| `git-sync.ts`               | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                                                                                  |
+| `rebase.ts`                 | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                                                                                       |
+| `history-rewrite.ts`        | The [SYNC-H1] kernel all three clusters touch                                                                                                                                                                                   |
+| `canopy-state.ts`           | Sync's handling of tracked `.canopy-meta/` state                                                                                                                                                                                |
+| `provisioned-workspace.ts`  | Zero-retry provisioning-lock hold                                                                                                                                                                                               |
+| `remote-git-maintenance.ts` | `remote.git` repack, logged (rule and gc config: `git-manager.ts`)                                                                                                                                                              |
+| `sparse-cone.ts`            | Re-applying a changed sparse cone                                                                                                                                                                                               |
+| `schema-gate.ts`            | Holding base for an editor deploy                                                                                                                                                                                               |
+| `log.ts`                    | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                    |
+| `github-gateway.ts`         | `GitHubGateway`, the only user of the credential and Octokit, and its in-process implementation                                                                                                                                 |
+| `github-auth.ts`            | Credential selection (token or App), installation-token minting, the PAT swap behind its 60s floor, PEM normalization                                                                                                           |
+| `github-mirror.ts`          | The gateway's private GitHub mirror, the only repository where git carries the credential                                                                                                                                       |
+| `shared-repo-git.ts`        | How the worker runs git in `remote.git` and the clones: the pins, the pinned pack commands, the config allowlist check                                                                                                          |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-auth` sits outside that chain as a leaf:
-`cms-worker` imports it, and it imports nothing from `worker/`; so are `shared-repo-git`
-and `github-mirror`. `pnpm lint:cycles` enforces that the graph stays
+`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-gateway` sits outside that chain: `cms-worker` creates it, the clusters reach it
+only through `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` are leaves. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 
@@ -50,7 +50,7 @@ lint and still break the layering above. Keep the direction by review.
 - Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
   loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
-  function (it is part of provisioning, so it stays there).
+  function.
 - No push, plain or leased, to the base branch or GitHub's default branch, whatever a task asks:
   `github-mirror.ts`, `MirrorSession.pushToGitHub` (`RefusedPushError`).
 - The credential only in mirror sessions; other shared-repository git only via `sharedRepoGit`,
@@ -72,8 +72,8 @@ lint and still break the layering above. Keep the direction by review.
   here inherits.
 - The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
   `canopycms-cdk/worker/run.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
-- github-auth's invariants (fail-closed boot, mint timeouts, no token caching, no re-wrapped
-  mint rejection): `github-auth.ts`, at each rule.
+- github-auth's invariants (mint timeouts, no token caching, no re-wrapped mint rejection):
+  `github-auth.ts`, at each rule; the fail-closed boot check: `github-gateway.ts`.
 
 ## `github-auth.ts`: the one cross-file rule
 

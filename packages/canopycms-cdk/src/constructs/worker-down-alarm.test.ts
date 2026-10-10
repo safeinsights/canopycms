@@ -15,7 +15,7 @@ import { Construct } from 'constructs'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda, aws_sns as sns } from 'aws-cdk-lib'
 import { CmsWorker } from 'canopycms/worker/cms-worker'
-import { mockConsole } from 'canopycms/test-utils'
+import { mockConsole, useLocalGitHubGateway } from 'canopycms/test-utils'
 import type { MockConsole } from 'canopycms/test-utils'
 
 import { CanopyCmsService } from './cms-service'
@@ -173,7 +173,7 @@ describe('the line the alarm counts', () => {
   })
 
   it('is written by the real syncGit() at the start of a cycle', async () => {
-    type Internals = { running: boolean; buildGitHubUrl(): Promise<string> }
+    type Internals = { running: boolean }
     const worker = new CmsWorker({
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
@@ -184,7 +184,9 @@ describe('the line the alarm counts', () => {
     const internals = worker as unknown as Internals
     // The fetch fails against a missing remote after the line is logged, which
     // is all this test needs.
-    internals.buildGitHubUrl = async () => path.join(tmpDir, 'no-such-github.git')
+    useLocalGitHubGateway(worker, {
+      remoteUrl: async () => path.join(tmpDir, 'no-such-github.git'),
+    })
     internals.running = true
 
     await expect(worker.syncGit()).rejects.toThrow()

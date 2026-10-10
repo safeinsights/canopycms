@@ -10,13 +10,11 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { mockConsole, type MockConsole } from '../test-utils'
+import { mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
 
 type WorkerInternals = {
-  buildGitHubUrl: () => Promise<string>
-  octokit: unknown
   baseBranch: string
 }
 
@@ -66,9 +64,10 @@ function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
     gitSyncInterval: 60_000,
     ...extra,
   })
-  const internals = worker as unknown as WorkerInternals
-  internals.buildGitHubUrl = async () => githubFixture
-  internals.octokit = { repos: { get: reposGet } }
+  useLocalGitHubGateway(worker, {
+    remoteUrl: async () => githubFixture,
+    octokit: { repos: { get: reposGet } },
+  })
   return worker
 }
 

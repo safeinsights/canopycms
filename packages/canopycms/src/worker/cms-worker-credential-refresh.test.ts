@@ -27,13 +27,13 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
+import type { GitHubGateway } from './github-gateway'
 
 /** `syncGit` is public but the wrapper around it is not; both are stubbed here. */
 type SyncInternals = {
   syncGit(): Promise<void>
   syncGitWithCredentialRefresh(): Promise<void>
-  buildGitHubUrl(): Promise<string>
 }
 
 describe('CmsWorker credential refresh on a failing sync', () => {
@@ -86,7 +86,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       gitSyncInterval: 20,
       taskPollInterval: 10_000,
     })
-    ;(worker as unknown as SyncInternals).buildGitHubUrl = async () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
     return worker
   }
 
@@ -186,7 +186,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
   describe('on a failing task', () => {
     type TaskInternals = {
       running: boolean
-      buildGitHubUrl(): Promise<string>
+      github(): GitHubGateway
       pushBranchToGitHub(branch: string): Promise<void>
     }
 
@@ -219,7 +219,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
      * A worker whose push is rejected for as long as it holds the revoked token.
      *
      * The stub stands in only for GitHub refusing a dead credential. It reads
-     * the credential through the worker's REAL `buildGitHubUrl()` -- the path a
+     * the credential through the gateway's REAL `buildGitHubUrl()` -- the path a
      * real push takes -- so it sees whatever `refreshCredential()` last swapped
      * in. Its rejection carries no `.status`, as a real `git push` failure does
      * not, so the task path classifies it transient and retries.
@@ -245,8 +245,9 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       })
       const internals = worker as unknown as TaskInternals
       internals.running = true
+      const gateway = internals.github() as unknown as { buildGitHubUrl(): Promise<string> }
       const push = vi.fn(async (_branch: string) => {
-        if ((await internals.buildGitHubUrl()).includes('ghp_revoked')) {
+        if ((await gateway.buildGitHubUrl()).includes('ghp_revoked')) {
           throw new Error(
             "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/test-owner/test-repo.git/'",
           )
