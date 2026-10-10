@@ -8,24 +8,22 @@
  *   - `next dev` and `next build` are both `dev`. Build-time reads come from
  *     the working tree in either mode (`readsFromCheckout` in build-mode.ts),
  *     while prod would hold the image builder to checks it has no reason to
- *     meet: `gitBotAuthorName`/`gitBotAuthorEmail` (the prod strategy's
- *     `validateConfig`) and a credential-verifying auth plugin
- *     (`assertAuthPluginAllowedForMode`). See Dockerfile.cms.template.
+ *     meet: the prod strategy's `validateConfig` (`gitBotAuthorName`/`Email`)
+ *     and `assertAuthPluginAllowedForMode`. See Dockerfile.cms.template.
  *   - The Lambda is `prod`: dev resolves the workspace to `<cwd>/.canopy-dev`,
- *     and Lambda's filesystem is read-only outside /tmp, so the first write
- *     fails with EROFS.
+ *     and Lambda's filesystem is read-only outside /tmp (EROFS).
  *
  * Two variable names, on purpose. Server code reads `CANOPY_MODE`, stamped on
- * the Lambda by `CanopyCmsService` and deliberately NOT set during
- * `next build`. Browser code has no runtime environment — the editor page
- * imports the config directly (`config.client()`), so its `mode` is whatever
- * was inlined at build time, and Next inlines only `NEXT_PUBLIC_*`. Both names
- * MUST appear as literal `process.env.X` member expressions here or the
- * bundler cannot substitute them.
+ * the Lambda by `CanopyCmsService` and NOT set during `next build`. The editor
+ * page imports the config directly, so the browser's `mode` is inlined at
+ * build, and Next inlines only `NEXT_PUBLIC_*`. Both names MUST appear as
+ * literal `process.env.X` member expressions here or the bundler cannot
+ * substitute them. The two MUST agree at run time: editor-mode-check.ts refuses
+ * editor requests where they do not. A prerendered `/edit` may resolve the
+ * build's mode on the server harmlessly, as it renders only a Suspense bail-out.
  *
- * An unrecognized value throws rather than falling back: falling back would
- * turn a typo (`CANOPY_MODE=production`) into a silent dev-mode deployment
- * running header-trusting dev auth semantics.
+ * An unrecognized value throws rather than falling back: a typo
+ * (`CANOPY_MODE=production`) would otherwise deploy dev auth semantics silently.
  */
 
 import { canopyLogWarn } from '../utils/logger'

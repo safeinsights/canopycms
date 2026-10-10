@@ -23,6 +23,16 @@ const signedInAs = (userId: string): Reply => ({
 })
 const unauthorized: Reply = { status: 401, body: { ok: false, status: 401, error: 'Unauthorized' } }
 const ok: Reply = { status: 200, body: { ok: true, status: 200, data: { branches: [] } } }
+/** What the handler answers an editor bundle built for the other mode (editor-mode-check.ts). */
+const modeMismatch = (editorMode: 'prod' | 'dev'): Reply => ({
+  status: 412,
+  body: {
+    ok: false,
+    status: 412,
+    code: 'EDITOR_MODE_MISMATCH',
+    error: `This editor was built for "${editorMode}" mode`,
+  },
+})
 const unavailable: Reply = {
   status: 503,
   body: { ok: false, status: 503, error: 'Workspace unavailable' },
@@ -110,12 +120,13 @@ function renderGate(
     withSignIn?: boolean
     signIn?: React.ComponentType<EditorSignInProps>
     client?: ReturnType<typeof createApiClient>
+    editorMode?: 'prod' | 'dev'
   } = {},
 ) {
-  const { withSignIn = true, signIn = TestSignIn, client } = props
+  const { withSignIn = true, signIn = TestSignIn, client, editorMode } = props
   return render(
-    <ApiClientProvider client={client}>
-      <EditorAuthGate SignInComponent={withSignIn ? signIn : undefined}>
+    <ApiClientProvider client={client} editorMode={editorMode}>
+      <EditorAuthGate SignInComponent={withSignIn ? signIn : undefined} editorMode={editorMode}>
         <Probe />
       </EditorAuthGate>
     </ApiClientProvider>,
@@ -353,6 +364,55 @@ describe('EditorAuthGate', () => {
       await new Promise((resolve) => setTimeout(resolve, 20))
 
       expect(screen.getByTestId('rejected').textContent).toBe('true')
+    })
+  })
+
+  describe('when the editor was built for the other mode than the server runs', () => {
+    it('blocks with both modes and the build variable instead of offering sign-in', async () => {
+      whoamiReply = modeMismatch('dev')
+      renderGate({ editorMode: 'dev' })
+
+      const notice = await screen.findByTestId('canopy-mode-mismatch')
+      expect(notice.textContent).toContain('built for "dev" mode')
+      expect(notice.textContent).toContain('runs in "prod" mode')
+      expect(notice.textContent).toContain('NEXT_PUBLIC_CANOPY_MODE=prod')
+      expect(screen.queryByTestId('canopy-sign-in-screen')).toBeNull()
+      expect(screen.queryByText('Retry')).toBeNull()
+      expect(screen.queryByTestId('probe-user')).toBeNull()
+    })
+
+    // An injected client reports nothing to the provider's signals, so this is the gate's own check.
+    it('blocks from the whoami result alone with an injected client', async () => {
+      whoamiReply = modeMismatch('dev')
+      renderGate({ editorMode: 'dev', client: createApiClient({ editorMode: 'dev' }) })
+
+      expect((await screen.findByTestId('canopy-mode-mismatch')).textContent).toContain(
+        'NEXT_PUBLIC_CANOPY_MODE=prod',
+      )
+      expect(screen.queryByTestId('canopy-auth-error')).toBeNull()
+    })
+
+    it('mounts the editor when the server accepts its mode, having sent it', async () => {
+      renderGate({ editorMode: 'prod' })
+
+      expect((await screen.findByTestId('probe-user')).textContent).toBe('alice')
+      expect(screen.queryByTestId('canopy-mode-mismatch')).toBeNull()
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(init.headers).toMatchObject({ 'x-canopy-editor-mode': 'prod' })
+    })
+
+    it('overlays a mounted editor when a later request is refused, keeping its edits', async () => {
+      renderGate({ editorMode: 'dev' })
+      await screen.findByTestId('probe-user')
+      fireEvent.change(screen.getByLabelText('draft'), { target: { value: 'unsaved edit' } })
+
+      otherReply = modeMismatch('dev')
+      fireEvent.click(screen.getByText('call api'))
+
+      expect((await screen.findByTestId('canopy-mode-mismatch')).textContent).toContain(
+        'NEXT_PUBLIC_CANOPY_MODE=prod',
+      )
+      expect((screen.getByLabelText('draft') as HTMLInputElement).value).toBe('unsaved edit')
     })
   })
 })

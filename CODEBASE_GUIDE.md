@@ -681,8 +681,9 @@ Why it is read-only in prod but editable in dev is in
 - `client-unsafe-strategy.ts` — `ProdStrategy` and `DevStrategy`, the full server-side strategies
 - `client.ts` — the client-bundle entry point, client-safe exports only
 - `deployment-name.ts` — `resolveDeploymentName`, the single resolution point for `deploymentName`
-- `deployment-name-fixtures.ts` — the shared fixture pinning the runtime and synth-time validity rules together
-- `mode-env.ts` — the single resolution point for the operating `mode`
+- `deployment-name-fixtures.ts` — the fixture pinning runtime and synth-time validity rules together
+- `mode-env.ts` — the single resolution point for `mode`
+- `editor-mode-check.ts` — editor/server mode agreement
 - `types.ts` — `ClientSafeStrategy`, `ClientUnsafeStrategy`, `RemoteUrlConfig`
 
 What each mode does, and the `deploymentName` precedence that namespaces the settings branch, are in

@@ -229,8 +229,8 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
 - `environment: { CANOPY_MODE: ... }` on `CanopyCmsService` accepts only
   `'prod'`, and rejects anything else at synth.
 - **Set `NEXT_PUBLIC_CANOPY_MODE=prod` as a constant in the image's build
-  stage**: an `ENV` line in your own Dockerfile, or
-  `--build-arg NEXT_PUBLIC_CANOPY_MODE=prod` against the generated one. Every
+  stage**: an `ENV` line in your own Dockerfile. The generated one defaults
+  to `prod` and fails its build on any value but `prod` or `dev`. Every
   deployed tier runs `prod`, so one image still serves them all, and the
   build's own content reads stay in dev mode, because `resolveOperatingMode`
   reads this variable only where `window` exists. Expect one browser console
@@ -238,12 +238,10 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   `CanopyCMS: NEXT_PUBLIC_CANOPY_MODE="prod" overrides config.mode="dev"`; that
   is the override working.
 - **Without it, the browser resolves `dev`,** and the scaffolded edit page
-  (`edit-page.tsx.template`) selects dev auth rather than Clerk against a
-  server that accepts only Clerk tokens, unless `NEXT_PUBLIC_CANOPY_AUTH_MODE=clerk`
-  was also set at build. That is the only thing CanopyCMS's client code takes
-  from the mode: the editor's capability checks answer the same in both modes,
-  and `supportsPullRequests`, the one that differs, is only consulted on the
-  server.
+  (`edit-page.tsx.template`) would select dev auth against a server that
+  accepts only Clerk tokens. The server refuses an editor built for the other
+  mode before sign-in, logs it once, and the editor shows a blocking screen
+  naming this variable.
 - **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
   from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
   Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build would
@@ -251,8 +249,8 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   it (see [Operating mode](#operating-mode)). Not from `CANOPY_MODE` either
   (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
   inline it into the browser bundle, so that literal is always `dev` there,
-  while server code on the Lambda gets `prod`. The server half looks
-  right, and the missing browser half goes unnoticed.
+  while server code on the Lambda gets `prod`, and the editor shows the
+  mode-mismatch screen.
 
 ## Step 4: CDK Stack
 

@@ -22,7 +22,13 @@ import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../uti
 // canopyLogError, not console.error: this is shared code and not guaranteed to
 // stay out of the worker's runtime import closure, so new log lines here go
 // through the indirection (utils/logger.ts).
-import { canopyLogError } from '../utils/logger'
+import { canopyLogError, canopyLogWarn } from '../utils/logger'
+import {
+  EDITOR_MODE_HEADER,
+  EDITOR_MODE_MISMATCH_STATUS,
+  editorModeMismatchMessage,
+  parseEditorModeHeader,
+} from '../operating-mode/editor-mode-check'
 import {
   runWithRequestTiming,
   setRequestTimingRoute,
@@ -164,6 +170,30 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
   const router = createCanopyRouter()
 
+  // Before auth, because a mismatched editor cannot authenticate: see editor-mode-check.ts.
+  let modeMismatchLogged = false
+  const editorModeMismatchResponse = (req: CanopyRequest): CanopyResponse<ApiResponse> | null => {
+    const editorMode = parseEditorModeHeader(req.header(EDITOR_MODE_HEADER))
+    if (!mode || !editorMode || editorMode === mode) return null
+    if (!modeMismatchLogged) {
+      modeMismatchLogged = true
+      canopyLogWarn(
+        `CanopyCMS: an editor built with NEXT_PUBLIC_CANOPY_MODE="${editorMode}" called this server, ` +
+          `which runs in "${mode}" mode. Its requests are refused with ${EDITOR_MODE_MISMATCH_STATUS} ` +
+          `until the editor is rebuilt with NEXT_PUBLIC_CANOPY_MODE=${mode}. Logged once per process.`,
+      )
+    }
+    return jsonResponse(
+      {
+        ok: false,
+        status: EDITOR_MODE_MISMATCH_STATUS,
+        code: 'EDITOR_MODE_MISMATCH',
+        error: editorModeMismatchMessage(editorMode),
+      },
+      EDITOR_MODE_MISMATCH_STATUS,
+    )
+  }
+
   // Built once and reused across requests in the same warm container. On
   // rejection (transient cold start, EFS not yet mounted) the cache is cleared
   // (API-H3) so the NEXT request retries instead of replaying the rejection.
@@ -192,6 +222,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       return jsonResponse({ ok: false, status: 404, error: 'Not found' }, 404)
     }
     setRequestTimingRoute(match.pattern.join('/') || '(malformed path)')
+
+    const modeMismatch = editorModeMismatchResponse(req)
+    if (modeMismatch) return modeMismatch
 
     const apiCtx = await timeRequestPhase('context', getContext)
 

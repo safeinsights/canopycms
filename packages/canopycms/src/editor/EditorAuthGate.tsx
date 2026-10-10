@@ -15,6 +15,9 @@
  *   different user the editor and its cache remount, because the SWRProvider is keyed by user id.
  * - A re-check that fails for a non-auth reason keeps the sign-in UI up with the error and Retry,
  *   so a provider that has already reported sign-in is never left waiting on nothing.
+ * - A response refusing the editor's mode (`EDITOR_MODE_MISMATCH`, see
+ *   operating-mode/editor-mode-check.ts) blocks for good, with no Retry: only a rebuild fixes it.
+ *   The server answers it before auth, so `whoami` meets it before any sign-in UI.
  */
 
 import React, { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
@@ -23,8 +26,14 @@ import { useSWRConfig } from 'swr'
 
 import type { EditorSignInProps } from '../config'
 import { getErrorMessage } from '../utils/error'
+import { editorModeMismatchMessage } from '../operating-mode/editor-mode-check'
+import type { OperatingMode } from '../operating-mode/types'
 import type { UserContext } from './BranchManager'
-import { useApiClient, useOnUnauthorized } from './context/ApiClientContext'
+import {
+  useApiClient,
+  useOnEditorModeMismatch,
+  useOnUnauthorized,
+} from './context/ApiClientContext'
 import { EditorIdentityContext, type EditorIdentity } from './context/EditorIdentityContext'
 import { SWRProvider } from './context/SWRProvider'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
@@ -40,6 +49,8 @@ interface GateState {
   error: string | undefined
   /** Increments each time the server re-accepts a session after a 401. */
   reauthCount: number
+  /** Set once the server refuses the editor's mode; never cleared. */
+  modeMismatch: boolean
 }
 
 type GateAction =
@@ -47,6 +58,7 @@ type GateAction =
   | { type: 'unauthorized'; afterSignIn: boolean }
   | { type: 'failed'; error: string }
   | { type: 'retry' }
+  | { type: 'modeMismatch' }
 
 const initialGateState: GateState = {
   phase: 'checking',
@@ -54,12 +66,16 @@ const initialGateState: GateState = {
   sessionRejected: false,
   error: undefined,
   reauthCount: 0,
+  modeMismatch: false,
 }
 
 function gateReducer(state: GateState, action: GateAction): GateState {
   switch (action.type) {
+    case 'modeMismatch':
+      return state.modeMismatch ? state : { ...state, modeMismatch: true }
     case 'accepted':
       return {
+        ...state,
         phase: 'signed-in',
         user: action.user,
         sessionRejected: false,
@@ -97,9 +113,16 @@ export interface EditorAuthGateProps {
   SignInComponent?: React.ComponentType<EditorSignInProps>
   /** The editor's theme, so the gate's own screens match it. */
   themeOptions?: CanopyThemeOptions
+  /** The mode this bundle was built for, named by the mode-mismatch screen. */
+  editorMode?: OperatingMode
 }
 
-export function EditorAuthGate({ children, SignInComponent, themeOptions }: EditorAuthGateProps) {
+export function EditorAuthGate({
+  children,
+  SignInComponent,
+  themeOptions,
+  editorMode,
+}: EditorAuthGateProps) {
   const apiClient = useApiClient()
   const [state, dispatch] = useReducer(gateReducer, initialGateState)
 
@@ -108,11 +131,18 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
   }, [])
   useOnUnauthorized(handleUnauthorized)
 
+  const handleModeMismatch = useCallback(() => {
+    dispatch({ type: 'modeMismatch' })
+  }, [])
+  useOnEditorModeMismatch(handleModeMismatch)
+
   const check = useCallback(
     async (afterSignIn: boolean) => {
       try {
         const result = await apiClient.user.whoami()
-        if (result.ok && result.data) {
+        if (result.code === 'EDITOR_MODE_MISMATCH') {
+          dispatch({ type: 'modeMismatch' })
+        } else if (result.ok && result.data) {
           dispatch({
             type: 'accepted',
             user: { userId: result.data.userId, groups: result.data.groups },
@@ -165,7 +195,18 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
     </>
   )
 
+  const modeMismatchNotice = state.modeMismatch && <ModeMismatchNotice editorMode={editorMode} />
+
   if (!state.user || !identity) {
+    if (modeMismatchNotice) {
+      return (
+        <CanopyCMSProvider {...themeOptions} withNotifications={false}>
+          <Center mih="100vh" p="md">
+            {modeMismatchNotice}
+          </Center>
+        </CanopyCMSProvider>
+      )
+    }
     return (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
         <Center mih="100vh" p="md">
@@ -198,7 +239,22 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
         <RevalidateOnReauth reauthCount={state.reauthCount} />
         {children}
       </SWRProvider>
-      {state.phase === 'signed-out' && (
+      {modeMismatchNotice && (
+        <CanopyCMSProvider {...themeOptions} withNotifications={false}>
+          <Modal
+            opened
+            onClose={keepOpen}
+            withCloseButton={false}
+            closeOnClickOutside={false}
+            closeOnEscape={false}
+            centered
+            size="lg"
+          >
+            {modeMismatchNotice}
+          </Modal>
+        </CanopyCMSProvider>
+      )}
+      {!modeMismatchNotice && state.phase === 'signed-out' && (
         // The editor's own MantineProvider is inside <Editor>, so the overlay brings its own.
         // Notifications stay with the editor's provider; a second container would duplicate them.
         <CanopyCMSProvider {...themeOptions} withNotifications={false}>
@@ -225,8 +281,28 @@ export function EditorAuthGate({ children, SignInComponent, themeOptions }: Edit
   )
 }
 
-/** The overlay closes only when the server accepts a session again. */
+/** The sign-in overlay closes only when the server accepts a session again; the mode one never. */
 function keepOpen(): void {}
+
+/** Blocking, with no Retry: the editor bundle itself is wrong, so only a rebuild helps. */
+function ModeMismatchNotice({ editorMode }: { editorMode: OperatingMode | undefined }) {
+  return (
+    <Alert
+      color="red"
+      title="This editor doesn't match its CMS server"
+      maw={560}
+      data-testid="canopy-mode-mismatch"
+    >
+      <Text size="sm">
+        {editorMode
+          ? editorModeMismatchMessage(editorMode)
+          : 'This editor was built for a different mode than the CMS server runs, so signing in ' +
+            'cannot work. Whoever deploys this site needs to rebuild the editor with ' +
+            'NEXT_PUBLIC_CANOPY_MODE set to the server mode at build time.'}
+      </Text>
+    </Alert>
+  )
+}
 
 /**
  * Revalidates every SWR key when the same identity is re-accepted. `revalidateOnFocus` is off

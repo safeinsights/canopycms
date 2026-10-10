@@ -245,7 +245,7 @@ Branch creation rejects any name colliding with a static top-level namespace, ch
 
 ## Operating Modes
 
-The mode is configured in `canopycms.config.ts` via a required `mode` field with **no default**. Omitting it fails Zod validation loudly at startup rather than falling back, because a prod deployment that forgot `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation `config.mode` is always defined and needs no fallback checks anywhere. An environment variable outranks the config literal so one config file can serve `next dev`, an image build and a deployed prod Lambda; [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) holds the resolution points and [docs/deploying-to-aws.md](docs/deploying-to-aws.md#operating-mode) the deployment recipe.
+The mode is configured in `canopycms.config.ts` via a required `mode` field with **no default**. Omitting it fails Zod validation loudly at startup rather than falling back, because a prod deployment that forgot `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation `config.mode` is always defined and needs no fallback checks anywhere. An environment variable outranks the config literal so one config file can serve `next dev`, an image build and a deployed prod Lambda; [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) holds the resolution points and [docs/deploying-to-aws.md](docs/deploying-to-aws.md#operating-mode) the deployment recipe. The two halves must agree at run time: the server refuses an editor declaring the other mode before auth.
 
 ### dev
 
