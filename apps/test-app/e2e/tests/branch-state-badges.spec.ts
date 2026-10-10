@@ -210,7 +210,7 @@ test.describe('Branch State Badges', () => {
       await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       const title = editorPage.getFieldInput('title')
-      await expect(title).toBeDisabled()
+      await expect(title).not.toBeEditable()
       await expect(title).toHaveAttribute('readonly', '')
     })
 

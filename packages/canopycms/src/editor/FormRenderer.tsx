@@ -89,28 +89,29 @@ const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path
 const noop = (): void => {}
 
 const FENCE_STYLE: React.CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 }
-const FENCE_CLASS = 'canopy-read-only-fence'
+const READ_ONLY_FORM_CLASS = 'canopy-read-only-form'
 
-/** Mantine fades a disabled input to 60% grey; read-only content still has to be read. */
-const ReadOnlyFenceStyles: React.FC = () => (
+/** Read-only inputs look disabled but stay focusable, so a reviewer can select and copy them. */
+const ReadOnlyFormStyles: React.FC = () => (
   <style>{`
-    .${FENCE_CLASS} .mantine-Input-input:is(:disabled, [data-disabled], :has(input:disabled)) {
-      opacity: 1;
-      color: var(--mantine-color-text);
+    .${READ_ONLY_FORM_CLASS} .mantine-Input-input:is([readonly], :has(input[readonly])) {
+      background-color: var(--input-disabled-bg);
+    }
+    .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {
+      background-color: var(--mantine-color-gray-1);
     }
   `}</style>
 )
 
 /**
- * Disables the native controls of one leaf field on a read-only form. It wraps the control, never
- * its `FieldWrapper`, so review comments stay open; portals and contenteditables escape it, so
- * each field also honours `readOnly`.
+ * Disables a custom renderer's native controls on a read-only form, whether or not it honours
+ * `readOnly`. It wraps the control, never its `FieldWrapper`, so review comments stay open.
  */
 const ReadOnlyFence: React.FC<{ readOnly: boolean; children: React.ReactNode }> = ({
   readOnly,
   children,
 }) => (
-  <fieldset disabled={readOnly} role="presentation" className={FENCE_CLASS} style={FENCE_STYLE}>
+  <fieldset disabled={readOnly} role="presentation" style={FENCE_STYLE}>
     {children}
   </fieldset>
 )
@@ -371,13 +372,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       return renderedField
     }
 
-    const wrapLeaf = (control: React.ReactNode) =>
-      wrapWithComments(<ReadOnlyFence readOnly={readOnly}>{control}</ReadOnlyFence>)
-
     switch (field.type) {
       case 'string':
         if (field.list) {
-          return wrapLeaf(
+          return wrapWithComments(
             <StringListField
               key={fieldKey(path)}
               id={fieldId}
@@ -390,7 +388,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             />,
           )
         }
-        return wrapLeaf(
+        return wrapWithComments(
           <TextField
             key={fieldKey(path)}
             id={fieldId}
@@ -403,7 +401,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           />,
         )
       case 'boolean':
-        return wrapLeaf(
+        return wrapWithComments(
           <ToggleField
             key={fieldKey(path)}
             id={fieldId}
@@ -418,7 +416,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         )
       case 'number':
         if (field.list) {
-          return wrapLeaf(
+          return wrapWithComments(
             <NumberListField
               key={fieldKey(path)}
               id={fieldId}
@@ -435,7 +433,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             />,
           )
         }
-        return wrapLeaf(
+        return wrapWithComments(
           <NumberField
             key={fieldKey(path)}
             id={fieldId}
@@ -448,7 +446,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           />,
         )
       case 'datetime':
-        return wrapLeaf(
+        return wrapWithComments(
           <DateTimeField
             key={fieldKey(path)}
             id={fieldId}
@@ -468,7 +466,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           siteMdxAllow,
           isBody ? format : undefined,
         )
-        return wrapLeaf(
+        return wrapWithComments(
           <MarkdownField
             key={fieldKey(path)}
             id={fieldId}
@@ -486,7 +484,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         const selectField = field as SelectFieldConfig
         const options = normalizeOptions(selectField.options)
         const isMulti = Boolean(selectField.list)
-        return wrapLeaf(
+        return wrapWithComments(
           <SelectField
             key={fieldKey(path)}
             id={fieldId}
@@ -513,7 +511,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           ? normalizeOptions(referenceField.options)
           : undefined
         const isMulti = Boolean(referenceField.list)
-        return wrapLeaf(
+        return wrapWithComments(
           <ReferenceField
             key={fieldKey(path)}
             id={fieldId}
@@ -543,7 +541,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       }
       case 'image': {
         const imageField = field as ImageFieldConfig
-        return wrapLeaf(
+        return wrapWithComments(
           <ImageField
             key={fieldKey(path)}
             id={fieldId}
@@ -699,7 +697,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         )
       }
       case 'code':
-        return wrapLeaf(
+        return wrapWithComments(
           <CodeField
             key={fieldKey(path)}
             id={fieldId}
@@ -721,8 +719,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   }
 
   return (
-    <Stack gap="md" data-form-renderer>
-      {readOnly && <ReadOnlyFenceStyles />}
+    <Stack gap="md" data-form-renderer className={readOnly ? READ_ONLY_FORM_CLASS : undefined}>
+      {readOnly && <ReadOnlyFormStyles />}
       {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
         <EntryComments
           comments={comments}

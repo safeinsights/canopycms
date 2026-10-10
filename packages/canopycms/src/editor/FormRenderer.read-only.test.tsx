@@ -1,7 +1,8 @@
 /**
- * A read-only form takes no edit through any field type: every control is read-only and inside a
- * disabled fence, no add/remove/reorder affordance renders, and `onChange` is never called,
- * MDXEditor's mount-time normalisation included. Comments stay usable.
+ * A read-only form takes no edit through any field type: every built-in control is read-only yet
+ * focusable, a custom renderer sits in a disabled fence, no add/remove/reorder affordance
+ * renders, and `onChange` is never called, MDXEditor's mount-time normalisation included.
+ * Comments stay usable. Each field also refuses edits on its own, without FormRenderer's gate.
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import React from 'react'
@@ -13,6 +14,15 @@ import '@mdxeditor/editor'
 import type { FieldConfig } from '../config'
 import type { CustomFieldRenderProps, FormRendererProps, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
+import { TextField } from './fields/TextField'
+import { CodeField } from './fields/CodeField'
+import { NumberField } from './fields/NumberField'
+import { NumberListField } from './fields/NumberListField'
+import { StringListField } from './fields/StringListField'
+import { DateTimeField } from './fields/DateTimeField'
+import { ToggleField } from './fields/ToggleField'
+import { ImageField } from './fields/ImageField'
+import { MarkdownSourceEditor } from './fields/MarkdownField'
 import { CanopyCMSProvider } from './theme'
 import type { MockApiClient } from '../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
@@ -54,10 +64,10 @@ const renderReadOnly = (
   return { onChange, ...view }
 }
 
-/** Read-only by the field's own prop, and disabled by the fence around it. */
+/** Read-only by the field's own prop, and still focusable so its value can be copied. */
 const expectLocked = (el: HTMLElement) => {
   expect((el as HTMLInputElement).readOnly).toBe(true)
-  expect(el.matches(':disabled')).toBe(true)
+  expect(el.matches(':disabled')).toBe(false)
 }
 
 describe('FormRenderer readOnly', () => {
@@ -137,6 +147,7 @@ describe('FormRenderer readOnly', () => {
     })
     const content = container.querySelector('.canopy-mdx-content')!
     expect(content.getAttribute('contenteditable')).toBe('false')
+    expect(container.querySelector('[role="toolbar"]')).toBeNull()
     expect(screen.queryByTestId('markdown-mode-toggle')).toBeNull()
     // Let any mount-time normalisation settle before asserting nothing was emitted.
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -383,5 +394,81 @@ describe('FormRenderer readOnly', () => {
     )
     const newComment = screen.getByTestId('field-new-comment-title')
     expect(newComment.matches(':disabled')).toBe(false)
+  })
+})
+
+describe('each field refuses edits on its own', () => {
+  const renderField = (node: React.ReactNode) => {
+    const Wrapper = createApiClientWrapper(mockClient)
+    return render(
+      <CanopyCMSProvider>
+        <Wrapper>{node}</Wrapper>
+      </CanopyCMSProvider>,
+    )
+  }
+  it.each([
+    ['TextField', (on: () => void) => <TextField label="F" value="a" onChange={on} readOnly />],
+    ['CodeField', (on: () => void) => <CodeField label="F" value="a" onChange={on} readOnly />],
+    ['NumberField', (on: () => void) => <NumberField label="F" value={1} onChange={on} readOnly />],
+    [
+      'MarkdownSourceEditor',
+      (on: () => void) => <MarkdownSourceEditor label="F" value="a" onChange={on} readOnly />,
+    ],
+  ])('%s: a change event calls no onChange', (_name, build) => {
+    const onChange = vi.fn()
+    renderField(build(onChange))
+    const input = screen.getAllByRole('textbox')[0]
+    fireEvent.change(input, { target: { value: 'b' } })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'StringListField',
+      (on: () => void) => <StringListField label="F" value={['a']} onChange={on} readOnly />,
+    ],
+    [
+      'NumberListField',
+      (on: () => void) => <NumberListField label="F" value={[1]} onChange={on} readOnly />,
+    ],
+  ])('%s: Enter adds nothing', (_name, build) => {
+    const onChange = vi.fn()
+    renderField(build(onChange))
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: '2' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('DateTimeField: a change event calls no onChange', () => {
+    const onChange = vi.fn()
+    const { container } = renderField(
+      <DateTimeField label="F" value="2024-01-02T03:04:05.000Z" onChange={onChange} readOnly />,
+    )
+    const input = container.querySelector<HTMLInputElement>('input[type="datetime-local"]')!
+    fireEvent.change(input, { target: { value: '2025-01-01T00:00' } })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('ToggleField: a click calls no onChange', () => {
+    const onChange = vi.fn()
+    renderField(<ToggleField label="F" value={false} onChange={onChange} readOnly />)
+    fireEvent.click(screen.getByRole('switch'))
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('ImageField: an alt-text change calls no onChange', () => {
+    const onChange = vi.fn()
+    renderField(
+      <ImageField
+        label="F"
+        value={{ src: 'https://example.com/a.png', alt: 'A' }}
+        onChange={onChange}
+        dataCanopyField="hero"
+        readOnly
+      />,
+    )
+    fireEvent.change(screen.getByTestId('image-field-alt-hero'), { target: { value: 'B' } })
+    expect(onChange).not.toHaveBeenCalled()
   })
 })

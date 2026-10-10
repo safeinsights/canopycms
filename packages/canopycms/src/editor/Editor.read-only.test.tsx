@@ -23,14 +23,17 @@ vi.mock('@mantine/modals', () => ({
   modals: { openConfirmModal: vi.fn() },
 }))
 
-// Lets a test make the form emit a value on mount, ignoring `readOnly`, to reach the draft writer.
+// Lets a test reach the draft writer past FormRenderer's own gate: emit on mount, ignoring
+// `readOnly`, or keep the latest `onChange`, as an async field callback holds it.
 const formStub = vi.hoisted(() => ({
   emitOnMount: undefined as Record<string, unknown> | undefined,
+  latestOnChange: undefined as ((next: Record<string, unknown>) => void) | undefined,
 }))
 vi.mock('./FormRenderer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./FormRenderer')>()
   const { createElement, useEffect } = await import('react')
   const FormRenderer: typeof actual.FormRenderer = (props) => {
+    formStub.latestOnChange = props.onChange
     useEffect(() => {
       if (formStub.emitOnMount) props.onChange(formStub.emitOnMount)
       // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
@@ -47,6 +50,7 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 
 afterEach(() => {
   formStub.emitOnMount = undefined
+  formStub.latestOnChange = undefined
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -90,8 +94,11 @@ const protectedMain = {
   writeBlocked: true,
 }
 
-/** `branches` undefined leaves the branch list unanswered, the fail-closed loading window. */
-const stubApi = (branches: unknown[] | undefined) => {
+/**
+ * `branches` undefined leaves the branch list unanswered, the fail-closed loading window; a
+ * function answers each fetch afresh.
+ */
+const stubApi = (branches: unknown[] | undefined | (() => unknown[])) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -100,7 +107,12 @@ const stubApi = (branches: unknown[] | undefined) => {
       if (url.endsWith('/api/canopycms/branches')) {
         return branches === undefined
           ? new Promise<Response>(() => {})
-          : Promise.resolve(okJson({ branches, defaultBranch: 'main' }))
+          : Promise.resolve(
+              okJson({
+                branches: typeof branches === 'function' ? branches() : branches,
+                defaultBranch: 'main',
+              }),
+            )
       }
       if (url.includes('/schema') && !url.includes('/schema/')) {
         return Promise.resolve(
@@ -220,6 +232,35 @@ describe('Editor on a read-only branch', () => {
     renderEditor()
 
     await titleInput()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(persistedDrafts()).not.toHaveProperty(CONTENT_ID)
+  })
+
+  it('drops an edit that lands after the branch locks, from a callback made while it was open', async () => {
+    const editingMain = {
+      ...protectedMain,
+      isProtected: false,
+      readOnly: false,
+      writeBlocked: false,
+    }
+    let branchFetches = 0
+    stubApi(() =>
+      ++branchFetches === 1
+        ? [editingMain]
+        : [{ ...editingMain, status: 'submitted', writeBlocked: true }],
+    )
+    renderEditor()
+    await titleInput()
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Title' })).toHaveProperty('readOnly', false),
+    )
+    const staleOnChange = formStub.latestOnChange
+
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    await waitFor(() => expect(screen.getByTestId('status-locked-banner')).toBeTruthy())
+
+    act(() => staleOnChange?.({ title: 'Late upload', body: '' }))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(persistedDrafts()).not.toHaveProperty(CONTENT_ID)
   })

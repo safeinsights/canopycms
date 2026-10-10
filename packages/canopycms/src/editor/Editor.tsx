@@ -481,6 +481,9 @@ const EditorContent: React.FC<EditorProps> = ({
   // until it is discarded or the branch unlocks.
   const contentReadOnly = branchContentLocked || currentEntry?.canEdit === false
   const displayValue = contentReadOnly ? loadedValue : effectiveValue
+  // Read when an edit lands, which an upload or other async field work can do renders later.
+  const contentReadOnlyRef = useRef(contentReadOnly)
+  contentReadOnlyRef.current = contentReadOnly
   // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
   const hiddenDraftNotice =
     contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()
@@ -1232,7 +1235,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
                               const contentId = currentEntry?.contentId
-                              if (contentId && !contentReadOnly) {
+                              if (contentId && !contentReadOnlyRef.current) {
                                 setDrafts((prev) => ({ ...prev, [contentId]: next }))
                               }
                             }}
@@ -1258,7 +1261,9 @@ const EditorContent: React.FC<EditorProps> = ({
                         </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
                     ) : (
-                      <CenteredMessage>No fields to edit.</CenteredMessage>
+                      <CenteredMessage>
+                        {schema.length > 0 ? 'Loading content…' : 'No fields to edit.'}
+                      </CenteredMessage>
                     )
                   }
                 />

@@ -140,7 +140,8 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   const keyboardSensor = useSensor(KeyboardSensor, {
     coordinateGetter: sortableKeyboardCoordinates,
   })
-  const sensors = useSensors(...(readOnly ? [] : [pointerSensor, keyboardSensor]))
+  // Fixed arity: useSensors memoises on its arguments, and a changing count never re-memoises.
+  const sensors = useSensors(readOnly ? null : pointerSensor, readOnly ? null : keyboardSensor)
 
   const emit = (next: BlockInstance[]) => {
     if (!readOnly) onChange(next)

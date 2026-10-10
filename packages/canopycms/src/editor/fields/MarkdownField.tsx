@@ -242,27 +242,35 @@ export const MDXEditorLazy = React.lazy(async () => {
               markdown: 'Markdown',
             },
           }),
-          toolbarPlugin({
-            toolbarContents: () => (
-              <>
-                <UndoRedo />
-                <Separator />
-                <BoldItalicUnderlineToggles options={underline ? undefined : ['Bold', 'Italic']} />
-                <CodeToggle />
-                <Separator />
-                <BlockTypeSelect />
-                <Separator />
-                <ListsToggle />
-                <Separator />
-                <CreateLink />
-                <EntryLinkToolbarButton onInsert={onInsert} />
-                <InsertImage />
-                <InsertTable />
-                <InsertThematicBreak />
-                <InsertCodeBlock />
-              </>
-            ),
-          }),
+          // MDXEditor's readOnly leaves its toolbar enabled, and its inserts edit the document.
+          // It reads plugins once, so the editor's key remounts it when `readOnly` changes.
+          ...(readOnly
+            ? []
+            : [
+                toolbarPlugin({
+                  toolbarContents: () => (
+                    <>
+                      <UndoRedo />
+                      <Separator />
+                      <BoldItalicUnderlineToggles
+                        options={underline ? undefined : ['Bold', 'Italic']}
+                      />
+                      <CodeToggle />
+                      <Separator />
+                      <BlockTypeSelect />
+                      <Separator />
+                      <ListsToggle />
+                      <Separator />
+                      <CreateLink />
+                      <EntryLinkToolbarButton onInsert={onInsert} />
+                      <InsertImage />
+                      <InsertTable />
+                      <InsertThematicBreak />
+                      <InsertCodeBlock />
+                    </>
+                  ),
+                }),
+              ]),
         ]}
         contentEditableClassName="canopy-mdx-content"
       />
@@ -576,7 +584,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           >
             <Suspense fallback={<FallbackTextarea value={value} />}>
               <MDXEditorLazy
-                key={editorGeneration}
+                key={`${editorGeneration}-${readOnly}`}
                 markdown={value}
                 onChange={handleEditorChange}
                 onError={handleEditorError}
