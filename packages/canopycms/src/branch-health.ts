@@ -131,8 +131,16 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 }
 
 /**
+ * The duplicate-ID scan's shared budget. `spent` is set when the deadline is
+ * observed to pass, by either clock: a Node timer can fire a millisecond before
+ * `Date.now()` reaches the deadline, so once a scan has timed out no later
+ * branch may start on the sliver `Date.now()` still reports.
+ */
+type DuplicateScanBudget = { deadline: number; spent: boolean }
+
+/**
  * Scan a healthy branch's content tree for duplicate embedded IDs, giving up
- * at `deadline` (epoch ms). Never throws: one branch's unreadable content tree
+ * when `budget` runs out. Never throws: one branch's unreadable content tree
  * must not take down the whole health scan. Costs a full recursive readdir, so
  * it runs only on request and under a budget. A readdir cannot be cancelled: a
  * scan that misses the deadline keeps running unobserved until it settles.
@@ -140,10 +148,13 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 async function scanDuplicateContentIds(
   branchRoot: string,
   contentRootName: string,
-  deadline: number,
+  budget: DuplicateScanBudget,
 ): Promise<DuplicateIdScan> {
-  const remainingMs = deadline - Date.now()
-  if (remainingMs <= 0) return { state: 'unknown', reason: 'out-of-time' }
+  const remainingMs = budget.deadline - Date.now()
+  if (budget.spent || remainingMs <= 0) {
+    budget.spent = true
+    return { state: 'unknown', reason: 'out-of-time' }
+  }
 
   const scan = (async (): Promise<DuplicateIdScan> => {
     try {
@@ -157,7 +168,10 @@ async function scanDuplicateContentIds(
   })()
   let timer: ReturnType<typeof setTimeout> | undefined
   const outOfTime = new Promise<DuplicateIdScan>((resolve) => {
-    timer = setTimeout(() => resolve({ state: 'unknown', reason: 'out-of-time' }), remainingMs)
+    timer = setTimeout(() => {
+      budget.spent = true
+      resolve({ state: 'unknown', reason: 'out-of-time' })
+    }, remainingMs)
   })
   try {
     return await Promise.race([scan, outOfTime])
@@ -185,8 +199,8 @@ export async function scanBranchHealth(
     duplicateIdScan?: { budgetMs: number }
   },
 ): Promise<BranchHealthEntry[]> {
-  const duplicateScanDeadline = opts.duplicateIdScan
-    ? Date.now() + opts.duplicateIdScan.budgetMs
+  const duplicateScanBudget: DuplicateScanBudget | undefined = opts.duplicateIdScan
+    ? { deadline: Date.now() + opts.duplicateIdScan.budgetMs, spent: false }
     : undefined
   const resolvedRoot = path.resolve(baseRoot)
   const sanitizedBaseBranchName = sanitizeBranchName(opts.baseBranchName)
@@ -255,9 +269,9 @@ export async function scanBranchHealth(
 
     if (meta) {
       const [duplicateIdScan, rebaseInProgress] = await Promise.all([
-        duplicateScanDeadline === undefined
+        duplicateScanBudget === undefined
           ? undefined
-          : scanDuplicateContentIds(branchRoot, contentRootName, duplicateScanDeadline),
+          : scanDuplicateContentIds(branchRoot, contentRootName, duplicateScanBudget),
         isRebaseInProgress(branchRoot),
       ])
       entries.push({
