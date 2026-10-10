@@ -82,7 +82,15 @@ export const MDXEditorLazy = React.lazy(async () => {
     Cell,
     // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
     // a separately resolved copy would throw inside this editor's `read()`.
-    lexical: { $getNodeByKey, COMMAND_PRIORITY_CRITICAL, FORMAT_TEXT_COMMAND },
+    lexical: {
+      $getNodeByKey,
+      $getSelection,
+      $isRangeSelection,
+      COMMAND_PRIORITY_CRITICAL,
+      FORMAT_TEXT_COMMAND,
+      SET_TEXT_FORMAT_COMMAND,
+      mergeRegister,
+    },
   } = mdx
   const mdxJsxPlugins = createMdxJsxPlugins(mdx)
 
@@ -92,18 +100,34 @@ export const MDXEditorLazy = React.lazy(async () => {
     TAG_FORMATS.filter(([, tag]) => htmlTags?.has(tag) === false).map(([format]) => format)
 
   /**
-   * Refuses applying a format whose tag the field refuses, from the toolbar or a shortcut (Cmd+U).
-   * Lexical passes a nested editor's commands (table cells, component children) up to the root's.
-   * Content is never rewritten: a stored tag stays, for the server's unchanged-field rule to judge.
+   * Refuses adding a format whose tag the field refuses, from the toolbar or a shortcut (Cmd+U), and
+   * lets removing one through. Lexical toggles a range off when the selection already has the
+   * format, and passes a nested editor's commands (table cells, component children) up to the
+   * root's. Content is never rewritten: a stored tag stays for the server's unchanged-field rule,
+   * and a pasted one reaches the server, which refuses it.
    */
   const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> | undefined }>({
     init(realm, params) {
       realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+      const refused = (format: string) => realm.getValue(refusedFormats$).includes(format)
       const guard: EditorSubscription = (editor) =>
-        editor.registerCommand(
-          FORMAT_TEXT_COMMAND,
-          (format) => realm.getValue(refusedFormats$).includes(format),
-          COMMAND_PRIORITY_CRITICAL,
+        mergeRegister(
+          editor.registerCommand(
+            FORMAT_TEXT_COMMAND,
+            (format) => {
+              const selection = $getSelection()
+              return (
+                refused(format) && !($isRangeSelection(selection) && selection.hasFormat(format))
+              )
+            },
+            COMMAND_PRIORITY_CRITICAL,
+          ),
+          editor.registerCommand(
+            SET_TEXT_FORMAT_COMMAND,
+            (formats) =>
+              Object.entries(formats).some(([format, on]) => on === true && refused(format)),
+            COMMAND_PRIORITY_CRITICAL,
+          ),
         )
       realm.pub(createRootEditorSubscription$, guard)
     },

@@ -44,6 +44,7 @@ import {
   FORBIDDEN_ATTRIBUTES,
   SAFE_HTML_TAGS,
   isComponentName,
+  allowlistIdentity,
   isMarkdownField,
   markdownPolicyOf,
   resolveMdxAllowlist,
@@ -56,7 +57,7 @@ interface MarkdownSafetyIssue {
   message: string
   /** 1-based line in the checked source, when known. */
   line?: number
-  /** What a stored issue must match to be kept: its dialect and whole field. None: never kept. */
+  /** What a stored issue must match to be kept: its dialect, allowlist and whole field. None: never kept. */
   key?: string
 }
 
@@ -589,8 +590,9 @@ export function findUnsafeMarkdown(
     if (count > 0) unmatched.set(id(item), count - 1)
     else issues.push(item)
   }
-  // The same text runs differently as markdown and as MDX, so the dialect is part of the key.
-  const key = `${dialect}\0${field}`
+  // The same text runs differently as markdown and as MDX, and a field may hold only what its own
+  // allowlist accepts, so both are part of the key.
+  const key = `${dialect}\0${allowlistIdentity(allow)}\0${field}`
   return issues.map((item) => ({ ...item, key }))
 }
 
@@ -658,12 +660,11 @@ const site = (fieldPath: string) => fieldPath.replace(/\[\d+\]/g, '')
 
 /**
  * The field occurrence a finding stands for: its site and key, which every one of its issues
- * carries. Undefined when an issue has no key, such as a body that does not parse.
+ * carries, or undefined for a finding whose one issue has none, such as a body that does not parse.
  */
 function occurrenceOf(finding: MarkdownSafetyFinding): string | undefined {
-  const keys = new Set(finding.issues.map((item) => item.key))
-  const [key] = keys
-  return keys.size === 1 && key !== undefined ? `${site(finding.fieldPath)}\0${key}` : undefined
+  const key = finding.issues[0]?.key
+  return key === undefined ? undefined : `${site(finding.fieldPath)}\0${key}`
 }
 
 /**

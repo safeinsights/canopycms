@@ -171,6 +171,51 @@ describe('a field whose allowlist leaves out a formatting tag', () => {
     }
   })
 
+  it('lets a refused format be removed', async () => {
+    const mounted = await mountEditor('Some <u>under</u> words.\n', new Set())
+    try {
+      const [root] = mounted.editors()
+      if (root === undefined) throw new Error('no Lexical editor')
+      const lx = mdx.lexical
+      await act(async () => {
+        root.update(
+          () => {
+            const paragraph = lx.$getRoot().getFirstChild()
+            const under = lx.$isElementNode(paragraph)
+              ? paragraph.getChildren().find((node) => node.getTextContent() === 'under')
+              : undefined
+            if (!lx.$isTextNode(under)) throw new Error('no underlined text node')
+            const selection = under.select(0, under.getTextContentSize())
+            // A real selection change gives the selection its text's format, which Lexical's
+            // toggle reads to decide between adding and removing.
+            selection.format = under.getFormat()
+          },
+          { discrete: true },
+        )
+        root.dispatchCommand(lx.FORMAT_TEXT_COMMAND, 'underline')
+      })
+      expect(mounted.exported().trim()).toBe('Some under words.')
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('refuses setting a refused format explicitly', async () => {
+    const mounted = await mountEditor('Some words.\n', new Set())
+    try {
+      const [root] = mounted.editors()
+      if (root === undefined) throw new Error('no Lexical editor')
+      const lx = mdx.lexical
+      await applyFormat(root, 'words', 'bold')
+      await act(async () => {
+        root.dispatchCommand(lx.SET_TEXT_FORMAT_COMMAND, { underline: true })
+      })
+      expect(mounted.exported()).not.toContain('<u>')
+    } finally {
+      mounted.unmount()
+    }
+  })
+
   it('follows a change of allowed tags on the same editor', async () => {
     const mounted = await mountEditor('Alpha beta gamma.\n', new Set(['u']))
     try {
@@ -245,5 +290,39 @@ describe('the toolbar through FormRenderer', () => {
     const fields: EntrySchema = [{ name: 'body', type: 'markdown', isBody: true }]
     expect(await underlineButtons(fields, narrow, 'md')).toBeGreaterThan(0)
     expect(await underlineButtons(fields, narrow, 'mdx')).toBe(0)
+  })
+
+  it('leaves an md entry body typed mdx alone, as the server checks it as markdown', async () => {
+    const fields: EntrySchema = [{ name: 'body', type: 'mdx', isBody: true }]
+    expect(await underlineButtons(fields, narrow, 'md')).toBeGreaterThan(0)
+  })
+
+  it('reads a nested field named like the body by its own type', async () => {
+    const fields: EntrySchema = [
+      { name: 'body', type: 'markdown', isBody: true, renderAs: 'mdx' },
+      { name: 'meta', type: 'object', fields: [{ name: 'body', type: 'markdown' }] },
+    ]
+    const view = render(
+      <CanopyCMSProvider>
+        <ApiClient>
+          <SiteMdxAllowContext.Provider value={narrow}>
+            <FormRenderer
+              fields={fields}
+              value={{ body: 'Text', meta: { body: 'Text' } }}
+              onChange={() => {}}
+              format="mdx"
+            />
+          </SiteMdxAllowContext.Provider>
+        </ApiClient>
+      </CanopyCMSProvider>,
+    )
+    await act(async () => {})
+    const toolbars = view.container.querySelectorAll('[role="toolbar"]')
+    const underlines = [...toolbars].map(
+      (toolbar) => toolbar.querySelectorAll('[aria-label="Underline"], [title="Underline"]').length,
+    )
+    view.unmount()
+    expect(underlines).toHaveLength(2)
+    expect(underlines.sort()).toEqual([0, 1])
   })
 })

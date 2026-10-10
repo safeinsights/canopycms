@@ -133,6 +133,23 @@ export interface ResolvedMdxAllowlist {
   fragments: boolean
 }
 
+/** A string equal for two allowlists exactly when they accept the same MDX. */
+export function allowlistIdentity(allow: ResolvedMdxAllowlist): string {
+  const components =
+    allow.components === undefined
+      ? null
+      : [...allow.components]
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([name, props]) => [
+            name,
+            props === undefined
+              ? null
+              : [...props].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+          ])
+  const htmlTags = allow.htmlTags === SAFE_HTML_TAGS ? null : [...allow.htmlTags].sort()
+  return JSON.stringify([components, htmlTags, allow.expressions, allow.fragments])
+}
+
 /** Each key the field sets replaces the site's; a key neither sets keeps the base policy. */
 export function resolveMdxAllowlist(
   field: MdxAllowlist | undefined,
@@ -168,8 +185,9 @@ export interface MarkdownPolicy {
 
 /**
  * The policy the server enforces and the editor follows, or undefined for an `executable` field. A
- * field is MDX when typed `mdx` or set `renderAs: 'mdx'`; an entry's body (`bodyFormat` given, its
- * field possibly undeclared) is also MDX in an `mdx` entry.
+ * field is MDX when typed `mdx` or set `renderAs: 'mdx'`. An entry's body (`bodyFormat` given, its
+ * field possibly undeclared) follows the entry instead: MDX in an `mdx` entry, and in an `md` entry
+ * only with `renderAs: 'mdx'`, since a site renders an `md` file as markdown.
  */
 export function markdownPolicyOf(
   field: MarkdownFieldConfig | undefined,
@@ -177,7 +195,10 @@ export function markdownPolicyOf(
   bodyFormat?: ContentFormat,
 ): MarkdownPolicy | undefined {
   if (field?.executable === true) return undefined
-  const mdx = bodyFormat === 'mdx' || field?.type === 'mdx' || field?.renderAs === 'mdx'
+  const mdx =
+    bodyFormat === undefined
+      ? field?.type === 'mdx' || field?.renderAs === 'mdx'
+      : bodyFormat === 'mdx' || field?.renderAs === 'mdx'
   return { dialect: mdx ? 'mdx' : 'md', allow: resolveMdxAllowlist(field?.mdxAllow, site) }
 }
 

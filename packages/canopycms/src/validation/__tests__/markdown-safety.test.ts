@@ -294,13 +294,12 @@ describe('findMarkdownSafetyIssues', () => {
       expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
     })
 
-    it('is MDX in an md entry when its field is typed mdx, with its mdxAllow', () => {
-      const errors = findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: '{x()}' })
-      expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
-      const narrowed: EntrySchema = [
-        { name: 'content', type: 'mdx', isBody: true, mdxAllow: { htmlTags: [] } },
-      ]
-      expect(findMarkdownSafetyIssues(narrowed, 'md', { content: 'a <u>b</u>' })).toHaveLength(1)
+    it('is markdown in an md entry even when its field is typed mdx', () => {
+      expect(findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: '{x()}' })).toEqual([])
+      // An HTML comment, common in markdown, does not parse as MDX.
+      expect(
+        findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: 'x\n\n<!-- c -->' }),
+      ).toEqual([])
     })
 
     it('is markdown in an md entry when its field is typed markdown', () => {
@@ -448,31 +447,34 @@ describe('splitByStored', () => {
     expect(splitByStored(found('rich'), found('rich')).refused).toEqual([])
   })
 
-  it('keeps one saved field per stored field, whatever the policies count as issues', () => {
-    // Under `components: {}` the text is one issue; under the base policy it is two.
+  describe('across block templates sharing a field name', () => {
     const blocks: EntrySchema = [
       {
         name: 'blocks',
         type: 'block',
         templates: [
-          { name: 'a', fields: [{ name: 'm', type: 'mdx', mdxAllow: { components: {} } }] },
-          { name: 'b', fields: [{ name: 'm', type: 'mdx' }] },
+          { name: 'narrow', fields: [{ name: 'm', type: 'mdx', mdxAllow: { components: {} } }] },
+          { name: 'wide', fields: [{ name: 'm', type: 'mdx' }] },
         ],
       },
     ]
+    // One issue under `narrow`, two under `wide`.
     const text = '<Foo a="javascript:alert(1)" b="javascript:alert(2)" />'
-    const stored = findMarkdownSafetyIssues(blocks, 'json', {
-      blocks: [{ template: 'b', value: { m: text } }],
+    const findings = (...templates: string[]) =>
+      findMarkdownSafetyIssues(blocks, 'json', {
+        blocks: templates.map((template) => ({ template, value: { m: text } })),
+      })
+
+    it('keeps one saved field per stored field of the same template', () => {
+      const { refused, kept } = splitByStored(findings('wide', 'wide'), findings('wide'))
+      expect(kept.map((e) => e.fieldPath)).toEqual(['blocks[0].m'])
+      expect(refused.map((e) => e.fieldPath)).toEqual(['blocks[1].m'])
     })
-    const saved = findMarkdownSafetyIssues(blocks, 'json', {
-      blocks: [
-        { template: 'a', value: { m: text } },
-        { template: 'a', value: { m: text } },
-      ],
+
+    it('refuses stored content moved into a template whose allowlist refuses it', () => {
+      expect(splitByStored(findings('narrow'), findings('wide')).kept).toEqual([])
+      expect(splitByStored(findings('narrow', 'narrow'), findings('wide')).kept).toEqual([])
     })
-    const { refused, kept } = splitByStored(saved, stored)
-    expect(kept.map((e) => e.fieldPath)).toEqual(['blocks[0].m'])
-    expect(refused.map((e) => e.fieldPath)).toEqual(['blocks[1].m'])
   })
 
   it('never keeps a body that does not parse, which cannot be checked', () => {
