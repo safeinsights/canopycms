@@ -272,7 +272,8 @@ export class EditorPage {
   }
 
   /**
-   * The banner shown while a workflow status (e.g. submitted) locks the branch's content.
+   * The banner shown while the branch's content is locked: by a workflow status such as submitted,
+   * or until the branch's details load.
    */
   statusLockedBanner(): Locator {
     return this.page.locator('[data-testid="status-locked-banner"]')

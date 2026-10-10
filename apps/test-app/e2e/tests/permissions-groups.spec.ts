@@ -16,9 +16,7 @@ import {
  * "Manage Groups" / "Manage Permissions"): admin gating (D3), group CRUD
  * round trip (D1), and path-permission assignment round trip (D2).
  *
- * Selector strategy is documented in `../fixtures/settings-managers-page.ts`
- * — neither module carries `data-testid`s, so every locator here is
- * role/text based and was confirmed against the component source.
+ * Selector strategy is documented in `../fixtures/settings-managers-page.ts`.
  */
 test.describe('Permissions and Groups', () => {
   let editorPage: EditorPage
