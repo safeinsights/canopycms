@@ -1896,8 +1896,8 @@ export class ContentStore {
         const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
           (value as unknown[]).map(async (block, index) => {
-            // A value that is null or an array passes through untouched: it has no named fields
-            // to resolve, and a reshaped one would be written back on the next save.
+            // An item or value that is not a record (null, an array, a scalar) passes through
+            // untouched: it has no named fields, and reshaping it here would be saved to the file.
             if (!isPlainRecord(block) || !isPlainRecord(block.value)) return block
             const template = blockField.templates.find((t) => t.name === block.template)
             if (!template) return block

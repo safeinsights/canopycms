@@ -5,7 +5,7 @@ summary: >-
   RESOLVED 2026-10-09, fix/block-value-null-or-array (safeinsights/canopycms#470).
   `resolveReferencesInData`'s block-value, object-value and object-list-item guards, plus the
   edit bases of `BlockField` and `ObjectField`, now use `isPlainRecord`, which is exported from
-  `validation/field-traversal.ts`. A null or array value passes through read, listing and save
+  `validation/field-traversal.ts`. A null or array block or object value passes through read, listing and save
   unreshaped, opens as an empty block, and is never written index-keyed. The leftover
   unknown-key notice for such a value is block-nonrecord-value-reported-as-unknown-key.md.
 ---

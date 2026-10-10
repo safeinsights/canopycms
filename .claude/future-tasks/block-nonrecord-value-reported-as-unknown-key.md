@@ -42,6 +42,16 @@ Pick one:
 The first removes the ambiguity at its source. Optionally add a specific validation message ("block
 value must be an object").
 
+## Same shape elsewhere
+
+`ImageField.tsx`'s alt and crop handlers spread `value` as the base of an edit. A hand-edited
+array image value would therefore be saved index-keyed. `BlockField` and `ObjectField` guard their
+edit bases with `isPlainRecord`, and the same guard fits here.
+
+A `null` block item, such as YAML `blocks: [null]` or an empty `- ` entry, reaches the editor
+untouched. There `BlockField`'s `findTemplate(templates, block.template)` throws, and the field's
+error boundary shows its crash fallback for the whole block list. No data is written.
+
 ## Related
 
 - [resolved/block-value-null-or-array-breaks-resolution.md](resolved/block-value-null-or-array-breaks-resolution.md),
