@@ -499,7 +499,7 @@ the editor's origin; the editor still detects sign-out. Otherwise nothing.
 ### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
 
 **What changed.** (next int) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
-`dev`, and fails its build on any other value but `dev`. An editor built for the other mode than its
+`dev`, and fails its build on any value but `prod` or `dev`. An editor built for the other mode than its
 server runs now gets a blocking screen naming that variable, not a sign-in that never succeeds.
 
 **To adopt.** A hand-built image running a dev-mode server passes

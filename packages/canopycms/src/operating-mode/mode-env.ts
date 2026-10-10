@@ -8,7 +8,7 @@
  *   - `next dev` and `next build` are both `dev`. Build-time reads come from
  *     the working tree in either mode (`readsFromCheckout` in build-mode.ts),
  *     while prod would hold the image builder to checks it has no reason to
- *     meet: the prod strategy's `validateConfig` (`gitBotAuthorName`/`Email`)
+ *     meet: the prod strategy's `validateConfig` (`gitBotAuthorName`, `gitBotAuthorEmail`)
  *     and `assertAuthPluginAllowedForMode`. See Dockerfile.cms.template.
  *   - The Lambda is `prod`: dev resolves the workspace to `<cwd>/.canopy-dev`,
  *     and Lambda's filesystem is read-only outside /tmp (EROFS).
@@ -19,8 +19,9 @@
  * build, and Next inlines only `NEXT_PUBLIC_*`. Both names MUST appear as
  * literal `process.env.X` member expressions here or the bundler cannot
  * substitute them. The two MUST agree at run time: editor-mode-check.ts refuses
- * editor requests where they do not. A prerendered `/edit` may resolve the
- * build's mode on the server harmlessly, as it renders only a Suspense bail-out.
+ * editor requests where they do not. A prerendered `/edit` resolves the
+ * build's mode on the server, which is harmless: NextCanopyEditorPage's
+ * `<Suspense>` makes that prerender bail out to client rendering.
  *
  * An unrecognized value throws rather than falling back: a typo
  * (`CANOPY_MODE=production`) would otherwise deploy dev auth semantics silently.

@@ -249,8 +249,9 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   it (see [Operating mode](#operating-mode)). Not from `CANOPY_MODE` either
   (`process.env.CANOPY_MODE === 'prod' ? 'prod' : 'dev'`): Next.js doesn't
   inline it into the browser bundle, so that literal is always `dev` there,
-  while server code on the Lambda gets `prod`, and the editor shows the
-  mode-mismatch screen.
+  while server code on the Lambda gets `prod`. Only `NEXT_PUBLIC_CANOPY_MODE`
+  makes the browser `prod`; without it the editor shows the mode-mismatch
+  screen.
 
 ## Step 4: CDK Stack
 

@@ -170,7 +170,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
   const router = createCanopyRouter()
 
-  // Before auth, because a mismatched editor cannot authenticate: see editor-mode-check.ts.
+  // Before auth, because a dev bundle against a prod server cannot authenticate: see
+  // editor-mode-check.ts.
   let modeMismatchLogged = false
   const editorModeMismatchResponse = (req: CanopyRequest): CanopyResponse<ApiResponse> | null => {
     const editorMode = parseEditorModeHeader(req.header(EDITOR_MODE_HEADER))
@@ -180,7 +181,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       canopyLogWarn(
         `CanopyCMS: an editor built with NEXT_PUBLIC_CANOPY_MODE="${editorMode}" called this server, ` +
           `which runs in "${mode}" mode. Its requests are refused with ${EDITOR_MODE_MISMATCH_STATUS} ` +
-          `until the editor is rebuilt with NEXT_PUBLIC_CANOPY_MODE=${mode}. Logged once per process.`,
+          `until the editor is rebuilt with NEXT_PUBLIC_CANOPY_MODE=${mode}. Logged once per request handler.`,
       )
     }
     return jsonResponse(
