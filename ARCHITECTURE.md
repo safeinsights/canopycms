@@ -605,11 +605,9 @@ Around that core: the resolver skips fenced code blocks and inline code spans, s
 
 ## Comments & Collaboration
 
-Comments support asynchronous review at three attachment levels — **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments on the changeset — stored per branch in `.canopy-meta/comments.json`. Thread resolution is controlled by the thread author, users with review access, or admins.
+Comments support asynchronous review at three attachment levels — **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments on the changeset — stored per branch in `.canopy-meta/comments.json`. A field or entry thread inherits its entry's path read rule, for reading and writing alike, so branch access alone never discloses comments on an entry the reader cannot open; branch threads need only branch access. Thread resolution is controlled by the thread author, users with review access, or admins.
 
 Comments are **not committed to git**, automatically excluded via git info/exclude: they are ephemeral discussion about a change rather than published content. Groups and permissions go the other way, onto a version-controlled settings branch, because who can edit what should be revertible like anything else, with the branch history as the audit trail.
-
-Comment writes are safe under concurrent authors, including two Lambda containers writing at the same moment: an in-process mutex, a server-enforced cross-host lock, and per-write version checks compose so a comment cannot be silently lost to a write on another host (see [docs/concurrency.md](docs/concurrency.md)).
 
 ## Editor Architecture
 

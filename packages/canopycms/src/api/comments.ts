@@ -5,6 +5,8 @@ import type { BranchContext } from '../types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
+import type { ContentAccessChecker } from '../authorization'
+import { parseLogicalPath } from '../paths/validation'
 import { defineEndpoint } from './route-builder'
 import { branchParamSchema, branchNameSchema, logicalPathSchema } from './validators'
 
@@ -49,23 +51,47 @@ const addCommentBodySchema = z.object({
   canopyPath: z.string().optional(), // Canopy field path, not a file path
 })
 
+/**
+ * Whether the user may see a thread: its entry's path rules at `read`, the level a content
+ * read needs, so a thread discloses nothing about an entry its reader could not open. A
+ * field thread is governed by its entry. A thread with no entry path (a branch thread) is
+ * governed by branch access alone, which the `branchAccess` guard has already passed. An
+ * entry path that does not parse as a logical path is denied: comments.json is read without
+ * schema validation.
+ */
+const canReadThreadEntry = (
+  checkAccess: ContentAccessChecker,
+  entryPath: string | undefined,
+): boolean => {
+  if (entryPath === undefined) return true
+  const parsed = parseLogicalPath(entryPath)
+  return parsed.ok && checkAccess(parsed.path, 'read').allowed
+}
+
+const createChecker = (ctx: ApiContext, req: ApiRequest, branchContext: BranchContext) =>
+  ctx.services.createContentAccessChecker(branchContext, branchContext.branchRoot, req.user)
+
 const listCommentsHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
-  _req: ApiRequest,
+  ctx: ApiContext,
+  req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
 ): Promise<CommentsResponse> => {
   const { branchContext } = gc
 
   const commentStore = new CommentStore(branchContext.branchRoot)
-  const threads = await commentStore.listThreads({ includeResolved: true })
+  const [allThreads, checkAccess] = await Promise.all([
+    commentStore.listThreads({ includeResolved: true }),
+    createChecker(ctx, req, branchContext),
+  ])
+  const threads = allThreads.filter((thread) => canReadThreadEntry(checkAccess, thread.entryPath))
 
   return { ok: true, status: 200, data: { threads } }
 }
 
 const addCommentHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
+  ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof addCommentBodySchema>,
@@ -89,7 +115,22 @@ const addCommentHandler = async (
     }
   }
 
+  // Commenting needs read access to the entry the comment lands on. A reply lands on the
+  // stored thread, whose entry path the store keeps over the body's, so a reply is checked
+  // against that; a thread's entry path never changes once it exists. A reply to a thread the
+  // user cannot read answers as missing, as resolve does.
   const commentStore = new CommentStore(branchContext.branchRoot)
+  const [existing, checkAccess] = await Promise.all([
+    body.threadId ? commentStore.getThread(body.threadId) : Promise.resolve(null),
+    createChecker(ctx, req, branchContext),
+  ])
+  if (body.threadId) {
+    if (!existing || !canReadThreadEntry(checkAccess, existing.entryPath)) {
+      return { ok: false, status: 404, error: 'Thread not found' }
+    }
+  } else if (!canReadThreadEntry(checkAccess, body.entryPath)) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
 
   const result = await commentStore.addComment({
     userId: req.user.userId,
@@ -105,16 +146,19 @@ const addCommentHandler = async (
 
 const resolveCommentHandler = async (
   gc: { branchContext: BranchContext },
-  _ctx: ApiContext,
+  ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof threadParamSchema>,
 ): Promise<ResolveCommentResponse> => {
   const { branchContext } = gc
 
   const commentStore = new CommentStore(branchContext.branchRoot)
-
-  const thread = await commentStore.getThread(params.threadId)
-  if (!thread) {
+  const [thread, checkAccess] = await Promise.all([
+    commentStore.getThread(params.threadId),
+    createChecker(ctx, req, branchContext),
+  ])
+  // A thread the user cannot read answers as missing, so its id does not confirm it exists.
+  if (!thread || !canReadThreadEntry(checkAccess, thread.entryPath)) {
     return { ok: false, status: 404, error: 'Thread not found' }
   }
 
