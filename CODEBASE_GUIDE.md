@@ -118,7 +118,7 @@ Route handlers, one file per endpoint namespace:
 - `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route (on-demand transforms, presigned S3 redirects)
 - `comments.ts` — `/comments`: comment CRUD
 - `groups.ts` — `/groups`: internal group management
-- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list; `/users` search, `/users/:userId`, `POST /users/batch` via `lookupUsersMetadata`
+- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list; the `/users` lookups
 - `reference-options.ts` — `/reference-options`: reference field option lookup
 - `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview, through `ContentStore.resolveReferenceTarget` and the request's path ACLs
 - `user.ts` — `/user`: current user info
@@ -153,7 +153,7 @@ the dependency-free modules above.
 **Location**: `packages/canopycms/src/auth/`
 
 - `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
-- `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process LRU in front of the plugin, batched lookups
+- `user-metadata-lookup.ts` — `lookupUsersMetadata`: the `/users` lookups' per-process cache and batching
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
