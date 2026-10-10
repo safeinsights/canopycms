@@ -24,6 +24,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicWriteFile } from '../utils/atomic-write'
+import { isNotFoundError } from '../utils/error'
 import type { WorkerStatusReport } from '../types'
 
 export const WORKER_STATUS_FILE = 'worker-status.json'
@@ -58,12 +59,21 @@ export async function readCarriedOverStatus(
   return { lastFatalError, lastShutdown }
 }
 
-/** `startedAt` of the worker that wrote the status file, or `undefined` when there is none to read. */
+/**
+ * `startedAt` of the worker that wrote the status file, or `undefined` when there is no file or
+ * it names no worker. Throws on any other read error: a caller deciding whether the file is its
+ * own must not take an unreadable one for an absent one.
+ */
 export async function readWorkerStatusStartedAt(taskDir: string): Promise<string | undefined> {
+  let content: string
   try {
-    const report = JSON.parse(
-      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
-    ) as Partial<WorkerStatusReport>
+    content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return undefined
+    throw err
+  }
+  try {
+    const report = JSON.parse(content) as Partial<WorkerStatusReport>
     return typeof report.startedAt === 'string' ? report.startedAt : undefined
   } catch {
     return undefined

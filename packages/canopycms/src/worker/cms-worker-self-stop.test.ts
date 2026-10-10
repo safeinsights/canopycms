@@ -130,6 +130,47 @@ describe('CmsWorker.selfStopped', () => {
     expect((await readStatus())?.lastFatalError?.phase).toBe('run')
   }, 25_000)
 
+  it("replaces the previous worker's status file when its own write never landed", async () => {
+    await fs.mkdir(taskDir, { recursive: true })
+    const previous = { version: 1, startedAt: '2026-10-09T09:00:00.000Z', updatedAt: 'x' }
+    await fs.writeFile(path.join(taskDir, WORKER_STATUS_FILE), JSON.stringify(previous))
+    const worker = makeWorker()
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    trackAbortable(worker)
+
+    await ageHeldLock()
+
+    expect(await settledWithin(worker, 15_000)).not.toBe('pending')
+    expect((await readStatus())?.lastFatalError?.phase).toBe('run')
+  }, 25_000)
+
+  // Root reads through any mode bits, so there is no unreadable file to test with.
+  it.skipIf(process.getuid?.() === 0)(
+    'records nothing over a status file it cannot read',
+    async () => {
+      const worker = makeWorker()
+      const w = internals(worker)
+      await w.acquireLock()
+      w.running = true
+      trackAbortable(worker)
+
+      await ageHeldLock()
+      const statusPath = path.join(taskDir, WORKER_STATUS_FILE)
+      await fs.writeFile(statusPath, '{"startedAt":"2026-10-09T10:00:00.000Z"}')
+      await fs.chmod(statusPath, 0o000)
+      try {
+        expect(await settledWithin(worker, 15_000)).not.toBe('pending')
+      } finally {
+        await fs.chmod(statusPath, 0o644)
+      }
+      expect(await readStatus()).toEqual({ startedAt: '2026-10-09T10:00:00.000Z' })
+      expect(consoleSpy).toHaveErrored('Failed to record the lock loss')
+    },
+    25_000,
+  )
+
   it('records nothing over a status file another worker wrote during the wait', async () => {
     const worker = makeWorker()
     const w = internals(worker)

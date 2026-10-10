@@ -334,6 +334,9 @@ export class CmsWorker {
   private githubAuth?: ResolvedGitHubAuth
   // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
   private lockLostMessage?: string
+  // Who wrote worker-status.json when this worker took the lock: until its own first write
+  // lands, the file is still that worker's, and recordLockLoss may replace it.
+  private statusWriterAtLock?: string
   private settleSelfStopped!: (stop: WorkerSelfStop) => void
 
   /**
@@ -749,6 +752,7 @@ export class CmsWorker {
       }
       throw err
     }
+    this.statusWriterAtLock = await readWorkerStatusStartedAt(this.taskDir).catch(() => undefined)
   }
 
   private async releaseLock(): Promise<void> {
@@ -788,7 +792,11 @@ export class CmsWorker {
       const report = this.ensureStatusReport()
       // A successor that took the lock and released it during the wait owns the file now.
       const writtenBy = await readWorkerStatusStartedAt(this.taskDir)
-      if (writtenBy !== undefined && writtenBy !== report.startedAt) {
+      if (
+        writtenBy !== undefined &&
+        writtenBy !== report.startedAt &&
+        writtenBy !== this.statusWriterAtLock
+      ) {
         workerLogError(
           'Not recording the lock loss: another worker has written worker-status.json since',
         )
