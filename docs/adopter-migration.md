@@ -74,9 +74,9 @@ drain applies from the deploy after this one.
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 
-**What changed.** After the worker records a failed start, the prod not-ready 503 is `WORKER_FAILED`:
-no `Retry-After`, the failure named, account ids masked. `CmsWorker.selfStopped` settles when the
-worker stops itself (a lost EFS lock); the `canopycms-cdk` entrypoint then exits 69 for a restart.
+**What changed.** After a recorded failed start, the prod not-ready 503 is `WORKER_FAILED`: no
+`Retry-After`, the failure named to admins, account ids masked. `CmsWorker.selfStopped` settles when
+the worker stops itself (a lost EFS lock); the `canopycms-cdk` entrypoint then exits 69.
 `recordWorkerStartupFailure` records a failure before `start()`.
 
 **To adopt.** A hand-written entrypoint calls `recordWorkerStartupFailure` on a pre-`start()`

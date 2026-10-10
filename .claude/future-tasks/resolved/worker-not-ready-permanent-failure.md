@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  RESOLVED (2026-10-09). The prod not-ready 503 reads the worker's recorded startup failure: a failure from the latest attempt answers 503 `WORKER_FAILED` with no `Retry-After`, naming it with account ids masked; one a newer worker carried forward stays retriable. Auto-detecting `remote.git` treats only ENOENT as absent. A handler test drives real prod provisioning. A worker that was never deployed still reads as starting; the worker-down alarm covers it
+  RESOLVED (2026-10-09). The prod not-ready 503 reads the worker's recorded startup failure: a failure from the latest attempt answers 503 `WORKER_FAILED` with no `Retry-After`, naming it to admins with account ids masked; one a newer worker carried forward stays retriable. Auto-detecting `remote.git` treats only ENOENT as absent. A handler test drives real prod provisioning. A worker that was never deployed still reads as starting; the worker-down alarm covers it
 ---
 # A permanently missing worker reads as "still starting"
 

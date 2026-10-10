@@ -1215,7 +1215,7 @@ because it also enables every other debug line.
 CloudWatch log group (see [Worker observability](#worker-observability)), or run
 `systemctl status canopy-worker` on the instance (SSM or SSH).
 
-**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists. After a recorded failed start, the 503 instead names the failure, with no `Retry-After`.
+**503 "CMS worker not ready" right after a first deploy**: the Lambda has no remote until the EC2 worker's first boot creates `remote.git` on EFS; requests get a 503 (with `Retry-After`) until then, so check the worker's CloudWatch log group if it persists. After a recorded failed start, it drops `Retry-After` and names the failure to admins.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 

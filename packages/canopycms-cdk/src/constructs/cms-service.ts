@@ -1493,8 +1493,8 @@ export class CanopyCmsService extends Construct {
 
       // Fires when 3 consecutive 10-minute periods hold no git-sync cycle line.
       // The worker logs one every cycle (default 5 minutes), even while the
-      // schema gate holds the base branch. 30 minutes is the shortest window a
-      // normal replacement stays inside: the terminating hook's drain
+      // schema gate holds the base branch. 30 minutes leaves room for a normal
+      // replacement: the terminating hook's drain
       // (`workerTerminationHeartbeat`, 5 minutes by default), a 2-4 minute boot
       // and the first sync. So a deploy or a spot replacement does not page,
       // while a crash loop, a boot loop, a worker that never started and a

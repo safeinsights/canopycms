@@ -207,7 +207,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     // Whether a worker's recorded failure may be named in a not-ready 503: admins only, as in
     // System health. With no remote there are no internal groups, so this is the bootstrap
-    // admins, who are also the only callers /admin admits then.
+    // admins, and /admin is behind the same 503, so this answer is where they read it.
     const mayReadWorkerFailure = () =>
       isAdmin(authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds).groups)
 

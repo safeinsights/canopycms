@@ -237,8 +237,9 @@ async function readCarriedFields(
  * `startup`), so System health and the API's not-ready answer say why. For an entrypoint's own
  * boot steps (its environment, its secrets); start() records its own failures.
  *
- * Writes under the worker lock like every status write, and writes nothing while another worker
- * holds it: that worker owns the file. Never throws, since its caller is already exiting.
+ * Writes under the worker lock like every status write, and writes nothing while the lock looks
+ * held (fresher than twice `lockStaleMs`, see recordLockLoss): its holder owns the file. Never
+ * throws, since its caller is already exiting.
  */
 export async function recordWorkerStartupFailure(options: {
   workspacePath: string
@@ -396,12 +397,12 @@ export class CmsWorker {
    * as foreign and never pushes it.
    *
    * DEFERRED out of the constructor deliberately, which is the whole point of
-   * the method existing: canopycms-cdk/worker/index.ts constructs the worker
-   * before calling start(), so a throw during `new CmsWorker(...)` lands BEFORE
-   * the only code that writes `lastFatalError` -- start()'s catch. Under
-   * systemd `Type=simple` + `Restart=always` with no cfn-signal, that is an
-   * invisible ~5s crash-loop that `cdk deploy` reports as success while the
-   * admin panel shows the worker 'absent' with no fatal error to explain it.
+   * the method existing: an entrypoint constructs the worker before calling
+   * start(), so a throw during `new CmsWorker(...)` lands BEFORE start()'s
+   * catch, which records `lastFatalError` for every entrypoint. Only one that
+   * calls `recordWorkerStartupFailure` (canopycms-cdk/worker/run.ts does) would
+   * record it otherwise; under systemd `Restart=always` the rest crash-loop
+   * every ~5s with System health showing the worker 'absent' and no reason.
    *
    * Lazy rather than start()-only so unit tests driving pushSettingsBranches()
    * still see the value, exactly as ensureStatusReport() above. Idempotent: the
@@ -631,8 +632,8 @@ export class CmsWorker {
    *    lossily; anything still unsettled after a short grace is abandoned to
    *    the process exit.
    * 4. Record `lastShutdown` in worker-status.json -- only while this worker
-   *    still holds the lock, since after a compromise another worker owns the
-   *    file -- and release the lock. Release comes last, so a successor starts
+   *    still holds the lock, or after a compromise that started this stop once
+   *    it has retaken it (recordLockLoss) -- and release the lock. Release comes last, so a successor starts
    *    only once this worker's work has settled or been abandoned.
    */
   stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
@@ -768,23 +769,23 @@ export class CmsWorker {
 
   /**
    * Record a lock compromise in worker-status.json, under the lock: retake it, waiting out its
-   * staleness window, and write only if that succeeds. A worker that took the lock over keeps
-   * it fresh and owns the file, so nothing is written. A heartbeat this worker merely failed to
-   * refresh (an EFS hiccup) goes stale, and the record lands where the restarted worker carries
-   * `lastShutdown` forward. The wait costs nothing: a restart would find the same lock.
+   * staleness window, and write only if that succeeds and the file is still this worker's (or
+   * the one it took the lock from). A worker that took the lock over keeps it fresh, or has
+   * written the file since, and owns it, so nothing is written. A heartbeat this worker merely
+   * failed to refresh (an EFS hiccup) goes stale, and the record lands where the restarted
+   * worker carries `lastShutdown` forward. The restart waits for it, at most `lockStaleMs` + 2 s.
    */
   private async recordLockLoss(shutdown: WorkerShutdownRecord, message: string): Promise<void> {
     let release: (() => Promise<void>) | undefined
     try {
       // Twice the usual staleness: a successor's live heartbeat can look a refresh interval
       // plus an EFS attribute-cache window old from here, and taking it would remove its lock.
-      // This worker's own lock, if still there, went unrefreshed for `lockStaleMs` before the
-      // compromise fired, so the wait still reaches its staleness.
       release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs * 2, {
-        // Its own lock can be up to a second younger than `lockStaleMs` when the compromise
-        // fires (proper-lockfile rounds the first mtime up), so the wait covers the remaining
-        // `lockStaleMs`, that second and a retry interval. Still inside the unit's
-        // TimeoutStopSec when a SIGTERM lands mid-wait.
+        // A refresh failure fires the compromise once this worker's own lock has gone
+        // unrefreshed for `lockStaleMs`, or up to a second less (proper-lockfile rounds the
+        // first mtime up). So the wait covers the remaining `lockStaleMs`, that second and a
+        // retry interval, and stays inside the unit's TimeoutStopSec when a SIGTERM lands
+        // mid-wait. A deleted lock is retaken at once; a foreign mtime is a successor's.
         waitMs: this.lockStaleMs + 2_000,
         onCompromised: (err) =>
           workerLogError('Worker lock lost again while recording the loss:', getErrorMessage(err)),
@@ -1085,8 +1086,8 @@ export class CmsWorker {
    * `ensureSettingsBranch()` is and for the reason that method records:
    * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
    * set, neither set, an unusable mint timeout or refresh interval), and a
-   * throw during `new CmsWorker(...)` lands BEFORE the only code that writes
-   * `lastFatalError` — start()'s catch.
+   * throw during `new CmsWorker(...)` lands BEFORE start()'s catch, which
+   * records `lastFatalError` for every entrypoint.
    *
    * Idempotent, and it does NOT replace an `octokit` a test has already
    * assigned onto the instance — see the field's comment.

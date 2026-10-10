@@ -99,8 +99,8 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
    */
   let terminating: Promise<void> | undefined
 
-  // Set when the failure happened before `worker.start()`, which is the only
-  // failure the entrypoint records: start() records its own, and its ELOCKED
+  // Set just before `worker.start()`. Only a failure before it is the
+  // entrypoint's to record: start() records its own, and its ELOCKED
   // ("another worker is running") must stay unrecorded.
   let startCalled = false
   let workspacePath: string | undefined
