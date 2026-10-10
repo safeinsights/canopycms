@@ -161,6 +161,8 @@ describe('seedBareRepository', () => {
     const check = (github: GitHubReachability) => github
     // @ts-expect-error The gateway's own onGitHub waits on the session the check runs inside.
     check(gateway())
+    // @ts-expect-error The brand is all this literal lacks.
+    check({ onGitHub: async () => new Set<string>() })
   })
 
   it('stops before creating anything when the check throws', async () => {

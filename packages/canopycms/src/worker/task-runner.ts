@@ -276,7 +276,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       //
       // Ungated, and AFTER the outcome is recorded rather than before: the task
       // is safely in pending/ or failed/ while a network read runs, and that
-      // read is bounded and never throws. See GitHubGateway.refreshCredential.
+      // read is bounded and never throws. See refreshGitHubCredential.
       await refreshGitHubCredential(() => ctx.github())
     }
     processed++
