@@ -5,7 +5,8 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 
 ## Vocabulary
 
-One word per idea, everywhere: buttons, menus, titles, toasts and errors.
+One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
+`packages/canopycms/src/editor/copy.ts`.
 
 | Say                       | For                                                    | Not                            |
 | ------------------------- | ------------------------------------------------------ | ------------------------------ |
@@ -20,7 +21,7 @@ One word per idea, everywhere: buttons, menus, titles, toasts and errors.
 | **Discard changes**       | Throwing away unsaved edits                            | Discard drafts, Revert         |
 | **entry**, **collection** | A content item, and the folder that holds entries      | file, page, item; folder       |
 
-Branch status labels are **Editing**, **In review** and **Protected**.
+Branch status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`.
 
 ## Copy
 
@@ -81,9 +82,9 @@ info, yellow warning, red error. An error that needs action stays until dismisse
 
 ## Fields
 
-Every field's label row has the same anatomy, rendered by one shared `FieldLabel`: label and
-required marker on the left, field actions then the comment control on the right, and the
-description beneath. No hand-rolled label styles. A read-only form disables its inputs and
+Every field's label row has the same anatomy, rendered by
+`packages/canopycms/src/editor/fields/FieldLabel.tsx`: label, required marker and comment
+control on the left, field actions on the right, and the description beneath. No hand-rolled label styles. A read-only form disables its inputs and
 lets the banner explain once; no lock icon per field. List and block rows collapse, take their
 title from the content, and carry a drag handle and a "…" menu (Move up, Move down, Duplicate,
 Remove). Validation shows inline and in a summary of labelled breadcrumbs that focus the
