@@ -483,7 +483,7 @@ describe('useCanopyPreview', () => {
         onTestFinished(() => el.remove())
         return el
       }
-      return { reports, mark }
+      return { reports, mark, parentWin }
     }
 
     it('lists each path once, however many elements mark it', async () => {
@@ -512,6 +512,21 @@ describe('useCanopyPreview', () => {
           paths: ['value', 'posts[0].category'],
         }),
       )
+    })
+
+    it('is reported again after each draft, even when the marks are unchanged', async () => {
+      const { reports, parentWin } = setUp()
+      await waitFor(() => expect(reports()).toHaveLength(1))
+      act(() => {
+        window.dispatchEvent(
+          trustedEvent(
+            { type: CANOPY_PREVIEW_MESSAGE, path: '/posts/marks', data: { value: 'draft' } },
+            parentWin,
+          ),
+        )
+      })
+      await waitFor(() => expect(reports()).toHaveLength(2))
+      expect(reports()[1]).toEqual(reports()[0])
     })
 
     it('carries at most the limit of paths, and none longer than the limit', async () => {

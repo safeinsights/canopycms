@@ -240,6 +240,16 @@ describe('FieldProps types', () => {
     fieldProps(['sections', i, 'headline'])
   })
 
+  it('refuses a computed segment array, whose length the type cannot see', () => {
+    const computed: (string | number)[] = ['sections', i]
+    // @ts-expect-error - computed paths go in as literal segments
+    fieldProps(computed)
+    // @ts-expect-error - a scope from one would be typed as the root
+    scopeFieldProps(fieldProps, computed)
+    const untyped: FieldProps = fieldProps
+    untyped(computed)
+  })
+
   it('treats nullable content as its non-null value', () => {
     const maybe = createFieldProps<Page | undefined>()
     maybe('title')

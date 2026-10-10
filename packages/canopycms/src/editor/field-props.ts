@@ -92,11 +92,13 @@ type ExpectedSegments<V, P> = P extends readonly [infer Head, ...infer Rest]
     : readonly [NextSegment<V>, ...CanopyPathSegment[]]
   : readonly []
 
-type SegmentsArg<V, P> = unknown extends V
+type SegmentsArg<V, P extends readonly unknown[]> = unknown extends V
   ? P
-  : IsFieldPath<V, P> extends true
-    ? P
-    : ExpectedSegments<V, P>
+  : number extends P['length']
+    ? ComputedPathError
+    : IsFieldPath<V, P> extends true
+      ? P
+      : ExpectedSegments<V, P>
 
 type Spell<P> = P extends readonly [infer Head, ...infer Rest]
   ? `${Head extends number ? `[${Head}]` : `.${Head & string}`}${Spell<Rest>}`
@@ -115,7 +117,7 @@ type Completions<V, P, Done extends readonly CanopyPathSegment[] = []> = P exten
   : never
 
 type ComputedPathError =
-  'a computed string path is untyped: pass segments, e.g. ["list", i, "field"]'
+  'a computed path is untyped: pass segments as a literal, e.g. ["list", i, "field"]'
 
 type StringArg<V, S extends string> = unknown extends V
   ? S

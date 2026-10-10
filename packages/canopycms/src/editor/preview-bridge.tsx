@@ -273,8 +273,10 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     return () => window.removeEventListener('message', handler)
   }, [editorOrigin])
 
-  // Reported after the render that turned highlighting on, then again whenever the marks change
-  // (a draft, or content rendered after hydration), so the editor's note keeps up with the page.
+  // Reported after the render that turned highlighting on, whenever the marks change (content
+  // rendered after hydration), and after every draft even when they do not: the editor checks a
+  // report against its draft as it stood when the report arrived, so a block whose template
+  // changed under unchanged marks needs a fresh one.
   useEffect(() => {
     if (!enabled || window.parent === window) return
     const target = resolveMessageOrigin(editorOrigin)
@@ -300,21 +302,31 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     }
     report()
     // A trailing throttle, so steady DOM churn cannot hold the report back, on a timer rather
-    // than requestAnimationFrame, which a hidden frame never runs.
+    // than requestAnimationFrame, which a hidden frame never runs. It also lets a draft render
+    // before the report it triggers.
     let timer: ReturnType<typeof setTimeout> | undefined
-    const observer = new MutationObserver(() => {
+    const schedule = () => {
       timer ??= setTimeout(() => {
         timer = undefined
         report()
       }, 100)
-    })
+    }
+    const observer = new MutationObserver(schedule)
     observer.observe(document.body, {
       subtree: true,
       childList: true,
       attributeFilter: ['data-canopy-path'],
     })
+    const onDraft = (event: MessageEvent) => {
+      if (!isTrustedEditorMessage(event, editorOrigin)) return
+      if ((event.data as { type?: unknown })?.type !== CANOPY_PREVIEW_MESSAGE) return
+      reported = undefined
+      schedule()
+    }
+    window.addEventListener('message', onDraft)
     return () => {
       observer.disconnect()
+      window.removeEventListener('message', onDraft)
       clearTimeout(timer)
     }
   }, [enabled, editorOrigin])
