@@ -179,9 +179,14 @@ export async function assertPlainBranchName(branch: string): Promise<void> {
   let normalized: string
   try {
     normalized = (await simpleGit().raw(['check-ref-format', '--branch', branch])).trim()
-  } catch {
-    throw new RefusedPushError(branch, 'invalid')
+  } catch (err) {
+    // Only git's own verdict is a refusal; a failure to run git at all is transient.
+    if (/is not a valid branch name/.test(getErrorMessage(err))) {
+      throw new RefusedPushError(branch, 'invalid')
+    }
+    throw err
   }
+  // `@{-1}` and the like resolve to some other name.
   if (normalized !== branch) throw new RefusedPushError(branch, 'invalid')
 }
 

@@ -689,7 +689,7 @@ export async function pushBranchToGitHub(
   // what GitHub received.
   await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
   // Before `branch` reaches any git: `readPublishedSha` below would read a `<rev>:<path>` form as a
-  // tree lookup in remote.git. A retry can never make the name valid.
+  // tree lookup in remote.git. A refusal is permanent; a failure to run git is retried.
   try {
     await assertPlainBranchName(branch)
   } catch (err) {
