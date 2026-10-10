@@ -40,6 +40,23 @@ function synth(withTopic: boolean, nesting = 0): Template {
   return Template.fromStack(stack)
 }
 
+/** The resource whose logical id starts with `idPrefix` (CDK appends a hash). */
+function resourceById(template: Template, type: string, idPrefix: string): Record<string, unknown> {
+  const matches = Object.entries(template.findResources(type)).filter(([id]) =>
+    id.startsWith(`Cms${idPrefix}`),
+  )
+  expect(matches).toHaveLength(1)
+  return matches[0][1].Properties as Record<string, unknown>
+}
+
+function expectAlarmCountsFilter(template: Template, filterId: string, alarmId: string): void {
+  const filter = resourceById(template, 'AWS::Logs::MetricFilter', filterId) as {
+    MetricTransformations: Array<{ MetricName: string }>
+  }
+  const alarm = resourceById(template, 'AWS::CloudWatch::Alarm', alarmId)
+  expect(alarm.MetricName).toBe(filter.MetricTransformations[0].MetricName)
+}
+
 describe('alarmTopic', () => {
   it('creates no metric filter, alarm, or action without a topic', () => {
     const template = synth(false)
@@ -49,7 +66,7 @@ describe('alarmTopic', () => {
 
   it('counts the worker per-cycle sync line in the worker log group', () => {
     const template = synth(true)
-    template.resourceCountIs('AWS::Logs::MetricFilter', 1)
+    template.resourceCountIs('AWS::Logs::MetricFilter', 2)
     template.hasResourceProperties('AWS::Logs::MetricFilter', {
       LogGroupName: { Ref: Match.stringLikeRegexp('CmsWorkerLogs') },
       FilterPattern: `"${WORKER_SYNC_LOG_PHRASE}"`,
@@ -79,13 +96,13 @@ describe('alarmTopic', () => {
         (filter.Properties as { MetricTransformations: Array<{ MetricName: string }> })
           .MetricTransformations[0].MetricName,
     )
-    expect(names).toHaveLength(1)
-    expect(names[0].length).toBeLessThanOrEqual(255)
+    expect(names).toHaveLength(2)
+    for (const name of names) expect(name.length).toBeLessThanOrEqual(255)
   })
 
   it('alarms when 3 consecutive 10-minute periods have no sync, missing data included', () => {
     const template = synth(true)
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 1)
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 2)
     template.hasResourceProperties('AWS::CloudWatch::Alarm', {
       Namespace: 'CanopyCMS',
       MetricName: Match.stringLikeRegexp('^WorkerGitSyncCycles'),
@@ -102,13 +119,41 @@ describe('alarmTopic', () => {
   })
 
   it('uses the same metric name in the filter and the alarm', () => {
+    expectAlarmCountsFilter(synth(true), 'WorkerSyncCycles', 'WorkerDownAlarm')
+  })
+})
+
+describe('the unpatched-boot alarm', () => {
+  it("counts user data's unpatched line in the worker log group", () => {
+    const filter = resourceById(synth(true), 'AWS::Logs::MetricFilter', 'WorkerUnpatchedBoots')
+    expect(filter).toMatchObject({
+      LogGroupName: { Ref: expect.stringMatching(/CmsWorkerLogs/) },
+      FilterPattern: expect.stringMatching(/^"running unpatched on the AMI packages/),
+      MetricTransformations: [
+        {
+          MetricNamespace: 'CanopyCMS',
+          MetricName: expect.stringMatching(/^WorkerUnpatchedBoots/),
+          MetricValue: '1',
+        },
+      ],
+    })
+  })
+
+  it('alarms on one line, notifying the topic of the alarm only', () => {
     const template = synth(true)
-    const [filter] = Object.values(template.findResources('AWS::Logs::MetricFilter'))
-    const [alarm] = Object.values(template.findResources('AWS::CloudWatch::Alarm'))
-    const filterName = (
-      filter.Properties as { MetricTransformations: Array<{ MetricName: string }> }
-    ).MetricTransformations[0].MetricName
-    expect((alarm.Properties as { MetricName: string }).MetricName).toBe(filterName)
+    const alarm = resourceById(template, 'AWS::CloudWatch::Alarm', 'WorkerUnpatchedAlarm')
+    expect(alarm).toMatchObject({
+      Namespace: 'CanopyCMS',
+      Statistic: 'Sum',
+      Period: 600,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      EvaluationPeriods: 1,
+      TreatMissingData: 'notBreaching',
+      AlarmActions: [{ Ref: expect.stringMatching(/Alerts/) }],
+    })
+    expect(alarm.OKActions).toBeUndefined()
+    expectAlarmCountsFilter(template, 'WorkerUnpatchedBoots', 'WorkerUnpatchedAlarm')
   })
 })
 

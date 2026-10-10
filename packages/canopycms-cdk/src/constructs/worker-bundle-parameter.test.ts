@@ -144,7 +144,7 @@ describe("workerCode: { source: 'parameter' }", () => {
       userData(parameterMode, { [conditionId(parameterMode)]: true }),
     )
     expect(copy).toBe(
-      `retry aws s3 cp s3://<${bucket.id}>/canopy-worker/<${paramId}>.js /tmp/canopy-worker.js`,
+      `retry 'worker bundle download' aws s3 cp s3://<${bucket.id}>/canopy-worker/<${paramId}>.js /tmp/canopy-worker.js`,
     )
     expect(check).toBe(`echo '<${paramId}>  /tmp/canopy-worker.js' | sha256sum -c -`)
   })
