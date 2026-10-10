@@ -130,6 +130,35 @@ describe('CmsWorker.selfStopped', () => {
     }
   }, 15_000)
 
+  // On EFS a live successor's heartbeat can look older than it is (its refresh interval plus the
+  // attribute cache), so the retake must not treat a lock just past `lockStaleMs` as abandoned.
+  it("leaves a successor's lock alone while it looks only just stale", async () => {
+    const worker = makeWorker()
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    trackAbortable(worker)
+
+    const lockPath = path.join(taskDir, '.worker-lock')
+    await fs.rm(lockPath, { recursive: true, force: true })
+    await fs.mkdir(lockPath)
+    const lookOld = () => {
+      const seen = new Date(Date.now() - LOCK_STALE_MS * 1.25)
+      return fs.utimes(lockPath, seen, seen).catch(() => {})
+    }
+    await lookOld()
+    const lagging = setInterval(() => void lookOld(), 100)
+    try {
+      expect(await settledWithin(worker, 8000)).toEqual({
+        reason: 'the worker lost its lock on the shared workspace',
+      })
+      expect(await readStatus()).toBeNull()
+      await expect(fs.stat(lockPath)).resolves.toBeTruthy()
+    } finally {
+      clearInterval(lagging)
+    }
+  }, 15_000)
+
   it('never settles for a stop the entrypoint asked for, even if the lock is lost during it', async () => {
     const worker = makeWorker()
     const w = internals(worker)

@@ -263,6 +263,7 @@ export async function recordWorkerStartupFailure(options: {
         message: redactCredentials(getErrorMessage(options.error)),
         at: now,
         phase: 'startup',
+        workerStartedAt: now,
       },
     })
   } catch (err) {
@@ -568,6 +569,7 @@ export class CmsWorker {
         message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
+        workerStartedAt: report.startedAt,
       }
       try {
         await writeWorkerStatus(this.taskDir, report)
@@ -764,7 +766,11 @@ export class CmsWorker {
   private async recordLockLoss(shutdown: WorkerShutdownRecord, message: string): Promise<void> {
     let release: (() => Promise<void>) | undefined
     try {
-      release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs, {
+      // Twice the usual staleness: a successor's live heartbeat can look a refresh interval
+      // plus an EFS attribute-cache window old from here, and taking it would remove its lock.
+      // This worker's own lock, if still there, went unrefreshed for `lockStaleMs` before the
+      // compromise fired, so the wait still reaches its staleness.
+      release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs * 2, {
         waitMs: Math.ceil(this.lockStaleMs * 1.5),
         onCompromised: (err) =>
           workerLogError('Worker lock lost again while recording the loss:', getErrorMessage(err)),
@@ -775,6 +781,7 @@ export class CmsWorker {
         message: `The worker lost its lock on the shared workspace and stopped; it restarts on its own. ${message}`,
         at: shutdown.at,
         phase: 'run',
+        workerStartedAt: report.startedAt,
       }
       await writeWorkerStatus(this.taskDir, report)
     } catch (err) {

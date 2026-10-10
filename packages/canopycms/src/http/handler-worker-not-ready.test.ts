@@ -74,7 +74,7 @@ describe('the not-ready 503 under real prod provisioning', () => {
       updatedAt: fatalAt,
       lastFatalError: {
         message:
-          'Secret arn:aws:secretsmanager:us-east-1:123456789012:secret:bot-token has no field "token".',
+          'Secret arn:aws:secretsmanager:us-east-1:123456789012:secret:bot-token has no field "token" (read for /opt/canopy-worker/.env).',
         at: fatalAt,
         phase: 'startup',
       },
@@ -99,7 +99,7 @@ describe('the not-ready 503 under real prod provisioning', () => {
     const { error } = response.body as { error: string }
     expect(error).toContain('The CMS worker failed to start')
     expect(error).toContain(
-      'arn:aws:secretsmanager:us-east-1:************:secret:bot-token has no field "token".',
+      'arn:aws:secretsmanager:us-east-1:************:secret:bot-token has no field "token" (read for <path>).',
     )
     expect(error).not.toMatch(/[0-9]{12}/)
   })

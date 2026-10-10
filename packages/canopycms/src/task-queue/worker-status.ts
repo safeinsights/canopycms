@@ -72,10 +72,11 @@ export interface WorkerStartupFailure {
 
 /**
  * The startup failure in `{taskDir}/worker-status.json`, for a request that found no remote to
- * clone. A failure is current when it is no older than the snapshot's `startedAt`: a worker
- * that starts again writes its own `startedAt` and carries the previous failure forward, so a
- * retry in progress (a first clone can take minutes) is not reported as a dead worker. Tolerant
- * like every reader: a missing or unreadable file yields none.
+ * clone. A failure is current when the worker that recorded it is the one the snapshot
+ * describes: a worker that starts again writes its own `startedAt` and carries the previous
+ * failure forward, so a retry in progress (a first clone can take minutes) is not reported as a
+ * dead worker. Compared by identity, not by clock, since the two workers can run on different
+ * hosts. Tolerant like every reader: a missing or unreadable file yields none.
  */
 export async function readWorkerStartupFailure(
   taskDir: string,
@@ -90,13 +91,15 @@ export async function readWorkerStartupFailure(
   }
   const fatal = report.lastFatalError
   if (fatal?.phase !== 'startup' || typeof fatal.message !== 'string') return undefined
-  const failedAt = Date.parse(fatal.at)
-  const startedAt = report.startedAt ? Date.parse(report.startedAt) : NaN
-  return {
-    message: fatal.message,
-    at: fatal.at,
-    current: Number.isNaN(startedAt) || !(failedAt < startedAt),
+  let current: boolean
+  if (fatal.workerStartedAt !== undefined) {
+    current = fatal.workerStartedAt === report.startedAt
+  } else {
+    // A file from a worker that does not link the two: compare clocks instead.
+    const startedAt = report.startedAt ? Date.parse(report.startedAt) : NaN
+    current = Number.isNaN(startedAt) || !(Date.parse(fatal.at) < startedAt)
   }
+  return { message: fatal.message, at: fatal.at, current }
 }
 
 /**

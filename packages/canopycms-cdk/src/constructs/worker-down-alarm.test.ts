@@ -11,6 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Stack } from 'aws-cdk-lib'
+import { Construct } from 'constructs'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda, aws_sns as sns } from 'aws-cdk-lib'
 import { CmsWorker } from 'canopycms/worker/cms-worker'
@@ -21,12 +22,14 @@ import { CanopyCmsService } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
 import { WORKER_SYNC_LOG_PHRASE } from './worker-lifecycle'
 
-function synth(withTopic: boolean): Template {
+function synth(withTopic: boolean, nesting = 0): Template {
   const app = newTestApp()
   const stack = new Stack(app, 'TestStack', {
     env: { account: '123456789012', region: 'us-east-1' },
   })
-  new CanopyCmsService(stack, 'Cms', {
+  let scope: Construct = stack
+  for (let i = 0; i < nesting; i++) scope = new Construct(scope, `Level${i}${'x'.repeat(40)}`)
+  new CanopyCmsService(scope, 'Cms', {
     cmsDockerImage: lambda.DockerImageCode.fromEcr(
       ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
     ),
@@ -58,6 +61,17 @@ describe('alarmTopic', () => {
         },
       ],
     })
+  })
+
+  it("keeps the metric name within CloudWatch's 255 characters under a deep construct path", () => {
+    const filters = synth(true, 8).findResources('AWS::Logs::MetricFilter')
+    const names = Object.values(filters).map(
+      (filter) =>
+        (filter.Properties as { MetricTransformations: Array<{ MetricName: string }> })
+          .MetricTransformations[0].MetricName,
+    )
+    expect(names).toHaveLength(1)
+    expect(names[0].length).toBeLessThanOrEqual(255)
   })
 
   it('alarms when 3 consecutive 10-minute periods have no sync, missing data included', () => {

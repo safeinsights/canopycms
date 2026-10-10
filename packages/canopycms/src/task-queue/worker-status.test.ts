@@ -210,6 +210,31 @@ describe('readWorkerStartupFailure', () => {
     expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
   })
 
+  it('decides by the worker that recorded it, not by clocks that can disagree across hosts', async () => {
+    // A successor whose clock runs behind the failed worker's.
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:30.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:29.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
+
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:05.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:00.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(true)
+  })
+
   it('ignores a failure while running, which a missing remote cannot follow', async () => {
     await write({
       startedAt: '2026-10-09T10:00:00.000Z',

@@ -1481,12 +1481,13 @@ export class CanopyCmsService extends Construct {
     if (props.alarmTopic) {
       // Metrics are keyed by namespace and name alone, so the name carries this
       // construct's unique id: two services in one account and region must not
-      // share one count.
+      // share one count. Capped at CloudWatch's 255 characters.
+      const metricPrefix = 'WorkerGitSyncCycles-'
       const syncCycles = new logs.MetricFilter(this, 'WorkerSyncCycles', {
         logGroup: this.workerLogGroup,
         filterPattern: logs.FilterPattern.literal(`"${WORKER_SYNC_LOG_PHRASE}"`),
         metricNamespace: 'CanopyCMS',
-        metricName: `WorkerGitSyncCycles-${Names.uniqueId(this)}`,
+        metricName: `${metricPrefix}${Names.uniqueResourceName(this, { maxLength: 255 - metricPrefix.length })}`,
         metricValue: '1',
       })
 

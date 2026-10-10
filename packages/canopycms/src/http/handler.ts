@@ -229,7 +229,8 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
-        const notReady = workerNotReadyResponse(err)
+        // Authenticated above, so the worker's recorded failure may be named.
+        const notReady = workerNotReadyResponse(err, { workerFailureDetail: true })
         if (notReady) return notReady
         return jsonResponse(
           {
@@ -267,7 +268,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       // No remote means no settings workspace, so /admin cannot load either:
       // the worker has not created the remote yet, so every caller gets the
       // not-ready 503, bootstrap admins included.
-      const notReady = workerNotReadyResponse(err)
+      const notReady = workerNotReadyResponse(err, { workerFailureDetail: true })
       if (notReady) return notReady
 
       // Same trade as the base-branch degradation above: /admin is the recovery
