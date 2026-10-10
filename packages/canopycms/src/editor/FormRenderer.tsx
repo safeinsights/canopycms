@@ -12,11 +12,14 @@ import type {
   ImageFieldConfig,
   ImageFieldValue,
   InlineGroupFieldConfig,
+  MarkdownFieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
   SelectFieldConfig,
 } from '../config'
 import { MarkdownField } from './fields/MarkdownField'
+import { useSiteMdxAllow } from './context'
+import { resolveMdxAllowlist } from '../validation/mdx-allowlist'
 import { StringListField } from './fields/StringListField'
 import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
@@ -162,6 +165,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   fieldErrors,
 }) => {
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
+  const siteMdxAllow = useSiteMdxAllow()
 
   // Object-list item keys. An object listed once keeps the key it was first shown with, so an
   // append remounts no item and a removal never hands a crashed item's boundary to the next one.
@@ -404,7 +408,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           />,
         )
       case 'markdown':
-      case 'mdx':
+      case 'mdx': {
+        const markdownField = field as MarkdownFieldConfig
+        const checkedAsMdx = markdownField.type === 'mdx' || markdownField.renderAs === 'mdx'
         return wrapWithComments(
           <MarkdownField
             key={fieldKey(path)}
@@ -414,8 +420,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={(currentValue as string) ?? ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
+            htmlTags={
+              checkedAsMdx
+                ? resolveMdxAllowlist(markdownField.mdxAllow, siteMdxAllow).htmlTags
+                : undefined
+            }
           />,
         )
+      }
       case 'select': {
         const selectField = field as SelectFieldConfig
         const options = normalizeOptions(selectField.options)

@@ -885,6 +885,49 @@ describe('content api', () => {
       expect(res.ok).toBe(true)
       expect(writeSpy).toHaveBeenCalledTimes(1)
     })
+
+    describe('with a site mdxAllow', () => {
+      const legacyBody = '# Post\n\n<Legacy />\n'
+
+      it('refuses a component the site does not allow, naming the allowed ones', async () => {
+        const ctx = allowedCtx()
+        ctx.services.config.mdxAllow = { components: { Callout: {} } }
+        const { writeSpy } = await mockStoreOnce('article')
+
+        const res = await writeContent(ctx, writeReq, writeParams, {
+          format: 'mdx',
+          expectedVersion: EXISTING_VERSION,
+          data: {},
+          body: legacyBody,
+        })
+
+        expect(res.status).toBe(422)
+        expect(res.fieldErrors).toEqual([
+          {
+            fieldPath: 'content',
+            message: 'Component <Legacy> is not allowed here; allowed: Callout (line 3)',
+          },
+        ])
+        expect(writeSpy).not.toHaveBeenCalled()
+      })
+
+      it('keeps such a component in a body saved as the entry already held it', async () => {
+        const ctx = allowedCtx()
+        ctx.services.config.mdxAllow = { components: { Callout: {} } }
+        const { writeSpy } = await mockStoreOnce('article', legacyBody)
+
+        const res = await writeContent(ctx, writeReq, writeParams, {
+          format: 'mdx',
+          expectedVersion: EXISTING_VERSION,
+          data: {},
+          body: legacyBody,
+        })
+
+        expect(res.ok).toBe(true)
+        expect(writeSpy).toHaveBeenCalledTimes(1)
+        expect(res.data?.validationWarnings).toHaveLength(1)
+      })
+    })
   })
 
   describe('renameEntry', () => {

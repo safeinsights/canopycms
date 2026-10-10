@@ -3,7 +3,8 @@
  *
  * MDX compiles `{expressions}`, `import`/`export` and JSX into JavaScript that runs wherever a
  * body renders: a preview with the viewer's session, a server render, a CI build. A body this
- * policy accepts runs only the site's own components. An `mdx` field or `mdx` body accepts:
+ * policy accepts runs only the site's own components. An `mdx` field or body, or a `markdown` one
+ * with `renderAs: 'mdx'`, accepts:
  *
  * - no `import`/`export`, and no `{…}` expression except a comment or a static literal
  *   (`{300}`, `{["a", "b"]}`), in text or as an attribute value; no spread attributes;
@@ -16,12 +17,10 @@
  *   `SAFE_URL_SCHEMES`, or are raster `data:` images; no `javascript:` or `vbscript:` value in any
  *   prop. React 18 renders a `javascript:` href as given.
  *
- * Markdown (`markdown` fields, the body of an `md` entry) renders braces and imports as text, and
- * runs no tag unless the site enables raw HTML, so only its URLs are checked. A field with
- * `executable: true` is not checked at all.
- *
- * A body is parsed with and without GFM, so a site's choice of `remark-gfm` cannot hide a
- * construct from the check; an MDX body that does not parse cannot be checked, so is refused.
+ * An `mdxAllow` allowlist (`mdx-allowlist.ts`) narrows this further. Other markdown renders braces
+ * and imports as text and runs no tag without raw HTML, so only its URLs are checked; a field with
+ * `executable: true` is not checked. A body is parsed with and without GFM, so `remark-gfm` cannot
+ * hide a construct; an MDX body that does not parse cannot be checked, so is refused.
  *
  * A save keeps code the stored entry already holds (from outside the CMS, or from before this
  * policy) only in a field saved unchanged: code reads what surrounds it (the props beside it, its
@@ -35,12 +34,20 @@ import { mdxFromMarkdown } from 'mdast-util-mdx'
 import { gfm } from 'micromark-extension-gfm'
 import { mdxjs } from 'micromark-extension-mdxjs'
 
-import type { ContentFormat, EntrySchema, FieldConfig } from '../config'
+import type { ContentFormat, EntrySchema, FieldConfig, MdxAllowlist } from '../config'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { getErrorMessage } from '../utils/error'
 import type { EntryFieldError } from './entry-validator'
 import { traverseFields } from './field-traversal'
+import {
+  FORBIDDEN_ATTRIBUTES,
+  SAFE_HTML_TAGS,
+  isComponentName,
+  isMarkdownField,
+  resolveMdxAllowlist,
+} from './mdx-allowlist'
+import type { ResolvedMdxAllowlist } from './mdx-allowlist'
 
 type MarkdownDialect = 'md' | 'mdx'
 
@@ -57,87 +64,6 @@ export interface MarkdownSafetyFinding {
   fieldPath: string
   issues: MarkdownSafetyIssue[]
 }
-
-/** HTML tags an MDX body may use: content elements whose attributes carry no code. */
-const SAFE_HTML_TAGS = new Set([
-  'a',
-  'abbr',
-  'address',
-  'article',
-  'aside',
-  'audio',
-  'b',
-  'bdi',
-  'bdo',
-  'blockquote',
-  'br',
-  'caption',
-  'cite',
-  'code',
-  'col',
-  'colgroup',
-  'data',
-  'dd',
-  'del',
-  'details',
-  'dfn',
-  'div',
-  'dl',
-  'dt',
-  'em',
-  'figcaption',
-  'figure',
-  'footer',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'header',
-  'hgroup',
-  'hr',
-  'i',
-  'img',
-  'ins',
-  'kbd',
-  'li',
-  'main',
-  'mark',
-  'nav',
-  'ol',
-  'p',
-  'picture',
-  'pre',
-  'q',
-  'rp',
-  'rt',
-  'ruby',
-  's',
-  'samp',
-  'section',
-  'small',
-  'source',
-  'span',
-  'strong',
-  'sub',
-  'summary',
-  'sup',
-  'table',
-  'tbody',
-  'td',
-  'tfoot',
-  'th',
-  'thead',
-  'time',
-  'tr',
-  'track',
-  'u',
-  'ul',
-  'var',
-  'video',
-  'wbr',
-])
 
 /** `entry:` is CanopyCMS's own link to an entry, which the site resolves to a path. */
 const SAFE_URL_SCHEMES = new Set(['http', 'https', 'mailto', 'tel', 'entry'])
@@ -163,9 +89,6 @@ const URL_ATTRIBUTES = new Set([
   'url',
   'xlinkhref',
 ])
-
-/** Attribute names, lower-cased, that put markup or a document into the page. */
-const FORBIDDEN_ATTRIBUTES = new Set(['dangerouslysetinnerhtml', 'srcdoc'])
 
 /**
  * Attributes, lower-cased, that `SAFE_HTML_TAGS` may carry, plus any `aria-*`. Anything else is
@@ -368,13 +291,6 @@ function srcsetUrls(value: string): string[] {
     .filter((url) => url !== '')
 }
 
-/**
- * A JSX name MDX resolves from the site's components rather than rendering as an HTML tag. A name
- * led by `_` or `$` could name one of MDX's own bindings, as could the two below.
- */
-const COMPONENT_NAME = /^[A-Z][\w$]*$/
-const MDX_BINDINGS = new Set(['MDXContent', 'MDXLayout'])
-
 /** Where an issue sits, as the editor shows it. */
 const at = (node: MdNode) => (node.position ? ` (line ${node.position.start.line})` : '')
 
@@ -391,12 +307,75 @@ function urlIssue(node: MdNode, url: string, where: string): MarkdownSafetyIssue
   )
 }
 
-function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
+/** The URLs and script schemes in one attribute value, which the base policy refuses. */
+function attributeValueIssues(
+  node: MdNode,
+  tag: string,
+  attributeName: string,
+  value: unknown,
+): MarkdownSafetyIssue[] {
+  const lower = attributeName.toLowerCase()
+  const isUrl = URL_ATTRIBUTES.has(lower.replace(/[^a-z]/g, ''))
+  if (isRecord(value) && (isUrl || !isInertProgram(estreeOf(value)))) {
+    return [
+      issue(
+        node,
+        isUrl
+          ? `${attributeName} on ${tag} must be a plain "string"`
+          : `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
+      ),
+    ]
+  }
+  if (isUrl && typeof value === 'string') {
+    const urls = lower === 'srcset' ? srcsetUrls(value) : [value]
+    return urls.flatMap((url) => urlIssue(node, url, `${attributeName} on ${tag}`) ?? [])
+  }
+  const strings =
+    typeof value === 'string' ? [value] : isRecord(value) ? staticStrings(estreeOf(value)) : []
+  return strings.flatMap((text) => {
+    const scheme = scriptScheme(text)
+    return scheme === undefined
+      ? []
+      : [issue(node, `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}`)]
+  })
+}
+
+/**
+ * The value an allowlist's value list matches: a string, `true` for a bare attribute, or a
+ * single literal expression. Undefined for anything else, which no list matches.
+ */
+function plainValue(value: unknown): string | number | boolean | undefined {
+  if (value === null || value === undefined) return true
+  if (typeof value === 'string') return value
+  const estree = isRecord(value) ? estreeOf(value) : undefined
+  if (!isRecord(estree) || !Array.isArray(estree.body) || estree.body.length !== 1) return undefined
+  const [statement] = estree.body
+  if (!isRecord(statement) || statement.type !== 'ExpressionStatement') return undefined
+  const expression = statement.expression
+  if (!isRecord(expression) || expression.type !== 'Literal') return undefined
+  const literal = expression.value
+  return typeof literal === 'string' || typeof literal === 'number' || typeof literal === 'boolean'
+    ? literal
+    : undefined
+}
+
+/** How a refusal shows an attribute as written. */
+function showAttribute(attributeName: string, value: unknown): string {
+  if (value === null || value === undefined) return attributeName
+  if (typeof value === 'string') return `${attributeName}="${value}"`
+  return `${attributeName}={…}`
+}
+
+const listOf = (names: Iterable<string>) => [...names].sort().join(', ')
+
+function checkJsxElement(node: MdNode, allow: ResolvedMdxAllowlist): MarkdownSafetyIssue[] {
   const name = node.name
   // A fragment (`<>…</>`) renders its children and nothing else.
-  if (name === null || name === undefined) return []
+  if (name === null || name === undefined) {
+    return allow.fragments ? [] : [issue(node, 'Fragments (<>…</>) are not allowed here')]
+  }
   const tag = `<${name}>`
-  const isComponent = COMPONENT_NAME.test(name) && !MDX_BINDINGS.has(name)
+  const isComponent = isComponentName(name)
   if (!isComponent && !SAFE_HTML_TAGS.has(name)) {
     return [
       issue(
@@ -407,6 +386,21 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
       ),
     ]
   }
+  if (!isComponent && !allow.htmlTags.has(name)) {
+    const allowed = allow.htmlTags.size === 0 ? 'none' : listOf(allow.htmlTags)
+    return [issue(node, `${tag} is not allowed here; allowed HTML tags: ${allowed}`)]
+  }
+  if (isComponent && allow.components !== undefined && !allow.components.has(name)) {
+    return [
+      issue(
+        node,
+        allow.components.size === 0
+          ? `Component ${tag} is not allowed: no components are allowed here`
+          : `Component ${tag} is not allowed here; allowed: ${listOf(allow.components.keys())}`,
+      ),
+    ]
+  }
+  const props = isComponent ? allow.components?.get(name) : undefined
   const issues: MarkdownSafetyIssue[] = []
   const attributes: unknown[] = Array.isArray(node.attributes) ? node.attributes : []
   for (const attribute of attributes) {
@@ -421,6 +415,17 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
     const attributeName = attribute.name
     const value = attribute.value
     const lower = attributeName.toLowerCase()
+    if (props !== undefined && !props.has(attributeName)) {
+      issues.push(
+        issue(
+          node,
+          props.size === 0
+            ? `Prop ${attributeName} on ${tag} is not allowed: ${tag} takes no props here`
+            : `Prop ${attributeName} on ${tag} is not allowed here; allowed: ${listOf(props.keys())}`,
+        ),
+      )
+      continue
+    }
     // A tag's `on…` attribute is a handler in any spelling; a component's prop is one by React's
     // convention, so `online` or `onlyMobile` stays a plain prop.
     if (isComponent ? /^on[A-Z]/.test(attributeName) : /^on/.test(lower)) {
@@ -434,40 +439,42 @@ function checkJsxElement(node: MdNode): MarkdownSafetyIssue[] {
       issues.push(issue(node, `${attributeName} on ${tag} is not allowed`))
       continue
     }
-    const isUrl = URL_ATTRIBUTES.has(lower.replace(/[^a-z]/g, ''))
-    if (isRecord(value) && (isUrl || !isInertProgram(estreeOf(value)))) {
+    if (isRecord(value) && !allow.expressions) {
       issues.push(
         issue(
           node,
-          isUrl
-            ? `${attributeName} on ${tag} must be a plain "string"`
-            : `${attributeName} on ${tag} must be a plain value, such as "text" or {300}`,
+          `${attributeName} on ${tag} must be a plain "string": {…} values are not allowed here`,
         ),
       )
       continue
     }
-    if (isUrl && typeof value === 'string') {
-      const urls = lower === 'srcset' ? srcsetUrls(value) : [value]
-      for (const url of urls) {
-        const found = urlIssue(node, url, `${attributeName} on ${tag}`)
-        if (found) issues.push(found)
-      }
+    const found = attributeValueIssues(node, tag, attributeName, value)
+    if (found.length > 0) {
+      issues.push(...found)
       continue
     }
-    const strings =
-      typeof value === 'string' ? [value] : isRecord(value) ? staticStrings(estreeOf(value)) : []
-    for (const text of strings) {
-      const scheme = scriptScheme(text)
-      if (scheme === undefined) continue
-      issues.push(
-        issue(node, `The URL scheme "${scheme}:" is not allowed in ${attributeName} on ${tag}`),
-      )
+    const values = props?.get(attributeName)
+    if (Array.isArray(values)) {
+      const plain = plainValue(value)
+      if (plain === undefined || !values.includes(plain)) {
+        const allowed = values.map((v) => JSON.stringify(v)).join(', ')
+        issues.push(
+          issue(
+            node,
+            `${showAttribute(attributeName, value)} on ${tag} is not allowed here; allowed values: ${allowed}`,
+          ),
+        )
+      }
     }
   }
   return issues
 }
 
-function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): MarkdownSafetyIssue[] {
+function checkNode(
+  node: MdNode,
+  definitions: ReadonlyMap<string, string>,
+  allow: ResolvedMdxAllowlist,
+): MarkdownSafetyIssue[] {
   const issues: MarkdownSafetyIssue[] = []
   switch (node.type) {
     case 'mdxjsEsm':
@@ -475,7 +482,11 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
       break
     case 'mdxFlowExpression':
     case 'mdxTextExpression':
-      if (!isInertProgram(estreeOf(node))) {
+      if (!allow.expressions) {
+        issues.push(
+          issue(node, '{…} expressions are not allowed here, not even comments or plain values'),
+        )
+      } else if (!isInertProgram(estreeOf(node))) {
         issues.push(
           issue(
             node,
@@ -486,7 +497,7 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
       break
     case 'mdxJsxFlowElement':
     case 'mdxJsxTextElement':
-      issues.push(...checkJsxElement(node))
+      issues.push(...checkJsxElement(node, allow))
       break
     case 'link':
     case 'image':
@@ -505,7 +516,7 @@ function checkNode(node: MdNode, definitions: ReadonlyMap<string, string>): Mark
       break
     }
   }
-  for (const child of node.children ?? []) issues.push(...checkNode(child, definitions))
+  for (const child of node.children ?? []) issues.push(...checkNode(child, definitions, allow))
   return issues
 }
 
@@ -543,6 +554,7 @@ function parse(source: string, dialect: MarkdownDialect, withGfm: boolean): MdNo
 export function findUnsafeMarkdown(
   source: string,
   dialect: MarkdownDialect,
+  allow: ResolvedMdxAllowlist = resolveMdxAllowlist(undefined, undefined),
 ): MarkdownSafetyIssue[] {
   // Line endings are not part of what MDX compiles, and a save may turn CRLF into LF.
   const field = source.replace(/\r\n?/g, '\n')
@@ -558,7 +570,7 @@ export function findUnsafeMarkdown(
     }
     let found: MarkdownSafetyIssue[]
     try {
-      found = checkNode(tree, collectDefinitions(tree))
+      found = checkNode(tree, collectDefinitions(tree), allow)
     } catch (err: unknown) {
       // Nesting deep enough to exhaust the stack.
       return [{ message: `This body is too deeply nested to check: ${getErrorMessage(err)}` }]
@@ -588,23 +600,33 @@ function toFieldError(fieldPath: string, issues: MarkdownSafetyIssue[]): EntryFi
   return { fieldPath, message: `${first?.message ?? ''}${more}` }
 }
 
-function dialectOfField(field: FieldConfig): MarkdownDialect | undefined {
-  if ('executable' in field && field.executable === true) return undefined
-  if (field.type === 'mdx') return 'mdx'
-  if (field.type === 'markdown') return 'md'
-  return undefined
+/** How one field is checked: as markdown or MDX, and what MDX it accepts. */
+interface FieldPolicy {
+  dialect: MarkdownDialect
+  allow: ResolvedMdxAllowlist
+}
+
+function policyOfField(
+  field: FieldConfig,
+  site: MdxAllowlist | undefined,
+): FieldPolicy | undefined {
+  if (!isMarkdownField(field) || field.executable === true) return undefined
+  return {
+    dialect: field.type === 'mdx' || field.renderAs === 'mdx' ? 'mdx' : 'md',
+    allow: resolveMdxAllowlist(field.mdxAllow, site),
+  }
 }
 
 function findInValue(
   fieldPath: string,
   value: unknown,
-  dialect: MarkdownDialect,
+  { dialect, allow }: FieldPolicy,
 ): MarkdownSafetyFinding[] {
   const values = Array.isArray(value) ? value : [value]
   const findings: MarkdownSafetyFinding[] = []
   values.forEach((item, index) => {
     if (typeof item !== 'string' || item === '') return
-    const issues = findUnsafeMarkdown(item, dialect)
+    const issues = findUnsafeMarkdown(item, dialect, allow)
     if (issues.length === 0) return
     findings.push({
       fieldPath: Array.isArray(value) ? `${fieldPath}[${index}]` : fieldPath,
@@ -616,31 +638,38 @@ function findInValue(
 
 /**
  * The policy's issues in one entry's on-disk-shaped data, the body merged in under the schema's
- * body field name. The body of an `md`/`mdx` entry is checked in the entry's format whatever its
- * field's type, and is checked when the schema declares no body field; it is exempt only when
- * its field is `executable`.
+ * body field name. The body of an `mdx` entry is MDX whatever its field's type; the body of an
+ * `md` entry is MDX only when its field sets `renderAs: 'mdx'`. The body is checked when the
+ * schema declares no body field, and is exempt only when its field is `executable`. `siteAllow`
+ * is the config's `mdxAllow`, under each field's own.
  */
 export function findMarkdownSafetyIssues(
   fields: EntrySchema,
   format: ContentFormat | undefined,
   data: Record<string, unknown>,
+  siteAllow?: MdxAllowlist,
 ): MarkdownSafetyFinding[] {
   const hasBody = format === 'md' || format === 'mdx'
   const bodyName = hasBody ? findBodyFieldName(fields) : undefined
   const findings: MarkdownSafetyFinding[] = []
 
   if (hasBody && bodyName !== undefined) {
-    const bodyField = flattenGroupFields(fields).find((field) => field.name === bodyName)
-    const executable =
-      bodyField !== undefined && 'executable' in bodyField && bodyField.executable === true
-    if (!executable) findings.push(...findInValue(bodyName, data[bodyName], format))
+    const found = flattenGroupFields(fields).find((field) => field.name === bodyName)
+    const bodyField = found !== undefined && isMarkdownField(found) ? found : undefined
+    if (bodyField?.executable !== true) {
+      const policy: FieldPolicy = {
+        dialect: format === 'mdx' || bodyField?.renderAs === 'mdx' ? 'mdx' : 'md',
+        allow: resolveMdxAllowlist(bodyField?.mdxAllow, siteAllow),
+      }
+      findings.push(...findInValue(bodyName, data[bodyName], policy))
+    }
   }
 
   findings.push(
     ...traverseFields<MarkdownSafetyFinding>(fields, data, ({ field, value, path }) => {
       if (path === bodyName) return []
-      const dialect = dialectOfField(field)
-      return dialect === undefined ? [] : findInValue(path, value, dialect)
+      const policy = policyOfField(field, siteAllow)
+      return policy === undefined ? [] : findInValue(path, value, policy)
     }),
   )
   return findings
@@ -689,7 +718,7 @@ export function splitByStored(
         storedSites.has(site(finding.fieldPath))
           ? {
               ...error,
-              message: `This field already holds code, so it saves only unchanged or with the code removed. ${error.message}`,
+              message: `This field already holds content it refuses, so it saves only unchanged or with that content removed. ${error.message}`,
             }
           : error,
       )

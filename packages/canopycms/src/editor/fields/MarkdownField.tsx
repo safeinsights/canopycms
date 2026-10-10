@@ -29,7 +29,16 @@ export interface MarkdownFieldProps {
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
+  /** The HTML tags the field accepts; the toolbar offers no action writing another. Omitted: any. */
+  htmlTags?: ReadonlySet<string>
 }
+
+/** Text formats MDXEditor exports as an HTML tag, with that tag. */
+const TAG_FORMATS = [
+  ['underline', 'u'],
+  ['subscript', 'sub'],
+  ['superscript', 'sup'],
+] as const
 
 /** @internal Exported for the round-trip corpus test, which drives exactly this editor. */
 export const MDXEditorLazy = React.lazy(async () => {
@@ -68,11 +77,29 @@ export const MDXEditorLazy = React.lazy(async () => {
     imageDialogState$,
     activeEditor$,
     $isImageNode,
+    createRootEditorSubscription$,
+    realmPlugin,
     // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
     // a separately resolved copy would throw inside this editor's `read()`.
-    lexical: { $getNodeByKey },
+    lexical: { $getNodeByKey, TextNode },
   } = mdx
   const mdxJsxPlugins = createMdxJsxPlugins(mdx)
+
+  /**
+   * Drops each text format whose tag the field refuses, however it was applied: the toolbar, a
+   * shortcut (Cmd+U) or a paste.
+   */
+  const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> }>({
+    init(realm, params) {
+      const refused = TAG_FORMATS.filter(([, tag]) => params?.htmlTags.has(tag) === false)
+      if (refused.length === 0) return
+      realm.pub(createRootEditorSubscription$, (editor) =>
+        editor.registerNodeTransform(TextNode, (node) => {
+          for (const [format] of refused) if (node.hasFormat(format)) node.toggleFormat(format)
+        }),
+      )
+    },
+  })
   const markdownFidelityPlugin = createMarkdownFidelityPlugin(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
@@ -119,6 +146,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
     imagePreviewHandler: (src: string) => Promise<string>
+    htmlTags?: ReadonlySet<string>
   }> = ({
     markdown,
     onChange,
@@ -127,7 +155,9 @@ export const MDXEditorLazy = React.lazy(async () => {
     editorRef,
     imageUploadHandler,
     imagePreviewHandler,
+    htmlTags,
   }) => {
+    const underline = htmlTags?.has('u') ?? true
     return (
       <MDXEditor
         ref={editorRef}
@@ -147,10 +177,13 @@ export const MDXEditorLazy = React.lazy(async () => {
             imageUploadHandler,
             imagePreviewHandler,
             ImageDialog: MdxImageDialogBridge,
+            // A resized image exports as `<img>`.
+            disableImageResize: htmlTags?.has('img') === false,
           }),
           tablePlugin(),
           ...mdxJsxPlugins(),
           markdownFidelityPlugin(),
+          ...(htmlTags === undefined ? [] : [tagFormatGuardPlugin({ htmlTags })]),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {
@@ -173,7 +206,7 @@ export const MDXEditorLazy = React.lazy(async () => {
               <>
                 <UndoRedo />
                 <Separator />
-                <BoldItalicUnderlineToggles />
+                <BoldItalicUnderlineToggles options={underline ? undefined : ['Bold', 'Italic']} />
                 <CodeToggle />
                 <Separator />
                 <BlockTypeSelect />
@@ -302,6 +335,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  htmlTags,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -503,6 +537,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
                 editorRef={editorRef}
                 imageUploadHandler={imageUploadHandler}
                 imagePreviewHandler={imagePreviewHandler}
+                htmlTags={htmlTags}
               />
             </Suspense>
           </EditorErrorBoundary>

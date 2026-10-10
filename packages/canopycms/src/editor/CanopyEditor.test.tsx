@@ -46,6 +46,7 @@ const baseConfig = {
     previewBase: { 'content/posts': '/blog' },
     previewPrefix: '/preview',
   },
+  mdxAllow: { htmlTags: [] },
 } as const
 
 // The editor mounts behind EditorAuthGate, which asks the API who the user is first.
@@ -82,6 +83,7 @@ describe('CanopyEditor', () => {
     expect(props?.collections?.[0]?.children?.[0]?.path).toBe('content/posts')
     expect(props?.previewBaseByCollection).toEqual({ 'content/posts': '/blog' })
     expect(props?.previewPrefix).toBe('/preview')
+    expect(props?.mdxAllow).toEqual({ htmlTags: [] })
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })
 

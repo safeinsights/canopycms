@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { EntrySchema } from '../../config'
+import type { EntrySchema, MdxAllowlist } from '../../config'
 import { validateEntryFormValue } from '../entry-validator'
 import { findMarkdownSafetyIssues, findUnsafeMarkdown, splitByStored } from '../markdown-safety'
+import { resolveMdxAllowlist } from '../mdx-allowlist'
 
 const mdx = (source: string) => findUnsafeMarkdown(source, 'mdx')
 const md = (source: string) => findUnsafeMarkdown(source, 'md')
@@ -388,8 +389,10 @@ describe('splitByStored', () => {
       { summary: 'Intro, edited\n\n{legacy()}' },
       { summary: 'Intro\n\n{legacy()}' },
     )
-    expect(refused[0]?.message).toMatch(/already holds code.*unchanged or with the code removed/)
-    expect(split({ summary: '{new()}' }, {}).refused[0]?.message).not.toMatch(/already holds code/)
+    expect(refused[0]?.message).toMatch(
+      /already holds content it refuses.*unchanged or with that content removed/,
+    )
+    expect(split({ summary: '{new()}' }, {}).refused[0]?.message).not.toMatch(/already holds/)
   })
 
   it('refuses a stored field copied into a second list item', () => {
@@ -440,5 +443,253 @@ describe('splitByStored', () => {
     const { refused, kept } = split({ summary: '<A>{x()}' }, { summary: '<A>{x()}' })
     expect(kept).toEqual([])
     expect(refused.map((e) => e.fieldPath)).toEqual(['summary'])
+  })
+})
+
+describe('a markdown field with renderAs: mdx', () => {
+  const schema: EntrySchema = [
+    { name: 'summary', type: 'markdown', renderAs: 'mdx' },
+    { name: 'notes', type: 'markdown' },
+    { name: 'trusted', type: 'markdown', renderAs: 'mdx', executable: true },
+  ]
+  const paths = (data: Record<string, unknown>) =>
+    findMarkdownSafetyIssues(schema, 'json', data).map((e) => e.fieldPath)
+
+  it.each([
+    ['an expression', 'Total: {count}'],
+    ['an import', "import X from './x'"],
+    ['a script tag', '<script>alert(1)</script>'],
+    ['a member-expression component', '<motion.div />'],
+  ])('refuses %s, as an mdx field does', (_label, source) => {
+    expect(paths({ summary: source })).toEqual(['summary'])
+    expect(paths({ notes: source })).toEqual([])
+  })
+
+  it('keeps the markdown checks', () => {
+    expect(paths({ summary: '[x](javascript:alert(1))' })).toEqual(['summary'])
+  })
+
+  it('accepts what an mdx field accepts', () => {
+    expect(paths({ summary: '<Callout type="tip">**Hi** {/* note */}</Callout>' })).toEqual([])
+  })
+
+  it('is left alone when executable', () => {
+    expect(paths({ trusted: '{x()}' })).toEqual([])
+  })
+
+  it('makes the body of an md entry MDX', () => {
+    const fields: EntrySchema = [{ name: 'body', type: 'markdown', isBody: true, renderAs: 'mdx' }]
+    expect(
+      findMarkdownSafetyIssues(fields, 'md', { body: '{x()}' }).map((e) => e.fieldPath),
+    ).toEqual(['body'])
+  })
+
+  it('keeps stored code only while the field is saved unchanged', () => {
+    const stored = findMarkdownSafetyIssues(schema, 'json', { summary: 'Intro {legacy()}' })
+    const same = findMarkdownSafetyIssues(schema, 'json', { summary: 'Intro {legacy()}' })
+    const edited = findMarkdownSafetyIssues(schema, 'json', { summary: 'Intro! {legacy()}' })
+    expect(splitByStored(same, stored).refused).toEqual([])
+    expect(splitByStored(edited, stored).refused).toHaveLength(1)
+  })
+})
+
+describe('findUnsafeMarkdown with an mdxAllow allowlist', () => {
+  const narrow = resolveMdxAllowlist(
+    {
+      components: { Callout: { props: { type: ['info', 'warning'] } } },
+      htmlTags: [],
+      expressions: false,
+      fragments: false,
+    },
+    undefined,
+  )
+  const messages = (source: string, allow: MdxAllowlist = {}) =>
+    findUnsafeMarkdown(source, 'mdx', resolveMdxAllowlist(allow, undefined)).map((i) => i.message)
+  const narrowMessages = (source: string) =>
+    findUnsafeMarkdown(source, 'mdx', narrow).map((i) => i.message)
+
+  it('accepts prose and the allowed component with an allowed string value', () => {
+    expect(
+      narrowMessages(
+        '# Title\n\nSome **prose** with [a link](/x) and ![an image](/i.png).\n\n<Callout type="info">\n  Body\n</Callout>\n\n<Callout>No props</Callout>',
+      ),
+    ).toEqual([])
+  })
+
+  it('names a refused component and the allowed ones', () => {
+    expect(narrowMessages('<Note>x</Note>')).toEqual([
+      'Component <Note> is not allowed here; allowed: Callout (line 1)',
+    ])
+    expect(messages('<Note />', { components: { Callout: {}, Aside: {} } })).toEqual([
+      'Component <Note> is not allowed here; allowed: Aside, Callout (line 1)',
+    ])
+    expect(messages('<Note />', { components: {} })).toEqual([
+      'Component <Note> is not allowed: no components are allowed here (line 1)',
+    ])
+  })
+
+  it('refuses an allowed component inline as well as in flow', () => {
+    expect(narrowMessages('Text <Note>x</Note> more')).toHaveLength(1)
+  })
+
+  it('names a refused HTML tag and the allowed ones', () => {
+    expect(narrowMessages('<div>x</div>')).toEqual([
+      '<div> is not allowed here; allowed HTML tags: none (line 1)',
+    ])
+    expect(messages('<div><span>x</span></div>', { htmlTags: ['div', 'b'] })).toEqual([
+      '<span> is not allowed here; allowed HTML tags: b, div (line 1)',
+    ])
+  })
+
+  it('refuses every expression, inert ones and comments too, when expressions is false', () => {
+    for (const source of ['{300}', 'a {" "} b', '{/* note */}', '{}']) {
+      expect(narrowMessages(source)).toEqual([
+        '{…} expressions are not allowed here, not even comments or plain values (line 1)',
+      ])
+      expect(messages(source)).toEqual([])
+    }
+  })
+
+  it('takes a plain string where expressions is false, and refuses the same value in braces', () => {
+    expect(narrowMessages('<Callout type="info">x</Callout>')).toEqual([])
+    expect(narrowMessages('<Callout type={"info"}>x</Callout>')).toEqual([
+      'type on <Callout> must be a plain "string": {…} values are not allowed here (line 1)',
+    ])
+  })
+
+  it('names a refused prop value and the allowed ones', () => {
+    expect(narrowMessages('<Callout type="danger">x</Callout>')).toEqual([
+      'type="danger" on <Callout> is not allowed here; allowed values: "info", "warning" (line 1)',
+    ])
+    expect(narrowMessages('<Callout type>x</Callout>')).toHaveLength(1)
+  })
+
+  it('names a refused prop and the allowed ones', () => {
+    expect(narrowMessages('<Callout kind="x">x</Callout>')).toEqual([
+      'Prop kind on <Callout> is not allowed here; allowed: type (line 1)',
+    ])
+    expect(messages('<Callout kind="x" />', { components: { Callout: { props: {} } } })).toEqual([
+      'Prop kind on <Callout> is not allowed: <Callout> takes no props here (line 1)',
+    ])
+  })
+
+  it('reads a prop missing from the props map as not allowed, whatever its name', () => {
+    expect(narrowMessages('<Callout constructor="x" toString="y">x</Callout>')).toHaveLength(2)
+  })
+
+  it('accepts any prop of a component with no props list', () => {
+    expect(messages('<Callout kind="x" level={2} />', { components: { Callout: {} } })).toEqual([])
+  })
+
+  it('matches a value list against a literal expression, a bare prop and a string', () => {
+    const allow: MdxAllowlist = {
+      components: { Chart: { props: { height: [300], open: [true], tone: ['a'] } } },
+    }
+    expect(messages('<Chart height={300} open tone="a" />', allow)).toEqual([])
+    expect(messages('<Chart height="300" />', allow)).toEqual([
+      'height="300" on <Chart> is not allowed here; allowed values: 300 (line 1)',
+    ])
+    expect(messages('<Chart open={false} />', allow)).toEqual([
+      'open={…} on <Chart> is not allowed here; allowed values: true (line 1)',
+    ])
+    expect(messages('<Chart tone={["a"]} />', allow)).toHaveLength(1)
+  })
+
+  it('refuses fragments when fragments is false', () => {
+    expect(narrowMessages('<>x</>')).toEqual(['Fragments (<>…</>) are not allowed here (line 1)'])
+    expect(messages('<>x</>')).toEqual([])
+  })
+
+  describe('only narrows the base policy', () => {
+    it('still refuses a script URL in an allowed prop', () => {
+      const allow: MdxAllowlist = { components: { Link: { props: { href: true } } } }
+      expect(messages('<Link href="javascript:alert(1)" />', allow)).toHaveLength(1)
+    })
+
+    it('still refuses an allowed value list holding a script URL', () => {
+      const allow: MdxAllowlist = {
+        components: { Link: { props: { to: ['javascript:alert(1)'] } } },
+      }
+      expect(messages('<Link to="javascript:alert(1)" />', allow)).toHaveLength(1)
+    })
+
+    it('still refuses handlers, srcdoc and code in a prop the allowlist names', () => {
+      const allow: MdxAllowlist = {
+        components: { Button: { props: { onClick: true, srcDoc: true, data: true } } },
+      }
+      expect(messages('<Button onClick="x()" />', allow)).toHaveLength(1)
+      expect(messages('<Button srcDoc="<script></script>" />', allow)).toHaveLength(1)
+      expect(messages('<Button data={load()} />', allow)).toHaveLength(1)
+    })
+
+    it('still refuses a tag outside the safe set, and its unsafe attributes', () => {
+      expect(messages('<script>x</script>', { htmlTags: ['script'] })).toHaveLength(1)
+      expect(messages('<a onclick="x()">x</a>', { htmlTags: ['a'] })).toHaveLength(1)
+    })
+
+    it('still refuses a non-component name listed as a component', () => {
+      expect(messages('<MDXContent />', { components: { MDXContent: {} } })).toHaveLength(1)
+    })
+
+    it('still refuses imports and spreads', () => {
+      expect(narrowMessages("import X from './x'")).toHaveLength(1)
+      expect(messages('<Callout {...p} />', { components: { Callout: {} } })).toHaveLength(1)
+    })
+  })
+})
+
+describe('resolveMdxAllowlist', () => {
+  it('is the base policy when neither field nor site sets anything', () => {
+    const allow = resolveMdxAllowlist(undefined, undefined)
+    expect(allow.components).toBeUndefined()
+    expect(allow.htmlTags.has('div')).toBe(true)
+    expect(allow.expressions).toBe(true)
+    expect(allow.fragments).toBe(true)
+  })
+
+  it('takes each key from the field, else the site', () => {
+    const allow = resolveMdxAllowlist(
+      { components: { Callout: {} }, expressions: true },
+      { components: { Aside: {} }, htmlTags: [], expressions: false, fragments: false },
+    )
+    expect([...(allow.components?.keys() ?? [])]).toEqual(['Callout'])
+    expect(allow.htmlTags.size).toBe(0)
+    expect(allow.expressions).toBe(true)
+    expect(allow.fragments).toBe(false)
+  })
+
+  it('takes an empty list from the field over the site', () => {
+    const allow = resolveMdxAllowlist(
+      { htmlTags: [], components: {} },
+      { htmlTags: ['div'], components: { Aside: {} } },
+    )
+    expect(allow.htmlTags.size).toBe(0)
+    expect(allow.components?.size).toBe(0)
+  })
+})
+
+describe('findMarkdownSafetyIssues with a site mdxAllow', () => {
+  const site: MdxAllowlist = { components: { Callout: {} } }
+  const schema: EntrySchema = [
+    { name: 'summary', type: 'mdx' },
+    { name: 'aside', type: 'mdx', mdxAllow: { components: { Aside: {} } } },
+    { name: 'notes', type: 'markdown' },
+    { name: 'trusted', type: 'mdx', executable: true },
+  ]
+  const paths = (data: Record<string, unknown>) =>
+    findMarkdownSafetyIssues(schema, 'json', data, site).map((e) => e.fieldPath)
+
+  it('applies to an mdx field, under its own mdxAllow', () => {
+    expect(paths({ summary: '<Aside />', aside: '<Aside />' })).toEqual(['summary'])
+    expect(paths({ summary: '<Callout />', aside: '<Callout />' })).toEqual(['aside'])
+  })
+
+  it('does not reach a markdown or an executable field', () => {
+    expect(paths({ notes: '<Aside />', trusted: '<Aside />' })).toEqual([])
+  })
+
+  it('applies to the body of an mdx entry with no body field', () => {
+    const errors = findMarkdownSafetyIssues([], 'mdx', { body: '<Aside />' }, site)
+    expect(errors.map((e) => e.fieldPath)).toEqual(['body'])
   })
 })

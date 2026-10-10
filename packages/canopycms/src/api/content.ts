@@ -11,7 +11,13 @@ import {
   getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
-import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
+import type {
+  EntrySchema,
+  EntryTypeConfig,
+  EntryValidationIssue,
+  FlatSchemaItem,
+  MdxAllowlist,
+} from '../config'
 import { defineEndpoint } from './route-builder'
 import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { ReferenceValidator } from '../validation/reference-validator'
@@ -255,6 +261,7 @@ const storedMarkdownSafetyIssues = async (
   collectionPath: LogicalPath,
   slug: Slug,
   fields: EntrySchema,
+  siteAllow: MdxAllowlist | undefined,
 ): Promise<MarkdownSafetyFinding[]> => {
   // A stored file that does not read keeps nothing, so the save's code is refused, not a 500.
   const doc = await store
@@ -262,7 +269,7 @@ const storedMarkdownSafetyIssues = async (
     .catch(() => undefined)
   if (doc === undefined) return []
   const data = 'body' in doc ? mergeBodyIntoData(fields, doc.data, doc.body) : doc.data
-  return findMarkdownSafetyIssues(fields, doc.format, data)
+  return findMarkdownSafetyIssues(fields, doc.format, data, siteAllow)
 }
 
 const writeContentHandler = async (
@@ -452,10 +459,11 @@ const writeContentHandler = async (
 
       // Code in markdown or MDX (validation/markdown-safety.ts). A field the stored entry held
       // with code is kept, with a warning, when saved unchanged; any other code is refused.
-      const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation)
+      const { mdxAllow } = ctx.services.config
+      const unsafe = findMarkdownSafetyIssues(fields, body.format, dataForValidation, mdxAllow)
       if (unsafe.length > 0) {
         const stored = exists
-          ? await storedMarkdownSafetyIssues(store, schemaItem.logicalPath, slug, fields)
+          ? await storedMarkdownSafetyIssues(store, schemaItem.logicalPath, slug, fields, mdxAllow)
           : []
         const { refused, kept } = splitByStored(unsafe, stored)
         fieldErrors.push(...refused)
@@ -463,7 +471,7 @@ const writeContentHandler = async (
           keptWarnings.push({
             level: 'warning',
             fieldPath: e.fieldPath,
-            message: `holds code that runs when the page renders, kept because the saved entry already had it: ${e.message}. Ask a developer to move it into a component.`,
+            message: `holds content this field refuses, kept because the saved entry already had it: ${e.message}. Ask a developer to move any code into a component.`,
           })
         }
       }
