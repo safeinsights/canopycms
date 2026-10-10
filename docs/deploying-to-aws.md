@@ -1093,7 +1093,7 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
   which boots while the old one drains. Saves keep working; publishing, pull requests and sync
   wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
-  12–15 minutes leaves a gap of about 20, inside the worker-down alarm's 30.
+  12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
 - **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its log
   directory and a private `/tmp` are writable, not its own code; `ProtectHome=tmpfs`, no
   capabilities, and the kernel, device and namespace protections.
