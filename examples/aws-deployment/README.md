@@ -26,8 +26,8 @@ See [docs/deploying-to-aws.md](../../docs/deploying-to-aws.md) for the full walk
   through tsx, which does not check types, so the workflow runs `tsc --noEmit -p infrastructure` before
   deploying. It extends the project's own `tsconfig.json`, and the stack imports the project's
   `canopycms.config.ts`; this directory has neither, nor the CDK packages, so it does not type-check on its own.
-  The scaffold test (`packages/canopycms-cdk/src/scaffold-synth.test.ts`) runs that `tsc` command on these
-  files as `init-deploy aws` writes them into a Next.js app.
+  The scaffold test (`packages/canopycms-cdk/src/scaffold-synth.test.ts`) runs that `tsc` command on the
+  files `init-deploy aws` writes into a Next.js app.
 - `deploy-cms.yml` — GitHub Actions workflow. Belongs at `.github/workflows/deploy-cms.yml`.
 
 `cdk deploy` is the only thing that ships code here — see the comments in `deploy-cms.yml` for why pairing it

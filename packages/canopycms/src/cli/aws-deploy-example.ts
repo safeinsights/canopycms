@@ -1,8 +1,8 @@
 /**
  * Renders `examples/aws-deployment/` from the `init-deploy aws` templates, through the same
  * functions the CLI calls. `scripts/generate-aws-example.ts` writes the result and
- * `aws-deploy-example.test.ts` fails when the checked-in copy differs, so the example cannot
- * drift from what the command scaffolds.
+ * `aws-deploy-example.test.ts` fails when the checked-in copy differs, so a template edit cannot
+ * leave the example behind.
  */
 
 import path from 'node:path'
