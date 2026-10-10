@@ -23,6 +23,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 
 import type { BlockConfig, FieldConfig } from '../../config'
+import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
@@ -261,7 +262,9 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                                 block.value?.[f.name],
                                 (next) =>
                                   updateBlockValue(idx, {
-                                    ...block.value,
+                                    // A null or array value has no fields to keep, and spreading
+                                    // an array would save it index-keyed.
+                                    ...(isPlainRecord(block.value) ? block.value : {}),
                                     [f.name]: next,
                                   }),
                                 [...currentPath, f.name],
