@@ -27,13 +27,13 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
+import type { GitHubGateway } from './github-gateway'
 
 /** `syncGit` is public but the wrapper around it is not; both are stubbed here. */
 type SyncInternals = {
   syncGit(): Promise<void>
   syncGitWithCredentialRefresh(): Promise<void>
-  buildGitHubUrl(): Promise<string>
 }
 
 describe('CmsWorker credential refresh on a failing sync', () => {
@@ -86,7 +86,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       gitSyncInterval: 20,
       taskPollInterval: 10_000,
     })
-    ;(worker as unknown as SyncInternals).buildGitHubUrl = async () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
     return worker
   }
 
@@ -181,12 +181,28 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       await expect(wrapperOf(worker).syncGitWithCredentialRefresh()).rejects.toThrow()
       expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
     })
+
+    it('rethrows the SYNC error when the gateway cannot even be built', async () => {
+      // No credential at all, and no gateway installed: building one throws.
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        baseBranch: 'main',
+      })
+      wrapperOf(worker).syncGit = vi.fn().mockRejectedValue(new Error('fetch rejected by GitHub'))
+
+      await expect(wrapperOf(worker).syncGitWithCredentialRefresh()).rejects.toThrow(
+        'fetch rejected by GitHub',
+      )
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
+    })
   })
 
   describe('on a failing task', () => {
     type TaskInternals = {
       running: boolean
-      buildGitHubUrl(): Promise<string>
+      github(): GitHubGateway
       pushBranchToGitHub(branch: string): Promise<void>
     }
 
@@ -219,7 +235,7 @@ describe('CmsWorker credential refresh on a failing sync', () => {
      * A worker whose push is rejected for as long as it holds the revoked token.
      *
      * The stub stands in only for GitHub refusing a dead credential. It reads
-     * the credential through the worker's REAL `buildGitHubUrl()` -- the path a
+     * the credential through the gateway's REAL `buildGitHubUrl()` -- the path a
      * real push takes -- so it sees whatever `refreshCredential()` last swapped
      * in. Its rejection carries no `.status`, as a real `git push` failure does
      * not, so the task path classifies it transient and retries.
@@ -245,8 +261,9 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       })
       const internals = worker as unknown as TaskInternals
       internals.running = true
+      const gateway = internals.github() as unknown as { buildGitHubUrl(): Promise<string> }
       const push = vi.fn(async (_branch: string) => {
-        if ((await internals.buildGitHubUrl()).includes('ghp_revoked')) {
+        if ((await gateway.buildGitHubUrl()).includes('ghp_revoked')) {
           throw new Error(
             "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/test-owner/test-repo.git/'",
           )
@@ -329,6 +346,34 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       expect(pending.retryCount).toBe(1)
       expect(pending.error).toMatch(/Authentication failed/)
       expect(pending.error).not.toMatch(/AccessDenied/)
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
+    })
+
+    it('keeps draining the queue when the gateway cannot even be built', async () => {
+      // No credential at all, and no gateway installed: building one throws.
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        baseBranch: 'main',
+        maxRetries: MAX_RETRIES,
+      })
+      const internals = worker as unknown as TaskInternals
+      internals.running = true
+      internals.pushBranchToGitHub = vi.fn().mockRejectedValue(new Error('push refused'))
+      const first = await enqueuePush()
+      const second = await enqueueTask(path.join(workspacePath, '.tasks'), {
+        action: 'push-branch',
+        payload: { branch: 'feature-2' },
+      })
+
+      await worker.processTaskQueue()
+
+      for (const id of [first, second]) {
+        const pending = JSON.parse(await fs.readFile(taskPath('pending', id), 'utf-8'))
+        expect(pending.retryCount).toBe(1)
+        expect(pending.error).toMatch(/push refused/)
+      }
       expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
     })
 

@@ -4,16 +4,16 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
-import { Octokit } from '@octokit/rest'
 import { recoverOrphanedTasks, cmsTaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import { createCanopyOctokit } from '../github-service'
+import { resolveWorkerGitHubAuth, type GitHubAuthConfig } from './github-auth'
 import {
-  isTransientAuthFailure,
-  resolveWorkerGitHubAuth,
-  type GitHubAuthConfig,
-  type ResolvedGitHubAuth,
-} from './github-auth'
+  createLocalGitHubGateway,
+  refreshGitHubCredential,
+  type GitHubGateway,
+  type GitHubReachability,
+  type LocalGitHubGatewayOptions,
+} from './github-gateway'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
 import { readHeadBranch } from '../utils/git'
@@ -35,7 +35,6 @@ import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
-import { GitHubMirror, type MirrorSession } from './github-mirror'
 import {
   SharedRepoRefusalError,
   UntrustedRepoConfigError,
@@ -160,22 +159,6 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * process.
    */
   drainDeadlineMs?: number
-}
-
-/** `target` with symlinks resolved as far as it exists, so a link cannot hide where it lands. */
-async function realpathOfNearest(target: string): Promise<string> {
-  const missing: string[] = []
-  let current = path.resolve(target)
-  for (;;) {
-    try {
-      return path.join(await fs.realpath(current), ...missing.reverse())
-    } catch {
-      const parent = path.dirname(current)
-      if (parent === current) return path.resolve(target)
-      missing.push(path.basename(current))
-      current = parent
-    }
-  }
 }
 
 /** Per workspace, so two workers on one host (tests, dev) never share a mirror. */
@@ -367,16 +350,13 @@ export async function recordWorkerStartupFailure(options: {
 }
 
 export class CmsWorker {
-  // Built by ensureGitHubAuth(), not the constructor, so a credential config
-  // error is throwable somewhere start()'s catch can record it. A FIELD rather
-  // than a getter because two test files assign a mock over it (the same
-  // INVARIANT worker-context.ts states), and ensureGitHubAuth() will not
-  // overwrite one that is already there.
-  private octokit!: Octokit
+  // Created by github(), not the constructor, so a credential config error is
+  // throwable somewhere start()'s catch can record it. A FIELD because tests
+  // install their own (test-utils/worker-gateway.ts), which github() keeps.
+  private gateway?: GitHubGateway
   private taskDir: string
   private remoteGitPath: string
   private stateDirectory: string
-  private githubMirror: GitHubMirror
   private contentBranchesPath: string
   // Set by the constructor when configured, else by resolveBaseBranch() in
   // start(); read through the two getters below, which throw until then.
@@ -413,11 +393,6 @@ export class CmsWorker {
   // Normally initialized at the top of start(); see ensureStatusReport() for
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
-  // Which GitHub credential this worker uses, resolved ONCE so Octokit and
-  // every git URL provably authenticate as the same identity. Resolved lazily
-  // by ensureGitHubAuth(), NOT in the constructor (see that method):
-  // `undefined` means "not resolved yet", never "no credential".
-  private githubAuth?: ResolvedGitHubAuth
   // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
   private lockLostMessage?: string
   // Who wrote worker-status.json when this worker took the lock: until its own first write
@@ -453,11 +428,6 @@ export class CmsWorker {
     this.drainDeadlineMs = config.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS
     this.contentRoot = config.contentRoot ?? 'content'
     this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
-    this.githubMirror = new GitHubMirror(
-      this.stateDirectory,
-      this.remoteGitPath,
-      this.taskTimeoutMs,
-    )
   }
 
   /**
@@ -518,13 +488,11 @@ export class CmsWorker {
    * Built FRESH on every call, with instance-backed members as functions rather
    * than copied values. See WorkerContext's INVARIANT: a context that captured
    * any of them at construction time would hand the extracted code the pre-test
-   * value, which for `buildGitHubUrl` means a test's push going to github.com
-   * for real instead of its local fixture repo.
+   * value, which for the GitHub gateway means a test's push going to
+   * github.com for real instead of its local fixture repo.
    */
   private ctx(): WorkerContext {
     return {
-      githubOwner: this.config.githubOwner,
-      githubRepo: this.config.githubRepo,
       baseBranch: this.baseBranch,
       sanitizedBaseBranch: this.sanitizedBaseBranch,
       taskDir: this.taskDir,
@@ -536,10 +504,7 @@ export class CmsWorker {
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
       log: this.log,
-      octokit: () => this.octokitClient(),
-      buildGitHubUrl: () => this.buildGitHubUrl(),
-      githubMirror: () => this.githubMirror,
-      refreshGitHubCredential: () => this.refreshGitHubCredential(),
+      github: () => this.github(),
       branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
       executeTask: (task, signal) => this.executeTask(task, signal),
       pushBranchToGitHub: (branch, signal) => this.pushBranchToGitHub(branch, signal),
@@ -623,7 +588,7 @@ export class CmsWorker {
       // Same shape, same reason: a half-configured credential throws HERE,
       // inside the try, rather than out of `new CmsWorker(...)` where nothing
       // could record it.
-      this.ensureGitHubAuth()
+      const github = this.github()
 
       // Same again. NaN would never expire a schema hold, which is the one
       // thing the bound exists to prevent.
@@ -635,11 +600,8 @@ export class CmsWorker {
 
       // BEFORE ensureRemoteGit(): its clone is the first thing to use the
       // credential, and its catch blames the repository rather than the
-      // credential. See preflightGitHubAppAuth().
-      await this.preflightGitHubAppAuth()
-
-      await this.ensureStateDirectoryIsPrivate()
-      await this.githubMirror.ensure()
+      // credential. See GitHubGateway.prepare().
+      await github.prepare()
       await this.resolveBaseBranch()
       await this.ensureRemoteGit()
       await this.recordBaseBranchInRemoteHead()
@@ -677,7 +639,7 @@ export class CmsWorker {
       report.lastFatalError = {
         // [REDACT] Persisted to worker-status.json and served to the browser by
         // the admin panel -- must never carry the bot token a poisoned or
-        // failed git URL (buildGitHubUrl()) can embed.
+        // failed git URL (the gateway's) can embed.
         message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
@@ -1007,12 +969,7 @@ export class CmsWorker {
       const fromRemoteGit = remoteGitExists && (await this.hasContentBranch(this.remoteGitPath))
       name = fromRemoteGit
         ? await readHeadBranch(this.remoteGitPath, sharedRepoGit(this.remoteGitPath, 'bare'))
-        : (
-            await this.octokitClient().repos.get({
-              owner: this.config.githubOwner,
-              repo: this.config.githubRepo,
-            })
-          ).data.default_branch
+        : await this.github().defaultBranch()
     } catch (err) {
       throw undetermined(err)
     }
@@ -1267,10 +1224,11 @@ export class CmsWorker {
     workerLog(
       `remote.git has no branch '${this.baseBranch}': replacing it if GitHub has every ref in it`,
     )
-    const stagingPath = await this.seedRemoteGitStaging(async (mirror) => {
+    const stagingPath = await this.seedRemoteGitStaging(async (github) => {
+      const onGitHub = await github.onGitHub([...refs.values()])
       const unpushed: string[] = []
       for (const [ref, id] of refs) {
-        if (!(await mirror.isOnGitHub(id))) unpushed.push(ref)
+        if (!onGitHub.has(id)) unpushed.push(ref)
       }
       if (unpushed.length === 0) return
       const shown = unpushed.slice(0, MAX_REFS_LISTED)
@@ -1346,7 +1304,7 @@ export class CmsWorker {
    * after the GitHub fetch, and its throw stops the seed. Throws with the staging directory gone.
    */
   private async seedRemoteGitStaging(
-    check?: (mirror: MirrorSession) => Promise<void>,
+    check?: (github: GitHubReachability) => Promise<void>,
   ): Promise<string> {
     // Seeded under a TEMP name and renamed into place only once verified, so a crash mid-seed
     // leaves only this staging directory, which the next boot deletes, rather than a poisoned
@@ -1355,17 +1313,13 @@ export class CmsWorker {
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      const githubUrl = await this.buildGitHubUrl()
-      await this.githubMirror.exclusive(async (mirror) => {
-        await mirror.fetchFromGitHub(githubUrl)
-        await check?.(mirror)
-        if ((await mirror.branchTip(this.baseBranch)) === null) {
-          throw new Error(`GitHub has no branch '${this.baseBranch}'`)
-        }
-        await fs.mkdir(stagingPath)
-        const staging = sharedRepoGit(stagingPath, 'bare')
-        await staging.raw(['init', '--quiet', '--bare'])
-        await mirror.seedBareRepository(stagingPath)
+      await this.github().seedBareRepository(stagingPath, {
+        baseBranch: this.baseBranch,
+        beforeSeed: check,
+        createRepository: async () => {
+          await fs.mkdir(stagingPath)
+          await sharedRepoGit(stagingPath, 'bare').raw(['init', '--quiet', '--bare'])
+        },
       })
 
       // The staging path is predictable, and so writable by the Lambda while seeding runs.
@@ -1400,23 +1354,6 @@ export class CmsWorker {
     return stagingPath
   }
 
-  /**
-   * Refuse a state directory on the shared filesystem: the mirror there would be as writable by
-   * the Lambda as remote.git is.
-   */
-  private async ensureStateDirectoryIsPrivate(): Promise<void> {
-    const workspace = await realpathOfNearest(this.config.workspacePath)
-    const state = await realpathOfNearest(this.stateDirectory)
-    const relative = path.relative(workspace, state)
-    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
-      throw new Error(
-        `The worker's state directory (${this.stateDirectory}) is inside its shared workspace ` +
-          `(${this.config.workspacePath}). It holds the repository the GitHub credential is used ` +
-          `in, so it must be somewhere the CMS Lambda cannot write.`,
-      )
-    }
-  }
-
   // --- Task-queue cluster (worker/task-runner.ts) ------------------------
   //
   // READ THIS BEFORE STUBBING ANY DELEGATOR BELOW: they are not all the same,
@@ -1449,118 +1386,29 @@ export class CmsWorker {
   }
 
   /**
-   * Resolve which GitHub credential this worker uses, once, and build the
-   * Octokit client from it.
-   *
-   * DEFERRED out of the constructor deliberately, exactly as
-   * `ensureSettingsBranch()` is and for the reason that method records:
-   * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
-   * set, neither set, an unusable mint timeout or refresh interval), and a
-   * throw during `new CmsWorker(...)` lands BEFORE start()'s catch, which
-   * records `lastFatalError` for every entrypoint.
-   *
-   * Idempotent, and it does NOT replace an `octokit` a test has already
-   * assigned onto the instance — see the field's comment.
+   * The worker's GitHub gateway, created on first use: inside start()'s try, or wherever a test
+   * entry point first reaches it. Creating it resolves the credential, which throws for a
+   * half-configured one (both set, neither set, an unusable mint timeout or refresh interval) --
+   * never in the constructor, for the reason `ensureSettingsBranch()` gives. Keeps a gateway a
+   * test installed.
    */
-  private ensureGitHubAuth(): ResolvedGitHubAuth {
-    if (!this.githubAuth) {
-      this.githubAuth = resolveWorkerGitHubAuth(this.config)
-    }
-    if (!this.octokit) {
-      this.octokit = createCanopyOctokit(this.githubAuth.octokitAuth)
-    }
-    return this.githubAuth
+  private github(): GitHubGateway {
+    this.gateway ??= createLocalGitHubGateway(this.localGitHubGatewayOptions())
+    return this.gateway
   }
 
-  /**
-   * The Octokit client, built on first use. Every read goes through here rather
-   * than touching the field, which the constructor does not populate: a method
-   * reached without start() would otherwise see `undefined`.
-   * `rebaseActiveBranches()` is exactly that case — apps/test-app's e2e route
-   * calls it directly, and its `pollMergeState` dispatch reads `ctx.octokit()`.
-   */
-  private octokitClient(): Octokit {
-    this.ensureGitHubAuth()
-    return this.octokit
-  }
-
-  /**
-   * The single seam through which every git-over-HTTPS credential reaches a git
-   * command. The only other consumer is Octokit, built from the same resolution
-   * by `ensureGitHubAuth()` above.
-   *
-   * Async because under GitHub App auth `resolveGitToken` mints an installation
-   * token lasting about an hour. NOTHING may cache what this returns — a URL
-   * built from an installation token goes stale with it — and resolving per use
-   * is cheap, since `@octokit/auth-app` answers from its own cache until the
-   * token is near expiry.
-   *
-   * A mint failure propagates AS THROWN, carrying the `.status` that
-   * `isPermanentTaskFailure` classifies on — see github-auth.ts.
-   *
-   * Do NOT add a parallel token accessor alongside it. Every instance-backed
-   * WorkerContext member stays a function precisely so tests can replace it
-   * through the instance (worker-context.ts's INVARIANT); a second credential
-   * path would be one nothing stubs.
-   */
-  private async buildGitHubUrl(): Promise<string> {
-    const token = await this.ensureGitHubAuth().resolveGitToken()
-    return `https://x-access-token:${token}@github.com/${this.config.githubOwner}/${this.config.githubRepo}.git`
-  }
-
-  /**
-   * Prove the GitHub App credential works before anything depends on it.
-   *
-   * Without this the first failure comes out of `ensureRemoteGit`'s bare clone
-   * below, whose catch blames the repository ("may be empty, or the base branch
-   * may not exist") and sends an operator holding a bad private key looking for
-   * a problem that does not exist. Called from start()'s try, so the failure is
-   * also recorded as `lastFatalError` and reaches the admin panel. No-op on the
-   * token path: a PAT is a literal, so the first real request checks everything
-   * this could.
-   *
-   * FATAL UNLESS THE FAILURE POSITIVELY LOOKS TRANSIENT. Both halves are
-   * load-bearing. Not always fatal, because the two credential paths must
-   * degrade alike: on the token path a GitHub 502 during boot is absorbed (a
-   * warm `remote.git` short-circuits `ensureRemoteGit`, `Promise.allSettled`
-   * swallows the initial `syncGit`) so the worker starts and its loops retry,
-   * while rethrowing every error class would make the App path exit and systemd
-   * crash-loop it until GitHub recovered — each iteration telling the operator
-   * to check their private key.
-   *
-   * But fail CLOSED, via `isTransientAuthFailure` rather than the inverse of
-   * `isPermanentTaskFailure`: that classifier defaults a status-less error to
-   * transient, which is right on the task path (bounded by `maxRetries`) and
-   * wrong here (bounded by nothing). A key that never reaches GitHub at all —
-   * the wrong type, or too mangled to sign with — fails locally and
-   * status-lessly, so defaulting to transient would boot a worker with a dead
-   * credential, record no `lastFatalError`, and show healthy in the admin panel
-   * while every task and every sync failed.
-   */
-  private async preflightGitHubAppAuth(): Promise<void> {
-    if (!this.config.githubAppAuth) return
-    try {
-      await this.ensureGitHubAuth().resolveGitToken()
-    } catch (err) {
-      // [REDACT] Both messages below reach worker-status.json and the browser.
-      const detail = redactCredentials(getErrorMessage(err))
-      if (isTransientAuthFailure(err)) {
-        workerLogWarn(
-          `Could not verify GitHub App authentication at startup: ${detail}. ` +
-            'Continuing — this looks transient, and the credential is minted again on first use.',
-        )
-        return
-      }
-      // Re-thrown WITH context, unlike buildGitHubUrl() above, which must
-      // preserve the error identity for task classification. Nothing classifies
-      // a startup failure -- start()'s catch records the message and the
-      // process exits -- so the operator-facing wording wins here.
-      throw new Error(
-        `GitHub App authentication failed: ${detail}. ` +
-          'Check the app id, the installation id, and that the private key belongs to that app.',
-      )
+  /** What the in-process gateway is built from; test-utils/worker-gateway.ts builds from it too. */
+  private localGitHubGatewayOptions(): LocalGitHubGatewayOptions {
+    return {
+      githubOwner: this.config.githubOwner,
+      githubRepo: this.config.githubRepo,
+      auth: resolveWorkerGitHubAuth(this.config),
+      githubApp: Boolean(this.config.githubAppAuth),
+      stateDirectory: this.stateDirectory,
+      workspacePath: this.config.workspacePath,
+      remoteGitPath: this.remoteGitPath,
+      timeoutMs: this.taskTimeoutMs,
     }
-    workerLog('GitHub App authentication verified')
   }
 
   /**
@@ -1636,10 +1484,10 @@ export class CmsWorker {
   /**
    * `syncGit`, plus "the credential may have rotated" on the way out.
    *
-   * One of `refreshGitHubCredential`'s two call sites, and the one that works
-   * when nobody is publishing: it fetches from GitHub every `gitSyncInterval`
-   * whether or not anyone is editing, so a credential that has stopped working
-   * surfaces here even with no push queued for days.
+   * One of `refreshGitHubCredential`'s two call sites, and the one that
+   * works when nobody is publishing: it fetches from GitHub every
+   * `gitSyncInterval` whether or not anyone is editing, so a credential that has
+   * stopped working surfaces here even with no push queued for days.
    *
    * The SYNC failure is what propagates to `scheduleLoop`'s catch;
    * `refreshGitHubCredential` never throws, so nothing it does can replace it.
@@ -1648,63 +1496,8 @@ export class CmsWorker {
     try {
       await this.syncGit()
     } catch (err) {
-      await this.refreshGitHubCredential()
+      await refreshGitHubCredential(() => this.github())
       throw err
-    }
-  }
-
-  /**
-   * Re-read the GitHub credential, because an operation using it just failed.
-   *
-   * **Two call sites, each covering what the other cannot.** The git-sync loop
-   * (`syncGitWithCredentialRefresh`) notices a dead credential when nobody is
-   * publishing. `processTaskQueue`'s per-task catch is what saves a publish: a
-   * push task spends its retry budget on a 5s/10s/20s backoff, well inside one
-   * 5-minute sync interval, so with the sync loop as the only trigger a publish
-   * meeting a rotated token fails permanently while the working one is already
-   * in the secret store. Every consumer reaches the credential through
-   * `ensureGitHubAuth()`, which reads it per use, so a refresh from either site
-   * repairs all of them for their NEXT use — but not an attempt already failed.
-   *
-   * NOT gated on the error looking auth-shaped, at either site: a `git
-   * fetch`/`push` rejected for a dead token throws a plain simple-git error
-   * (exit 128, no HTTP `.status`) that `isPermanentTaskFailure` reads as
-   * transient, so a gate keyed on it would never fire. Two floors bound the
-   * cost instead — core's `refreshGitHubTokenMinIntervalMs` (default 60s,
-   * enforced by `refreshCredential` in github-auth.ts) and whatever floor the
-   * provider keeps (the AWS one reads at most once per five minutes) — and both
-   * call sites share both, so a read issued by one throttles the other. On the
-   * GitHub App path the refresh is a no-op.
-   *
-   * **Never throws**: both callers are already reporting the failure that must
-   * reach the log. **Bounded by `taskTimeoutMs`**, because the task loop awaits
-   * it and a read that never settled would stop every publish queued behind it
-   * (an adopter's provider may have no bound at all; the AWS one can take 87s
-   * for one `getSecret`). A losing read is not cancelled and may land later, but
-   * `refreshCredential` discards a result older than one already applied.
-   */
-  private async refreshGitHubCredential(): Promise<void> {
-    let timer: NodeJS.Timeout | undefined
-    const timedOut = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`the re-read did not settle within ${this.taskTimeoutMs}ms`)),
-        this.taskTimeoutMs,
-      )
-    })
-    try {
-      // `ensureGitHubAuth()` inside the try: it throws for a half-configured
-      // credential, and that has to be logged like any other refresh failure.
-      await Promise.race([this.ensureGitHubAuth().refreshCredential(), timedOut])
-    } catch (err) {
-      // [REDACT] The message can name the secret and, on a malformed-secret
-      // path, quote what was read. Console only, but the rule is uniform --
-      // see redactCredentials in utils/error.ts.
-      workerLogError(
-        'Failed to re-read the GitHub credential after a failure:',
-        redactCredentials(getErrorMessage(err)),
-      )
-    } finally {
-      clearTimeout(timer)
     }
   }
 

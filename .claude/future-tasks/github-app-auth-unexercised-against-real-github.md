@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-09-13, filed while landing `canopycms init-github-app` (PR #333) and deliberately scoped OUT of it — it needs account-owner rights and a live deployment, so folding it in would make a testable PR depend on a manual one. **Adopter request #45/#329 shipped GitHub App auth that has never authenticated to github.com**: every test mocks Octokit. Unproven in particular are the `x-access-token:<installation token>@github.com` URL for clone/fetch/`--force-with-lease` (`cms-worker.ts:823-826`), the `@octokit/auth-app@6` -> `universal-github-app-jwt@1` resolution the worker actually bundles, `preflightGitHubAppAuth`'s boot mint, and whether `contents: write` + `pull_requests: write` really covers the two **GraphQL** mutations — the single entry in `CANOPY_APP_PERMISSIONS` derived by analogy rather than from GitHub's permissions reference, which enumerates REST endpoints only. The failure mode is why it is P2 rather than P3: `convert-to-draft`'s GraphQL failure carries no HTTP status, so `isPermanentTaskFailure` reads a permission denial as TRANSIENT and wedges the branch in `sync-failed` naming no permission. Plan is to run `init-github-app create`/`verify` against the `canopycms` org's `deploy-test` repo — the run is itself half the test, since the manifest conversion, the name limit and the 422-on-unapproved-permission behaviour are browser- and owner-gated and can never run in CI — then **narrow the installation deliberately** and confirm `verify` catches it. Afterwards re-measure `APP_NAME_MAX_LENGTH` (34) and `APP_SUMMARY_MAX_LENGTH` (37), both carried over from a sibling project rather than measured here
+  New 2026-09-13, filed while landing `canopycms init-github-app` (PR #333) and deliberately scoped OUT of it — it needs account-owner rights and a live deployment, so folding it in would make a testable PR depend on a manual one. **Adopter request #45/#329 shipped GitHub App auth that has never authenticated to github.com**: every test mocks Octokit. Unproven in particular are the `x-access-token:<installation token>@github.com` URL for clone/fetch/`--force-with-lease` (`worker/github-gateway.ts`, `buildGitHubUrl`), the `@octokit/auth-app@6` -> `universal-github-app-jwt@1` resolution the worker actually bundles, `preflightGitHubAppAuth`'s boot mint, and whether `contents: write` + `pull_requests: write` really covers the two **GraphQL** mutations — the single entry in `CANOPY_APP_PERMISSIONS` derived by analogy rather than from GitHub's permissions reference, which enumerates REST endpoints only. The failure mode is why it is P2 rather than P3: `convert-to-draft`'s GraphQL failure carries no HTTP status, so `isPermanentTaskFailure` reads a permission denial as TRANSIENT and wedges the branch in `sync-failed` naming no permission. Plan is to run `init-github-app create`/`verify` against the `canopycms` org's `deploy-test` repo — the run is itself half the test, since the manifest conversion, the name limit and the 422-on-unapproved-permission behaviour are browser- and owner-gated and can never run in CI — then **narrow the installation deliberately** and confirm `verify` catches it. Afterwards re-measure `APP_NAME_MAX_LENGTH` (34) and `APP_SUMMARY_MAX_LENGTH` (37), both carried over from a sibling project rather than measured here
 ---
 # [P2] The GitHub App auth path has never run against real GitHub — exercise it with `init-github-app`
 
@@ -20,20 +20,24 @@ ever authenticated to github.com.** Specifically unproven against the real servi
   `@octokit/auth-app@6` → `universal-github-app-jwt@1` resolution the worker actually bundles
   (`packages/canopycms/src/worker/github-auth.ts:548-567` records why that resolution, not the
   key, is the variable);
-- that `buildGitHubUrl()`'s `https://x-access-token:<token>@github.com/…` form is accepted for
+- that the gateway's `buildGitHubUrl()` `https://x-access-token:<token>@github.com/…` form is accepted for
   clone, fetch and `--force-with-lease` push by an **installation** token
-  (`worker/cms-worker.ts:823-826`);
+  (`worker/github-gateway.ts:182-187`);
 - that `contents: write` + `pull_requests: write` is genuinely sufficient — in particular for
   the two **GraphQL** mutations, which is the one entry in `CANOPY_APP_PERMISSIONS` derived by
   analogy rather than from GitHub's permissions reference (that reference enumerates REST
   endpoints only);
-- that `preflightGitHubAppAuth()`'s boot mint works and that
+- that the gateway's `preflightGitHubAppAuth()` boot mint works and that
   `isTransientAuthFailure()` classifies a real GitHub failure the way it classifies a
-  synthesised one (`worker/cms-worker.ts:856-880`).
+  synthesised one (`worker/github-gateway.ts:206-227`).
+
+The permission-drift guard (`cli/github-app-permission-drift.test.ts`) never drives the gateway's
+`defaultBranch()` (`repos.get`, needing only `metadata`), so that call is in no `OPERATION_PERMISSIONS` entry.
 
 ## Why it matters more than "untested feature"
 
-The failure is quiet. `task-runner.ts:387-403` (`convert-to-draft`) runs a GraphQL mutation,
+The failure is quiet. `convert-to-draft` (the gateway's `convertPullRequestToDraft`,
+`worker/github-gateway.ts`) runs a GraphQL mutation,
 and a GraphQL failure answers HTTP 200 with a body-level error carrying **no numeric status** —
 so `isPermanentTaskFailure` reads a permission denial as transient, retries to the cap, and
 wedges the branch in `sync-failed` with nothing naming a permission. And

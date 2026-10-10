@@ -78,7 +78,8 @@ separates a guard from its rationale.
 **What the split cost, recorded because it is the reusable lesson.** The test suite is the
 whole safety net (eight `cms-worker*.test.ts` files, 5,860 lines, all passing unmodified),
 and it drives `CmsWorker` by reaching *through the instance* — replacing `buildGitHubUrl`,
-`octokit`, `executeTask` and `pushBranchToGitHub` on it, setting `running` directly, and
+`octokit` (both now on the GitHub gateway, `worker/github-gateway.ts`, which tests install with
+`useLocalGitHubGateway`), `executeTask` and `pushBranchToGitHub` on it, setting `running` directly, and
 subclassing to override two `protected` test hooks. Two of those four replacements were
 missed when cataloguing that surface up front, and calling the module-level function
 directly instead of routing through the context turned 8 tests red. The fix was to widen

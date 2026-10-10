@@ -31,7 +31,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { mockConsole, openBareRepo } from '../test-utils'
+import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
@@ -191,7 +191,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     })
     // Point the GitHub fetch/push URL at the local bare fixture instead of a
     // real GitHub URL (same technique as cms-worker.test.ts's syncGit suite).
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => githubPath
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }

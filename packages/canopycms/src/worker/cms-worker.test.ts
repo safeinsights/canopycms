@@ -19,6 +19,7 @@ import {
   mockConsole,
   noCommitsBetweenError,
   octokitErrorFor,
+  useLocalGitHubGateway,
   type MockConsole,
 } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
@@ -411,7 +412,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
 
   // [REDACT] task.error is persisted to failed/<id>.json and served to the
   // browser by the admin panel's Tasks tab. A git push failure's message
-  // can embed the bot token (buildGitHubUrl() builds
+  // can embed the bot token (the gateway's buildGitHubUrl() builds
   // https://x-access-token:TOKEN@github.com/...), so it must be redacted
   // before it reaches disk.
   it('redacts a token-bearing error message before persisting task.error via failTask', async () => {
@@ -445,15 +446,17 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
 
 type PrWorkerInternals = {
   running: boolean
-  octokit: {
-    pulls: {
-      list: ReturnType<typeof vi.fn>
-      create: ReturnType<typeof vi.fn>
-      update: ReturnType<typeof vi.fn>
-    }
-    graphql: ReturnType<typeof vi.fn>
-  }
   pushBranchToGitHub(branch: string): Promise<void>
+}
+
+/** The Octokit calls the PR tests stub; installed through the worker's GitHub gateway. */
+type PrOctokitStub = {
+  pulls: {
+    list: ReturnType<typeof vi.fn>
+    create: ReturnType<typeof vi.fn>
+    update: ReturnType<typeof vi.fn>
+  }
+  graphql: ReturnType<typeof vi.fn>
 }
 
 describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
@@ -499,7 +502,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     // Real git push is out of scope here (covered by pushBranchToGitHub's
     // own tests elsewhere); stub it so only the PR-creation logic is exercised.
     internals.pushBranchToGitHub = vi.fn().mockResolvedValue(undefined)
-    internals.octokit = {
+    const octokit: PrOctokitStub = {
       pulls: {
         list: vi.fn(),
         create: vi.fn(),
@@ -507,8 +510,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       },
       graphql: vi.fn(),
     }
+    useLocalGitHubGateway(worker, { octokit })
     internals.running = true
-    return { worker, internals }
+    return { worker, internals, octokit }
   }
 
   const setupBranchDir = (branch: string) =>
@@ -523,10 +527,10 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     // Simulates the GIT-H1 crash scenario: PR #77 already exists on GitHub
     // from a prior attempt, but branch metadata never got pullRequestNumber
     // (the process died first). This task carries no known PR number either.
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('feature-x')
 
-    internals.octokit.pulls.list.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({
       data: [
         {
           number: 77,
@@ -543,10 +547,8 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
-      expect.objectContaining({ pull_number: 77 }),
-    )
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+    expect(octokit.pulls.update).toHaveBeenCalledWith(expect.objectContaining({ pull_number: 77 }))
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
 
     const meta = await readBranchMeta('feature-x')
@@ -555,11 +557,11 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   })
 
   it('keeps the human text of an existing PR body when the task carries mergeSectionIntoBody', async () => {
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('feature-x')
     const oldSection = `${PR_SECTION_START}\nold\n${PR_SECTION_END}`
     const newSection = `${PR_SECTION_START}\nnew\n${PR_SECTION_END}`
-    internals.octokit.pulls.list.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({
       data: [
         {
           number: 77,
@@ -581,15 +583,15 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     })
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+    expect(octokit.pulls.update).toHaveBeenCalledWith(
       expect.objectContaining({ pull_number: 77, body: `Reviewer notes\n\n${newSection}` }),
     )
   })
 
   it('replaces an existing PR body when the task does not carry mergeSectionIntoBody', async () => {
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('feature-x')
-    internals.octokit.pulls.list.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({
       data: [
         {
           number: 77,
@@ -606,17 +608,17 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     })
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+    expect(octokit.pulls.update).toHaveBeenCalledWith(
       expect.objectContaining({ pull_number: 77, body: 'settings sync' }),
     )
   })
 
   it('creates a new PR on first submit and records its number', async () => {
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('feature-new')
 
-    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
-    internals.octokit.pulls.create.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
       data: { number: 42, html_url: 'https://github.com/test-owner/test-repo/pull/42' },
     })
 
@@ -627,8 +629,8 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.create).toHaveBeenCalled()
+    expect(octokit.pulls.update).not.toHaveBeenCalled()
+    expect(octokit.pulls.create).toHaveBeenCalled()
 
     const meta = await readBranchMeta('feature-new')
     expect(meta.branch.pullRequestNumber).toBe(42)
@@ -638,10 +640,10 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   it('converts an existing draft PR to ready when the payload carries markReadyIfDraft', async () => {
     // Content submits (api/github-sync.ts) set markReadyIfDraft: true so a
     // pre-existing draft PR is converted to ready-for-review on submit.
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('feature-draft')
 
-    internals.octokit.pulls.list.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({
       data: [
         {
           number: 88,
@@ -665,7 +667,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.graphql).toHaveBeenCalledWith(
+    expect(octokit.graphql).toHaveBeenCalledWith(
       expect.stringContaining('markPullRequestReadyForReview'),
       expect.objectContaining({ pullRequestId: 'PR_draft_88' }),
     )
@@ -677,10 +679,10 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
   it('leaves an existing draft PR alone when the payload has no markReadyIfDraft flag', async () => {
     // Only a payload that sets the flag converts a draft; the default leaves it.
-    const { worker, internals } = makePrWorker()
+    const { worker, octokit } = makePrWorker()
     await setupBranchDir('settings-sync')
 
-    internals.octokit.pulls.list.mockResolvedValue({
+    octokit.pulls.list.mockResolvedValue({
       data: [
         {
           number: 89,
@@ -699,7 +701,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.graphql).not.toHaveBeenCalled()
+    expect(octokit.graphql).not.toHaveBeenCalled()
 
     const meta = await readBranchMeta('settings-sync')
     expect(meta.branch.pullRequestNumber).toBe(89)
@@ -716,7 +718,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   it('refuses a push-and-create-or-update-pr task for the base branch (head === base)', async () => {
     // makePrWorker() doesn't set config.baseBranch, so this.baseBranch
     // defaults to 'main' (see CmsWorker constructor).
-    const { worker, internals } = makePrWorker()
+    const { worker, internals, octokit } = makePrWorker()
     await setupBranchDir('main')
 
     const id = await enqueueTask(taskDir, {
@@ -727,9 +729,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await worker.processTaskQueue()
 
     expect(internals.pushBranchToGitHub).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.list).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
+    expect(octokit.pulls.list).not.toHaveBeenCalled()
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+    expect(octokit.pulls.update).not.toHaveBeenCalled()
     // PermanentTaskError -> fails immediately, landing in failed/ rather than
     // being retried (retrying can't make the branch not be the base branch).
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(true)
@@ -741,7 +743,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     ['the settings branch this worker resolves', 'canopycms-settings-prod'],
     ['a reserved-prefix name this worker does not resolve', 'canopycms-settings-staging'],
   ])('pushes and completes without a PR for %s', async (_label, branch) => {
-    const { worker, internals } = makePrWorker()
+    const { worker, internals, octokit } = makePrWorker()
 
     const id = await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
@@ -751,9 +753,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await worker.processTaskQueue()
 
     expect(internals.pushBranchToGitHub).toHaveBeenCalledWith(branch, expect.any(AbortSignal))
-    expect(internals.octokit.pulls.list).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
-    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
+    expect(octokit.pulls.list).not.toHaveBeenCalled()
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+    expect(octokit.pulls.update).not.toHaveBeenCalled()
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
     expect(await fileExists(path.join(taskDir, 'completed', `${id}.json`))).toBe(true)
   })
@@ -761,9 +763,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   // A configured settings name without the prefix may be a content branch's name when
   // the worker and API configs drift, and that branch's submit must still open its PR.
   it('creates a PR for a branch matching an unprefixed configured settings name', async () => {
-    const { worker, internals } = makePrWorker({ settingsBranch: 'site-settings' })
-    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
-    internals.octokit.pulls.create.mockResolvedValue({
+    const { worker, octokit } = makePrWorker({ settingsBranch: 'site-settings' })
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
       data: { number: 6, html_url: 'https://github.com/test-owner/test-repo/pull/6' },
     })
 
@@ -774,13 +776,13 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.create).toHaveBeenCalled()
+    expect(octokit.pulls.create).toHaveBeenCalled()
   })
 
   it('still creates a PR for a branch that merely resembles a settings branch name', async () => {
-    const { worker, internals } = makePrWorker({ settingsBranch: 'adopter-settings' })
-    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
-    internals.octokit.pulls.create.mockResolvedValue({
+    const { worker, octokit } = makePrWorker({ settingsBranch: 'adopter-settings' })
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
       data: { number: 5, html_url: 'https://github.com/test-owner/test-repo/pull/5' },
     })
 
@@ -791,7 +793,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await worker.processTaskQueue()
 
-    expect(internals.octokit.pulls.create).toHaveBeenCalled()
+    expect(octokit.pulls.create).toHaveBeenCalled()
   })
 
   describe('when GitHub finds no commits to open a PR for', () => {
@@ -806,9 +808,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     const SUBMIT = '2026-03-01T00:00:00.000Z'
 
     const runSubmitTask = async (createError: Error, submittedAt: string | null = SUBMIT) => {
-      const { worker, internals } = makePrWorker()
-      internals.octokit.pulls.list.mockResolvedValue({ data: [] })
-      internals.octokit.pulls.create.mockRejectedValue(createError)
+      const { worker, octokit } = makePrWorker()
+      octokit.pulls.list.mockResolvedValue({ data: [] })
+      octokit.pulls.create.mockRejectedValue(createError)
       const id = await enqueueTask(taskDir, {
         action: 'push-and-create-or-update-pr',
         payload: {
@@ -907,7 +909,6 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
 type PushBranchInternals = {
   pushBranchToGitHub(branch: string): Promise<void>
-  buildGitHubUrl(): string
 }
 
 describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () => {
@@ -946,7 +947,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       githubToken: 'fake-token',
       taskTimeoutMs,
     })
-    ;(worker as unknown as PushBranchInternals).buildGitHubUrl = () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubFixture })
     return worker
   }
 
@@ -1422,35 +1423,25 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   })
 
   // -------------------------------------------------------------------------
-  // buildGitHubUrl() resolves asynchronously.
+  // The gateway's buildGitHubUrl() resolves asynchronously.
   //
   // The credential behind the URL need not be a value the worker already holds
   // -- a credential that has to be fetched or minted cannot be read out of
-  // config synchronously -- so buildGitHubUrl returns a Promise. Every stub
-  // above returns a BARE STRING through an `as unknown as` double assertion,
-  // which type-checks against the test's own inline type and therefore compiles
-  // unchanged under any signature. `await` on a string is a no-op, so those
-  // stubs cannot tell a correct conversion from a missing one: dropping the
-  // `await` in pushBranchToGitHub was measured to fail the three tests below
-  // and leave all nine pre-existing tests in this suite green.
+  // config synchronously -- so the gateway resolves the URL per operation, and
+  // a push awaits it. The tests below pin what that resolution must not change:
+  // a resolver returning a real promise, one resolution for both of a push's
+  // attempts, and a tip that moves while it resolves.
   // -------------------------------------------------------------------------
 
   type AsyncPushBranchInternals = {
     pushBranchToGitHub(branch: string): Promise<void>
-    buildGitHubUrl(): Promise<string>
   }
 
   it('pushes when buildGitHubUrl resolves a real promise rather than a bare string', async () => {
-    // The one stub in this file whose `await` actually suspends. A conversion
-    // that dropped the `await` hands git a Promise where a remote belongs and
-    // fails here, where every bare-string stub above would pass. (Measured: it
-    // does NOT surface as "[object Promise]" -- simple-git's push() filters
-    // non-string arguments out, so the remote is dropped entirely and git
-    // fails with "The current branch main has no upstream branch".)
+    // A resolver that returns a promise rather than a bare string.
     await seedBranchInRemoteGit('feature-async-url', 'hello')
     const worker = makePushWorker()
-    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = () =>
-      Promise.resolve(githubFixture)
+    useLocalGitHubGateway(worker, { remoteUrl: () => Promise.resolve(githubFixture) })
 
     await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-async-url')
 
@@ -1458,17 +1449,17 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(consoleSpy).toHaveLogged('Pushed feature-async-url to GitHub')
   })
 
-  it('resolves the URL once for all three pushes, so a later resolution failure cannot displace the stale-lease classification', async () => {
-    // Pins the hoist in pushBranchToGitHub. The retry push sits INSIDE the
-    // stale-lease catch block: if the URL were resolved per-push instead of
-    // once up front, a resolution that threw there would replace the push
+  it('resolves the URL once for both push attempts, so a later resolution failure cannot displace the stale-lease classification', async () => {
+    // Pins the single resolution in GitHubGateway.push. The retry push sits
+    // INSIDE the stale-lease catch block: if the URL were resolved per attempt
+    // instead of once up front, a resolution that threw there would replace the push
     // error being classified, so neither isStaleLeaseRejection nor
     // isNonFastForwardRejection would run and this genuinely diverged branch
     // would be retried instead of failing fast.
     //
     // The resolver below succeeds exactly once and throws afterwards -- a real
     // shape for an on-demand credential, and the shape that tells the two
-    // implementations apart. Revert the hoist and this goes red: the second
+    // implementations apart. Resolve it per attempt and this goes red: the second
     // resolution throws, `caught` is that plain Error, and the
     // PermanentTaskError assertion fails.
     await seedBranchInGitHubFixture('feature-once', 'someone else')
@@ -1480,13 +1471,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     const worker = makePushWorker()
     let resolutions = 0
-    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = () => {
-      resolutions++
-      if (resolutions > 1) {
-        return Promise.reject(new Error('credential resolution failed on a later call'))
-      }
-      return Promise.resolve(githubFixture)
-    }
+    useLocalGitHubGateway(worker, {
+      remoteUrl: () => {
+        resolutions++
+        if (resolutions > 1) {
+          return Promise.reject(new Error('credential resolution failed on a later call'))
+        }
+        return Promise.resolve(githubFixture)
+      },
+    })
 
     let caught: unknown
     try {
@@ -1504,25 +1497,17 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       'has genuinely diverged and nothing was overwritten',
     )
     expect((caught as Error).message).not.toContain('credential resolution failed')
-    // Resolved once, so all three pushes provably carry the same credential.
+    // Resolved once, so both attempts provably carry the same credential.
     expect(resolutions).toBe(1)
     // Nothing was overwritten, and the marker is kept for a reconciled retry.
     expect(await shaOf(githubFixture, 'refs/heads/feature-once')).toBe(foreignTip)
     expect(await readMarker('feature-once')).toBe('0'.repeat(40))
   })
 
-  it('resolves the URL before reading the published SHA, so the marker decision sees the commit it actually sent', async () => {
-    // The hoist's second reason. `outgoingSha` is what decides whether the
-    // [SYNC-H1] marker is spent, and it must describe the commit this push
-    // actually sends. Resolving the URL BELOW that read puts an await between
-    // the read and the push, so a tip that moves in between leaves outgoingSha
-    // describing a commit that is no longer what went out.
-    //
-    // Made observable by a resolver that moves remote.git's tip while it
-    // resolves -- the shape a slow credential mint has. Move the const below
-    // readPublishedSha and this goes red: outgoingSha reads the PRE-move tip,
-    // which still equals the marker, so the marker is never cleared and the
-    // self-heal pass keeps firing against a rewrite that has already landed.
+  it('pushes exactly the SHA it read, so the marker decision describes the commit sent', async () => {
+    // [SYNC-H1] The marker is spent only when GitHub receives a commit other than it. The push
+    // sends the SHA read from remote.git, so a tip that moves while the push is in flight goes
+    // out with the next push, not this one.
     await seedBranchInRemoteGit('feature-window', 'v1')
     const published = await shaOf(remoteGitPath, 'refs/heads/feature-window')
     // GitHub holds exactly the marker commit, so the lease is satisfied.
@@ -1546,18 +1531,31 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await laterGit.commit('later work')
 
     const worker = makePushWorker()
-    ;(worker as unknown as AsyncPushBranchInternals).buildGitHubUrl = async () => {
-      await laterGit.raw(['push', 'origin', 'feature-window:feature-window'])
-      return githubFixture
-    }
+    let moved = false
+    useLocalGitHubGateway(worker, {
+      // The editor's publish lands in remote.git while the first push is in flight.
+      remoteUrl: async () => {
+        if (!moved) {
+          moved = true
+          await laterGit.raw(['push', 'origin', 'feature-window:feature-window'])
+        }
+        return githubFixture
+      },
+    })
+    const push = () =>
+      (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-window')
 
-    await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-window')
+    await push()
 
-    const sentTip = await shaOf(remoteGitPath, 'refs/heads/feature-window')
-    expect(sentTip).not.toBe(published)
-    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(sentTip)
-    // outgoingSha was read after resolution, so it is the commit actually sent
-    // rather than the pre-resolution tip, and the marker is correctly spent.
+    const movedTip = await shaOf(remoteGitPath, 'refs/heads/feature-window')
+    expect(movedTip).not.toBe(published)
+    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(published)
+    expect(await readMarker('feature-window')).toBe(published)
+
+    // The editor's own queued push task.
+    await push()
+
+    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(movedTip)
     expect(await readMarker('feature-window')).toBeUndefined()
   })
 })
@@ -1574,12 +1572,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 // heals on its own.
 //
 // These tests exercise the guard against real git repos (no network calls --
-// buildGitHubUrl is stubbed to point at a local bare "GitHub" fixture).
+// the worker's GitHub gateway points at a local bare "GitHub" fixture).
 // ---------------------------------------------------------------------------
 
 type RemoteGitInternals = {
   ensureRemoteGit(): Promise<void>
-  buildGitHubUrl(): string
 }
 
 describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
@@ -1610,7 +1607,7 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
       baseBranch,
     })
     // Point clone/fetch/push at the local fixture instead of a real GitHub URL.
-    ;(worker as unknown as RemoteGitInternals).buildGitHubUrl = () => fixtureRemote
+    useLocalGitHubGateway(worker, { remoteUrl: () => fixtureRemote })
     return worker
   }
 
@@ -1919,7 +1916,7 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => fixtureRemote
+    useLocalGitHubGateway(worker, { remoteUrl: () => fixtureRemote })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
@@ -1959,8 +1956,7 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     const worker = makeSyncWorker()
     // Point the top-level fetch at a path with no git repo at all -- fails
     // immediately, no network involved, before any rebase work runs.
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
-      '/nonexistent/definitely-not-a-remote.git'
+    useLocalGitHubGateway(worker, { remoteUrl: () => '/nonexistent/definitely-not-a-remote.git' })
 
     await expect(worker.syncGit()).rejects.toThrow()
 
@@ -1982,10 +1978,12 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     // A local nonexistent path (no `://`) so git fails immediately without
     // any network attempt, while still echoing the literal string back
     // verbatim in its fatal message -- simulating a fetch/push error whose
-    // text embeds the bot token, same shape as buildGitHubUrl()'s
+    // text embeds the bot token, same shape as the gateway's buildGitHubUrl()
     // https://x-access-token:TOKEN@github.com/... URLs.
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
-      path.join(tmpDir, 'x-access-token:ghp_secret123456@nonexistent', 'remote.git')
+    useLocalGitHubGateway(worker, {
+      remoteUrl: () =>
+        path.join(tmpDir, 'x-access-token:ghp_secret123456@nonexistent', 'remote.git'),
+    })
 
     await expect(worker.syncGit()).rejects.toThrow()
 
@@ -2323,7 +2321,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
       githubToken: 'fake-token',
       deploymentName,
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => githubFixture
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubFixture })
     return worker
   }
 
@@ -2554,12 +2552,9 @@ describe('CmsWorker delete-remote-branch', () => {
       githubToken: 'fake-token',
       taskTimeoutMs: 2000,
     })
-    const internals = worker as unknown as {
-      running: boolean
-      octokit: { git: { deleteRef: ReturnType<typeof vi.fn> } }
-    }
+    const internals = worker as unknown as { running: boolean }
     internals.running = true
-    internals.octokit = { git: { deleteRef } }
+    useLocalGitHubGateway(worker, { octokit: { git: { deleteRef } } })
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
       payload: {

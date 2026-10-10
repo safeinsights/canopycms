@@ -85,8 +85,7 @@ export type GitSyncContext = Pick<
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'log'
-  | 'buildGitHubUrl'
-  | 'githubMirror'
+  | 'github'
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
@@ -202,16 +201,15 @@ export async function pushSettingsBranches(
     }
 
     try {
-      // `git` is remote.git, read for the commit to send; the push itself runs in the
-      // worker's private mirror, which alone ever sees the credential.
+      // `git` is remote.git, read for the commit to send; the push itself goes through the
+      // GitHub gateway, which alone ever sees the credential.
       const sha = (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
-      const githubUrl = await ctx.buildGitHubUrl()
-      await ctx.githubMirror().exclusive((mirror) =>
-        mirror.pushToGitHub(githubUrl, settingsBranch, sha, {
-          signal: ctx.shutdownSignal(),
-          protectedBranches: [ctx.baseBranch],
-        }),
-      )
+      await ctx
+        .github()
+        .push(
+          { branch: settingsBranch, sha, protectedBranches: [ctx.baseBranch] },
+          ctx.shutdownSignal(),
+        )
       workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
     } catch (err) {
       // Non-fatal: the branch may already be up to date, and this call site has
@@ -488,7 +486,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
     try {
-      await ctx.githubMirror().maintain()
+      await ctx.github().maintain()
     } catch (err) {
       workerLogWarn(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
     }
@@ -499,11 +497,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // refs/heads/* -- see that constant's doc comment for the destructive-fetch bug this avoids.
     // Both are killed at the drain deadline; a killed ref update leaves the ref as it was or
     // fully moved.
-    const githubUrl = await ctx.buildGitHubUrl()
-    await ctx.githubMirror().exclusive(async (mirror) => {
-      await mirror.fetchFromGitHub(githubUrl, ctx.shutdownSignal())
-      await mirror.publishTrackingRefs(ctx.shutdownSignal())
-    })
+    await ctx.github().fetch({ have: [] }, ctx.shutdownSignal())
     workerLog('Fetched from GitHub')
 
     const {
@@ -568,7 +562,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     // [REDACT] Persisted to worker-status.json and served to the browser
     // by the admin panel -- a fetch/push failure's message can embed the
-    // bot token via buildGitHubUrl().
+    // bot token from the gateway's git URL.
     report.lastGitSyncError = {
       message: redactCredentials(getErrorMessage(err)),
       at: new Date().toISOString(),

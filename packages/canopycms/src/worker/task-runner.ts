@@ -8,11 +8,7 @@ import {
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
-import {
-  createOrUpdatePullRequest,
-  isNoCommitsBetweenError,
-  isRefAlreadyGoneError,
-} from '../github-service'
+import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   BranchMetadataCorruptError,
   BranchMetadataFileManager,
@@ -20,11 +16,8 @@ import {
 } from '../branch-metadata'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
-import {
-  isNonFastForwardRejection,
-  isStaleLeaseRejection,
-  workflowPushRefusalFile,
-} from '../utils/git'
+import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
+import { GitHubPushError, refreshGitHubCredential, type GitHubPushOutcome } from './github-gateway'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -41,7 +34,7 @@ import type { WorkerContext } from './worker-context'
  * whether a failed task is retried or fails fast.
  *
  * It shares nothing with the git-sync cluster but the four resolved paths, the
- * Octokit client and the history-rewrite marker (history-rewrite.ts), and the
+ * GitHub gateway and the history-rewrite marker (history-rewrite.ts), and the
  * two loops run CONCURRENTLY: `scheduleLoop` drives this on `taskPollInterval`
  * (default 5s) and syncGit on `gitSyncInterval` (default 5min). So anything
  * here that reads branch metadata written by the rebase loop MUST re-read it
@@ -49,8 +42,6 @@ import type { WorkerContext } from './worker-context'
  */
 export type TaskRunnerContext = Pick<
   WorkerContext,
-  | 'githubOwner'
-  | 'githubRepo'
   | 'baseBranch'
   | 'sanitizedBaseBranch'
   | 'taskDir'
@@ -60,10 +51,7 @@ export type TaskRunnerContext = Pick<
   | 'maxTasksPerCycle'
   | 'maxRetries'
   | 'log'
-  | 'octokit'
-  | 'buildGitHubUrl'
-  | 'githubMirror'
-  | 'refreshGitHubCredential'
+  | 'github'
   | 'branchWorkspacePath'
   // Both are implemented in THIS module and are still reached through the
   // context: cms-worker.test.ts replaces each on the CmsWorker instance, so a
@@ -256,7 +244,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
 
       // [REDACT] task.error is persisted (pending/failed task JSON) and served
       // to the browser by the admin panel's Tasks tab -- a push failure's
-      // message can embed the bot token via buildGitHubUrl(). Console output
+      // message can embed the bot token from the gateway's git URL. Console output
       // above stays raw (journald/CloudWatch is trusted).
       const persistedMessage = redactCredentials(message)
 
@@ -280,16 +268,16 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
         )
       }
 
-      // The credential may have rotated, and the next retry resolves
-      // buildGitHubUrl() afresh to pick a new token up. Without this a push
+      // The credential may have rotated, and the next retry resolves the
+      // gateway's git URL afresh to pick a new token up. Without this a push
       // meeting a revoked token spends its whole retry budget (5s/10s/20s
       // backoff) waiting on the git-sync loop's refresh up to 5 minutes away,
       // and fails permanently while the working token sits in the secret store.
       //
       // Ungated, and AFTER the outcome is recorded rather than before: the task
       // is safely in pending/ or failed/ while a network read runs, and that
-      // read is bounded and never throws. See CmsWorker.refreshGitHubCredential.
-      await ctx.refreshGitHubCredential()
+      // read is bounded and never throws. See refreshGitHubCredential.
+      await refreshGitHubCredential(() => ctx.github())
     }
     processed++
   }
@@ -313,7 +301,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
  * - an AbortSignal cancels Octokit HTTP calls and kills the push's git process
  *   (pushBranchToGitHub passes it to simple-git's `abort`);
  * - a Promise.race rejects when either fires, so work that cannot observe the
- *   signal (a hung `ctx.buildGitHubUrl()` in pushBranchToGitHub) still ends
+ *   signal (a hung credential resolution in the gateway's push) still ends
  *   the attempt and the worker moves on instead of stalling forever.
  *
  * A raced-out credential resolution is not cancelled. On the App path the mint
@@ -365,30 +353,30 @@ export async function executeTask(
     case 'push-and-create-pr': {
       const branch = requireString(payload, 'branch')
       await ctx.pushBranchToGitHub(branch, signal)
-      const pr = await ctx.octokit().pulls.create({
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        head: branch,
-        base: optionalString(payload, 'baseBranch', ctx.baseBranch),
-        title: optionalString(payload, 'title', `Submit ${branch}`),
-        body: optionalString(payload, 'body', ''),
-        request: { signal },
-      })
-      workerLog(`Created PR #${pr.data.number} for ${branch}`)
-      return { prUrl: pr.data.html_url, prNumber: pr.data.number }
+      const pr = await ctx.github().createPullRequest(
+        {
+          head: branch,
+          base: optionalString(payload, 'baseBranch', ctx.baseBranch),
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
+        },
+        signal,
+      )
+      workerLog(`Created PR #${pr.number} for ${branch}`)
+      return { prUrl: pr.url, prNumber: pr.number }
     }
     case 'push-and-update-pr': {
       const branch = requireString(payload, 'branch')
       const prNumber = requireNumber(payload, 'pullRequestNumber')
       await ctx.pushBranchToGitHub(branch, signal)
-      await ctx.octokit().pulls.update({
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        pull_number: prNumber,
-        title: optionalString(payload, 'title', `Submit ${branch}`),
-        body: optionalString(payload, 'body', ''),
-        request: { signal },
-      })
+      await ctx.github().updatePullRequest(
+        prNumber,
+        {
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
+        },
+        signal,
+      )
       workerLog(`Updated PR #${prNumber} for ${branch}`)
       return { prNumber }
     }
@@ -420,12 +408,9 @@ export async function executeTask(
       }
       await ctx.pushBranchToGitHub(branch, signal)
 
-      let result: Awaited<ReturnType<typeof createOrUpdatePullRequest>>
+      let result: { number: number; url: string; created: boolean }
       try {
-        result = await createOrUpdatePullRequest({
-          octokit: ctx.octokit(),
-          owner: ctx.githubOwner,
-          repo: ctx.githubRepo,
+        result = await ctx.github().createOrUpdatePullRequest({
           head: branch,
           base,
           title: optionalString(payload, 'title', `Submit ${branch}`),
@@ -451,32 +436,13 @@ export async function executeTask(
     }
     case 'convert-to-draft': {
       const draftPrNumber = requireNumber(payload, 'pullRequestNumber')
-      // GitHub REST API doesn't support converting to draft directly.
-      // Use the GraphQL API via Octokit.
-      const { data: pr } = await ctx.octokit().pulls.get({
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        pull_number: draftPrNumber,
-        request: { signal },
-      })
-      await ctx
-        .octokit()
-        .graphql(
-          `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
-          { id: pr.node_id, request: { signal } },
-        )
+      await ctx.github().convertPullRequestToDraft(draftPrNumber, signal)
       workerLog(`Converted PR #${draftPrNumber} to draft`)
       return { prNumber: draftPrNumber, draft: true }
     }
     case 'close-pr': {
       const closePrNumber = requireNumber(payload, 'pullRequestNumber')
-      await ctx.octokit().pulls.update({
-        owner: ctx.githubOwner,
-        repo: ctx.githubRepo,
-        pull_number: closePrNumber,
-        state: 'closed',
-        request: { signal },
-      })
+      await ctx.github().updatePullRequest(closePrNumber, { state: 'closed' }, signal)
       return { closed: true }
     }
     case 'delete-remote-branch': {
@@ -520,12 +486,7 @@ export async function executeTask(
         return { deleted: false, skipped: 'name-reused' }
       }
       try {
-        await ctx.octokit().git.deleteRef({
-          owner: ctx.githubOwner,
-          repo: ctx.githubRepo,
-          ref: `heads/${branch}`,
-          request: { signal },
-        })
+        await ctx.github().deleteBranch(branch, signal)
       } catch (err) {
         // Already gone is the outcome this task wants; failing it would only park it in failed/.
         if (!isRefAlreadyGoneError(err)) throw err
@@ -697,16 +658,6 @@ export async function pushBranchToGitHub(
     throw err
   }
 
-  // Resolve the tokenized URL ONCE, here: all three pushes below use this
-  // const and none calls ctx.buildGitHubUrl() again. A correctness
-  // requirement, not tidiness, since resolution is async: the retry push sits
-  // INSIDE the stale-lease catch, and a resolution that threw there would
-  // replace the push error being classified, so neither isStaleLeaseRejection
-  // nor isNonFastForwardRejection would run and a genuinely diverged branch
-  // would be retried instead of raising PermanentTaskError. It also means every
-  // push provably carries the same credential.
-  const githubUrl = await ctx.buildGitHubUrl()
-
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
   // history, GitHub still holds the commit it replaced, so an ordinary
   // push is non-fast-forward forever. Push under a lease keyed to exactly
@@ -719,76 +670,48 @@ export async function pushBranchToGitHub(
   if (outgoingSha === null) {
     throw new Error(`Branch "${branch}" is not in remote.git, so there is nothing to push`)
   }
-  // The whole exchange, retry included, is one mirror session; the mirror kills its git when
-  // `signal` aborts (the task timed out, or the worker's drain deadline hit). GitHub moves the ref
-  // only after receiving the whole pack: a push killed before that changes nothing, and one
-  // killed after it is found already done by the re-run.
-  const outcome = await ctx.githubMirror().exclusive(async (mirror) => {
-    const push = (lease?: string) =>
-      mirror.pushToGitHub(githubUrl, branch, outgoingSha, {
-        lease,
+  let outcome: GitHubPushOutcome
+  try {
+    outcome = await ctx
+      .github()
+      .push(
+        { branch, sha: outgoingSha, lease: marker, protectedBranches: [ctx.baseBranch] },
         signal,
-        protectedBranches: [ctx.baseBranch],
-      })
-    try {
-      await push(marker)
-      return 'pushed'
-    } catch (err) {
-      // A retry can never make the branch not protected.
-      if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
-      const message = getErrorMessage(err)
-      throwIfWorkflowRefusal(branch, message)
-
-      // A refused lease means GitHub is not at the commit we rewrote, so the
-      // marker is stale -- routine, not exceptional: tasks are re-run after a
-      // crash (recoverOrphanedTasks) and the marker survives any failure to
-      // clear it. The two benign shapes that reach here (GitHub already holds
-      // the rewritten history, or the branch moved past it) are ordinary
-      // fast-forwards a lease has no business blocking.
-      //
-      // So retry PLAIN and let git adjudicate: a non-forced push succeeds if and
-      // only if it fast-forwards, so it can never destroy anything, with no
-      // ancestry check to get wrong and no extra round trip to read GitHub's
-      // tip. Only if THAT is also rejected has the branch genuinely diverged.
-      //
-      // (git evaluates the lease only when it actually has an update to apply,
-      // so an up-to-date ref with a stale lease prints "Everything up-to-date",
-      // exits 0, and is absorbed above without reaching here.)
-      if (marker && isStaleLeaseRejection(message)) {
-        try {
-          await push()
-        } catch (retryErr) {
-          const retryMessage = getErrorMessage(retryErr)
-          throwIfWorkflowRefusal(branch, retryMessage)
-          if (isNonFastForwardRejection(retryMessage)) {
-            throw new PermanentTaskError(
-              `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
-                `deployment last published nor an ancestor of what it is pushing, so the branch ` +
-                `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
-                `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
-            )
-          }
-          throw retryErr
-        }
-        return 'pushed-past-stale-lease'
-      }
-
-      // An ordinary non-fast-forward rejection: GitHub has commits this
-      // deployment never published, so retrying the identical push can never
-      // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply) and
-      // it fails fast instead of burning the retry budget. Deliberately does NOT
-      // advise renaming the branch: one reaching this point usually has an open
-      // PR, which renaming would orphan.
-      if (isNonFastForwardRejection(message)) {
+      )
+  } catch (err) {
+    // A retry can never make the branch not protected.
+    if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
+    if (!(err instanceof GitHubPushError)) throw err
+    throwIfWorkflowRefusal(branch, err.message)
+    // A refused lease was already retried plain, and that retry rejected too: only a
+    // non-fast-forward then means the branch has genuinely diverged.
+    if (err.kind === 'rejected-after-stale-lease') {
+      if (isNonFastForwardRejection(err.message)) {
         throw new PermanentTaskError(
-          `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
-            `published, so the branch has diverged and needs reconciling. Something else moved it ` +
-            `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
+          `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
+            `deployment last published nor an ancestor of what it is pushing, so the branch ` +
+            `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
+            `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
         )
       }
-      throw err
+      throw err.cause
     }
-  })
+
+    // An ordinary non-fast-forward rejection: GitHub has commits this
+    // deployment never published, so retrying the identical push can never
+    // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply) and
+    // it fails fast instead of burning the retry budget. Deliberately does NOT
+    // advise renaming the branch: one reaching this point usually has an open
+    // PR, which renaming would orphan.
+    if (isNonFastForwardRejection(err.message)) {
+      throw new PermanentTaskError(
+        `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
+          `published, so the branch has diverged and needs reconciling. Something else moved it ` +
+          `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
+      )
+    }
+    throw err.cause
+  }
 
   if (outcome === 'pushed-past-stale-lease') {
     // The lease was refused, so GitHub is provably not at the marker: it

@@ -12,7 +12,7 @@ import { simpleGit } from 'simple-git'
 
 import { recordSchemaRegistry } from '../schema-registry-record'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
-import { mockConsole, openBareRepo, type MockConsole } from '../test-utils'
+import { mockConsole, openBareRepo, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
 
@@ -149,7 +149,7 @@ describe('CmsWorker.syncGit() schema gate', () => {
       baseBranch: 'main',
       ...(schemaHoldMaxMs === undefined ? {} : { schemaHoldMaxMs }),
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => githubPath
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
@@ -188,10 +188,12 @@ describe('CmsWorker.syncGit() schema gate', () => {
     expect(held?.missingSchemas).toEqual(['personSchema'])
 
     // The drain begins during the next held cycle's fetch.
-    ;(first as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () => {
-      void first.stop({ reason: 'SIGTERM' })
-      return githubPath
-    }
+    useLocalGitHubGateway(first, {
+      remoteUrl: () => {
+        void first.stop({ reason: 'SIGTERM' })
+        return githubPath
+      },
+    })
     await first.syncGit()
     await first.stop()
 

@@ -23,7 +23,7 @@ import { BranchMetadataFileManager } from '../branch-metadata'
 import { recordSparseCone } from '../branch-sparse'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 import { MirrorSession } from './github-mirror'
 
@@ -75,7 +75,6 @@ interface Fixture {
 }
 
 type WorkerInternals = {
-  buildGitHubUrl(): Promise<string>
   running: boolean
   syncGit(): Promise<void>
   ensureRemoteGit(): Promise<void>
@@ -141,15 +140,16 @@ async function createFixture(): Promise<Fixture> {
   await branchGit.commit('branch work')
   await branchGit.raw(['push', '-q', remoteGitPath, `${BRANCH}:${BRANCH}`])
 
-  const worker = new CmsWorker({
+  const cmsWorker = new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
     githubToken: 'fake-token',
     baseBranch: BASE,
     stateDirectory: path.join(root, 'worker-state'),
-  }) as unknown as WorkerInternals
-  worker.buildGitHubUrl = async () => githubPath
+  })
+  useLocalGitHubGateway(cmsWorker, { remoteUrl: async () => githubPath })
+  const worker = cmsWorker as unknown as WorkerInternals
   worker.running = true
 
   let n = 0

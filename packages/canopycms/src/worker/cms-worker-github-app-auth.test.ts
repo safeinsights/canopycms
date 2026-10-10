@@ -1,8 +1,8 @@
 /**
- * CmsWorker's end of GitHub App authentication: the credential behind
- * buildGitHubUrl(), the Octokit client it hands the same auth to, and the
- * startup preflight that stops a bad credential from being reported as an
- * empty repository.
+ * CmsWorker's end of GitHub App authentication: the credential behind its
+ * GitHub gateway's buildGitHubUrl(), the Octokit client the gateway hands the
+ * same auth to, and the startup preflight that stops a bad credential from
+ * being reported as an empty repository.
  *
  * github-auth.test.ts covers the resolver itself; these tests are about the
  * wiring — that the worker really routes both halves through it.
@@ -19,15 +19,18 @@ import type { GitHubAppAuth } from './github-auth'
 import { isPermanentTaskFailure } from './task-runner'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
+import type { GitHubGateway } from './github-gateway'
 
-/** buildGitHubUrl() is private; these tests are precisely about its output. */
+/** The gateway's buildGitHubUrl() is private; these tests are precisely about its output. */
 type GitUrlInternals = {
   buildGitHubUrl(): Promise<string>
-  // The accessor, not the field: the client is built on first use now, so a
-  // test that read the field would see `undefined` before start().
-  octokitClient(): { auth: (options?: unknown) => Promise<unknown> }
+  octokit: { auth: (options?: unknown) => Promise<unknown> }
 }
+
+/** The worker's own gateway, created on first use as start() would create it. */
+const gatewayOf = (worker: CmsWorker): GitUrlInternals =>
+  (worker as unknown as { github(): GitHubGateway }).github() as unknown as GitUrlInternals
 
 /**
  * An `@octokit/auth-app`-shaped injection. `octokitAuth.authStrategy` returns
@@ -100,7 +103,7 @@ describe('CmsWorker GitHub App authentication', () => {
       // reachable from it.
       const worker = makeWorker({ githubToken: 'ghp_static' })
 
-      expect(await (worker as unknown as GitUrlInternals).buildGitHubUrl()).toBe(
+      expect(await gatewayOf(worker).buildGitHubUrl()).toBe(
         'https://x-access-token:ghp_static@github.com/test-owner/test-repo.git',
       )
     })
@@ -108,7 +111,7 @@ describe('CmsWorker GitHub App authentication', () => {
     it('embeds a freshly minted installation token under App auth', async () => {
       const worker = makeWorker({ githubAppAuth: appAuthWith(async () => 'ghs_minted') })
 
-      expect(await (worker as unknown as GitUrlInternals).buildGitHubUrl()).toBe(
+      expect(await gatewayOf(worker).buildGitHubUrl()).toBe(
         'https://x-access-token:ghs_minted@github.com/test-owner/test-repo.git',
       )
     })
@@ -122,7 +125,7 @@ describe('CmsWorker GitHub App authentication', () => {
       const worker = makeWorker({
         githubAppAuth: appAuthWith(async () => `ghs_token_${++minted}`),
       })
-      const internals = worker as unknown as GitUrlInternals
+      const internals = gatewayOf(worker)
 
       const first = await internals.buildGitHubUrl()
       const second = await internals.buildGitHubUrl()
@@ -143,7 +146,7 @@ describe('CmsWorker GitHub App authentication', () => {
         }),
       })
 
-      const caught = await (worker as unknown as GitUrlInternals)
+      const caught = await gatewayOf(worker)
         .buildGitHubUrl()
         .catch((err: unknown) => err)
 
@@ -159,7 +162,7 @@ describe('CmsWorker GitHub App authentication', () => {
       // Octokit assigns the strategy's return value to `.auth`, so this is
       // the observable proof that the passthrough reached the constructor
       // rather than being dropped on the way through createCanopyOctokit.
-      await expect((worker as unknown as GitUrlInternals).octokitClient().auth()).resolves.toEqual({
+      await expect(gatewayOf(worker).octokit.auth()).resolves.toEqual({
         token: 'ghs_from_strategy',
       })
     })
@@ -167,9 +170,7 @@ describe('CmsWorker GitHub App authentication', () => {
     it('still authenticates with the bare token on the token path', async () => {
       const worker = makeWorker({ githubToken: 'ghp_static' })
 
-      await expect(
-        (worker as unknown as GitUrlInternals).octokitClient().auth(),
-      ).resolves.toMatchObject({
+      await expect(gatewayOf(worker).octokit.auth()).resolves.toMatchObject({
         token: 'ghp_static',
         type: 'token',
       })
@@ -292,8 +293,7 @@ describe('CmsWorker GitHub App authentication', () => {
           throw Object.assign(new Error('Service unavailable'), { status: 503 })
         }),
       })
-      ;(worker as unknown as { buildGitHubUrl(): Promise<string> }).buildGitHubUrl = async () =>
-        githubFixture
+      useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
 
       try {
         await worker.start()
@@ -359,8 +359,7 @@ describe('CmsWorker GitHub App authentication', () => {
       })
       // Keep every later git operation off the network; the preflight does not
       // go through this seam, so it is unaffected.
-      ;(worker as unknown as { buildGitHubUrl(): Promise<string> }).buildGitHubUrl = async () =>
-        githubFixture
+      useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
 
       try {
         await worker.start()
@@ -373,8 +372,7 @@ describe('CmsWorker GitHub App authentication', () => {
 
     it('does not run at all on the token path', async () => {
       const worker = makeWorker({ githubToken: 'ghp_static' })
-      ;(worker as unknown as { buildGitHubUrl(): Promise<string> }).buildGitHubUrl = async () =>
-        githubFixture
+      useLocalGitHubGateway(worker, { remoteUrl: async () => githubFixture })
 
       try {
         await worker.start()

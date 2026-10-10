@@ -22,7 +22,7 @@ Include the error's name or code, never its message body, in the retry line. For
 
 ## 2. "Failed to re-read the GitHub credential" is logged for a read that later succeeds
 
-`CmsWorker.refreshGitHubCredential` (`packages/canopycms/src/worker/cms-worker.ts`) races the
+`refreshCredential` in `createLocalGitHubGateway` (`packages/canopycms/src/worker/github-gateway.ts`) races the
 provider against `taskTimeoutMs`. When the race loses, it logs
 `Failed to re-read the GitHub credential after a failure: the re-read did not settle within <n>ms`.
 The abandoned read is not cancelled, though, and may land a moment later and swap the rotated token

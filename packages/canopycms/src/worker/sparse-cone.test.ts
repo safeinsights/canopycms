@@ -12,7 +12,7 @@ import { simpleGit } from 'simple-git'
 import { recordConfiguredSparseCone } from '../branch-sparse'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { defineCanopyTestConfig } from '../config-test'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import { CmsWorker } from './cms-worker'
@@ -220,8 +220,7 @@ describe('reapplySparseCones', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
-      path.join(tmpDir, 'no-such-github.git')
+    useLocalGitHubGateway(worker, { remoteUrl: () => path.join(tmpDir, 'no-such-github.git') })
     ;(worker as unknown as { running: boolean }).running = true
 
     await expect(worker.syncGit()).rejects.toThrow()
