@@ -12,7 +12,7 @@ import { simpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
-import { initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
+import { fixtureCredential, initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 import { GitHubMirror, RefusedPushError } from './github-mirror'
 
@@ -190,7 +190,10 @@ describe('the worker refuses to push protected branches', () => {
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(github, 'main', sha, { lease: githubTip, protectedBranches: [] }),
+        m.pushToGitHub(fixtureCredential(github), 'main', sha, {
+          lease: githubTip,
+          protectedBranches: [],
+        }),
       ),
     ).rejects.toBeInstanceOf(RefusedPushError)
     expect(await githubLog('main')).toBe('A: base')

@@ -13,8 +13,8 @@ type TokenAuth = ReturnType<typeof createTokenAuth>
 
 /**
  * How the worker authenticates to GitHub, for both halves of its access:
- * Octokit (the REST API) and git-over-HTTPS (push/fetch, which carries the
- * credential in the remote URL).
+ * Octokit (the REST API) and git-over-HTTPS (push/fetch, which the gateway
+ * hands the credential in a per-command config file).
  *
  * Two shapes are supported, and they are equals — nothing here deprecates,
  * warns on, or nudges away from the token.
@@ -30,7 +30,7 @@ type TokenAuth = ReturnType<typeof createTokenAuth>
  *   a year, acts as the person who created it, and dies when they leave the
  *   organisation. The cost is that its installation tokens last about an
  *   hour, so the credential must be minted on demand rather than read once at
- *   boot — which is why the gateway resolves its git URL per use (github-gateway.ts).
+ *   boot — which is why the gateway resolves it per operation (github-gateway.ts).
  */
 export interface GitHubAuthConfig {
   /**
@@ -80,8 +80,8 @@ export interface GitHubAuthConfig {
    *
    * Core's own backstop, not a substitute for one the provider keeps: a
    * failing publish retries on a 5s/10s/20s backoff (task-queue.ts), and
-   * the worker calls `refreshCredential` after every failed task attempt AND
-   * every failed git sync, so a burst of failures would otherwise reach an
+   * the gateway calls `refreshCredential` after every operation that failed
+   * reaching GitHub, so a burst of failures would otherwise reach an
    * adopter-supplied `refreshGitHubToken` every few seconds. The AWS provider
    * (`packages/canopycms-cdk/worker/credential-refresh.ts`) already enforces
    * its own five-minute floor; an adopter's own provider has none unless they
@@ -182,7 +182,7 @@ export interface ResolvedGitHubAuth {
    * `refreshGitHubTokenMinIntervalMs`, and swaps the result in.
    *
    * Nothing needs rebuilding afterwards, on either path. Both consumers read
-   * the credential per use — `resolveGitToken` on every git URL the gateway builds,
+   * the credential per use — `resolveGitToken` for every GitHub-bound git operation,
    * and Octokit through a strategy hook that reads it per request — so a
    * swapped token is live at the next use with no cache to invalidate.
    *
@@ -320,10 +320,10 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       // Stamped BEFORE the await, not after, for the same reason
       // credential-refresh.ts's does: stamping after lets two overlapping
       // calls each see an unstamped clock and both reach the provider, which
-      // is the floor not holding. Overlap is real here -- the task loop and
-      // the git-sync loop both call `refreshCredential`, on separate loops
-      // `scheduleLoop` does not serialise against each other -- so this is
-      // what collapses them into one provider call. A provider that THROWS
+      // is the floor not holding. Overlap is real here -- the gateway stops
+      // waiting for a re-read after its timeout without cancelling it, and the
+      // next failure arms another -- so this is what collapses them into one
+      // provider call. A provider that THROWS
       // still counts as reached: the stamp already landed by the time the
       // rejection surfaces, so a failing provider is bounded by the floor
       // too, and this call is not counted in `refreshesStarted` below unless
@@ -332,15 +332,14 @@ export function resolveWorkerGitHubAuth(config: GitHubAuthConfig): ResolvedGitHu
       const refresh = ++refreshesStarted
       const refreshed = await config.refreshGitHubToken()
       // Falsy covers both "nothing rotated" (`undefined`) and an empty secret:
-      // an empty token would build `https://x-access-token:@github.com/…`,
-      // which git sends anonymously, so keeping the known-bad-but-real token
+      // an empty token would send an empty basic credential, which GitHub
+      // treats as anonymous, so keeping the known-bad-but-real token
       // fails more legibly than replacing it with nothing.
       if (!refreshed) return
       // A refresh that STARTED before one already applied read the store
-      // earlier, so its value can only be older. Refreshes do overlap: the task
-      // loop and the git-sync loop both call this, and
-      // the gateway's `refreshCredential` stops waiting after `taskTimeoutMs`
-      // without cancelling. Only a refresh that returned a value counts as
+      // earlier, so its value can only be older. Refreshes do overlap: the
+      // gateway stops waiting for one after `taskTimeoutMs` without cancelling
+      // it, and may start the next. Only a refresh that returned a value counts as
       // applied -- one that returned `undefined` (a provider's floor, say) says
       // nothing about how recent it is, so it must not block a slower real read.
       if (refresh < newestRefreshApplied) return
@@ -419,9 +418,8 @@ async function mintInstallationToken(app: GitHubAppAuth, timeoutMs: number): Pro
   })
   const minted = await Promise.race([minting, timedOut])
   if (!minted) {
-    // An empty token would build `https://x-access-token:@github.com/…`, which
-    // git sends as an anonymous request and GitHub answers with a 403 that
-    // says nothing about the credential.
+    // An empty token would send an empty basic credential, which GitHub
+    // answers as anonymous, with a 403 that says nothing about the credential.
     throw new Error('GitHub App authentication returned an empty installation token')
   }
   return minted

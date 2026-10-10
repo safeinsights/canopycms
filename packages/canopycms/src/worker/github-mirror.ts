@@ -11,15 +11,21 @@ import {
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { workerLogWarn } from './log'
-import { mirrorGitOptions, pinnedReceivePack, pinnedUploadPack } from './shared-repo-git'
+import {
+  githubBoundGitOptions,
+  mirrorGitOptions,
+  pinnedReceivePack,
+  pinnedUploadPack,
+} from './shared-repo-git'
 
 /**
  * The worker's private bare mirror of the GitHub repository, on storage the CMS Lambda cannot
  * reach: the only repository in which git ever runs with the GitHub credential. Every
- * token-bearing fetch and push reads config and hooks from here, never from `remote.git` or a
+ * credentialed fetch and push reads config and hooks from here, never from `remote.git` or a
  * branch clone, whose config the Lambda can write (see worker/shared-repo-git.ts for why `-c`
  * cannot neutralize that). Objects cross to and from `remote.git` only by local fetch and push,
- * through the pinned `upload-pack`/`receive-pack` commands.
+ * through the pinned `upload-pack`/`receive-pack` commands. The credential reaches git only as a
+ * per-command config file ({@link withCredentialConfig}).
  *
  * `refs/heads/*` mirrors GitHub as of the last fetch. `refs/canopy/outgoing/<branch>` holds a
  * commit being pushed for the length of that push. A cache: deleting it costs a fetch, from
@@ -76,12 +82,15 @@ export class GitHubMirror {
   }
 
   /**
-   * Create the mirror, or recreate one that is not a readable bare repository, and drop staging
-   * refs a killed push left: one at `<branch>` blocks a later `<branch>/<x>`.
+   * Create the mirror, or recreate one that is not a readable bare repository, and drop what a
+   * killed session left: credential files, and staging refs (one at `<branch>` blocks a later
+   * `<branch>/<x>`). Runs with no session active, so no credential file it removes is in use.
    */
   private async create(): Promise<void> {
-    await fs.mkdir(path.dirname(this.gitDir), { recursive: true, mode: 0o700 })
-    await assertOwnDirectory(path.dirname(this.gitDir))
+    const stateDirectory = path.dirname(this.gitDir)
+    await fs.mkdir(stateDirectory, { recursive: true, mode: 0o700 })
+    await assertOwnDirectory(stateDirectory)
+    await sweepCredentialConfigs(stateDirectory)
     if (!(await isBareRepository(this.gitDir))) {
       await fs.rm(this.gitDir, { recursive: true, force: true })
       await fs.mkdir(this.gitDir, { mode: 0o700 })
@@ -128,6 +137,103 @@ export class GitHubMirror {
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
 
 const STAGING_PREFIX = 'refs/canopy/outgoing/'
+
+/**
+ * What a GitHub-bound git command authenticates with: the GitHub fetch, the `ls-remote` that reads
+ * GitHub's default branch, and the push to GitHub.
+ */
+export interface GitHubCredential {
+  /** GitHub's bare https URL, or a test's stand-in for it. Never carries the token. */
+  readonly url: string
+  readonly token: string
+  /** Told of each GitHub-bound command that fails, except on a lock of the mirror's own. */
+  onFailure(): void
+}
+
+/** The origin a credential's header is scoped to when its URL has none of its own. */
+const GITHUB_ORIGIN = 'https://github.com'
+
+/** `mkdtemp`'s prefix for a credential file's directory; nothing else in the state directory starts so. */
+const CREDENTIAL_DIR_PREFIX = '.canopy-github-credential-'
+const CREDENTIAL_DIR_PATTERN = /^\.canopy-github-credential-[A-Za-z0-9]{6}$/
+
+/**
+ * The global-scope config a GitHub-bound command gets: the token as an `Authorization` header for
+ * the remote's origin only, and an empty credential-helper list, so a 401 asks no helper (a
+ * developer's keychain included) and git's prompt is off besides. A URL without an http(s) origin
+ * (a test's local fixture) gets GitHub's, which it can never match. Every value is base64 or an
+ * origin, so no byte of the token can end a line or a quoted section name.
+ */
+function credentialConfig(credential: GitHubCredential): string {
+  let origin = GITHUB_ORIGIN
+  try {
+    const url = new URL(credential.url)
+    if (url.protocol === 'https:' || url.protocol === 'http:') origin = url.origin
+  } catch {
+    // Not a URL: a local path.
+  }
+  const basic = Buffer.from(`x-access-token:${credential.token}`).toString('base64')
+  return (
+    `[http "${origin}/"]\n\textraheader = AUTHORIZATION: basic ${basic}\n` +
+    `[credential]\n\thelper =\n`
+  )
+}
+
+/**
+ * Run `fn` with the path of a fresh config file holding the credential, then delete it. The file
+ * is created exclusively, `0600`, in a new `mkdtemp` directory inside the state directory, which
+ * {@link assertOwnDirectory} proves only this user can write: a path nobody else could have
+ * created first or swapped for a link. It must exist before git starts, since a
+ * `GIT_CONFIG_GLOBAL` naming a missing file is a fatal error. A file a crash leaves behind is
+ * swept by the next {@link GitHubMirror} creation.
+ */
+async function withCredentialConfig<T>(
+  stateDirectory: string,
+  credential: GitHubCredential,
+  fn: (configPath: string) => Promise<T>,
+): Promise<T> {
+  await assertOwnDirectory(stateDirectory)
+  const dir = await fs.mkdtemp(path.join(stateDirectory, CREDENTIAL_DIR_PREFIX))
+  try {
+    const configPath = path.join(dir, 'config')
+    const file = await fs.open(configPath, 'wx', 0o600)
+    try {
+      await file.writeFile(credentialConfig(credential))
+    } finally {
+      await file.close()
+    }
+    return await fn(configPath)
+  } finally {
+    // Never thrown: it would replace the command's own failure.
+    await fs
+      .rm(dir, { recursive: true, force: true })
+      .catch((err: unknown) =>
+        workerLogWarn(`Could not delete a credential file in ${dir}: ${getErrorMessage(err)}`),
+      )
+  }
+}
+
+/** Delete every credential directory {@link withCredentialConfig} left in `stateDirectory`. */
+async function sweepCredentialConfigs(stateDirectory: string): Promise<void> {
+  for (const name of await fs.readdir(stateDirectory)) {
+    if (CREDENTIAL_DIR_PATTERN.test(name)) {
+      await fs.rm(path.join(stateDirectory, name), { recursive: true, force: true })
+    }
+  }
+}
+
+/**
+ * Whether git's own output, not a `remote:` line relayed from GitHub, says a lock file was
+ * already there: the mirror's own housekeeping holds it, which says nothing about the credential.
+ * @internal Exported for tests.
+ */
+export function isOwnLockFailure(message: string): boolean {
+  return message
+    .split('\n')
+    .some(
+      (line) => !/^\s*remote:/.test(line) && /Unable to create '.*\.lock': File exists/.test(line),
+    )
+}
 
 /**
  * Refuse a directory the worker does not own outright: another local user could have created a
@@ -208,24 +314,56 @@ export class MirrorSession {
   }
 
   /**
-   * Bring `refs/heads/*` to exactly what GitHub holds. `githubUrl` carries the credential. An empty
-   * mirror (every new instance) first takes what `remote.git` already has, so GitHub sends only the
-   * difference; the GitHub fetch then overwrites and prunes every ref that seeding set.
+   * Run one GitHub-bound command, `args` naming `credential.url` where git expects the remote. The
+   * credential reaches it only through {@link withCredentialConfig}'s file, named by
+   * `GIT_CONFIG_GLOBAL`, so it is in no argv and in no process's environment. No trace variable
+   * reaches this git: trace2 prints config values. Its failure is reported to the credential
+   * unless {@link isOwnLockFailure}.
    */
-  async fetchFromGitHub(githubUrl: string, signal?: AbortSignal): Promise<void> {
-    const git = this.git(signal)
-    if ((await git.raw(['for-each-ref', '--count=1', 'refs/heads/'])).trim() === '') {
+  private async githubBound(
+    credential: GitHubCredential,
+    args: string[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return withCredentialConfig(path.dirname(this.gitDir), credential, async (configPath) => {
+      try {
+        return await simpleGit({
+          baseDir: this.gitDir,
+          ...githubBoundGitOptions(),
+          timeout: { block: this.timeoutMs },
+          abort: signal,
+        })
+          .env({ ...githubBoundEnv(this.gitDir), GIT_CONFIG_GLOBAL: configPath })
+          .raw(args)
+      } catch (err) {
+        if (!isOwnLockFailure(getErrorMessage(err))) credential.onFailure()
+        throw err
+      }
+    })
+  }
+
+  /**
+   * Bring `refs/heads/*` to exactly what GitHub holds. An empty mirror (every new instance) first
+   * takes what `remote.git` already has, so GitHub sends only the difference; the GitHub fetch then
+   * overwrites and prunes every ref that seeding set.
+   */
+  async fetchFromGitHub(credential: GitHubCredential, signal?: AbortSignal): Promise<void> {
+    if ((await this.git(signal).raw(['for-each-ref', '--count=1', 'refs/heads/'])).trim() === '') {
       await this.seedFromRemoteGit(signal)
     }
-    await git.raw([
-      'fetch',
-      '--prune',
-      '--progress',
-      '--no-write-fetch-head',
-      '--end-of-options',
-      githubUrl,
-      '+refs/heads/*:refs/heads/*',
-    ])
+    await this.githubBound(
+      credential,
+      [
+        'fetch',
+        '--prune',
+        '--progress',
+        '--no-write-fetch-head',
+        '--end-of-options',
+        credential.url,
+        '+refs/heads/*:refs/heads/*',
+      ],
+      signal,
+    )
   }
 
   /**
@@ -267,16 +405,14 @@ export class MirrorSession {
    * failure to reach GitHub throws, so a push that cannot learn it does not happen.
    */
   private async githubDefaultBranch(
-    githubUrl: string,
+    credential: GitHubCredential,
     signal?: AbortSignal,
   ): Promise<string | null> {
-    const out = await this.git(signal).raw([
-      'ls-remote',
-      '--symref',
-      '--end-of-options',
-      githubUrl,
-      'HEAD',
-    ])
+    const out = await this.githubBound(
+      credential,
+      ['ls-remote', '--symref', '--end-of-options', credential.url, 'HEAD'],
+      signal,
+    )
     const match = /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(out)
     return match ? match[1] : null
   }
@@ -357,7 +493,7 @@ export class MirrorSession {
    * the pinned `upload-pack`.
    */
   async pushToGitHub(
-    githubUrl: string,
+    credential: GitHubCredential,
     branch: string,
     sha: string,
     options: { lease?: string; signal?: AbortSignal; protectedBranches: readonly string[] },
@@ -372,24 +508,27 @@ export class MirrorSession {
     // itself, per push.
     await assertPlainBranchName(branch)
     const protectedNames = [...options.protectedBranches]
-    const githubDefault = await this.githubDefaultBranch(githubUrl, options.signal)
+    const githubDefault = await this.githubDefaultBranch(credential, options.signal)
     if (githubDefault !== null) protectedNames.push(githubDefault)
     const target = sanitizeBranchName(branch)
     if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
       throw new RefusedPushError(branch, 'protected')
     }
     const staging = `${STAGING_PREFIX}${branch}`
-    const git = this.git(options.signal)
     try {
       await this.fetchFromRemoteGit([`+${sha}:${staging}`], options.signal)
-      await git.raw([
-        'push',
-        '--progress',
-        ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
-        '--end-of-options',
-        githubUrl,
-        `${sha}:refs/heads/${branch}`,
-      ])
+      await this.githubBound(
+        credential,
+        [
+          'push',
+          '--progress',
+          ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
+          '--end-of-options',
+          credential.url,
+          `${sha}:refs/heads/${branch}`,
+        ],
+        options.signal,
+      )
     } finally {
       // A deleted branch's leftover ref would block a later `<branch>/<x>` (a directory/file
       // conflict in the ref namespace).
@@ -407,6 +546,15 @@ export class MirrorSession {
  */
 function mirrorEnv(gitDir: string): Record<string, string> {
   return { ...gitNetworkChildEnv(), GIT_DIR: gitDir }
+}
+
+/**
+ * {@link mirrorEnv} for a GitHub-bound command: without any `GIT_TRACE*` variable, and with git's
+ * terminal prompt off, so a refused credential fails rather than asking a developer's terminal.
+ */
+function githubBoundEnv(gitDir: string): Record<string, string> {
+  const env = Object.entries(mirrorEnv(gitDir)).filter(([key]) => !key.startsWith('GIT_TRACE'))
+  return { ...Object.fromEntries(env), GIT_TERMINAL_PROMPT: '0' }
 }
 
 /** A full SHA-1 or SHA-256 object ID, so nothing else can reach a refspec. */

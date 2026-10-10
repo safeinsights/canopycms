@@ -81,6 +81,15 @@ export function redactCredentials(message: string): string {
   // literal `://` (leaving the scheme untouched) — a `\w+` scheme prefix backtracks
   // polynomially on long word-character runs (CodeQL js/polynomial-redos).
   result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
+  // An `Authorization` header's credential: the worker's GitHub-bound git carries the token as
+  // `AUTHORIZATION: basic <base64>` (worker/github-mirror.ts).
+  result = result.replace(
+    /(\bauthorization\s*:\s*(?:basic|bearer|token)\s+)[A-Za-z0-9+/=._~-]+/gi,
+    '$1***',
+  )
+  // That header's base64 of `x-access-token:<token>` wherever it appears on its own. The 15-byte
+  // prefix encodes to the same 20 characters whatever the token, with no padding to shift it.
+  result = result.replace(/eC1hY2Nlc3MtdG9rZW46[A-Za-z0-9+/]*={0,2}/g, '***')
   // Bare token shapes, for messages embedding a token outside URL userinfo: GitHub token
   // prefixes and Bearer values.
   result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')

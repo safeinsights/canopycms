@@ -17,7 +17,7 @@ import {
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
-import { GitHubPushError, refreshGitHubCredential, type GitHubPushOutcome } from './github-gateway'
+import { GitHubPushError, type GitHubPushOutcome } from './github-gateway'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -243,9 +243,9 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       workerLogError(`Task ${task.id} (${task.action}) failed:`, message)
 
       // [REDACT] task.error is persisted (pending/failed task JSON) and served
-      // to the browser by the admin panel's Tasks tab -- a push failure's
-      // message can embed the bot token from the gateway's git URL. Console output
-      // above stays raw (journald/CloudWatch is trusted).
+      // to the browser by the admin panel's Tasks tab, so a credential in any
+      // failure's message must not reach it. Console output above stays raw
+      // (journald/CloudWatch is trusted).
       const persistedMessage = redactCredentials(message)
 
       // DEP-L1: only transient failures are worth retrying; a permanent one
@@ -267,17 +267,6 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
             : `  Permanently failed after ${maxRetries} retries`,
         )
       }
-
-      // The credential may have rotated, and the next retry resolves the
-      // gateway's git URL afresh to pick a new token up. Without this a push
-      // meeting a revoked token spends its whole retry budget (5s/10s/20s
-      // backoff) waiting on the git-sync loop's refresh up to 5 minutes away,
-      // and fails permanently while the working token sits in the secret store.
-      //
-      // Ungated, and AFTER the outcome is recorded rather than before: the task
-      // is safely in pending/ or failed/ while a network read runs, and that
-      // read is bounded and never throws. See refreshGitHubCredential.
-      await refreshGitHubCredential(() => ctx.github())
     }
     processed++
   }

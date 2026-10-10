@@ -1,14 +1,15 @@
 /**
- * CmsWorker's end of GitHub App authentication: the credential behind its
- * GitHub gateway's buildGitHubUrl(), the Octokit client the gateway hands the
- * same auth to, and the startup preflight that stops a bad credential from
- * being reported as an empty repository.
+ * CmsWorker's end of GitHub App authentication: the credential its GitHub
+ * gateway resolves for each GitHub-bound git operation, the Octokit client the
+ * gateway hands the same auth to, and the startup preflight that stops a bad
+ * credential from being reported as an empty repository.
  *
  * github-auth.test.ts covers the resolver itself; these tests are about the
  * wiring — that the worker really routes both halves through it.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,11 +23,19 @@ import type { WorkerStatusReport } from '../types'
 import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import type { GitHubGateway } from './github-gateway'
 
-/** The gateway's buildGitHubUrl() is private; these tests are precisely about its output. */
+/** The gateway's credential() is private; these tests are precisely about its output. */
 type GitUrlInternals = {
-  buildGitHubUrl(): Promise<string>
+  credential(reach: { failed: boolean }): Promise<{ url: string; token: string }>
   octokit: { auth: (options?: unknown) => Promise<unknown> }
 }
+
+const credentialOf = (internals: GitUrlInternals) => internals.credential({ failed: false })
+
+/** Whether the worker's GitHub mirror exists yet: the first git the gateway runs creates it. */
+const mirrorExists = (worker: CmsWorker): boolean =>
+  existsSync(
+    path.join((worker as unknown as { stateDirectory: string }).stateDirectory, 'github.git'),
+  )
 
 /** The worker's own gateway, created on first use as start() would create it. */
 const gatewayOf = (worker: CmsWorker): GitUrlInternals =>
@@ -96,49 +105,51 @@ describe('CmsWorker GitHub App authentication', () => {
       ...auth,
     })
 
-  describe('buildGitHubUrl()', () => {
-    it('still embeds a personal access token when no App auth is injected at all', async () => {
+  describe('the git credential', () => {
+    const BARE_URL = 'https://github.com/test-owner/test-repo.git'
+
+    it('is still the personal access token when no App auth is injected at all, beside a bare URL', async () => {
       // The regression guard for the default path. App auth is purely
-      // additive: nothing about this URL changed, and no App machinery is
-      // reachable from it.
+      // additive, and no App machinery is reachable from it. The URL never
+      // carries the token: git gets it only from a per-command config file.
       const worker = makeWorker({ githubToken: 'ghp_static' })
 
-      expect(await gatewayOf(worker).buildGitHubUrl()).toBe(
-        'https://x-access-token:ghp_static@github.com/test-owner/test-repo.git',
-      )
+      expect(await credentialOf(gatewayOf(worker))).toMatchObject({
+        url: BARE_URL,
+        token: 'ghp_static',
+      })
     })
 
-    it('embeds a freshly minted installation token under App auth', async () => {
+    it('is a freshly minted installation token under App auth', async () => {
       const worker = makeWorker({ githubAppAuth: appAuthWith(async () => 'ghs_minted') })
 
-      expect(await gatewayOf(worker).buildGitHubUrl()).toBe(
-        'https://x-access-token:ghs_minted@github.com/test-owner/test-repo.git',
-      )
+      expect(await credentialOf(gatewayOf(worker))).toMatchObject({
+        url: BARE_URL,
+        token: 'ghs_minted',
+      })
     })
 
-    it('mints per call, so no tokenized URL is ever reused across calls', async () => {
-      // An installation token expires in about an hour; a URL cached from one
-      // goes stale with it. Varied ACROSS calls on purpose -- a single
-      // pushBranchToGitHub resolves exactly once by design, and
-      // cms-worker.test.ts pins that.
+    it('is minted per operation, so no token is ever reused across operations', async () => {
+      // An installation token expires in about an hour; one cached goes stale
+      // with it. Varied ACROSS operations on purpose -- a single push resolves
+      // exactly once by design, and cms-worker.test.ts pins that.
       let minted = 0
       const worker = makeWorker({
         githubAppAuth: appAuthWith(async () => `ghs_token_${++minted}`),
       })
       const internals = gatewayOf(worker)
 
-      const first = await internals.buildGitHubUrl()
-      const second = await internals.buildGitHubUrl()
+      const first = await credentialOf(internals)
+      const second = await credentialOf(internals)
 
-      expect(first).toContain('ghs_token_1')
-      expect(second).toContain('ghs_token_2')
-      expect(first).not.toBe(second)
+      expect(first.token).toBe('ghs_token_1')
+      expect(second.token).toBe('ghs_token_2')
     })
 
     it('lets a mint failure through unwrapped, so the task classifier still sees its status', async () => {
-      // buildGitHubUrl is on the push path, where a wrapped error would be
-      // classified as transient and burn the task's whole retry budget
-      // against a permanently bad credential.
+      // The credential is resolved on the push path, where a wrapped error
+      // would be classified as transient and burn the task's whole retry
+      // budget against a permanently bad credential.
       const thrown = Object.assign(new Error('Bad credentials'), { status: 401 })
       const worker = makeWorker({
         githubAppAuth: appAuthWith(async () => {
@@ -146,9 +157,7 @@ describe('CmsWorker GitHub App authentication', () => {
         }),
       })
 
-      const caught = await gatewayOf(worker)
-        .buildGitHubUrl()
-        .catch((err: unknown) => err)
+      const caught = await credentialOf(gatewayOf(worker)).catch((err: unknown) => err)
 
       expect(caught).toBe(thrown)
       expect(isPermanentTaskFailure(caught)).toBe(true)
@@ -286,10 +295,11 @@ describe('CmsWorker GitHub App authentication', () => {
       // this path exited instead, systemd (Restart=always) would crash-loop
       // the instance until GitHub recovered, blaming the private key each
       // time.
-      let mints = 0
+      // Whether the mirror existed at each mint: the preflight's comes before any git.
+      const mints: boolean[] = []
       const worker = makeWorker({
         githubAppAuth: appAuthWith(async () => {
-          mints++
+          mints.push(mirrorExists(worker))
           throw Object.assign(new Error('Service unavailable'), { status: 503 })
         }),
       })
@@ -297,7 +307,9 @@ describe('CmsWorker GitHub App authentication', () => {
 
       try {
         await worker.start()
-        expect(mints).toBe(1)
+        // The preflight's one mint, then the boot sync's GitHub fetch resolving the credential
+        // for its own command, which fails the same way and is swallowed with that sync.
+        expect(mints).toEqual([false, true])
         expect(consoleSpy).toHaveWarned('Could not verify GitHub App authentication at startup')
         expect(consoleSpy).toHaveWarned('Service unavailable')
         expect(consoleSpy).toHaveLogged('CMS Worker started')
@@ -332,8 +344,8 @@ describe('CmsWorker GitHub App authentication', () => {
     })
 
     it('exits when the injected strategy hands back an empty token', async () => {
-      // Also status-less, and also permanent: it would otherwise build
-      // `https://x-access-token:@github.com/...` and get an anonymous 403.
+      // Also status-less, and also permanent: it would otherwise send an empty
+      // credential and get an anonymous 403.
       const worker = makeWorker({ githubAppAuth: appAuthWith(async () => '') })
 
       await expect(worker.start()).rejects.toThrow(/empty installation token/)
@@ -353,9 +365,13 @@ describe('CmsWorker GitHub App authentication', () => {
     })
 
     it('mints once before any git work and lets startup continue', async () => {
-      let mintedBeforeGit = 0
+      // Whether the mirror existed at each mint.
+      const mints: boolean[] = []
       const worker = makeWorker({
-        githubAppAuth: appAuthWith(async () => `ghs_token_${++mintedBeforeGit}`),
+        githubAppAuth: appAuthWith(async () => {
+          mints.push(mirrorExists(worker))
+          return `ghs_token_${mints.length}`
+        }),
       })
       // Keep every later git operation off the network; the preflight does not
       // go through this seam, so it is unaffected.
@@ -363,7 +379,9 @@ describe('CmsWorker GitHub App authentication', () => {
 
       try {
         await worker.start()
-        expect(mintedBeforeGit).toBe(1)
+        // Exactly one mint before any git work, the preflight's; the other is the boot sync's
+        // GitHub fetch, which resolves the credential for its own command.
+        expect(mints).toEqual([false, true])
         expect(consoleSpy).toHaveLogged('GitHub App authentication verified')
       } finally {
         await worker.stop()

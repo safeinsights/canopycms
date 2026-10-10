@@ -9,7 +9,6 @@ import type { Task } from '../task-queue/cms-task-queue'
 import { resolveWorkerGitHubAuth, type GitHubAuthConfig } from './github-auth'
 import {
   createLocalGitHubGateway,
-  refreshGitHubCredential,
   type GitHubGateway,
   type GitHubReachability,
   type LocalGitHubGatewayOptions,
@@ -663,11 +662,7 @@ export class CmsWorker {
     const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
 
     this.scheduleLoop('task queue', () => this.processTaskQueue(), taskInterval)
-    // The wrapper, not syncGit() itself: a failed sync is where a rotated or
-    // revoked GitHub credential is noticed. start()'s own initial syncGit()
-    // above stays unwrapped -- there is no stale credential to refresh one line
-    // after reading it at boot.
-    this.scheduleLoop('git sync', () => this.syncGitWithCredentialRefresh(), gitInterval)
+    this.scheduleLoop('git sync', () => this.syncGit(), gitInterval)
 
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
@@ -1479,26 +1474,6 @@ export class CmsWorker {
 
   async syncGit(): Promise<void> {
     return syncGit(this.ctx())
-  }
-
-  /**
-   * `syncGit`, plus "the credential may have rotated" on the way out.
-   *
-   * One of `refreshGitHubCredential`'s two call sites, and the one that
-   * works when nobody is publishing: it fetches from GitHub every
-   * `gitSyncInterval` whether or not anyone is editing, so a credential that has
-   * stopped working surfaces here even with no push queued for days.
-   *
-   * The SYNC failure is what propagates to `scheduleLoop`'s catch;
-   * `refreshGitHubCredential` never throws, so nothing it does can replace it.
-   */
-  private async syncGitWithCredentialRefresh(): Promise<void> {
-    try {
-      await this.syncGit()
-    } catch (err) {
-      await refreshGitHubCredential(() => this.github())
-      throw err
-    }
   }
 
   private async pushSettingsBranches(
