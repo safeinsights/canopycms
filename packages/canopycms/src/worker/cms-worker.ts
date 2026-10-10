@@ -903,7 +903,8 @@ export class CmsWorker {
       throw new Error(
         `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
           `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
-          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork from.`,
+          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork ` +
+          `from, or, if remote.git is damaged, delete ${this.remoteGitPath} and restart to re-clone.`,
       )
     }
     this.setBaseBranch(name)
@@ -913,14 +914,14 @@ export class CmsWorker {
   /**
    * Point remote.git's HEAD at the base branch this worker uses, so a Lambda left to detect it
    * (GitManager.detectBaseBranch) reads the same name. Only the worker writes it, at boot under
-   * the worker lock; a Lambda reads it once per process.
+   * the worker lock, and in a fresh clone before it is renamed into place, so no Lambda reads the
+   * clone's GitHub-default HEAD first; a Lambda reads it once per process.
    */
-  private async recordBaseBranchInRemoteHead(): Promise<void> {
+  private async recordBaseBranchInRemoteHead(gitDir = this.remoteGitPath): Promise<void> {
     const ref = `refs/heads/${this.baseBranch}`
-    const git = simpleGit()
-    const current = await readHeadBranch(this.remoteGitPath).catch(() => undefined)
+    const current = await readHeadBranch(gitDir).catch(() => undefined)
     if (current === this.baseBranch) return
-    await git.raw(['--git-dir', this.remoteGitPath, 'symbolic-ref', 'HEAD', ref])
+    await simpleGit().raw(['--git-dir', gitDir, 'symbolic-ref', 'HEAD', ref])
     workerLog(`remote.git HEAD now names the base branch '${this.baseBranch}'`)
   }
 
@@ -1105,6 +1106,7 @@ export class CmsWorker {
       await this.scrubPersistedRemote(stagingPath)
 
       await this.verifyBaseBranchExists(stagingPath)
+      await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
       workerLogError(`remote.git clone failed: ${redactCredentials(getErrorMessage(err))}`)

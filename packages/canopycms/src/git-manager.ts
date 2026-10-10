@@ -1151,8 +1151,8 @@ export class GitManager {
    * remote is the bare `remote.git` the worker keeps, whose HEAD it sets to the base branch it
    * uses (worker/cms-worker.ts `recordBaseBranchInRemoteHead`), so the two agree.
    *
-   * While that remote does not exist yet, `'pending'` resolves `undefined` and `'throw'` rejects
-   * with {@link RemoteNotReadyError}. A network remote, or a HEAD that names no branch, throws
+   * While that remote does not exist yet, whether auto-detected or configured as a local path,
+   * `'pending'` resolves `undefined` and `'throw'` rejects with {@link RemoteNotReadyError}. A network remote, or a HEAD that names no branch, throws
    * `BaseBranchUnresolvedError`.
    */
   static async detectBaseBranch(
@@ -1188,6 +1188,12 @@ export class GitManager {
       )
     }
     const remoteGitDir = /^file:\/\//i.test(remoteUrl) ? fileURLToPath(remoteUrl) : remoteUrl
+    // A configured local remote is not existence-checked by resolveRemoteUrl; absent, it is the
+    // same not-yet-created remote the auto-detected one is.
+    if (await fs.stat(remoteGitDir).then(() => false, isNotFoundError)) {
+      if (whenNoRemote === 'pending') return undefined
+      throw (await GitManager.remoteNotReadyError('prod')) ?? new RemoteNotReadyError(remoteGitDir)
+    }
     return resolveBaseBranch({ mode: 'prod', remoteGitDir })
   }
 

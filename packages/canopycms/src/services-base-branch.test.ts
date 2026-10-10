@@ -7,6 +7,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -111,6 +112,23 @@ describe('prod base branch resolution', () => {
     })
     expect(services.checkBranchAccess(unrecordedBranch('main'), editor).allowed).toBe(false)
   })
+
+  it.each([
+    ['a path', (dir: string) => dir],
+    ['a file URL', (dir: string) => pathToFileURL(dir).href],
+  ])(
+    'stays pending, not failing, while a configured local remote (%s) does not exist yet',
+    async (_shape, toUrl) => {
+      const services = await makeServices({ defaultRemoteUrl: toUrl(remoteGit()) })
+      expect(services.config.defaultBaseBranch).toBeUndefined()
+      await expect(services.resolvePendingBaseBranch()).rejects.toThrow(RemoteNotReadyError)
+
+      await createRemoteGit('production')
+      await services.resolvePendingBaseBranch()
+
+      expect(services.config.defaultBaseBranch).toBe('production')
+    },
+  )
 
   it('keeps a configured active branch when the base branch resolves later', async () => {
     const services = await makeServices({ defaultActiveBranch: 'staging' })

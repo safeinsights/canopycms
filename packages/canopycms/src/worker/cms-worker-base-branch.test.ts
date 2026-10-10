@@ -104,6 +104,22 @@ describe('CmsWorker base branch', () => {
     expect(await readHeadBranch(remoteGitPath)).toBe('main')
   })
 
+  it('names the configured base branch in a fresh clone before it becomes remote.git', async () => {
+    const headsAtRename: string[] = []
+    const rename = fs.rename.bind(fs)
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to) === remoteGitPath) headsAtRename.push(await readHeadBranch(String(from)))
+      return rename(from, to)
+    })
+    try {
+      await boot(makeWorker({ baseBranch: 'main' }))
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(headsAtRename).toEqual(['main'])
+  })
+
   it('fails to start, naming CANOPYCMS_BASE_BRANCH, when remote.git HEAD names no branch', async () => {
     await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])
     await simpleGit().raw(['--git-dir', remoteGitPath, 'symbolic-ref', 'HEAD', 'refs/heads/gone'])
