@@ -507,6 +507,28 @@ describe('a repository planted where git would look first', () => {
   })
 })
 
+describe('base-branch detection at boot', () => {
+  it("refuses remote.git's config before reading its HEAD, and records the refusal as itself", async () => {
+    await plantConfig(f.remoteGitPath, [['core.fsmonitor', record(f, 'boot')]])
+    // Read first, this HEAD would fail detection with an error about the base branch instead.
+    await bare(f.remoteGitPath).raw(['symbolic-ref', 'HEAD', 'refs/heads/no-such-branch'])
+    const worker = new CmsWorker({
+      workspacePath: f.workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      stateDirectory: path.join(f.root, 'boot-state'),
+    })
+
+    await expect(worker.start()).rejects.toThrow(
+      /^Refusing to run git in \S+remote\.git: .*core\.fsmonitor in \S+remote\.git\/config/,
+    )
+
+    expect((await readStatus())?.lastFatalError?.message).toMatch(/^Refusing to run git in/)
+    expect(await f.sentinelLines()).toEqual([])
+  })
+})
+
 describe('the state directory', () => {
   it('is refused at start when it is inside the shared workspace, and the refusal is recorded', async () => {
     const worker = new CmsWorker({

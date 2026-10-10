@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { Stats } from 'node:fs'
-import { simpleGit, type SimpleGit, type SimpleGitOptions } from 'simple-git'
+import { simpleGit, type SimpleGit } from 'simple-git'
 
 import type { OperatingMode } from '../operating-mode'
 import { BaseBranchUnresolvedError } from './base-branch'
@@ -238,13 +238,12 @@ export async function detectHeadBranch(
  * Throws when HEAD is detached, unreadable, or names a branch with no commit.
  *
  * `--git-dir` rather than cwd discovery, which `safe.bareRepository=explicit` refuses for bare
- * repos. `gitOptions` is how the worker passes the pins it runs a shared repository under.
+ * repos. `git` is how the worker passes the instance it runs a shared repository with.
  */
 export async function readHeadBranch(
   gitDir: string,
-  gitOptions: Partial<SimpleGitOptions> = {},
+  git: SimpleGit = simpleGit(),
 ): Promise<string> {
-  const git = simpleGit(gitOptions)
   const ref = (await git.raw(['--git-dir', gitDir, 'symbolic-ref', 'HEAD'])).trim()
   if (!ref.startsWith('refs/heads/')) {
     throw new Error(`its HEAD does not name a branch (${ref || 'empty'})`)

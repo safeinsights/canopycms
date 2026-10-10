@@ -144,8 +144,9 @@ function pinsFor(kind: SharedRepoKind): string[] {
 }
 
 /**
- * simple-git options for a worker git instance in a shared repository. Only for a call that names
- * the repository itself with `--git-dir`; everything else uses {@link sharedRepoGit}.
+ * The pins alone, without the environment {@link sharedRepoGit} adds (an explicit `GIT_DIR`, no
+ * lazy fetches), which every worker git in a shared repository needs too.
+ * @internal Exported for tests.
  */
 export function sharedRepoGitOptions(
   kind: SharedRepoKind,

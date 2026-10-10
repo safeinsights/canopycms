@@ -18,6 +18,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { GitManager, REMOTE_GIT_CONFIG, ensureRemoteGitConfig } from '../git-manager'
+import { readHeadBranch } from '../utils/git'
 import { initTestRepo } from '../test-utils'
 import {
   SHARED_REPO_STATUS_ARGS,
@@ -416,6 +417,26 @@ describe('assertSharedRepoConfig: a repository that is really somewhere else', (
 })
 
 describe('sharedRepoGit', () => {
+  it('never lazily fetches a missing object from a promisor remote the config names', async () => {
+    const { remote } = await sharedPair()
+    const config = path.join(remote, 'config')
+    await setConfig(config, 'core.repositoryformatversion', '1')
+    await setConfig(config, 'extensions.partialClone', 'planted')
+    await setConfig(config, 'remote.planted.promisor', 'true')
+    await setConfig(config, 'remote.planted.url', remote)
+    await setConfig(
+      config,
+      'remote.planted.uploadpack',
+      `sh -c '${record('lazy-fetch')}; exit 1' #`,
+    )
+    await fs.writeFile(path.join(remote, 'refs', 'heads', 'ghost'), `${'1'.repeat(40)}\n`)
+    await execFileAsync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/ghost'])
+
+    await expect(readHeadBranch(remote, sharedRepoGit(remote, 'bare'))).rejects.toThrow()
+
+    expect(await sentinelLines()).toEqual([])
+  })
+
   it('never runs in a repository above a clone whose .git has gone', async () => {
     const outer = path.join(root, 'outer')
     await fs.mkdir(outer)

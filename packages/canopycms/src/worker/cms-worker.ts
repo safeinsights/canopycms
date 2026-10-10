@@ -32,7 +32,7 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
 import { GitHubMirror } from './github-mirror'
-import { assertSharedRepoConfig, sharedRepoGit, sharedRepoGitOptions } from './shared-repo-git'
+import { assertSharedRepoConfig, sharedRepoGit } from './shared-repo-git'
 import {
   executeTask,
   orphanRecoveryMaxAgeMs,
@@ -932,20 +932,19 @@ export class CmsWorker {
   private async resolveBaseBranch(): Promise<void> {
     if (this.resolvedBaseBranch) return
     let name: string
+    const remoteGitExists = await fs.stat(this.remoteGitPath).then(
+      () => true,
+      (err: unknown) => {
+        if (isNodeError(err) && err.code === 'ENOENT') return false
+        throw err
+      },
+    )
+    // Before the first git to read it, and outside the try below: a refusal is recorded as itself,
+    // not as a base branch to configure or a remote.git to delete.
+    if (remoteGitExists) await assertSharedRepoConfig(this.remoteGitPath, 'bare')
     try {
-      const remoteGitExists = await fs.stat(this.remoteGitPath).then(
-        () => true,
-        (err: unknown) => {
-          if (isNodeError(err) && err.code === 'ENOENT') return false
-          throw err
-        },
-      )
-      if (remoteGitExists) {
-        // Before the first git to read it, so a refusal is the startup failure recorded.
-        await assertSharedRepoConfig(this.remoteGitPath, 'bare')
-      }
       name = remoteGitExists
-        ? await readHeadBranch(this.remoteGitPath, sharedRepoGitOptions('bare'))
+        ? await readHeadBranch(this.remoteGitPath, sharedRepoGit(this.remoteGitPath, 'bare'))
         : (
             await this.octokitClient().repos.get({
               owner: this.config.githubOwner,
@@ -972,7 +971,7 @@ export class CmsWorker {
    */
   private async recordBaseBranchInRemoteHead(gitDir = this.remoteGitPath): Promise<void> {
     const ref = `refs/heads/${this.baseBranch}`
-    const current = await readHeadBranch(gitDir, sharedRepoGitOptions('bare')).catch(
+    const current = await readHeadBranch(gitDir, sharedRepoGit(gitDir, 'bare')).catch(
       () => undefined,
     )
     if (current === this.baseBranch) return
@@ -1088,7 +1087,7 @@ export class CmsWorker {
    */
   private async applyRemoteGitConfig(gitDir: string): Promise<void> {
     try {
-      await ensureRemoteGitConfig(gitDir, sharedRepoGitOptions('bare'))
+      await ensureRemoteGitConfig(gitDir, sharedRepoGit(gitDir, 'bare'))
     } catch (err) {
       workerLogWarn(`Could not apply remote.git config in ${gitDir}: ${getErrorMessage(err)}`)
     }
@@ -1160,6 +1159,8 @@ export class CmsWorker {
         await mirror.seedBareRepository(stagingPath)
       })
 
+      // The staging path is predictable, and so writable by the Lambda while seeding runs.
+      await assertSharedRepoConfig(stagingPath, 'bare')
       await this.verifyBaseBranchExists(stagingPath)
       await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
@@ -1169,6 +1170,7 @@ export class CmsWorker {
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
+      if (getErrorMessage(err).startsWith('Refusing to run git in')) throw err
       throw new Error(
         `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )

@@ -101,7 +101,10 @@ export class GitHubMirror {
   /** Repack when it needs it, and say once if it has grown past {@link MIRROR_SIZE_WARN_KIB}. */
   async maintain(): Promise<BareRemoteRepackResult> {
     await this.ensure()
-    const result = await repackBareRemoteIfNeeded(this.gitDir, mirrorGitOptions())
+    const result = await repackBareRemoteIfNeeded(
+      this.gitDir,
+      simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() }).env(mirrorEnv(this.gitDir)),
+    )
     if (!this.warnedSize) {
       const kib = await objectStoreKiB(this.gitDir)
       if (kib > MIRROR_SIZE_WARN_KIB) {
