@@ -29,8 +29,6 @@ describe('examples/aws-deployment', () => {
       const difference = actual === null ? 'missing' : firstDifference(expected, actual)
       if (difference) stale.push(`examples/aws-deployment/${relativePath}, ${difference}`)
     }
-    // The commit hook runs prettier over these files, so a template prettier would reformat
-    // regenerates into a file that differs again once committed. Format the template instead.
     expect(stale, 'run `pnpm generate:aws-example` and commit the result').toEqual([])
   })
 })
