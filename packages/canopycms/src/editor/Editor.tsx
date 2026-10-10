@@ -1262,7 +1262,11 @@ const EditorContent: React.FC<EditorProps> = ({
                       </EntryLinkContext.Provider>
                     ) : (
                       <CenteredMessage>
-                        {schema.length > 0 ? 'Loading content…' : 'No fields to edit.'}
+                        {entriesLoading
+                          ? 'Loading content…'
+                          : schema.length > 0
+                            ? "This entry couldn't be loaded. Reload it from the File menu."
+                            : 'No fields to edit.'}
                       </CenteredMessage>
                     )
                   }

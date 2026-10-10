@@ -20,6 +20,7 @@ import { NumberField } from './fields/NumberField'
 import { NumberListField } from './fields/NumberListField'
 import { StringListField } from './fields/StringListField'
 import { DateTimeField } from './fields/DateTimeField'
+import { SelectField } from './fields/SelectField'
 import { ToggleField } from './fields/ToggleField'
 import { ImageField } from './fields/ImageField'
 import { MarkdownSourceEditor } from './fields/MarkdownField'
@@ -446,6 +447,42 @@ describe('each field refuses edits on its own', () => {
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: '2' } })
     fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  // Mantine's TagsInput paste handler and MultiSelect's Backspace handler ignore readOnly, so
+  // only the field's own gate stops these.
+  it.each([
+    [
+      'StringListField',
+      (on: () => void) => <StringListField label="F" value={['a']} onChange={on} readOnly />,
+    ],
+    [
+      'NumberListField',
+      (on: () => void) => <NumberListField label="F" value={[1]} onChange={on} readOnly />,
+    ],
+  ])('%s: a paste adds nothing', (_name, build) => {
+    const onChange = vi.fn()
+    renderField(build(onChange))
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: { getData: () => '2' },
+    })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('SelectField (multiple): Backspace removes no pill', () => {
+    const onChange = vi.fn()
+    renderField(
+      <SelectField
+        label="F"
+        options={[{ label: 'Red', value: 'red' }]}
+        value={['red']}
+        multiple
+        onChange={onChange}
+        readOnly
+      />,
+    )
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Backspace' })
     expect(onChange).not.toHaveBeenCalled()
   })
 
