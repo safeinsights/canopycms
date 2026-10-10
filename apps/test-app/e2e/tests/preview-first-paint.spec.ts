@@ -51,7 +51,7 @@ test.describe('A createPreviewPage view paints its images from the signed-in rou
     await test.step('save Home with a freshly cropped hero', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       const body = await mediaPage.uploadViaImageFieldDropzone('heroImage', 'test-image.png')
       expect(body.ok).toBe(true)

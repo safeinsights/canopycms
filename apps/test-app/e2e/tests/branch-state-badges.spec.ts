@@ -198,7 +198,7 @@ test.describe('Branch State Badges', () => {
     })
 
     await test.step('status-locked banner is visible and save is disabled', async () => {
-      const banner = page.locator('[data-testid="status-locked-banner"]')
+      const banner = editorPage.statusLockedBanner()
       await expect(banner).toBeVisible()
       await expect(banner).toContainText(
         `Branch "${branchName}" is submitted for review and locked for edits`,
@@ -226,7 +226,7 @@ test.describe('Branch State Badges', () => {
       await page.reload()
       await editorPage.waitForReady()
 
-      await expect(page.locator('[data-testid="status-locked-banner"]')).not.toBeVisible()
+      await expect(editorPage.statusLockedBanner()).not.toBeVisible()
       // NOTE: save-button stays disabled right after reload regardless of
       // the status lock -- it's also gated on `hasUnsavedChanges` and
       // `currentEntry`, neither of which survives a reload (see
@@ -235,7 +235,7 @@ test.describe('Branch State Badges', () => {
       // actually editing and saving below.
 
       // Prove editing genuinely works again, not just that the banner is gone.
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       await editorPage.fillTextField('title', `Restored-${Date.now()}`)
       await editorPage.saveAndVerify()

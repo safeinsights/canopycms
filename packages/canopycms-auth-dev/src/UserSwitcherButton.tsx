@@ -24,6 +24,7 @@ export function UserSwitcherButton() {
         radius="md"
         onClick={() => setOpened(true)}
         aria-label="Switch user"
+        data-testid="switch-user-button"
       >
         <Avatar size="sm" color="blue">
           {currentUser?.name[0] ?? 'U'}

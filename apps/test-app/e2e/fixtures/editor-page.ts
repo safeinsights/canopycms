@@ -1,9 +1,28 @@
 import { type Page, type Locator, expect } from '@playwright/test'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
+import { BranchPage } from './branch-page'
+
+/** Entries of the rail's Settings menu, named for what they open. */
+export type SettingsItem = 'Groups' | 'Permissions' | 'Media library' | 'System health'
+
+const SETTINGS_ITEM_TEST_IDS: Record<SettingsItem, string> = {
+  Groups: 'settings-menu-groups',
+  Permissions: 'settings-menu-permissions',
+  'Media library': 'settings-menu-media-library',
+  'System health': 'settings-menu-system-health',
+}
+
+/** The navigator derives its per-node test ids from the node label this way. */
+const navigatorTestIdSuffix = (label: string): string => label.toLowerCase().replace(/\s+/g, '-')
 
 /**
  * Page object for the CanopyCMS Editor.
  * Provides methods for common editor interactions in E2E tests.
+ *
+ * The editor `data-testid`s this class and the other page objects use are the e2e contract: a UI
+ * change that renames or removes one does so deliberately and updates the page object in the same
+ * PR. Specs reach editor chrome (header, rail, navigator, comments, toasts) only through page
+ * objects.
  */
 export class EditorPage {
   readonly page: Page
@@ -13,12 +32,12 @@ export class EditorPage {
   readonly previewPane: Locator
 
   // Header elements
-  readonly fileDropdownButton: Locator
-  readonly allFilesMenuItem: Locator
   readonly saveButton: Locator
+  private readonly fileDropdownButton: Locator
+  private readonly allFilesMenuItem: Locator
 
-  // Entry navigator
-  readonly entryNavigator: Locator
+  /** The entry navigator (a drawer): the tree of collections and entries. */
+  readonly contentNavigator: Locator
 
   constructor(page: Page) {
     this.page = page
@@ -32,8 +51,7 @@ export class EditorPage {
     this.saveButton = page.locator('[data-testid="save-button"]')
     this.allFilesMenuItem = page.locator('[data-testid="all-files-menu-item"]')
 
-    // Entry navigator (in drawer)
-    this.entryNavigator = page.locator('[data-testid="entry-navigator"]')
+    this.contentNavigator = page.locator('[data-testid="entry-navigator"]')
   }
 
   /**
@@ -60,15 +78,53 @@ export class EditorPage {
   }
 
   /**
-   * Open the entry navigator drawer via the file dropdown menu.
+   * Open the content navigator via the header's file menu.
    */
-  async openEntryNavigator(): Promise<void> {
+  async openContentNavigator(): Promise<void> {
     await this.fileDropdownButton.click()
     await this.allFilesMenuItem.click()
-    await this.entryNavigator.waitFor({
+    await this.contentNavigator.waitFor({
       state: 'visible',
       timeout: STANDARD_TIMEOUT,
     })
+  }
+
+  /**
+   * Close the content navigator so the form pane is interactive.
+   */
+  async closeContentNavigator(): Promise<void> {
+    await this.page.keyboard.press('Escape')
+    await expect(this.contentNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+  }
+
+  /**
+   * The navigator row for a collection or entry, by its display label.
+   */
+  navigatorItem(label: string): Locator {
+    return this.contentNavigator.locator(
+      `[data-testid="entry-nav-item-${navigatorTestIdSuffix(label)}"]`,
+    )
+  }
+
+  /**
+   * Every node (collection or entry) in the navigator tree, in display order.
+   */
+  navigatorNodes(): Locator {
+    return this.contentNavigator.locator('[role="treeitem"]')
+  }
+
+  /**
+   * The navigator's markers on entries whose content conflicts with the base branch.
+   */
+  navigatorConflictBadges(): Locator {
+    return this.contentNavigator.locator('[data-testid="conflict-badge"]')
+  }
+
+  /**
+   * Expand or collapse a collection in the navigator.
+   */
+  async toggleCollection(label: string): Promise<void> {
+    await this.navigatorItem(label).click()
   }
 
   /**
@@ -76,18 +132,288 @@ export class EditorPage {
    * @param label - The display label of the entry to select
    */
   async selectEntry(label: string): Promise<void> {
-    // Use the data-testid for reliable selection
-    const testId = `entry-nav-item-${label.toLowerCase().replace(/\s+/g, '-')}`
-    const entry = this.entryNavigator.locator(`[data-testid="${testId}"]`)
+    const entry = this.navigatorItem(label)
     await entry.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
 
-    // Click on the entry item
     await entry.click()
 
-    // Wait for the file dropdown to show the selected entry name (condition-based, no blind wait)
-    await expect(this.fileDropdownButton).toContainText(label, {
+    // Wait for the editor to show the selected entry (condition-based, no blind wait)
+    await expect(this.currentEntryLabel()).toContainText(label, {
       timeout: STANDARD_TIMEOUT,
     })
+  }
+
+  /**
+   * What the editor shows as the open entry.
+   */
+  currentEntryLabel(): Locator {
+    return this.fileDropdownButton
+  }
+
+  /**
+   * Create an entry in a collection through the navigator, and wait for the create modal to close.
+   * The navigator must be open.
+   * @param collection - The collection's display label, e.g. 'Posts'
+   * @param slug - The new entry's slug
+   */
+  async createEntry(collection: string, slug: string): Promise<void> {
+    await this.openCollectionMenu(collection, 'add-entry-menu-item')
+
+    const modal = this.page.locator('[data-testid="create-entry-modal"]')
+    await expect(modal).toBeVisible()
+    await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
+    await this.page.locator('[data-testid="create-entry-submit"]').click()
+    // Entry creation involves server-side file writes
+    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+  }
+
+  /**
+   * Rename an entry's slug through the navigator, and wait for the rename modal to close.
+   * The navigator must be open.
+   * @param entryLabel - The entry's display label (a rename changes the slug, not the label)
+   * @param newSlug - The new slug
+   */
+  async renameEntry(entryLabel: string, newSlug: string): Promise<void> {
+    await this.openEntryMenu(entryLabel, 'rename-entry-menu-item')
+
+    const modal = this.page.locator('[data-testid="rename-entry-modal"]')
+    await expect(modal).toBeVisible()
+    // fill() replaces the pre-filled current slug
+    await this.page.locator('[data-testid="rename-slug-input"]').fill(newSlug)
+    await this.page.locator('[data-testid="rename-entry-submit"]').click()
+    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+  }
+
+  /**
+   * Start deleting an entry through the navigator and return its confirmation dialog, visible.
+   * The navigator must be open.
+   */
+  async startDeleteEntry(entryLabel: string): Promise<Locator> {
+    await this.openEntryMenu(entryLabel, 'delete-entry-menu-item')
+    const modal = this.page.locator('[data-testid="confirm-delete-modal"]')
+    await expect(modal).toBeVisible()
+    return modal
+  }
+
+  /**
+   * The delete dialog's confirm button. Its label changes to "Delete anyway" once the dialog has
+   * listed the entries that reference the one being deleted.
+   */
+  deleteConfirmButton(): Locator {
+    return this.page.locator('[data-testid="confirm-delete-submit"]')
+  }
+
+  /**
+   * Delete an entry through the navigator, confirming the dialog, and wait for it to close.
+   * The navigator must be open.
+   */
+  async deleteEntry(entryLabel: string): Promise<void> {
+    const modal = await this.startDeleteEntry(entryLabel)
+    await this.deleteConfirmButton().click()
+    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+  }
+
+  private async openCollectionMenu(collection: string, itemTestId: string): Promise<void> {
+    const menu = this.page.locator(
+      `[data-testid="collection-menu-${navigatorTestIdSuffix(collection)}"]`,
+    )
+    await menu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await menu.click()
+    const item = this.page.locator(`[data-testid="${itemTestId}"]`)
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
+  private async openEntryMenu(entryLabel: string, itemTestId: string): Promise<void> {
+    const menu = this.page.locator(
+      `[data-testid="entry-menu-${navigatorTestIdSuffix(entryLabel)}"]`,
+    )
+    await menu.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await menu.click()
+    const item = this.page.locator(`[data-testid="${itemTestId}"]`)
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+  }
+
+  /**
+   * Open the header's file menu and discard the open entry's unsaved draft. Returns the
+   * confirmation dialog; finish with {@link confirmDiscard}.
+   */
+  async discardEntryDraft(): Promise<Locator> {
+    await this.fileDropdownButton.click()
+    const item = this.page.locator('[data-testid="discard-file-draft-menu-item"]')
+    await item.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await item.click()
+    return this.page.getByRole('dialog', { name: 'Discard draft' })
+  }
+
+  /**
+   * Open the branch menu and discard every unsaved file draft. Returns the confirmation dialog;
+   * finish with {@link confirmDiscard}.
+   */
+  async discardAllDrafts(): Promise<Locator> {
+    await new BranchPage(this.page).openBranchMenu()
+    await this.page.locator('[data-testid="discard-all-drafts-menu-item"]').click()
+    return this.page.getByRole('dialog', { name: 'Discard drafts' })
+  }
+
+  /**
+   * Confirm a discard dialog returned by {@link discardEntryDraft} or {@link discardAllDrafts}.
+   */
+  async confirmDiscard(dialog: Locator): Promise<void> {
+    await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
+  }
+
+  /**
+   * The banner shown while a workflow status (e.g. submitted) locks the branch's content.
+   */
+  statusLockedBanner(): Locator {
+    return this.page.locator('[data-testid="status-locked-banner"]')
+  }
+
+  /**
+   * A toast notification containing the given text.
+   */
+  notification(text: string | RegExp): Locator {
+    return this.page.locator('.mantine-Notification-root', { hasText: text })
+  }
+
+  /**
+   * Open the comments panel from the header.
+   */
+  async openComments(): Promise<void> {
+    const button = this.page.locator('[data-testid="comments-button"]')
+    await button.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await button.click()
+  }
+
+  /**
+   * Close the comments panel.
+   */
+  async closeComments(): Promise<void> {
+    await this.page.keyboard.press('Escape')
+  }
+
+  /**
+   * Add a branch-level comment in the open comments panel.
+   */
+  async addBranchComment(text: string): Promise<void> {
+    const textarea = this.branchCommentDraft()
+    await textarea.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await textarea.fill(text)
+    await this.page.locator('[data-testid="comment-submit"]').click()
+  }
+
+  /**
+   * The comments panel's new-comment text box.
+   */
+  branchCommentDraft(): Locator {
+    return this.page.locator('[data-testid="comment-textarea"]')
+  }
+
+  /**
+   * The threads listed in the comments panel.
+   */
+  branchCommentThreads(): Locator {
+    return this.page.locator('[data-testid="comment-thread"]')
+  }
+
+  /**
+   * Begin a new comment thread on a form field.
+   * @param field - The field's data-canopy-field path
+   */
+  async startFieldComment(field: string): Promise<void> {
+    const trigger = this.page.locator(`[data-testid="field-new-comment-${field}"]`)
+    await trigger.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await trigger.click()
+  }
+
+  /**
+   * Fill and create the field comment thread started by {@link startFieldComment}.
+   */
+  async submitFieldComment(text: string): Promise<void> {
+    const textarea = this.page.locator('[data-testid="new-thread-textarea"]')
+    await textarea.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await textarea.fill(text)
+    await this.page.locator('[data-testid="create-thread-button"]').click()
+  }
+
+  /**
+   * The comment thread shown inline in the form.
+   */
+  fieldCommentThread(): Locator {
+    return this.page.locator('[data-testid="inline-comment-thread"]')
+  }
+
+  /**
+   * The control that resolves a comment thread; absent once the thread is resolved.
+   */
+  resolveThreadButton(): Locator {
+    return this.page.locator('[data-testid="resolve-thread-button"]')
+  }
+
+  /**
+   * Resolve the inline comment thread.
+   */
+  async resolveFieldComment(): Promise<void> {
+    const button = this.resolveThreadButton()
+    await button.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await button.click()
+  }
+
+  /**
+   * The rail's preview-highlights toggle; reflects its state in `aria-pressed`.
+   */
+  highlightToggle(): Locator {
+    return this.page.locator('[data-testid="toggle-highlights-button"]')
+  }
+
+  /**
+   * Switch preview highlights on or off.
+   */
+  async toggleHighlights(): Promise<void> {
+    await this.highlightToggle().click()
+  }
+
+  /**
+   * The notice shown when the previewed page marks no editable elements.
+   */
+  noEditableMarksNotice(): Locator {
+    return this.page.getByText(/marks no editable elements/)
+  }
+
+  /**
+   * Open the rail's Settings menu.
+   */
+  async openSettingsMenu(): Promise<void> {
+    await this.page.locator('[data-testid="settings-button"]').click()
+    await expect(this.page.locator('[data-testid="settings-menu"]')).toBeVisible({
+      timeout: STANDARD_TIMEOUT,
+    })
+  }
+
+  /**
+   * A Settings menu entry. Only meaningful while the menu is open; "System health" is absent from
+   * the DOM for non-admins.
+   */
+  settingsMenuItem(item: SettingsItem): Locator {
+    return this.page.locator(`[data-testid="${SETTINGS_ITEM_TEST_IDS[item]}"]`)
+  }
+
+  /**
+   * Open the Settings menu and choose an entry. The surface it opens is the caller's to wait for.
+   */
+  async openSettingsItem(item: SettingsItem): Promise<void> {
+    await this.openSettingsMenu()
+    await this.settingsMenuItem(item).click()
+  }
+
+  /**
+   * Sign out through the dev auth user switcher.
+   */
+  async signOut(): Promise<void> {
+    await this.page.locator('[data-testid="switch-user-button"]').click()
+    await this.page.locator('[data-testid="sign-out-button"]').click()
   }
 
   /**
@@ -127,9 +453,7 @@ export class EditorPage {
    * instead of the notification and is immune to stale notifications from prior saves.
    */
   async waitForSaveNotification(): Promise<void> {
-    await expect(
-      this.page.locator('.mantine-Notification-root', { hasText: 'Saved' }).first(),
-    ).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await expect(this.notification('Saved').first()).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -162,9 +486,6 @@ export class EditorPage {
       timeout: STANDARD_TIMEOUT,
     })
   }
-
-  // NOTE: No discard-button data-testid exists in the editor UI yet.
-  // Discard is available via "Discard File Draft" menu item but has no data-testid.
 
   /**
    * Fill a textarea field (for MDX, markdown, etc.).
@@ -265,27 +586,14 @@ export class EditorPage {
    * duplicating the navigator → modal → expand → select → fill → save flow.
    */
   async createPost(slug: string, title: string): Promise<void> {
-    await this.openEntryNavigator()
-
-    const collectionMenu = this.page.locator('[data-testid="collection-menu-posts"]')
-    await collectionMenu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    await collectionMenu.click()
-
-    const addEntry = this.page.locator('[data-testid="add-entry-menu-item"]')
-    await addEntry.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await addEntry.click()
-
-    const modal = this.page.locator('[data-testid="create-entry-modal"]')
-    await expect(modal).toBeVisible()
-    await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
-    await this.page.locator('[data-testid="create-entry-submit"]').click()
-    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+    await this.openContentNavigator()
+    await this.createEntry('Posts', slug)
 
     // After creation the navigator is still open. Expand Posts if collapsed,
     // then click the new entry so it loads in the form pane.
-    const postsCollection = this.page.locator('[data-testid="entry-nav-item-posts"]')
+    const postsCollection = this.navigatorItem('Posts')
     await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    const navItem = this.page.locator('[data-testid="entry-nav-item-post"]').last()
+    const navItem = this.navigatorItem('Post').last()
     if (!(await navItem.isVisible())) {
       await postsCollection.click()
     }
@@ -293,8 +601,7 @@ export class EditorPage {
     await navItem.click()
 
     // Close navigator so form pane is interactive
-    await this.page.keyboard.press('Escape')
-    await expect(this.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+    await this.closeContentNavigator()
 
     // Fill title and save so the entry has a recognisable label
     await this.fillTextField('title', title)

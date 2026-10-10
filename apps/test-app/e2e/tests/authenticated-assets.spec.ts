@@ -41,7 +41,7 @@ test.describe('Editor and preview images use the authenticated asset route', () 
     await test.step('open Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 

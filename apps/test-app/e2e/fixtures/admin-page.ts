@@ -18,6 +18,7 @@
  */
 
 import { expect, type Locator, type Page } from '@playwright/test'
+import { EditorPage } from './editor-page'
 import { STANDARD_TIMEOUT } from './timeouts'
 
 /** Queue buckets selectable in the Tasks tab's segmented control. */
@@ -33,27 +34,9 @@ export class AdminPage {
     this.panel = page.getByRole('dialog', { name: 'System health' })
   }
 
-  /** Open the sidebar Settings menu (gear icon). */
-  async openSettingsMenu(): Promise<void> {
-    await this.page.getByRole('button', { name: 'Settings' }).click()
-    await expect(this.page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible({
-      timeout: STANDARD_TIMEOUT,
-    })
-  }
-
-  /**
-   * The "System health" menu item. Only rendered for admins — `Editor.tsx`
-   * passes `onSystemHealthOpen` conditionally, so for a non-admin the item is
-   * absent from the DOM entirely rather than merely disabled.
-   */
-  systemHealthMenuItem(): Locator {
-    return this.page.getByRole('menuitem', { name: 'System health' })
-  }
-
-  /** Open Settings → System health and wait for the panel. */
+  /** Open Settings -> System health and wait for the panel. */
   async open(): Promise<void> {
-    await this.openSettingsMenu()
-    await this.systemHealthMenuItem().click()
+    await new EditorPage(this.page).openSettingsItem('System health')
     await expect(this.panel).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 

@@ -22,7 +22,7 @@ test.describe('Preview Bridge', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -62,7 +62,7 @@ test.describe('Preview Bridge', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -93,9 +93,9 @@ test.describe('Preview Bridge', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('spotlight-target', 'Spotlight Target Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await expect(previewFrame.locator('[data-canopy-path="title"]')).toContainText('Home Page', {
         timeout: 15000,
       })
@@ -115,7 +115,7 @@ test.describe('Preview Bridge', () => {
   test('an entry with no page shows no preview and frames nothing', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Test Site')
 
     await expect(editorPage.previewPane).toContainText('No preview for this entry.')

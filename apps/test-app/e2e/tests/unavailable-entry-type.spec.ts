@@ -50,18 +50,18 @@ test.describe('Unavailable entry type', () => {
   }) => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
 
     await test.step('the navigator names the unknown content type once, under its collection', async () => {
-      const messages = editorPage.entryNavigator.getByTestId('unavailable-type-message')
+      const messages = editorPage.contentNavigator.getByTestId('unavailable-type-message')
       await expect(messages).toHaveCount(1)
       await expect(messages).toContainText('widgetSchema')
       await expect(messages).toContainText("doesn't know yet")
     })
 
     await test.step('opening its entry shows the notice in place of the form', async () => {
-      await editorPage.entryNavigator.getByTestId('entry-nav-item-widgets').click()
-      await editorPage.entryNavigator.getByTestId('entry-nav-item-alpha').click()
+      await editorPage.toggleCollection('Widgets')
+      await editorPage.navigatorItem('Alpha').click()
       const notice = page.getByTestId('unavailable-entry-notice')
       await expect(notice).toBeVisible()
       await expect(notice).toContainText('widgetSchema')
@@ -69,7 +69,7 @@ test.describe('Unavailable entry type', () => {
     })
 
     await test.step('a healthy entry still opens into its form', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       await expect(page.getByTestId('unavailable-entry-notice')).toHaveCount(0)
       await expect(editorPage.formPane.locator('[data-canopy-field]').first()).toBeVisible()
