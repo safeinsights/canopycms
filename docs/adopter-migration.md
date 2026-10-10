@@ -40,6 +40,35 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `canopycms-cdk`: the worker instance is hardened — **an existing stack upgrades in two deploys; behaviour and cost change**
+
+**Upgrade an existing stack in two deploys:**
+
+1. Deploy with `efsEnforceIamAndTls: false` on `CanopyCmsService`. The worker is replaced by one
+   that mounts EFS with IAM, and no file-system policy exists yet.
+2. Remove the prop and deploy again. The policy lands while every client already uses IAM and TLS.
+
+In a single deploy, CloudFormation updates the file system's policy before it replaces the worker.
+The outgoing worker still holds an anonymous mount then, and if its connection drops, its NFS calls
+hang until the drain heartbeat lets termination continue. Its in-flight task is retried later. A
+new stack needs no steps.
+
+**What changed.** Detailed in [The worker instance](deploying-to-aws.md#the-worker-instance): IMDSv2
+with a hop limit of 1; the bundle is one file whose sha256 user data checks, readable as that one
+object; a file-system policy refusing clients without TLS or IAM, replacing the worker's
+`AmazonElasticFileSystemClientReadWriteAccess`; an encrypted gp3 root volume; a boot-time upgrade
+to the latest AL2023 release; a weekly replacement (`workerMaxInstanceLifetime`); a sandboxed
+systemd unit; and daily EFS backups (`efsBackup`, billed per GB-month).
+
+**To adopt.** The two deploys above. Anything else that mounts this file system needs `tls,iam` and
+`elasticfilesystem:ClientMount`. A hand-installed unit copies the sandbox lines from
+`worker/canopy-worker.service`. If your account encrypts EBS by default with a customer-managed key,
+grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLifetime: null` or
+`efsBackup: false` to opt out.
+
+**Now deletable.** Any override adding `MetadataOptions`, an encrypted root volume or an EFS
+`FileSystemPolicy`, or narrowing the worker role's asset-bucket grant.
+
 ### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
 **What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other

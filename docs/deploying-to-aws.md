@@ -1042,7 +1042,7 @@ typically about 2 minutes). This is expected and safe:
 - No worker starts until the old one releases the worker lock on EFS.
 
 **The boot script fails fast on anything the worker needs.** A failed package
-install, EFS mount, bundle unpack or service start shuts the instance down so
+install, EFS mount, bundle download or checksum, or service start shuts the instance down so
 the ASG replaces it — the only automatic recovery here, since a half-booted
 instance passes the EC2-only health check forever. The best-effort CloudWatch
 agent setup runs after fail-fast is turned off, so a mirror hiccup there cannot
@@ -1054,6 +1054,37 @@ with `Restart=always`, so `systemctl start` succeeds the instant the process
 execs, crash-loop or not. To confirm a redeploy took, check the new instance's
 log stream (see [Worker observability](#worker-observability)), not
 `cdk deploy`'s exit code.
+
+## The worker instance
+
+The worker holds the GitHub credential, so its instance is the stack's most sensitive part.
+`CanopyCmsService` configures it as follows.
+
+- **Public subnet, no inbound traffic.** The worker reaches GitHub and AWS through the
+  internet gateway rather than a NAT gateway, which would cost more than the rest of the stack.
+  Its security group admits nothing inbound, and it runs no listening service.
+- **IMDSv2 only**, with a hop limit of 1: metadata answers only processes on the host.
+- **The bundle runs only if its sha256 matches.** It is the single file `build:worker` writes,
+  so its hash is known at synth. User data checks it before installing, and a mismatch fails the
+  boot. The worker role can read that one object, not the whole CDK asset bucket.
+- **EFS refuses clients without TLS or IAM** (`efsEnforceIamAndTls`, default `true`). The worker
+  mounts with `tls,iam` through the access point its role is granted. The Lambda always mounts
+  that way. Anything else that mounts this file system needs both, plus `ClientMount`.
+- **An encrypted gp3 root volume** (8 GiB, the AMI's size). If your account's default EBS key is
+  a customer-managed key, grant the Auto Scaling service-linked role on it.
+- **Patched between deploys.** AL2023 pins `dnf` to its AMI's repository release. Every boot
+  therefore first upgrades to the latest release, leaving the kernel to the next AMI because the
+  instance never reboots. This adds an estimated 1–3 minutes to a boot. Auto Scaling also
+  replaces the instance after `workerMaxInstanceLifetime` (default 7 days, `null` to turn off).
+  A replacement is terminate-then-launch, with the new instance booting while the old one drains.
+  Saves keep working; only publishing, pull requests and sync wait. The worker logs
+  `Syncing git...` at startup and every 5 minutes, so the longest gap a scheduled replacement
+  leaves in those lines is one interval plus the replacement, about 20 minutes.
+- **A sandboxed service**: `NoNewPrivileges`, `ProtectSystem=strict` (only `/mnt/efs` and its log
+  directory are writable, not its own code), `ProtectHome=tmpfs`, `PrivateTmp` and no
+  capabilities.
+- **Daily EFS backups** (`efsBackup`, default `true`; AWS Backup's default plan, kept 35 days).
+  Branches nobody has submitted exist only on EFS. Backup storage is billed per GB-month.
 
 ## Security Model
 
@@ -1079,10 +1110,11 @@ endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ v
 rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
 argument, not an impossibility argument.
 
-The worker's own AWS permissions are correspondingly narrow: EFS client access, Secrets
-Manager reads for its specific secrets, SSM core (the Session Manager channel, for
-operators whose roles allow it), read access to the CDK asset bucket holding its code
-bundle, and write-only access to its one CloudWatch log group.
+The worker's own AWS permissions are correspondingly narrow: EFS mount and write through
+the shared access point, Secrets Manager reads for its specific secrets, SSM core (the Session
+Manager channel, for operators whose roles allow it), read on its one bundle object, and
+write-only access to its one CloudWatch log group. [The worker instance](#the-worker-instance)
+covers the instance itself.
 
 Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 `CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication

@@ -1,5 +1,3 @@
-import * as path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
   Annotations,
@@ -19,6 +17,7 @@ import {
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
+import { WORKER_BUNDLE_DOWNLOAD_PATH, WORKER_BUNDLE_PATH, sha256OfFile } from './worker-bundle'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
 import {
@@ -26,14 +25,6 @@ import {
   WORKER_CAPACITY_ENV,
   WORKER_DRAIN_HOOK_NAME,
 } from './worker-lifecycle'
-
-// This package (`canopycms-cdk`) is `"type": "module"`, so its compiled output
-// is real ESM and `__dirname` is not a global there - the worker asset path
-// below throws `__dirname is not defined` under a real ESM runtime (e.g. `tsx`)
-// without this. Vitest's SSR/CJS-interop transform shims `__dirname`
-// automatically, so this file's own tests would not catch its absence. Same fix
-// as ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
  * Synth-time mirror of `resolveDeploymentName`'s rule in the `canopycms`
@@ -621,6 +612,17 @@ export interface CanopyCmsServiceProps {
   workerTerminationHeartbeat?: Duration
 
   /**
+   * How long a worker instance may run before Auto Scaling replaces it
+   * (default 7 days; between 1 and 365 days; `null` never replaces it on
+   * age). Each replacement boots on the latest Amazon Linux packages, which
+   * is how a worker that no deploy has touched still gets patched.
+   *
+   * A replacement pauses only the worker's half: saves keep working, while
+   * publishing, pull requests and sync wait for the new instance to boot.
+   */
+  workerMaxInstanceLifetime?: Duration | null
+
+  /**
    * ADDITIONAL Secrets Manager ARNs the worker may read.
    *
    * You do NOT need to repeat `githubTokenSecretArn` or
@@ -644,6 +646,25 @@ export interface CanopyCmsServiceProps {
 
   /** EFS removal policy (default: RETAIN) */
   efsRemovalPolicy?: RemovalPolicy
+
+  /**
+   * Daily AWS Backup of the EFS file system, kept 35 days (default true).
+   * Branches nobody has submitted yet exist only on EFS. Backup storage is
+   * billed per GB-month on top of EFS itself.
+   */
+  efsBackup?: boolean
+
+  /**
+   * Give the file system a policy that refuses clients without TLS or without
+   * IAM authorization (default true). The worker and the Lambda mount with
+   * both, through the access point their roles are granted.
+   *
+   * A stack deployed before the worker mounted with IAM upgrades in two
+   * deploys, `false` first: CloudFormation updates the file system before it
+   * replaces the worker, so in one deploy the policy lands while the outgoing
+   * worker still holds an anonymous mount. See docs/adopter-migration.md.
+   */
+  efsEnforceIamAndTls?: boolean
 
   /** GitHub owner for worker git operations (e.g., 'safeinsights') */
   githubOwner: string
@@ -1199,6 +1220,18 @@ export class CanopyCmsService extends Construct {
       allowAllOutbound: false,
     })
 
+    // With any policy in effect, EFS evaluates a client that mounts without
+    // `iam` against the Principal "*" statements alone, so a policy granting
+    // "*" nothing is what requires IAM: the worker and the Lambda get their
+    // access from their roles' grants (below, and CDK's for the Lambda's access
+    // point). `allowAnonymousAccess: true` keeps CDK from adding its own
+    // "*" ClientWrite/ClientRootAccess statement, which it does under the
+    // `@aws-cdk/aws-efs:denyAnonymousAccess` flag or after a `grant*` call.
+    const efsClientActions = [
+      'elasticfilesystem:ClientMount',
+      'elasticfilesystem:ClientWrite',
+      'elasticfilesystem:ClientRootAccess',
+    ]
     this.fileSystem = new efs.FileSystem(this, 'FileSystem', {
       vpc: this.vpc,
       encrypted: true,
@@ -1206,6 +1239,21 @@ export class CanopyCmsService extends Construct {
       removalPolicy: props.efsRemovalPolicy ?? RemovalPolicy.RETAIN,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroup: efsSg,
+      enableAutomaticBackups: props.efsBackup ?? true,
+      allowAnonymousAccess: true,
+      fileSystemPolicy:
+        (props.efsEnforceIamAndTls ?? true)
+          ? new iam.PolicyDocument({
+              statements: [
+                new iam.PolicyStatement({
+                  effect: iam.Effect.DENY,
+                  principals: [new iam.AnyPrincipal()],
+                  actions: efsClientActions,
+                  conditions: { Bool: { 'aws:SecureTransport': 'false' } },
+                }),
+              ],
+            })
+          : undefined,
     })
 
     const accessPoint = this.fileSystem.addAccessPoint('WorkspaceAP', {
@@ -1434,9 +1482,30 @@ export class CanopyCmsService extends Construct {
       )
     }
 
-    // Worker needs EFS access (handled via security group, but mount needs ec2:DescribeAvailabilityZones)
-    workerRole.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticFileSystemClientReadWriteAccess'),
+    // The worker's `iam` mount, through the shared access point only. The
+    // describe calls are what amazon-efs-utils makes when it falls back from
+    // the file system's DNS name to a mount target in another zone.
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
+        resources: [this.fileSystem.fileSystemArn],
+        conditions: {
+          StringEquals: { 'elasticfilesystem:AccessPointArn': accessPoint.accessPointArn },
+        },
+      }),
+    )
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['elasticfilesystem:DescribeMountTargets'],
+        resources: [this.fileSystem.fileSystemArn],
+      }),
+    )
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        // Supports no resource-level permissions.
+        actions: ['ec2:DescribeAvailabilityZones'],
+        resources: ['*'],
+      }),
     )
 
     // Observation channel for a NAT-less deploy (SSM Session Manager / send-command);
@@ -1457,11 +1526,17 @@ export class CanopyCmsService extends Construct {
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
 
-    // The worker is bundled with esbuild into a single JS file (pnpm run build:worker)
-    const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
-      path: path.join(__dirname, '../../worker/dist'),
-    })
-    workerAsset.grantRead(workerRole)
+    const workerAsset = new s3assets.Asset(this, 'WorkerCode', { path: WORKER_BUNDLE_PATH })
+    const workerBundleSha256 = sha256OfFile(WORKER_BUNDLE_PATH)
+    // This one object, not `workerAsset.grantRead`'s whole bootstrap bucket. No
+    // KMS grant: the bootstrap bucket's key (aws/s3, or the key bootstrap
+    // creates) lets any principal in the account decrypt through S3.
+    workerRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:GetObject'],
+        resources: [workerAsset.bucket.arnForObjects(workerAsset.s3ObjectKey)],
+      }),
+    )
 
     // Name/value PAIRS rather than pre-formatted lines: every value then flows
     // through `assertEnvSafe` in the single `map` below, so a value added here
@@ -1536,7 +1611,7 @@ export class CanopyCmsService extends Construct {
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)
       .join('\n')
 
-    const efsMountOptions = `tls,accesspoint=${accessPoint.accessPointId}`
+    const efsMountOptions = `tls,iam,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
     userData.addCommands(
       '#!/bin/bash',
@@ -1575,8 +1650,16 @@ export class CanopyCmsService extends Construct {
       '  done',
       '}',
       '',
-      '# Install dependencies (unzip is not guaranteed in the AL2023 AMI)',
-      'retry dnf install -y git unzip',
+      '# Patch first. AL2023 locks dnf to the repository release its AMI was',
+      '# built from, so a relaunch from the AMI resolved at the last deploy',
+      '# would otherwise install nothing newer than that AMI. Moving to the',
+      '# latest release also makes it the one every install below resolves',
+      '# from. The kernel is left out: this instance never reboots, so a new',
+      '# kernel would take boot time and apply nothing; it arrives with the',
+      '# AMI on each deploy.',
+      "retry dnf upgrade --releasever=latest --exclude='kernel*' -y",
+      '',
+      'retry dnf install -y git',
       "# Node comes from AL2023's own repos, NOT a piped third-party installer.",
       '# The previous boot curled the NodeSource RPM setup script straight into',
       '# bash, so every instance replacement -- which the ASG performs on every',
@@ -1608,11 +1691,12 @@ export class CanopyCmsService extends Construct {
       '# onto the instance disk, invisible to the Lambda.',
       `echo '${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH} efs _netdev,${efsMountOptions} 0 0' >> /etc/fstab`,
       '',
-      '# Download worker from CDK S3 Asset',
-      `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
-      'mkdir -p /opt/canopy-worker',
-      'cd /opt/canopy-worker',
-      'unzip -o /tmp/canopy-worker.zip',
+      '# The bundle runs only if it is byte-for-byte the file synthesized; a',
+      '# mismatch fails the boot under the trap above.',
+      `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
+      `echo '${workerBundleSha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
+      '# Root-owned, and read-only to the service (ProtectSystem=strict below).',
+      `install -D -m 0644 ${WORKER_BUNDLE_DOWNLOAD_PATH} /opt/canopy-worker/index.js`,
       '# The worker bundle is ESM (esbuild --format=esm). Without this marker a',
       '# .js file is CommonJS by default and the import statement fails.',
       '# Node >=22.7 auto-detects module syntax and would mask its absence, and',
@@ -1666,13 +1750,21 @@ export class CanopyCmsService extends Construct {
       'StandardOutput=append:/var/log/canopy-worker/worker.log',
       'StandardError=append:/var/log/canopy-worker/worker.log',
       'EnvironmentFile=/opt/canopy-worker/.env',
+      '# Sandbox. Writable: the workspace, and the log dir (LogsDirectory=).',
+      '# ProtectHome=tmpfs, not yes: every git call reads per-user files under',
+      '# $HOME (~/.config/git/attributes, ignore), and an inaccessible /home',
+      '# makes each read warn "Permission denied"; an empty one is a silent',
+      '# ENOENT.',
+      'NoNewPrivileges=yes',
+      'ProtectSystem=strict',
+      'ProtectHome=tmpfs',
+      'PrivateTmp=yes',
+      'CapabilityBoundingSet=',
+      `ReadWritePaths=${EFS_MOUNT_PATH}`,
       '',
       '[Install]',
       'WantedBy=multi-user.target',
       'SVCEOF',
-      '',
-      '# Set ownership for ec2-user',
-      'chown -R ec2-user:ec2-user /opt/canopy-worker',
       '',
       '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
       '# first systemctl start): systemd opens StandardOutput=append: files',
@@ -1775,10 +1867,28 @@ export class CanopyCmsService extends Construct {
       role: workerRole,
       securityGroup: workerSg,
       userData,
+      requireImdsv2: true,
+      // 1, not AL2023's 2: everything that reads metadata runs on the host,
+      // and a second hop only serves containers.
+      httpPutResponseHopLimit: 1,
+      blockDevices: [
+        {
+          // AL2023's root device, at its AMI snapshot's size.
+          deviceName: '/dev/xvda',
+          volume: ec2.BlockDeviceVolume.ebs(8, {
+            encrypted: true,
+            volumeType: ec2.EbsDeviceVolumeType.GP3,
+            deleteOnTermination: true,
+          }),
+        },
+      ],
     })
 
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,
+      // Public, deliberately: it reaches GitHub and AWS APIs through the
+      // internet gateway instead of a NAT gateway that would cost more than
+      // the rest of the stack. Its security group admits no inbound traffic.
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       // Spot goes through a mixed-instances policy rather than spot options on
       // the launch template, so the group can choose among several pools.
@@ -1801,6 +1911,10 @@ export class CanopyCmsService extends Construct {
         : { launchTemplate }),
       minCapacity: 1,
       maxCapacity: 1,
+      maxInstanceLifetime:
+        props.workerMaxInstanceLifetime === null
+          ? undefined
+          : (props.workerMaxInstanceLifetime ?? Duration.days(7)),
       // `healthChecks`, not the deprecated `healthCheck`/`HealthCheck.ec2({ grace })`:
       // both synthesize the same HealthCheckType/HealthCheckGracePeriod, but the
       // deprecated form prints a jsii warning on every synth -- in adopters'

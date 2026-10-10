@@ -1425,9 +1425,9 @@ describe('CanopyCmsService B1: Lambda and worker see the workspace at the same p
     const fsId = fileSystemId(template)
     const lines = workerUserDataScript(template).split('\n')
 
-    expect(lines).toContain(`mount -t efs -o tls,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
+    expect(lines).toContain(`mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
     expect(lines).toContain(
-      `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
+      `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
   })
 
@@ -1525,10 +1525,9 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
 })
 
 describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
-  it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
+  it('writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
-    expect(all).toContain('dnf install -y git unzip')
     expect(all).toContain('{\\"type\\":\\"module\\"}')
   })
 })
@@ -1592,7 +1591,8 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
     const all = workerUserDataBlobs(synth())
     expect(all).toContain('retry()')
     for (const step of [
-      'retry dnf install -y git unzip',
+      'retry dnf upgrade --releasever=latest',
+      'retry dnf install -y git',
       'retry dnf install -y nodejs22',
       'retry dnf install -y amazon-efs-utils',
       'retry aws s3 cp',
