@@ -1,9 +1,17 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { InternalGroup, CanopyGroupId, CanopyUserId } from '../types'
 
 const TEMP_GROUP_ID_PREFIX = 'temp-'
 
 const isTempGroupId = (id: CanopyGroupId): boolean => id.startsWith(TEMP_GROUP_ID_PREFIX)
+
+const sameMembers = (a: CanopyUserId[] = [], b: CanopyUserId[] = []): boolean =>
+  a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n')
+
+const sameGroup = (a: InternalGroup, b: InternalGroup): boolean =>
+  a.name === b.name &&
+  (a.description ?? '') === (b.description ?? '') &&
+  sameMembers(a.members, b.members)
 
 export interface UseGroupStateOptions {
   initialGroups: InternalGroup[]
@@ -12,6 +20,8 @@ export interface UseGroupStateOptions {
 
 export interface UseGroupStateResult {
   groups: InternalGroup[]
+  /** Listed groups that are new or differ from the last loaded or saved state. */
+  unsavedGroupIds: ReadonlySet<CanopyGroupId>
   isDirty: boolean
   isSaving: boolean
   error: string | null
@@ -38,6 +48,18 @@ export function useGroupState({
     setGroups(initialGroups)
     setIsDirty(false)
   }, [initialGroups])
+
+  const unsavedGroupIds = useMemo(() => {
+    const initialById = new Map(initialGroups.map((g) => [g.id, g]))
+    return new Set(
+      groups
+        .filter((g) => {
+          const initial = initialById.get(g.id)
+          return !initial || !sameGroup(g, initial)
+        })
+        .map((g) => g.id),
+    )
+  }, [groups, initialGroups])
 
   const createGroup = useCallback((name: string, description: string) => {
     const newGroup: InternalGroup = {
@@ -120,6 +142,7 @@ export function useGroupState({
 
   return {
     groups,
+    unsavedGroupIds,
     isDirty,
     isSaving,
     error,

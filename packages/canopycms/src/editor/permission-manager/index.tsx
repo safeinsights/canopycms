@@ -8,8 +8,11 @@ import { usePermissionTree } from './hooks/usePermissionTree'
 import { useGroupsAndUsers } from './hooks/useGroupsAndUsers'
 import { PermissionTree } from './PermissionTree'
 import { findTreeNode } from './utils'
+import { StagedChangesDrawer } from '../components/StagedChangesDrawer'
 
 export const PermissionManager: React.FC<PermissionManagerProps> = ({
+  opened,
+  onClose,
   collections,
   contentRoot = 'content',
   permissions,
@@ -18,7 +21,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   onSearchUsers,
   onGetUserMetadata,
   onListGroups,
-  onClose: __,
   loading = false,
   contentTree,
 }) => {
@@ -87,6 +89,13 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     resetPermissions()
     setError(null)
   }, [resetPermissions])
+
+  // This component outlives the drawer's content, so closing resets the transient search UI.
+  const handleClose = useCallback(() => {
+    toggleUserSearch(false)
+    setShowGroupSearch(false)
+    onClose()
+  }, [toggleUserSearch, setShowGroupSearch, onClose])
 
   const handleAddUser = useCallback(
     (nodePath: string, level: PermissionLevel, userId: string) => {
@@ -169,105 +178,103 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   )
 
   return (
-    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
-      {!canEdit && (
-        <Alert icon={<IconAlertCircle size={16} />} color="yellow" mb="sm" title="Read-only">
-          You need admin access to edit permissions
-        </Alert>
-      )}
-
-      {error && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          mb="sm"
-          title="Error"
-          withCloseButton
-          onClose={() => setError(null)}
-        >
-          {error}
-        </Alert>
-      )}
-
-      {groupLoadError && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="orange"
-          mb="sm"
-          title="Warning"
-          withCloseButton
-          onClose={clearGroupLoadError}
-        >
-          {groupLoadError}
-        </Alert>
-      )}
-
-      <Group gap="xs" pb="sm">
-        <Button size="xs" variant="subtle" onClick={expandAll}>
-          Expand All
-        </Button>
-        <Button size="xs" variant="subtle" onClick={collapseAll}>
-          Collapse All
-        </Button>
-      </Group>
-
-      <ScrollArea style={{ flex: 1 }} pb="md">
-        {loading ? (
-          <Group justify="center" py="xl">
-            <Loader size="md" />
-            <Text size="sm" c="dimmed">
-              Loading permissions...
-            </Text>
-          </Group>
-        ) : (
-          <PermissionTree
-            node={annotatedTree}
-            expandedNodes={expandedNodes}
-            selectedNode={selectedNode}
-            canEdit={canEdit}
-            groups={groupSelectData}
-            activeLevel={activeLevel}
-            userSearchResults={userSearchResults}
-            isSearchingUsers={isSearchingUsers}
-            showUserSearch={showUserSearch}
-            userSearchQuery={userSearchQuery}
-            userSearchError={userSearchError}
-            showGroupSearch={showGroupSearch}
-            groupSearchQuery={groupSearchQuery}
-            filteredGroups={filteredGroups}
-            onToggle={toggleNode}
-            onSelect={selectNode}
-            onSetActiveLevel={setActiveLevel}
-            onUpdatePermission={updateNodePermission}
-            onSearchUsers={setUserSearchQuery}
-            onGetUserMetadata={onGetUserMetadata}
-            onToggleUserSearch={toggleUserSearch}
-            onAddUser={handleAddUser}
-            onRemoveUser={handleRemoveUser}
-            onSearchGroups={setGroupSearchQuery}
-            onToggleGroupSearch={setShowGroupSearch}
-            onAddGroup={handleAddGroup}
-            onRemoveGroup={handleRemoveGroup}
-          />
+    <StagedChangesDrawer
+      opened={opened}
+      onClose={handleClose}
+      title="Permissions"
+      description="Manage content access by path (read, edit, review)"
+      size={700}
+      isDirty={isDirty}
+      isSaving={isSaving}
+      canEdit={canEdit}
+      saveLabel="Save Permissions"
+      onSave={handleSave}
+      onDiscard={handleDiscard}
+    >
+      <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
+        {!canEdit && (
+          <Alert icon={<IconAlertCircle size={16} />} color="yellow" mb="sm" title="Read-only">
+            You need admin access to edit permissions
+          </Alert>
         )}
-      </ScrollArea>
 
-      {canEdit && isDirty && (
-        <Group
-          justify="flex-end"
-          py="sm"
-          gap="sm"
-          style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}
-        >
-          <Button variant="subtle" color="neutral" onClick={handleDiscard} disabled={isSaving}>
-            Discard Changes
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="red"
+            mb="sm"
+            title="Error"
+            withCloseButton
+            onClose={() => setError(null)}
+          >
+            {error}
+          </Alert>
+        )}
+
+        {groupLoadError && (
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="orange"
+            mb="sm"
+            title="Warning"
+            withCloseButton
+            onClose={clearGroupLoadError}
+          >
+            {groupLoadError}
+          </Alert>
+        )}
+
+        <Group gap="xs" pb="sm">
+          <Button size="xs" variant="subtle" onClick={expandAll}>
+            Expand All
           </Button>
-          <Button onClick={handleSave} loading={isSaving} disabled={isSaving}>
-            Save Permissions
+          <Button size="xs" variant="subtle" onClick={collapseAll}>
+            Collapse All
           </Button>
         </Group>
-      )}
-    </Stack>
+
+        <ScrollArea style={{ flex: 1 }} pb="md">
+          {loading ? (
+            <Group justify="center" py="xl">
+              <Loader size="md" />
+              <Text size="sm" c="dimmed">
+                Loading permissions...
+              </Text>
+            </Group>
+          ) : (
+            <PermissionTree
+              node={annotatedTree}
+              expandedNodes={expandedNodes}
+              selectedNode={selectedNode}
+              canEdit={canEdit}
+              groups={groupSelectData}
+              activeLevel={activeLevel}
+              userSearchResults={userSearchResults}
+              isSearchingUsers={isSearchingUsers}
+              showUserSearch={showUserSearch}
+              userSearchQuery={userSearchQuery}
+              userSearchError={userSearchError}
+              showGroupSearch={showGroupSearch}
+              groupSearchQuery={groupSearchQuery}
+              filteredGroups={filteredGroups}
+              onToggle={toggleNode}
+              onSelect={selectNode}
+              onSetActiveLevel={setActiveLevel}
+              onUpdatePermission={updateNodePermission}
+              onSearchUsers={setUserSearchQuery}
+              onGetUserMetadata={onGetUserMetadata}
+              onToggleUserSearch={toggleUserSearch}
+              onAddUser={handleAddUser}
+              onRemoveUser={handleRemoveUser}
+              onSearchGroups={setGroupSearchQuery}
+              onToggleGroupSearch={setShowGroupSearch}
+              onAddGroup={handleAddGroup}
+              onRemoveGroup={handleRemoveGroup}
+            />
+          )}
+        </ScrollArea>
+      </Stack>
+    </StagedChangesDrawer>
   )
 }
 

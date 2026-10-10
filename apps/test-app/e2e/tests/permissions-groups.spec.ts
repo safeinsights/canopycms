@@ -14,7 +14,8 @@ import {
 /**
  * E2E tests for the Group Manager and Permission Manager (Settings gear ->
  * "Manage Groups" / "Manage Permissions"): admin gating (D3), group CRUD
- * round trip (D1), and path-permission assignment round trip (D2).
+ * round trip (D1), path-permission assignment round trip (D2), and the
+ * discard confirm on closing with staged changes (D6).
  *
  * Selector strategy is documented in `../fixtures/settings-managers-page.ts`
  * — neither module carries `data-testid`s, so every locator here is
@@ -160,6 +161,73 @@ test.describe('Permissions and Groups', () => {
       // PRIMARY assertion error as the reported failure (a finally that
       // throws replaces it). The start-of-test self-heal covers the state.
       await test.step('cleanup: remove the created group (settings workspace is never reset)', () =>
+        removeE2eGroupsViaApi(page).catch((err) =>
+          console.warn('e2e group cleanup failed (state self-heals next run):', err),
+        ))
+    }
+  })
+
+  test('D6: closing the group manager with a staged group asks first; keep editing keeps it, discard drops it', async ({
+    page,
+  }) => {
+    const groupName = `e2e-group-${Date.now()}-staged`
+    const groupManager = new GroupManagerPage(page)
+
+    await test.step('self-heal: remove e2e groups left by prior runs', () =>
+      removeE2eGroupsViaApi(page))
+
+    try {
+      await test.step('open editor and Manage Groups', async () => {
+        await editorPage.goto()
+        await editorPage.waitForReady()
+        await groupManager.open()
+      })
+
+      await test.step('add a group: it is staged, marked unsaved, and the save bar is in view', async () => {
+        await groupManager.createGroup(groupName, 'Staged by permissions-groups.spec.ts (D6)')
+        await expect(
+          groupManager.groupCard(groupName).getByText('Unsaved', { exact: true }),
+        ).toBeVisible()
+        await expect(
+          groupManager.drawer.getByText('Unsaved changes', { exact: true }),
+        ).toBeVisible()
+        await expect(groupManager.saveButton).toBeInViewport()
+      })
+
+      await test.step('try to close: the discard confirm opens; "Keep editing" keeps the drawer and the group', async () => {
+        await page.keyboard.press('Escape')
+        await expect(groupManager.discardConfirm).toBeVisible({ timeout: SHORT_TIMEOUT })
+        await groupManager.discardConfirm.getByRole('button', { name: 'Keep editing' }).click()
+        await expect(groupManager.discardConfirm).toBeHidden({ timeout: SHORT_TIMEOUT })
+        await expect(groupManager.drawer).toBeVisible()
+        await expect(groupManager.groupEntry(groupName)).toBeVisible()
+      })
+
+      await test.step('try to close again and discard: the drawer closes and the group is gone on reopen', async () => {
+        await page.keyboard.press('Escape')
+        await expect(groupManager.discardConfirm).toBeVisible({ timeout: SHORT_TIMEOUT })
+        await groupManager.discardConfirm
+          .getByRole('button', { name: 'Discard', exact: true })
+          .click()
+        await expect(groupManager.drawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+
+        await groupManager.open()
+        await expect(
+          groupManager.drawer.getByRole('tab', { name: 'Internal Groups' }),
+        ).toBeVisible()
+        await expect(groupManager.groupEntry(groupName)).toBeHidden()
+      })
+
+      await test.step('nothing reached the server', async () => {
+        const res = await page.request.get('/api/canopycms/groups/internal', {
+          headers: { 'X-Test-User': 'admin' },
+        })
+        expect(res.status()).toBe(200)
+        const body = (await res.json()) as { data: { groups: Array<{ name: string }> } }
+        expect(body.data.groups.map((g) => g.name)).not.toContain(groupName)
+      })
+    } finally {
+      await test.step('cleanup: remove any e2e group (settings workspace is never reset)', () =>
         removeE2eGroupsViaApi(page).catch((err) =>
           console.warn('e2e group cleanup failed (state self-heals next run):', err),
         ))

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useCallback } from 'react'
-import { Alert, Button, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
+import { Alert, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 import type { GroupManagerProps, InternalGroup, GroupFormData } from './types'
 import { useGroupState } from './hooks/useGroupState'
@@ -10,8 +10,11 @@ import { useExternalGroupSearch } from './hooks/useExternalGroupSearch'
 import { InternalGroupsTab } from './InternalGroupsTab'
 import { ExternalGroupsTab } from './ExternalGroupsTab'
 import { GroupForm } from './GroupForm'
+import { StagedChangesDrawer } from '../components/StagedChangesDrawer'
 
 export const GroupManager: React.FC<GroupManagerProps> = ({
+  opened,
+  onClose,
   internalGroups: initialInternalGroups,
   loading = false,
   canEdit,
@@ -19,10 +22,10 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   onSearchUsers,
   onGetUserMetadata,
   onSearchExternalGroups,
-  onClose: _,
 }) => {
   const {
     groups,
+    unsavedGroupIds,
     isDirty,
     isSaving,
     error,
@@ -77,6 +80,12 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setError(null)
   }, [formData, editingGroup, updateGroup, createGroup, setError])
 
+  // This component outlives the drawer's content, so closing resets the transient search UI.
+  const handleClose = useCallback(() => {
+    userSearch.hideSearch()
+    onClose()
+  }, [userSearch, onClose])
+
   const handleFormChange = useCallback((data: Partial<GroupFormData>) => {
     setFormData((prev) => ({ ...prev, ...data }))
   }, [])
@@ -93,101 +102,104 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   )
 
   return (
-    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
-      {!canEdit && (
-        <Alert icon={<IconAlertCircle size={16} />} color="yellow" mb="sm" title="Read-only">
-          You need admin access to manage groups.
-        </Alert>
-      )}
+    <StagedChangesDrawer
+      opened={opened}
+      onClose={handleClose}
+      title="Groups"
+      description="Manage groups and organizations"
+      size={600}
+      isDirty={isDirty}
+      isSaving={isSaving}
+      canEdit={canEdit}
+      saveLabel="Save Groups"
+      onSave={save}
+      onDiscard={discard}
+      childModalOpen={isModalOpen}
+    >
+      <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
+        {!canEdit && (
+          <Alert icon={<IconAlertCircle size={16} />} color="yellow" mb="sm" title="Read-only">
+            You need admin access to manage groups.
+          </Alert>
+        )}
 
-      {error && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          mb="sm"
-          title="Error"
-          withCloseButton
-          onClose={() => setError(null)}
-        >
-          {error}
-        </Alert>
-      )}
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="red"
+            mb="sm"
+            title="Error"
+            withCloseButton
+            onClose={() => setError(null)}
+          >
+            {error}
+          </Alert>
+        )}
 
-      {loading ? (
-        <Group justify="center" py="xl">
-          <Loader size="md" />
-          <Text size="sm" c="dimmed">
-            Loading groups...
-          </Text>
-        </Group>
-      ) : (
-        <Tabs defaultValue="internal" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <Tabs.List>
-            <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
-            <Tabs.Tab value="external">External Groups</Tabs.Tab>
-          </Tabs.List>
+        {loading ? (
+          <Group justify="center" py="xl">
+            <Loader size="md" />
+            <Text size="sm" c="dimmed">
+              Loading groups...
+            </Text>
+          </Group>
+        ) : (
+          <Tabs
+            defaultValue="internal"
+            style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+          >
+            <Tabs.List>
+              <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
+              <Tabs.Tab value="external">External Groups</Tabs.Tab>
+            </Tabs.List>
 
-          <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }}>
-            <InternalGroupsTab
-              groups={groups}
-              canEdit={canEdit}
-              onCreateGroup={handleCreateGroup}
-              onEditGroup={handleEditGroup}
-              onDeleteGroup={deleteGroup}
-              onAddMember={handleAddMember}
-              onRemoveMember={removeMember}
-              onGetUserMetadata={onGetUserMetadata}
-              activeSearchGroupId={userSearch.activeGroupId}
-              searchQuery={userSearch.searchQuery}
-              searchResults={userSearch.searchResults}
-              isSearching={userSearch.isSearching}
-              searchError={userSearch.searchError}
-              onSearchQueryChange={userSearch.setSearchQuery}
-              onShowSearch={userSearch.showSearch}
-              onHideSearch={userSearch.hideSearch}
-              canSearch={!!onSearchUsers}
-            />
-          </Tabs.Panel>
+            <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }}>
+              <InternalGroupsTab
+                groups={groups}
+                unsavedGroupIds={unsavedGroupIds}
+                canEdit={canEdit}
+                onCreateGroup={handleCreateGroup}
+                onEditGroup={handleEditGroup}
+                onDeleteGroup={deleteGroup}
+                onAddMember={handleAddMember}
+                onRemoveMember={removeMember}
+                onGetUserMetadata={onGetUserMetadata}
+                activeSearchGroupId={userSearch.activeGroupId}
+                searchQuery={userSearch.searchQuery}
+                searchResults={userSearch.searchResults}
+                isSearching={userSearch.isSearching}
+                searchError={userSearch.searchError}
+                onSearchQueryChange={userSearch.setSearchQuery}
+                onShowSearch={userSearch.showSearch}
+                onHideSearch={userSearch.hideSearch}
+                canSearch={!!onSearchUsers}
+              />
+            </Tabs.Panel>
 
-          <Tabs.Panel value="external" style={{ flex: 1, overflow: 'auto' }}>
-            <ExternalGroupsTab
-              canEdit={canEdit}
-              searchQuery={externalGroupSearch.searchQuery}
-              searchResults={externalGroupSearch.searchResults}
-              isSearching={externalGroupSearch.isSearching}
-              searchError={externalGroupSearch.searchError}
-              onSearchQueryChange={externalGroupSearch.setSearchQuery}
-              canSearch={!!onSearchExternalGroups}
-            />
-          </Tabs.Panel>
-        </Tabs>
-      )}
+            <Tabs.Panel value="external" style={{ flex: 1, overflow: 'auto' }}>
+              <ExternalGroupsTab
+                canEdit={canEdit}
+                searchQuery={externalGroupSearch.searchQuery}
+                searchResults={externalGroupSearch.searchResults}
+                isSearching={externalGroupSearch.isSearching}
+                searchError={externalGroupSearch.searchError}
+                onSearchQueryChange={externalGroupSearch.setSearchQuery}
+                canSearch={!!onSearchExternalGroups}
+              />
+            </Tabs.Panel>
+          </Tabs>
+        )}
 
-      {canEdit && isDirty && (
-        <Group
-          justify="flex-end"
-          py="sm"
-          gap="sm"
-          style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}
-        >
-          <Button variant="subtle" color="neutral" onClick={discard} disabled={isSaving}>
-            Discard Changes
-          </Button>
-          <Button onClick={save} loading={isSaving} disabled={isSaving}>
-            Save Groups
-          </Button>
-        </Group>
-      )}
-
-      <GroupForm
-        isOpen={isModalOpen}
-        editingGroup={editingGroup}
-        formData={formData}
-        onFormChange={handleFormChange}
-        onSave={handleSaveModal}
-        onClose={() => setIsModalOpen(false)}
-      />
-    </Stack>
+        <GroupForm
+          isOpen={isModalOpen}
+          editingGroup={editingGroup}
+          formData={formData}
+          onFormChange={handleFormChange}
+          onSave={handleSaveModal}
+          onClose={() => setIsModalOpen(false)}
+        />
+      </Stack>
+    </StagedChangesDrawer>
   )
 }
 
