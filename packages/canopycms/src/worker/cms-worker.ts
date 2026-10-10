@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import lockfile from 'proper-lockfile'
@@ -28,6 +30,8 @@ import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
+import { GitHubMirror } from './github-mirror'
+import { assertSharedRepoConfig, sharedRepoGit, sharedRepoGitOptions } from './shared-repo-git'
 import {
   executeTask,
   orphanRecoveryMaxAgeMs,
@@ -81,6 +85,13 @@ export type AuthCacheRefresher = () => Promise<void>
 export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Path to workspace root on EFS (e.g., /mnt/efs) */
   workspacePath: string
+  /**
+   * A directory only this worker can write, never on the shared filesystem: it holds the private
+   * GitHub mirror, the one repository any git command carrying the credential runs in
+   * (worker/github-mirror.ts). The AWS worker passes systemd's `StateDirectory=`. Default: a
+   * directory under `os.tmpdir()`, for dev and tests.
+   */
+  stateDirectory?: string
   /** GitHub owner (e.g., 'acme') */
   githubOwner: string
   /** GitHub repo name (e.g., 'site') */
@@ -138,6 +149,28 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * process.
    */
   drainDeadlineMs?: number
+}
+
+/** `target` with symlinks resolved as far as it exists, so a link cannot hide where it lands. */
+async function realpathOfNearest(target: string): Promise<string> {
+  const missing: string[] = []
+  let current = path.resolve(target)
+  for (;;) {
+    try {
+      return path.join(await fs.realpath(current), ...missing.reverse())
+    } catch {
+      const parent = path.dirname(current)
+      if (parent === current) return path.resolve(target)
+      missing.push(path.basename(current))
+      current = parent
+    }
+  }
+}
+
+/** Per workspace, so two workers on one host (tests, dev) never share a mirror. */
+function defaultStateDirectory(workspacePath: string): string {
+  const key = createHash('sha256').update(path.resolve(workspacePath)).digest('hex').slice(0, 16)
+  return path.join(os.tmpdir(), `canopycms-worker-${key}`)
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
@@ -293,6 +326,8 @@ export class CmsWorker {
   private octokit!: Octokit
   private taskDir: string
   private remoteGitPath: string
+  private stateDirectory: string
+  private githubMirror: GitHubMirror
   private contentBranchesPath: string
   private baseBranch: string
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
@@ -353,6 +388,9 @@ export class CmsWorker {
   constructor(private config: CmsWorkerConfig) {
     this.taskDir = path.join(config.workspacePath, '.tasks')
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
+    this.stateDirectory = path.resolve(
+      config.stateDirectory ?? defaultStateDirectory(config.workspacePath),
+    )
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
     this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
@@ -364,6 +402,11 @@ export class CmsWorker {
     this.drainDeadlineMs = config.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS
     this.contentRoot = config.contentRoot ?? 'content'
     this.schemaHoldMaxMs = config.schemaHoldMaxMs ?? DEFAULT_SCHEMA_HOLD_MAX_MS
+    this.githubMirror = new GitHubMirror(
+      this.stateDirectory,
+      this.remoteGitPath,
+      this.taskTimeoutMs,
+    )
   }
 
   /**
@@ -444,6 +487,7 @@ export class CmsWorker {
       log: this.log,
       octokit: () => this.octokitClient(),
       buildGitHubUrl: () => this.buildGitHubUrl(),
+      githubMirror: () => this.githubMirror,
       refreshGitHubCredential: () => this.refreshGitHubCredential(),
       branchWorkspacePath: (branchRefName) => this.branchWorkspacePath(branchRefName),
       executeTask: (task, signal) => this.executeTask(task, signal),
@@ -540,6 +584,8 @@ export class CmsWorker {
       // credential. See preflightGitHubAppAuth().
       await this.preflightGitHubAppAuth()
 
+      await this.ensureStateDirectoryIsPrivate()
+      await this.githubMirror.ensure()
       await this.ensureRemoteGit()
 
       // Recover orphaned tasks immediately rather than waiting for the first
@@ -853,10 +899,9 @@ export class CmsWorker {
   /**
    * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
    *
-   * Explicit `--git-dir` rather than `simpleGit({ baseDir })`, so this also
+   * The repository is named outright (sharedRepoGit's GIT_DIR), so this also
    * works where `safe.bareRepository=explicit` refuses cwd-based discovery of
-   * bare repos but expressly allows `--git-dir` (same pattern as
-   * GitManager.bareRemoteHasBranch).
+   * bare repos.
    *
    * Deliberately omits `--quiet`: simple-git treats a task as failed only when
    * the process exits non-zero AND writes to stderr, so a silent-on-failure
@@ -865,9 +910,7 @@ export class CmsWorker {
    * which is what makes simple-git reject the promise here.
    */
   private async verifyBaseBranchExists(gitDir: string): Promise<void> {
-    await simpleGit().raw([
-      '--git-dir',
-      gitDir,
+    await sharedRepoGit(gitDir, 'bare').raw([
       'rev-parse',
       '--verify',
       `refs/heads/${this.baseBranch}`,
@@ -893,7 +936,7 @@ export class CmsWorker {
    * survives, so a failed scrub is never indistinguishable from a clean one.
    */
   private async scrubPersistedRemote(gitDir: string): Promise<void> {
-    const git = simpleGit({ baseDir: gitDir })
+    const git = sharedRepoGit(gitDir, 'bare')
     // `git config --get` exits 1 with no output when the key is absent, and
     // simple-git resolves with an empty string rather than throwing (verified
     // against 3.36), so an empty result means "absent" too.
@@ -960,24 +1003,24 @@ export class CmsWorker {
    */
   private async applyRemoteGitConfig(gitDir: string): Promise<void> {
     try {
-      await ensureRemoteGitConfig(gitDir)
+      await ensureRemoteGitConfig(gitDir, sharedRepoGitOptions('bare'))
     } catch (err) {
       workerLogWarn(`Could not apply remote.git config in ${gitDir}: ${getErrorMessage(err)}`)
     }
   }
 
   /**
-   * Ensure the remote.git bare repo exists, cloning it from GitHub on first
-   * run.
+   * Ensure the remote.git bare repo exists, seeding it from GitHub on first run.
    *
-   * Empty-remote guard: simple-git's bare clone of an EMPTY GitHub repo (no
-   * commits, or a base branch never pushed) exits 0 and produces a refs-less
-   * bare repo whose HEAD points at an unborn branch. `fs.stat` cannot tell that
-   * from a healthy clone, so left unchecked it silently poisons remote.git —
-   * every later branch operation breaks and the fs.stat short-circuit means it
-   * never heals. The base branch is therefore verified right after cloning AND
-   * on the already-exists fast path, since a previous run can have left a
-   * poisoned remote.git behind.
+   * Seeded through the private mirror: the mirror fetches from GitHub, and a fresh bare repo
+   * receives its branches by local push, so no git command run against remote.git ever carries
+   * the credential, and no token-bearing URL is ever written to EFS.
+   *
+   * Empty-remote guard: a fetch of an EMPTY GitHub repo (no commits, or a base branch never
+   * pushed) succeeds and leaves a refs-less repo that `fs.stat` cannot tell from a healthy one, so
+   * left unchecked it silently poisons remote.git and the stat short-circuit means it never heals.
+   * The base branch is therefore verified right after seeding AND on the already-exists fast
+   * path, since a previous run can have left a poisoned remote.git behind.
    */
   private async ensureRemoteGit(): Promise<void> {
     let exists: boolean
@@ -989,12 +1032,11 @@ export class CmsWorker {
     }
 
     if (exists) {
-      // SELF-HEAL, before anything else touches this repo: re-checked on every
-      // boot, not only at clone time, so a token that survived one scrub does
-      // not survive forever, and a clone interrupted between `git clone` and
-      // the scrub cannot leave a token-bearing config sitting on EFS until an
-      // operator acts.
+      // SELF-HEAL, before anything else touches this repo: a remote.git cloned from GitHub by an
+      // older worker recorded the token-bearing clone URL in its config.
       await this.scrubPersistedRemote(this.remoteGitPath)
+      // At boot, so a refusal lands in worker-status.json as a startup failure.
+      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
 
       try {
         await this.verifyBaseBranchExists(this.remoteGitPath)
@@ -1012,23 +1054,26 @@ export class CmsWorker {
     }
 
     workerLog('Initializing remote.git from GitHub...')
-    const git = simpleGit()
 
-    // Clone under a TEMP name and rename into place only once the token is
-    // scrubbed and the repo verified, so `remote.git` never exists on EFS in a
-    // token-bearing state. A crash mid-clone leaves only this staging
-    // directory, which the next boot deletes, rather than a poisoned
+    // Seeded under a TEMP name and renamed into place only once verified, so a crash mid-seed
+    // leaves only this staging directory, which the next boot deletes, rather than a poisoned
     // `remote.git` that fs.stat cannot distinguish from a healthy one.
     const stagingPath = `${this.remoteGitPath}.cloning`
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await git.clone(await this.buildGitHubUrl(), stagingPath, ['--bare'])
-
-      // Before the rename, so the token is gone from the config the moment the
-      // repo becomes reachable under its real name. Throws (rather than
-      // swallowing) if the scrub does not take.
-      await this.scrubPersistedRemote(stagingPath)
+      const githubUrl = await this.buildGitHubUrl()
+      await this.githubMirror.exclusive(async (mirror) => {
+        await mirror.fetchFromGitHub(githubUrl)
+        if ((await mirror.branchTip(this.baseBranch)) === null) {
+          throw new Error(`GitHub has no branch '${this.baseBranch}'`)
+        }
+        await fs.mkdir(stagingPath)
+        const staging = sharedRepoGit(stagingPath, 'bare')
+        await staging.raw(['init', '--quiet', '--bare'])
+        await staging.raw(['symbolic-ref', 'HEAD', `refs/heads/${this.baseBranch}`])
+        await mirror.seedBareRepository(stagingPath)
+      })
 
       await this.verifyBaseBranchExists(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
@@ -1045,6 +1090,23 @@ export class CmsWorker {
 
     await fs.rename(stagingPath, this.remoteGitPath)
     workerLog('remote.git initialized')
+  }
+
+  /**
+   * Refuse a state directory on the shared filesystem: the mirror there would be as writable by
+   * the Lambda as remote.git is.
+   */
+  private async ensureStateDirectoryIsPrivate(): Promise<void> {
+    const workspace = await realpathOfNearest(this.config.workspacePath)
+    const state = await realpathOfNearest(this.stateDirectory)
+    const relative = path.relative(workspace, state)
+    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+      throw new Error(
+        `The worker's state directory (${this.stateDirectory}) is inside its shared workspace ` +
+          `(${this.config.workspacePath}). It holds the repository the GitHub credential is used ` +
+          `in, so it must be somewhere the CMS Lambda cannot write.`,
+      )
+    }
   }
 
   // --- Task-queue cluster (worker/task-runner.ts) ------------------------

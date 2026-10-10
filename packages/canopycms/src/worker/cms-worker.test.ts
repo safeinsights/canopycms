@@ -1889,7 +1889,6 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
     await branchGit.addConfig('user.name', 'Test Bot')
     await branchGit.addConfig('user.email', 'test@canopycms.test')
-    await branchGit.addConfig('core.editor', 'true')
     await branchGit.checkoutBranch(branchName, 'origin/main')
     // A provisioned workspace has branch metadata; the worker skips one without it.
     await getBranchMetadataFileManager(
@@ -1927,7 +1926,8 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     // Behind, no conflicts -> should complete and land in lastGitSync.rebased.
     await createSyncBranch('behind-branch')
 
-    // Its fetch from remote.git will throw -> should land in lastGitSync.failed.
+    // A config key the worker never writes -> refused before any git runs there, landing in
+    // lastGitSync.failed with the key and the command that removes it.
     const broken = await createSyncBranch('broken-branch')
     await simpleGit({
       baseDir: broken.branchPath,
@@ -1947,7 +1947,9 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSync?.rebased).toContain('behind-branch')
     expect(status.lastGitSync?.failed).toContainEqual({
       branch: 'broken-branch',
-      error: expect.stringMatching(/transport 'file' not allowed/),
+      error: expect.stringMatching(
+        /^Refusing to run git in \S+broken-branch: .*protocol\.file\.allow in \S+\/\.git\/config\b.*--unset-all 'protocol\.file\.allow'$/,
+      ),
     })
   })
 

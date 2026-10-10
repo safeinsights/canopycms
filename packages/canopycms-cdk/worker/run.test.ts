@@ -28,6 +28,7 @@ const baseEnv = (): NodeJS.ProcessEnv => ({
   CANOPYCMS_GITHUB_OWNER: 'acme',
   CANOPYCMS_GITHUB_REPO: 'site',
   CANOPYCMS_GITHUB_TOKEN: 'ghp_test_token',
+  STATE_DIRECTORY: '/var/lib/canopy-worker',
 })
 
 function envWithout(...names: string[]): NodeJS.ProcessEnv {
@@ -239,6 +240,35 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.record).toHaveBeenCalledWith({ workspacePath: WORKSPACE, error: boom })
     expect(h.exitCodes()).toEqual([1])
     expect(h.start).not.toHaveBeenCalled()
+  })
+
+  it('records a unit without StateDirectory=, naming the line to add', async () => {
+    const h = harness({ env: envWithout('STATE_DIRECTORY') })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringMatching(
+          /^StateDirectory=canopy-worker is not set on the worker unit/,
+        ),
+      }),
+    })
+    expect(h.exitCodes()).toEqual([1])
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it("hands the worker systemd's state directory, the first of several", async () => {
+    const h = harness({
+      env: { ...baseEnv(), STATE_DIRECTORY: '/var/lib/canopy-worker:/var/lib/other' },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.createWorker).toHaveBeenCalledWith(
+      expect.objectContaining({ stateDirectory: '/var/lib/canopy-worker' }),
+    )
   })
 
   it('has nowhere to record without CANOPYCMS_WORKSPACE_ROOT: exits 1 and records nothing', async () => {

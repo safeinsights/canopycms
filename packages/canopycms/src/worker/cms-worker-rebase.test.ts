@@ -72,7 +72,10 @@ interface BranchSetup {
   branchPath: string
   contentBranchesPath: string
   branchGit: SimpleGit
+  /** The working repository commits are made in before they are pushed to the bare `remote.git`. */
   remoteGit: SimpleGit
+  /** Push the working repository's base branch into the bare `remote.git`. */
+  publishRemote: () => Promise<void>
   /** Add a commit to the origin remote (makes the branch workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
   /** Commit changes in the branch workspace. */
@@ -80,7 +83,8 @@ interface BranchSetup {
 }
 
 /**
- * Creates a local git setup: a "remote" repo and a branch-workspace clone.
+ * Creates a local git setup: a bare `remote.git` (fed from a sibling working repository,
+ * as production's is fed by pushes) and a branch-workspace clone.
  * The branch workspace's feature branch tracks origin/<baseBranch>.
  */
 async function createBranchSetup(
@@ -96,21 +100,27 @@ async function createBranchSetup(
   const { baseBranch = 'main', initialFiles = { '.gitkeep': '' }, sparseCone } = opts
 
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 
   // --- Set up remote repo ---
-  await fs.mkdir(remotePath)
-  const remoteGit = await initTestRepo(remotePath)
+  await fs.mkdir(upstreamPath)
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', baseBranch])
+  await simpleGit().raw(['init', '--bare', '--initial-branch', baseBranch, remotePath])
+  const publishRemote = async () => {
+    await remoteGit.raw(['push', '-q', '--force', remotePath, `${baseBranch}:${baseBranch}`])
+  }
 
   for (const [name, content] of Object.entries(initialFiles)) {
-    const fullPath = path.join(remotePath, name)
+    const fullPath = path.join(upstreamPath, name)
     await fs.mkdir(path.dirname(fullPath), { recursive: true })
     await fs.writeFile(fullPath, content)
   }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await publishRemote()
 
   // --- Clone remote to branch workspace ---
   await fs.mkdir(contentBranchesPath, { recursive: true })
@@ -121,8 +131,6 @@ async function createBranchSetup(
   const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
-  // Prevent interactive editor prompts during `rebase --continue`
-  await branchGit.addConfig('core.editor', 'true')
 
   // Exclude .canopy-meta/ from git tracking (matches production setup via ensureGitExclude)
   const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
@@ -137,12 +145,13 @@ async function createBranchSetup(
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
-      const fullPath = path.join(remotePath, name)
+      const fullPath = path.join(upstreamPath, name)
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
     await remoteGit.add(['.'])
     await remoteGit.commit(message)
+    await publishRemote()
   }
 
   const commitToBranch = async (files: Record<string, string>, message = 'branch commit') => {
@@ -160,6 +169,7 @@ async function createBranchSetup(
     contentBranchesPath,
     branchGit,
     remoteGit,
+    publishRemote,
     pushToRemote,
     commitToBranch,
   }
@@ -605,6 +615,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await fs.writeFile(commentsPath, '{"threads":["live"]}')
       await setup.remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
       await setup.remoteGit.commit('untrack canopycms state')
+      await setup.publishRemote()
       const headBefore = (await setup.branchGit.revparse(['HEAD'])).trim()
 
       const consoleSpy = mockConsole()
@@ -874,6 +885,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.pushToRemote({ 'src/both.ts': 'main', 'src/branch-deletes.ts': 'main' })
       await setup.remoteGit.rm(['src/main-deletes.ts'])
       await setup.remoteGit.commit('main: delete')
+      await setup.publishRemote()
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
 
       await runRebase(makeWorker(tmpDir))
@@ -895,16 +907,13 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
   describe('rebaseFailure recording', () => {
     /**
-     * Installs a pre-rebase hook that always refuses the rebase before it
-     * starts. This drives the round loop's "unexpected error" branch for
-     * real (not a conflict -- st.conflicted stays empty since the rebase
-     * never begins -- and not the "nothing to commit"/"apply --skip" empty-
-     * commit message), without mocking simple-git internals.
+     * Leaves a stale `.git/index.lock`, so the rebase refuses to start. This drives the round
+     * loop's "unexpected error" branch for real (not a conflict -- st.conflicted stays empty since
+     * the rebase never begins -- and not the "nothing to commit"/"apply --skip" empty-commit
+     * message), without mocking simple-git internals. Not a hook: the worker runs none.
      */
-    const installRefusingPreRebaseHook = async (branchPath: string) => {
-      const hookPath = path.join(branchPath, '.git', 'hooks', 'pre-rebase')
-      await fs.writeFile(hookPath, '#!/bin/sh\necho "blocked by test hook" >&2\nexit 1\n')
-      await fs.chmod(hookPath, 0o755)
+    const blockRebaseWithIndexLock = async (branchPath: string) => {
+      await fs.writeFile(path.join(branchPath, '.git', 'index.lock'), '')
     }
 
     const readRawBranchJson = async (branchPath: string): Promise<Record<string, unknown>> => {
@@ -917,7 +926,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
@@ -997,7 +1006,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker) // first cycle: records the failure
@@ -1013,7 +1022,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
-      await installRefusingPreRebaseHook(setup.branchPath)
+      await blockRebaseWithIndexLock(setup.branchPath)
 
       const worker = makeWorker(tmpDir)
       await runRebase(worker) // first cycle: records the real failure message

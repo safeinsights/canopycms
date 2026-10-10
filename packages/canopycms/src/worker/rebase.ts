@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { simpleGit, type SimpleGit } from 'simple-git'
+import type { SimpleGit } from 'simple-git'
 import {
   BranchMetadataFileManager,
   buildMergedBranchUpdate,
@@ -35,6 +35,7 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
+import { assertSharedRepoConfig, fetchFromRemoteGit, sharedRepoGit } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -702,15 +703,11 @@ async function rebaseOneBranch(
       return { kind: 'none' }
     }
 
-    const branchGit = simpleGit({
-      baseDir: branchPath,
-      // Keep git non-interactive during rebase/merge so it never blocks on an
-      // editor. simple-git >=3.32 requires opting in to set core.editor; the
-      // value is a hardcoded literal ("true", the shell no-op), not user input,
-      // so allowUnsafeEditor carries no injection risk here.
-      config: ['core.editor=true'],
-      unsafe: { allowUnsafeEditor: true },
-    })
+    // Throws into the catch below, which records the refusal on the branch: a planted key here
+    // would run in this worker's rebase, merge and checkout.
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    // The pins also keep git non-interactive (core.editor=true): a rebase never waits on an editor.
+    const branchGit = sharedRepoGit(branchPath, 'worktree')
 
     // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
     // dirty check, and hold it for the whole rebase. The dirty check alone is
@@ -851,7 +848,7 @@ async function rebaseOneBranch(
       // the bytes stay untouched, and the wedge is recorded for an operator.
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
-        await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+        await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
         const reason =
@@ -889,7 +886,7 @@ async function rebaseOneBranch(
         })
       }
 
-      await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+      await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
 
       // rev-list, not status.behind, which needs an upstream tracking branch
       // that checkoutBranch's fallback paths do not always configure. Against

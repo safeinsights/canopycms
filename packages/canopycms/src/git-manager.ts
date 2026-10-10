@@ -137,9 +137,15 @@ export const REMOTE_GIT_CONFIG: ReadonlyArray<readonly [key: string, value: stri
   ['transfer.unpackLimit', '1'],
 ]
 
-/** Write each of {@link REMOTE_GIT_CONFIG} into the bare repo `gitDir` only where it differs. */
-export async function ensureRemoteGitConfig(gitDir: string): Promise<void> {
-  const git = simpleGit().env(gitChildEnv({}))
+/**
+ * Write each of {@link REMOTE_GIT_CONFIG} into the bare repo `gitDir` only where it differs.
+ * `gitOptions` is how the worker passes the pins it runs every shared repository under.
+ */
+export async function ensureRemoteGitConfig(
+  gitDir: string,
+  gitOptions: Partial<SimpleGitOptions> = {},
+): Promise<void> {
+  const git = simpleGit(gitOptions).env(gitChildEnv({}))
   const current = new Map<string, string>()
   const listed = await git.raw(['--git-dir', gitDir, 'config', '--local', '--list'])
   for (const line of listed.split('\n')) {
@@ -198,10 +204,13 @@ export type BareRemoteRepackResult =
  * old object before the repack still finds it, and a repack only deletes packs it listed when it
  * began. A clone that hardlinked a pack keeps that inode when the repack unlinks the remote's
  * name for it, and packs are never modified in place. `repack -d` also removes the loose objects
- * it packed and their emptied fan-out directories.
+ * it packed and their emptied fan-out directories. `gitOptions` as for `ensureRemoteGitConfig`.
  */
-export async function repackBareRemoteIfNeeded(gitDir: string): Promise<BareRemoteRepackResult> {
-  const git = simpleGit().env(gitChildEnv({}))
+export async function repackBareRemoteIfNeeded(
+  gitDir: string,
+  gitOptions: Partial<SimpleGitOptions> = {},
+): Promise<BareRemoteRepackResult> {
+  const git = simpleGit(gitOptions).env(gitChildEnv({}))
   const before = await countObjects(git, gitDir)
   if (before.loose <= REMOTE_GIT_MAX_LOOSE_OBJECTS && before.packs <= REMOTE_GIT_MAX_PACKS) {
     return { repacked: false, before }

@@ -85,12 +85,16 @@ async function createSetup(
   opts: { branchDeletesEntry: boolean; baseDeletesEntry?: boolean },
 ): Promise<Setup> {
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const branchPath = path.join(contentBranchesPath, branchName)
 
-  await fs.mkdir(remotePath)
-  const remoteGit = await initTestRepo(remotePath)
+  // remote.git is bare, as in production; commits are made in `upstream` and pushed.
+  await fs.mkdir(upstreamPath)
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', 'main'])
+  await simpleGit().raw(['init', '--bare', '--initial-branch', 'main', remotePath])
+  const publishRemote = () => remoteGit.raw(['push', '-q', '--force', remotePath, 'main:main'])
 
   const writeInto = async (root: string, content: string) => {
     const full = path.join(root, ENTRY_FILE)
@@ -98,14 +102,15 @@ async function createSetup(
     await fs.writeFile(full, content)
   }
 
-  await writeInto(remotePath, '{\n  "title": "base"\n}\n')
+  await writeInto(upstreamPath, '{\n  "title": "base"\n}\n')
   for (const extra of [BYSTANDER_FILE, REPLAY_STAGED_FILE]) {
-    const full = path.join(remotePath, extra)
+    const full = path.join(upstreamPath, extra)
     await fs.mkdir(path.dirname(full), { recursive: true })
     await fs.writeFile(full, '{\n  "title": "base"\n}\n')
   }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await publishRemote()
 
   await fs.mkdir(contentBranchesPath, { recursive: true })
   await simpleGit().clone(remotePath, branchPath)
@@ -113,7 +118,6 @@ async function createSetup(
   const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
-  await branchGit.addConfig('core.editor', 'true')
 
   const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
   await fs.mkdir(path.dirname(excludeFile), { recursive: true })
@@ -143,10 +147,12 @@ async function createSetup(
   if (opts.baseDeletesEntry) {
     await remoteGit.rm([ENTRY_FILE])
     await remoteGit.commit('main: delete entry')
+    await publishRemote()
   } else {
-    await writeInto(remotePath, '{\n  "title": "main version"\n}\n')
+    await writeInto(upstreamPath, '{\n  "title": "main version"\n}\n')
     await remoteGit.add(['.'])
     await remoteGit.commit('main: update same entry')
+    await publishRemote()
   }
 
   const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)

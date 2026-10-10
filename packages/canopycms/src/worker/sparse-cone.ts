@@ -1,7 +1,7 @@
 import type { Dirent } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { simpleGit, type SimpleGit } from 'simple-git'
+import type { SimpleGit } from 'simple-git'
 
 import { readRecordedSparseCone, sameCone } from '../branch-sparse'
 import { invalidateBranchContentCaches } from '../content-index-generation'
@@ -10,6 +10,7 @@ import { getErrorMessage, isNodeError } from '../utils/error'
 import { isRebaseInProgress } from '../utils/git'
 import { workerLog, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
+import { assertSharedRepoConfig, sharedRepoGit } from './shared-repo-git'
 
 export interface SparseConeReport {
   reapplied: string[]
@@ -62,10 +63,12 @@ export async function reapplySparseCones(ctx: {
       () => false,
     )
     if (!isClone) continue
-    const git = simpleGit({ baseDir: branchPath })
+    const git = sharedRepoGit(branchPath, 'worktree')
     const cone = await currentCone(git)
     if (cone === null || sameCone(cone, recorded.cone)) continue
     try {
+      // `sparse-checkout set` checks files out, which runs any filter driver the config names.
+      await assertSharedRepoConfig(branchPath, 'worktree')
       const outcome = await reapplyOne(ctx.contentBranchesPath, dirName, git, recorded.cone)
       if (outcome === 'applied') {
         workerLog(

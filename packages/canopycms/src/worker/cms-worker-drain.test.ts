@@ -248,7 +248,8 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
 
   afterEach(async () => {
     consoleSpy.restore()
-    await fs.rm(tmpDir, { recursive: true, force: true })
+    // An aborted push leaves the fixture's receive-pack, and its 3s hook, still writing there.
+    await fs.rm(tmpDir, { recursive: true, force: true, maxRetries: 25, retryDelay: 200 })
   })
 
   it('a submit whose push the drain aborts is released, not stamped as pushed, and stays submitted', async () => {
@@ -351,7 +352,6 @@ describe('CmsWorker.syncGit() while draining', () => {
     const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
     await branchGit.addConfig('user.name', 'Test Bot')
     await branchGit.addConfig('user.email', 'test@canopycms.test')
-    await branchGit.addConfig('core.editor', 'true')
     await branchGit.checkoutBranch(branchName, 'origin/main')
     await getBranchMetadataFileManager(
       branchPath,

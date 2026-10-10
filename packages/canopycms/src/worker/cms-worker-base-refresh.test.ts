@@ -48,9 +48,13 @@ const refreshBase = (worker: CmsWorker): Promise<BaseRefreshReport> =>
 interface BaseWorkspaceSetup {
   basePath: string
   contentBranchesPath: string
+  /** The bare `remote.git` the worker fetches from. */
   remotePath: string
+  /** The working repository commits are made in before they are pushed to `remotePath`. */
   remoteGit: SimpleGit
   baseGit: SimpleGit
+  /** Push the working repository's base branch into the bare `remote.git`. */
+  publishRemote: () => Promise<void>
   /** Add a commit to the origin remote (makes the base workspace "behind"). */
   pushToRemote: (files: Record<string, string>, message?: string) => Promise<void>
 }
@@ -58,7 +62,9 @@ interface BaseWorkspaceSetup {
 /**
  * Creates a local git setup where content-branches/<baseBranch> is a clone
  * checked out AS the base branch itself (not a distinct feature branch) --
- * matching what Lambda provisions for the base branch's own workspace.
+ * matching what Lambda provisions for the base branch's own workspace. `remote.git`
+ * is bare, as in production; commits are made in a sibling working repository and
+ * pushed into it.
  */
 async function createBaseWorkspaceSetup(
   tmpDir: string,
@@ -79,19 +85,25 @@ async function createBaseWorkspaceSetup(
   } = opts
 
   const remotePath = path.join(tmpDir, 'remote.git')
+  const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
   const basePath = path.join(contentBranchesPath, baseBranch)
 
-  await fs.mkdir(remotePath, { recursive: true })
-  const remoteGit = await initTestRepo(remotePath)
+  await fs.mkdir(upstreamPath, { recursive: true })
+  const remoteGit = await initTestRepo(upstreamPath)
   await remoteGit.raw(['branch', '-M', baseBranch])
+  const publishRemote = async () => {
+    await remoteGit.raw(['push', '-q', '--force', remotePath, `${baseBranch}:${baseBranch}`])
+  }
   for (const [name, content] of Object.entries(initialFiles)) {
-    const fullPath = path.join(remotePath, name)
+    const fullPath = path.join(upstreamPath, name)
     await fs.mkdir(path.dirname(fullPath), { recursive: true })
     await fs.writeFile(fullPath, content)
   }
   await remoteGit.add(['.'])
   await remoteGit.commit('initial commit')
+  await simpleGit().raw(['init', '--bare', '--initial-branch', baseBranch, remotePath])
+  await publishRemote()
 
   await fs.mkdir(contentBranchesPath, { recursive: true })
   await simpleGit().clone(remotePath, basePath, ['--branch', baseBranch])
@@ -101,7 +113,6 @@ async function createBaseWorkspaceSetup(
   const baseGit = simpleGit({ baseDir: basePath, unsafe: { allowUnsafeEditor: true } })
   await baseGit.addConfig('user.name', 'Test Bot')
   await baseGit.addConfig('user.email', 'test@canopycms.test')
-  await baseGit.addConfig('core.editor', 'true')
   if (sparseCone) await baseGit.raw(['sparse-checkout', 'set', '--cone', '--', ...sparseCone])
 
   // Exclude .canopy-meta/ from git tracking (matches production ensureGitExclude)
@@ -118,15 +129,24 @@ async function createBaseWorkspaceSetup(
 
   const pushToRemote = async (files: Record<string, string>, message = 'remote commit') => {
     for (const [name, content] of Object.entries(files)) {
-      const fullPath = path.join(remotePath, name)
+      const fullPath = path.join(upstreamPath, name)
       await fs.mkdir(path.dirname(fullPath), { recursive: true })
       await fs.writeFile(fullPath, content)
     }
     await remoteGit.add(['.'])
     await remoteGit.commit(message)
+    await publishRemote()
   }
 
-  return { basePath, contentBranchesPath, remotePath, remoteGit, baseGit, pushToRemote }
+  return {
+    basePath,
+    contentBranchesPath,
+    remotePath,
+    remoteGit,
+    baseGit,
+    publishRemote,
+    pushToRemote,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -454,7 +474,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
 
     it("restores the retired in-tree schema cache, so the adopter's untracking commit fast-forwards", async () => {
-      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+      const { basePath, remoteGit, publishRemote } = await createBaseWorkspaceSetup(tmpDir, {
         sparseCone,
         initialFiles: { 'content/a.md': 'a', '.canopy-meta/schema-cache.json': '{"v":"old"}' },
       })
@@ -463,6 +483,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       // The adopter's fix lands upstream.
       await remoteGit.raw(['rm', '-r', '--cached', '.canopy-meta'])
       await remoteGit.commit('untrack canopycms state')
+      await publishRemote()
 
       const consoleSpy = mockConsole()
       const report = await refreshBase(makeWorker(tmpDir))
@@ -475,7 +496,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     })
 
     it("fast-forwards past the adopter's untracking commit without touching live state", async () => {
-      const { basePath, remoteGit } = await createBaseWorkspaceSetup(tmpDir, {
+      const { basePath, remoteGit, publishRemote } = await createBaseWorkspaceSetup(tmpDir, {
         sparseCone,
         initialFiles: {
           'content/a.md': 'a',
@@ -487,6 +508,7 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
       await fs.writeFile(commentsPath, '{"threads":["live"]}')
       await remoteGit.raw(['rm', '-r', '--cached', '-q', '.canopy-meta'])
       await remoteGit.commit('untrack canopycms state')
+      await publishRemote()
 
       const consoleSpy = mockConsole()
       const report = await refreshBase(makeWorker(tmpDir))
