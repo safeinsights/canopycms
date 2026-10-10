@@ -379,7 +379,8 @@ can pass `schemaHoldMaxMs` to `CmsWorker`.
 ### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
 
 **What changed.** (int.108) The worker is one on-demand `t4g.nano` by default (about $3 a month,
-against spot's $1–2); a spot shortage could leave no worker and `/edit` answering 500. Spot is
+against spot's $1–2); a spot shortage could leave no worker: on a first deploy `/edit` answers 500, and later
+publishes wait. Spot is
 opt-in: `workerCapacity: { type: 'spot' }`, a mixed-instances policy that still cannot guarantee a
 worker. A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat
 `workerTerminationHeartbeat`, default 5 minutes) lets the old worker finish in-flight work for up
@@ -424,8 +425,8 @@ key, grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLi
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 
-**What changed.** (int.109) After a recorded failed start, the prod not-ready 503 is
-`WORKER_FAILED`: no `Retry-After`, the failure named to admins, account ids masked.
+**What changed.** (int.109) While the latest start's recorded failure stands, the prod not-ready 503
+is `WORKER_FAILED`: no `Retry-After`, the failure named to admins, account ids masked.
 `CmsWorker.selfStopped` settles when the worker stops itself (a lost EFS lock); the `canopycms-cdk`
 entrypoint then exits 69. `recordWorkerStartupFailure` records a failure before `start()`.
 
@@ -439,7 +440,7 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 **What changed.** (int.109)
 
 - `workerCode: { source: 'parameter' }` on `CanopyCmsService` selects the worker bundle by a
-  `WorkerBundleSha256` parameter, from a bucket the construct creates. The package ships the bundle
+  sha256 template parameter (its logical id is the `WorkerBundleSha256ParameterName` stack output), from a bucket the construct creates. The package ships the bundle
   with its hash, as `worker/dist/index.js` and `index.js.sha256`. The default, `'asset'`, is
   unchanged.
 - `CanopyCmsService` alarms when the worker logs no git sync for 30 minutes. See
@@ -459,8 +460,8 @@ adds the editor's behaviors (`/edit`, `/edit/*`, `/api/canopycms/*`) to a distri
 own: OAC, the Lambda's timeout as the origin-read timeout, no caching, `x-forwarded-host`, and a
 response headers policy. `CanopyCmsDistribution` sends the same headers: `frame-ancestors 'self'`,
 `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`. Unless your app sends
-its own framing headers, no other origin can frame the editor or any page the CMS domain serves, and
-those pages are marked `noindex`. The editor's default preview is same-origin and unaffected. See
+its own framing headers, no other origin can frame the editor or any page the CMS domain serves. Every such page is
+marked `noindex`. The editor's default preview is same-origin and unaffected. See
 [Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
 
 **To adopt.** If you wired the Function URL into your own distribution by hand, delete those
@@ -648,10 +649,10 @@ fast naming the ARN, the field and the keys present, never a value.
 prop. The scaffolded stack fills them from the repository _variables_
 `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`
 ([why the prefix](deploying-to-aws.md#repository-secrets-and-variables)); a stack scaffolded earlier
-adds the props to `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts`, or re-runs the
-generator and diffs. `cdk synth` refuses a `…JsonField` prop without its `…SecretArn`, and an ARN carrying the ECS `:KEY::` suffix
-(also in `secretsArns`). Don't use CDK's `secretValueFromJson`: it puts the plaintext in the
-template. Only `CLERK_SECRET_KEY` goes through Secrets Manager; `CLERK_JWT_KEY` and the publishable
+adds the props to `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts` and the two `env`
+lines to `.github/workflows/deploy-cms.yml`, or re-runs the generator and diffs. `cdk synth` refuses a `…JsonField` prop without its `…SecretArn`, and an ARN carrying the ECS `:KEY::` suffix
+(also in `secretsArns`). Don't use CDK's `secretValueFromJson`: it resolves the plaintext into the deployed
+resource's configuration, readable by anyone who can describe it. Only `CLERK_SECRET_KEY` goes through Secrets Manager; `CLERK_JWT_KEY` and the publishable
 key are public material ([Security Model](deploying-to-aws.md#security-model)).
 
 **Now deletable.** A wrapper that fetches the secret, parses it and re-exports one field into the
@@ -675,7 +676,7 @@ anyone holding an App's key can mint a token for any of its installations
    Secrets Manager. `canopycms init-github-app create -- <command>` does this from a manifest: it
    pipes the key to your command's standard input (or `--key-out <path>` writes a `0600` file), and
    `verify` checks an existing installation's permissions: run it, since an App missing a
-   permission retries silently into `sync-failed`. It needs an interactive terminal and
+   permission only shows up later, as `sync-failed`. `create` needs an interactive terminal and
    never edits an existing JSON secret (create one and point the JSON-field prop at it)
    ([details](deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
 2. Set the three props and **remove `githubTokenSecretArn`** (with its JSON field). A partial set
@@ -683,10 +684,11 @@ anyone holding an App's key can mint a token for any of its installations
 3. In the generated workflow, store them as `CANOPY_GITHUB_APP_ID`,
    `CANOPY_GITHUB_APP_INSTALLATION_ID` and `CANOPY_GITHUB_APP_PRIVATE_KEY_SECRET_ARN`: GitHub refuses
    an Actions secret or variable whose name starts with `GITHUB_`. The workflow maps each onto the
-   unprefixed variable the CDK app reads.
+   unprefixed variable the CDK app reads. A workflow, `app.ts` or `cms-stack.ts` scaffolded before
+   0.0.67 has none of this wiring: re-run `init-deploy aws` and diff.
 
 The private key is ARN-only; passing the key itself is refused at synth. Its ARN joins the worker's
-IAM policy automatically, so it stays out of `secretsArns`. See
+IAM policy automatically, so you need not add it to `secretsArns`. See
 [Authenticating as a GitHub App](deploying-to-aws.md#authenticating-as-a-github-app).
 
 ```bash
@@ -721,9 +723,8 @@ new CmsWorker({
 ```
 
 `normalizeGitHubAppPrivateKey` repairs `\n` escapes and base64-wrapped PEMs, converts PKCS#1 to
-PKCS#8, and throws where the key is configured. Octokit's REST calls mint through the `request`
-Octokit passes the strategy, so with `createAppAuth({ request })` for a GitHub Enterprise host, set
-Octokit's own `baseUrl` too. `GitHubService` stays static-token-only.
+PKCS#8, and throws where the key is configured. The worker's git remote and REST client target
+github.com. `GitHubService` stays static-token-only.
 
 **Now deletable.** A hand-written entrypoint that existed only to get App auth onto a CDK
 deployment; user-data steps that fetched the PEM into the worker's environment; your own PEM
@@ -803,7 +804,8 @@ on an x86 host ([Where the image is built](deploying-to-aws.md#where-the-image-i
    `CanopyCmsService` only if you want x86_64.
 2. Re-run `canopycms init-deploy aws`. It asks before replacing each existing file
    (`--non-interactive` skips them, `--force` replaces everything, including an edited stack), and
-   always adds `infrastructure/tsconfig.json` and the `exclude` entry. In files you keep, bring
+   always adds `infrastructure/tsconfig.json`, and the `exclude` entry unless `tsconfig.json` is
+   missing, isn't plain JSON, or inherits `exclude` through `extends` (it then tells you to add it). In files you keep, bring
    across: the workflow's "Type-check the CDK app" step before "Configure AWS credentials", with
    `tsconfig.json` in `on.push.paths` (`examples/aws-deployment/deploy-cms.yml` has both);
    `runs-on: ubuntu-24.04-arm`; an `infrastructure` line in `.dockerignore`; and, with pnpm,
@@ -919,9 +921,9 @@ the synthesized `CacheBehaviors` order.
 **To adopt.** Optional. Core 3 needs `<ClerkProvider>` inside `<body>`, not around `<html>`
 (`apps/example1/app/layout.tsx`); a dual-build editor layout is already inside `<body>`. If you
 render `AccountComponent` yourself with `afterSignOutUrl`/`signOutUrl`, move them to
-`ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`. If you keep `clerkMiddleware`, it needs a non-empty `secretKey`, more strictly than 6.x.
+`ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`. If you keep `clerkMiddleware`, it needs a non-empty `secretKey`.
 `CLERK_ENCRYPTION_KEY` does not apply to
-the scaffolded middleware, which passes only `jwtKey`. Node must be >= 22.12.0 for every CanopyCMS
+the scaffold's commented `clerkMiddleware` snippet, which passes only `jwtKey`. Node must be >= 22.12.0 for every CanopyCMS
 package regardless.
 
 ```tsx
@@ -937,7 +939,8 @@ package regardless.
 **What changed.** `settingsBranch` sets the worker's `CANOPYCMS_SETTINGS_BRANCH`; it and
 `baseBranch` are checked against git's branch-name rules at synth. The generated
 `infrastructure/lib/cms-stack.ts` imports `canopycms.config.ts` and passes
-`baseBranch: config.defaultBaseBranch` and `settingsBranch: config.settingsBranch`.
+`baseBranch: canopyConfig.server.defaultBaseBranch` and
+`settingsBranch: canopyConfig.server.settingsBranch`.
 
 **To adopt.** Regenerate `cms-stack.ts` or copy the import and two lines; your own stack sets both
 props to match `canopycms.config.ts`. **Do this now if your default branch is not `main` or you set
@@ -1000,7 +1003,37 @@ ships an empty build id from an empty variable. Also a post-build step rewriting
 
 ### 0.0.65
 
-No adopter-visible changes.
+#### `canopycms-cdk`: CloudFront waits as long as the CMS Lambda, and the worker boots from AL2023's Node 22
+
+**What changed.**
+
+- `CanopyCmsDistribution` takes `originReadTimeout`, defaulting to the CMS Lambda's default
+  `timeout` (60 seconds, exposed as `cmsService.timeout`); synth refuses more than 60 seconds.
+  Without a `certificate`, it refuses a stack region other than `us-east-1`, where CloudFront
+  needs its certificate.
+- The worker installs Node 22 with `dnf` and runs `/usr/bin/node-22`; a failed boot step shuts the
+  instance down so the group replaces it. Its IAM policy covers `githubTokenSecretArn` and
+  `clerkSecretKeySecretArn` as well as `secretsArns`. The bot token never stays in
+  `remote.git`'s config on EFS, and one an earlier worker left there is scrubbed.
+- An `/assets/t/` URL whose slug is not the asset's own answers 404; `assetUrl` always uses the
+  real slug.
+- `canopycms worker run-once` exits 1 on an unknown `CANOPY_AUTH_MODE`.
+
+**To adopt.** If you override `CanopyCmsService`'s `timeout`, pass
+`originReadTimeout: cmsService.timeout` (the generated stack does). A hand-installed unit copies
+`ExecStart` from `worker/canopy-worker.service`.
+
+#### `canopycms init` scaffold fixes
+
+**What changed.** `init` writes `middleware.ts` beside the app directory's parent (`src/` for
+`--app-dir src/app`), leaves an existing `next.config.js`/`.mjs` alone and prints the wiring,
+creates `.gitignore` with `.canopy-dev/` when absent, and the generated workflow deploys on
+`next.config.*`, `middleware.ts` and `public/**` changes.
+
+**To adopt.** Check what an earlier `init` left: a `middleware.ts` at the root of a `src/app`
+project, which Next never loads (move it into `src/`); a `next.config.ts` beside a `.js`/`.mjs`
+config, which Next ignores (wrap the loaded one in `withCanopy` and delete it); `.canopy-dev/`
+missing from `.gitignore`; and those three paths missing from `deploy-cms.yml`'s `on.push.paths`.
 
 ### 0.0.64
 
@@ -1037,7 +1070,8 @@ trailing slashes" helper (`stripTrailingSlashes` is in `canopycms/server`).
 **What changed.** `TypeFromEntrySchema` infers a `select` as the literal union of its options'
 values (`'draft' | 'published'`), not `string | number`. Options must be literals at the type level
 (`defineEntrySchema` or `as const`); an array typed `SelectOption[]`, or no options, falls back to
-`string`. `''` is not in the union, though the validator accepts it for a non-required field: compare cleared
+`string`. `''` is not in the union, though the validator accepts it for any field not marked
+`required: true`: compare cleared
 values before they reach the typed surface, or add `''` to the options.
 
 **To adopt.** Fix comparisons against strings that are not options (now "no overlap" errors), and
@@ -1150,7 +1184,7 @@ pathFor: (entry) =>
 #### A slug that cannot round-trip through a URL fails the build, and the CMS refuses to create one — **breaking (build)**
 
 **What changed.** A slug must be lowercase letters, numbers and hyphens, starting with a letter or
-number. A production build fails listing every entry whose slug isn't (such as
+number, and at most 64 characters. A production build fails listing every entry whose slug isn't (such as
 `post.getting.started.guide.<id>.md`, which built and then 404'd), and a create or rename to one is
 refused with 400. Existing entries stay readable and renameable.
 
@@ -1217,7 +1251,7 @@ return entryToMetadata(result?.data, {
 Exclude entry types with no page of their own. Pass `seo` once to `createNextCanopyContext`, not
 per call. With `defineSeoFieldGroup({ group: 'seo' })`, include the same `group` in
 that `seo` option. Add `defineSeoFieldGroup()` to schemas with SEO fields; map an existing group with
-`{ fields: { title: 'yourName' } }` rather than keeping both. Pass a `lastModified` callback for a
+`seo: { fields: { title: 'yourName' } }` rather than keeping both. Pass a `lastModified` callback for a
 real content date, or return `undefined` from it to omit `<lastmod>`. Write `app/robots.ts` yourself.
 
 **Now deletable.** A sitemap over a hardcoded list of entry types, a hand-written `Metadata` mapper,
@@ -1240,8 +1274,8 @@ underscore-prefixed files are skipped.
 ([Public read on server deployments](../README.md#public-read-on-server-deployments)).
 
 **To adopt.** An older scaffold's `defaultBranchAccess: 'allow'` is wider than recommended;
-consider `'deny'`. If you deleted `defaultPathAccess: { read: 'allow' }`, anonymous routes 403 until
-you restore it.
+consider `'deny'`. If you deleted `defaultPathAccess: { read: 'allow' }`, anonymous visitors get no content until you
+restore it: `readByUrlPath` pages 404, `read()` throws, API calls 403.
 
 #### Read and listing helpers replace hand-rolled parsing (#1, #2, #3, #4, #17)
 
@@ -1347,7 +1381,8 @@ Not retro-documented, apart from these:
 
 - **`rich-text` was removed** (breaking). Change a `type: 'rich-text'` field to `type: 'markdown'`.
 - **Content IDs are 12-character Base58** without `0 O I l`. An entry with a hand-rolled ID
-  containing one never loads, silently. Use `generateId()` from `canopycms/server`.
+  containing one never loads: it is skipped silently in the editor and `next dev`, and fails a
+  production build. Use `generateId()` from `canopycms/server`.
 
 #### The registry is keyed by entry-type name (0.0.42)
 
@@ -1358,8 +1393,8 @@ Not retro-documented, apart from these:
 1. Rename the keys in `schemas.ts`: `{ postSchema, authorSchema }` becomes `{ post: postSchema, author: authorSchema }`.
 2. Rename every `entry.schema` string in `content/**/.collection.json` to match (`"schema": "postSchema"` becomes `"schema": "post"`), then confirm nothing is left with `grep -r 'Schema"' content/`.
 3. Add `export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>` and derive the per-schema aliases from it (`type PostContent = EntryTypes['post']`).
-4. Pass `EntryTypes` as the second generic wherever you call `buildContentTree`, so `meta.indexEntry.data` narrows on `meta.entryType`.
-5. Run `pnpm typecheck`. A `.collection.json` still naming an old key fails at startup with `Schema reference "postSchema" ... not found in registry. Available schemas: ...`.
+4. Pass `EntryTypes` as the second generic wherever you call `buildContentTree`, so `meta.indexEntry.data` narrows on `meta.indexEntry.entryType`.
+5. Run `pnpm typecheck`. A `.collection.json` still naming an old key fails `next build` with `Schema reference "postSchema" ... not found in registry. Available schemas: ...`; in the editor, that entry type shows as unavailable.
 
 Content files, frontmatter and `.canopy-meta/` caches are untouched; in dev, editing a `.collection.json` invalidates the schema cache.
 
