@@ -6,6 +6,8 @@ import lockfile from 'proper-lockfile'
 
 import { getErrorMessage, isFileExistsError, isNodeError } from './error'
 import { createDebugLogger } from './debug'
+import { canopyLogWarn } from './logger'
+import { guardOnCompromised } from './provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'OccJsonWrite' })
 
@@ -244,16 +246,19 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
         realpath: false,
         stale: 10_000,
         retries: 0,
-        // A compromised lock (the lock dir vanished or refresh failed
-        // mid-hold, e.g. the branch directory containing it was deleted)
-        // must not crash the process, which is proper-lockfile's default.
-        // Our critical sections are short and idempotent-on-conflict (OCC
-        // verify inside); log and let the section finish.
-        onCompromised: (err) => {
-          log.warn('lock', `Lock compromised mid-hold for ${filePath}`, {
-            error: getErrorMessage(err),
-          })
-        },
+        // A compromised lock (the lock dir vanished or refresh failed mid-hold, e.g. the branch
+        // directory containing it was deleted, or an EFS waiter misread a cached mtime and took
+        // it over) must not crash the process, which is proper-lockfile's default. Our critical
+        // sections are short and idempotent-on-conflict (OCC verify inside); log and let the
+        // section finish.
+        onCompromised: guardOnCompromised(
+          (err) =>
+            canopyLogWarn(
+              `[canopy] OCC file lock compromised mid-hold for ${filePath}:`,
+              getErrorMessage(err),
+            ),
+          filePath,
+        ),
       })
     } catch (err) {
       const code = isNodeError(err) ? err.code : undefined

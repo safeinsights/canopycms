@@ -106,19 +106,20 @@ which settings init calls into while holding its own lock) — keeping them out 
 other's way and out of the git working tree.
 
 **Never let a compromised lock kill the process.** proper-lockfile's default
-`onCompromised` rethrows from inside its refresh timer, i.e. an uncaught exception. By the
-time a compromise is reported the mutual exclusion is already gone, so crashing protects
-nothing — it just turns a lock failure into an outage for a Lambda serving unrelated
-requests. `provisioning-lock.ts` therefore wraps
-whatever handler a call site supplies in a `try/catch`, so this holds even if the handler
-(or the logger it calls) throws, as any console write does under `CI=true` vitest.
+`onCompromised` rethrows from its refresh timer: an uncaught exception. The mutual exclusion
+is already gone by then, so crashing protects nothing and kills a Lambda serving other
+requests. `guardOnCompromised` (`provisioning-lock.ts`) wraps the provisioning,
+content-write and OCC locks' handlers so not even a throwing logger escapes (`CI=true`
+vitest throws on console writes). Handlers skip the debug logger: "two holders may be
+live" reaches production.
 
 **Then decide, per call site, what a compromise means for that critical section.** It is a
 parameter, not a fixed policy, because the right answer differs: provisioning logs and
 finishes (idempotent, and a real concurrent provisioner fails loudly on its own), whereas
 the content-write lock must not let the work stand unexamined — `withContentWriteLock`
 raises a retriable `ContentWriteLockBusyError` telling the editor to reload before saving
-again, and the worker's rebase stops before the next destructive git step. The one thing
+again (API code `WRITE_OUTCOME_UNKNOWN`; the editor holds that entry's saves until it is
+re-read), and the worker's rebase stops before the next destructive git step. The one thing
 that is NOT a valid response is skipping cleanup for work that already happened: a rebase
 that completed owns the [SYNC-H1] history-rewrite marker and its cache invalidation, and a
 caught-up branch is never revisited (`behindCount === 0`), so bailing there wedges the

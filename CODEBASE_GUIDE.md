@@ -134,7 +134,7 @@ Support files:
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
-- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps; the idempotent branch-create window. Dependency-free so the editor bundle can import them
+- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
@@ -812,7 +812,7 @@ in `server.ts` and `client.ts`. See
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (`CANOPY_TRAILING_SLASH` at build time)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
-- `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`
+- `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`; `guardOnCompromised`
 - `provision-log.ts` — `ProvisionLog`: per-step start/done timing lines for one workspace provisioning, never behind `CANOPYCMS_DEBUG`
 - `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
 

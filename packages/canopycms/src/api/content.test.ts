@@ -54,7 +54,14 @@ vi.mock('../content-store', () => {
     }),
     ContentStoreError: class ContentStoreError extends Error {},
     ContentConflictError: MockContentConflictError,
-    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {},
+    BranchSyncingError: class BranchSyncingError extends MockContentConflictError {
+      constructor(
+        message: string,
+        readonly outcome: 'not-run' | 'unknown' = 'not-run',
+      ) {
+        super(message)
+      }
+    },
     // [F1] Same reasoning as BranchSyncingError above: a real
     // ContentConflictError subclass, so the handler's `instanceof` chain
     // behaves here the way it does in production. The constructor mirrors the
@@ -402,6 +409,41 @@ describe('content api', () => {
       )
       expect(res.ok).toBe(true)
     })
+
+    it.each([
+      ['not-run', undefined],
+      ['unknown', 'WRITE_OUTCOME_UNKNOWN'],
+    ] as const)(
+      "[SYNC-C1] passes a syncing refusal's message through, coded only when the write may have landed (%s)",
+      async (outcome, code) => {
+        const ctx = allowedCtx()
+        const { ContentStore, BranchSyncingError } = await import('../content-store')
+        const mockStore = {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+          write: vi.fn().mockRejectedValue(new BranchSyncingError('branch syncing', outcome)),
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(true),
+          getExistingEntryType: vi.fn().mockResolvedValue(undefined),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
+        }
+        vi.mocked(ContentStore).mockImplementationOnce(function () {
+          return mockStore as any
+        })
+
+        const res = await writeContent(
+          ctx,
+          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+          { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+          { format: 'json', data: {}, expectedVersion: 123 },
+        )
+        expect(res).toMatchObject({ ok: false, status: 409, error: 'branch syncing' })
+        expect(res.code).toBe(code)
+      },
+    )
 
     it('returns a slug-collision message (not the generic conflict message) when store.write races into a create-intent conflict', async () => {
       const ctx = allowedCtx()
