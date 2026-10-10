@@ -1022,8 +1022,8 @@ an AMI refresh, a role or user-data change. Without it, CloudFormation would
 update the template and leave the old worker running.
 
 Because `minInstancesInService` must be `0` here, every such deploy leaves no
-worker while the replacement boots (installing packages and mounting EFS,
-typically about 2 minutes). This is expected and safe:
+worker while the replacement boots (patching, installing packages and mounting EFS; see
+[The worker instance](#the-worker-instance)). This is expected and safe:
 
 - The task queue and branch workspaces live on EFS, not on the instance, so
   the replacement worker picks up exactly where the old one left off.
@@ -1085,34 +1085,40 @@ downloadable.
 
 ## The worker instance
 
-The worker holds the GitHub credential, so its instance is the stack's most sensitive part.
-`CanopyCmsService` configures it as follows.
+The worker holds the GitHub credential, so `CanopyCmsService` hardens its instance:
 
-- **Public subnet, no inbound traffic.** The worker reaches GitHub and AWS through the
-  internet gateway rather than a NAT gateway, which would cost more than the rest of the stack.
-  Its security group admits nothing inbound, and it runs no listening service.
+- **Public subnet, no inbound traffic.** It reaches GitHub and AWS through the internet
+  gateway; a NAT gateway would cost more than the rest of the stack. Its security group admits
+  nothing inbound.
 - **IMDSv2 only**, with a hop limit of 1: metadata answers only processes on the host.
-- **The bundle runs only if its sha256 matches.** It is the single file `build:worker` writes,
-  so its hash is known at synth. User data checks it before installing, and a mismatch fails the
-  boot. The worker role can read that one object, not the whole CDK asset bucket.
+- **The bundle runs only if its sha256 matches** the hash taken at synth; a mismatch fails the
+  boot. The worker can read that one object, not the whole CDK asset bucket.
 - **EFS refuses clients without TLS or IAM** (`efsEnforceIamAndTls`, default `true`). The worker
-  mounts with `tls,iam` through the access point its role is granted. The Lambda always mounts
-  that way. Anything else that mounts this file system needs both, plus `ClientMount`.
-- **An encrypted gp3 root volume** (8 GiB, the AMI's size). If your account's default EBS key is
-  a customer-managed key, grant the Auto Scaling service-linked role on it.
-- **Patched between deploys.** AL2023 pins `dnf` to its AMI's repository release. Every boot
-  therefore first upgrades to the latest release, leaving the kernel to the next AMI because the
-  instance never reboots. This adds an estimated 1–3 minutes to a boot. Auto Scaling also
-  replaces the instance after `workerMaxInstanceLifetime` (default 7 days, `null` to turn off).
-  A replacement is terminate-then-launch, with the new instance booting while the old one drains.
-  Saves keep working; only publishing, pull requests and sync wait. The worker logs
-  `Syncing git...` at startup and every 5 minutes, so the longest gap a scheduled replacement
-  leaves in those lines is one interval plus the replacement, about 20 minutes.
-- **A sandboxed service**: `NoNewPrivileges`, `ProtectSystem=strict` (only `/mnt/efs` and its log
-  directory are writable, not its own code), `ProtectHome=tmpfs`, `PrivateTmp` and no
-  capabilities.
-- **Daily EFS backups** (`efsBackup`, default `true`; AWS Backup's default plan, kept 35 days).
-  Branches nobody has submitted exist only on EFS. Backup storage is billed per GB-month.
+  mounts with `tls,iam` through the access point its role is granted. The Lambda mounts with
+  IAM through the same access point, and
+  [uses TLS for every file-system connection](https://docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html).
+  Anything else that mounts this file system needs both, plus `ClientMount`.
+- **An encrypted gp3 root volume**, at the AMI's size. If your account's default EBS key is a
+  customer-managed key, grant the Auto Scaling service-linked role on it.
+- **Patched between deploys, except the kernel.** AL2023 pins `dnf` to its AMI's repository
+  release, so every boot first upgrades to the latest release. The kernel is excluded, because a
+  new one applies only at a reboot. The running kernel is therefore always the AMI's, and it moves
+  only when a deploy resolves a newer AMI: deploy now and then even when nothing else changed.
+  The upgrade adds an estimated 1–3 minutes to a boot (not measured). It also makes boots
+  non-deterministic: a replacement can get newer git, Node or efs-utils than the AMI. A boot that
+  fails shuts the instance down and the group launches another. The trap prints the failing line to that
+  instance's `aws ec2 get-console-output`.
+- **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
+  Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
+  which boots while the old one drains. Saves keep working; publishing, pull requests and sync
+  wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
+  12–15 minutes leaves a gap of about 20, inside the worker-down alarm's 30.
+- **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its log
+  directory and a private `/tmp` are writable, not its own code; `ProtectHome=tmpfs`, no
+  capabilities, and the kernel, device and namespace protections.
+- **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
+  exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
+  their vault refuses deletes until you change its access policy.
 
 ## Security Model
 

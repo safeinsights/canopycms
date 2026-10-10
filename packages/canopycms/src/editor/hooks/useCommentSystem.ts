@@ -61,8 +61,9 @@ export interface UseCommentSystemReturn {
 }
 
 /**
- * The form element for a path as given, else for its nearest ancestor that has one: a list item
- * (`tags[1]`) has no field of its own. Compares values, not a selector: the path is untrusted.
+ * The form element for a path, as given or as `canopy-path.ts` spells it (`blocks.2.title` is
+ * `blocks[2].title`), else for its nearest ancestor that has one: a list item (`tags[1]`) has no
+ * field of its own. Compares values, not a selector: the path is untrusted.
  */
 const findFieldTarget = (path: string): { element: HTMLElement; path: string } | undefined => {
   const byField = new Map<string, HTMLElement>()

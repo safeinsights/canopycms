@@ -278,7 +278,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 
 **Location**: `packages/canopycms-cdk/`
 
-- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG, worker log group; `attachTo()` wires editor routes into an existing distribution
+- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG (bundle: `worker-bundle.ts`), worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
 - `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny
@@ -486,7 +486,9 @@ Top-level components and helpers:
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
-- `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
+- `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
+- `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
@@ -619,7 +621,7 @@ Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:p
 `canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
-- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
+- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, typed `fieldProps()`, `reportError()`
 - `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — site-side primitives it wraps
 - `isTrustedEditorMessage` / `resolveMessageOrigin` — origin resolution and the inbound trust check
 
@@ -633,7 +635,8 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`
-- `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
+- `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
+- `branch-metadata-error.ts` — the corrupt-metadata error, node-free
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
 - `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`

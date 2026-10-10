@@ -185,13 +185,14 @@ export async function scanBranchHealth(
 
     if (loadErr) {
       // Every loadOnly failure lands here — BranchMetadataCorruptError for bad
-      // JSON, EACCES/EISDIR and the rest for everything else — since all of
-      // them need admin attention and none may throw out of the scan.
+      // JSON or a failed schema check, EACCES/EISDIR and the rest for
+      // everything else — since all of them need admin attention and none may
+      // throw out of the scan.
       //
       // [REDACT] parseError reaches the browser through the admin branch-health
       // endpoint, so it must never carry the absolute workspace path.
-      // BranchMetadataCorruptError's `parseCause` is the path-free JSON.parse
-      // message for exactly this, while its `message` embeds branchRoot and is
+      // BranchMetadataCorruptError's `parseCause` is the path-free cause
+      // for exactly this, while its `message` embeds branchRoot and is
       // for server logs only. Node errors embed the path in `message` too, so
       // only their `code` is safe to surface.
       const parseError =

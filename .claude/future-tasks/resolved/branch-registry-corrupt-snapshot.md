@@ -2,9 +2,17 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  `branch-registry.ts` regenerates its snapshot only on a not-found error and rethrows a `SyntaxError`, so a corrupt `branches.json` on EFS fails branch listing for every editor until someone deletes the file by hand. Regenerate on a parse failure
+  RESOLVED (2026-10-09). `BranchRegistry.list()` treats an unparseable snapshot, or one failing a zod shape check (version 2, generation, each entry's branch held to branch.json's own schema), like an absent one: it warns once per registry path and regenerates through the existing temp+rename `regenerate()`. Other read errors still propagate. On `fix/branch-metadata-robustness`
 ---
 # A corrupt `branches.json` bricks branch listing for every editor
+
+## Status: RESOLVED 2026-10-09
+
+`list()` regenerates over an unparseable or wrong-shaped snapshot, warning once per registry path
+(the de-duplication matters when the marker is unreadable and the rebuilt snapshot is served
+without being persisted). No new lock: `regenerate()` already captures the marker before it scans
+and writes by temp+rename, and the corrupt file is only ever replaced by a fresh scan. Tests in
+`branch-registry.test.ts`.
 
 ## Priority: P2 [BOTH]
 

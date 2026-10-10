@@ -56,6 +56,7 @@ const expectHighlightToggles = async (page: Page, marked: Locator[]) => {
     .poll(async () => (await markCounts(page)).at(-1) ?? 0)
     .toBeGreaterThanOrEqual(marked.length)
   await expect(page.getByText(/marks no editable elements/)).toHaveCount(0)
+  await expect(toggle).not.toHaveAttribute('aria-description')
 
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
@@ -147,6 +148,28 @@ test.describe('Preview highlights and click-to-focus', () => {
     await test.step('clicking a field inside an object focuses that field', async () => {
       await preview.locator('[data-canopy-path="byline.name"]').click()
       await expectFieldFocused(page, 'byline.name')
+    })
+
+    await test.step('a mark naming no field is counted on the toggle and logged', async () => {
+      const warnings: string[] = []
+      page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text())
+      })
+      const toggle = page.getByRole('button', { name: 'Toggle highlights' })
+      await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+      await title.evaluate((node) => {
+        const mark = document.createElement('span')
+        mark.setAttribute('data-canopy-path', 'byline.nam')
+        node.after(mark)
+      })
+      await expect(toggle).toHaveAttribute(
+        'aria-description',
+        /^1 preview mark doesn't match a field: byline\.nam\./,
+      )
+      await expect
+        .poll(() => warnings)
+        .toContainEqual(expect.stringContaining('"byline.nam", which names no field'))
     })
   })
 })

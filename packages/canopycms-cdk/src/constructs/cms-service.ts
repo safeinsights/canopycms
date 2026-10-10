@@ -642,8 +642,9 @@ export interface CanopyCmsServiceProps {
   /**
    * How long a worker instance may run before Auto Scaling replaces it
    * (default 7 days; between 1 and 365 days; `null` never replaces it on
-   * age). Each replacement boots on the latest Amazon Linux packages, which
-   * is how a worker that no deploy has touched still gets patched.
+   * age). Each replacement boots on the latest Amazon Linux packages, the
+   * kernel excepted, which is how a worker no deploy has touched still gets
+   * patched.
    *
    * A replacement pauses only the worker's half: saves keep working, while
    * publishing, pull requests and sync wait for the new instance to boot.
@@ -685,7 +686,8 @@ export interface CanopyCmsServiceProps {
   /**
    * Daily AWS Backup of the EFS file system, kept 35 days (default true).
    * Branches nobody has submitted yet exist only on EFS. Backup storage is
-   * billed per GB-month on top of EFS itself.
+   * billed per GB-month on top of EFS itself, and recovery points outlive the
+   * stack: their vault refuses deletes until its access policy is changed.
    */
   efsBackup?: boolean
 
@@ -1271,7 +1273,8 @@ export class CanopyCmsService extends Construct {
     // `iam` against the Principal "*" statements alone, so a policy granting
     // "*" nothing is what requires IAM: the worker and the Lambda get their
     // access from their roles' grants (below, and CDK's for the Lambda's access
-    // point). `allowAnonymousAccess: true` keeps CDK from adding its own
+    // point). Lambda uses TLS for every file-system connection
+    // (docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html). `allowAnonymousAccess: true` keeps CDK from adding its own
     // "*" ClientWrite/ClientRootAccess statement, which it does under the
     // `@aws-cdk/aws-efs:denyAnonymousAccess` flag or after a `grant*` call.
     const efsClientActions = [
@@ -1530,8 +1533,9 @@ export class CanopyCmsService extends Construct {
     }
 
     // The worker's `iam` mount, through the shared access point only. The
-    // describe calls are what amazon-efs-utils makes when it falls back from
-    // the file system's DNS name to a mount target in another zone.
+    // describe calls serve amazon-efs-utils' fallback to a mount target's IP
+    // address when the file system's DNS name does not resolve (it needs
+    // botocore too).
     workerRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['elasticfilesystem:ClientMount', 'elasticfilesystem:ClientWrite'],
@@ -1697,9 +1701,9 @@ export class CanopyCmsService extends Construct {
       '# built from, so a relaunch from the AMI resolved at the last deploy',
       '# would otherwise install nothing newer than that AMI. Moving to the',
       '# latest release also makes it the one every install below resolves',
-      '# from. The kernel is left out: this instance never reboots, so a new',
-      '# kernel would take boot time and apply nothing; it arrives with the',
-      '# AMI on each deploy.',
+      '# from. The kernel is left out: a new one applies only at a reboot,',
+      '# which nothing here performs, so it would cost boot time and change',
+      '# nothing. Kernel fixes arrive with the AMI a deploy resolves.',
       "retry dnf upgrade --releasever=latest --exclude='kernel*' -y",
       '',
       'retry dnf install -y git',
@@ -1794,7 +1798,8 @@ export class CanopyCmsService extends Construct {
       'StandardOutput=append:/var/log/canopy-worker/worker.log',
       'StandardError=append:/var/log/canopy-worker/worker.log',
       'EnvironmentFile=/opt/canopy-worker/.env',
-      '# Sandbox. Writable: the workspace, and the log dir (LogsDirectory=).',
+      '# Sandbox. Writable: the workspace, the log dir (LogsDirectory=) and a',
+      '# private /tmp.',
       '# ProtectHome=tmpfs, not yes: every git call reads per-user files under',
       '# $HOME (~/.config/git/attributes, ignore), and an inaccessible /home',
       '# makes each read warn "Permission denied"; an empty one is a silent',

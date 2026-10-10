@@ -60,6 +60,7 @@ import { useBranchActions } from './hooks/useBranchActions'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
+import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
@@ -239,8 +240,6 @@ const EditorContent: React.FC<EditorProps> = ({
   const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
     null,
   )
-  // How many elements the framed page marks, keyed to the src that said so; a toggle clears it.
-  const [previewMarks, setPreviewMarks] = useState<{ src: string; count: number } | null>(null)
 
   const apiClient = useApiClient()
 
@@ -1006,11 +1005,17 @@ const EditorContent: React.FC<EditorProps> = ({
     </div>
   )
 
-  const previewMarksNothing =
-    highlightEnabled &&
-    previewMarks !== null &&
-    previewMarks.src === currentEntry?.previewSrc &&
-    previewMarks.count === 0
+  const {
+    onMarks: onPreviewMarks,
+    clearMarks: clearPreviewMarks,
+    marksNothing: previewMarksNothing,
+    inexactMarks: previewInexactMarks,
+  } = usePreviewMarks({
+    src: currentEntry?.previewSrc,
+    highlightEnabled,
+    fields: schema,
+    data: effectiveValue,
+  })
 
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
   // otherwise mount the frame at a page that answers not-found.
@@ -1042,7 +1047,7 @@ const EditorContent: React.FC<EditorProps> = ({
           }}
           highlightEnabled={highlightEnabled}
           onPreviewError={setPreviewError}
-          onMarkCount={(count) => setPreviewMarks({ src: currentEntry.previewSrc ?? '', count })}
+          onMarks={onPreviewMarks}
           assetBase={authenticatedAssetBase(basePath)}
         />
       </Box>
@@ -1220,13 +1225,14 @@ const EditorContent: React.FC<EditorProps> = ({
                 layout={layout}
                 highlightEnabled={highlightEnabled}
                 previewMarksNothing={previewMarksNothing}
+                previewInexactMarks={previewInexactMarks}
                 sidebarWidth={sidebarWidth}
                 headerHeight={headerHeight}
                 footerHeight={footerHeight}
                 onLayoutChange={setLayout}
                 onHighlightToggle={() => {
                   setHighlightEnabled(!highlightEnabled)
-                  setPreviewMarks(null)
+                  clearPreviewMarks()
                 }}
                 onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
                 onGroupManagerOpen={() => setGroupManagerOpen(true)}
