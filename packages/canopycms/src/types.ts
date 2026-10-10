@@ -241,8 +241,9 @@ export interface WorkerStatusReport {
    */
   baseHold?: BaseSchemaHold
   /**
-   * How the previous worker stopped, carried into each new worker's snapshot
-   * (task-queue/worker-status.ts's `readCarriedOverStatus`).
+   * How the last worker that ran stopped, carried into each new worker's snapshot
+   * (task-queue/worker-status.ts's `readCarriedOverStatus`). A worker that fails at startup
+   * leaves it alone and records the failure as `lastFatalError`.
    */
   lastShutdown?: WorkerShutdownRecord
 }
