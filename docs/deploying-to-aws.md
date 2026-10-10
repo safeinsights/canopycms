@@ -1078,8 +1078,8 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   only when a deploy resolves a newer AMI: deploy now and then even when nothing else changed.
   The upgrade adds an estimated 1–3 minutes to a boot (not measured). It also makes boots
   non-deterministic: a replacement can get newer git, Node or efs-utils than the AMI. A boot that
-  fails shuts the instance down and the group launches another. The failing line is in
-  `aws ec2 get-console-output` and `/var/log/cloud-init-output.log`.
+  fails shuts the instance down and the group launches another. The trap prints the failing line to that
+  instance's `aws ec2 get-console-output`.
 - **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
   which boots while the old one drains. Saves keep working; publishing, pull requests and sync
