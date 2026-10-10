@@ -893,11 +893,10 @@ same underlying reason as `deploymentName` above: each is read independently
 by a different process, with no automatic reconciliation unless something
 wires them together.
 
-- **`CANOPYCMS_BASE_BRANCH`** — the worker's own copy of the GitHub
-  repository's default branch, stamped once into the worker's `.env` at synth
-  by `CanopyCmsService`'s `baseBranch` prop (default `'main'`). The Lambda
-  instead reads `config.defaultBaseBranch` from `canopycms.config.ts` at
-  request time.
+- **`CANOPYCMS_BASE_BRANCH`** — the worker's base branch, stamped into its
+  `.env` at synth by `CanopyCmsService`'s `baseBranch` prop. Unset, the worker
+  uses GitHub's default branch, recorded as `remote.git`'s HEAD, which a
+  Lambda without `config.defaultBaseBranch` reads.
 
   **Get this wrong and there is no working worker at all.**
   `verifyBaseBranchExists` throws when the named branch doesn't exist in the

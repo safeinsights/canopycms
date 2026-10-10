@@ -338,6 +338,15 @@ describe('runWorker: a healthy start', () => {
     expect(h.exit).not.toHaveBeenCalled()
   })
 
+  it('leaves the base branch unset for CmsWorker to detect when the env var is absent', async () => {
+    const h = harness({ env: envWithout('CANOPYCMS_BASE_BRANCH') })
+
+    await runWorker(h.deps)
+
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
+    expect(h.createWorker.mock.calls[0][0].baseBranch).toBeUndefined()
+  })
+
   it('builds an App credential from the trio, reading the key from its secret', async () => {
     const h = harness({
       env: {

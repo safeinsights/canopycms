@@ -16,6 +16,7 @@ import {
 } from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { ensureRemoteGitConfig } from '../git-manager'
+import { readHeadBranch } from '../utils/git'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
@@ -105,7 +106,7 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   gitSyncInterval?: number
   /** Auth cache refresh interval in ms (default: 15 * 60 * 1000) */
   authCacheRefreshInterval?: number
-  /** Base branch name (default: 'main') */
+  /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */
   baseBranch?: string
   /**
    * Names THIS worker's own settings branch
@@ -330,12 +331,13 @@ export class CmsWorker {
   private stateDirectory: string
   private githubMirror: GitHubMirror
   private contentBranchesPath: string
-  private baseBranch: string
+  // Set by the constructor when configured, else by resolveBaseBranch() in
+  // start(); read through the two getters below, which throw until then.
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
   // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
-  private sanitizedBaseBranch: SanitizedBranchName
+  private resolvedBaseBranch?: { name: string; sanitized: SanitizedBranchName }
   // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
   // `pushSettingsBranches` pushes ONLY this branch, never another
   // `canopycms-settings-*` it happens to find locally. Resolved lazily by
@@ -395,8 +397,7 @@ export class CmsWorker {
       config.stateDirectory ?? defaultStateDirectory(config.workspacePath),
     )
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
-    this.baseBranch = config.baseBranch ?? 'main'
-    this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    if (config.baseBranch !== undefined) this.setBaseBranch(config.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -592,7 +593,9 @@ export class CmsWorker {
 
       await this.ensureStateDirectoryIsPrivate()
       await this.githubMirror.ensure()
+      await this.resolveBaseBranch()
       await this.ensureRemoteGit()
+      await this.recordBaseBranchInRemoteHead()
 
       // Recover orphaned tasks immediately rather than waiting for the first
       // processTaskQueue() poll. Not the only call site: processTaskQueue()
@@ -902,6 +905,82 @@ export class CmsWorker {
     run()
   }
 
+  private get baseBranch(): string {
+    return this.requireBaseBranch().name
+  }
+
+  private get sanitizedBaseBranch(): SanitizedBranchName {
+    return this.requireBaseBranch().sanitized
+  }
+
+  private requireBaseBranch(): { name: string; sanitized: SanitizedBranchName } {
+    if (!this.resolvedBaseBranch) {
+      throw new Error('CmsWorker: the base branch is resolved by start(); it has not run yet')
+    }
+    return this.resolvedBaseBranch
+  }
+
+  private setBaseBranch(name: string): void {
+    this.resolvedBaseBranch = { name, sanitized: sanitizeBranchName(name) }
+  }
+
+  /**
+   * An unconfigured base branch is the one remote.git's HEAD names, which is what the Lambda
+   * reads too (GitManager.detectBaseBranch); before remote.git exists, it is GitHub's default
+   * branch, which the clone then records as that HEAD. Never assumes 'main'.
+   */
+  private async resolveBaseBranch(): Promise<void> {
+    if (this.resolvedBaseBranch) return
+    let name: string
+    try {
+      const remoteGitExists = await fs.stat(this.remoteGitPath).then(
+        () => true,
+        (err: unknown) => {
+          if (isNodeError(err) && err.code === 'ENOENT') return false
+          throw err
+        },
+      )
+      if (remoteGitExists) {
+        // Before the first git to read it, so a refusal is the startup failure recorded.
+        await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+      }
+      name = remoteGitExists
+        ? await readHeadBranch(this.remoteGitPath, sharedRepoGitOptions('bare'))
+        : (
+            await this.octokitClient().repos.get({
+              owner: this.config.githubOwner,
+              repo: this.config.githubRepo,
+            })
+          ).data.default_branch
+    } catch (err) {
+      throw new Error(
+        `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
+          `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
+          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork ` +
+          `from, or, if remote.git is damaged, delete ${this.remoteGitPath} and restart to re-clone.`,
+      )
+    }
+    this.setBaseBranch(name)
+    workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Point remote.git's HEAD at the base branch this worker uses, so a Lambda left to detect it
+   * (GitManager.detectBaseBranch) reads the same name. Only the worker writes it, at boot under
+   * the worker lock, and in a fresh clone before it is renamed into place, so no Lambda reads the
+   * clone's GitHub-default HEAD first; a Lambda reads it once per process.
+   */
+  private async recordBaseBranchInRemoteHead(gitDir = this.remoteGitPath): Promise<void> {
+    const ref = `refs/heads/${this.baseBranch}`
+    const current = await readHeadBranch(gitDir, sharedRepoGitOptions('bare')).catch(
+      () => undefined,
+    )
+    if (current === this.baseBranch) return
+    // Pinned: moving HEAD fires remote.git's reference-transaction hooks.
+    await sharedRepoGit(gitDir, 'bare').raw(['symbolic-ref', 'HEAD', ref])
+    workerLog(`${path.basename(gitDir)} HEAD now names the base branch '${this.baseBranch}'`)
+  }
+
   /**
    * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
    *
@@ -1078,11 +1157,11 @@ export class CmsWorker {
         await fs.mkdir(stagingPath)
         const staging = sharedRepoGit(stagingPath, 'bare')
         await staging.raw(['init', '--quiet', '--bare'])
-        await staging.raw(['symbolic-ref', 'HEAD', `refs/heads/${this.baseBranch}`])
         await mirror.seedBareRepository(stagingPath)
       })
 
       await this.verifyBaseBranchExists(stagingPath)
+      await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
       workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)

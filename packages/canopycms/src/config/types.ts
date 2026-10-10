@@ -84,8 +84,17 @@ export interface MarkdownFieldConfig extends BaseFieldConfig {
   mdxAllow?: MdxAllowlist
 }
 
-/** A prop's allowed values: `true` for any value the base policy accepts; `<X open>` is `true`. */
-export type MdxPropAllow = true | Array<string | number | boolean>
+/**
+ * A prop's allowed values. `true`: any value the base policy accepts, a bare attribute (`<X open>`,
+ * the value `true`) and `{…}` values included. `'string'`: only a quoted string, `title="…"`; a
+ * bare attribute and every `{…}` refused. The object form adds `maxLength`, in characters (code
+ * points). A list: those values only; `[true, false]` is a boolean (bare, `{true}`, `{false}`).
+ */
+export type MdxPropAllow =
+  | true
+  | 'string'
+  | { type: 'string'; maxLength?: number }
+  | Array<string | number | boolean>
 
 export interface MdxComponentAllow {
   /** Allowed props by name. Omitted: any prop. `{}`: none. */
@@ -514,7 +523,10 @@ export interface CanopyConfigInput {
   defaultRemoteUrl?: string
   gitBotAuthorName: string
   gitBotAuthorEmail: string
-  /** Add `Edited-by: Name (user id)` for the submitter to submit commits. Default true. */
+  /**
+   * Add `Edited-by: Name (user id)` to submit commits, for the submitter and each user who saved
+   * since the last submit commit, and to settings commits for the user making the change. Default true.
+   */
   gitEditedByTrailers?: boolean
   /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */
   gitCoAuthoredByTrailers?: boolean

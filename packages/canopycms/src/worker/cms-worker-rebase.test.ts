@@ -306,6 +306,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
             workspacePath: tmpDir,
             githubOwner: 'test-owner',
             githubRepo: 'test-repo',
+            baseBranch: 'main',
             githubToken: 'fake-token',
             settingsBranch,
           })

@@ -1336,13 +1336,14 @@ describe('Editor integration', () => {
       await waitFor(() =>
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
-            message: 'Content was modified by another editor. Reload to see the latest changes.',
+            message:
+              "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
           }),
         ),
       )
       expect(fetchMock.mock.calls.some(isPut)).toBe(false)
       expect(consoleSpy).toHaveErrored(/Load failed: 500/)
-      expect(consoleSpy).toHaveErrored(/has not been loaded from the server/)
+      expect(consoleSpy).toHaveErrored(/hasn't finished loading/)
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
       consoleSpy.restore()

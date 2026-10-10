@@ -270,6 +270,19 @@ describe('hooks planted in remote.git and branch clones (no config: the worker p
     expect(await f.sentinelLines()).toEqual([])
   })
 
+  it('never run when the worker points remote.git HEAD at the base branch', async () => {
+    await bare(f.remoteGitPath).raw(['symbolic-ref', 'HEAD', `refs/heads/${BRANCH}`])
+    await plantHookScripts(f, f.remoteGitPath, 'remote.git')
+    const internals = f.worker as unknown as { recordBaseBranchInRemoteHead(): Promise<void> }
+
+    await internals.recordBaseBranchInRemoteHead()
+
+    expect((await bare(f.remoteGitPath).raw(['symbolic-ref', 'HEAD'])).trim()).toBe(
+      `refs/heads/${BASE}`,
+    )
+    expect(await f.sentinelLines()).toEqual([])
+  })
+
   it('never run during a publish to GitHub, and the push lands on GitHub', async () => {
     await plantHookScripts(f, f.remoteGitPath, 'remote.git')
     const published = await f.sha(f.remoteGitPath, `refs/heads/${BRANCH}`)

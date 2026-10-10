@@ -9,6 +9,7 @@ import { getErrorMessage } from './utils/error'
 // is plain console. See utils/logger.ts.
 import { canopyLogWarn } from './utils/logger'
 import { mergePrSection } from './submission-attribution'
+import { baseBranchOf } from './utils/base-branch'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
 
@@ -504,7 +505,7 @@ export const createGitHubService = (
       token,
       owner,
       repo,
-      baseBranch: config.defaultBaseBranch ?? 'main',
+      baseBranch: baseBranchOf(config),
     })
   } catch (err) {
     canopyLogWarn('CanopyCMS: Failed to parse GitHub remote URL:', err)

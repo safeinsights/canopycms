@@ -45,6 +45,8 @@ const primitiveFieldSchema = fieldBaseSchema.extend({
 
 const mdxPropAllowSchema = z.union([
   z.literal(true),
+  z.literal('string'),
+  z.object({ type: z.literal('string'), maxLength: z.number().int().min(1).optional() }).strict(),
   z.array(z.union([z.string(), z.number(), z.boolean()])).min(1),
 ])
 

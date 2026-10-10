@@ -384,15 +384,15 @@ A missing schema or an invalid meta file fails a build or static deploy; a missi
 ### `defineCanopyConfig` Options
 
 - `gitBotAuthorName` / `gitBotAuthorEmail` (`string`, **required**) — identity used for git commits made by CanopyCMS.
-- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming the submitting user (display name and auth user id; the id alone when there is no name) to each submit commit. The bot stays the author.
-- `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author to an account only when that email is associated with their GitHub account.
-  On submit, the pull request body also records the submitter (name and id, never the email), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
+- `gitEditedByTrailers` (`boolean`, default `true`) — add an `Edited-by: Jane Doe (user_2abc)` trailer naming each user whose edits the commit carries (display name and auth user id; the id alone when there is no name) to submit and settings commits. The bot stays the author.
+- `gitCoAuthoredByTrailers` (`boolean`, default `false`) — also add `Co-authored-by: Jane Doe <jane@example.com>`. Off by default because it writes the user's email into commit history, which is public on a public repo. GitHub links a co-author only by an email on their GitHub account.
+  On submit, the pull request body also records who edited (names and ids, never emails), the branch description and the changed paths, inside a section between `<!-- canopycms:submission:start -->` and `<!-- canopycms:submission:end -->`. A re-submit replaces only that section, so text reviewers add outside it stays. Names are sanitized in both places, so a display name cannot add @mentions, issue references, HTML or extra trailer lines; a user id unsafe to record is left out.
 - `mode` (`'dev' | 'prod'`, **required**) — see [Operating Modes](#operating-modes). No default: a deploy that omits it fails config validation at startup rather than silently running insecure dev auth semantics in production.
 - `contentRoot` (`string`, default `'content'`) — root directory for content files, relative to the project root.
 - `basePath` (`string`, optional) — the deployment prefix your Next app is served under (`'/preview-123'`), matching `next.config`'s `basePath`. CanopyCMS cannot read `next.config`, so state it here or the editor's API requests and preview pane target the un-prefixed root. **Not** `contentStaticParams`'s `basePath`, and not necessarily right for `assetUrl`'s `baseUrl` — see [Deploying under a `basePath`](#deploying-under-a-basepath).
 - `danglingReferences` (`'error' | 'warn'`, default `'error'`) — see [No dangling references](#no-dangling-references).
 - `unauthenticatedStatus` (`401 | 419`, default `401`) — the HTTP status of an unauthenticated API response. Use `419` when your pages sit behind HTTP Basic auth on the editor's origin: on a 401, Chrome drops a root-cached Basic credential.
-- `defaultBaseBranch` (`string`, default `'main'`) — the fork point for CMS content branches. It can never be submitted for review, and in `prod` it is read-only in the editor; see [Submitting for Review](#submitting-for-review).
+- `defaultBaseBranch` (`string`) — the fork point for CMS content branches. Unset, dev uses the checked-out branch and prod the repository's default branch as the CMS worker first cloned it; set it before changing that default, which prod does not follow. It can never be submitted for review, and in `prod` it is read-only in the editor; see [Submitting for Review](#submitting-for-review).
 - `defaultActiveBranch` (`string`, optional) — which workspace the dev server serves content from and which branch the editor opens by default. Auto-detected from the current git branch in dev; falls back to `defaultBaseBranch` in prod.
 - `defaultBranchAccess` (`'allow' | 'deny'`, default `'deny'`) — fallback access policy for a branch with no ACL, and what `canopycms init` scaffolds. **Three grants are exempt from it**, which is what makes the fail-closed default workable rather than a lockout: the `admins` and `reviewers` groups; the creator of an un-ACL'd branch (otherwise they could create a branch and rewrite its ACL but not read a file on it); and the protected base branch, which takes no ACL by design and is where every user lands. Because the last two are scoped to branches with **no ACL**, writing an explicit ACL still restricts the branch — including against its own creator, which is how an admin locks down a branch someone else created.
 - `defaultPathAccess` (`'allow' | 'deny' | { read?, edit?, review? }`, default `'deny'`) — default policy for content paths when no permission rule matches. The object form scopes the default per level (`{ read: 'allow' }` for public read without opening edit/review); an unspecified level resolves to `'deny'`. See [Public read on server deployments](#public-read-on-server-deployments).
@@ -551,7 +551,15 @@ Plainly named components (`<Callout type="tip">`) are your code and pass. Other 
 
 ```typescript
 mdxAllow: {
-  components: { Callout: { props: { type: ['info', 'warning'] } } }, // {}: none; no `props`: any
+  components: {
+    Callout: {
+      props: {
+        type: ['info', 'warning'], // these values only; [true, false] for a boolean
+        title: 'string', // title="…" only, never bare or {…}; or { type: 'string', maxLength: 120 }
+        icon: true, // any value the base policy accepts, a bare `icon` included
+      }, // {}: none; no `props`: any
+    },
+  }, // {}: none
   htmlTags: [], // from the safe set; omitted: all of it
   expressions: false, // refuses comments and `{300}` too
   fragments: false,
@@ -1544,7 +1552,7 @@ The base branch itself (the PR target, usually `main`) is protected: it can neve
 
 ### Comments System
 
-Comments enable asynchronous review at three levels: **field** comments on a specific form field, **entry** comments on a whole entry, and **branch** comments about the changeset. They are stored in `.canopy-meta/comments.json` per branch workspace and are **not** committed to git — they are review artifacts, excluded via git's `info/exclude`.
+Comments enable asynchronous review at three levels: **field**, **entry**, and **branch** (the changeset). They live in each branch workspace's `.canopy-meta/comments.json`, excluded from git. Only users who can read an entry see its field and entry comments or can add to or resolve them; branch comments follow branch access.
 
 ### Permission Model
 

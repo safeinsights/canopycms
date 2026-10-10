@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { getBranchProtection, getBranchWriteProtection } from '../protected-branch'
 import type { BranchStatus } from '../../types'
+import { BaseBranchUnresolvedError } from '../../utils/base-branch'
 
 describe('getBranchProtection', () => {
   it('flags the base branch as protected+submitBlocked+readOnly in prod', () => {
@@ -19,9 +20,15 @@ describe('getBranchProtection', () => {
     expect(result).toEqual({ isProtected: false, submitBlocked: false, readOnly: false })
   })
 
-  it('falls back to "main" when defaultBaseBranch is unset', () => {
-    const result = getBranchProtection({ mode: 'prod', defaultBaseBranch: undefined }, 'main')
-    expect(result).toEqual({ isProtected: true, submitBlocked: true, readOnly: true })
+  it('falls back to "main" in dev when defaultBaseBranch is unset', () => {
+    const result = getBranchProtection({ mode: 'dev', defaultBaseBranch: undefined }, 'main')
+    expect(result).toEqual({ isProtected: true, submitBlocked: true, readOnly: false })
+  })
+
+  it('refuses an unresolved prod base branch rather than protecting "main"', () => {
+    expect(() =>
+      getBranchProtection({ mode: 'prod', defaultBaseBranch: undefined }, 'main'),
+    ).toThrow(BaseBranchUnresolvedError)
   })
 
   it('protects a non-main base branch (master)', () => {
@@ -122,7 +129,10 @@ describe('getBranchProtection', () => {
 
   it('does not expose writeBlocked -- that decision needs a status', () => {
     // Guards against a caller reading a `writeBlocked` that was never computed.
-    expect('writeBlocked' in getBranchProtection({ mode: 'prod' }, 'feature-x')).toBe(false)
+    expect(
+      'writeBlocked' in
+        getBranchProtection({ mode: 'prod', defaultBaseBranch: 'main' }, 'feature-x'),
+    ).toBe(false)
   })
 })
 

@@ -115,6 +115,20 @@ describe('validateEntryData', () => {
     expect(errors).toEqual([{ fieldPath: 'blocks[1].text', message: 'This field is required' }])
   })
 
+  it('reports a required block field when the value is null or an array', () => {
+    const errors = validateEntryData(schema, {
+      ...validData,
+      blocks: [
+        { template: 'quote', value: null },
+        { template: 'quote', value: ['fine'] },
+      ],
+    })
+    expect(errors).toEqual([
+      { fieldPath: 'blocks[0].text', message: 'This field is required' },
+      { fieldPath: 'blocks[1].text', message: 'This field is required' },
+    ])
+  })
+
   it('rejects block items with an unknown template', () => {
     const errors = validateEntryData(schema, {
       ...validData,

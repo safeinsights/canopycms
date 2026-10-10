@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   simpleGit,
@@ -24,6 +25,7 @@ import {
   type StatusResult,
 } from 'simple-git'
 
+import type { CanopyConfig } from './config'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
@@ -36,6 +38,7 @@ import {
   resolveBaseBranch,
   stageAllExceptCanopyState,
 } from './utils/git'
+import { BaseBranchUnresolvedError } from './utils/base-branch'
 import { canopyLogWarn } from './utils/logger'
 import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
@@ -393,14 +396,19 @@ export class RemoteNotReadyError extends Error {
   /**
    * @param workerStartupFailure - The startup failure the worker recorded, if it recorded one;
    *   a current one means the worker is not coming without an admin's fix.
+   * @param configured - `expectedRemotePath` is a configured local remote, not the auto-detected one.
    */
   constructor(
     public readonly expectedRemotePath: string,
     public readonly workerStartupFailure?: WorkerStartupFailure,
+    configured = false,
   ) {
     super(
-      `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
-        `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
+      configured
+        ? `CanopyCMS: no git remote is available yet. The configured remote ${expectedRemotePath} ` +
+            `does not exist; the worker may still be starting.`
+        : `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
+            `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
     )
     this.name = 'RemoteNotReadyError'
   }
@@ -486,6 +494,12 @@ export interface ResolveRemoteUrlOptions {
    */
   allowNetworkRemoteInProd?: boolean
 }
+
+/** Where prod reads an unset base branch from: the remote a workspace would clone. */
+type BaseBranchRemoteOptions = Pick<
+  CanopyConfig,
+  'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'
+> & { remoteUrl?: string }
 
 export interface InitializeWorkspaceOptions {
   workspacePath: string
@@ -1146,6 +1160,80 @@ export class GitManager {
   }
 
   /**
+   * Prod's base branch when `defaultBaseBranch` is unset: the branch named by the HEAD of the
+   * remote the workspaces clone from, read locally because the Lambda has no internet. That
+   * remote is the bare `remote.git` the worker keeps, whose HEAD it sets to the base branch it
+   * uses (worker/cms-worker.ts `recordBaseBranchInRemoteHead`), so the two agree.
+   *
+   * While that remote does not exist yet, whether auto-detected or configured as a local path,
+   * `'pending'` resolves `undefined` and `'throw'` rejects with {@link RemoteNotReadyError}. A network remote, or a HEAD that names no branch, throws
+   * `BaseBranchUnresolvedError`.
+   */
+  static async detectBaseBranch(
+    config: BaseBranchRemoteOptions,
+    whenNoRemote: 'pending',
+  ): Promise<string | undefined>
+  static async detectBaseBranch(
+    config: BaseBranchRemoteOptions,
+    whenNoRemote: 'throw',
+  ): Promise<string>
+  static async detectBaseBranch(
+    config: BaseBranchRemoteOptions,
+    whenNoRemote: 'pending' | 'throw',
+  ): Promise<string | undefined> {
+    const options: ResolveRemoteUrlOptions = {
+      mode: 'prod',
+      remoteUrl: config.remoteUrl,
+      defaultRemoteUrl: config.defaultRemoteUrl,
+      sourceRoot: config.sourceRoot,
+      allowNetworkRemoteInProd: config.allowNetworkRemoteInProd,
+      // Read only to seed dev's simulated remote, which prod never does.
+      baseBranch: '',
+    }
+    const remoteUrl =
+      whenNoRemote === 'throw'
+        ? await GitManager.resolveCloneRemoteUrl(options)
+        : await GitManager.resolveRemoteUrl(options)
+    if (!remoteUrl) return undefined
+    if (isNetworkRemoteUrl(remoteUrl)) {
+      throw new BaseBranchUnresolvedError(
+        `defaultBaseBranch is not set, and the base branch cannot be read locally from the ` +
+          `network remote ${redactCredentials(remoteUrl)}.`,
+      )
+    }
+    const remoteGitDir = /^file:\/\//i.test(remoteUrl) ? fileURLToPath(remoteUrl) : remoteUrl
+    // A configured local remote is not existence-checked by resolveRemoteUrl; absent, it is the
+    // same not-yet-created remote the auto-detected one is.
+    if (await fs.stat(remoteGitDir).then(() => false, isNotFoundError)) {
+      if (whenNoRemote === 'pending') return undefined
+      const notReady = await GitManager.remoteNotReadyError('prod')
+      if (notReady?.expectedRemotePath === path.resolve(remoteGitDir)) throw notReady
+      throw new RemoteNotReadyError(remoteGitDir, notReady?.workerStartupFailure, true)
+    }
+    return resolveBaseBranch({ mode: 'prod', remoteGitDir })
+  }
+
+  /**
+   * The base branch a workspace about to be provisioned forks from: the configured one, else
+   * dev's git HEAD (resolveBaseBranch), else prod's remote HEAD ({@link detectBaseBranch}), which
+   * rejects with RemoteNotReadyError while the worker has not created the remote.
+   */
+  static async resolveWorkspaceBaseBranch(
+    options: BaseBranchRemoteOptions & { mode: OperatingMode; baseBranch?: string },
+  ): Promise<string> {
+    if (options.mode === 'prod' && !options.baseBranch) {
+      return GitManager.detectBaseBranch(options, 'throw')
+    }
+    return resolveBaseBranch({
+      defaultBaseBranch: options.baseBranch,
+      mode: options.mode,
+      detectFrom: options.sourceRoot
+        ? path.resolve(process.cwd(), options.sourceRoot)
+        : process.cwd(),
+    })
+  }
+
+  /**
    * {@link cloneRepo} for a workspace, failing with one message that names the
    * workspace, the remote and the base branch, which git's own error mixes.
    */
@@ -1195,15 +1283,7 @@ export class GitManager {
    * Note: Does NOT configure git author - that should be done before commits, not during init.
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
-    // Resolve the fork point through the shared resolver (dev mode detects the
-    // current HEAD when baseBranch is not explicitly set).
-    const baseBranch = await resolveBaseBranch({
-      defaultBaseBranch: options.baseBranch,
-      mode: options.mode,
-      detectFrom: options.sourceRoot
-        ? path.resolve(process.cwd(), options.sourceRoot)
-        : process.cwd(),
-    })
+    const baseBranch = await GitManager.resolveWorkspaceBaseBranch(options)
     const remoteName = options.remoteName ?? 'origin'
 
     const repoExists = await GitManager.repoExistsAt(options.workspacePath)

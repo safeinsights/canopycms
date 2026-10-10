@@ -26,7 +26,6 @@ import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 import { GitManager, managedWorkspaceConfig } from './git-manager'
 import { getErrorMessage } from './utils/error'
-import { resolveBaseBranch } from './utils/git'
 import { canopyLogWarn } from './utils/logger'
 import { OccWriteConflictError, writeOccJsonFile } from './utils/occ-json-write'
 import { ProvisionLog } from './utils/provision-log'
@@ -143,14 +142,13 @@ export class BranchWorkspaceManager {
     const { branchRoot, baseRoot, dirName } = paths
     await fs.mkdir(baseRoot, { recursive: true })
 
-    // Resolve the fork point once so the clone and the recorded metadata agree (config value, or
-    // dev-mode git HEAD), and the remote before any clone is paid for.
-    const baseBranch = await resolveBaseBranch({
-      defaultBaseBranch: this.config.defaultBaseBranch,
+    // Resolve the fork point once so the clone and the recorded metadata agree, and the remote
+    // before any clone is paid for.
+    const baseBranch = await GitManager.resolveWorkspaceBaseBranch({
+      ...this.config,
       mode: options.mode,
-      detectFrom: this.config.sourceRoot
-        ? path.resolve(process.cwd(), this.config.sourceRoot)
-        : undefined,
+      baseBranch: this.config.defaultBaseBranch,
+      remoteUrl: options.remoteUrl,
     })
     const remoteUrl = await GitManager.resolveCloneRemoteUrl({
       mode: options.mode,

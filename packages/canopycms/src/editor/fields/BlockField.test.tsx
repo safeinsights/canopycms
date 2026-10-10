@@ -38,4 +38,40 @@ describe('BlockField', () => {
       'Hero',
     )
   })
+
+  it('edits a block whose value is null or an array into a record of its fields', () => {
+    const fieldChanges: Array<(v: unknown) => void> = []
+    const changes: unknown[] = []
+    render(
+      <MantineProvider>
+        <BlockField
+          templates={templates}
+          value={[
+            { template: 'hero', value: null as unknown as Record<string, unknown> },
+            { template: 'hero', value: ['item1', 'item2'] as unknown as Record<string, unknown> },
+          ]}
+          onChange={(blocks) => changes.push(blocks)}
+          renderField={(_field, _value, onChange) => {
+            fieldChanges.push(onChange)
+            return null
+          }}
+          path={['blocks']}
+        />
+      </MantineProvider>,
+    )
+
+    fieldChanges[0]('First')
+    fieldChanges[1]('Second')
+
+    expect(changes).toEqual([
+      [
+        { template: 'hero', value: { headline: 'First' } },
+        { template: 'hero', value: ['item1', 'item2'] },
+      ],
+      [
+        { template: 'hero', value: null },
+        { template: 'hero', value: { headline: 'Second' } },
+      ],
+    ])
+  })
 })

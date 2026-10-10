@@ -173,6 +173,10 @@ const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, acc
   return { ok: true, context: { branchContext: context as BranchContextWithSchema } }
 }
 
+/**
+ * A success records the user as an editor the next submit credits (route-builder.ts), so give
+ * this guard only to endpoints that change the branch's working tree.
+ */
 const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }

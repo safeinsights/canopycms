@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  `useDraftManager`'s save path sends every 409 to a FIXED "modified by another editor" notification and discards `err.message`, so a `BranchSyncingError` (branch is rebasing, nobody edited anything) and the [SYNC-C1] compromise case (the write LANDED, reload before retrying) are both misattributed — and a blind retry resends a stale `expectedVersion` and bounces off the user's own write. Other statuses already pass the message through; the rename path and admin repair surface it correctly. P3: drafts are retained and the fixed text does say "reload"
+  RESOLVED 2026-10-09, branch `fix/occ-compromise-warn-and-409-messages`. The save path shows every 409's own server message (`SaveApiError.serverMessage`), falling back to the shared `ENTRY_CHANGED_MESSAGE`. A lock lost mid-write now carries `outcome: 'unknown'` on `BranchSyncingError`, and the API codes it `WRITE_OUTCOME_UNKNOWN`; the editor then holds saves of that entry until its version token changes or it is reloaded, so a blind retry cannot resend the stale `expectedVersion`. The server's generic conflict text, both content-write-lock messages and the no-token refusal were reworded to be shorter and cause-neutral
 ---
 # [P3] The save path shows a fixed conflict message and discards the server's
 

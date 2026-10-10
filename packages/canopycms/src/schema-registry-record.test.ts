@@ -192,6 +192,7 @@ describe('recordServedSchemaRegistry', () => {
         config: prodConfig(),
         entrySchemaRegistry: REGISTRY,
         refreshActiveBranch: async () => {},
+        resolvePendingBaseBranch: async () => {},
       } as unknown as CanopyServices,
       authPlugin: {
         verifiesCredentials: true,

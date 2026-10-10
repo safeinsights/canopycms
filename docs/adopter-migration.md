@@ -50,6 +50,20 @@ unit's `StateDirectory=`, and the worker does not start without it.
 
 **Now deletable.** Nothing.
 
+### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
+
+**What changed.** Unset, prod reads the base branch from the HEAD of the workspace's `remote.git`,
+which the worker points at the branch it uses. Before the worker creates `remote.git`, requests
+answer the not-ready 503. A HEAD naming no branch, or a network remote, fails service creation with
+an error naming `defaultBaseBranch`. `CanopyCmsService` stamps `CANOPYCMS_BASE_BRANCH` only when
+`baseBranch` is set; unset, the worker uses GitHub's default branch. A stack that relied on the
+implicit `'main'` behaves as before when its repository's default branch is `main`.
+
+**To adopt.** If your base branch is not the repository's default, set `defaultBaseBranch`. Prod
+does not follow a later change of GitHub's default branch, so set it before a cutover.
+
+**Now deletable.** A `defaultBaseBranch: 'main'` in a repository whose default branch is `main`.
+
 ### `canopycms-cdk`: CI can roll the worker with a parameter — **new, opt-in**
 
 **What changed.** `workerCode: { source: 'parameter' }` on `CanopyCmsService` selects the worker
@@ -118,7 +132,7 @@ options `executable`, `renderAs`, `mdxAllow`; config key `mdxAllow`; types `Mark
 `MdxAllowlist`. See [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `renderAs: 'mdx'` on each `markdown` field your site compiles as MDX, and
-`mdxAllow` to what your renderer takes. Set `executable: true` only on a field whose editors you
+`mdxAllow` to what your renderer takes (`title: 'string'`: quoted only). Set `executable: true` only on a field whose editors you
 trust as code authors; an entry type with no `isBody` field needs one declared to opt its body out.
 Content already there is kept, with a warning, while its field is saved unchanged; a production
 build lists it.
@@ -462,10 +476,10 @@ extension in logical form (`content/blog/**`, `content/about`).
 
 **Now deletable.** A content-root grant working around inert collection grants.
 
-### Submit commits and pull requests name the submitting user
+### Commits and pull requests name the editing users
 
-**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
-that re-submits replace, keeping human text.
+**What changed.** Submit and settings commits gain `Edited-by: Name (id)` trailers naming their
+editors; PR bodies gain a section that re-submits replace, keeping human text.
 
 **To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
 ([reference](../README.md#definecanopyconfig-options)).

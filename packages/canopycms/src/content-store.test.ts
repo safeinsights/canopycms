@@ -3083,6 +3083,7 @@ describe('ContentStore content-write lock', () => {
         // keeps working without a new branch at each call site.
         expect(err).toBeInstanceOf(ContentConflictError)
         expect((err as Error).message).toMatch(/syncing/i)
+        expect((err as BranchSyncingError).outcome).toBe('not-run')
       }
       // Nothing was half-applied.
       const doc = await store.read(posts, unsafeAsSlug('hello'))
@@ -3931,5 +3932,111 @@ describe('contested-URL guard', () => {
         data: { title: 'Home' },
       }),
     ).resolves.toBeDefined()
+  })
+})
+
+describe('ContentStore read of a block or object value that is null or an array', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [
+              { name: 'title', type: 'string' as const },
+              {
+                name: 'blocks',
+                type: 'block' as const,
+                templates: [
+                  {
+                    name: 'hero',
+                    fields: [
+                      { name: 'headline', type: 'string' as const },
+                      { name: 'who', type: 'reference' as const },
+                    ],
+                  },
+                ],
+              },
+              {
+                name: 'meta',
+                type: 'object' as const,
+                fields: [{ name: 'who', type: 'reference' as const }],
+              },
+              {
+                name: 'items',
+                type: 'object' as const,
+                list: true,
+                fields: [{ name: 'who', type: 'reference' as const }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const frontmatter = [
+    '---',
+    'title: Hello',
+    'blocks:',
+    '  - template: hero',
+    '    value: null',
+    '  - template: hero',
+    '    value:',
+    '      - item1',
+    '      - item2',
+    'meta:',
+    '  - a',
+    'items:',
+    '  - - x',
+    '---',
+    '',
+  ].join('\n')
+
+  /** A store holding one post whose file is then hand-edited to `frontmatter`. */
+  const makeStore = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+    const postsPath = unsafeAsLogicalPath('content/posts')
+    const slug = unsafeAsSlug('hello')
+    const written = await store.write(postsPath, slug, {
+      format: 'md',
+      data: { title: 'Hello' },
+      body: '',
+    })
+    await fs.writeFile(written.absolutePath, frontmatter)
+    return { store, postsPath, slug }
+  }
+
+  it('opens the entry, passing a null or array value through unreshaped', async () => {
+    const { store, postsPath, slug } = await makeStore()
+
+    const doc = await store.read(postsPath, slug)
+
+    expect(doc.data.blocks).toEqual([
+      { template: 'hero', value: null },
+      { template: 'hero', value: ['item1', 'item2'] },
+    ])
+    expect(doc.data.meta).toEqual(['a'])
+    expect(doc.data.items).toEqual([['x']])
+  })
+
+  it('saves what it read without writing an index-keyed value', async () => {
+    const { store, postsPath, slug } = await makeStore()
+    const doc = await store.read(postsPath, slug)
+
+    await store.write(postsPath, slug, { format: 'md', data: doc.data, body: '' })
+
+    const saved = await store.read(postsPath, slug, { resolveReferences: false })
+    expect(saved.data.blocks).toEqual([
+      { template: 'hero', value: null },
+      { template: 'hero', value: ['item1', 'item2'] },
+    ])
+    expect(saved.data.meta).toEqual(['a'])
+    expect(saved.data.items).toEqual([['x']])
   })
 })

@@ -10,8 +10,11 @@ import {
   BranchMetadataCorruptError,
   getBranchMetadataFileManager,
   buildMergedBranchUpdate,
+  recordBranchEditor,
   type BranchMetadataFile,
 } from './branch-metadata'
+import { ANONYMOUS_USER } from './user'
+import { mockConsole } from './test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
@@ -473,6 +476,96 @@ describe('BranchMetadataFileManager', () => {
 
       expect(seen).toEqual([3])
       expect((await BranchMetadataFileManager.loadOnly(root))?.branch.status).toBe('submitted')
+    })
+  })
+
+  describe('recorded editors', () => {
+    const editingBranch = async (root: string) =>
+      createMeta(root, root).save({ branch: { name: 'b', status: 'editing' } })
+
+    it('adds a user to editors and uncommittedEditors, keeping updatedAt', async () => {
+      const root = await tmpDir()
+      const created = await editingBranch(root)
+
+      await createMeta(root, root).recordEditor('u1')
+      await createMeta(root, root).recordEditor('u2')
+
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2'])
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u1', 'u2'])
+      expect(onDisk?.branch.updatedAt).toBe(created.branch.updatedAt)
+    })
+
+    it('writes nothing for a user already recorded', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      await createMeta(root, root).recordEditor('u1')
+      const before = await BranchMetadataFileManager.loadOnly(root)
+      const meta = createMeta(root, root)
+      const update = vi.spyOn(meta, 'update')
+
+      await meta.recordEditor('u1')
+
+      // The lock-free read decides, so a repeat save takes no lock.
+      expect(update).not.toHaveBeenCalled()
+      expect((await BranchMetadataFileManager.loadOnly(root))?.version).toBe(before?.version)
+    })
+
+    it('loses no editor when many save at once', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      const users = Array.from({ length: 8 }, (_, i) => `u${i}`)
+
+      await Promise.all(users.map((u) => createMeta(root, root).recordEditor(u)))
+
+      const onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect([...(onDisk?.branch.editors ?? [])].sort()).toEqual(users)
+      expect([...(onDisk?.branch.uncommittedEditors ?? [])].sort()).toEqual(users)
+    })
+
+    it('never creates branch.json', async () => {
+      const root = await tmpDir()
+
+      await createMeta(root, root).recordEditor('u1')
+
+      expect(await BranchMetadataFileManager.loadOnly(root)).toBeNull()
+    })
+
+    it('markEditorsCommitted removes only the committed ids, and keeps editors', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      for (const u of ['u1', 'u2', 'u3']) await createMeta(root, root).recordEditor(u)
+
+      await createMeta(root, root).markEditorsCommitted(['u1', 'u3'])
+      let onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u2'])
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2', 'u3'])
+
+      await createMeta(root, root).markEditorsCommitted(['u2'])
+      onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toBeUndefined()
+
+      // Committed, a user is recorded as uncommitted again by their next save.
+      await createMeta(root, root).recordEditor('u1')
+      onDisk = await BranchMetadataFileManager.loadOnly(root)
+      expect(onDisk?.branch.uncommittedEditors).toEqual(['u1'])
+      expect(onDisk?.branch.editors).toEqual(['u1', 'u2', 'u3'])
+    })
+
+    it('recordBranchEditor skips anonymous users and logs, never throws, on a failure', async () => {
+      const root = await tmpDir()
+      await editingBranch(root)
+      await recordBranchEditor({ branchRoot: root, baseRoot: root }, ANONYMOUS_USER)
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.editors).toBeUndefined()
+
+      await fs.writeFile(path.join(root, '.canopy-meta', 'branch.json'), '{ corrupt', 'utf8')
+      const consoleSpy = mockConsole()
+      await recordBranchEditor(
+        { branchRoot: root, baseRoot: root },
+        { type: 'authenticated', userId: 'u1', groups: [] },
+      )
+      expect(consoleSpy).toHaveWarned('Could not record an editor')
+      consoleSpy.restore()
     })
   })
 

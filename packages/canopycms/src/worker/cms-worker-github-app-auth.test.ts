@@ -89,6 +89,7 @@ describe('CmsWorker GitHub App authentication', () => {
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       ...auth,
     })
 

@@ -30,6 +30,7 @@ const makeWorker = () =>
     workspacePath: '/tmp/fake-workspace',
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
+    baseBranch: 'main',
     githubToken: 'fake-token',
     taskTimeoutMs: 500,
     drainDeadlineMs: 500,
@@ -138,6 +139,7 @@ describe('CmsWorker lock (DEP-C2)', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       lockStaleMs,
     })
@@ -216,6 +218,7 @@ describe('CmsWorker task timeout (DEP-H1)', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 200,
     })
@@ -326,6 +329,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 500,
     })
@@ -486,6 +490,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 2000,
       ...extra,
@@ -937,6 +942,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs,
     })
@@ -2014,6 +2020,7 @@ describe('CmsWorker.processTaskQueue() worker-status.json bookkeeping', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 500,
     })
@@ -2084,6 +2091,7 @@ describe('CmsWorker.processTaskQueue() recovers orphaned tasks every cycle (not 
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 500,
     })
@@ -2165,6 +2173,7 @@ describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
     })
 
@@ -2314,6 +2323,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       deploymentName,
     })
@@ -2392,6 +2402,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
           workspacePath,
           githubOwner: 'o',
           githubRepo: 'r',
+          baseBranch: 'main',
           githubToken: 't',
         }),
       ),
@@ -2543,6 +2554,7 @@ describe('CmsWorker delete-remote-branch', () => {
       workspacePath: tmpDir,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
+      baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 2000,
     })
