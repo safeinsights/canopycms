@@ -34,7 +34,7 @@ test.describe('Draft Lifecycle', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -60,9 +60,7 @@ test.describe('Draft Lifecycle', () => {
     })
   })
 
-  test('E4: discard-all confirm dialog pluralizes correctly (regression b9990b2)', async ({
-    page,
-  }) => {
+  test('E4: discard-all confirm dialog pluralizes correctly (regression b9990b2)', async () => {
     const homeDraftTitle = `E4-Home-${Date.now()}`
     const postSavedTitle = `E4 Post ${Date.now()}`
     const postDraftTitle = `E4-Post-Dirty-${Date.now()}`
@@ -71,9 +69,9 @@ test.describe('Draft Lifecycle', () => {
     await test.step('open editor and dirty Home Page without saving', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', homeDraftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
     })
@@ -88,12 +86,10 @@ test.describe('Draft Lifecycle', () => {
     })
 
     await test.step('open discard-all and assert the PLURAL dialog naming 2 files', async () => {
-      await page.locator('[data-testid="branch-dropdown-button"]').click()
-      await page.getByRole('menuitem', { name: 'Discard All File Drafts' }).click()
-      const dialog = page.getByRole('dialog', { name: 'Discard drafts' })
+      const dialog = await editorPage.discardAllDrafts()
       await expect(dialog).toBeVisible({ timeout: SHORT_TIMEOUT })
       await expect(dialog).toContainText('Discard drafts for 2 files?')
-      await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
+      await editorPage.confirmDiscard(dialog)
       await expect(dialog).toBeHidden({ timeout: SHORT_TIMEOUT })
     })
 
@@ -103,9 +99,9 @@ test.describe('Draft Lifecycle', () => {
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
 
       // Home reverts too.
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('title', 'Home Page')
       await expect(editorPage.saveButton).toBeDisabled({ timeout: STANDARD_TIMEOUT })
     })
@@ -115,15 +111,13 @@ test.describe('Draft Lifecycle', () => {
       await editorPage.fillTextField('title', secondDraftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
 
-      await page.locator('[data-testid="branch-dropdown-button"]').click()
-      await page.getByRole('menuitem', { name: 'Discard All File Drafts' }).click()
-      const dialog = page.getByRole('dialog', { name: 'Discard drafts' })
+      const dialog = await editorPage.discardAllDrafts()
       await expect(dialog).toBeVisible({ timeout: SHORT_TIMEOUT })
       await expect(dialog).toContainText('Discard drafts for 1 file?')
       // Guard against a regression back to "1 files" — toContainText above
       // would still pass against "1 files" since it's a substring match.
       await expect(dialog).not.toContainText('1 files')
-      await dialog.getByRole('button', { name: 'Discard', exact: true }).click()
+      await editorPage.confirmDiscard(dialog)
       await expect(dialog).toBeHidden({ timeout: SHORT_TIMEOUT })
     })
   })
@@ -136,9 +130,9 @@ test.describe('Draft Lifecycle', () => {
     await test.step('dirty Home Page without saving', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', draftTitle)
       await expect(editorPage.saveButton).toBeEnabled({ timeout: SHORT_TIMEOUT })
     })
@@ -151,18 +145,18 @@ test.describe('Draft Lifecycle', () => {
     })
 
     await test.step('the entry navigator still lists entries normally', async () => {
-      await editorPage.openEntryNavigator()
-      await expect(page.locator('[data-testid="entry-nav-item-home-page"]')).toBeVisible({
+      await editorPage.openContentNavigator()
+      await expect(editorPage.navigatorItem('Home Page')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
-      await expect(page.locator('[data-testid="entry-nav-item-test-site"]')).toBeVisible({
+      await expect(editorPage.navigatorItem('Test Site')).toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
     })
 
     await test.step('switching to a different entry shows its real saved value (server load was not short-circuited by the restored draft)', async () => {
       await editorPage.selectEntry('Test Site')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await editorPage.verifyFieldValue('siteName', 'Test Site')
       // This entry has no draft of its own, so it should read as clean —
       // proving its loadedValues entry was actually populated rather than

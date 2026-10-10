@@ -56,9 +56,8 @@ export class BranchPage {
   readonly page: Page
 
   // Branch menu and buttons
-  readonly branchDropdownButton: Locator
-  readonly branchMenu: Locator
-  readonly manageBranchesMenuItem: Locator
+  private readonly branchDropdownButton: Locator
+  private readonly manageBranchesMenuItem: Locator
 
   // Branch manager modal/drawer
   readonly branchManager: Locator
@@ -75,7 +74,6 @@ export class BranchPage {
 
     // Branch dropdown in header
     this.branchDropdownButton = page.locator('[data-testid="branch-dropdown-button"]')
-    this.branchMenu = page.locator('[data-testid="branch-menu"]')
     this.manageBranchesMenuItem = page.locator('[data-testid="manage-branches-menu-item"]')
 
     // Branch manager
@@ -90,10 +88,17 @@ export class BranchPage {
   }
 
   /**
+   * Open the header's branch menu.
+   */
+  async openBranchMenu(): Promise<void> {
+    await this.branchDropdownButton.click()
+  }
+
+  /**
    * Open the branch manager modal/drawer.
    */
   async openBranchManager(): Promise<void> {
-    await this.branchDropdownButton.click()
+    await this.openBranchMenu()
     await this.manageBranchesMenuItem.click()
     await this.branchManager.waitFor({
       state: 'visible',
