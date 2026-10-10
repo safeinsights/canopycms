@@ -28,7 +28,7 @@ Neither edits this file unless the task is in a ranked list below.
 sandbox tier (Lambda + EFS + worker, Clerk, group path rules, `trailingSlash: true`). Its production
 go-live comes next: shared-package extraction, then the official accounts (each tier gets its own
 editor), a content pass, and the DNS cutover, at which point the editor's base branch becomes
-`production`. The **knowledge base** follows on the same shape. A task's `adopters` names which of them it
+`production`. The **knowledge base** follows on the same shape, but KB work is **paused for several weeks from 2026-10-10**: KB-only tasks wait, and nothing ranked here is blocked on it. A task's `adopters` names which of them it
 serves; prod-shape work is `BOTH` by default.
 
 Check each adopter's lockfile for the `canopycms` version it pins; this index carries no version pins.
@@ -51,8 +51,8 @@ answers "what now". Each item's detail is in its file.
 | 1 | [adopter-base-branch-protection.md](adopter-base-branch-protection.md) (adopter-side, BOTH; do now) | The base branch is what each site deploys from. Until the worker refuses base-branch pushes, branch protection the CMS credential cannot bypass is the only guard; it stays as defense in depth after. |
 | 2 | Release readiness (JP's calls): the live first-mount probe on the first prerelease carrying MDXEditor 4.3 ([turbopack-import-cycle-double-evaluation.md](turbopack-import-cycle-double-evaluation.md)), then `int-202610-b` → `main` and a stable release before the first official-account editor deploy | The jsx import cycle survives 4.3.2, so only the live probe shows the Turbopack crash is still contained. A production editor should not pin an `int` prerelease. |
 | 3 | Deploy verification sweep: [infra-review-2026-08-deploy-verification.md](infra-review-2026-08-deploy-verification.md), the live Clerk proof in [clerk-signed-out-followups.md](clerk-signed-out-followups.md), the plaintext-secret check in [deploy-test-lambda-plaintext-clerk-secret.md](deploy-test-lambda-plaintext-clerk-secret.md), and the deployed timing breakdown in [editor-api-latency.md](editor-api-latency.md) | A real stack exists and none of these has a recorded result. Run them on the sandbox tier before the official accounts copy its shape; two of the infra checks fail silently. Needs AWS access. |
-| 4 | [live-site-acl-migration.md](live-site-acl-migration.md) (adopter-side, KB) | Sequence it before the KB flips to `defaultBranchAccess: 'deny'`: add the editors' `edit` rule first, then verify as a non-admin, because the admin bypass hides every path-layer mistake. |
-| 5 | [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) | The one known path from a compromised Lambda to the GitHub credential. Persistent plants are already refused, so what is left needs a compromised Lambda that wins a race; the fix is a process split with real design content, so it starts with a plan review. The next package-side code work now that the setup traps and admin surfaces have shipped. |
+| 4 | [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) | The one known path from a compromised Lambda to the GitHub credential. Persistent plants are already refused, so what is left needs a compromised Lambda that wins a race; the fix is a process split with real design content, so it starts with a plan review. The next package-side code work now that the setup traps and admin surfaces have shipped. |
+| 5 | [live-site-acl-migration.md](live-site-acl-migration.md) (adopter-side, KB; **parked**) | The KB is paused for several weeks from 2026-10-10. When it resumes: add the editors' `edit` rule before flipping to `defaultBranchAccess: 'deny'`, then verify as a non-admin, because the admin bypass hides every path-layer mistake. |
 
 ---
 
