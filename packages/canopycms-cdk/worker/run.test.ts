@@ -262,7 +262,7 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.createWorker).not.toHaveBeenCalled()
   })
 
-  it('refuses a unit with no contract stamp with the template-too-old line, before the state directory', async () => {
+  it('refuses an unstamped unit without StateDirectory= with the template-too-old line, before the state-directory check', async () => {
     const h = harness({ env: envWithout(WORKER_CONTRACT_ENV, 'STATE_DIRECTORY') })
 
     await runWorker(h.deps)
@@ -280,7 +280,16 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.createWorker).not.toHaveBeenCalled()
   })
 
-  it('refuses a unit stamped below the bundle', async () => {
+  it('runs an unstamped unit that has StateDirectory= as contract 1', async () => {
+    const h = harness({ env: envWithout(WORKER_CONTRACT_ENV) })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.start).toHaveBeenCalled()
+  })
+
+  it('refuses a unit stamped below the bundle, whatever else it provides', async () => {
     const h = harness({
       env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION - 1) },
     })

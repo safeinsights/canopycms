@@ -24,7 +24,6 @@ import {
   EXIT_DRAINED_FOR_TERMINATION,
   EXIT_WORKER_SELF_STOPPED,
   WORKER_CAPACITY_ENV,
-  WORKER_CONTRACT_ENV,
   workerContractShortfall,
 } from '../src/constructs/worker-lifecycle'
 import type { GetSecretOptions } from './secrets'
@@ -116,7 +115,7 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
     // First after the workspace root, which recording the failure needs: under a
     // unit too old for this bundle, the checks below would report one missing
     // setting as a generic failure.
-    const contractShortfall = workerContractShortfall(env[WORKER_CONTRACT_ENV])
+    const contractShortfall = workerContractShortfall(env)
     if (contractShortfall) throw new Error(contractShortfall)
 
     const githubOwner = env.CANOPYCMS_GITHUB_OWNER

@@ -1101,7 +1101,7 @@ has=$(aws cloudformation describe-stacks --stack-name "$STACK" --output text \
 ((has >= needs)) || { echo "bundle needs worker contract $needs, stack has $has" >&2; exit 1; }
 ```
 
-A bundle that slips past logs `template too old for this bundle` and refuses to start.
+Past the gate, a unit too old for the bundle still stops it at start: `template too old for this bundle`.
 
 ## The worker instance
 
