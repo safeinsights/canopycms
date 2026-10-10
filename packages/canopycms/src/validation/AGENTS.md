@@ -15,11 +15,11 @@ Validation utilities (field traversal, reference validation, entry link validati
 
 `entry-validator.ts`'s `findUnknownKeys` is built on `traverseFields` and reports content keys the schema does not define — non-blocking, feeding `validationWarnings` at the API boundary and `static/`'s `warnUnknownEntryKeys` at build time; it runs on the NORMALIZED (about-to-be-persisted) data, so a resolved reference collapsed to an id string can't be mistaken for anything, and it reports nothing when a container has no fields at all ("no schema" is not "every key is unknown").
 
-`markdown-safety.ts` (code in markdown/MDX) runs in `api/content.ts` and `static/`'s build warning, not the editor.
+`markdown-safety.ts` (code in markdown/MDX) runs in `api/content.ts` and `static/`'s build warning, not the editor; config validation and the editor's toolbar read its dependency-free half, `mdx-allowlist.ts`.
 
 ### `normalizeReferenceValues` — the inverse of reference resolution
 
-`normalizeReferenceValues(fields, data)` is the inverse of resolution: it collapses resolved reference objects (`{ id, ... }`) back to their id strings, recursing through objects/lists/block items. `api/content.ts`'s write handler runs it on the incoming payload BEFORE both validating (so `ReferenceValidator` checks the real id, not a stale resolved snapshot from a prior GET) and persisting — the editor round-trips whole documents, so an unnormalized save would freeze a `{ ...target data, id, slug, collection, urlPath }` snapshot into the content file and permanently sever the reference from its target; `findUnknownKeys` then runs on that same normalized data for exactly this reason. `entry-type-reference-validator.ts` checks every reference field's `entryTypes` against the resolved schema's actual entry types (typo detection), wired into `branch-schema-cache.ts` before caching.
+`normalizeReferenceValues(fields, data)` is the inverse of resolution: it collapses resolved reference objects (`{ id, ... }`) back to their id strings, recursing through objects/lists/block items. `api/content.ts`'s write handler runs it on the incoming payload BEFORE both validating (so `ReferenceValidator` checks the real id, not a stale resolved snapshot from a prior GET) and persisting — an unnormalized save would freeze a resolved snapshot, severing the reference; `findUnknownKeys` then runs on that same normalized data for exactly this reason. `entry-type-reference-validator.ts` checks every reference field's `entryTypes` against the resolved schema's actual entry types (typo detection), wired into `branch-schema-cache.ts` before caching.
 
 ### `block-structural-keys.ts` — one list, two opposite consumers
 

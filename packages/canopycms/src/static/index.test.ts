@@ -150,6 +150,31 @@ describe('collectStaticPaths', () => {
       }
     })
 
+    it('warns about an mdx body holding a component the site mdxAllow excludes', async () => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+      const consoleSpy = mockConsole()
+      try {
+        const item: Partial<ListEntriesItem> = {
+          urlPath: '/posts/legacy',
+          slug: 'legacy' as never,
+          entryType: 'post',
+          entryPath: 'content/posts/legacy' as never,
+          format: 'mdx',
+          schema: [{ name: 'title', type: 'string' }],
+          data: { title: 'Legacy', body: 'Intro\n\n<Legacy />' },
+        }
+        const config: Partial<CanopyConfig> = { mdxAllow: { components: { Callout: {} } } }
+        const ctx = { ...fakeCtx([item]), services: { config } as unknown as CanopyServices }
+
+        await expect(collectStaticPaths(fakeCtx([item]))).resolves.toHaveLength(1)
+        expect(consoleSpy.all().warn).toEqual([])
+        await expect(collectStaticPaths(ctx)).resolves.toHaveLength(1)
+        expect(consoleSpy).toHaveWarned('content/posts/legacy')
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
     it('does not throw when CANOPY_BUILD_MODE is unset, even with an invalid entry', async () => {
       vi.stubEnv('CANOPY_BUILD_MODE', '')
       const ctx = fakeCtx([

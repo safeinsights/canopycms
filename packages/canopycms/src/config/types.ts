@@ -78,6 +78,33 @@ export interface MarkdownFieldConfig extends BaseFieldConfig {
   type: (typeof markdownFieldTypes)[number]
   /** Accept code, making every editor of this field a code author for whoever renders it. */
   executable?: boolean
+  /** On a `markdown` field the site compiles as MDX: check it as MDX. */
+  renderAs?: 'mdx'
+  /** Narrow what this field accepts as MDX, key by key over the site's `mdxAllow`. */
+  mdxAllow?: MdxAllowlist
+}
+
+/** A prop's allowed values: `true` for any value the base policy accepts; `<X open>` is `true`. */
+export type MdxPropAllow = true | Array<string | number | boolean>
+
+export interface MdxComponentAllow {
+  /** Allowed props by name. Omitted: any prop. `{}`: none. */
+  props?: Record<string, MdxPropAllow>
+}
+
+/**
+ * What an MDX body may hold, narrowing the base policy (`validation/mdx-allowlist.ts`). An omitted
+ * key keeps the base policy's choice.
+ */
+export interface MdxAllowlist {
+  /** Allowed components by name. Omitted: any plainly named component. `{}`: none. */
+  components?: Record<string, MdxComponentAllow>
+  /** Allowed HTML tags, from the base policy's safe set. Omitted: that whole set. `[]`: none. */
+  htmlTags?: string[]
+  /** `false` refuses every `{…}`, comments and plain values included. Default `true`. */
+  expressions?: boolean
+  /** `false` refuses `<>…</>`. Default `true`. */
+  fragments?: boolean
 }
 
 export interface SelectFieldConfig extends BaseFieldConfig {
@@ -467,6 +494,8 @@ export interface CanopyConfig {
   entryLinkUrl?: EntryLinkUrlResolver
   /** Save-time validation hook — see {@link CanopyConfigInput.validateEntry}. */
   validateEntry?: ValidateEntryHook
+  /** Site default for every field checked as MDX — see {@link CanopyConfigInput.mdxAllow}. */
+  mdxAllow?: MdxAllowlist
   /** Dev-mode-only behavior — see {@link CanopyConfigInput.dev}. */
   dev?: DevConfig
 }
@@ -552,6 +581,8 @@ export interface CanopyConfigInput {
   entryLinkUrl?: EntryLinkUrlResolver
   /** Save-time validation hook. 'error' issues reject the save; 'warning' issues are returned with it. */
   validateEntry?: ValidateEntryHook
+  /** What every field checked as MDX accepts; a field's own `mdxAllow` replaces it key by key. */
+  mdxAllow?: MdxAllowlist
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }
@@ -613,6 +644,7 @@ export type CanopyClientConfig = Pick<
   | 'mode'
   | 'entryLinkUrl'
   | 'basePath'
+  | 'mdxAllow'
 > & {
   flatSchema: FlatSchemaItem[]
 }
