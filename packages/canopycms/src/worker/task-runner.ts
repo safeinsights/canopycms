@@ -17,7 +17,12 @@ import {
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
-import { GitHubPushError, refreshGitHubCredential, type GitHubPushOutcome } from './github-gateway'
+import {
+  GitHubPushError,
+  describeMove,
+  refreshGitHubCredential,
+  type GitHubPushOutcome,
+} from './github-gateway'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -403,7 +408,7 @@ export async function executeTask(
       // base, so GitHub 422s a PR for it: push it and stop.
       if (isSettingsBranch(branch)) {
         await ctx.pushBranchToGitHub(branch, signal)
-        workerLog(`Pushed settings branch ${branch}; settings branches never get a PR`)
+        workerLog(`No PR for ${branch}: settings branches never get one`)
         return { pushed: true }
       }
       await ctx.pushBranchToGitHub(branch, signal)
@@ -713,12 +718,12 @@ export async function pushBranchToGitHub(
     throw err.cause
   }
 
-  if (outcome === 'pushed-past-stale-lease') {
+  if (outcome.pastStaleLease) {
     // The lease was refused, so GitHub is provably not at the marker: it
     // has moved past the rewritten commit and the marker is spent.
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
     await recordPushedToGitHub(ctx, branchPath, branch)
-    workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
+    logPushOutcome(ctx, branch, outcome, 'GitHub had already moved past the rewritten commit')
     return
   }
 
@@ -730,7 +735,22 @@ export async function pushBranchToGitHub(
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
   }
   await recordPushedToGitHub(ctx, branchPath, branch)
-  workerLog(`Pushed ${branch} to GitHub`)
+  logPushOutcome(ctx, branch, outcome)
+}
+
+/** An unmoved ref is routine (a task re-run after a crash), so it is logged at debug level. */
+function logPushOutcome(
+  ctx: TaskRunnerContext,
+  branch: string,
+  outcome: GitHubPushOutcome,
+  note?: string,
+): void {
+  const suffix = note === undefined ? '' : `; ${note}`
+  if (outcome.moved) {
+    workerLog(`Pushed ${branch} to GitHub (${describeMove(outcome)}${suffix})`)
+  } else {
+    ctx.log.debug(`${branch} already up to date on GitHub${suffix}`)
+  }
 }
 
 /**
