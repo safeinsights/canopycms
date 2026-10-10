@@ -56,7 +56,8 @@ export class GitHubMirror {
 
   /**
    * Run `fn` with the mirror to itself, after every session started before it. Creates the
-   * mirror first if it is missing, and checks again after any session that failed.
+   * mirror first if it is missing, and checks again after any session that failed. First deletes
+   * any credential file a killed or failed cleanup left: no session is running, so none is in use.
    */
   exclusive<T>(fn: (session: MirrorSession) => Promise<T>): Promise<T> {
     const start = async () => {
@@ -64,6 +65,7 @@ export class GitHubMirror {
         await this.create()
         this.ready = true
       }
+      await sweepCredentialConfigs(path.dirname(this.gitDir))
       try {
         return await fn(new MirrorSession(this.gitDir, this.remoteGitPath, this.timeoutMs))
       } catch (err) {
@@ -82,15 +84,13 @@ export class GitHubMirror {
   }
 
   /**
-   * Create the mirror, or recreate one that is not a readable bare repository, and drop what a
-   * killed session left: credential files, and staging refs (one at `<branch>` blocks a later
-   * `<branch>/<x>`). Runs with no session active, so no credential file it removes is in use.
+   * Create the mirror, or recreate one that is not a readable bare repository, and drop staging
+   * refs a killed push left: one at `<branch>` blocks a later `<branch>/<x>`.
    */
   private async create(): Promise<void> {
     const stateDirectory = path.dirname(this.gitDir)
     await fs.mkdir(stateDirectory, { recursive: true, mode: 0o700 })
     await assertOwnDirectory(stateDirectory)
-    await sweepCredentialConfigs(stateDirectory)
     if (!(await isBareRepository(this.gitDir))) {
       await fs.rm(this.gitDir, { recursive: true, force: true })
       await fs.mkdir(this.gitDir, { mode: 0o700 })
@@ -183,9 +183,8 @@ function credentialConfig(credential: GitHubCredential): string {
  * Run `fn` with the path of a fresh config file holding the credential, then delete it. The file
  * is created exclusively, `0600`, in a new `mkdtemp` directory inside the state directory, which
  * {@link assertOwnDirectory} proves only this user can write: a path nobody else could have
- * created first or swapped for a link. It must exist before git starts, since a
- * `GIT_CONFIG_GLOBAL` naming a missing file is a fatal error. A file a crash leaves behind is
- * swept by the next {@link GitHubMirror} creation.
+ * created first or swapped for a link. A file a crash or a failed delete leaves behind is swept
+ * before the next session ({@link GitHubMirror.exclusive}).
  */
 async function withCredentialConfig<T>(
   stateDirectory: string,

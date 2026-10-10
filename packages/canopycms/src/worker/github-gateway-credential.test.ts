@@ -295,6 +295,20 @@ describe('the credential file', () => {
   })
 })
 
+it('is swept before the next session when an earlier delete left it, with the mirror already up', async () => {
+  await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+  const github = gateway()
+  await github.fetch({ have: [] })
+  // As if a delete in a healthy worker had failed: nothing marks the mirror for re-creation.
+  const leftover = path.join(stateDirectory, '.canopy-github-credential-zZ9yY8')
+  await fs.mkdir(leftover, { mode: 0o700 })
+  await fs.writeFile(path.join(leftover, 'config'), 'left by a failed delete', { mode: 0o600 })
+
+  await github.onGitHub([])
+
+  await expect(fs.stat(leftover)).rejects.toThrow(/ENOENT/)
+})
+
 describe('against a server that checks the credential', () => {
   let server: HttpsGitServer
   let serverRoot: string
@@ -393,7 +407,7 @@ describe('re-reading the credential', () => {
 
   it('is armed by an Octokit error', async () => {
     const provider = vi.fn(async () => undefined)
-    const create = vi.fn().mockRejectedValue(await octokitErrorFor(422, { message: 'Nope' }))
+    const create = vi.fn().mockRejectedValue(await octokitErrorFor(401, { message: 'Nope' }))
     const github = gateway(
       { octokit: { pulls: { create } } as unknown as LocalGitHubGatewayOptions['octokit'] },
       provider,
@@ -402,6 +416,38 @@ describe('re-reading the credential', () => {
     await expect(
       github.createPullRequest({ head: 'f', base: 'main', title: 'T', body: 'B' }),
     ).rejects.toThrow('Nope')
+    await settle()
+
+    expect(provider).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not armed by an Octokit 422, a validation answer', async () => {
+    const provider = vi.fn(async () => undefined)
+    const deleteRef = vi
+      .fn()
+      .mockRejectedValue(await octokitErrorFor(422, { message: 'Reference does not exist' }))
+    const github = gateway(
+      { octokit: { git: { deleteRef } } as unknown as LocalGitHubGatewayOptions['octokit'] },
+      provider,
+    )
+
+    await expect(github.deleteBranch('gone')).rejects.toThrow('Reference does not exist')
+    await settle()
+
+    expect(provider).not.toHaveBeenCalled()
+  })
+
+  it('is armed by a 404 deleting a branch, which can mean lost access', async () => {
+    const provider = vi.fn(async () => undefined)
+    const deleteRef = vi
+      .fn()
+      .mockRejectedValue(await octokitErrorFor(404, { message: 'Not Found' }))
+    const github = gateway(
+      { octokit: { git: { deleteRef } } as unknown as LocalGitHubGatewayOptions['octokit'] },
+      provider,
+    )
+
+    await expect(github.deleteBranch('feature')).rejects.toThrow('Not Found')
     await settle()
 
     expect(provider).toHaveBeenCalledTimes(1)

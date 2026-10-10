@@ -68,6 +68,17 @@ export async function startHttpsGitServer(
         return
       }
       const url = new URL(req.url ?? '/', 'https://127.0.0.1')
+      let pathInfo: string
+      try {
+        pathInfo = decodeURIComponent(url.pathname)
+      } catch {
+        pathInfo = '..'
+      }
+      if (pathInfo.split('/').includes('..')) {
+        res.writeHead(400)
+        res.end()
+        return
+      }
       const backend = spawn('git', ['http-backend'], {
         env: {
           PATH: process.env.PATH ?? '',
@@ -77,7 +88,7 @@ export async function startHttpsGitServer(
           REMOTE_USER: 'x-access-token',
           REMOTE_ADDR: '127.0.0.1',
           REQUEST_METHOD: req.method ?? 'GET',
-          PATH_INFO: decodeURIComponent(url.pathname),
+          PATH_INFO: pathInfo,
           QUERY_STRING: url.search.replace(/^\?/, ''),
           CONTENT_TYPE: req.headers['content-type'] ?? '',
           HTTP_CONTENT_ENCODING: req.headers['content-encoding'] ?? '',
@@ -101,6 +112,12 @@ export async function startHttpsGitServer(
         }
         res.writeHead(status, headers)
         res.end(output.subarray(end + 4))
+      })
+      // A backend that exits before reading the body must fail the request, not the test run.
+      backend.stdin.on('error', () => undefined)
+      backend.on('error', () => {
+        res.writeHead(500)
+        res.end()
       })
       req.pipe(backend.stdin)
     },

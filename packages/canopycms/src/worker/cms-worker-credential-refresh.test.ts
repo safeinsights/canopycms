@@ -184,16 +184,15 @@ describe('CmsWorker credential refresh', () => {
       })
     })
 
-    it("reports a gateway that cannot even be built as the sync loop's error, re-reading nothing", async () => {
-      // No credential at all, and no gateway installed: building one throws. There is no gateway
-      // to re-read anything, so what the operator must see is the configuration error itself.
-      const refreshGitHubToken = vi.fn(async () => undefined)
+    it("reports a gateway that cannot even be built as the sync loop's error", async () => {
+      // No credential at all, and no gateway installed: building one throws. Only a gateway can
+      // re-read a credential, and resolving the config throws before one exists, so no provider
+      // could be called; what the operator must see is the configuration error itself.
       const worker = new CmsWorker({
         workspacePath,
         githubOwner: 'test-owner',
         githubRepo: 'test-repo',
         baseBranch: 'main',
-        refreshGitHubToken,
       })
       const internals = worker as unknown as {
         running: boolean
@@ -210,7 +209,6 @@ describe('CmsWorker credential refresh', () => {
             /Worker loop error:.*githubToken or githubAppAuth is required/,
           ),
         )
-        expect(refreshGitHubToken).not.toHaveBeenCalled()
       } finally {
         internals.running = false
       }
@@ -386,17 +384,16 @@ describe('CmsWorker credential refresh', () => {
     })
 
     it('keeps draining the queue when the gateway cannot even be built, recording why', async () => {
-      // No credential at all, and no gateway installed: building one throws. Each task records
-      // the configuration error itself, which is what the operator must see; there is no gateway
-      // to re-read anything.
-      const refreshGitHubToken = vi.fn(async () => undefined)
+      // No credential at all, and no gateway installed: building one throws. Only a gateway can
+      // re-read a credential, and resolving the config throws before one exists, so no provider
+      // could be called; each task records the configuration error itself, which is what the
+      // operator must see.
       const worker = new CmsWorker({
         workspacePath,
         githubOwner: 'test-owner',
         githubRepo: 'test-repo',
         baseBranch: 'main',
         maxRetries: MAX_RETRIES,
-        refreshGitHubToken,
       })
       ;(worker as unknown as TaskInternals).running = true
       const first = await enqueuePush('feature-1')
@@ -412,7 +409,6 @@ describe('CmsWorker credential refresh', () => {
       expect(consoleSpy).toHaveErrored(
         /Task .* \(push-branch\) failed:.*githubToken or githubAppAuth is required/,
       )
-      expect(refreshGitHubToken).not.toHaveBeenCalled()
     })
 
     it('does not let a re-read that never settles stall the task loop', async () => {
