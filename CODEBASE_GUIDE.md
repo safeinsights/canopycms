@@ -229,9 +229,10 @@ direction, and every invariant.
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
+- `github-gateway.ts` — the worker's GitHub access
 - `github-mirror.ts`, `shared-repo-git.ts` — isolated git
 - `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
-- `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
+- `github-auth.ts` — credential selection and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, the timestamp-and-level prefixed replacements for `console.*`
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
