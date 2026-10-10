@@ -33,8 +33,8 @@ export const WORKER_STATUS_FILE = 'worker-status.json'
  * What a new worker carries from the previous status file into its first snapshot:
  * `lastFatalError`, so a crash loop keeps its alert, and how the last worker that ran stopped.
  * A `lastShutdown` written by an earlier worker than the file's own means the last one stopped
- * without draining, unless the file's own worker failed to start: it never ran, so the carried
- * record still holds. Tolerant like every reader: a missing or unreadable file yields neither.
+ * without draining, unless the file's own worker recorded its failed start: it never ran, so the
+ * carried record holds. Tolerant like every reader: a missing or unreadable file yields neither.
  */
 export async function readCarriedOverStatus(
   taskDir: string,
