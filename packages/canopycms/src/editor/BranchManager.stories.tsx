@@ -5,6 +5,7 @@ import { BranchManager } from './BranchManager'
 const meta: Meta<typeof BranchManager> = {
   title: 'Editor/BranchManager',
   component: BranchManager,
+  args: { mode: 'prod' },
 }
 
 export default meta
@@ -13,6 +14,13 @@ type Story = StoryObj<typeof BranchManager>
 export const Default: Story = {
   args: {
     branches: [
+      {
+        name: 'main',
+        status: 'editing',
+        updatedAt: 'today',
+        access: {},
+        isProtected: true,
+      },
       {
         name: 'feature/landing',
         status: 'editing',

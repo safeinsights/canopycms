@@ -7,9 +7,20 @@ import SplitPane, { type SplitPaneProps } from 'react-split-pane'
 
 export type PaneLayout = 'side' | 'stacked'
 
+export const SPLIT_PERCENT_MIN = 15
+export const SPLIT_PERCENT_MAX = 85
+export const DEFAULT_SIDE_SPLIT_PERCENT = 52
+export const DEFAULT_STACKED_SPLIT_PERCENT = 58
+
 export interface EditorPanesProps {
   layout?: PaneLayout
   onLayoutChange?: (layout: PaneLayout) => void
+  /** Primary-pane size (percent) in the side layout; follows this prop when it changes. */
+  sideSplitPercent?: number
+  /** Primary-pane size (percent) in the stacked layout; follows this prop when it changes. */
+  stackedSplitPercent?: number
+  /** Called once per drag, when it ends, with the clamped percent; live dragging never calls it. */
+  onSplitPercentChange?: (layout: PaneLayout, percent: number) => void
   preview?: React.ReactNode
   form?: React.ReactNode
 }
@@ -17,6 +28,9 @@ export interface EditorPanesProps {
 export const EditorPanes: React.FC<EditorPanesProps> = ({
   layout: layoutProp = 'side',
   onLayoutChange: _,
+  sideSplitPercent = DEFAULT_SIDE_SPLIT_PERCENT,
+  stackedSplitPercent = DEFAULT_STACKED_SPLIT_PERCENT,
+  onSplitPercentChange,
   preview,
   form,
 }) => {
@@ -25,14 +39,27 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
   >
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<PaneLayout>(layoutProp)
-  const [sidePrimarySize, setSidePrimarySize] = useState<number>(52)
-  const [stackedPrimarySize, setStackedPrimarySize] = useState<number>(58)
+  // Live drag state: the props change only when a drag ends or stored prefs load, so dragging
+  // never writes storage.
+  const [sidePrimarySize, setSidePrimarySize] = useState<number>(sideSplitPercent)
+  const [stackedPrimarySize, setStackedPrimarySize] = useState<number>(stackedSplitPercent)
   // Turn off iframe/pane pointer events while dragging so the gutter keeps receiving mouse events.
   const [isDragging, setIsDragging] = useState(false)
+  // The last percent a drag produced. `onDragFinished` cannot supply it: with `size` controlled,
+  // react-split-pane hands back that prop's string ("37%"), a click with no movement included.
+  const dragPercentRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {
     setLayout(layoutProp)
   }, [layoutProp])
+
+  useEffect(() => {
+    setSidePrimarySize(sideSplitPercent)
+  }, [sideSplitPercent])
+
+  useEffect(() => {
+    setStackedPrimarySize(stackedSplitPercent)
+  }, [stackedSplitPercent])
 
   const direction = layout === 'side' ? 'vertical' : 'horizontal'
   const primarySize = useMemo(
@@ -60,19 +87,23 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
     [isDragging, layout],
   )
 
-  const updateSizeFromPixels = (nextPixels: number, nextLayout: PaneLayout) => {
+  const updateSizeFromPixels = (nextPixels: number, nextLayout: PaneLayout): number | undefined => {
     const total =
       nextLayout === 'side'
         ? (splitContainerRef.current?.clientWidth ?? 0)
         : (splitContainerRef.current?.clientHeight ?? 0)
     // Guard: ensure valid dimensions before calculating
-    if (!total || total <= 0 || nextPixels <= 0) return
-    const percent = Math.min(85, Math.max(15, (nextPixels / total) * 100))
+    if (!total || total <= 0 || !Number.isFinite(nextPixels) || nextPixels <= 0) return undefined
+    const percent = Math.min(
+      SPLIT_PERCENT_MAX,
+      Math.max(SPLIT_PERCENT_MIN, (nextPixels / total) * 100),
+    )
     if (nextLayout === 'side') {
       setSidePrimarySize(percent)
     } else {
       setStackedPrimarySize(percent)
     }
+    return percent
   }
 
   return (
@@ -99,10 +130,17 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
             minSize={120}
             size={`${primarySize}%`}
             allowResize
-            onChange={(next) => updateSizeFromPixels(next, layout)}
-            onDragStarted={() => setIsDragging(true)}
-            onDragFinished={(next) => {
-              updateSizeFromPixels(next, layout)
+            onChange={(next) => {
+              dragPercentRef.current = updateSizeFromPixels(next, layout) ?? dragPercentRef.current
+            }}
+            onDragStarted={() => {
+              dragPercentRef.current = undefined
+              setIsDragging(true)
+            }}
+            onDragFinished={() => {
+              const percent = dragPercentRef.current
+              dragPercentRef.current = undefined
+              if (percent !== undefined) onSplitPercentChange?.(layout, percent)
               setIsDragging(false)
             }}
             style={{

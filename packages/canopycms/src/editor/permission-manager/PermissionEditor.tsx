@@ -179,7 +179,11 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                                 variant="transparent"
                                 onClick={() => onRemoveGroup(node.path, level, groupId)}
                               >
-                                <IconX size={12} stroke={2.5} style={{ color: 'white' }} />
+                                <IconX
+                                  size={12}
+                                  stroke={2.5}
+                                  style={{ color: 'var(--mantine-color-white)' }}
+                                />
                               </ActionIcon>
                             }
                           >
@@ -220,7 +224,11 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                                 variant="transparent"
                                 onClick={() => onRemoveUser(node.path, level, userId)}
                               >
-                                <IconX size={12} stroke={2.5} style={{ color: 'white' }} />
+                                <IconX
+                                  size={12}
+                                  stroke={2.5}
+                                  style={{ color: 'var(--mantine-color-white)' }}
+                                />
                               </ActionIcon>
                             }
                           >
@@ -239,7 +247,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
 
                     <Group gap="xs">
                       <Button
-                        size="xs"
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleGroupSearch(!showGroupSearch)}
@@ -248,7 +255,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                       </Button>
 
                       <Button
-                        size="xs"
                         variant="subtle"
                         leftSection={<IconSearch size={14} />}
                         onClick={() => onToggleUserSearch(!showUserSearch)}
@@ -259,7 +265,6 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({
                       {!(directTarget?.allowedUsers ?? []).includes('anonymous') && (
                         <Tooltip label="Allow unauthenticated/public access">
                           <Button
-                            size="xs"
                             variant="subtle"
                             color="orange"
                             leftSection={<IconUserOff size={14} />}

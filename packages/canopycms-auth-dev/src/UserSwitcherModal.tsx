@@ -28,6 +28,7 @@ export function UserSwitcherModal({ opened, onClose, currentUserId }: Props) {
         <DevUserList onSelect={switchUser} currentUserId={currentUserId} />
         <Button
           variant="subtle"
+          size="sm"
           leftSection={<IconLogout size={16} />}
           onClick={signOut}
           data-testid="sign-out-button"

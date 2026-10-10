@@ -170,10 +170,10 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
           gap="sm"
           style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}
         >
-          <Button variant="subtle" color="neutral" onClick={discard} disabled={isSaving}>
+          <Button size="sm" variant="subtle" color="neutral" onClick={discard} disabled={isSaving}>
             Discard Changes
           </Button>
-          <Button onClick={save} loading={isSaving} disabled={isSaving}>
+          <Button size="sm" onClick={save} loading={isSaving} disabled={isSaving}>
             Save Groups
           </Button>
         </Group>

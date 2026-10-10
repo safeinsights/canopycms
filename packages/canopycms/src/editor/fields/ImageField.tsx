@@ -186,7 +186,6 @@ export const ImageField: React.FC<ImageFieldProps> = ({
           <Group justify="center">
             <Button
               variant="light"
-              size="xs"
               leftSection={<IconPhoto size={14} />}
               onClick={() => setPickerOpen(true)}
               data-testid={`image-field-browse-library-${dataCanopyField}`}
@@ -259,7 +258,6 @@ export const ImageField: React.FC<ImageFieldProps> = ({
           <Group gap="xs">
             <Button
               variant="light"
-              size="xs"
               onClick={() => setPickerOpen(true)}
               data-testid={`image-field-replace-${dataCanopyField}`}
             >
@@ -268,7 +266,6 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             {canCrop && (
               <Button
                 variant="light"
-                size="xs"
                 onClick={() => setCropRequest({ kind: 'existing' })}
                 data-testid={`image-field-crop-${dataCanopyField}`}
               >
@@ -278,7 +275,6 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             <Button
               variant="subtle"
               color="red"
-              size="xs"
               onClick={handleRemove}
               data-testid={`image-field-remove-${dataCanopyField}`}
             >

@@ -2,7 +2,7 @@
 
 import React, { useRef, useState } from 'react'
 
-import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { Alert, Button, Paper, Stack, Text } from '@mantine/core'
 import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
 
 import type {
@@ -34,7 +34,9 @@ import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
-import { FieldDescription, groupDescriptionProps } from './fields/FieldDescription'
+import { groupDescriptionProps } from './fields/FieldDescription'
+import { FieldLabel } from './fields/FieldLabel'
+import { EDITOR_ACTIONS } from './copy'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
@@ -518,6 +520,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           <BlockField
             key={fieldKey(path)}
             label={label}
+            required={field.required}
             description={field.description}
             templates={blockField.templates}
             value={(Array.isArray(currentValue) ? currentValue : []) as BlockInstance[]}
@@ -539,25 +542,25 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             <Paper
               key={fieldKey(path)}
               withBorder
-              radius="md"
               p="md"
               shadow="xs"
               {...groupDescriptionProps(fieldId, field.description)}
             >
               <Stack gap="sm">
-                <Group justify="space-between">
-                  <Text size="sm" fw={600}>
-                    {label}
-                  </Text>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() => update([...items, {} as Record<string, unknown>])}
-                  >
-                    Add item
-                  </Button>
-                </Group>
-                <FieldDescription baseId={fieldId} description={field.description} />
+                <FieldLabel
+                  label={label}
+                  required={field.required}
+                  description={field.description}
+                  descriptionBaseId={fieldId}
+                  actions={
+                    <Button
+                      variant="light"
+                      onClick={() => update([...items, {} as Record<string, unknown>])}
+                    >
+                      Add item
+                    </Button>
+                  }
+                />
                 <Stack gap="sm">
                   {items.map((item, idx) => {
                     const itemTitle = listItemTitle(
@@ -571,24 +574,22 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                         role="group"
                         aria-label={itemTitle}
                         withBorder
-                        radius="md"
                         p="sm"
                         shadow="xs"
                       >
                         <Stack gap="xs">
-                          <Group justify="space-between">
-                            <Text size="xs" fw={700}>
-                              {itemTitle}
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant="subtle"
-                              color="red"
-                              onClick={() => update(items.filter((_, i) => i !== idx))}
-                            >
-                              Remove
-                            </Button>
-                          </Group>
+                          <FieldLabel
+                            label={itemTitle}
+                            actions={
+                              <Button
+                                variant="subtle"
+                                color="red"
+                                onClick={() => update(items.filter((_, i) => i !== idx))}
+                              >
+                                {EDITOR_ACTIONS.remove}
+                              </Button>
+                            }
+                          />
                           <ObjectField
                             fields={objectField.fields}
                             value={item}
@@ -631,6 +632,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           <ObjectField
             key={fieldKey(path)}
             label={label}
+            required={objectField.required}
             description={field.description}
             fields={objectField.fields}
             value={currentValue as Record<string, unknown> | undefined}

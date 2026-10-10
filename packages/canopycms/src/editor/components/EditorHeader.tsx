@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Group,
+  Indicator,
   Menu,
   Paper,
   Stack,
@@ -19,6 +20,7 @@ import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
+import { branchStatusPresentation } from '../branch-status'
 
 export interface EditorHeaderProps {
   /**
@@ -183,20 +185,6 @@ export interface EditorHeaderProps {
 }
 
 /**
- * Status color map matching BranchManager.tsx pattern.
- * Returns the Mantine color string for a given branch status.
- */
-const getStatusColor = (status: BranchStatus): string => {
-  const statusColorMap: Record<BranchStatus, string> = {
-    editing: 'brand',
-    submitted: 'green',
-    approved: 'teal',
-    archived: 'gray',
-  }
-  return statusColorMap[status] ?? 'gray'
-}
-
-/**
  * Header component for the Editor.
  * Contains site info, file navigation, breadcrumbs, branch selector, comments button, and action buttons.
  */
@@ -252,6 +240,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
   const branchDataUnavailable =
     statusLocked && (branchStatus === undefined || branchStatus === 'editing')
 
+  const statusPresentation = branchStatusPresentation(branchStatus, branchIsProtected)
+  const unresolvedCount = comments.filter((t) => !t.resolved).length
+
   return (
     <Paper
       ref={ref}
@@ -296,7 +287,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"
-                    size="xs"
                     leftSection={<IconFolderOpen size={16} />}
                     rightSection={<IconChevronDown size={14} />}
                   >
@@ -346,7 +336,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                         /
                       </Text>
                     )}
-                    <Button variant="subtle" size="xs" px="xs" onClick={onNavigatorOpen}>
+                    <Button variant="subtle" px="xs" onClick={onNavigatorOpen}>
                       {segment}
                     </Button>
                   </Group>
@@ -358,7 +348,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Button
                     variant="outline"
                     color="gray"
-                    size="xs"
                     leftSection={<IconGitBranch size={16} />}
                     rightSection={<IconChevronDown size={14} />}
                     loading={!branchName && busy}
@@ -404,50 +393,39 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
 
               {clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() &&
                 branchName &&
-                branchStatus && (
+                statusPresentation && (
                   <Badge
-                    color={getStatusColor(branchStatus)}
-                    variant="light"
+                    color={statusPresentation.color}
+                    variant={statusPresentation.variant}
                     size="sm"
-                    data-testid={`header-status-badge-${branchStatus}`}
+                    data-testid={`header-status-badge-${branchIsProtected ? 'protected' : branchStatus}`}
+                    data-status={branchIsProtected ? 'protected' : branchStatus}
                   >
-                    {branchStatus}
+                    {statusPresentation.label}
                   </Badge>
                 )}
 
               {clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() &&
                 branchName && (
-                  <Button
-                    variant="outline"
-                    color="gray"
-                    size="xs"
-                    onClick={onCommentsPanelOpen}
-                    style={{ position: 'relative' }}
-                    data-testid="comments-button"
+                  <Indicator
+                    label={<span data-testid="comments-unresolved-count">{unresolvedCount}</span>}
+                    size={18}
+                    color="brand"
+                    disabled={unresolvedCount === 0}
+                    styles={{ indicator: { pointerEvents: 'none' } }}
                   >
-                    Comments
-                    {comments.filter((t) => !t.resolved).length > 0 && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          top: -6,
-                          right: -6,
-                          background: 'var(--mantine-color-grape-6)',
-                          color: 'white',
-                          borderRadius: '50%',
-                          width: 18,
-                          height: 18,
-                          fontSize: 10,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {comments.filter((t) => !t.resolved).length}
-                      </span>
-                    )}
-                  </Button>
+                    <Button
+                      variant="outline"
+                      color="gray"
+                      onClick={onCommentsPanelOpen}
+                      data-testid="comments-button"
+                      aria-label={
+                        unresolvedCount > 0 ? `Comments, ${unresolvedCount} unresolved` : undefined
+                      }
+                    >
+                      Comments
+                    </Button>
+                  </Indicator>
                 )}
             </Group>
           </Stack>
@@ -569,7 +547,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               <Text size="sm">
                 {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
               </Text>
-              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
+              <Button variant="light" color="yellow" onClick={onBranchManagerOpen}>
                 Create a branch
               </Button>
             </Group>
@@ -591,7 +569,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
                     : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
-              <Button size="xs" variant="light" color="yellow" onClick={onBranchManagerOpen}>
+              <Button variant="light" color="yellow" onClick={onBranchManagerOpen}>
                 Manage Branches
               </Button>
             </Group>

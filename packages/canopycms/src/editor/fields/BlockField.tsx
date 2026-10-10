@@ -25,7 +25,9 @@ import { CSS } from '@dnd-kit/utilities'
 import type { BlockConfig, FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { EDITOR_ACTIONS } from '../copy'
+import { groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 export interface BlockInstance {
   template: string
@@ -41,6 +43,7 @@ type RenderField = (
 
 export interface BlockFieldProps {
   label?: string
+  required?: boolean
   description?: string
   templates: BlockConfig[]
   value: BlockInstance[]
@@ -73,7 +76,6 @@ const SortableBlock: React.FC<{
     <Paper
       ref={setNodeRef}
       withBorder
-      radius="md"
       p="sm"
       shadow="xs"
       style={style}
@@ -81,6 +83,7 @@ const SortableBlock: React.FC<{
     >
       <Group align="flex-start" gap="sm">
         <ActionIcon
+          size="md"
           key="drag-handle"
           variant="subtle"
           aria-label="Drag to reorder"
@@ -100,6 +103,7 @@ const SortableBlock: React.FC<{
 
 export const BlockField: React.FC<BlockFieldProps> = ({
   label,
+  required,
   description,
   templates,
   value,
@@ -177,7 +181,6 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   return (
     <Paper
       withBorder
-      radius="md"
       p="md"
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
@@ -185,27 +188,29 @@ export const BlockField: React.FC<BlockFieldProps> = ({
       {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
-        <Group justify="space-between">
-          <Text size="xs" fw={700} c="dimmed">
-            {label ?? 'Blocks'}
-          </Text>
-          <Select
-            aria-label="Add block"
-            placeholder="Add block..."
-            data={selectableTemplates}
-            value={pendingTemplate}
-            onChange={(next) => {
-              if (next) {
-                addBlock(next)
-              }
-              setPendingTemplate(null)
-            }}
-            allowDeselect
-            size="xs"
-            w={180}
-          />
-        </Group>
-        <FieldDescription baseId={descriptionBaseId} description={description} />
+        <FieldLabel
+          label={label ?? 'Blocks'}
+          required={required}
+          description={description}
+          descriptionBaseId={descriptionBaseId}
+          actions={
+            <Select
+              aria-label="Add block"
+              placeholder="Add block..."
+              data={selectableTemplates}
+              value={pendingTemplate}
+              onChange={(next) => {
+                if (next) {
+                  addBlock(next)
+                }
+                setPendingTemplate(null)
+              }}
+              allowDeselect
+              size="xs"
+              w={180}
+            />
+          }
+        />
 
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <SortableContext items={itemKeys} strategy={verticalListSortingStrategy}>
@@ -221,37 +226,34 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                     canopyPath={formatCanopyPath(currentPath)}
                   >
                     <Stack gap="xs">
-                      <Group justify="space-between" align="flex-start">
-                        <Text size="sm" fw={600}>
-                          {template?.label ?? block.template ?? 'Unknown block'}
-                        </Text>
-                        <Group gap={4}>
-                          <ActionIcon
-                            variant="light"
-                            aria-label="Move block up"
-                            disabled={idx === 0}
-                            onClick={() => moveBlock(idx, idx - 1)}
-                          >
-                            ↑
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="light"
-                            aria-label="Move block down"
-                            disabled={idx === value.length - 1}
-                            onClick={() => moveBlock(idx, idx + 1)}
-                          >
-                            ↓
-                          </ActionIcon>
-                          <Button
-                            variant="subtle"
-                            color="red"
-                            size="xs"
-                            onClick={() => removeBlock(idx)}
-                          >
-                            Remove
-                          </Button>
-                        </Group>
-                      </Group>
+                      <FieldLabel
+                        label={template?.label ?? block.template ?? 'Unknown block'}
+                        actions={
+                          <>
+                            <ActionIcon
+                              size="md"
+                              variant="light"
+                              aria-label="Move block up"
+                              disabled={idx === 0}
+                              onClick={() => moveBlock(idx, idx - 1)}
+                            >
+                              ↑
+                            </ActionIcon>
+                            <ActionIcon
+                              size="md"
+                              variant="light"
+                              aria-label="Move block down"
+                              disabled={idx === value.length - 1}
+                              onClick={() => moveBlock(idx, idx + 1)}
+                            >
+                              ↓
+                            </ActionIcon>
+                            <Button variant="subtle" color="red" onClick={() => removeBlock(idx)}>
+                              {EDITOR_ACTIONS.remove}
+                            </Button>
+                          </>
+                        }
+                      />
 
                       {template ? (
                         <Stack gap="sm">

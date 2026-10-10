@@ -162,17 +162,11 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               disabled={isSubmitting}
             />
             <Group gap="xs">
-              <Button
-                size="xs"
-                onClick={handleReply}
-                loading={isSubmitting}
-                disabled={!replyText.trim()}
-              >
+              <Button onClick={handleReply} loading={isSubmitting} disabled={!replyText.trim()}>
                 Reply
               </Button>
               {canUserResolve() && (
                 <Button
-                  size="xs"
                   variant="light"
                   color="green"
                   onClick={handleResolve}
