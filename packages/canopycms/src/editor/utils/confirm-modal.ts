@@ -4,7 +4,7 @@ type ConfirmModalProps = Parameters<typeof modals.openConfirmModal>[0]
 
 /**
  * `modals.openConfirmModal` with `sm` actions: its own Buttons would otherwise take the theme's
- * compact `xs` default. A caller's `size` still wins.
+ * compact `xs` default. A `size` the caller sets replaces it.
  */
 export function openConfirm(props: ConfirmModalProps): string {
   return modals.openConfirmModal({

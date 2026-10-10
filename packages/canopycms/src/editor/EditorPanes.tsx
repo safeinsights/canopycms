@@ -39,14 +39,14 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
   >
   const splitContainerRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<PaneLayout>(layoutProp)
-  // Live drag state: the props only change when a drag ends, so dragging never writes storage.
+  // Live drag state: the props change only when a drag ends or stored prefs load, so dragging
+  // never writes storage.
   const [sidePrimarySize, setSidePrimarySize] = useState<number>(sideSplitPercent)
   const [stackedPrimarySize, setStackedPrimarySize] = useState<number>(stackedSplitPercent)
   // Turn off iframe/pane pointer events while dragging so the gutter keeps receiving mouse events.
   const [isDragging, setIsDragging] = useState(false)
-  // The last percent a drag produced. `onDragFinished` cannot supply it: once `size` is
-  // controlled, react-split-pane hands back that prop's string ("37%"), or undefined after a
-  // click with no movement.
+  // The last percent a drag produced. `onDragFinished` cannot supply it: with `size` controlled,
+  // react-split-pane hands back that prop's string ("37%"), a click with no movement included.
   const dragPercentRef = useRef<number | undefined>(undefined)
 
   useEffect(() => {

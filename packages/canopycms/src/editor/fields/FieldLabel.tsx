@@ -15,7 +15,7 @@ export interface FieldLabelProps {
   required?: boolean
   /** Guidance under the label; rendered via FieldDescription so its id matches groupDescriptionProps(baseId, ...). */
   description?: string
-  /** Base id shared with groupDescriptionProps/fieldDescriptionId; required when description is set. */
+  /** Base id shared with groupDescriptionProps/fieldDescriptionId; without it, no description renders. */
   descriptionBaseId?: string
   /** When set, the label is a <label for=...>; otherwise it is a <div> (groups have no single input). */
   htmlFor?: string
