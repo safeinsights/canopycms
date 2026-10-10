@@ -498,17 +498,11 @@ the editor's origin; the editor still detects sign-out. Otherwise nothing.
 
 ### Auth plugins look users up in batches
 
-**What changed.** (next int) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, given at
-most 100 ids and resolving to the users found. The Permissions and Groups panels fetch their users
-in one request. The Clerk and dev plugins implement it.
+**What changed.** (next int) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, and the
+editor batches its user-badge lookups.
 
-**To adopt.** Nothing under `createNextCanopyContext` with a plugin implementing `verifyTokenOnly`:
-lookups come from the file-based auth cache. Otherwise core calls your plugin, caching answers for
-five minutes per process; without `getUsersMetadata` it makes up to 8 concurrent `getUserMetadata`
-calls. Implement it with your provider's list-by-ids call, rejecting on a provider failure: an
-omitted id is cached as unknown.
-
-**Now deletable.** A cache in front of a custom plugin's `getUserMetadata`.
+**To adopt.** Nothing. A custom auth plugin may implement it; otherwise the server falls back to
+bounded single lookups.
 
 ### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
 
