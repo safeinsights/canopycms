@@ -375,7 +375,7 @@ function stringAllowance(
   allowed: MdxPropAllow | undefined,
 ): { maxLength: number | null } | undefined {
   if (allowed === 'string') return { maxLength: null }
-  if (typeof allowed === 'object' && !Array.isArray(allowed)) {
+  if (isRecord(allowed) && allowed.type === 'string') {
     return { maxLength: allowed.maxLength ?? null }
   }
   return undefined
