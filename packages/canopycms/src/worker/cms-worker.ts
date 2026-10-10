@@ -32,7 +32,12 @@ import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
 import { GitHubMirror } from './github-mirror'
-import { assertSharedRepoConfig, sharedRepoGit } from './shared-repo-git'
+import {
+  SharedRepoRefusalError,
+  UntrustedRepoConfigError,
+  assertSharedRepoConfig,
+  sharedRepoGit,
+} from './shared-repo-git'
 import {
   executeTask,
   orphanRecoveryMaxAgeMs,
@@ -931,17 +936,29 @@ export class CmsWorker {
    */
   private async resolveBaseBranch(): Promise<void> {
     if (this.resolvedBaseBranch) return
-    let name: string
-    const remoteGitExists = await fs.stat(this.remoteGitPath).then(
-      () => true,
-      (err: unknown) => {
-        if (isNodeError(err) && err.code === 'ENOENT') return false
-        throw err
-      },
-    )
-    // Before the first git to read it, and outside the try below: a refusal is recorded as itself,
-    // not as a base branch to configure or a remote.git to delete.
+    const undetermined = (err: unknown) =>
+      new Error(
+        `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
+          `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
+          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork ` +
+          `from, or, if remote.git is damaged, delete ${this.remoteGitPath} and restart to re-clone.`,
+      )
+    let remoteGitExists: boolean
+    try {
+      remoteGitExists = await fs.stat(this.remoteGitPath).then(
+        () => true,
+        (err: unknown) => {
+          if (isNodeError(err) && err.code === 'ENOENT') return false
+          throw err
+        },
+      )
+    } catch (err) {
+      throw undetermined(err)
+    }
+    // Before the first git to read it, and on its own: a refusal is recorded as itself, not as a
+    // base branch to configure or a remote.git to delete.
     if (remoteGitExists) await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    let name: string
     try {
       name = remoteGitExists
         ? await readHeadBranch(this.remoteGitPath, sharedRepoGit(this.remoteGitPath, 'bare'))
@@ -952,12 +969,7 @@ export class CmsWorker {
             })
           ).data.default_branch
     } catch (err) {
-      throw new Error(
-        `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
-          `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
-          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork ` +
-          `from, or, if remote.git is damaged, delete ${this.remoteGitPath} and restart to re-clone.`,
-      )
+      throw undetermined(err)
     }
     this.setBaseBranch(name)
     workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
@@ -1170,7 +1182,17 @@ export class CmsWorker {
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
-      if (getErrorMessage(err).startsWith('Refusing to run git in')) throw err
+      if (err instanceof SharedRepoRefusalError) {
+        // Not the refusal's own advice: the directory it names is gone.
+        throw new SharedRepoRefusalError(
+          `Refusing to run git in ${stagingPath}: something wrote to it while the worker seeded ` +
+            `remote.git from it` +
+            (err instanceof UntrustedRepoConfigError
+              ? ` (${err.keys.map((k) => k.key).join(', ')})`
+              : '') +
+            `, so it was removed. Find out what wrote there; restarting the worker seeds it again.`,
+        )
+      }
       throw new Error(
         `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )

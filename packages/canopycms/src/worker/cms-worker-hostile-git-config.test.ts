@@ -17,7 +17,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { simpleGit, type SimpleGit } from 'simple-git'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { recordSparseCone } from '../branch-sparse'
@@ -25,6 +25,7 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
+import { MirrorSession } from './github-mirror'
 
 const execFileAsync = promisify(execFile)
 
@@ -525,6 +526,31 @@ describe('base-branch detection at boot', () => {
     )
 
     expect((await readStatus())?.lastFatalError?.message).toMatch(/^Refusing to run git in/)
+    expect(await f.sentinelLines()).toEqual([])
+  })
+})
+
+describe('seeding a new remote.git', () => {
+  it('refuses a staging directory written to while it seeds, and leaves neither behind', async () => {
+    await fs.rm(f.remoteGitPath, { recursive: true, force: true })
+    const staging = `${f.remoteGitPath}.cloning`
+    const seed = MirrorSession.prototype.seedBareRepository
+    const spy = vi
+      .spyOn(MirrorSession.prototype, 'seedBareRepository')
+      .mockImplementation(async function (this: MirrorSession, gitDir, signal) {
+        await seed.call(this, gitDir, signal)
+        await plantConfig(gitDir, [['core.fsmonitor', record(f, 'staging')]])
+      })
+    try {
+      await expect(f.worker.ensureRemoteGit()).rejects.toThrow(
+        /^Refusing to run git in \S+remote\.git\.cloning: something wrote to it while the worker seeded remote\.git from it \(core\.fsmonitor\), so it was removed\./,
+      )
+    } finally {
+      spy.mockRestore()
+    }
+
+    await expect(fs.access(staging)).rejects.toThrow()
+    await expect(fs.access(f.remoteGitPath)).rejects.toThrow()
     expect(await f.sentinelLines()).toEqual([])
   })
 })

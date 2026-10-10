@@ -276,11 +276,19 @@ export interface UnexpectedConfigKey {
   file: string
 }
 
+/** Every refusal to run git in a shared repository, so a caller can tell one from git's own errors. */
+export class SharedRepoRefusalError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SharedRepoRefusalError'
+  }
+}
+
 /**
  * A shared repository whose own config holds a key CanopyCMS never writes.
  * @internal Exported for tests.
  */
-export class UntrustedRepoConfigError extends Error {
+export class UntrustedRepoConfigError extends SharedRepoRefusalError {
   constructor(
     readonly repoPath: string,
     readonly keys: readonly UnexpectedConfigKey[],
@@ -302,10 +310,14 @@ export class UntrustedRepoConfigError extends Error {
 }
 
 /** A shared repository whose config git could not read, or did not finish reading. */
-function unreadableConfig(repoPath: string, configFile: string, err: unknown): Error {
+function unreadableConfig(
+  repoPath: string,
+  configFile: string,
+  err: unknown,
+): SharedRepoRefusalError {
   const cause = getErrorMessage(err).trim()
   const timedOut = /block timeout/i.test(cause)
-  return new Error(
+  return new SharedRepoRefusalError(
     `Refusing to run git in ${repoPath}: ` +
       (timedOut
         ? `reading its git config did not finish, which an include.path naming a pipe or device ` +
@@ -316,8 +328,8 @@ function unreadableConfig(repoPath: string, configFile: string, err: unknown): E
 }
 
 /** A clone whose index git could not list. */
-function unreadableIndex(clone: string, err: unknown): Error {
-  return new Error(
+function unreadableIndex(clone: string, err: unknown): SharedRepoRefusalError {
+  return new SharedRepoRefusalError(
     `Refusing to run git in ${clone}: git could not list its index (${getErrorMessage(err).trim()}).`,
   )
 }
@@ -476,7 +488,7 @@ async function refusePopulated(clone: string, gitlinks: string[]): Promise<void>
         : `remove the symbolic link that makes ${shellQuote(planted)} resolve to ${shellQuote(real)}`,
     )
   }
-  throw new Error(
+  throw new SharedRepoRefusalError(
     `Refusing to run git in ${clone}: it has a submodule with a repository in it at ` +
       `${populated.map((p) => JSON.stringify(p)).join(', ')}, and git runs inside one under its ` +
       `own config. CanopyCMS never populates a submodule. Find out how it got there, then ` +
