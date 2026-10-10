@@ -213,6 +213,37 @@ export class CommentStore {
     })
   }
 
+  /**
+   * Append a comment to an existing thread, or return null when `threadId` names none at write
+   * time. Unlike {@link addComment}, a missing thread is never created, so a reply cannot plant
+   * a thread under an id or entry path nobody checked.
+   */
+  async addReply(options: {
+    userId: string
+    text: string
+    threadId: string
+  }): Promise<{ threadId: string; commentId: string } | null> {
+    const commentId = randomUUID()
+
+    return this.withMutation(async (data, version) => {
+      const thread = ownThread(data, options.threadId)
+      if (!thread) {
+        return null
+      }
+
+      thread.comments.push({
+        id: commentId,
+        threadId: options.threadId,
+        userId: options.userId,
+        timestamp: new Date().toISOString(),
+        text: options.text,
+      })
+
+      await this.writeData(data, version)
+      return { threadId: options.threadId, commentId }
+    })
+  }
+
   async resolveThread(threadId: string, userId: string): Promise<boolean> {
     return this.withMutation(async (data, version) => {
       const thread = ownThread(data, threadId)

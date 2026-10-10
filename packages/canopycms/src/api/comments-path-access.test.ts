@@ -98,6 +98,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -201,17 +202,11 @@ describe('comment threads honour path read rules', () => {
 
   it('refuses a new thread whose entry path aliases a read-denied entry', async () => {
     for (const alias of [
+      'secret/plan',
       'content/./secret/plan',
       'content//secret/plan',
       'content/secret/./plan',
     ]) {
-      const validated = COMMENT_ROUTES.add.validate({
-        params: { branch },
-        body: { text: 'sneaky', type: 'entry', entryPath: alias },
-      })
-      expect(validated.ok, alias).toBe(false)
-
-      // The handler refuses it too, for a caller that skips the route's validation.
       const res = await add(editor, {
         text: 'sneaky',
         type: 'entry',
@@ -241,6 +236,24 @@ describe('comment threads honour path read rules', () => {
     })
 
     expect(res.status).toBe(201)
+  })
+
+  it('refuses a reply whose thread is gone by the time it is written', async () => {
+    const stale = await store.getThread(threadIds.open)
+    const data = await store.load()
+    delete data.threads[threadIds.open]
+    await fs.writeFile(path.join(root, '.canopy-meta', 'comments.json'), JSON.stringify(data))
+    vi.spyOn(CommentStore.prototype, 'getThread').mockResolvedValueOnce(stale)
+
+    const res = await add(editor, {
+      text: 'late reply',
+      threadId: threadIds.open,
+      type: 'entry',
+      entryPath: unsafeAsLogicalPath(SECRET_ENTRY),
+    })
+
+    expect(res.status).toBe(404)
+    expect(await store.getThread(threadIds.open)).toBeNull()
   })
 
   it('never resolves to an inherited property for a thread id like __proto__', async () => {
