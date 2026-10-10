@@ -361,9 +361,26 @@ describe('assertSharedRepoConfig: a repository that is really somewhere else', (
     await expect(assertSharedRepoConfig(clone, 'worktree')).rejects.toThrow(
       `Refusing to run git in ${clone}: it has a submodule with a repository in it at "sub", ` +
         `and git runs inside one under its own config. CanopyCMS never populates a submodule. ` +
-        `Find out how it got there, then remove it: rm -rf '${clone}/sub/.git'`,
+        `Find out how it got there, then rm -rf '${clone}/sub/.git'`,
     )
     expect(await sentinelLines()).toEqual([])
+  })
+
+  it('never advises removing what a symbolic link at the submodule path names', async () => {
+    const { clone, cloneGit } = await sharedPair()
+    const elsewhere = path.join(root, 'elsewhere')
+    await fs.mkdir(elsewhere)
+    await initTestRepo(elsewhere)
+    await fs.symlink(elsewhere, path.join(clone, 'sub'))
+    const sha = (await cloneGit.revparse(['HEAD'])).trim()
+    await cloneGit.raw(['update-index', '--add', '--cacheinfo', `160000,${sha},sub`])
+
+    const err = await assertSharedRepoConfig(clone, 'worktree').catch((e: unknown) => e)
+
+    expect((err as Error).message).not.toMatch(/rm -rf/)
+    expect((err as Error).message).toMatch(
+      `remove the symbolic link that makes '${clone}/sub/.git' resolve to '${elsewhere}/.git'`,
+    )
   })
 
   it("accepts an unpopulated submodule, as a non-recursive clone of an adopter's repository has", async () => {

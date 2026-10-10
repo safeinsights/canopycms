@@ -447,16 +447,27 @@ export async function assertNoIncomingSubmodules(
 
 async function refusePopulated(clone: string, gitlinks: string[]): Promise<void> {
   const populated: string[] = []
-  for (const gitlink of gitlinks) {
+  // A conflicted gitlink is listed once per stage.
+  for (const gitlink of new Set(gitlinks)) {
     if (await pathExists(path.join(clone, gitlink, '.git'))) populated.push(gitlink)
   }
   if (populated.length === 0) return
+  const removals: string[] = []
+  for (const gitlink of populated) {
+    const planted = path.join(clone, gitlink, '.git')
+    // A symbolic link on the way would make `rm -rf` remove whatever it names instead.
+    const real = await fs.realpath(planted).catch(() => planted)
+    removals.push(
+      real === planted
+        ? `rm -rf ${shellQuote(planted)}`
+        : `remove the symbolic link that makes ${shellQuote(planted)} resolve to ${shellQuote(real)}`,
+    )
+  }
   throw new Error(
     `Refusing to run git in ${clone}: it has a submodule with a repository in it at ` +
       `${populated.map((p) => JSON.stringify(p)).join(', ')}, and git runs inside one under its ` +
-      `own config. CanopyCMS never populates a submodule. Find out how it got there, then remove ` +
-      `it: ` +
-      populated.map((p) => `rm -rf ${shellQuote(path.join(clone, p, '.git'))}`).join(' && '),
+      `own config. CanopyCMS never populates a submodule. Find out how it got there, then ` +
+      `${removals.join('; then ')}`,
   )
 }
 
