@@ -10,7 +10,8 @@ import { CanopyCMSProvider } from '../theme'
 import { SystemHealthPanel } from './SystemHealthPanel'
 import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
-import type { BranchHealthEntry } from '../../branch-health'
+import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
+import type { BranchHealthData } from '../../api/admin-branch-health'
 import type { BaseRefreshReport, BaseSchemaHold, WorkerStatusReport } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
@@ -793,11 +794,14 @@ describe('SystemHealthPanel', () => {
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
       },
-      duplicateContentIds: [
+    }
+    const duplicateFound: DuplicateIdScan = {
+      state: 'found',
+      duplicates: [
         {
           id: unsafeAsContentId('a1b2c3d4e5f6'),
-          keptPath: unsafeAsPhysicalPath('content/posts/one.md'),
-          droppedPaths: [unsafeAsPhysicalPath('content/notes/one.md')],
+          keptPath: unsafeAsPhysicalPath('content/posts/post.one.a1b2c3d4e5f6.json'),
+          droppedPaths: [unsafeAsPhysicalPath('content/posts/post.two.a1b2c3d4e5f6.json')],
         },
       ],
     }
@@ -872,17 +876,125 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByText('orphan-old')).toBeTruthy()
     })
 
-    // The editor's 409 says an administrator must resolve the duplicate; this
-    // is the only place an administrator can see which branch is affected.
-    it('surfaces duplicate content IDs on a healthy branch, read-only', async () => {
-      renderPanel()
-      await userEvent.click(screen.getByText('Branches'))
+    describe('duplicate content IDs', () => {
+      /**
+       * Answers the plain request with `entries` and the `duplicates=1` scan
+       * with each healthy entry's `scans[dirName]` (omitted when absent).
+       */
+      const mockScan = (
+        entries: BranchHealthEntry[],
+        scans: Record<string, DuplicateIdScan>,
+        truncated = false,
+      ) => {
+        mockClient.admin.branchHealth.mockImplementation(async (params) => {
+          const data: BranchHealthData =
+            params?.duplicates === '1'
+              ? {
+                  entries: entries.map((e) =>
+                    scans[e.dirName] ? { ...e, duplicateIdScan: scans[e.dirName] } : e,
+                  ),
+                  generatedAt: '2026-01-01T00:00:00.000Z',
+                  duplicateIdScan: { budgetMs: 20_000, truncated },
+                }
+              : { entries, generatedAt: '2026-01-01T00:00:00.000Z' }
+          return mockSuccess(data)
+        })
+      }
+      const summary = () => screen.getByTestId('duplicate-id-summary').textContent
 
-      await waitFor(() => expect(screen.getByText('feature-dupes')).toBeTruthy())
-      const badge = screen.getByTestId('duplicate-content-ids-feature-dupes')
-      expect(badge.textContent).toBe('1 duplicate ID')
-      // No repair control here: the action would sit beside Purge.
-      expect(screen.queryByTestId('repair-content-duplicates-feature-dupes')).toBeNull()
+      it('opens its own confirmation from the badge, showing kept and archived paths, and confirm runs only the repair', async () => {
+        const { modals } = await import('@mantine/modals')
+        mockScan([healthyWithDuplicateIds, oldOrphan], { 'feature-dupes': duplicateFound })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        const badge = await screen.findByTestId('duplicate-content-ids-feature-dupes')
+        expect(badge.textContent).toBe('1 duplicate ID')
+        expect(summary()).toBe('Duplicate content IDs found on 1 branch.')
+
+        await userEvent.click(badge)
+
+        const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+        expect(options?.title).toBe('Fix duplicate content IDs')
+        expect(options?.labels).toEqual({ confirm: 'Archive duplicates', cancel: 'Cancel' })
+        cleanup()
+        render(<CanopyCMSProvider>{options?.children}</CanopyCMSProvider>)
+        expect(screen.getByText('content/posts/post.one.a1b2c3d4e5f6.json')).toBeTruthy()
+        expect(screen.getByText('content/posts/post.two.a1b2c3d4e5f6.json')).toBeTruthy()
+        expect(screen.getByText(/Nothing is deleted/)).toBeTruthy()
+
+        await waitFor(() =>
+          expect(mockClient.admin.repairContentDuplicates).toHaveBeenCalledWith({
+            dirName: 'feature-dupes',
+          }),
+        )
+        expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
+      })
+
+      it('says not checked, never clean, for a branch the scan could not finish or did not include', async () => {
+        const late: BranchHealthEntry = { ...healthyWithDuplicateIds, dirName: 'feature-late' }
+        const added: BranchHealthEntry = { ...healthyWithDuplicateIds, dirName: 'feature-new' }
+        mockScan(
+          [healthyWithDuplicateIds, late, added],
+          {
+            'feature-dupes': { state: 'none' },
+            'feature-late': { state: 'unknown', reason: 'out-of-time' },
+          },
+          true,
+        )
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await screen.findByTestId('duplicate-ids-unchecked-feature-late')
+        expect(screen.getByTestId('duplicate-ids-unchecked-feature-new')).toBeTruthy()
+        expect(screen.queryByTestId('duplicate-ids-unchecked-feature-dupes')).toBeNull()
+        expect(screen.queryByTestId('duplicate-content-ids-feature-late')).toBeNull()
+        expect(summary()).toBe('Could not check 2 branches.')
+
+        await userEvent.hover(screen.getByTestId('duplicate-ids-unchecked-feature-late'))
+        expect((await screen.findByRole('tooltip')).textContent).toBe(
+          'The duplicate ID check ran out of time before this branch.',
+        )
+      })
+
+      it('says clean only when every healthy branch was scanned clean', async () => {
+        mockScan([healthyWithDuplicateIds, corruptEntry], { 'feature-dupes': { state: 'none' } })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await waitFor(() => expect(summary()).toBe('No duplicate content IDs found.'))
+        expect(screen.queryByTestId('duplicate-content-ids-feature-dupes')).toBeNull()
+        expect(screen.queryByTestId('duplicate-ids-unchecked-feature-dupes')).toBeNull()
+      })
+
+      it('reports a failed scan request as not checked', async () => {
+        mockClient.admin.branchHealth.mockImplementation(async (params) =>
+          params?.duplicates === '1'
+            ? { ok: false, status: 500, error: 'Lambda timed out' }
+            : mockSuccess({
+                entries: [healthyWithDuplicateIds],
+                generatedAt: '2026-01-01T00:00:00.000Z',
+              }),
+        )
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+
+        await waitFor(() =>
+          expect(summary()).toBe('Could not check for duplicate content IDs: Lambda timed out'),
+        )
+      })
+
+      it('Check again re-runs the scan', async () => {
+        mockScan([healthyWithDuplicateIds], { 'feature-dupes': { state: 'none' } })
+        renderPanel()
+        await userEvent.click(screen.getByText('Branches'))
+        await waitFor(() => expect(summary()).toBe('No duplicate content IDs found.'))
+
+        mockScan([healthyWithDuplicateIds], { 'feature-dupes': duplicateFound })
+        await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
+
+        await screen.findByTestId('duplicate-content-ids-feature-dupes')
+      })
     })
 
     it('shows Mark merged only for submitted/approved branches with a PR, and confirms the prod verification gap', async () => {

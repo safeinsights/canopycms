@@ -3,6 +3,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { ADMIN_ROUTES } from './admin'
+import { DUPLICATE_ID_SCAN_BUDGET_MS } from './admin-branch-health'
+import { ContentIdIndex } from '../content-id-index'
 import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser, initTestRepo } from '../test-utils'
@@ -100,7 +102,7 @@ describe('admin branch-health api', () => {
       await createCorruptBranch('broken')
       await createOrphanBranch('orphan-dir')
 
-      const result = await branchHealthHandler(ctx, req)
+      const result = await branchHealthHandler(ctx, req, {})
 
       expect(result.ok).toBe(true)
       expect(result.data?.entries).toHaveLength(3)
@@ -120,7 +122,7 @@ describe('admin branch-health api', () => {
       const eisdirMetaDir = path.join(branchesRoot, 'weird-branch', '.canopy-meta')
       await fs.mkdir(path.join(eisdirMetaDir, 'branch.json'), { recursive: true })
 
-      const result = await branchHealthHandler(ctx, req)
+      const result = await branchHealthHandler(ctx, req, {})
 
       expect(result.data?.entries).toHaveLength(3)
       const broken = result.data?.entries.find((e) => e.dirName === 'broken')
@@ -128,6 +130,45 @@ describe('admin branch-health api', () => {
       expect(broken?.parseError).toBeTruthy()
       expect(weird?.parseError).toBeTruthy()
       expect(JSON.stringify(result)).not.toContain(tmpDir)
+    })
+
+    it('scans for duplicate IDs only when asked, and reports the budget and truncation', async () => {
+      await createHealthyBranch('main')
+
+      const plain = await branchHealthHandler(ctx, req, {})
+      expect(plain.data?.duplicateIdScan).toBeUndefined()
+      expect(plain.data?.entries[0].duplicateIdScan).toBeUndefined()
+
+      const scanned = await branchHealthHandler(ctx, req, { duplicates: '1' })
+      expect(scanned.data?.duplicateIdScan).toEqual({
+        budgetMs: DUPLICATE_ID_SCAN_BUDGET_MS,
+        truncated: false,
+      })
+      expect(scanned.data?.entries[0].duplicateIdScan).toEqual({ state: 'none' })
+    })
+
+    it('marks the scan truncated when a branch scan outlives the budget', async () => {
+      await createHealthyBranch('main')
+      vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames').mockImplementation(
+        () => new Promise<void>(() => {}),
+      )
+      // Only the timer pair is faked: the handler's real fs I/O must still run.
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const pending = branchHealthHandler(ctx, req, { duplicates: '1' })
+        while (vi.getTimerCount() === 0) await new Promise((r) => setImmediate(r))
+        vi.advanceTimersByTime(DUPLICATE_ID_SCAN_BUDGET_MS)
+        const result = await pending
+
+        expect(result.data?.duplicateIdScan?.truncated).toBe(true)
+        expect(result.data?.entries[0].duplicateIdScan).toEqual({
+          state: 'unknown',
+          reason: 'out-of-time',
+        })
+      } finally {
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+      }
     })
   })
 
@@ -145,7 +186,7 @@ describe('admin branch-health api', () => {
       expect(invalidateSpy).toHaveBeenCalled()
 
       // Scan no longer lists the purged dir under its old name.
-      const scan = await branchHealthHandler(ctx, req)
+      const scan = await branchHealthHandler(ctx, req, {})
       expect(scan.data?.entries.find((e) => e.dirName === 'broken')).toBeUndefined()
     })
 
@@ -280,7 +321,7 @@ describe('admin branch-health api', () => {
       await fs.mkdir(metaDir, { recursive: true })
       await fs.writeFile(path.join(metaDir, 'branch.json'), shapeBroken, 'utf-8')
 
-      const scanned = await branchHealthHandler(ctx, req)
+      const scanned = await branchHealthHandler(ctx, req, {})
       const entry = scanned.data?.entries.find((e) => e.dirName === 'shape-broken')
       expect(entry?.kind).toBe('corrupt-metadata')
       expect(entry?.parseError).toBe('Not branch metadata. Missing: branch.status, branch.access')
@@ -478,12 +519,12 @@ describe('admin branch-health api', () => {
       const rescanSpy = mockConsole()
       let scan: Awaited<ReturnType<typeof branchHealthHandler>>
       try {
-        scan = await branchHealthHandler(ctx, req)
+        scan = await branchHealthHandler(ctx, req, { duplicates: '1' })
       } finally {
         rescanSpy.restore()
       }
       const entry = scan.data?.entries.find((e) => e.dirName === 'dup-branch')
-      expect(entry?.duplicateContentIds).toBeUndefined()
+      expect(entry?.duplicateIdScan).toEqual({ state: 'none' })
     })
 
     it('returns 409 when there are no duplicate content IDs to repair', async () => {

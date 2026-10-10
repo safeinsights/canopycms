@@ -31,6 +31,16 @@ type BranchHealthKind = 'healthy' | 'corrupt-metadata' | 'orphan'
  */
 export const ORPHAN_YOUTH_THRESHOLD_MS = 15 * 60_000
 
+/**
+ * One healthy branch's duplicate-content-ID scan (see content-id-index.ts).
+ * `unknown` means the scan did not finish — it failed, or the request's time
+ * budget ran out first — and must never be read as `none`.
+ */
+export type DuplicateIdScan =
+  | { state: 'none' }
+  | { state: 'found'; duplicates: DuplicateContentId[] }
+  | { state: 'unknown'; reason: 'failed' | 'out-of-time' }
+
 export interface BranchHealthEntry {
   dirName: string
   kind: BranchHealthKind
@@ -39,19 +49,19 @@ export interface BranchHealthEntry {
   /** healthy only */
   branch?: BranchMetadata
   /**
-   * healthy only, non-empty only: duplicate content IDs in this branch's
-   * content tree (see content-id-index.ts). The branch stays usable — only the
-   * quarantined IDs degrade, dropping out of ID-based lookups and refusing
-   * saves (`DuplicateContentIdError`, a 409 naming the repair action) rather
-   * than mutating an ambiguous target.
+   * healthy only, and only when the caller asked for the duplicate-ID scan: see
+   * {@link DuplicateIdScan}. The branch stays usable while IDs are duplicated —
+   * only the quarantined IDs degrade, dropping out of ID-based lookups and
+   * refusing saves (`DuplicateContentIdError`) rather than mutating an
+   * ambiguous target.
    */
-  duplicateContentIds?: DuplicateContentId[]
+  duplicateIdScan?: DuplicateIdScan
   /**
    * healthy only, true only: this clone has an interrupted rebase on disk
    * (`.git/rebase-merge` / `.git/rebase-apply`).
    *
    * Advisory on `healthy` rather than its own `BranchHealthKind`, like
-   * `duplicateContentIds`: the metadata is intact and the state is usually
+   * `duplicateIdScan`: the metadata is intact and the state is usually
    * transient, since the worker's sync loop aborts an interrupted rebase at the
    * top of its next per-branch pass. The flag buys visibility in the window
    * before that, where the branch otherwise scans as plain `healthy` while
@@ -121,22 +131,38 @@ async function readMetaMtime(branchRoot: string): Promise<string | undefined> {
 }
 
 /**
- * Scan a healthy branch's content tree for duplicate embedded IDs (see
- * content-id-index.ts). Never throws: one branch's unreadable content tree must
- * not take down the whole health scan. Costs a full recursive readdir — the
- * same class of cost as a ContentStore's first-access warm-up, fine for an
- * admin-triggered scan and not for a hot path.
+ * Scan a healthy branch's content tree for duplicate embedded IDs, giving up
+ * at `deadline` (epoch ms). Never throws: one branch's unreadable content tree
+ * must not take down the whole health scan. Costs a full recursive readdir, so
+ * it runs only on request and under a budget. A readdir cannot be cancelled: a
+ * scan that misses the deadline keeps running unobserved until it settles.
  */
 async function scanDuplicateContentIds(
   branchRoot: string,
   contentRootName: string,
-): Promise<DuplicateContentId[]> {
+  deadline: number,
+): Promise<DuplicateIdScan> {
+  const remainingMs = deadline - Date.now()
+  if (remainingMs <= 0) return { state: 'unknown', reason: 'out-of-time' }
+
+  const scan = (async (): Promise<DuplicateIdScan> => {
+    try {
+      const idIndex = new ContentIdIndex(branchRoot)
+      await idIndex.buildFromFilenames(contentRootName)
+      const duplicates = idIndex.getDuplicateIds()
+      return duplicates.length ? { state: 'found', duplicates } : { state: 'none' }
+    } catch {
+      return { state: 'unknown', reason: 'failed' }
+    }
+  })()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const outOfTime = new Promise<DuplicateIdScan>((resolve) => {
+    timer = setTimeout(() => resolve({ state: 'unknown', reason: 'out-of-time' }), remainingMs)
+  })
   try {
-    const idIndex = new ContentIdIndex(branchRoot)
-    await idIndex.buildFromFilenames(contentRootName)
-    return idIndex.getDuplicateIds()
-  } catch {
-    return []
+    return await Promise.race([scan, outOfTime])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -146,11 +172,22 @@ async function scanDuplicateContentIds(
  * metadata must not take down the whole scan, as in the registry's quarantine.
  * A missing `baseRoot` returns `[]`, so the admin endpoint can call this
  * without a pre-existence check.
+ *
+ * `duplicateIdScan` opts in to the per-branch duplicate-ID scan, which shares
+ * one `budgetMs` across every healthy branch, scanned in turn; a branch
+ * reached after the budget is spent reports `unknown`/`out-of-time`.
  */
 export async function scanBranchHealth(
   baseRoot: string,
-  opts: { baseBranchName: string; contentRootName?: string },
+  opts: {
+    baseBranchName: string
+    contentRootName?: string
+    duplicateIdScan?: { budgetMs: number }
+  },
 ): Promise<BranchHealthEntry[]> {
+  const duplicateScanDeadline = opts.duplicateIdScan
+    ? Date.now() + opts.duplicateIdScan.budgetMs
+    : undefined
   const resolvedRoot = path.resolve(baseRoot)
   const sanitizedBaseBranchName = sanitizeBranchName(opts.baseBranchName)
   const contentRootName = opts.contentRootName ?? 'content'
@@ -217,8 +254,10 @@ export async function scanBranchHealth(
     }
 
     if (meta) {
-      const [duplicateContentIds, rebaseInProgress] = await Promise.all([
-        scanDuplicateContentIds(branchRoot, contentRootName),
+      const [duplicateIdScan, rebaseInProgress] = await Promise.all([
+        duplicateScanDeadline === undefined
+          ? undefined
+          : scanDuplicateContentIds(branchRoot, contentRootName, duplicateScanDeadline),
         isRebaseInProgress(branchRoot),
       ])
       entries.push({
@@ -226,7 +265,7 @@ export async function scanBranchHealth(
         kind: 'healthy',
         ...(isBaseBranch ? { isBaseBranch } : {}),
         branch: meta.branch,
-        ...(duplicateContentIds.length ? { duplicateContentIds } : {}),
+        ...(duplicateIdScan ? { duplicateIdScan } : {}),
         ...(rebaseInProgress ? { rebaseInProgress } : {}),
       })
       continue
