@@ -1,16 +1,20 @@
 ---
-priority: P2
-adopters: BOTH
 summary: >-
-  `examples/aws-deployment/` and the scaffold templates hold five files in two copies and nothing compares them whole: the example workflow lacks the `next.config.*`/`middleware.ts`/`public/**` triggers and two of the template's six dependency checks. The incident that made it P1 (the example omitting `NEXT_PUBLIC_CANOPY_MODE: 'prod'`) was fixed in #322. Prefer generating the example over pinning it
+  RESOLVED 2026-10-10, fix/aws-example-generated-from-templates. `examples/aws-deployment/` is
+  generated: `pnpm generate:aws-example` renders its five files through the CLI's own template
+  functions (`cli/aws-deploy-example.ts`), and `aws-deploy-example.test.ts` fails, naming the file
+  and first differing line, when the checked-in copy differs. Regenerating brought in the missing
+  workflow triggers, dependency checks, install strings and stack comments; the example-side
+  per-feature pins were dropped. The example's tsconfig stays as rendered: it cannot type-check
+  outside a project, and the example README says why
 ---
 # `examples/aws-deployment/` has drifted from the scaffold templates it mirrors, and nothing compares the two
 
-**Status: open. Priority: P2 [BOTH].** Filed three times, independently, on 2026-09-12, and merged into
+**Status: resolved (see summary). Was P2 [BOTH].** Filed three times, independently, on 2026-09-12, and merged into
 this file during the base merge of `int-202609-a` into `int-202609-cms-image` (#341). The other
 two filings are kept as history:
-[example-deploy-workflow-drifted.md](resolved/example-deploy-workflow-drifted.md) and
-[examples-aws-deployment-drift.md](resolved/examples-aws-deployment-drift.md).
+[example-deploy-workflow-drifted.md](example-deploy-workflow-drifted.md) and
+[examples-aws-deployment-drift.md](examples-aws-deployment-drift.md).
 
 ## How it was found
 
@@ -108,5 +112,5 @@ Re-syncing the files by hand, without (1) or (2), repeats the history this file 
 
 ## Related
 
-- [worker-secret-json-field-cdk-props.md](resolved/worker-secret-json-field-cdk-props.md) — the
+- [worker-secret-json-field-cdk-props.md](worker-secret-json-field-cdk-props.md) — the
   task that ran into this; its PR added the JSON-field drift check.

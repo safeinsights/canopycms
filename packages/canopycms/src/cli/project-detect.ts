@@ -191,6 +191,9 @@ export interface GitHubRepo {
   repo: string
 }
 
+/** Written into the generated CDK app when `detectGitHubRepo` finds no GitHub remote. */
+export const PLACEHOLDER_GITHUB_REPO: GitHubRepo = { owner: 'your-org', repo: 'your-docs-site' }
+
 /**
  * Owner/repo from the `origin` remote, for the generated stack's worker
  * config. Supports both SSH (`git@github.com:owner/repo.git`) and HTTPS
