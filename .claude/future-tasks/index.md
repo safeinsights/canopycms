@@ -54,7 +54,7 @@ answers "what now". Each item's detail is in its file.
 | 5 | [occ-lock-compromise-silent-in-prod.md](occ-lock-compromise-silent-in-prod.md) and [save-conflict-notification-discards-message.md](save-conflict-notification-discards-message.md) | Two cheap fixes that tell operators and editors the truth when EFS locking or OCC fires. |
 | 6 | Next-site setup traps: [prod-remote-default-branch-detection.md](prod-remote-default-branch-detection.md), [example-aws-deployment-drift-from-template.md](example-aws-deployment-drift-from-template.md), the Dockerfile mode ARG in [pr229-review-followups.md](pr229-review-followups.md), [live-site-acl-migration.md](live-site-acl-migration.md) | Fix these before the official accounts and the KB deploy on the same shape; each one misconfigures a deploy silently, and the cutover moves the base branch to `production`. |
 | 7 | [pr229-review-followups.md](pr229-review-followups.md) (bounded health scan), [duplicate-content-id-repair-ui.md](duplicate-content-id-repair-ui.md), [user-metadata-optimization.md](user-metadata-optimization.md) | Admin surfaces on the live site: a health scan that times out reads as "no duplicates", and the Permission and Groups panels fire one Lambda call plus one Clerk call per badge. |
-| 8 | [block-value-null-or-array-breaks-resolution.md](block-value-null-or-array-breaks-resolution.md) and [remote-git-self-heal.md](remote-git-self-heal.md) | One-line fix for a "permanently unopenable entry" after merges; recovery from a poisoned `remote.git` still needs an EFS shell. |
+| 8 | [remote-git-self-heal.md](remote-git-self-heal.md) | Recovery from a poisoned `remote.git` still needs an EFS shell. |
 
 ---
 
