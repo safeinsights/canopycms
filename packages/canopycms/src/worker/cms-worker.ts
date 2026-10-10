@@ -1001,7 +1001,7 @@ export class CmsWorker {
     }
     // Before the first git to read it, and on its own: a refusal is recorded as itself, not as a
     // base branch to configure or a remote.git to delete.
-    if (remoteGitExists) await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    if (remoteGitExists) await this.assertRemoteGitConfig()
     let name: string
     try {
       const fromRemoteGit = remoteGitExists && (await this.hasContentBranch(this.remoteGitPath))
@@ -1018,6 +1018,23 @@ export class CmsWorker {
     }
     this.setBaseBranch(name)
     workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Check remote.git's config at boot. A refusal is never a case for replacement: it reports that
+   * something wrote there, and listing the refs a replacement would lose means running git under
+   * that config. The message says so, so System health does not read it as a routine failure.
+   */
+  private async assertRemoteGitConfig(): Promise<void> {
+    try {
+      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    } catch (err) {
+      if (!(err instanceof SharedRepoRefusalError)) throw err
+      throw new SharedRepoRefusalError(
+        `${err.message.replace(/\.$/, '')}. This needs an operator: the worker never repairs or ` +
+          `replaces a remote.git whose config was tampered with or cannot be read.`,
+      )
+    }
   }
 
   /** Whether the bare repo at `gitDir` has a branch that is not a settings branch. */
@@ -1186,10 +1203,8 @@ export class CmsWorker {
 
     if (exists) {
       // At boot, so a refusal lands in worker-status.json as a startup failure, and first: the
-      // scrub is git reading this config too. A refused config is never replaced: the refusal
-      // reports that something wrote there, and listing the refs replacement would lose means
-      // running git under that config.
-      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+      // scrub is git reading this config too.
+      await this.assertRemoteGitConfig()
       // SELF-HEAL, before anything else changes this repo: a remote.git cloned from GitHub by an
       // older worker recorded the token-bearing clone URL in its config.
       await this.scrubPersistedRemote(this.remoteGitPath)

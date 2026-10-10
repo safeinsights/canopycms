@@ -343,7 +343,9 @@ describe('a poisoned remote.git that is kept', () => {
       'value',
     ])
 
-    await expect(internals(makeWorker()).ensureRemoteGit()).rejects.toThrow(/planted\.key/)
+    await expect(internals(makeWorker()).ensureRemoteGit()).rejects.toThrow(
+      /planted\.key.*This needs an operator: .*config was tampered with/s,
+    )
     expect(await workspaceEntries()).toEqual(['remote.git'])
   })
 })

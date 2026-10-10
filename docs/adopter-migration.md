@@ -78,7 +78,7 @@ replaces each `next` with its number.
 | next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 | next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 | next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
-| next | Worker   | [A `remote.git` cloned from an empty repo is replaced](#the-worker-replaces-a-remotegit-cloned-from-an-empty-repository--behaviour-change)                                                  | None                    |
+| next | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                    |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -444,16 +444,12 @@ under the unit's `StateDirectory=`, and the worker does not start without it.
 **To adopt.** Nothing with `CanopyCmsService`. A hand-installed unit needs
 `StateDirectory=canopy-worker` under `[Service]`.
 
-### The worker replaces a `remote.git` cloned from an empty repository — **behaviour change**
+### A poisoned `remote.git` re-clones itself
 
-**What changed.** A `remote.git` with no base branch, as cloning an empty repository leaves it, is
-replaced from GitHub at worker start, unless it holds a commit no GitHub branch has (System
-health names the ref), a ref git cannot read, or a config key CanopyCMS never writes. With
-`baseBranch` unset, one holding only settings branches takes GitHub's default branch.
+**What changed.** A `remote.git` missing its base branch is re-cloned unless an unpushed ref would be
+lost; the refusal names those refs. A tampered config still refuses and needs an operator.
 
 **To adopt.** Nothing.
-
-**Now deletable.** Runbook steps deleting `remote.git` after deploying to an empty repository.
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 
