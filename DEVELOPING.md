@@ -1132,6 +1132,8 @@ Templates are `.template` files under `src/cli/template-files/`, located at runt
 
 `init.integration.test.ts` runs the binary from both source and `dist/`. The dist block needs `pnpm build` to have run first; its `beforeAll` checks for `dist/cli/init.js` and throws a clear error when it is missing. **When you change the set of files `canopycms init` creates, update the `expectedFiles` array in both the source and dist blocks.**
 
+`examples/aws-deployment/`'s non-README files are generated from the `init-deploy aws` templates (`cdk.json`, `cdk-app.ts`, `cms-stack.ts`, `cdk-tsconfig.json`, `deploy-cms.yml`). **After editing one, run `pnpm generate:aws-example` from the repo root and commit the result**; otherwise `src/cli/aws-deploy-example.test.ts` fails, naming the file and first differing line.
+
 ### Working on the `sync` CLI
 
 `canopycms sync` (`src/cli/sync.ts`) moves content between the developer's working tree and the branch workspaces in `.canopy-dev/content-branches/`. The commands and workflow are adopter-facing — see [README.md](README.md#local-development-sync). Three implementation rules:

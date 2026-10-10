@@ -50,6 +50,8 @@
     "src/authorization/test-utils.ts",
     "src/paths/test-utils.ts",
     "src/editor/test-setup.ts",
-    "src/editor/setup-test-dom.ts"
+    "src/editor/setup-test-dom.ts",
+    // Renders this repository's examples/aws-deployment/, which the tarball does not contain.
+    "src/cli/aws-deploy-example.ts"
   ]
 }
