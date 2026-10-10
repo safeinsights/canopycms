@@ -23,9 +23,9 @@ const config = {
   '.claude/future-tasks/**/*.md': () => 'pnpm run lint:tasks',
   // Both editor UX ratchets compare whole-tree counts with a committed
   // baseline, which a fix below the baseline must also update.
-  '{packages/canopycms/src/editor/**/*.{ts,tsx},scripts/check-ux-copy.mjs,scripts/ux-copy-baseline.json}':
+  '{packages/canopycms/src/editor/**/*.{ts,tsx},scripts/check-ux-copy.mjs,scripts/ux-copy-baseline.json,package.json}':
     () => 'pnpm run lint:ux-copy',
-  '{packages/canopycms/src/editor/**/*.tsx,eslint.config.mjs,eslint.a11y.config.mjs,scripts/a11y-suppressions.json}':
+  '{packages/canopycms/src/editor/**/*.tsx,eslint.config.mjs,eslint.a11y.config.mjs,scripts/a11y-suppressions.json,package.json}':
     () => 'pnpm run lint:a11y',
   // Doc factual drift is whole-tree for the same reason: renaming a module
   // breaks the doc that did NOT change. Cheap enough to run on any md, or on

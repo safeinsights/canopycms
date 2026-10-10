@@ -5,7 +5,7 @@
  *
  * Parses every non-test, non-story source file under packages/canopycms/src/editor
  * and checks the text a user can read: string literals, template text and JSX
- * text, skipping module specifiers and console.* arguments. Three rules:
+ * text, skipping module specifiers, literal types and console.* arguments. Three rules:
  * - `ellipsis`: three ASCII dots where `…` is meant.
  * - `successfully`: the word, in any casing. A result reads as done without it.
  * - `title-case`: a label written in Title Case. A label is the text of a
@@ -98,7 +98,10 @@ function titleCaseWords(text) {
     const word = token.replace(/^[^\p{L}\p{N}\uE000]+|[^\p{L}\p{N}\uE000]+$/gu, '')
     const inQuote = quoted
     if (quoted && /["”][^\p{L}\p{N}]*$/u.test(opensQuote ? token.slice(1) : token)) quoted = false
-    if (word === '') continue
+    if (word === '') {
+      if (PHRASE_END.test(token)) position = 0
+      continue
+    }
     if (!inQuote && position > 0 && /^[A-Z][a-z]+$/.test(word) && !PROPER_NOUNS.has(word)) {
       flagged.push(word)
     }
@@ -112,8 +115,8 @@ const hasSuccessfully = (text) => /successfully/i.test(text)
 
 /**
  * The strings an expression can evaluate to, as far as the source shows:
- * literals, templates (interpolations become SLOT), and both sides of
- * conditionals and `||`/`??`.
+ * literals, templates (interpolations become SLOT), both sides of
+ * conditionals and `||`/`??`, and the right side of `&&`.
  */
 function stringsOf(expr) {
   if (!expr) return []
@@ -137,6 +140,12 @@ function stringsOf(expr) {
   ) {
     return [...stringsOf(expr.left), ...stringsOf(expr.right)]
   }
+  if (
+    ts.isBinaryExpression(expr) &&
+    expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  ) {
+    return stringsOf(expr.right)
+  }
   return []
 }
 
@@ -144,17 +153,29 @@ function tagName(node) {
   return node.tagName.getText()
 }
 
-/** An element's visible text, with each non-literal child standing in as SLOT. */
-function elementText(element) {
-  const parts = []
+/** Most variants of one element's text checked; beyond it the rest are dropped. */
+const MAX_VARIANTS = 64
+
+/**
+ * Every text an element can show: one variant per combination of its
+ * children's alternatives. A child expression with no literal value stands in
+ * as SLOT; an element child or a JSX comment contributes no word.
+ */
+function elementTexts(element) {
+  let variants = ['']
   for (const child of element.children) {
-    if (ts.isJsxText(child)) parts.push(child.text)
+    let options
+    if (ts.isJsxText(child)) options = [child.text]
     else if (ts.isJsxExpression(child)) {
-      const strings = stringsOf(child.expression)
-      parts.push(strings.length === 1 ? strings[0].text : ` ${SLOT} `)
-    } else parts.push(` ${SLOT} `)
+      if (!child.expression) options = ['']
+      else {
+        const strings = stringsOf(child.expression).map((s) => s.text)
+        options = strings.length > 0 ? strings : [` ${SLOT} `]
+      }
+    } else options = [' ']
+    variants = variants.flatMap((v) => options.map((o) => v + o)).slice(0, MAX_VARIANTS)
   }
-  return parts.join('').replace(/\s+/g, ' ').trim()
+  return variants.map((v) => v.replace(/\s+/g, ' ').trim())
 }
 
 function propertyKey(name) {
@@ -163,8 +184,17 @@ function propertyKey(name) {
 }
 
 function isSkipped(node) {
-  const parent = node.parent
+  let parent = node.parent
+  while (
+    parent &&
+    (ts.isTemplateSpan(parent) ||
+      ts.isTemplateExpression(parent) ||
+      ts.isParenthesizedExpression(parent))
+  ) {
+    parent = parent.parent
+  }
   if (!parent) return false
+  if (ts.isLiteralTypeNode(parent)) return true
   if (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) return true
   if (ts.isExternalModuleReference(parent)) return true
   if (ts.isCallExpression(parent)) {
@@ -210,7 +240,8 @@ function scanSource(fileName, source) {
     }
 
     if (ts.isJsxElement(node) && LABEL_ELEMENTS.has(tagName(node.openingElement))) {
-      checkLabel(elementText(node), node)
+      const flagged = elementTexts(node).find((text) => titleCaseWords(text).length > 0)
+      if (flagged !== undefined) add('title-case', node, flagged)
     }
     if (ts.isJsxAttribute(node) && LABEL_KEYS.has(node.name.getText()) && node.initializer) {
       const init = node.initializer
@@ -253,6 +284,8 @@ function selfTest() {
     ['Rename “Home Page” Entry', ['Entry']],
     ['+ New', []],
     ['Write a Reply', ['Reply']],
+    [`${SLOT} : Select all`, []],
+    [`${SLOT} : Select All`, ['All']],
     [`Delete ${SLOT} Branch`, ['Branch']],
     [`${SLOT} Files`, ['Files']],
     ['Add Entry', ['Entry']],
@@ -281,6 +314,14 @@ function selfTest() {
     ["import x from '...'", []],
     ['setError("Saved Successfully")', ['successfully']],
     ['<Button>Saving…</Button>', []],
+    ['<Button>{open ? "Hide Panel" : "Show panel"}</Button>', ['title-case']],
+    ['<Button>{open ? "Hide panel" : "Show panel"}</Button>', []],
+    ['<Button>{busy && "Delete Branch"}</Button>', ['title-case']],
+    ['<Button>{/* note */}Delete branch</Button>', []],
+    ['<Menu.Item><IconX /> Reload page</Menu.Item>', []],
+    ['<Button>{count} Files</Button>', ['title-case']],
+    ['console.error(`Retrying ${n}...`)', []],
+    ['type Mode = "..."', []],
   ]
   const failures = []
   for (const [text, expected] of labelCases) {

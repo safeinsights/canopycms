@@ -131,10 +131,12 @@ const eslintConfig = [
   {
     ...editorA11yConfig,
     rules: Object.fromEntries(
-      Object.entries(editorA11yConfig.rules).map(([rule, entry]) => [
-        rule,
-        Array.isArray(entry) ? ['warn', ...entry.slice(1)] : 'warn',
-      ]),
+      Object.entries(editorA11yConfig.rules)
+        .filter(([, entry]) => !['off', 0].includes(Array.isArray(entry) ? entry[0] : entry))
+        .map(([rule, entry]) => [
+          rule,
+          Array.isArray(entry) ? ['warn', ...entry.slice(1)] : 'warn',
+        ]),
     ),
   },
   // Project-wide rules (strict by default)
