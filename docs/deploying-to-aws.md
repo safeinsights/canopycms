@@ -1094,6 +1094,7 @@ deploy the template first when the bundle needs more:
 
 ```bash
 needs=$(cat "$dist/index.js.contract")
+[[ "$needs" =~ ^[0-9]+$ ]] || { echo "no worker contract at $dist" >&2; exit 1; }
 has=$(aws cloudformation describe-stacks --stack-name "$STACK" --output text \
   --query "Stacks[0].Outputs[?contains(OutputKey, 'WorkerContract')].OutputValue")
 [[ "$has" =~ ^[0-9]+$ ]] || has=0 # no output: a template older than any contract
