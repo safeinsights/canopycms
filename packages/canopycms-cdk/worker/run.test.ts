@@ -12,6 +12,9 @@ import type { CmsWorkerConfig, WorkerSelfStop } from 'canopycms/worker/cms-worke
 import {
   EXIT_DRAINED_FOR_TERMINATION,
   EXIT_WORKER_SELF_STOPPED,
+  WORKER_CONTRACT_ENV,
+  WORKER_CONTRACT_VERSION,
+  unitWorkerContract,
 } from '../src/constructs/worker-lifecycle'
 import { readGitHubAppEnv, runWorker, type RunWorkerDeps, type WorkerHandle } from './run'
 
@@ -29,6 +32,7 @@ const baseEnv = (): NodeJS.ProcessEnv => ({
   CANOPYCMS_GITHUB_REPO: 'site',
   CANOPYCMS_GITHUB_TOKEN: 'ghp_test_token',
   STATE_DIRECTORY: '/var/lib/canopy-worker',
+  [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION),
 })
 
 function envWithout(...names: string[]): NodeJS.ProcessEnv {
@@ -59,6 +63,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+// The inferred value, not just whether the worker runs: once the contract
+// passes 1, an unstamped unit must still read as 1 and be refused.
+describe("unitWorkerContract: the unit's contract version", () => {
+  it.each<[string, number, NodeJS.ProcessEnv]>([
+    ['unstamped, with a state directory', 1, { STATE_DIRECTORY: '/var/lib/canopy-worker' }],
+    ['unstamped, without one', 0, {}],
+    ['unstamped, with an empty one', 0, { STATE_DIRECTORY: '' }],
+    ['stamped 0, with a state directory', 0, { [WORKER_CONTRACT_ENV]: '0', STATE_DIRECTORY: '/x' }],
+    ['stamped 3', 3, { [WORKER_CONTRACT_ENV]: '3' }],
+  ])('%s is %i', (_case, expected, env) => {
+    expect(unitWorkerContract(env)).toBe(expected)
+  })
+
+  it('is NaN for a stamp that is not a whole number', () => {
+    expect(unitWorkerContract({ [WORKER_CONTRACT_ENV]: '1.0' })).toBeNaN()
+  })
 })
 
 describe('readGitHubAppEnv: the all-or-nothing App trio', () => {
@@ -257,6 +279,82 @@ describe('runWorker: a failure before worker.start()', () => {
     })
     expect(h.exitCodes()).toEqual([1])
     expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('refuses an unstamped unit without StateDirectory= with the template-too-old line, before the state-directory check', async () => {
+    const h = harness({ env: envWithout(WORKER_CONTRACT_ENV, 'STATE_DIRECTORY') })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          `canopy-worker: template too old for this bundle: needs worker contract ` +
+            `${WORKER_CONTRACT_VERSION}, unit has 0 (contract 1 adds StateDirectory=canopy-worker`,
+        ),
+      }),
+    })
+    expect(h.exitCodes()).toEqual([1])
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  it('runs an unstamped unit that has StateDirectory= as contract 1', async () => {
+    const h = harness({ env: envWithout(WORKER_CONTRACT_ENV) })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.start).toHaveBeenCalled()
+  })
+
+  it('refuses a unit stamped below the bundle, whatever else it provides', async () => {
+    const h = harness({
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION - 1) },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledWith({
+      workspacePath: WORKSPACE,
+      error: expect.objectContaining({
+        message: expect.stringContaining(
+          `needs worker contract ${WORKER_CONTRACT_VERSION}, unit has ${WORKER_CONTRACT_VERSION - 1} (`,
+        ),
+      }),
+    })
+    expect(h.exitCodes()).toEqual([1])
+    expect(h.createWorker).not.toHaveBeenCalled()
+  })
+
+  // '' is what systemd passes for `Environment=CANOPYCMS_WORKER_CONTRACT=`.
+  it.each(['1.0', ''])(
+    'refuses a contract stamp of %j, which is not a whole number',
+    async (stamp) => {
+      const h = harness({ env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: stamp } })
+
+      await runWorker(h.deps)
+
+      expect(h.record).toHaveBeenCalledWith({
+        workspacePath: WORKSPACE,
+        error: expect.objectContaining({
+          message: `canopy-worker: ${WORKER_CONTRACT_ENV}=${JSON.stringify(stamp)} on the worker unit is not a whole number`,
+        }),
+      })
+      expect(h.exitCodes()).toEqual([1])
+      expect(h.createWorker).not.toHaveBeenCalled()
+    },
+  )
+
+  it('starts under a unit stamped newer than the bundle', async () => {
+    const h = harness({
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION + 1) },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.start).toHaveBeenCalled()
   })
 
   it("hands the worker systemd's state directory, the first of several", async () => {

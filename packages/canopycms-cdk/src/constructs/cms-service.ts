@@ -29,6 +29,8 @@ import type { CanopyCmsAttachOptions } from './editor-routing'
 import {
   EXIT_DRAINED_FOR_TERMINATION,
   WORKER_CAPACITY_ENV,
+  WORKER_CONTRACT_ENV,
+  WORKER_CONTRACT_VERSION,
   WORKER_DRAIN_HOOK_NAME,
   WORKER_SYNC_LOG_PHRASE,
 } from './worker-lifecycle'
@@ -1874,6 +1876,8 @@ export class CanopyCmsService extends Construct {
       '# does not start without it.',
       'StateDirectory=canopy-worker',
       'EnvironmentFile=/opt/canopy-worker/.env',
+      '# What this unit provides; a bundle needing more refuses to start.',
+      `Environment=${WORKER_CONTRACT_ENV}=${WORKER_CONTRACT_VERSION}`,
       '# Sandbox. Writable: the workspace, the log dir (LogsDirectory=), the',
       '# state dir (StateDirectory=) and a private /tmp.',
       '# ProtectHome=tmpfs, not yes: every git call reads per-user files under',

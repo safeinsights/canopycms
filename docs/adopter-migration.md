@@ -36,7 +36,8 @@ is still a read of `git log`.
 
 **int** is the first int prerelease carrying an entry, and each part of the entry is labelled
 `(int.N)` the same way; a number in parentheses after a change is a later int that added a part.
-**Action** says who must act. `next` marks a change no published int carries yet; publishing an int
+**Action** says who must act; **Template first** means that with `workerCode: { source: 'parameter' }`,
+you deploy the stack template before CI rolls that int's bundle. `next` marks a change no published int carries yet; publishing an int
 replaces each `next` with its number.
 
 | int  | Area     | Change                                                                                                                                                                                      | Action                  |
@@ -72,12 +73,13 @@ replaces each `next` with its number.
 | 109  | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
 | 109  | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                |
 | 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
-| 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--hand-installed-units-only)                                                                              | Hand-installed units    |
+| 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first          |
 | 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
-| next | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
-| next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
-| next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
-| next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| 111  | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
+| 111  | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
+| 111  | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
+| 111  | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| next | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first          |
 | next | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                    |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
@@ -436,12 +438,14 @@ key, grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLi
 **Now deletable.** Any override adding `MetadataOptions`, an encrypted root volume or an EFS
 `FileSystemPolicy`, or narrowing the worker role's asset-bucket grant.
 
-### `canopycms-cdk`: the worker needs a state directory — **hand-installed units only**
+### `canopycms-cdk`: the worker needs a state directory — **deploy the template before the bundle**
 
 **What changed.** (int.110) The worker's git keeps the GitHub credential in a private mirror
 under the unit's `StateDirectory=`, and the worker does not start without it.
 
-**To adopt.** Nothing with `CanopyCmsService`. A hand-installed unit needs
+**To adopt.** Default `workerCode`: nothing. `workerCode: { source: 'parameter' }`: `cdk deploy` the
+new template before CI rolls an int.110 or later bundle; a parameter-only change set never applies
+the new unit, so the new bundle exits at start. A hand-installed unit needs
 `StateDirectory=canopy-worker` under `[Service]`.
 
 ### A poisoned `remote.git` re-clones itself
@@ -481,6 +485,23 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
 worker, and a hand-built alarm on the worker log group.
 
+### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
+
+**What changed.** (next int) The worker unit carries a contract version
+(`Environment=CANOPYCMS_WORKER_CONTRACT=<n>`). Parameter mode outputs it as `WorkerContract`, and
+the package ships the bundle's need as `worker/dist/index.js.contract`. A bundle refuses to start
+under an older unit, logging `template too old for this bundle`; an unstamped unit with
+`StateDirectory=` (int.110 and later) counts as contract 1, so it runs this bundle. A new bundle
+changes the template too (the fallback bundle's key and hash), so only the contract says whether a
+bundle-only roll is safe.
+
+**To adopt.** Parameter mode: gate bundle-only rolls on the contract
+([recipe](deploying-to-aws.md#rolling-the-worker-from-ci)). The gate refuses a stack without the
+`WorkerContract` output, so `cdk deploy` the template once, which adds it. A hand-installed unit
+copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-worker.service`.
+
+**Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
+
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
 **What changed.** (int.94) `cmsService.attachTo(distribution, { viewerRequestFunction?, behaviorOverrides? })`
@@ -509,7 +530,7 @@ the editor's origin; the editor still detects sign-out. Otherwise nothing.
 
 ### Auth plugins look users up in batches
 
-**What changed.** (next int) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, and the
+**What changed.** (int.111) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, and the
 editor batches its user-badge lookups.
 
 **To adopt.** Nothing. A custom auth plugin may implement it; otherwise the server falls back to
@@ -517,7 +538,7 @@ bounded single lookups.
 
 ### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
 
-**What changed.** (next int) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
+**What changed.** (int.111) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
 `dev`, and fails its build on any value but `prod` or `dev`. An editor built for the other mode than its
 server runs now gets a blocking screen naming that variable, not a sign-in that never succeeds.
 
@@ -564,7 +585,7 @@ worker version, media-storage state) and warns when API and worker versions diff
 
 ### The AWS example workflow gains the template's triggers and dependency checks
 
-**What changed.** (next) Like the one `init-deploy aws` writes, `examples/aws-deployment/deploy-cms.yml`
+**What changed.** (int.111) Like the one `init-deploy aws` writes, `examples/aws-deployment/deploy-cms.yml`
 now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and checks `canopycms` and
 `aws-cdk` are installed.
 
@@ -572,7 +593,7 @@ now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and che
 
 ### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
 
-**What changed.** (next int) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
+**What changed.** (int.111) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
 budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `unknown`), replacing
 `duplicateContentIds`, and `duplicateIdScan.truncated` says whether the budget cut the scan short.
 

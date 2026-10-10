@@ -484,7 +484,7 @@ Without the unmount, components and their timers outlive the test: Mantine's `us
 
 **Attribute the failure to the base before blaming your diff** — run the suite at the merge-base first. One failure is expected-red locally: `src/cli/init.integration.test.ts` fails 7 tests with `listen EPERM … tsx-501/*.pipe`, because the sandbox blocks tsx's IPC socket. It is environmental, and **avoidable**: only the tsx _CLI_ binds that socket, so a TS subprocess spawned as `node --import tsx <file>` runs fine sandboxed where `node_modules/.bin/tsx <file>` dies. **Any new test that spawns a TypeScript subprocess should use the loader form** rather than joining this expected-red set.
 
-A `CannotFindAsset` in `canopycms-cdk` is a real failure. Its `test` script chains `build:test-fixtures` (`build:worker` plus a `--skip-native` lambda build), so a fresh worktree synthesizes fine; if you see one anyway, either the fixture build broke or `vitest` was invoked directly instead of through `pnpm test`, which skips that step. (The root `build` is `tsc` only; the full bundles build under `prepack`.)
+A `CannotFindAsset` in `canopycms-cdk` is a real failure. Its `test` script chains `build:test-fixtures` (`build:worker`, `build:worker-metadata` and a `--skip-native` lambda build), so a fresh worktree synthesizes fine; if you see one anyway, either the fixture build broke or `vitest` was invoked directly instead of through `pnpm test`, which skips that step. (The root `build` is `tsc` only; the full bundles build under `prepack`.)
 
 **Two known intermittents**, both in `canopycms`, which pnpm runs first in dependency topology — so a flake there delays every other package:
 

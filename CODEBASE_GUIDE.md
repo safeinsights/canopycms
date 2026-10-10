@@ -290,6 +290,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
+- `src/constructs/worker-lifecycle.ts` — names the construct and bundle share, incl. `WORKER_CONTRACT_VERSION`
 - `worker/index.ts` — EC2 worker entrypoint; boots through `worker/run.ts`'s injectable `runWorker`
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
