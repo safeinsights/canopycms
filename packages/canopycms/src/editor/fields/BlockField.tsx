@@ -262,8 +262,6 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                                 block.value?.[f.name],
                                 (next) =>
                                   updateBlockValue(idx, {
-                                    // A null or array value has no fields to keep, and spreading
-                                    // an array would save it index-keyed.
                                     ...(isPlainRecord(block.value) ? block.value : {}),
                                     [f.name]: next,
                                   }),

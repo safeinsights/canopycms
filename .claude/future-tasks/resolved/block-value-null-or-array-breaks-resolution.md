@@ -2,11 +2,16 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Found 2026-08-21, **pre-existing** (base branch byte-identical), exposure raised by resolution reaching listings. `resolveReferencesInData`'s block branch guards on `typeof b.value !== 'object'`, which `null` and arrays both pass. `value: null` under a known template throws out of `read()` — the editor GET 500s and the entry becomes **permanently unopenable**, and a resolving production build crashes the same way; `value:` as a YAML array is silently spread into an index-keyed object and an editor round-trip freezes that into the file. One-line fix at each site using the `isPlainRecord` helper `resolveBlockItem` already uses. P1-shaped symptom, P2 likelihood — needs hand-edited or merged content to reach
+  RESOLVED 2026-10-09, fix/block-value-null-or-array (safeinsights/canopycms#470).
+  `resolveReferencesInData`'s block-value, object-value and object-list-item guards, plus the
+  edit bases of `BlockField` and `ObjectField`, now use `isPlainRecord`, which is exported from
+  `validation/field-traversal.ts`. A null or array value passes through read, listing and save
+  unreshaped, opens as an empty block, and is never written index-keyed. The leftover
+  unknown-key notice for such a value is block-nonrecord-value-reported-as-unknown-key.md.
 ---
 # A block whose `value` is null or a YAML array crashes or corrupts reference resolution
 
-**Status:** Open. **Priority: P2**, with a P1-shaped symptom — read it before triaging.
+**Status:** Resolved, see the summary. **Priority: P2**, with a P1-shaped symptom — read it before triaging.
 
 ## What happens
 
@@ -48,7 +53,9 @@ Worth grepping for the same `typeof x === 'object'` pattern elsewhere while in t
 
 ## Related
 
-- [build-content-tree-silent-skip.md](build-content-tree-silent-skip.md) — the other
+- [build-content-tree-silent-skip.md](../build-content-tree-silent-skip.md) — the other
   malformed-content-reaches-a-listing case, and the same question of skip-vs-fail-loud.
+- [block-nonrecord-value-reported-as-unknown-key.md](../block-nonrecord-value-reported-as-unknown-key.md),
+  the unknown-key notice the same shapes still produce on save and at build time.
 
 [BOTH]
