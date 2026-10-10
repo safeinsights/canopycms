@@ -40,45 +40,46 @@ is still a read of `git log`.
 you deploy the stack template before CI rolls that int's bundle. `next` marks a change no published int carries yet; publishing an int
 replaces each `next` with its number.
 
-| int | Area     | Change                                                                                                                                                                                      | Action                  |
-| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| 93  | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules            |
-| 93  | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked              |
-| 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                |
-| 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages             |
-| 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                    |
-| 93  | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                 |
-| 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers          |
-| 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                |
-| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                |
-| 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                |
-| 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed |
-| 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                |
-| 100 | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together        |
-| 100 | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod            |
-| 100 | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                |
-| 100 | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only            |
-| 100 | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin             |
-| 100 | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`           |
-| 100 | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key              |
-| 101 | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                    |
-| 102 | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites        |
-| 105 | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps             |
-| 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config               |
-| 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                 |
-| 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                    |
-| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, 110)                                                                              | Required                |
-| 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                  |
-| 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys             |
-| 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
-| 109 | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                |
-| 109 | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
-| 110 | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first          |
-| 110 | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
-| 111 | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
-| 111 | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
-| 111 | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
-| 111 | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| int  | Area     | Change                                                                                                                                                                                      | Action                  |
+| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| 93   | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules            |
+| 93   | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked              |
+| 93   | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                |
+| 93   | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages             |
+| 93   | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                    |
+| 93   | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                 |
+| 94   | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers          |
+| 94   | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                |
+| 94   | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                |
+| 94   | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                |
+| 94   | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed |
+| 94   | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                |
+| 100  | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together        |
+| 100  | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod            |
+| 100  | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                |
+| 100  | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only            |
+| 100  | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin             |
+| 100  | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`           |
+| 100  | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key              |
+| 101  | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                    |
+| 102  | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites        |
+| 105  | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps             |
+| 106  | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config               |
+| 106  | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                 |
+| 107  | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                    |
+| 108  | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, 110)                                                                              | Required                |
+| 108  | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                  |
+| 109  | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys             |
+| 109  | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
+| 109  | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                |
+| 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
+| 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first          |
+| 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
+| 111  | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
+| 111  | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
+| 111  | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
+| 111  | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| next | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first          |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -475,6 +476,23 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
 worker, and a hand-built alarm on the worker log group.
+
+### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
+
+**What changed.** (next int) The worker unit carries a contract version
+(`Environment=CANOPYCMS_WORKER_CONTRACT=<n>`). Parameter mode outputs it as `WorkerContract`, and
+the package ships the bundle's need as `worker/dist/index.js.contract`. A bundle refuses to start
+under an older unit, logging `template too old for this bundle`; an unstamped unit with
+`StateDirectory=` (int.110 and later) counts as contract 1, so it runs this bundle. A new bundle
+changes the template too (the fallback bundle's key and hash), so only the contract says whether a
+bundle-only roll is safe.
+
+**To adopt.** Parameter mode: gate bundle-only rolls on the contract
+([recipe](deploying-to-aws.md#rolling-the-worker-from-ci)). The gate refuses a stack without the
+`WorkerContract` output, so `cdk deploy` the template once, which adds it. A hand-installed unit
+copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-worker.service`.
+
+**Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
