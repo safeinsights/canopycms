@@ -748,7 +748,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         if (err.code === 'WRITE_OUTCOME_UNKNOWN') {
           reloadRequiredRef.current[currentId] = options.getEntryVersion?.(currentId)
         }
-        showConflictNotification(err.serverMessage)
+        showConflictNotification(err.serverMessage || undefined)
       } else {
         const explained = isValidation || isForbidden || isUnavailable
         notifications.show({

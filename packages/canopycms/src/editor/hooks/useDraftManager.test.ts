@@ -530,27 +530,30 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
 
-    it('falls back to the version-mismatch copy on a 409 with no server message', async () => {
-      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409))
-      const { result } = renderHook(() => useDraftManager(defaultOptions))
+    it.each([undefined, ''])(
+      'falls back to the version-mismatch copy on a 409 with no server message (%j)',
+      async (serverMessage) => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        mockSaveEntry.mockRejectedValueOnce(new SaveApiError(409, serverMessage))
+        const { result } = renderHook(() => useDraftManager(defaultOptions))
 
-      act(() => {
-        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
-      })
-      await act(async () => {
-        await result.current.handleSave()
-      })
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
 
-      const { notifications } = await import('@mantine/notifications')
-      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: 'This entry changed since you opened it. Reload to see the latest version.',
-          color: 'yellow',
-        }),
-      )
-      consoleErrorSpy.mockRestore()
-    })
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'This entry changed since you opened it. Reload to see the latest version.',
+            color: 'yellow',
+          }),
+        )
+        consoleErrorSpy.mockRestore()
+      },
+    )
 
     describe('a save whose outcome is unknown (WRITE_OUTCOME_UNKNOWN)', () => {
       const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
