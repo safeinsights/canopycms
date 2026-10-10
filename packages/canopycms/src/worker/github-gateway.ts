@@ -123,8 +123,9 @@ export interface GitHubGateway {
   ): Promise<void>
   /**
    * Push `sha` to GitHub's `refs/heads/<branch>`, resolving with whether GitHub's ref moved. A
-   * refused lease is retried once without one, which succeeds only as a fast-forward. Throws {@link RefusedPushError} for a push the worker
-   * never makes, {@link GitHubPushError} when the push fails, and anything else as is.
+   * refused lease is retried once without one, which succeeds only as a fast-forward. Throws
+   * {@link RefusedPushError} for a push the worker never makes, {@link GitHubPushError} when the
+   * push fails, and anything else as is.
    */
   push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome>
   createPullRequest(

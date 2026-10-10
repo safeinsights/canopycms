@@ -535,8 +535,8 @@ worker protects only GitHub's current default branch and whatever it read as bas
 
 ### The worker's push logs say whether GitHub moved
 
-**What changed.** (next) `Pushed … to GitHub` is logged only when the branch moved, with its
-`old..new` range; an unmoved branch logs at debug level. An unchanged settings branch is not pushed.
+**What changed.** (next) `Pushed … to GitHub` is logged only when the branch moved, saying
+where from; an unmoved branch logs at debug level. An unchanged settings branch is not pushed.
 
 **To adopt.** Nothing.
 

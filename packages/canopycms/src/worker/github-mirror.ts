@@ -402,11 +402,11 @@ export class MirrorSession {
   }
 }
 
-/** What a push did to GitHub's `refs/heads/<branch>`. */
-export type GitHubRefUpdate =
-  | { moved: false }
-  /** `from` is git's abbreviation of the old tip, null for a new branch; `to` is the full SHA pushed. */
-  | { moved: true; from: string | null; to: string }
+/**
+ * What a push did to GitHub's `refs/heads/<branch>`. `from` is git's abbreviation of the old tip,
+ * null for a new branch; `to` is the full SHA pushed.
+ */
+export type GitHubRefUpdate = { moved: false } | { moved: true; from: string | null; to: string }
 
 /**
  * Read `refs/heads/<branch>`'s line from `git push --porcelain`'s stdout: `=` up to date, ` ` a

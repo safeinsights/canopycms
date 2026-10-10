@@ -5,7 +5,7 @@ summary: >-
   RESOLVED 2026-10-10, branch `fix/settings-push-reports-unmoved`, base `int-202610-b`. The
   gateway's push reads `git push --porcelain` and returns `{ moved: false }` or
   `{ moved: true, from, to }` with `pastStaleLease`. Both push logs say `Pushed … to GitHub
-  (<old7>..<new7>)` only when the ref moved, and `already up to date on GitHub` at debug level
+  (<old7>..<new7>)` (or `new branch at <new7>`) only when the ref moved, and `already up to date on GitHub` at debug level
   otherwise. The sync loop skips the settings push outright when this cycle's fetch already shows
   GitHub at the local head, so an unchanged branch costs no GitHub round trip.
 ---

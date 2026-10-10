@@ -524,10 +524,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     }
 
     // Push settings branches to GitHub (belt-and-suspenders for task queue).
-    // Ensures settings reach GitHub even if a task queue entry is lost.
-    // Ordering relative to the fetch/reconcile above is no longer a
-    // correctness dependency now that the fetch can't clobber refs/heads/*
-    // -- this could run before or after them just as safely.
+    // Ensures settings reach GitHub even if a task queue entry is lost. After
+    // the fetch, whose tips (`trackedTips`) let it skip a branch GitHub holds.
     await pushSettingsBranches(ctx, git, trackedTips)
 
     if (stoppedForDrain(ctx, 'the base-branch refresh')) return
