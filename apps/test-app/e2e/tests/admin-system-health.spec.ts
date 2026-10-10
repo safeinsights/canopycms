@@ -110,7 +110,7 @@ test.describe('Admin System Health Panel', () => {
     const adminPage = await openAdminPanel(page)
 
     await test.step('a fatal error inside the 30-min window shows the crash alert', async () => {
-      await expect(adminPage.panel.getByText('Worker crash detected')).toBeVisible()
+      await expect(adminPage.panel.getByText('The worker stopped while running')).toBeVisible()
       await expect(adminPage.panel.getByText('boom')).toBeVisible()
     })
 
@@ -118,7 +118,7 @@ test.describe('Admin System Health Panel', () => {
       const staleAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString()
       await seedWorkerStatus({ lastFatalError: { message: 'boom', at: staleAt, phase: 'run' } })
       await adminPage.refreshOverview()
-      await expect(adminPage.panel.getByText('Worker crash detected')).toHaveCount(0)
+      await expect(adminPage.panel.getByText('The worker stopped while running')).toHaveCount(0)
     })
   })
 

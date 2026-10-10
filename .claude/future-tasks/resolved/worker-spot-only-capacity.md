@@ -26,5 +26,5 @@ override of a construct internal that the next upgrade could break.
 A `workerCapacity` prop: on-demand, or a mixed-instances policy with several instance types,
 `capacity-optimized` spot allocation and an on-demand fallback. Keep spot as the default if wanted.
 Add a note to `docs/deploying-to-aws.md` that a spot shortage shows as a 500 on `/edit`, not a failed
-deploy. Related: [worker-not-ready-permanent-failure.md](../worker-not-ready-permanent-failure.md),
-[worker-boot-loop-alarming.md](../worker-boot-loop-alarming.md).
+deploy. Related: [worker-not-ready-permanent-failure.md](worker-not-ready-permanent-failure.md),
+[worker-boot-loop-alarming.md](worker-boot-loop-alarming.md).
