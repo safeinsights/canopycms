@@ -278,7 +278,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 
 **Location**: `packages/canopycms-cdk/`
 
-- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG (bundle: `worker-bundle.ts`), worker log group; `attachTo()` wires editor routes into an existing distribution
+- `src/constructs/cms-service.ts` — `CanopyCmsService`: VPC, EFS, Lambda, EC2 worker ASG (bundle and `workerCode`: `worker-bundle.ts`), worker log group; `attachTo()` wires editor routes into an existing distribution
 - `src/constructs/cms-distribution.ts` — `CanopyCmsDistribution`: CloudFront, ACM certificate, Route53 records
 - `src/constructs/editor-routing.ts` — shared CloudFront wiring for CMS Lambda routes: `EDITOR_PATH_PATTERNS`, `attachEditorBehaviors`, response headers policy
 - `src/constructs/asset-support.ts` — `AssetSupport`: bucket, S3-only reads with `replicaBucket` failover, upload route; `lazyPublicTransforms` adds the transform Lambda, `enforceCreateOnlyWrites` a create-only Deny

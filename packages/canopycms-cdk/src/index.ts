@@ -3,6 +3,7 @@ export type { CmsWorkerConfig } from './worker'
 
 export { CanopyCmsService } from './constructs/cms-service'
 export type { CanopyCmsServiceProps, WorkerCapacity } from './constructs/cms-service'
+export type { WorkerCode } from './constructs/worker-bundle'
 export type { CanopyCmsAttachOptions } from './constructs/editor-routing'
 export { CanopyCmsDistribution } from './constructs/cms-distribution'
 export type { CanopyCmsDistributionProps } from './constructs/cms-distribution'

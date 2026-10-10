@@ -40,6 +40,19 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `canopycms-cdk`: CI can roll the worker with a parameter — **new, opt-in**
+
+**What changed.** `workerCode: { source: 'parameter' }` on `CanopyCmsService` selects the worker
+bundle by a `WorkerBundleSha256` parameter, from a bucket the construct creates. The package
+ships the bundle with its hash, as `worker/dist/index.js` and `index.js.sha256`. The default,
+`'asset'`, is unchanged.
+
+**To adopt.** Only if your pipeline deploys with parameter-only change sets: see
+[Rolling the worker from CI](deploying-to-aws.md#rolling-the-worker-from-ci).
+
+**Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
+worker.
+
 ### `canopycms-cdk`: the worker instance is hardened — **an existing stack upgrades in two deploys; behaviour and cost change**
 
 **Upgrade an existing stack in two deploys:**
