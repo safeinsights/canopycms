@@ -9,6 +9,7 @@ import { loadBranchContext } from '../branch-metadata'
 import { executeGuards } from './guards'
 import type { GuardId } from './guards'
 import { createMockApiContext, createMockBranchContext, createMockUser } from '../test-utils'
+import { mockConsole } from '../test-utils/console-spy'
 import type { CanopyConfig, FlatSchemaItem } from '../config'
 
 // ---------------------------------------------------------------------------
@@ -851,15 +852,21 @@ describe('guards over a corrupt branch.json on disk', () => {
   for (const [label, raw] of corruptFiles) {
     it.each(branchGuards)(`%s denies a branch whose branch.json has ${label}`, async (guard) => {
       await writeBranchJson(raw)
+      const consoleSpy = mockConsole()
+      try {
+        const result = await executeGuards([guard] as const, realContext(), makeReq('admin'), {
+          branch: 'feature-x',
+        })
 
-      const result = await executeGuards([guard] as const, realContext(), makeReq('admin'), {
-        branch: 'feature-x',
-      })
-
-      expect(result.ok).toBe(false)
-      if (!result.ok) {
-        expect(result.response.status).toBe(500)
-        expect(result.response.error).toBe(BRANCH_METADATA_CORRUPT_MESSAGE)
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.response.status).toBe(500)
+          expect(result.response.error).toBe(BRANCH_METADATA_CORRUPT_MESSAGE)
+        }
+        // The path and the cause go to the server log, not the response.
+        expect(consoleSpy).toHaveErrored(/Corrupt branch metadata in '.*feature-x'/)
+      } finally {
+        consoleSpy.restore()
       }
     })
   }
