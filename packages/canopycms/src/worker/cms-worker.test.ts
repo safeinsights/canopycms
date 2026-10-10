@@ -752,6 +752,9 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await worker.processTaskQueue()
 
     expect(internals.pushBranchToGitHub).toHaveBeenCalledWith(branch, expect.any(AbortSignal))
+    // The push reports whether the ref moved; this step claims no push of its own.
+    expect(consoleSpy).not.toHaveLogged('Pushed')
+    expect(consoleSpy).toHaveLogged(`No PR for ${branch}`)
     expect(octokit.pulls.list).not.toHaveBeenCalled()
     expect(octokit.pulls.create).not.toHaveBeenCalled()
     expect(octokit.pulls.update).not.toHaveBeenCalled()
@@ -992,6 +995,29 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(consoleSpy).toHaveLogged('Pushed feature-clean to GitHub')
   })
 
+  it('logs a push that moved the branch with its range, and one that did not at debug level', async () => {
+    await seedBranchInRemoteGit('feature-twice', 'hello')
+    const sha = await shaOf(remoteGitPath, 'refs/heads/feature-twice')
+    const worker = makePushWorker()
+    const internals = worker as unknown as PushBranchInternals
+    const pushedLogs = () =>
+      consoleSpy.all().log.filter((line) => line.includes('Pushed feature-twice'))
+
+    await internals.pushBranchToGitHub('feature-twice')
+    expect(pushedLogs()).toEqual([
+      expect.stringContaining(`Pushed feature-twice to GitHub (new branch at ${sha.slice(0, 7)})`),
+    ])
+
+    vi.stubEnv('CANOPYCMS_DEBUG', 'true')
+    try {
+      await internals.pushBranchToGitHub('feature-twice')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(pushedLogs()).toHaveLength(1)
+    expect(consoleSpy).toHaveLogged('feature-twice already up to date on GitHub')
+  })
+
   it('records the push on branch metadata only once GitHub accepted it', async () => {
     const readPushedAt = async (branch: string) =>
       (await BranchMetadataFileManager.loadOnly(path.join(contentBranchesPath, branch)))?.branch
@@ -1202,7 +1228,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(newTip).not.toBe(landed)
     expect(await shaOf(githubFixture, 'refs/heads/feature-moved-on')).toBe(newTip)
     expect(await readMarker('feature-moved-on')).toBeUndefined()
-    expect(consoleSpy).toHaveLogged('already moved past the rewritten commit')
+    expect(consoleSpy).toHaveLogged(
+      `Pushed feature-moved-on to GitHub (${landed.slice(0, 7)}..${newTip.slice(0, 7)}; ` +
+        'GitHub had already moved past the rewritten commit)',
+    )
   })
 
   it('refuses to force over a GitHub tip that is neither the marker nor what it is pushing', async () => {
@@ -2265,10 +2294,10 @@ describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
 type PushSettingsBranchesInternals = {
   pushSettingsBranches(
     git: ReturnType<typeof simpleGit>,
-    // Branch names syncGit() saw on GitHub this cycle. A foreign settings
-    // branch missing from this set was pushed into remote.git locally and
+    // GitHub's tip per branch as syncGit() fetched it this cycle. A foreign
+    // settings branch missing from it was pushed into remote.git locally and
     // never reached GitHub -- see the [SYNC-M3] check in the implementation.
-    trackedNames: ReadonlySet<string>,
+    trackedTips: ReadonlyMap<string, string>,
   ): Promise<void>
 }
 
@@ -2309,6 +2338,12 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     await seedGit.raw(['push', 'origin', `${branchName}:${branchName}`])
   }
 
+  const remoteGitTip = async (branchName: string): Promise<string> =>
+    (await simpleGit({ baseDir: remoteGitPath }).revparse([`refs/heads/${branchName}`])).trim()
+
+  const pushedLogs = () =>
+    consoleSpy.all().log.filter((line) => line.includes('Pushed settings branch'))
+
   const makeSettingsWorker = (deploymentName?: string) => {
     const worker = new CmsWorker({
       workspacePath,
@@ -2333,10 +2368,71 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker() // no deploymentName -> defaults to 'prod'
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Map())
 
     expect(await fixtureHasBranch('canopycms-settings-prod')).toBe(true)
     expect(consoleSpy).toHaveLogged('Pushed settings branch canopycms-settings-prod')
+  })
+
+  it('logs the range a moved settings branch went through, and only when it moved', async () => {
+    await seedBranchInRemoteGit('canopycms-settings-prod', '{"acls":[]}')
+    const first = await remoteGitTip('canopycms-settings-prod')
+    const worker = makeSettingsWorker()
+    const git = simpleGit({ baseDir: remoteGitPath })
+    const internals = worker as unknown as PushSettingsBranchesInternals
+    await internals.pushSettingsBranches(git, new Map())
+    expect(pushedLogs()).toEqual([
+      expect.stringContaining(
+        `Pushed settings branch canopycms-settings-prod to GitHub (new branch at ${first.slice(0, 7)})`,
+      ),
+    ])
+
+    const seedGit = simpleGit({ baseDir: path.join(tmpDir, 'seed-canopycms-settings-prod') })
+    await seedGit.raw(['commit', '--allow-empty', '-m', 'second'])
+    await seedGit.raw(['push', 'origin', 'canopycms-settings-prod'])
+    const second = await remoteGitTip('canopycms-settings-prod')
+    // This cycle's fetch saw GitHub at `first`, so the push goes ahead and moves the ref.
+    await internals.pushSettingsBranches(git, new Map([['canopycms-settings-prod', first]]))
+    expect(pushedLogs()[1]).toContain(
+      `Pushed settings branch canopycms-settings-prod to GitHub (${first.slice(0, 7)}..${second.slice(0, 7)})`,
+    )
+
+    // GitHub already holds the head though the fetch did not show it: the push runs, and git
+    // reports the ref up to date.
+    vi.stubEnv('CANOPYCMS_DEBUG', 'true')
+    try {
+      await internals.pushSettingsBranches(git, new Map([['canopycms-settings-prod', first]]))
+    } finally {
+      vi.unstubAllEnvs()
+    }
+    expect(pushedLogs()).toHaveLength(2)
+    expect(consoleSpy).toHaveLogged(
+      'Settings branch canopycms-settings-prod already up to date on GitHub',
+    )
+  })
+
+  it("makes no GitHub call when this cycle's fetch already shows GitHub at the local head", async () => {
+    await seedBranchInRemoteGit('canopycms-settings-prod', '{"acls":[]}')
+    const tip = await remoteGitTip('canopycms-settings-prod')
+    const worker = makeSettingsWorker()
+    const gateway = useLocalGitHubGateway(worker, { remoteUrl: () => githubFixture })
+    const push = vi.spyOn(gateway, 'push')
+    vi.stubEnv('CANOPYCMS_DEBUG', 'true')
+    try {
+      await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(
+        simpleGit({ baseDir: remoteGitPath }),
+        new Map([['canopycms-settings-prod', tip]]),
+      )
+    } finally {
+      vi.unstubAllEnvs()
+    }
+
+    expect(push).not.toHaveBeenCalled()
+    expect(await fixtureHasBranch('canopycms-settings-prod')).toBe(false)
+    expect(pushedLogs()).toEqual([])
+    expect(consoleSpy).toHaveLogged(
+      'Settings branch canopycms-settings-prod already up to date on GitHub',
+    )
   })
 
   it('pushes the deployment-namespaced branch matching config.deploymentName, not a differently-named one', async () => {
@@ -2344,7 +2440,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker('acme')
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Map())
 
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
   })
@@ -2360,7 +2456,9 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     // refs) -- i.e. the SUPPORTED two-deployments-one-repo case.
     await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(
       git,
-      new Set(['canopycms-settings-other-tenant']),
+      new Map([
+        ['canopycms-settings-other-tenant', await remoteGitTip('canopycms-settings-other-tenant')],
+      ]),
     )
 
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(true)
@@ -2464,7 +2562,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     const git = simpleGit({ baseDir: remoteGitPath })
     // Empty tracking set: the branch is NOT on GitHub, so it can only have
     // been pushed into remote.git by this deployment's own API.
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Map())
 
     expect(consoleSpy).toHaveWarned('Settings branch mismatch')
     expect(consoleSpy).toHaveWarned('canopycms-settings-staging')
@@ -2479,7 +2577,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     const git = simpleGit({ baseDir: remoteGitPath })
 
     await expect(
-      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set()),
+      (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Map()),
     ).resolves.toBeUndefined()
     expect(await fixtureHasBranch('canopycms-settings-acme')).toBe(false)
   })
@@ -2504,7 +2602,7 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
 
     const worker = makeSettingsWorker('acme')
     const git = simpleGit({ baseDir: remoteGitPath })
-    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Set())
+    await (worker as unknown as PushSettingsBranchesInternals).pushSettingsBranches(git, new Map())
 
     expect(consoleSpy).toHaveWarned(
       'another CanopyCMS deployment appears to own this settings branch',
