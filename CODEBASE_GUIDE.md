@@ -133,7 +133,7 @@ Support files:
 - `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata; a successful `writableBranch` endpoint calls `services.recordBranchEditor`
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
-- `settings-helpers.ts` — settings-branch context resolution and commit helpers; `commitSettings` names its `actor` in trailers
+- `settings-helpers.ts` — settings-branch context resolution and commit helpers
 - `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps; the idempotent branch-create window. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
@@ -701,8 +701,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, status, commit all (trailers name the submitter and `uncommittedEditors`), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
-- `recordBranchEditor()` — record a user as a branch editor
+- `submitBranch()` — the submit workflow: checkout, status, commit all (with editor trailers), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
