@@ -2565,6 +2565,12 @@ describe('CanopyCmsService: baseBranch validation', () => {
     expect(all).toContain('CANOPYCMS_BASE_BRANCH=release.2026')
     expect(all).not.toContain('CANOPYCMS_BASE_BRANCH=main')
   })
+
+  it('stamps no CANOPYCMS_BASE_BRANCH when the prop is unset, so the worker detects it', () => {
+    const all = workerUserDataBlobs(synth(false))
+    expect(all).toContain('CANOPYCMS_GITHUB_REPO=')
+    expect(all).not.toContain('CANOPYCMS_BASE_BRANCH')
+  })
 })
 
 describe('CanopyCmsService: worker CloudWatch log shipping', () => {

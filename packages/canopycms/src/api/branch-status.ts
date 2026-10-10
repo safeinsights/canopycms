@@ -15,6 +15,7 @@ import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
+import { baseBranchOf } from '../utils/base-branch'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -164,7 +165,7 @@ const submitBranchForMergeHandler = async (
   // stays editable; the stamp records that it is now on GitHub, for delete.
   if (prResult.nothingToSubmit) {
     await meta.save({ branch: { name: branchContext.branch.name, ...pushed } })
-    const base = branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+    const base = branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config)
     return {
       ok: false,
       status: 400,

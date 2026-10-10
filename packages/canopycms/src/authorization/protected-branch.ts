@@ -14,6 +14,7 @@ import type { BranchStatus } from '../types'
 // api/guards.ts → here), and paths/branch.ts drags node:fs into the graph,
 // which breaks adopters' production `next build`.
 import { sanitizeBranchName } from '../paths/branch-name'
+import { baseBranchOf } from '../utils/base-branch'
 
 export interface BranchProtection {
   /** True when branchName resolves to the configured base branch. */
@@ -83,7 +84,7 @@ export function getBranchProtection(
 ): BranchProtection {
   const sanitizedName = sanitizeBranchName(branchName)
   const isProtected =
-    sanitizedName === sanitizeBranchName(config.defaultBaseBranch ?? 'main') ||
+    sanitizedName === sanitizeBranchName(baseBranchOf(config)) ||
     (recordedBaseBranch !== undefined && sanitizedName === sanitizeBranchName(recordedBaseBranch))
 
   return {

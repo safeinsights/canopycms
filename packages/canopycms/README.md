@@ -47,7 +47,7 @@ you misunderstood, which is why it is worth resolving the ref rather than guessi
 
 - Workspaces resolve per mode: `prod` uses `$CANOPYCMS_WORKSPACE_ROOT/content-branches` (default: `/mnt/efs/content-branches`), `dev` uses `.canopy-dev/content-branches/<branch>`.
 - For `prod` mode, you must set `defaultRemoteUrl`. For `dev`, `defaultRemoteUrl` is **optional** - if omitted, a local remote is auto-created at `.canopy-dev/remote.git`.
-- Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (default: `main`).
+- Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (unset: the checked-out git branch in dev, the repository's default branch in prod).
 - Git author identity is required for `prod` mode: set `gitBotAuthorName` and `gitBotAuthorEmail` so bot commits can be created reliably.
 - Branch names are sanitized and traversal is blocked before creating directories.
 - Metadata lives at `<workspace>/.canopy-meta/branch.json`; the registry lives at `<branchesRoot>/branches.json` and records the workspaceRoot for each branch.
@@ -515,7 +515,7 @@ export default defineCanopyConfig({
 **How it works:**
 
 1. When you create your first branch, CanopyCMS automatically creates a bare git repository at `.canopy-dev/remote.git`
-2. Your current `baseBranch` (default: `main`) is pushed to this local remote
+2. Your current `baseBranch` (unset: the checked-out branch) is pushed to this local remote
 3. Branch workspaces are cloned from this local remote into `.canopy-dev/content-branches/<branch-name>/`
 4. All git operations (push, fetch, etc.) work against the local remote
 

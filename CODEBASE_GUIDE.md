@@ -70,7 +70,7 @@ Content, git and branch files have their own sections below; the rest:
 - `server.ts` — server entry exports, e.g. `collectAssetRefs`, `readAssetRefsFile`, `materializeAssets`
 - `config.ts` — re-export shim over the `config/` module
 - `types.ts` — core types: `BranchContext`, `BranchMetadata`, `SyncStatus`, `PullRequestState`, `WorkerStatusReport`, `BaseRefreshReport`
-- `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields, see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
+- `services.ts` — `CanopyServices` factory; resolves and bakes both branch-identity fields (`resolvePendingBaseBranch()` per request in prod), see [ARCHITECTURE.md](ARCHITECTURE.md#branch-identity-defaultbasebranch-vs-defaultactivebranch)
 - `context.ts` — `CanopyContext` / `CanopyBuildContext` creation; see [ARCHITECTURE.md](ARCHITECTURE.md#context-architecture)
 - `build-canopy.ts` — `createBuildCanopy`, one-call build/admin context for standalone scripts; bypasses ACLs
 - `build-mode.ts` — `isDeployedStatic` / `isBuildMode` / `readsFromCheckout`; see [ARCHITECTURE.md](ARCHITECTURE.md#static-deployment-and-build-mode)
@@ -218,7 +218,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
@@ -632,7 +632,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
@@ -806,7 +806,8 @@ in `server.ts` and `client.ts`. See
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
-- `git.ts` — `detectHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `base-branch.ts` — `baseBranchOf`, resolved base branch; prod throws `BaseBranchUnresolvedError`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (`CANOPY_TRAILING_SLASH` at build time)

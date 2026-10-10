@@ -15,6 +15,7 @@ vi.mock('canopycms/server', async (importOriginal) => {
       config,
       bootstrapAdminIds: new Set<string>(),
       refreshActiveBranch: vi.fn(),
+      resolvePendingBaseBranch: vi.fn(),
       getSettingsBranchRoot: vi.fn(async () => '/nonexistent/canopy-settings'),
     })),
     startDevContentWatcher: vi.fn(),

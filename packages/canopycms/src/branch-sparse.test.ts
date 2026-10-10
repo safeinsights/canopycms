@@ -179,6 +179,7 @@ describe('content-branch clones', () => {
       services: {
         config: config('cms/content'),
         refreshActiveBranch: async () => {},
+        resolvePendingBaseBranch: async () => {},
       } as unknown as CanopyServices,
       authPlugin: {
         verifiesCredentials: true,

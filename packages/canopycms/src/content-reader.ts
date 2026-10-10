@@ -18,6 +18,7 @@ import type { CanopyUser } from './user'
 import { isDeployedStatic, isBuildMode, readsFromCheckout } from './build-mode'
 import { isNotFoundError } from './utils/error'
 import { resolveEntryLinksInData } from './entry-link-resolver'
+import { baseBranchOf } from './utils/base-branch'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -134,10 +135,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
   const defaultBranch =
-    options.defaultBranch ??
-    services.config.defaultActiveBranch ??
-    services.config.defaultBaseBranch ??
-    'main'
+    options.defaultBranch ?? services.config.defaultActiveBranch ?? baseBranchOf(services.config)
   const allowCreateBranch = options.allowCreateBranch ?? false
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
