@@ -178,7 +178,7 @@ export async function withContentWriteLock<T>(
     // as a phantom editor collision. The API marks this case `WRITE_OUTCOME_UNKNOWN` so the
     // editor can hold further saves of the entry until it is re-read.
     throw new ContentWriteLockBusyError(
-      "This branch was syncing while your change was saved, so we can't tell whether it was recorded. Reload to check before saving again.",
+      "We couldn't confirm your change was saved because the branch was syncing at the same time. Reload to check before saving again (your unsaved edits will be lost).",
       'unknown',
     )
   }

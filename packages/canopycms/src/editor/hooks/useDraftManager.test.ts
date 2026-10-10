@@ -547,7 +547,8 @@ describe('useDraftManager', () => {
         const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
           expect.objectContaining({
-            message: 'This entry changed since you opened it. Reload to see the latest version.',
+            message:
+              'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
             color: 'yellow',
           }),
         )
@@ -559,9 +560,9 @@ describe('useDraftManager', () => {
       const mockGetEntryVersion = vi.fn<(contentId: string) => number | undefined>()
       const versionedOptions = { ...defaultOptions, getEntryVersion: mockGetEntryVersion }
       const landed =
-        "This branch was syncing while your change was saved, so we can't tell whether it was recorded. Reload to check before saving again."
+        "We couldn't confirm your change was saved because the branch was syncing at the same time. Reload to check before saving again (your unsaved edits will be lost)."
       const held =
-        'Your last save may already have been recorded. Reload this entry before saving again.'
+        'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).'
 
       /** Render with a draft, then make one save that comes back outcome-unknown. */
       const renderAfterUnknownOutcome = async () => {
@@ -616,7 +617,8 @@ describe('useDraftManager', () => {
 
         const { notifications } = await import('@mantine/notifications')
         expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
-          message: 'This entry changed since you opened it. Reload to see the latest version.',
+          message:
+            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
         })
         expect(mockSaveEntry).toHaveBeenCalledTimes(1)
       })
@@ -1328,7 +1330,8 @@ describe('useDraftManager', () => {
       const { notifications } = await import('@mantine/notifications')
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'This entry changed since you opened it. Reload to see the latest version.',
+          message:
+            'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).',
           color: 'yellow',
         }),
       )

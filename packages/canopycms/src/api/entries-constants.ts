@@ -18,4 +18,4 @@ export const DEFAULT_ENTRIES_LIMIT = 50
  * caller read it. Shared with the editor, whose own pre-save staleness check reports the same.
  */
 export const ENTRY_CHANGED_MESSAGE =
-  'This entry changed since you opened it. Reload to see the latest version.'
+  'This entry changed since you opened it. Reload to see the latest version (your unsaved edits will be lost).'

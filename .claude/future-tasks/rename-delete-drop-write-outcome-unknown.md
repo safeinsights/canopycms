@@ -20,14 +20,14 @@ editor's rename and delete paths show the text and do not refresh the entries li
 so after a rename or delete that actually landed the list is stale until the next refresh, and
 a retry fails with a 404 or a slug collision.
 
-The wording is also save-specific ("while your change was saved") although rename and delete
+The wording is also save-specific ("We couldn't confirm your change was saved") although rename and delete
 raise it too.
 
 ## Fix direction
 
 Add the same `...(err.outcome === 'unknown' ? { code: 'WRITE_OUTCOME_UNKNOWN' } : {})` to both
 handlers, and have the editor's rename and delete callers refresh the entries list when they
-see that code. Consider a neutral message ("while your change was made").
+see that code. Consider a neutral message ("couldn't confirm your change was made").
 
 ## Why only P3
 

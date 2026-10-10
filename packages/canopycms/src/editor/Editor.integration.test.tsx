@@ -1337,13 +1337,13 @@ describe('Editor integration', () => {
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'This entry has not been loaded from the server, so it cannot be saved safely. Reload it and try again.',
+              "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
           }),
         ),
       )
       expect(fetchMock.mock.calls.some(isPut)).toBe(false)
       expect(consoleSpy).toHaveErrored(/Load failed: 500/)
-      expect(consoleSpy).toHaveErrored(/has not been loaded from the server/)
+      expect(consoleSpy).toHaveErrored(/hasn't finished loading/)
     } finally {
       window.localStorage.removeItem('canopycms:drafts:main')
       consoleSpy.restore()

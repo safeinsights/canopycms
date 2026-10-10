@@ -645,7 +645,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (currentId in reloadRequiredRef.current) {
       if (reloadRequiredRef.current[currentId] === options.getEntryVersion?.(currentId)) {
         showConflictNotification(
-          'Your last save may already have been recorded. Reload this entry before saving again.',
+          'Your last save may already have been recorded. Reload this entry before saving again (your unsaved edits will be lost).',
         )
         return
       }

@@ -370,8 +370,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (expectedVersion === undefined) {
       throw new SaveApiError(
         409,
-        'This entry has not been loaded from the server, so it cannot be saved safely. ' +
-          'Reload it and try again.',
+        "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
       )
     }
     const writeBody: WriteContentBody = {
