@@ -2,9 +2,11 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Prod falls back to `'main'` when `defaultBaseBranch` is unset (`utils/git.ts:155-166`); detect the remote's real default branch (origin/HEAD) at service creation instead. **This is now a live KB risk, not just a marketing-site hypothetical**: the KB's effective branch isn't literally named `main`, and if the config step is skipped, forking/rebasing/protection silently misconfigures rather than failing at startup
+  RESOLVED 2026-10-09, fix/prod-default-branch-detection. Prod no longer assumes `'main'` when `defaultBaseBranch` is unset: the Lambda reads the base branch from `remote.git`'s HEAD (`GitManager.detectBaseBranch`, a local read), the worker detects its own (remote.git HEAD, or GitHub's default before remote.git exists) and points remote.git's HEAD at the branch it uses, and the CDK stamps `CANOPYCMS_BASE_BRANCH` only when `baseBranch` is set. Before the worker creates remote.git the base branch stays pending and each request retries it behind the not-ready 503 (`resolvePendingBaseBranch`); an unreadable HEAD or a network remote fails service creation naming `defaultBaseBranch`. Dev mode is unchanged. Following a later change of GitHub's default branch is split to [worker-boot-default-branch-refresh.md](../worker-boot-default-branch-refresh.md)
 ---
 # Prod mode assumes 'main' when defaultBaseBranch is unset — detect the remote's real default branch
+
+## Status: RESOLVED 2026-10-09
 
 ## Priority: P2
 

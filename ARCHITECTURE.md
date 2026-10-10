@@ -186,25 +186,26 @@ Two branch concepts serve different purposes:
 
 **Why they are separate:** a developer working on a feature branch wants the CMS to show that branch's content while new editing branches still fork from a stable base. Conflating the two would force a choice between serving stale base content and forking editing branches off an unstable feature branch.
 
-**Detection matrix** (implemented by `resolveBaseBranch()` in `utils/git.ts` plus the active-branch detector in `services.ts`):
+**Detection matrix** (implemented by `resolveBaseBranch()` in `utils/git.ts`, `GitManager.detectBaseBranch()` for prod's remote, and the active-branch detector in `services.ts`):
 
-|          | `defaultBaseBranch` set                            | `defaultBaseBranch` unset                                                                           |
-| -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **dev**  | base = configured value; active follows git HEAD   | base **and** active follow git HEAD (workspaces fork from the branch the developer has checked out) |
-| **prod** | base = configured value; active falls back to base | base = `'main'`; active falls back to base                                                          |
+|          | `defaultBaseBranch` set                            | `defaultBaseBranch` unset                                                                                |
+| -------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **dev**  | base = configured value; active follows git HEAD   | base **and** active follow git HEAD (workspaces fork from the branch the developer has checked out)      |
+| **prod** | base = configured value; active falls back to base | base = the branch `remote.git`'s HEAD names, which the worker sets to its own; active falls back to base |
 
 - An explicitly configured value, for either field, is always respected and never overridden by detection. Adopters opt out of detection entirely by setting both.
 - Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh: a static export serves from the checkout, so there is no git HEAD to track and no git calls are made.
 - A build (`isBuildMode()`) skips detection the same way in every mode and deployment type — an unset active branch falls back to `defaultBaseBranch ?? 'main'` and an unset base branch to `'main'` — because a build reads the working tree directly rather than a git-HEAD-selected branch (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)).
 - Both resolved values are baked into the config at service creation, and refreshed per request by `refreshActiveBranch()` in dev mode only, outside a build, with a 5-second cache; only fields the adopter left unset are refreshed.
-- On detached HEAD, or no git repo, detection falls back to `defaultBaseBranch ?? 'main'`.
+- On detached HEAD, or no git repo, dev detection falls back to `defaultBaseBranch ?? 'main'`.
+- Prod never assumes `'main'`: until the worker creates `remote.git`, each request retries the read (`resolvePendingBaseBranch()`) and answers the not-ready 503; a HEAD naming no branch, or a network remote, fails service creation. The value is read once per process; set `defaultBaseBranch` to change it.
 - The Zod schema intentionally leaves `defaultBaseBranch` undefined when unset (`.optional()` defeats the `.default('main')`), which is what makes "unset" detectable for HEAD detection.
 
 **The recorded fork point is immutable.** When a branch workspace is created, the resolved base branch is recorded in `.canopy-meta/branch.json` (`branch.baseBranch`) and never changes. Git operations on an existing branch — commits, submit, PR base — prefer that recorded value over the config, so a developer switching git branches mid-session cannot retarget an existing branch's base.
 
 **Per-request branch tracking.** In dev mode every content-serving entry point calls `refreshActiveBranch()`, so switching git branches silently updates the active branch — and, when unset, the base branch used for newly provisioned workspaces — with no server restart, and the new branch's workspace is created lazily on the first content request. This affects only non-editor content serving: the editor is pinned to its own branch through URL params and keeps branch-specific drafts in localStorage. An editor opened with no pinned branch adopts the server's effective default, which the branches-list API reports per request, and an explicitly pinned branch is never overridden.
 
-**Fallback chain.** Content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The HTTP handler provisions the base-branch workspace on the first request, since internal groups load from it; if that provisioning fails outright it fails loudly — logging the cause and returning a 503 naming the branch and the reason — rather than letting every endpoint return confusingly empty results. Provisioning busy elsewhere is a retriable 503 with `Retry-After`.
+**Fallback chain.** Content-serving code resolves the active branch as `defaultActiveBranch ?? baseBranchOf(config)`, where `baseBranchOf` (`utils/base-branch.ts`) supplies `'main'` outside prod and throws in prod for a base branch nothing resolved. The HTTP handler provisions the base-branch workspace on the first request, since internal groups load from it; if that provisioning fails outright it fails loudly — logging the cause and returning a 503 naming the branch and the reason — rather than letting every endpoint return confusingly empty results. Provisioning busy elsewhere is a retriable 503 with `Retry-After`.
 
 **Corrupt base-branch metadata is the one exception to that 503.** If the base branch's `branch.json` exists but fails to parse, the handler serves the request with no internal groups (bootstrap admins keep access through their configured IDs) and logs the condition. A hard 503 here would make the problem unrecoverable through the product itself, because the only fix is the admin branch-health repair action, which is one of those same endpoints. Every other provisioning failure still 503s.
 
