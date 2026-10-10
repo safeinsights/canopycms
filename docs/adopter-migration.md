@@ -40,6 +40,20 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
+
+**What changed.** Unset, prod reads the base branch from the HEAD of the workspace's `remote.git`,
+which the worker points at the branch it uses. Before the worker creates `remote.git`, requests
+answer the not-ready 503. A HEAD naming no branch, or a network remote, fails service creation with
+an error naming `defaultBaseBranch`. `CanopyCmsService` stamps `CANOPYCMS_BASE_BRANCH` only when
+`baseBranch` is set; unset, the worker uses GitHub's default branch. A stack that relied on the
+implicit `'main'` behaves as before when its repository's default branch is `main`.
+
+**To adopt.** If your base branch is not the repository's default, set `defaultBaseBranch`. Prod
+does not follow a later change of GitHub's default branch, so set it before a cutover.
+
+**Now deletable.** A `defaultBaseBranch: 'main'` in a repository whose default branch is `main`.
+
 ### `canopycms-cdk`: CI can roll the worker with a parameter — **new, opt-in**
 
 **What changed.** `workerCode: { source: 'parameter' }` on `CanopyCmsService` selects the worker

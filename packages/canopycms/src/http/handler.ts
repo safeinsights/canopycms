@@ -28,6 +28,7 @@ import {
   setRequestTimingRoute,
   timeRequestPhase,
 } from '../utils/request-timing'
+import { baseBranchOf } from '../utils/base-branch'
 
 /** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
@@ -73,7 +74,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
 
       // Read from services.config per-request, not a captured variable, so a
       // refreshActiveBranch() update takes effect immediately.
-      const baseBranch = services.config.defaultBaseBranch ?? 'main'
+      const baseBranch = baseBranchOf(services.config)
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
@@ -212,11 +213,23 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const mayReadWorkerFailure = () =>
       isAdmin(authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds).groups)
 
+    // A prod base branch still pending since creation resolves here, once the
+    // worker has created the remote; until then this answers the not-ready 503.
+    try {
+      await timeRequestPhase('baseBranch', () => apiCtx.services.resolvePendingBaseBranch())
+    } catch (err) {
+      const notReady = workerNotReadyResponse(err, {
+        workerFailureDetail: mayReadWorkerFailure(),
+      })
+      if (notReady) return notReady
+      throw err
+    }
+
     // Provision the base/active branch workspace on first request, so the many
     // endpoints that assume it exists (registry reads and the like) don't return
     // confusing empty results on a cold start. A real provisioning error fails
     // loudly here rather than surprising a later handler.
-    const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranch = baseBranchOf(apiCtx.services.config)
     try {
       await apiCtx.getBranchContext(baseBranch)
     } catch (err) {

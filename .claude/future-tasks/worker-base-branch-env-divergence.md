@@ -51,7 +51,6 @@ Health panel can show it alongside the worker's other health signals, the way
 - `packages/canopycms-cdk/worker/index.ts`,
   `packages/canopycms-cdk/src/constructs/cms-service.ts` (now fixed — see above)
 - `docs/deploying-to-aws.md` (now documents both variables — see above)
-- [prod-remote-default-branch-detection.md](prod-remote-default-branch-detection.md)
-  (a different, still-open base-branch config concern: prod mode falling back
-  to `'main'` when the adopter never set `defaultBaseBranch` at all, rather than
-  the worker/Lambda disagreeing about a value that IS set)
+- [prod-remote-default-branch-detection.md](resolved/prod-remote-default-branch-detection.md)
+  (resolved: with neither value set, the worker detects the base branch and the
+  Lambda reads what it chose from `remote.git`'s HEAD)

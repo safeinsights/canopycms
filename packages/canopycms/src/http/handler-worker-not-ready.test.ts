@@ -8,6 +8,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AuthPlugin } from '../auth/plugin'
@@ -15,6 +16,7 @@ import { defineCanopyTestConfig } from '../config-test'
 import { clearStrategyCache } from '../operating-mode/client-unsafe-strategy'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { mockConsole, type MockConsole } from '../test-utils'
+import { BaseBranchUnresolvedError } from '../utils/base-branch'
 import { createCanopyRequestHandlerFromConfig } from './handler'
 import { isCanopyBinaryResponse } from './types'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
@@ -57,12 +59,14 @@ describe('the not-ready 503 under real prod provisioning', () => {
     await fs.rm(workspaceRoot, { recursive: true, force: true })
   })
 
-  const getBranches = async () => {
-    const handler = await createCanopyRequestHandlerFromConfig({
+  const createHandler = () =>
+    createCanopyRequestHandlerFromConfig({
       config: defineCanopyTestConfig({ schema: {}, mode: 'prod' }),
       authPlugin,
     })
-    const response = await handler(
+
+  const getBranches = async (handler?: Awaited<ReturnType<typeof createHandler>>) => {
+    const response = await (handler ?? (await createHandler()))(
       {
         method: 'GET',
         url: 'http://localhost/api/canopycms/branches',
@@ -138,14 +142,48 @@ describe('the not-ready 503 under real prod provisioning', () => {
     expect(error).toContain('has no field "token"')
   })
 
-  it('is no longer "not ready" when remote.git is not a directory', async () => {
+  it('fails at creation, not as "not ready", when remote.git is not a directory', async () => {
     await fs.writeFile(path.join(workspaceRoot, 'remote.git'), 'not a repository')
 
-    const response = await getBranches()
+    await expect(createHandler()).rejects.toThrow('is not a directory')
+  })
 
-    expect(response.headers?.['Retry-After']).toBeUndefined()
-    const { error } = response.body as { error: string }
-    expect(error).not.toBe(WORKER_NOT_READY_MESSAGE)
-    expect(error).toContain('is not a directory')
+  it('fails at creation, naming defaultBaseBranch, when remote.git has no readable HEAD', async () => {
+    await simpleGit().raw([
+      'init',
+      '--bare',
+      '--initial-branch=production',
+      path.join(workspaceRoot, 'remote.git'),
+    ])
+
+    await expect(createHandler()).rejects.toThrow(BaseBranchUnresolvedError)
+    await expect(createHandler()).rejects.toThrow(/Set defaultBaseBranch/)
+  })
+
+  it('resolves the base branch from remote.git once the worker creates it', async () => {
+    const handler = await createHandler()
+
+    const before = await getBranches(handler)
+    expect(before.status).toBe(503)
+    expect(before.body).toMatchObject({ ok: false, error: WORKER_NOT_READY_MESSAGE })
+
+    // What the worker leaves: a bare clone whose HEAD names the repository's default branch.
+    const source = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-not-ready-src-'))
+    const git = simpleGit({ baseDir: source })
+    await git.init(['--initial-branch=production'])
+    await git.addConfig('user.name', 'Test')
+    await git.addConfig('user.email', 'test@test.com')
+    await fs.writeFile(path.join(source, 'README.md'), '# site\n')
+    await git.add('-A')
+    await git.commit('initial commit')
+    await simpleGit().clone(source, path.join(workspaceRoot, 'remote.git'), ['--bare'])
+    await fs.rm(source, { recursive: true, force: true })
+
+    const after = await getBranches(handler)
+    expect(after.status).toBe(200)
+    await expect(
+      fs.stat(path.join(workspaceRoot, 'content-branches', 'production')),
+    ).resolves.toBeTruthy()
+    await expect(fs.stat(path.join(workspaceRoot, 'content-branches', 'main'))).rejects.toThrow()
   })
 })

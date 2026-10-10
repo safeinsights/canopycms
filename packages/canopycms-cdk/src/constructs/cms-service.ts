@@ -827,24 +827,26 @@ export interface CanopyCmsServiceProps {
   clerkSecretKeySecretJsonField?: string
 
   /**
-   * The GitHub repository's default branch name (default: 'main').
+   * The branch editing branches fork from (default: unset, so the worker
+   * detects it: the branch remote.git's HEAD names, or before remote.git exists
+   * GitHub's default branch).
    *
    * Interpolated straight into a git ref (`refs/heads/{baseBranch}`) and into
    * the worker's `.env` heredoc, so an invalid value is rejected at synth (see
    * `assertValidGitBranchName` above). A branch that git accepts but the repo
    * does not have fails permanently at boot instead: `verifyBaseBranchExists`
    * (packages/canopycms/src/worker/cms-worker.ts) throws, `worker/index.ts`
-   * exits 1, systemd's `Restart=always` repeats that forever, and
-   * `rebaseActiveBranches` rebases against the wrong lineage in the meantime.
+   * exits 1, and systemd's `Restart=always` repeats that forever.
    *
    * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`
-   * (both default to 'main' when unset) — the two are resolved by different
-   * processes (this stamps the worker's `.env`; the Lambda reads
-   * `config.defaultBaseBranch` at request time) with no automatic reconciliation
-   * between them. `infrastructure/lib/cms-stack.ts`, as scaffolded by
+   * whenever that is set. Leaving `defaultBaseBranch` unset is safe whether or
+   * not this is set: the worker points remote.git's HEAD at the branch it uses,
+   * and the Lambda reads that HEAD. Setting `defaultBaseBranch` alone is not:
+   * the two are resolved by different processes, and a Lambda configured with
+   * one name against a worker that detected another forks and rebases against
+   * different lineages. `infrastructure/lib/cms-stack.ts`, as scaffolded by
    * `canopycms init-deploy aws`, derives this prop FROM that config file so the
-   * two cannot drift; a hand-rolled stack must set it explicitly whenever
-   * `defaultBaseBranch` is anything other than 'main'.
+   * two cannot drift.
    */
   baseBranch?: string
 
@@ -1144,11 +1146,15 @@ export class CanopyCmsService extends Construct {
 
     // Both are interpolated into a git ref and the worker's `.env` heredoc, so
     // both are guarded at synth - see their doc comments for the failure each
-    // prevents. `settingsBranch` stays `undefined` (not stamped at all) unless
-    // the adopter explicitly set it: an absent env var and an empty one are NOT
-    // the same to the worker, which falls through to a computed name only when
+    // prevents. Each stays `undefined` (not stamped at all) unless the adopter
+    // explicitly set it, so the worker detects the base branch and computes the
+    // settings branch name. For the settings branch an absent env var and an
+    // empty one are NOT the same: the worker computes the name only when
     // `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
-    const baseBranch = assertValidGitBranchName('baseBranch', props.baseBranch ?? 'main')
+    const baseBranch =
+      props.baseBranch !== undefined
+        ? assertValidGitBranchName('baseBranch', props.baseBranch)
+        : undefined
     const settingsBranch =
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
@@ -1655,7 +1661,6 @@ export class CanopyCmsService extends Construct {
       ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH],
       ['CANOPYCMS_GITHUB_OWNER', props.githubOwner],
       ['CANOPYCMS_GITHUB_REPO', props.githubRepo],
-      ['CANOPYCMS_BASE_BRANCH', baseBranch],
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
@@ -1666,6 +1671,9 @@ export class CanopyCmsService extends Construct {
       // "Region is missing".
       ['AWS_REGION', Stack.of(this).region],
     ]
+    if (baseBranch !== undefined) {
+      envEntries.push(['CANOPYCMS_BASE_BRANCH', baseBranch])
+    }
     if (props.githubTokenSecretArn) {
       envEntries.push(['CANOPYCMS_GITHUB_TOKEN_SECRET_ARN', props.githubTokenSecretArn])
     }

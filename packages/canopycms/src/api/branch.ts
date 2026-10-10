@@ -29,6 +29,7 @@ import {
 import { GitManager } from '../git-manager'
 import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
+import { baseBranchOf } from '../utils/base-branch'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -444,7 +445,7 @@ export const createBranchHandler = async (
     // Load path permissions from the base branch's JSON file (the resolved
     // fork point — baked into config at service creation; dev-mode git HEAD
     // when not explicitly configured)
-    const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranch = baseBranchOf(ctx.services.config)
     const baseBranchContext = await ctx.getBranchContext(baseBranch)
 
     let pathPermissions: PathPermission[] = []
@@ -539,7 +540,7 @@ export const listBranchesHandler = async (
   // editor matches defaultBranch against registry names, so return the form
   // that can actually be found there.
   const defaultBranch = sanitizeBranchName(
-    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+    ctx.services.config.defaultActiveBranch ?? baseBranchOf(ctx.services.config),
   )
 
   // Admins and Reviewers see all branches
@@ -749,7 +750,7 @@ export const deleteBranchHandler = async (
   // Defense-in-depth only -- isProtected above already rejects the base
   // branch, and settings branches never resolve through getBranchContext.
   const sanitizedBase = sanitizeBranchName(
-    branchContext.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
+    branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config),
   )
   const deletableHead =
     sanitizedDeleted !== sanitizedBase &&
