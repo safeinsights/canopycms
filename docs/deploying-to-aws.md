@@ -1109,9 +1109,10 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   new one applies only at a reboot, so it moves only when a deploy resolves a newer AMI: deploy now
   and then even when nothing else changed. A replacement can get newer git, Node or efs-utils than
   the AMI. dnf needs more memory than a `t4g.nano` has free, so a 1 GiB swap file goes on first
-  (`vm.swappiness` 10). An upgrade that fails 5 attempts starts the worker unpatched and notifies
-  `alarmTopic`; the next boot retries. Any other failed step before the worker starts shuts the
-  instance down for the group to replace, and `aws ec2 get-console-output` names the step.
+  (`vm.swappiness` 10). An upgrade that fails 5 attempts starts the worker unpatched, notifying
+  `alarmTopic` if set; the next boot retries. A failed swap only warns. Any other failed step
+  before the worker starts shuts the instance down for the group to replace, and
+  `aws ec2 get-console-output` names the step, or the line for a step that is not retried.
 - **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
   which boots while the old one drains. Saves keep working; publishing, pull requests and sync

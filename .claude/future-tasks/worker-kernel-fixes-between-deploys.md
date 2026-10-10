@@ -30,7 +30,7 @@ redeployed runs that AMI's kernel indefinitely.
   - JP's variant (2026-10-10): pair it with a scheduled daily replacement in a low-editing window
     (EventBridge Scheduler calling `autoscaling:StartInstanceRefresh`; `workerMaxInstanceLifetime`
     has a one-day floor but cannot pick the hour). The kernel then moves too, and the boot-time
-    `dnf upgrade` could become a safety net or go, saving its 1–3 minutes.
+    `dnf upgrade` could become a safety net or go, saving its share of the boot.
   - Costs: AMIs lag the repositories by AWS's AMI release interval, so userland fixes arrive later
     than with the upgrade; the worker drains and reboots daily rather than weekly; and an AMI that
     breaks the boot arrives with no deploy to blame or roll back. Dropping the upgrade reverses a

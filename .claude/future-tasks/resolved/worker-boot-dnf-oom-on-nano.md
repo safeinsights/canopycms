@@ -2,7 +2,7 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-10, branch `fix/worker-boot-dnf-oom`, base `int-202610-b` (request 105). On the default one-nano `workerCapacity` the boot's `dnf upgrade --releasever=latest` was OOM-killed on three attempts out of five. User data now turns on a 1 GiB swap file before the first dnf (idempotent, in fstab, `vm.swappiness` 10); every `retry` names its step when it gives up; an upgrade that exhausts its retries starts the worker on the AMI's packages, writes a worker.log line, and trips `workerUnpatchedAlarm` when `alarmTopic` is set. The required installs still fail the boot
+  RESOLVED 2026-10-10, branch `fix/worker-boot-dnf-oom`, base `int-202610-b` (request 105). On the default one-nano `workerCapacity` the boot's `dnf upgrade --releasever=latest` was OOM-killed on three attempts in a row; the fourth of five succeeded. User data now turns on a 1 GiB swap file before the first dnf (idempotent, in fstab, `vm.swappiness` 10); every `retry` names its step when it gives up; an upgrade that exhausts its retries starts the worker on the AMI's packages, writes a worker.log line, and trips `workerUnpatchedAlarm` when `alarmTopic` is set. The required installs still fail the boot
 ---
 
 # A t4g.nano worker's boot-time `dnf upgrade` is OOM-killed
@@ -29,9 +29,10 @@ swap file and the same cap, the upgrade from 2023.6 to 2023.12 and the installs 
 `packages/canopycms-cdk/src/constructs/cms-service.ts`, worker user data:
 
 - **`setup_swap` runs before the first dnf.** It skips a swap file that is already active, reuses a
-  1 GiB file and recreates any other size, refuses with under 3 GiB free on `/`, then runs
-  `fallocate`, `chmod 600`, `mkswap`, `swapon`, adds a guarded fstab line and sets swappiness 10 in
-  `/etc/sysctl.d`. A failure warns and the boot carries on.
+  1 GiB file and recreates any other size, refuses when `/` has under 3 GiB free or `df` gives no
+  number, then runs `fallocate`, `chmod 600` and `mkswap`, adds a guarded fstab line, sets
+  swappiness 10 in `/etc/sysctl.d`, and runs `swapon` last, so swap is never on when it reports
+  failure. A failure warns and the boot carries on.
 - **`retry <step> <command…>`.** The message is `canopy-worker boot: '<step>' failed after 5
   attempts`.
 - **The upgrade fails open; the installs fail closed.** The decision and its bound are in the comment
@@ -50,4 +51,5 @@ A container cannot show these:
   reboot (via `swapfile.swap`) is unverified.
 - XFS root and `fallocate`: the container ran on ext4.
 - The nano's real headroom, around 400 MiB after boot services and the CloudWatch agent.
-- That the CloudWatch agent ships the unpatched line written before it started.
+- That the CloudWatch agent ships the unpatched line written before it started (its source defaults
+  `from_beginning` to true for a file with no saved position).

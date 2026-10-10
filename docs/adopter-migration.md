@@ -478,7 +478,7 @@ worker, and a hand-built alarm on the worker log group.
 
 **What changed.** (next int) The boot's `dnf upgrade` could be OOM-killed on every retry. A 1 GiB
 swap file now goes on first; an upgrade that still fails starts the worker unpatched and notifies
-`alarmTopic`; a failed step names itself. See
+`alarmTopic` if set; a retried step names itself when it gives up. See
 [The worker instance](deploying-to-aws.md#the-worker-instance).
 
 **To adopt.** Deploy, which replaces the worker instance.
