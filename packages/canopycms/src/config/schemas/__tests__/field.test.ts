@@ -105,6 +105,36 @@ describe('markdown field options: renderAs and mdxAllow', () => {
     expect(messageOf({ name: 'b', type: 'markdown', renderAs: 'markdown' })).toBeDefined()
   })
 
+  describe("the 'string' prop allowance", () => {
+    const withProp = (prop: unknown) => ({
+      name: 'b',
+      type: 'mdx',
+      mdxAllow: { components: { Callout: { props: { title: prop } } } },
+    })
+
+    it.each([['string'], [{ type: 'string' }], [{ type: 'string', maxLength: 120 }]])(
+      'accepts %j',
+      (prop) => {
+        expect(messageOf(withProp(prop))).toBeUndefined()
+        expect(fieldSchema.parse(withProp(prop))).toEqual(withProp(prop))
+      },
+    )
+
+    it.each([
+      ['number'],
+      ['boolean'],
+      [{ type: 'number' }],
+      [{ type: 'string', maxLength: 0 }],
+      [{ type: 'string', maxLength: -1 }],
+      [{ type: 'string', maxLength: 1.5 }],
+      [{ type: 'string', maxLength: '5' }],
+      [{ type: 'string', extra: 1 }],
+      [{ maxLength: 5 }],
+    ])('refuses %j', (prop) => {
+      expect(messageOf(withProp(prop))).toBeDefined()
+    })
+  })
+
   it.each([
     ['an unsafe tag', { htmlTags: ['script'] }, /HTML tags the base MDX policy accepts/],
     ['an upper-case tag', { htmlTags: ['DIV'] }, /HTML tags the base MDX policy accepts/],

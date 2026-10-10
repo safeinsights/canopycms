@@ -336,6 +336,23 @@ describe('createEntrySchemaRegistry: markdown field options', () => {
     ).toThrow('Field "body": mdxAllow.htmlTags.0 must be one of the HTML tags')
   })
 
+  it('throws on a string prop allowance with a bad maxLength, naming where', () => {
+    const withTitle = (title: unknown) => () =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'body',
+            type: 'mdx',
+            mdxAllow: { components: { Callout: { props: { title } } } },
+          },
+        ],
+      })
+    expect(withTitle({ type: 'string', maxLength: 5 })).not.toThrow()
+    expect(withTitle({ type: 'string', maxLength: 0 })).toThrow(
+      /Field "body": mdxAllow\.components\.Callout\.props\.title/,
+    )
+  })
+
   it('throws on a field in an inline group, and on a renderAs other than mdx', () => {
     expect(() =>
       createEntrySchemaRegistry({
