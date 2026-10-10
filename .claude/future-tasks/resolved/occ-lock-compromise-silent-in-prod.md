@@ -2,12 +2,12 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  `withOccFileLock`'s `onCompromised` logs through the `CANOPYCMS_DEBUG`-gated debug logger, so in production the one signal that **two holders may be live** on a `branch.json`/`comments.json` write emits nothing. Found by the independent review of the proper-lockfile-hazards fix, which moved `provisioning-lock.ts` to always-on `canopyLogWarn` — leaving layer 3's two halves inconsistent. Not urgent: the process-killing rethrow is already gone, this is observability only
+  RESOLVED 2026-10-09, branch `fix/occ-compromise-warn-and-409-messages`. `withOccFileLock`'s compromise handler now logs through always-on `canopyLogWarn`, wrapped by `guardOnCompromised` (extracted from `provisioning-lock.ts`, which uses it too) so a throwing logger falls back to a raw stderr write instead of escaping the refresh timer. `content-write-lock.ts` already logged via `canopyLogWarn` inside that wrapper; `branch-metadata.ts` and `comment-store.ts` have no handler of their own and go through `withOccFileLock`. Tests fire the captured handler with CANOPYCMS_DEBUG unset
 ---
 # [P2] `withOccFileLock`'s compromise handler is still silent in production
 
 **Found:** 2026-08-20, by the independent review of `fix/test-suite-unhandled-errors`
-(the branch that fixed [proper-lockfile-hazards](resolved/proper-lockfile-hazards.md)).
+(the branch that fixed [proper-lockfile-hazards](proper-lockfile-hazards.md)).
 
 ## Problem
 
