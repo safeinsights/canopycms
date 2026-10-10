@@ -14,7 +14,7 @@ import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
-import { GitHubMirror, ProtectedBranchPushError } from './github-mirror'
+import { GitHubMirror, RefusedPushError } from './github-mirror'
 
 describe('the worker refuses to push protected branches', () => {
   let tmp: string
@@ -135,6 +135,37 @@ describe('the worker refuses to push protected branches', () => {
     expect((await failedErrors())[0]).toMatch(/Refusing to push "main" to GitHub/)
   })
 
+  it("refuses the base branch on its own, when it is not GitHub's default branch", async () => {
+    // GitHub's default is `main`; this deployment's base is `production`.
+    await commitInRemoteGit('production', 'on-main')
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      '--force',
+      github,
+      'refs/heads/main:refs/heads/production',
+    ])
+    await queuePush('production')
+
+    await runQueue('production')
+
+    expect(await githubLog('production')).toBe('A: base')
+    expect((await failedErrors())[0]).toMatch(/Refusing to push "production" to GitHub/)
+  })
+
+  it('refuses a name that is not a plain branch name before any git reads it', async () => {
+    await commitInRemoteGit('main', 'on-main')
+    await queuePush('x:main')
+
+    await runQueue('decoy')
+
+    expect(await githubLog('main')).toBe('A: base')
+    const errors = await failedErrors()
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatch(/is not a valid branch name/)
+  })
+
   it('still pushes editor branches and the settings branch', async () => {
     await commitInRemoteGit('feature/x', 'on-main')
     await commitInRemoteGit('canopycms-settings-prod', 'unrelated')
@@ -161,7 +192,7 @@ describe('the worker refuses to push protected branches', () => {
       mirror.exclusive((m) =>
         m.pushToGitHub(github, 'main', sha, { lease: githubTip, protectedBranches: [] }),
       ),
-    ).rejects.toBeInstanceOf(ProtectedBranchPushError)
+    ).rejects.toBeInstanceOf(RefusedPushError)
     expect(await githubLog('main')).toBe('A: base')
   })
 })

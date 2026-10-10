@@ -510,7 +510,8 @@ branch. The refusal also covers a push that would replace history.
 **To adopt.** Nothing to change. Upgrade, and roll the worker. Regardless of this fix, protect
 your base branch on GitHub with a branch protection rule or ruleset that CanopyCMS's credential
 cannot bypass. A classic token belonging to a repository admin often can, so check its bypass
-list.
+list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without it, the
+worker protects only GitHub's current default branch and whatever it read as base at startup.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

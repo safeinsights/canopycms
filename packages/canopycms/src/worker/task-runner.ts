@@ -25,7 +25,7 @@ import {
   isStaleLeaseRejection,
   workflowPushRefusalFile,
 } from '../utils/git'
-import { ProtectedBranchPushError } from './github-mirror'
+import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -688,6 +688,14 @@ export async function pushBranchToGitHub(
   // commit remote.git held when it was read, so what the marker logic at the end compares is
   // what GitHub received.
   await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
+  // Before `branch` reaches any git: `readPublishedSha` below would read a `<rev>:<path>` form as a
+  // tree lookup in remote.git. A retry can never make the name valid.
+  try {
+    await assertPlainBranchName(branch)
+  } catch (err) {
+    if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
+    throw err
+  }
 
   // Resolve the tokenized URL ONCE, here: all three pushes below use this
   // const and none calls ctx.buildGitHubUrl() again. A correctness
@@ -727,7 +735,7 @@ export async function pushBranchToGitHub(
       return 'pushed'
     } catch (err) {
       // A retry can never make the branch not protected.
-      if (err instanceof ProtectedBranchPushError) throw new PermanentTaskError(err.message)
+      if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
       const message = getErrorMessage(err)
       throwIfWorkflowRefusal(branch, message)
 

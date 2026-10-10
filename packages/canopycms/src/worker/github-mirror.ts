@@ -148,22 +148,44 @@ async function assertOwnDirectory(dir: string): Promise<void> {
   }
 }
 
-/** What one {@link GitHubMirror.exclusive} call may do. */
 /**
- * A push the worker never makes: to the base branch, or to GitHub's default branch. No CanopyCMS
- * flow pushes either, so a task asking for one did not come from CanopyCMS.
+ * A push the worker never makes: to a name that is not a plain branch name, to the base branch, or
+ * to GitHub's default branch. No CanopyCMS flow asks for any of these, so a task that does was not
+ * written by CanopyCMS.
  */
-export class ProtectedBranchPushError extends Error {
-  constructor(readonly branch: string) {
+export class RefusedPushError extends Error {
+  constructor(
+    readonly branch: string,
+    reason: 'invalid' | 'protected',
+  ) {
     super(
-      `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default branch, ` +
-        `which the CanopyCMS worker never pushes. Nothing in CanopyCMS queues such a push; find ` +
-        `out what wrote this task.`,
+      reason === 'invalid'
+        ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
+        : `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default ` +
+            `branch, which the CanopyCMS worker never pushes. Nothing in CanopyCMS queues such a ` +
+            `push; find out what wrote this task.`,
     )
-    this.name = 'ProtectedBranchPushError'
+    this.name = 'RefusedPushError'
   }
 }
 
+/**
+ * Throw {@link RefusedPushError} unless `branch` is a plain branch name: one
+ * `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
+ * follows it in a refspec as another destination), `..`, `^`, `~`, `@{`, spaces and a leading
+ * `-`, so `refs/heads/<branch>` is exactly the ref a push names.
+ */
+export async function assertPlainBranchName(branch: string): Promise<void> {
+  let normalized: string
+  try {
+    normalized = (await simpleGit().raw(['check-ref-format', '--branch', branch])).trim()
+  } catch {
+    throw new RefusedPushError(branch, 'invalid')
+  }
+  if (normalized !== branch) throw new RefusedPushError(branch, 'invalid')
+}
+
+/** What one {@link GitHubMirror.exclusive} call may do. */
 export class MirrorSession {
   constructor(
     private readonly gitDir: string,
@@ -339,15 +361,17 @@ export class MirrorSession {
       if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
     }
     // Here, at the one place every GitHub push (plain or under a lease) goes through, so no caller
-    // can skip it. The task queue, remote.git and the lease marker are all Lambda-writable, and
-    // the Lambda's own base branch is resolved from Lambda-writable state when it is not
-    // configured; GitHub's default branch is read from GitHub itself, per push.
+    // can skip it, and before any git runs with `branch` in a refspec. The task queue, remote.git
+    // and the lease marker are all Lambda-writable, and the worker's base branch comes from
+    // Lambda-writable state when it is not configured; GitHub's default branch is read from GitHub
+    // itself, per push.
+    await assertPlainBranchName(branch)
     const protectedNames = [...options.protectedBranches]
     const githubDefault = await this.githubDefaultBranch(githubUrl, options.signal)
     if (githubDefault !== null) protectedNames.push(githubDefault)
     const target = sanitizeBranchName(branch)
-    if (protectedNames.some((name) => sanitizeBranchName(name) === target)) {
-      throw new ProtectedBranchPushError(branch)
+    if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
+      throw new RefusedPushError(branch, 'protected')
     }
     const staging = `${STAGING_PREFIX}${branch}`
     const git = this.git(options.signal)
