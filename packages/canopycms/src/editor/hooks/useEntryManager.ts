@@ -29,7 +29,7 @@ export { listAllEntries } from './useEntriesData'
 export class SaveApiError extends Error {
   constructor(
     public readonly status: number,
-    /** The server's own explanation, when it sent one; `message` falls back to the status. */
+    /** The server's (or saveEntry's own) explanation, if any; `message` falls back to the status. */
     public readonly serverMessage?: string,
     public readonly fieldErrors?: EntryFieldError[],
     public readonly code?: ApiErrorCode,

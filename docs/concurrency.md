@@ -108,10 +108,10 @@ other's way and out of the git working tree.
 **Never let a compromised lock kill the process.** proper-lockfile's default
 `onCompromised` rethrows from its refresh timer: an uncaught exception. The mutual exclusion
 is already gone by then, so crashing protects nothing and kills a Lambda serving other
-requests. `guardOnCompromised` (`provisioning-lock.ts`) wraps every lock's handler
-so that not even a throwing logger escapes (`CI=true` vitest throws on console writes).
-Handlers log with `canopyLogWarn`, not the debug logger, so "two holders may be live"
-reaches production.
+requests. `guardOnCompromised` (`provisioning-lock.ts`) wraps the provisioning,
+content-write and OCC locks' handlers so not even a throwing logger escapes (`CI=true`
+vitest throws on console writes). Handlers skip the debug logger: "two holders may be
+live" reaches production.
 
 **Then decide, per call site, what a compromise means for that critical section.** It is a
 parameter, not a fixed policy, because the right answer differs: provisioning logs and

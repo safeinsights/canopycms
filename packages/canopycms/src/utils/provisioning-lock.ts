@@ -26,8 +26,8 @@ export type OnLockCompromised = (err: Error) => void
  * rather than a convention, and also covers the LOGGER throwing -- under `CI=true`, vitest's
  * `onConsoleLog` turns a console write into a throw.
  *
- * Handlers report through `canopyLogWarn`, never the debug logger: "two holders may now be live"
- * must be visible without CANOPYCMS_DEBUG.
+ * Handlers report through an always-on logger (`canopyLogWarn`), never the debug logger: "two
+ * holders may now be live" must be visible without CANOPYCMS_DEBUG.
  */
 export function guardOnCompromised(
   handler: OnLockCompromised,
