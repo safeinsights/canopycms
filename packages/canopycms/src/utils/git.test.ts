@@ -13,6 +13,7 @@ import {
   stageAllExceptCanopyState,
   workflowPushRefusalFile,
 } from './git'
+import { BaseBranchUnresolvedError } from './base-branch'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-utilsgit-'))
 
@@ -103,9 +104,46 @@ describe('resolveBaseBranch', () => {
     expect(await resolveBaseBranch({ mode: 'dev', detectFrom: root })).toBe('main')
   })
 
-  it('prod mode never detects and defaults to main', async () => {
+  it('prod mode reads the base branch from the remote HEAD, including a non-main name', async () => {
+    const source = await initRepo('production')
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().clone(source, remoteGitDir, ['--bare'])
+    expect(await resolveBaseBranch({ mode: 'prod', remoteGitDir })).toBe('production')
+    expect(
+      await resolveBaseBranch({ defaultBaseBranch: 'develop', mode: 'prod', remoteGitDir }),
+    ).toBe('develop')
+  })
+
+  it('prod mode never falls back to the checkout HEAD or to main', async () => {
     const root = await initRepo('feature-z')
-    expect(await resolveBaseBranch({ mode: 'prod', detectFrom: root })).toBe('main')
+    await expect(resolveBaseBranch({ mode: 'prod', detectFrom: root })).rejects.toThrow(
+      BaseBranchUnresolvedError,
+    )
+    await expect(resolveBaseBranch({ mode: 'prod', detectFrom: root })).rejects.toThrow(
+      /defaultBaseBranch/,
+    )
+  })
+
+  it('prod mode fails loudly when the remote HEAD names no branch with a commit', async () => {
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().raw(['init', '--bare', '--initial-branch=production', remoteGitDir])
+    await expect(resolveBaseBranch({ mode: 'prod', remoteGitDir })).rejects.toThrow(
+      /defaultBaseBranch is not set, and the base branch could not be read from/,
+    )
+  })
+
+  it('prod mode fails loudly on a detached remote HEAD or a missing remote', async () => {
+    const source = await initRepo()
+    const remoteGitDir = path.join(await tmpDir(), 'remote.git')
+    await simpleGit().clone(source, remoteGitDir, ['--bare'])
+    const sha = (await simpleGit().raw(['--git-dir', remoteGitDir, 'rev-parse', 'HEAD'])).trim()
+    await simpleGit().raw(['--git-dir', remoteGitDir, 'update-ref', '--no-deref', 'HEAD', sha])
+    await expect(resolveBaseBranch({ mode: 'prod', remoteGitDir })).rejects.toThrow(
+      BaseBranchUnresolvedError,
+    )
+    await expect(
+      resolveBaseBranch({ mode: 'prod', remoteGitDir: path.join(remoteGitDir, 'absent') }),
+    ).rejects.toThrow(BaseBranchUnresolvedError)
   })
 })
 

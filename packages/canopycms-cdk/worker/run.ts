@@ -209,7 +209,8 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
       // `resolveWorkerGitHubAuth` never calls it.
       refreshGitHubToken: () => githubTokenSecret.refresh(),
       refreshAuthCache,
-      baseBranch: env.CANOPYCMS_BASE_BRANCH ?? 'main',
+      // Unset, CmsWorker detects it rather than assuming 'main'.
+      baseBranch: env.CANOPYCMS_BASE_BRANCH || undefined,
       // deploymentName is deliberately NOT passed: CmsWorker resolves it through
       // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself,
       // applies the same env > config > 'prod' precedence as the Lambda, and

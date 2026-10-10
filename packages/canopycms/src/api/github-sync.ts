@@ -8,6 +8,7 @@ import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submission-attribution'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
+import { baseBranchOf } from '../utils/base-branch'
 
 /**
  * The caller uses this to update branch metadata.
@@ -52,7 +53,7 @@ export async function syncSubmitPr(
     changedPaths: submission.changedPaths,
   })
   // Target the fork point recorded at branch creation when available.
-  const baseBranch = context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+  const baseBranch = context.branch.baseBranch ?? baseBranchOf(ctx.services.config)
 
   if (!clientOperatingStrategy(mode).supportsPullRequests()) {
     return {}

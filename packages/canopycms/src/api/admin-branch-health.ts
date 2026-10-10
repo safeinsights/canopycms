@@ -39,6 +39,7 @@ import {
 import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
+import { baseBranchOf } from '../utils/base-branch'
 
 /** [H1] A fresh (< 5 min old) init lock blocks purge -- provisioning may be running. */
 const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
@@ -144,7 +145,7 @@ const getBranchHealthHandler = async (
   // admin handlers must agree with it or the scan silently looks at the
   // wrong directory.
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
-  const baseBranchName = ctx.services.config.defaultBaseBranch ?? 'main'
+  const baseBranchName = baseBranchOf(ctx.services.config)
   const contentRootName = ctx.services.config.contentRoot || 'content'
 
   try {
@@ -187,7 +188,7 @@ const purgeBranchDirHandler = async (
   params: BranchDirParams,
 ): Promise<PurgeBranchDirResponse> => {
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
-  const baseBranchName = ctx.services.config.defaultBaseBranch ?? 'main'
+  const baseBranchName = baseBranchOf(ctx.services.config)
   const sanitizedBaseBranchName = sanitizeBranchName(baseBranchName)
 
   if (params.dirName === sanitizedBaseBranchName) {

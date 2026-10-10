@@ -14,6 +14,7 @@ import {
 } from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { ensureRemoteGitConfig } from '../git-manager'
+import { readHeadBranch } from '../utils/git'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
@@ -294,12 +295,13 @@ export class CmsWorker {
   private taskDir: string
   private remoteGitPath: string
   private contentBranchesPath: string
-  private baseBranch: string
+  // Set by the constructor when configured, else by resolveBaseBranch() in
+  // start(); read through the two getters below, which throw until then.
   // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
   // against remote.git) must keep using the raw `baseBranch` name.
   // Computed once so both filesystem call sites agree instead of re-deriving it
   // and risking drift.
-  private sanitizedBaseBranch: SanitizedBranchName
+  private resolvedBaseBranch?: { name: string; sanitized: SanitizedBranchName }
   // This deployment's own settings branch — see CmsWorkerConfig.deploymentName.
   // `pushSettingsBranches` pushes ONLY this branch, never another
   // `canopycms-settings-*` it happens to find locally. Resolved lazily by
@@ -354,8 +356,7 @@ export class CmsWorker {
     this.taskDir = path.join(config.workspacePath, '.tasks')
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
-    this.baseBranch = config.baseBranch ?? 'main'
-    this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
+    if (config.baseBranch !== undefined) this.setBaseBranch(config.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -543,7 +544,9 @@ export class CmsWorker {
       // credential. See preflightGitHubAppAuth().
       await this.preflightGitHubAppAuth()
 
+      await this.resolveBaseBranch()
       await this.ensureRemoteGit()
+      await this.recordBaseBranchInRemoteHead()
 
       // Recover orphaned tasks immediately rather than waiting for the first
       // processTaskQueue() poll. Not the only call site: processTaskQueue()
@@ -851,6 +854,74 @@ export class CmsWorker {
       this.activeTimeouts.add(timeout)
     }
     run()
+  }
+
+  private get baseBranch(): string {
+    return this.requireBaseBranch().name
+  }
+
+  private get sanitizedBaseBranch(): SanitizedBranchName {
+    return this.requireBaseBranch().sanitized
+  }
+
+  private requireBaseBranch(): { name: string; sanitized: SanitizedBranchName } {
+    if (!this.resolvedBaseBranch) {
+      throw new Error('CmsWorker: the base branch is resolved by start(); it has not run yet')
+    }
+    return this.resolvedBaseBranch
+  }
+
+  private setBaseBranch(name: string): void {
+    this.resolvedBaseBranch = { name, sanitized: sanitizeBranchName(name) }
+  }
+
+  /**
+   * An unconfigured base branch is the one remote.git's HEAD names, which is what the Lambda
+   * reads too (GitManager.detectBaseBranch); before remote.git exists, it is GitHub's default
+   * branch, which the clone then records as that HEAD. Never assumes 'main'.
+   */
+  private async resolveBaseBranch(): Promise<void> {
+    if (this.resolvedBaseBranch) return
+    let name: string
+    try {
+      const remoteGitExists = await fs.stat(this.remoteGitPath).then(
+        () => true,
+        (err: unknown) => {
+          if (isNodeError(err) && err.code === 'ENOENT') return false
+          throw err
+        },
+      )
+      name = remoteGitExists
+        ? await readHeadBranch(this.remoteGitPath)
+        : (
+            await this.octokitClient().repos.get({
+              owner: this.config.githubOwner,
+              repo: this.config.githubRepo,
+            })
+          ).data.default_branch
+    } catch (err) {
+      throw new Error(
+        `CANOPYCMS_BASE_BRANCH is not set (the CDK construct's \`baseBranch\` prop), and the ` +
+          `base branch could not be determined from ${this.remoteGitPath} or GitHub: ` +
+          `${redactCredentials(getErrorMessage(err))}. Set it to the branch editing branches fork from.`,
+      )
+    }
+    this.setBaseBranch(name)
+    workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Point remote.git's HEAD at the base branch this worker uses, so a Lambda left to detect it
+   * (GitManager.detectBaseBranch) reads the same name. Only the worker writes it, at boot under
+   * the worker lock; a Lambda reads it once per process.
+   */
+  private async recordBaseBranchInRemoteHead(): Promise<void> {
+    const ref = `refs/heads/${this.baseBranch}`
+    const git = simpleGit()
+    const current = await readHeadBranch(this.remoteGitPath).catch(() => undefined)
+    if (current === this.baseBranch) return
+    await git.raw(['--git-dir', this.remoteGitPath, 'symbolic-ref', 'HEAD', ref])
+    workerLog(`remote.git HEAD now names the base branch '${this.baseBranch}'`)
   }
 
   /**

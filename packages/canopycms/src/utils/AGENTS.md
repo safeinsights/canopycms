@@ -6,6 +6,9 @@ span files.
 
 ## Where each rule lives
 
+- `base-branch.ts` (`baseBranchOf`): every read of a resolved base branch; prod throws rather
+  than assume `'main'`. services.ts resolves it through `GitManager.detectBaseBranch`, from the
+  `remote.git` HEAD worker/cms-worker.ts records.
 - `content-serialize.ts` (module header, `looksLikeSameItem`): `ContentStore.write`'s
   source-preserving write path, printed by `yaml-source-splice.ts`/`markdown-body-splice.ts`;
   evidence search reads `validation/block-structural-keys.ts`.

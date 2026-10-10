@@ -36,6 +36,7 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
+import { baseBranchOf } from './utils/base-branch'
 import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
@@ -51,12 +52,12 @@ import { withContentWriteLock } from './utils/content-write-lock'
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
  * order: an explicitly configured value; `defaultBaseBranch ?? 'main'` with no
  * git for static deployments and builds; git HEAD in dev; and
- * `defaultBaseBranch ?? 'main'` in prod.
+ * `defaultBaseBranch` in prod, `undefined` while that is still unresolved.
  */
 function createActiveBranchDetector() {
   let cache: { value: string; expiresAt: number } | null = null
 
-  return async (config: CanopyConfig): Promise<string> => {
+  return async (config: CanopyConfig): Promise<string | undefined> => {
     if (config.defaultActiveBranch) return config.defaultActiveBranch
     // Static deployments and builds read content from the checkout — never shell out to git
     if (readsFromCheckout(config)) return config.defaultBaseBranch ?? 'main'
@@ -72,7 +73,7 @@ function createActiveBranchDetector() {
       cache = { value: branch, expiresAt: now + 5000 }
       return branch
     }
-    return config.defaultBaseBranch ?? 'main'
+    return config.defaultBaseBranch
   }
 }
 
@@ -119,6 +120,13 @@ export interface CanopyServices {
    * content serving since the editor is pinned to its own branch via URL params.
    */
   refreshActiveBranch: () => Promise<void>
+  /**
+   * Resolve a prod base branch that was still pending at creation because the worker had not yet
+   * created the remote it is read from; a no-op once resolved. Rejects with RemoteNotReadyError
+   * (a 503) until the remote exists. Every request entry point awaits it before reading
+   * `config.defaultBaseBranch`.
+   */
+  resolvePendingBaseBranch: () => Promise<void>
   /** Entry schema registry mapping entry schema names to field definitions */
   entrySchemaRegistry: EntrySchemaRegistry
   /** Per-branch schema cache */
@@ -240,22 +248,28 @@ async function _createCanopyServicesInternal(
   const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
   const explicitBaseBranch = config.defaultBaseBranch
-  const defaultActiveBranch = await detectActiveBranch(config)
-  // Unset, the base branch follows the same dev-mode HEAD detection, matching
-  // resolveBaseBranch in utils/git.ts — the canonical definition workspace
-  // provisioning uses.
+  // Unset, the base branch follows resolveBaseBranch in utils/git.ts, the
+  // canonical definition workspace provisioning uses: dev detects git HEAD, prod
+  // reads the remote's HEAD and fails loudly when it cannot. Prod stays pending
+  // (undefined) only while the worker has not created the remote yet; see
+  // resolvePendingBaseBranch.
   const defaultBaseBranch =
     explicitBaseBranch ??
-    (config.mode === 'dev' && !readsFromCheckout(config)
-      ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
-      : 'main')
+    (readsFromCheckout(config)
+      ? 'main'
+      : config.mode === 'dev'
+        ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
+        : await GitManager.detectBaseBranch(config, 'pending'))
+  const defaultActiveBranch = await detectActiveBranch({ ...config, defaultBaseBranch })
   config = { ...config, defaultActiveBranch, defaultBaseBranch }
 
   const bootstrapAdminIds = getBootstrapAdminIds()
 
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
-  const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
+  // Reads services.config per call: the protected base branch may resolve after creation.
+  const checkBranchAccess: CanopyServices['checkBranchAccess'] = (context, user) =>
+    createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', services.config)(context, user)
   // Content access loads permissions dynamically from the settings branch (orphan git branch)
   const ensureSettingsBranchRoot =
     options.getSettingsBranchRoot ??
@@ -265,7 +279,7 @@ async function _createCanopyServicesInternal(
       const settingsRoot = strategy.getSettingsRoot()
       const branchName = strategy.getSettingsBranchName(config)
 
-      const manager = new SettingsWorkspaceManager(config)
+      const manager = new SettingsWorkspaceManager(services.config)
       await manager.ensureGitWorkspace({
         settingsRoot,
         branchName,
@@ -299,7 +313,7 @@ async function _createCanopyServicesInternal(
   ) =>
     new GitManager({
       repoPath,
-      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
+      baseBranch: opts?.baseBranch ?? baseBranchOf(services.config),
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
       skipIndexMarker: opts?.skipIndexMarker,
     })
@@ -334,9 +348,9 @@ async function _createCanopyServicesInternal(
   }): Promise<SubmitBranchResult> => {
     // Defense-in-depth: refuse to push the base branch to itself even if the
     // 'submittableBranch' guard was somehow bypassed. Prefer the recorded fork
-    // point (context.branch.baseBranch) over config.defaultBaseBranch — the
-    // closure-captured `config` can go stale after dev refreshActiveBranch().
-    const effectiveBase = options.context.branch.baseBranch ?? config.defaultBaseBranch ?? 'main'
+    // point (context.branch.baseBranch) over the config value, which dev's
+    // refreshActiveBranch() can move.
+    const effectiveBase = options.context.branch.baseBranch ?? baseBranchOf(services.config)
     if (sanitizeBranchName(options.context.branch.name) === sanitizeBranchName(effectiveBase)) {
       throw new Error(
         `Refusing to commit and push the base branch "${options.context.branch.name}" — submitting requires a separate editing branch`,
@@ -565,12 +579,24 @@ async function _createCanopyServicesInternal(
         changed = true
       }
       if (changed) {
-        // The closures above (getSettingsBranchRoot, checkContentAccess,
-        // createGitManagerFor, …) captured the original `config` local. Only
-        // branch identity changes here: git operations on existing branches use
-        // the fork point in branch metadata, and anything needing the fresh
-        // values must read services.config.
+        // The closures above captured the original `config` local. Only branch
+        // identity changes here: git operations on existing branches use the
+        // fork point in branch metadata, and anything needing the fresh values
+        // reads services.config.
         services.config = next
+      }
+    },
+    resolvePendingBaseBranch: async () => {
+      if (services.config.defaultBaseBranch) return
+      // In-process and write-once in effect: concurrent requests each read the
+      // same remote HEAD and assign the same value, and nothing is written to
+      // disk, so no lock is needed. Later changes to that HEAD are not followed
+      // (configure defaultBaseBranch to move the base branch).
+      const detected = await GitManager.detectBaseBranch(services.config, 'throw')
+      services.config = {
+        ...services.config,
+        defaultBaseBranch: detected,
+        defaultActiveBranch: services.config.defaultActiveBranch ?? detected,
       }
     },
   }

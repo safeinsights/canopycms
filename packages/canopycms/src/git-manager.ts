@@ -15,6 +15,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   simpleGit,
@@ -24,6 +25,7 @@ import {
   type StatusResult,
 } from 'simple-git'
 
+import type { CanopyConfig } from './config'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
@@ -36,6 +38,7 @@ import {
   resolveBaseBranch,
   stageAllExceptCanopyState,
 } from './utils/git'
+import { BaseBranchUnresolvedError } from './utils/base-branch'
 import { canopyLogWarn } from './utils/logger'
 import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
@@ -1134,6 +1137,51 @@ export class GitManager {
     throw new Error(
       'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
     )
+  }
+
+  /**
+   * Prod's base branch when `defaultBaseBranch` is unset: the branch named by the HEAD of the
+   * remote the workspaces clone from, read locally because the Lambda has no internet. That
+   * remote is the bare `remote.git` the worker keeps, whose HEAD it sets to the base branch it
+   * uses (worker/cms-worker.ts `recordBaseBranchInRemoteHead`), so the two agree.
+   *
+   * While that remote does not exist yet, `'pending'` resolves `undefined` and `'throw'` rejects
+   * with {@link RemoteNotReadyError}. A network remote, or a HEAD that names no branch, throws
+   * `BaseBranchUnresolvedError`.
+   */
+  static async detectBaseBranch(
+    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    whenNoRemote: 'pending',
+  ): Promise<string | undefined>
+  static async detectBaseBranch(
+    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    whenNoRemote: 'throw',
+  ): Promise<string>
+  static async detectBaseBranch(
+    config: Pick<CanopyConfig, 'defaultRemoteUrl' | 'sourceRoot' | 'allowNetworkRemoteInProd'>,
+    whenNoRemote: 'pending' | 'throw',
+  ): Promise<string | undefined> {
+    const options: ResolveRemoteUrlOptions = {
+      mode: 'prod',
+      defaultRemoteUrl: config.defaultRemoteUrl,
+      sourceRoot: config.sourceRoot,
+      allowNetworkRemoteInProd: config.allowNetworkRemoteInProd,
+      // Read only to seed dev's simulated remote, which prod never does.
+      baseBranch: '',
+    }
+    const remoteUrl =
+      whenNoRemote === 'throw'
+        ? await GitManager.resolveCloneRemoteUrl(options)
+        : await GitManager.resolveRemoteUrl(options)
+    if (!remoteUrl) return undefined
+    if (isNetworkRemoteUrl(remoteUrl)) {
+      throw new BaseBranchUnresolvedError(
+        `defaultBaseBranch is not set, and the base branch cannot be read locally from the ` +
+          `network remote ${redactCredentials(remoteUrl)}.`,
+      )
+    }
+    const remoteGitDir = /^file:\/\//i.test(remoteUrl) ? fileURLToPath(remoteUrl) : remoteUrl
+    return resolveBaseBranch({ mode: 'prod', remoteGitDir })
   }
 
   /**

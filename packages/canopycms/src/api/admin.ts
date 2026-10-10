@@ -28,6 +28,7 @@ import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/er
 import { getBuildIdentity } from '../build-identity'
 import { loadSharp } from '../assets/sharp-loader'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
+import { baseBranchOf } from '../utils/base-branch'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
 // scripts/generate-client.ts) -- it has no way to know these four types
@@ -132,7 +133,7 @@ async function readSettingsWorkspaceError(ctx: ApiContext): Promise<string | und
 async function readBaseSchemaIssues(ctx: ApiContext): Promise<SchemaIssue[]> {
   try {
     const { config, branchSchemaCache, entrySchemaRegistry } = ctx.services
-    const base = await ctx.getBranchContext(config.defaultBaseBranch ?? 'main')
+    const base = await ctx.getBranchContext(baseBranchOf(config))
     if (!base) return []
     const { issues } = await branchSchemaCache.getSchema(
       base.branchRoot,
