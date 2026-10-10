@@ -69,8 +69,8 @@ function makeWorker(extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
 const internals = (worker: CmsWorker) => worker as unknown as Internals
 
 /** A worker with no base branch configured, whose GitHub reports `defaultBranch`. */
-function unconfigured(defaultBranch: string): CmsWorker {
-  const worker = makeWorker({ baseBranch: undefined })
+function unconfigured(defaultBranch: string, extra: Partial<CmsWorkerConfig> = {}): CmsWorker {
+  const worker = makeWorker({ ...extra, baseBranch: undefined })
   internals(worker).octokit = {
     repos: { get: vi.fn(async () => ({ data: { default_branch: defaultBranch } })) },
   }
@@ -245,6 +245,41 @@ describe('a poisoned remote.git that is kept', () => {
       await worker.stop()
     }
     expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/canopycms-settings-prod'])
+  })
+
+  it('names an unprefixed configured settings branch when no base branch is configured', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '--orphan', 'site-settings'])
+    await commit('permissions.json')
+    await push(remoteGitPath, 'HEAD:refs/heads/site-settings')
+    const worker = unconfigured('main', { settingsBranch: 'site-settings' })
+    try {
+      await expect(worker.start()).rejects.toThrow(
+        /will not replace it: refs\/heads\/site-settings\./,
+      )
+    } finally {
+      await worker.stop()
+    }
+  })
+
+  it('when its base branch is listed but fails verification', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await push(remoteGitPath, 'HEAD:refs/heads/main')
+    const worker = makeWorker()
+    const internal = worker as unknown as { verifyBaseBranchExists(gitDir: string): Promise<void> }
+    const verify = internal.verifyBaseBranchExists.bind(worker)
+    internal.verifyBaseBranchExists = async (gitDir) => {
+      if (gitDir === remoteGitPath) throw new Error('transient')
+      return verify(gitDir)
+    }
+
+    await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
+      /has branch 'main', but git could not verify it/,
+    )
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/main'])
+    expect(await workspaceEntries()).toEqual(['remote.git'])
   })
 
   it('when GitHub cannot be fetched, and deletes nothing', async () => {

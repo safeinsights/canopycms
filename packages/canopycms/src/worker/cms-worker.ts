@@ -1021,7 +1021,7 @@ export class CmsWorker {
 
   /** Whether the bare repo at `gitDir` has a branch that is not a settings branch. */
   private async hasContentBranch(gitDir: string): Promise<boolean> {
-    const branches = await sharedRepoGit(gitDir, 'bare').raw([
+    const branches = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit }).raw([
       'for-each-ref',
       '--format=%(refname:strip=2)',
       'refs/heads/',
@@ -1238,6 +1238,15 @@ export class CmsWorker {
       )
     }
 
+    // Only a base branch the listing confirms absent: a check that failed for any other reason
+    // is no evidence the repo is poisoned.
+    if (refs.has(`refs/heads/${this.baseBranch}`)) {
+      throw new Error(
+        `remote.git at ${this.remoteGitPath} has branch '${this.baseBranch}', but git could not ` +
+          `verify it, so the worker will not replace remote.git. Restarting the worker checks again.`,
+      )
+    }
+
     workerLog(
       `remote.git has no branch '${this.baseBranch}': replacing it if GitHub has every ref in it`,
     )
@@ -1279,7 +1288,12 @@ export class CmsWorker {
     }
 
     const replaced = `${this.remoteGitPath}.replaced-${Date.now()}`
-    await fs.rename(this.remoteGitPath, replaced)
+    try {
+      await fs.rename(this.remoteGitPath, replaced)
+    } catch (err) {
+      await discardStaging()
+      throw err
+    }
     try {
       await fs.rename(stagingPath, this.remoteGitPath)
     } catch (err) {
@@ -1342,12 +1356,14 @@ export class CmsWorker {
       await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
+      if (!(err instanceof RemoteGitKeptError)) {
+        workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
+      }
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
       if (err instanceof RemoteGitKeptError) throw err
-      workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
       if (err instanceof SharedRepoRefusalError) {
         // Not the refusal's own advice: the directory it names is gone.
         throw new SharedRepoRefusalError(
