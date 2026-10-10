@@ -74,7 +74,7 @@ replaces each `next` with its number.
 | 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
 | 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--hand-installed-units-only)                                                                              | Hand-installed units    |
 | 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
-| next | Ops      | [Duplicate-ID check on request, with a fix](#system-health-checks-for-duplicate-content-ids-on-request-and-can-fix-them--behaviour-change-on-get-adminbranch-health)                        | Admin-API scripts       |
+| next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -534,12 +534,11 @@ worker version, media-storage state) and warns when API and worker versions diff
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
 
-### System health checks for duplicate content IDs on request, and can fix them — **behaviour change on `GET /admin/branch-health`**
+### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
 
 **What changed.** (next int) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
-budget; healthy entries then carry `duplicateIdScan` (`none`, `found` or `unknown`), replacing
-`duplicateContentIds`. System health runs it on open, and its badge opens a confirmed fix that
-archives the extra files.
+budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `unknown`), replacing
+`duplicateContentIds`, and `duplicateIdScan.truncated` says whether the budget cut the scan short.
 
 **To adopt.** Scripts reading `duplicateContentIds`: pass `duplicates=1`, read `duplicateIdScan`.
 

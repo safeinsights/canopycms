@@ -953,7 +953,7 @@ describe('SystemHealthPanel', () => {
 
         await userEvent.hover(screen.getByTestId('duplicate-ids-unchecked-feature-late'))
         expect((await screen.findByRole('tooltip')).textContent).toBe(
-          'The duplicate ID check ran out of time before this branch.',
+          'The duplicate ID check ran out of time before reaching this branch.',
         )
       })
 

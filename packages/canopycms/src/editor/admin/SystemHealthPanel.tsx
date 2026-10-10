@@ -240,7 +240,7 @@ function duplicateUncheckedReason(scan: DuplicateIdScan | null): string {
     return 'The duplicate ID check failed on this branch.'
   }
   if (scan?.state === 'unknown') {
-    return 'The duplicate ID check ran out of time before this branch.'
+    return 'The duplicate ID check ran out of time before reaching this branch.'
   }
   return 'This branch was added after the last duplicate ID check.'
 }
