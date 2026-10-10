@@ -386,6 +386,104 @@ describe('services submitBranch', () => {
     })
   })
 
+  describe('credits the recorded editors', () => {
+    const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
+    const people: Record<string, { id: string; name: string; email: string }> = {
+      user_raj: { id: 'user_raj', name: 'Raj Patel', email: 'raj@example.com' },
+      user_ana: { id: 'user_ana', name: 'Ana Li', email: 'ana@example.com' },
+    }
+
+    async function writeEditors(editors: string[], uncommittedEditors: string[]): Promise<void> {
+      await fs.mkdir(path.join(localPath, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({
+          branch: { name: 'feature-1', status: 'editing', access: {}, editors, uncommittedEditors },
+        }),
+        'utf8',
+      )
+    }
+
+    async function recordedOnDisk(): Promise<{
+      editors?: string[]
+      uncommittedEditors?: string[]
+    }> {
+      const raw = await fs.readFile(path.join(localPath, '.canopy-meta', 'branch.json'), 'utf8')
+      return (JSON.parse(raw) as { branch: { editors?: string[]; uncommittedEditors?: string[] } })
+        .branch
+    }
+
+    async function trailers(): Promise<string> {
+      const git = simpleGit({ baseDir: localPath })
+      return (await git.raw(['log', '-1', '--format=%(trailers:only,unfold)'])).trim()
+    }
+
+    it('names the submitter and the uncommitted editors, then clears them', async () => {
+      await writeEditors(['user_ana', 'user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      const result = await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => people[id] ?? null,
+      })
+
+      expect(await trailers()).toBe(
+        'Edited-by: Jane Doe (user_2abc)\nEdited-by: Raj Patel (user_raj)',
+      )
+      expect(result.editors).toEqual([
+        { userId: 'user_ana', name: 'Ana Li', email: 'ana@example.com' },
+        { userId: 'user_raj', name: 'Raj Patel', email: 'raj@example.com' },
+      ])
+      const onDisk = await recordedOnDisk()
+      expect(onDisk.uncommittedEditors).toBeUndefined()
+      expect(onDisk.editors).toEqual(['user_ana', 'user_raj'])
+    })
+
+    it('looks editors up without holding the content-write lock', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      const lockFreeDuringLookup: boolean[] = []
+
+      await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => {
+          const release = await tryAcquireContentWriteLock(localPath).catch(() => undefined)
+          lockFreeDuringLookup.push(release !== undefined)
+          await release?.()
+          return people[id] ?? null
+        },
+      })
+
+      expect(lockFreeDuringLookup).toEqual([true])
+      expect(await trailers()).toContain('Edited-by: Raj Patel (user_raj)')
+    })
+
+    it('keeps the uncommitted editors when there is nothing to submit', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+
+      await expect(services.submitBranch({ context, submitter: jane })).rejects.toThrow(
+        NothingToSubmitError,
+      )
+
+      expect((await recordedOnDisk()).uncommittedEditors).toEqual(['user_raj'])
+    })
+
+    it('credits an editor by id when the lookup finds no one', async () => {
+      await writeEditors(['user_gone'], ['user_gone'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      const result = await services.submitBranch({
+        context,
+        lookupEditor: async () => null,
+      })
+
+      expect(await trailers()).toBe('Edited-by: user_gone')
+      expect(result.editors).toEqual([{ userId: 'user_gone' }])
+    })
+  })
+
   describe('changedPaths', () => {
     it('lists every path the branch changes against its base, across submits', async () => {
       await fs.writeFile(path.join(localPath, 'a.txt'), 'first', 'utf8')

@@ -110,6 +110,35 @@ export class NothingToSubmitError extends Error {
   }
 }
 
+type RecordedEditors = Pick<BranchMetadata, 'editors' | 'uncommittedEditors'>
+
+/** The branch's recorded editor ids, or undefined, with a warning, when branch.json cannot be read. */
+async function readRecordedEditors(context: BranchContext): Promise<RecordedEditors | undefined> {
+  try {
+    return (await readBranchMetadataFile(context.branchRoot))?.branch
+  } catch (err) {
+    console.warn(
+      `CanopyCMS: Could not read the recorded editors of ${context.branch.name}:`,
+      getErrorMessage(err),
+    )
+    return undefined
+  }
+}
+
+/** One lookup per user per submit, however often the submit asks. */
+function memoizeLookup(lookup: EditorLookup | undefined): EditorLookup | undefined {
+  if (!lookup) return undefined
+  const seen = new Map<string, ReturnType<EditorLookup>>()
+  return (userId) => {
+    let found = seen.get(userId)
+    if (!found) {
+      found = lookup(userId)
+      seen.set(userId, found)
+    }
+    return found
+  }
+}
+
 export interface SubmitBranchResult {
   /** Repo-relative paths the branch changes, excluding canopycms runtime metadata. */
   changedPaths: string[]
@@ -367,20 +396,22 @@ async function _createCanopyServicesInternal(
     // lands on the branch, and the rebase's `--abort` resets the branch past it
     // after this reported success. The push stays inside so no rebase rewrites
     // the commit between commit and push.
-    let recorded: Pick<BranchMetadata, 'editors' | 'uncommittedEditors'> = {}
+    const lookupEditor = memoizeLookup(options.lookupEditor)
+    const readRecorded = () => readRecordedEditors(options.context)
+    // Names are looked up before taking the lock, so a slow auth provider never holds it.
+    const named = new Map(
+      (await describeEditors((await readRecorded())?.editors ?? [], lookupEditor)).map((e) => [
+        e.userId,
+        e,
+      ]),
+    )
+    let recorded: RecordedEditors = {}
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
       // A save records its editor only after releasing this lock, so a save that lands just
       // before this submit can be committed here while its editor is named by the next commit.
-      try {
-        recorded = (await readBranchMetadataFile(options.context.branchRoot))?.branch ?? {}
-      } catch (err) {
-        console.warn(
-          `CanopyCMS: Could not read the recorded editors of ${options.context.branch.name}; crediting the submitter only:`,
-          getErrorMessage(err),
-        )
-      }
+      recorded = (await readRecorded()) ?? {}
       const uncommitted = recorded.uncommittedEditors ?? []
       // Commit and push answer two DIFFERENT questions. Committing cleans the
       // working tree, so one combined "tree is dirty" gate makes a retry after a
@@ -394,7 +425,7 @@ async function _createCanopyServicesInternal(
       const preCommitSha = await git.headSha()
       if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
         await git.addAllExceptCanopyState()
-        const committers = await describeEditors(uncommitted, options.lookupEditor)
+        const committers = uncommitted.map((userId) => named.get(userId) ?? { userId })
         const trailers = buildEditorTrailers(
           options.submitter ? [options.submitter, ...committers] : committers,
           {
@@ -448,8 +479,10 @@ async function _createCanopyServicesInternal(
       return changedPaths ?? status.files.map((f) => f.path).filter((p) => !isCanopyInternalPath(p))
     })
 
-    const editors = await describeEditors(recorded.editors ?? [], options.lookupEditor)
-    return { changedPaths: submitted, editors }
+    // Re-read after the lock, so the PR body also names an editor whose save this commit carries
+    // but who was recorded after the read above.
+    const editorIds = (await readRecorded())?.editors ?? recorded.editors ?? []
+    return { changedPaths: submitted, editors: await describeEditors(editorIds, lookupEditor) }
   }
 
   // Must be initialized before closures that reference it (commitToSettingsBranch)

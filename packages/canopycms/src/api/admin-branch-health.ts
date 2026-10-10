@@ -525,7 +525,7 @@ async function checkStillCorrupt(dirPath: string): Promise<'corrupt' | 'healthy'
 const repairContentDuplicatesHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   params: BranchDirParams,
 ): Promise<RepairContentDuplicatesResponse> => {
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
@@ -552,7 +552,7 @@ const repairContentDuplicatesHandler = async (
   const resolved: RepairedContentDuplicate[] = []
 
   try {
-    return await withContentWriteLock(
+    const result = await withContentWriteLock(
       dirPath,
       async (): Promise<RepairContentDuplicatesResponse> => {
         // Re-derive under the lock -- never trust a pre-lock scan; a
@@ -595,6 +595,11 @@ const repairContentDuplicatesHandler = async (
       },
       DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
     )
+    // The archived files leave the branch at its next submit, so the admin is one of its editors.
+    // No `writableBranch` guard can say so: this route names a directory, not a branch.
+    if (result.ok)
+      await ctx.services.recordBranchEditor({ branchRoot: dirPath, baseRoot }, req.user)
+    return result
   } catch (err: unknown) {
     if (err instanceof ContentWriteLockBusyError) {
       return { ok: false, status: 409, error: err.message }

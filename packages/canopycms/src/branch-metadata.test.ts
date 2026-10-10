@@ -501,9 +501,13 @@ describe('BranchMetadataFileManager', () => {
       await editingBranch(root)
       await createMeta(root, root).recordEditor('u1')
       const before = await BranchMetadataFileManager.loadOnly(root)
+      const meta = createMeta(root, root)
+      const update = vi.spyOn(meta, 'update')
 
-      await createMeta(root, root).recordEditor('u1')
+      await meta.recordEditor('u1')
 
+      // The lock-free read decides, so a repeat save takes no lock.
+      expect(update).not.toHaveBeenCalled()
       expect((await BranchMetadataFileManager.loadOnly(root))?.version).toBe(before?.version)
     })
 

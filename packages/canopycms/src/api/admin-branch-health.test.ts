@@ -441,6 +441,11 @@ describe('admin branch-health api', () => {
       }
 
       expect(result.ok).toBe(true)
+      // The archived files leave the branch at its next submit, so the admin is credited.
+      expect(ctx.services.recordBranchEditor).toHaveBeenCalledWith(
+        { branchRoot: path.join(branchesRoot, 'dup-branch'), baseRoot: branchesRoot },
+        req.user,
+      )
       expect(result.data?.resolved).toHaveLength(1)
       const [resolved] = result.data!.resolved
       expect(resolved.id).toBe(dupId)
@@ -486,6 +491,7 @@ describe('admin branch-health api', () => {
       const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'clean-branch' })
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
+      expect(ctx.services.recordBranchEditor).not.toHaveBeenCalled()
     })
 
     it('returns 404 for a nonexistent directory', async () => {
