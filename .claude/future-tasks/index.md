@@ -52,7 +52,6 @@ answers "what now". Each item's detail is in its file.
 | 2 | Deploy verification sweep: [infra-review-2026-08-deploy-verification.md](infra-review-2026-08-deploy-verification.md), the live Clerk proof in [clerk-signed-out-followups.md](clerk-signed-out-followups.md), the plaintext-secret check in [deploy-test-lambda-plaintext-clerk-secret.md](deploy-test-lambda-plaintext-clerk-secret.md), and the deployed timing breakdown in [editor-api-latency.md](editor-api-latency.md) | A real stack exists and none of these has a recorded result. Run them on the sandbox tier before the official accounts copy its shape; two of the infra checks fail silently. Needs AWS access. |
 | 3 | [live-site-acl-migration.md](live-site-acl-migration.md) (adopter-side, KB) | Sequence it before the KB flips to `defaultBranchAccess: 'deny'`: add the editors' `edit` rule first, then verify as a non-admin, because the admin bypass hides every path-layer mistake. |
 | 4 | [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) | The one known path from a compromised Lambda to the GitHub credential. Persistent plants are already refused, so what is left needs a compromised Lambda that wins a race; the fix is a process split with real design content, so it starts with a plan review. The next package-side code work now that the setup traps and admin surfaces have shipped. |
-| 5 | [remote-git-self-heal.md](remote-git-self-heal.md) | Recovery from a poisoned `remote.git` still needs an EFS shell. |
 
 ---
 

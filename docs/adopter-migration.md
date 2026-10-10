@@ -80,6 +80,7 @@ replaces each `next` with its number.
 | 111  | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 | 111  | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
 | next | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first          |
+| next | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                    |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -446,6 +447,13 @@ under the unit's `StateDirectory=`, and the worker does not start without it.
 new template before CI rolls an int.110 or later bundle; a parameter-only change set never applies
 the new unit, so the new bundle exits at start. A hand-installed unit needs
 `StateDirectory=canopy-worker` under `[Service]`.
+
+### A poisoned `remote.git` re-clones itself
+
+**What changed.** A `remote.git` missing its base branch is re-cloned unless an unpushed ref would be
+lost; the refusal names those refs. A tampered config still refuses and needs an operator.
+
+**To adopt.** Nothing.
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 

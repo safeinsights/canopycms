@@ -232,6 +232,27 @@ export class MirrorSession {
   }
 
   /**
+   * Whether a branch GitHub had at the last fetch contains the commit `id`, or the commit an
+   * annotated tag `id` points at. False for an object the mirror does not have, or one git cannot
+   * read as a commit.
+   */
+  async isOnGitHub(id: string): Promise<boolean> {
+    if (!isObjectId(id)) return false
+    try {
+      const found = await this.git().raw([
+        'for-each-ref',
+        '--count=1',
+        '--format=%(refname)',
+        `--contains=${id}`,
+        'refs/heads/',
+      ])
+      return found.trim() !== ''
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Copy GitHub's branches into `remote.git`'s tracking namespace, pruning the ones GitHub no
    * longer has. `reconcileTrackedBranches` (worker/git-sync.ts) moves `refs/heads/*` from there.
    */
