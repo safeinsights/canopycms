@@ -27,6 +27,8 @@ export interface GitHubSyncResult {
 /** What the PR body records about a submit. */
 export interface SubmissionRecord {
   submitter?: SubmissionEditor
+  /** Every recorded editor of the branch; the PR body lists those other than the submitter. */
+  editors?: readonly SubmissionEditor[]
   changedPaths: readonly string[]
   /** The submit's `submittedAt`, carried to the worker so its failure handling targets this submit. */
   submittedAt?: string
@@ -49,6 +51,7 @@ export async function syncSubmitPr(
   const prSection = buildPrSection({
     description: context.branch.description,
     submitter: submission.submitter,
+    editors: submission.editors,
     changedPaths: submission.changedPaths,
   })
   // Target the fork point recorded at branch creation when available.

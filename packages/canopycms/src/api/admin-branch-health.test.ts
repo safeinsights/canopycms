@@ -441,6 +441,11 @@ describe('admin branch-health api', () => {
       }
 
       expect(result.ok).toBe(true)
+      // The archived files leave the branch at its next submit, so the admin is credited.
+      expect(ctx.services.recordBranchEditor).toHaveBeenCalledWith(
+        { branchRoot: path.join(branchesRoot, 'dup-branch'), baseRoot: branchesRoot },
+        req.user,
+      )
       expect(result.data?.resolved).toHaveLength(1)
       const [resolved] = result.data!.resolved
       expect(resolved.id).toBe(dupId)
@@ -486,6 +491,7 @@ describe('admin branch-health api', () => {
       const result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'clean-branch' })
       expect(result.ok).toBe(false)
       expect(result.status).toBe(409)
+      expect(ctx.services.recordBranchEditor).not.toHaveBeenCalled()
     })
 
     it('returns 404 for a nonexistent directory', async () => {
@@ -524,6 +530,36 @@ describe('admin branch-health api', () => {
       }
       expect(result.ok).toBe(true)
       expect(result.data?.resolved[0].id).toBe(dupId)
+    })
+
+    it('credits the admin for a partial repair, whose archived files still leave the branch', async () => {
+      const { postsDir } = await createDuplicateContentIds('partial-branch')
+      const secondId = generateId()
+      await fs.writeFile(path.join(postsDir, `page.a.${secondId}.json`), '{}', 'utf-8')
+      await fs.writeFile(path.join(postsDir, `page.b.${secondId}.json`), '{}', 'utf-8')
+      const realRename = fs.rename.bind(fs)
+      let renames = 0
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        renames += 1
+        if (renames === 2) throw new Error('disk full')
+        return realRename(from, to)
+      })
+
+      const consoleSpy = mockConsole()
+      let result: Awaited<ReturnType<typeof repairContentDuplicatesHandler>>
+      try {
+        result = await repairContentDuplicatesHandler(ctx, req, { dirName: 'partial-branch' })
+      } finally {
+        consoleSpy.restore()
+        rename.mockRestore()
+      }
+
+      expect(result.status).toBe(500)
+      expect(result.error).toContain('partially repaired first')
+      expect(ctx.services.recordBranchEditor).toHaveBeenCalledWith(
+        { branchRoot: path.join(branchesRoot, 'partial-branch'), baseRoot: branchesRoot },
+        req.user,
+      )
     })
 
     it('returns 409 on content-write-lock contention against a real held lock', async () => {

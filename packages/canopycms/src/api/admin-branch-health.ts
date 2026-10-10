@@ -525,7 +525,7 @@ async function checkStillCorrupt(dirPath: string): Promise<'corrupt' | 'healthy'
 const repairContentDuplicatesHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
-  _req: ApiRequest,
+  req: ApiRequest,
   params: BranchDirParams,
 ): Promise<RepairContentDuplicatesResponse> => {
   const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
@@ -606,6 +606,13 @@ const repairContentDuplicatesHandler = async (
       error: completed.length
         ? `${getErrorMessage(err)} (partially repaired first - already archived: ${completed.join(', ')})`
         : getErrorMessage(err),
+    }
+  } finally {
+    // Archived files leave the branch at its next submit, a partial repair's included, so the
+    // admin is one of its editors. No `writableBranch` guard can say so: this route names a
+    // directory, not a branch.
+    if (resolved.length > 0) {
+      await ctx.services.recordBranchEditor({ branchRoot: dirPath, baseRoot }, req.user)
     }
   }
 }

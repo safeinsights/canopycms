@@ -46,7 +46,7 @@ replaces each `next` with its number.
 | 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                |
 | 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages             |
 | 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                    |
-| 93  | Branches | [Submit names the user; refuses an empty branch](#submit-names-the-submitting-user-and-refuses-a-branch-with-nothing-to-submit) (108)                                                       | Scripts                 |
+| 93  | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, next)                                          | Scripts                 |
 | 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers          |
 | 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                |
 | 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                |
@@ -345,13 +345,16 @@ repaired or re-created.
 **Now deletable.** Any local step that resets or reformats `.canopy-meta/` files before a commit or
 a format check.
 
-### Submit names the submitting user, and refuses a branch with nothing to submit
+### Commits name their editors, and submit refuses a branch with nothing to submit
 
 **What changed.**
 
 - (int.93) Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section that
   re-submits replace, keeping human text. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
   ([reference](../README.md#definecanopyconfig-options)).
+- (next int) The trailers and the PR-body section name every user whose edits the commit carries,
+  not only the submitter, and settings commits (permissions, groups) carry the acting user's
+  trailer.
 - (int.108) Submit answers 400 when a branch's saved content matches its base. `BranchMetadata`
   gains optional `submittedAt` and `pushedToGitHubAt`.
 

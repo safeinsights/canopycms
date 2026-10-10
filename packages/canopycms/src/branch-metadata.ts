@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchContext, BranchMetadata, BranchStatus } from './types'
+import type {
+  BranchContext,
+  BranchMetadata,
+  BranchPaths,
+  BranchStatus,
+  CanopyUserId,
+} from './types'
+import type { CanopyUser } from './user'
 import { BranchRegistry } from './branch-registry'
 import {
   BRANCH_META_DIR,
@@ -12,7 +19,8 @@ import {
 } from './branch-metadata-file'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
-import { isNotFoundError } from './utils/error'
+import { getErrorMessage, isNotFoundError } from './utils/error'
+import { canopyLogWarn } from './utils/logger'
 import { withLock } from './utils/async-mutex'
 import {
   writeOccJsonFile,
@@ -151,6 +159,19 @@ export class BranchMetadataFileManager {
     incoming: BranchMetadataUpdate,
     onlyIf: (existing: BranchMetadataFile | null) => boolean,
   ): Promise<BranchMetadataFile | null> {
+    return this.update((existing) => (onlyIf(existing) ? incoming : null))
+  }
+
+  /**
+   * A save whose update `compute` derives from the metadata on disk, inside the lock stack, so
+   * an update built from the existing value (adding to a list) cannot lose a concurrent one.
+   * `compute` returning null writes nothing and resolves null. `keepUpdatedAt` leaves
+   * `updatedAt` as it was, for bookkeeping writes that are not a change to the branch.
+   */
+  async update(
+    compute: (existing: BranchMetadataFile | null) => BranchMetadataUpdate | null,
+    options: { keepUpdatedAt?: boolean } = {},
+  ): Promise<BranchMetadataFile | null> {
     try {
       await fs.stat(this.branchRoot)
     } catch (err: unknown) {
@@ -166,8 +187,11 @@ export class BranchMetadataFileManager {
         withOccFileLock(this.filePath, () =>
           withOccRetry(async () => {
             const { meta: existing, version } = await this.load()
-            if (!onlyIf(existing)) return null
+            const incoming = compute(existing)
+            if (incoming === null) return null
             const merged = mergeBranchMetadata(existing, version, incoming)
+            if (options.keepUpdatedAt && existing)
+              merged.branch.updatedAt = existing.branch.updatedAt
             const written = await this.write(merged, version)
             merged.version = written.version
             merged.writeId = written.writeId
@@ -190,10 +214,80 @@ export class BranchMetadataFileManager {
     return saved
   }
 
+  /**
+   * Adds `userId` to `editors` and `uncommittedEditors`. A lock-free read skips the write when
+   * both already hold it, so only a user's first save since the last submit commit pays for the lock.
+   * Never creates branch.json.
+   */
+  async recordEditor(userId: CanopyUserId): Promise<void> {
+    const current = await readBranchMetadataFile(this.branchRoot)
+    if (!current || isRecordedEditor(current.branch, userId)) return
+    await this.update(
+      (existing) =>
+        existing && !isRecordedEditor(existing.branch, userId)
+          ? {
+              branch: {
+                editors: withMember(existing.branch.editors, userId),
+                uncommittedEditors: withMember(existing.branch.uncommittedEditors, userId),
+              },
+            }
+          : null,
+      { keepUpdatedAt: true },
+    )
+  }
+
+  /**
+   * Removes `userIds` from `uncommittedEditors` once a submit commit's trailers name them. Ids
+   * recorded after the commit read them stay, so the next commit names them.
+   */
+  async markEditorsCommitted(userIds: readonly CanopyUserId[]): Promise<void> {
+    const committed = new Set(userIds)
+    if (committed.size === 0) return
+    await this.update(
+      (existing) => {
+        const pending = existing?.branch.uncommittedEditors ?? []
+        const remaining = pending.filter((id) => !committed.has(id))
+        if (remaining.length === pending.length) return null
+        return { branch: { uncommittedEditors: remaining.length > 0 ? remaining : undefined } }
+      },
+      { keepUpdatedAt: true },
+    )
+  }
+
   /** Invalidate the registry cache so the next list() regenerates. */
   private async invalidateRegistry(): Promise<void> {
     const registry = new BranchRegistry(this.baseRoot)
     await registry.invalidate()
+  }
+}
+
+function isRecordedEditor(branch: BranchMetadata, userId: CanopyUserId): boolean {
+  return (
+    (branch.editors?.includes(userId) ?? false) &&
+    (branch.uncommittedEditors?.includes(userId) ?? false)
+  )
+}
+
+function withMember(list: readonly CanopyUserId[] | undefined, id: CanopyUserId): CanopyUserId[] {
+  return list?.includes(id) ? [...list] : [...(list ?? []), id]
+}
+
+/**
+ * Records `user` as an editor of the branch, for the submit's trailers and PR body. Called once a
+ * change to the branch's working tree has succeeded, so a failure here is logged and never fails
+ * that change. Anonymous users are not recorded.
+ */
+export async function recordBranchEditor(context: BranchPaths, user: CanopyUser): Promise<void> {
+  if (user.type !== 'authenticated') return
+  try {
+    await getBranchMetadataFileManager(context.branchRoot, context.baseRoot).recordEditor(
+      user.userId,
+    )
+  } catch (err: unknown) {
+    canopyLogWarn(
+      `CanopyCMS: Could not record an editor of ${path.basename(context.branchRoot)}; the next submit will not credit them:`,
+      getErrorMessage(err),
+    )
   }
 }
 

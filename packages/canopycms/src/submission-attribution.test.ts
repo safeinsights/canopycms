@@ -6,6 +6,7 @@ import {
   appendTrailers,
   buildEditorTrailers,
   buildPrSection,
+  describeEditors,
   mergePrSection,
   sanitizeDisplayName,
   sanitizeEmail,
@@ -126,6 +127,30 @@ describe('submissionEditorFromUser', () => {
 
   it('records nobody for an anonymous user', () => {
     expect(submissionEditorFromUser(ANONYMOUS_USER)).toBeUndefined()
+  })
+})
+
+describe('describeEditors', () => {
+  it("takes each user's current name and email from the lookup", async () => {
+    const lookup = async (id: string) =>
+      id === jane.userId ? { id, name: jane.name, email: jane.email } : null
+
+    expect(await describeEditors([jane.userId, 'user_gone'], lookup)).toEqual([
+      jane,
+      { userId: 'user_gone' },
+    ])
+  })
+
+  it('keeps just the id without a lookup, or when the lookup throws', async () => {
+    expect(await describeEditors([jane.userId], undefined)).toEqual([{ userId: jane.userId }])
+
+    const consoleSpy = mockConsole()
+    const failing = async (): Promise<null> => {
+      throw new Error('provider down')
+    }
+    expect(await describeEditors([jane.userId], failing)).toEqual([{ userId: jane.userId }])
+    expect(consoleSpy).toHaveWarned('Could not look up an editor')
+    consoleSpy.restore()
   })
 })
 

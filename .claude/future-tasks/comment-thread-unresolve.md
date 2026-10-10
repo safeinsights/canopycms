@@ -16,7 +16,7 @@ Resolved comment threads are terminal today: the panel hides Reply on resolved t
 ## Proposed shape
 
 - `comment-store.ts`: `unresolveThread(threadId, userId)` — clears `resolved/resolvedBy/resolvedAt` under the same OCC write helper; consider recording `reopenedBy/reopenedAt` for the audit trail.
-- API: either `POST .../unresolve` or make resolve accept `{ resolved: boolean }`.
+- API: either `POST .../unresolve` or make resolve accept `{ resolved: boolean }`. Either way it applies resolve's thread read gate (`canReadThreadEntry` in `api/comments.ts`): a thread on an entry the user cannot read answers 404.
 - UI: "Unresolve" action on resolved threads (CommentsPanel + InlineCommentThread), gated by the same `canResolve` permission.
 
 Deferred from the UX-fix branch because it adds API surface (kept that branch to behavior fixes only).

@@ -17,19 +17,20 @@ vi.mock('../comment-store', () => ({
           ],
           resolved: false,
           type: 'field',
-          entryPath: unsafeAsLogicalPath('posts/hello'),
+          entryPath: unsafeAsLogicalPath('content/posts/hello'),
           canopyPath: 'title',
           authorId: 'u1',
           createdAt: '2024-01-01',
         },
       ]),
       addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
+      addReply: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c2' }),
       getThread: vi.fn().mockResolvedValue({
         id: 'thread1',
         comments: [],
         resolved: false,
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: '2024-01-01',
@@ -100,7 +101,7 @@ describe('comments api - addComment', () => {
       {
         text: 'test',
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
         canopyPath: 'title',
       },
     )
@@ -115,7 +116,7 @@ describe('comments api - addComment', () => {
       {
         text: 'test',
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
         canopyPath: 'title',
       },
     )
@@ -130,7 +131,7 @@ describe('comments api - addComment', () => {
       {
         text: 'test',
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
       } as any,
     )
     expect(res.status).toBe(400)
@@ -167,7 +168,7 @@ describe('comments api - addComment', () => {
       {
         text: 'Great work!',
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
         canopyPath: 'title',
       },
     )
@@ -184,7 +185,7 @@ describe('comments api - addComment', () => {
       {
         text: 'Entry feedback',
         type: 'entry',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
       },
     )
     expect(res.ok).toBe(true)
@@ -209,7 +210,7 @@ describe('comments api - addComment', () => {
         text: 'Reply comment',
         threadId: 'existing-thread',
         type: 'field',
-        entryPath: unsafeAsLogicalPath('posts/hello'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
         canopyPath: 'title',
       },
     )

@@ -2,26 +2,14 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Five diverging ACL matchers that already disagree (one is client-side, so a shared matcher must be browser-safe); comment threads that ignore path ACLs (**Decided:** filter per entry with `createContentAccessChecker`, no new matcher; P1 the moment any read-deny path rule exists, and the marketing site runs group path rules); and Clerk `authorizedParties` optional in prod
+  Five diverging ACL matchers that already disagree (one is client-side, so a shared matcher must be browser-safe), and Clerk `authorizedParties` optional in prod
 ---
-# Five diverging ACL matchers, comment threads that ignore path ACLs, optional Clerk `authorizedParties`
+# Five diverging ACL matchers, optional Clerk `authorizedParties`
 
 ## Priority: P2 [BOTH]
 
-The comments slice becomes **P1** the moment any read-deny path rule exists. Path rules are real
-(`createContentAccessChecker` enforces them on listing, tree and write paths), and the marketing
-site already runs group path rules; check whether any of them denies `read`.
-
 The theme: authorization is enforced inconsistently, or more narrowly than the permission model
 promises.
-
-## Slice 1: comments leak past path ACLs
-
-`api/comments.ts` (`listCommentsHandler`, line 61) returns every thread on the branch, scoped by
-branch only, so branch access discloses comment text on entries the user cannot read by path.
-
-**Decided:** filter threads per entry with the existing content access checker
-(`createContentAccessChecker`), inside this consolidation work. No new matcher.
 
 ## Slice 2: the matchers (five, not four)
 
@@ -52,7 +40,6 @@ deployment can run without the check that binds tokens to expected origins.
 - One shared target-matcher, browser-safe, used by all five sites (or four plus a
   shared-fixture-tested client copy).
 - A test proving listing and access agree on a `managerOrAdminAllowed` branch.
-- `listThreads` results are filtered by path permission through `createContentAccessChecker`.
 - Clerk config requires `authorizedParties` in prod mode.
 
 ## Related
@@ -62,5 +49,6 @@ deployment can run without the check that binds tokens to expected origins.
 - [list-permission-level.md](list-permission-level.md): a new "list" level would add a sixth
   matcher unless this lands first
 - [listentries-acl-awareness.md](resolved/listentries-acl-awareness.md): the runtime `listEntries` /
-  `buildContentTree` enforce path ACLs through `createContentAccessChecker`, which routes through
-  matcher #1; those two callers migrate with the rest when the shared matcher lands
+  `buildContentTree`, and comment threads (`api/comments.ts`), enforce path ACLs through
+  `createContentAccessChecker`, which routes through matcher #1; those callers migrate with the
+  rest when the shared matcher lands

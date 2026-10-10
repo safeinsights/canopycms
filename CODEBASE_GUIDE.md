@@ -130,11 +130,11 @@ Route handlers, one file per endpoint namespace:
 Support files:
 
 - `routes.ts` — `buildCanopyRoutes()`, every route table plus `assetRawRoute`; the only `api/` module `http/` value-imports
-- `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata
+- `route-builder.ts` — declarative route builder with Zod validation, guards, and codegen metadata; a successful `writableBranch` endpoint calls `services.recordBranchEditor`
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
-- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps; the idempotent branch-create window. Dependency-free so the editor bundle can import them
+- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
@@ -634,7 +634,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
-- `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`
+- `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
@@ -646,7 +646,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
-- `submission-attribution.ts` — sanitized submitter identity: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
+- `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -701,7 +701,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, status, commit all (with submitter trailers), push; returns `changedPaths` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, status, commit all (with editor trailers), push; returns `changedPaths` and `editors` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -812,7 +812,7 @@ in `server.ts` and `client.ts`. See
 - `url-prefix.ts` — `joinUrlPrefix`, the single render-time prefix join, plus `isAbsoluteUrl`, `stripTrailingSlashes`, `withTrailingSlash`, `matchTrailingSlash` and `readTrailingSlashEnv` (`CANOPY_TRAILING_SLASH` at build time)
 - `async-mutex.ts` — `withLock` / `withLocks`, the FIFO per-key in-process mutex
 - `occ-json-write.ts` — `writeOccJsonFile`, `withOccRetry`, `withOccFileLock`, the OCC JSON write layer
-- `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`
+- `provisioning-lock.ts` — `acquireProvisioningLock` (patient), `tryAcquireProvisioningLock` (zero-retry), `acquireProvisioningLockWithin` (bounded wait); `branchProvisioningLockName`; `guardOnCompromised`
 - `provision-log.ts` — `ProvisionLog`: per-step start/done timing lines for one workspace provisioning, never behind `CANOPYCMS_DEBUG`
 - `content-write-lock.ts` — `withContentWriteLock`, cross-host exclusion between working-tree mutations and the worker's rebase loop; `ContentWriteLockBusyError.outcome`
 
