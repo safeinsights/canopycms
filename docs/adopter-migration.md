@@ -1024,7 +1024,7 @@ ships an empty build id from an empty variable. Also a post-build step rewriting
 
 **To adopt.** If you override `CanopyCmsService`'s `timeout`, pass
 `originReadTimeout: cmsService.timeout` (the generated stack does). A hand-installed worker runs
-`dnf install -y nodejs22` and copies `ExecStart` from `worker/canopy-worker.service`. The generated
+`dnf install -y nodejs22` and sets `ExecStart=/usr/bin/node-22 index.js`. The generated
 workflow reads the bot-token ARN from the secret `CANOPY_GITHUB_TOKEN_SECRET_ARN` (GitHub refuses
 `GITHUB_`-prefixed names): store it under that name. In a kept `Dockerfile.cms`, change both
 `node:20-slim` stages to `node:22-slim`; in `deploy-cms.yml`, set `node-version: 22`.
@@ -1281,7 +1281,7 @@ underscore-prefixed files are skipped.
 
 **To adopt.** An older scaffold's `defaultBranchAccess: 'allow'` is wider than recommended;
 consider `'deny'`. If you deleted `defaultPathAccess: { read: 'allow' }`, anonymous visitors get no content until you
-restore it: `readByUrlPath` pages 404 and `read()` throws; signed-in users without a path rule get 403 from
+restore it: `readByUrlPath` pages 404 and `read()` throws; non-admin signed-in users without a path rule get 403 from
 the API.
 
 #### Read and listing helpers replace hand-rolled parsing (#1, #2, #3, #4, #17)
