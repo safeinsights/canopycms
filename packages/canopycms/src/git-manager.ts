@@ -27,6 +27,7 @@ import {
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
+import type { WorkerStartupFailure } from './task-queue/worker-status'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNodeError, isNotFoundError, redactCredentials } from './utils/error'
 import {
@@ -380,7 +381,14 @@ export class GitRemoteRefMissingError extends Error {
  * The HTTP layer maps it to a 503 (`http/worker-not-ready.ts`).
  */
 export class RemoteNotReadyError extends Error {
-  constructor(public readonly expectedRemotePath: string) {
+  /**
+   * @param workerStartupFailure - The startup failure the worker recorded, if it recorded one;
+   *   a current one means the worker is not coming without an admin's fix.
+   */
+  constructor(
+    public readonly expectedRemotePath: string,
+    public readonly workerStartupFailure?: WorkerStartupFailure,
+  ) {
     super(
       `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
         `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
@@ -1001,13 +1009,22 @@ export class GitManager {
     )
   }
 
-  /** The not-ready error for a mode whose remote is auto-detected, or `undefined` for other modes. */
+  /**
+   * The not-ready error for a mode whose remote is auto-detected, carrying the worker's recorded
+   * startup failure, or `undefined` for other modes.
+   */
   private static async remoteNotReadyError(
     mode: OperatingMode,
   ): Promise<RemoteNotReadyError | undefined> {
     const { operatingStrategy } = await import('./operating-mode')
     const { autoDetectRemotePath } = operatingStrategy(mode).getRemoteUrlConfig()
-    return autoDetectRemotePath ? new RemoteNotReadyError(autoDetectRemotePath) : undefined
+    if (!autoDetectRemotePath) return undefined
+    const { getTaskQueueDir } = await import('./task-queue/task-queue-config')
+    const { readWorkerStartupFailure } = await import('./task-queue/worker-status')
+    return new RemoteNotReadyError(
+      autoDetectRemotePath,
+      await readWorkerStartupFailure(getTaskQueueDir({ mode })),
+    )
   }
 
   /**
@@ -1063,17 +1080,25 @@ export class GitManager {
 
     // Auto-detect a pre-existing remote.git at the expected path (in prod,
     // created by the EC2 worker on EFS)
+    // Only a missing path means "not created yet". Anything else there is broken, and waiting
+    // for the worker would not fix it.
     if (config.autoDetectRemotePath) {
-      try {
-        const stat = await fs.stat(config.autoDetectRemotePath)
-        if (stat.isDirectory()) {
-          log.debug('git', 'Auto-detected local remote', {
-            path: config.autoDetectRemotePath,
-          })
-          return config.autoDetectRemotePath
-        }
-      } catch {
-        // Path doesn't exist — fall through to next resolution step
+      const remotePath = config.autoDetectRemotePath
+      const stat = await fs.stat(remotePath).catch((err: unknown) => {
+        if (isNotFoundError(err)) return undefined
+        throw new Error(
+          `CanopyCMS: cannot read the git remote at ${remotePath}: ${getErrorMessage(err)}`,
+        )
+      })
+      if (stat?.isDirectory()) {
+        log.debug('git', 'Auto-detected local remote', { path: remotePath })
+        return remotePath
+      }
+      if (stat) {
+        throw new Error(
+          `CanopyCMS: ${remotePath} exists but is not a directory, so it cannot be the git remote. ` +
+            `The CMS worker creates it as a bare repository; remove what is there and restart the worker.`,
+        )
       }
     }
 
