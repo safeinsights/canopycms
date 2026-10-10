@@ -973,6 +973,23 @@ the int that carries PR 6.
 No separate epic branch: int is the integration branch, and the review gates above stand in for
 the epic PR.
 
+**PR 1 ships as two PRs.** 1a: the interface, `createLocalGitHubGateway`, `WorkerContext.github()`
+and the test corpus on `useLocalGitHubGateway`. 1b: the credential file, the refresh arming rule
+and the join, and deleting the worker-side refresh triggers. 1a's interface has none of the bundle
+parts yet (`push`'s `prerequisites` and body, `need-objects`, the `fetch` job). They arrive by
+PR 2, their first user.
+
+**Carried from 1a's reviews:**
+- PR 2: `fetch` returns only `bundleId`. The ref map arrives with its first consumer, the
+  `update-ref` transactions.
+- PR 3: the gateway owns the protected-branch set. `push` takes `protectedBranches` from its
+  caller today. The set must also guard `deleteBranch` and PR heads.
+- PRs 2 and 4: these cannot cross a socket: `seedBareRepository`'s callbacks, the
+  `remoteUrl` function, the live `GitHubPushError.cause`, and the `signal` inside a
+  `createOrUpdatePullRequest` request.
+- PR 4: `onGitHub` keeps its object-ID validation (`MirrorSession.isOnGitHub`) gateway-side,
+  whatever the client checks.
+
 ## 9. Residual risks, and the Security Model afterwards
 
 - **R1 — Gateway authority.** Through the queue and the worker, a compromised Lambda can still:
