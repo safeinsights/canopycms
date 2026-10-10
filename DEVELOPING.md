@@ -770,7 +770,7 @@ When you split a large class into module-level functions taking a context object
 1. **Every instance-backed member is a function**, resolved by calling back onto the live instance at call time — not a field copied when the context was built.
 2. **The context is built fresh per call**, so no long-lived object can hide a stale reference.
 
-A field copied at construction (`octokit: this.octokit`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.octokit()` makes the late binding visible at every call site.
+A field copied at construction (`github: this.gateway`) captures the pre-test value, so the extracted code runs against the real dependency while the test's mock sits unused on the instance. Plain functions rather than getters are deliberate: `ctx.github()` makes the late binding visible at every call site.
 
 **Pre-flight check before extracting:** grep for `as unknown as { ... }` casts and enumerate them **for assignment, not just for calls** — across the whole repo, not only the class's test files. `apps/test-app/app/api/e2e-test/rebase/route.ts` reaches into `CmsWorker` this way from an e2e fixture route, so a sweep scoped to `*.test.ts` would report that method as unused. Anything the tests _assign to_ has to stay reachable through the seam; the [call form](#testing-with-real-git-operations) is the easy half.
 
