@@ -69,6 +69,22 @@ grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLifetim
 **Now deletable.** Any override adding `MetadataOptions`, an encrypted root volume or an EFS
 `FileSystemPolicy`, or narrowing the worker role's asset-bucket grant.
 
+### Preview `fieldProps` is typed, with server-safe helpers — **breaking (types and schemas)**
+
+**What changed.** `fieldProps` checks each path against the view's content type, and `canopycms`
+exports `FieldProps`, `FieldAttrs`, `fieldAttrs` and `scopeFieldProps`, callable from server
+components. A string path marks the form's spelling (`'a.0.b'` marks `a[0].b`), and an empty path
+marks nothing. The editor counts and logs marks naming no field. `createEntrySchemaRegistry` refuses a field name that is empty, all digits or contains `.`,
+`[` or `]`. See [Live Preview](../README.md#live-preview).
+
+**To adopt.** Fix each path that stops compiling; the error lists valid ones. Rewrite computed
+paths as literal segments, or type that component's prop as plain `FieldProps`. Pass `fieldProps`
+as `undefined` on public pages. Rename refused fields and their content keys.
+
+**Now deletable.** A local `FieldProps` type, `fieldAttrs`/`scopeFieldProps` helpers and no-op
+`fieldProps` defaults; schema-walking tests for misspelled mark paths, once components are
+typed (the editor flags another block template's field).
+
 ### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
 **What changed.** An `mdx` field, and the body of an `mdx` entry, refuse `{…}` expressions other

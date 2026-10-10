@@ -619,6 +619,13 @@ describe('useCommentSystem', () => {
       })
     })
 
+    it('focuses the exact field a dotted-index path names', () => {
+      expect(focusOn('blocks.2.title', ['blocks', 'blocks[2]', 'blocks[2].title'])).toEqual({
+        focused: 'blocks[2].title',
+        scrolled: ['blocks[2].title'],
+      })
+    })
+
     it('focuses nothing when no ancestor is marked either', () => {
       expect(focusOn('gallery[0].caption', ['title'])).toEqual({
         focused: undefined,

@@ -12,7 +12,7 @@ The still-open remainder of finding B7 of
 [baseline-2026-08-production-and-followups.md](resolved/baseline-2026-08-production-and-followups.md).
 The items are independent; pick them off opportunistically. Item 3 of the original list, a corrupt
 `branches.json` bricking listing, is its own task:
-[branch-registry-corrupt-snapshot.md](branch-registry-corrupt-snapshot.md). Three more moved to
+[branch-registry-corrupt-snapshot.md](resolved/branch-registry-corrupt-snapshot.md). Three more moved to
 [authorization-enforcement-consolidation.md](authorization-enforcement-consolidation.md).
 
 1. **`createCollection` has no duplicate-slug check** though rename does

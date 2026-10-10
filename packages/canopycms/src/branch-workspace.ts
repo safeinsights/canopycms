@@ -98,7 +98,7 @@ export class BranchWorkspaceManager {
    *   what is at its path is too fresh to judge (retriable)
    * @throws BranchDirOccupiedError in prod, when its path holds a repository this deployment did
    *   not create
-   * @throws BranchMetadataCorruptError when its branch.json does not parse
+   * @throws BranchMetadataCorruptError when its branch.json is not valid JSON or fails its schema
    */
   async provisionBranch(options: OpenBranchOptions): Promise<ProvisionOutcome> {
     // resolveBranchPath refuses the reserved prefix; this also refuses an adopter's

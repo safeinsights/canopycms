@@ -64,9 +64,8 @@ const submitBranchForMergeHandler = async (
   // (merged) branch could be re-submitted by its creator, re-stamping it
   // 'submitted' and overwriting the merged PR's title/body.
   //
-  // Fails closed on a missing status (branch.json is read with a bare
-  // JSON.parse, no schema validation, so a damaged file can yield
-  // `undefined`) -- same as runWritableBranchGuard's unreadable-status arm.
+  // Fails closed on a missing status, same as runWritableBranchGuard's
+  // unreadable-status arm.
   const status = branchContext.branch.status
   if (status !== 'editing') {
     return {
