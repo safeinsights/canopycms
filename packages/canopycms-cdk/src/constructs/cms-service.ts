@@ -63,6 +63,32 @@ const isValidDeploymentName = (name: string): boolean =>
 const EFS_MOUNT_PATH = '/mnt/efs'
 
 /**
+ * The worker unit's sandbox, also in worker/canopy-worker.service. Node and git
+ * need none of what these take away; `MemoryDenyWriteExecute` is left out
+ * because V8's JIT writes executable memory.
+ */
+const WORKER_SANDBOX_DIRECTIVES = [
+  'NoNewPrivileges=yes',
+  'ProtectSystem=strict',
+  'ProtectHome=tmpfs',
+  'PrivateTmp=yes',
+  'PrivateDevices=yes',
+  'ProtectProc=invisible',
+  'ProtectKernelTunables=yes',
+  'ProtectKernelModules=yes',
+  'ProtectKernelLogs=yes',
+  'ProtectControlGroups=yes',
+  'ProtectClock=yes',
+  'ProtectHostname=yes',
+  'RestrictNamespaces=yes',
+  'RestrictSUIDSGID=yes',
+  'RestrictRealtime=yes',
+  'LockPersonality=yes',
+  'SystemCallArchitectures=native',
+  'CapabilityBoundingSet=',
+]
+
+/**
  * The heredoc delimiter user-data uses to write the worker's `.env` (see the
  * `cat > … << 'ENVEOF'` block below).
  */
@@ -1684,7 +1710,8 @@ export class CanopyCmsService extends Construct {
       '# mount without tls (efs_utils_common/mount_options.py).',
       'retry dnf install -y amazon-efs-utils',
       `mkdir -p ${EFS_MOUNT_PATH}`,
-      `mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
+      '# Retried: an `iam` mount also fetches instance-role credentials.',
+      `retry mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
       '# Persist the mount across instance reboots: user-data runs once per',
       '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
       '# empty local dir and the worker would clone a divergent remote.git',
@@ -1755,11 +1782,7 @@ export class CanopyCmsService extends Construct {
       '# $HOME (~/.config/git/attributes, ignore), and an inaccessible /home',
       '# makes each read warn "Permission denied"; an empty one is a silent',
       '# ENOENT.',
-      'NoNewPrivileges=yes',
-      'ProtectSystem=strict',
-      'ProtectHome=tmpfs',
-      'PrivateTmp=yes',
-      'CapabilityBoundingSet=',
+      ...WORKER_SANDBOX_DIRECTIVES,
       `ReadWritePaths=${EFS_MOUNT_PATH}`,
       '',
       '[Install]',
@@ -1873,7 +1896,7 @@ export class CanopyCmsService extends Construct {
       httpPutResponseHopLimit: 1,
       blockDevices: [
         {
-          // AL2023's root device, at its AMI snapshot's size.
+          // AL2023's root device. Its size is removed below.
           deviceName: '/dev/xvda',
           volume: ec2.BlockDeviceVolume.ebs(8, {
             encrypted: true,
@@ -1883,6 +1906,13 @@ export class CanopyCmsService extends Construct {
         },
       ],
     })
+
+    // Unset, the root volume takes the AMI snapshot's size, so an AMI that
+    // grows cannot fail every launch as "smaller than snapshot".
+    // `BlockDeviceVolume.ebs` requires a size.
+    ;(launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate).addPropertyDeletionOverride(
+      'LaunchTemplateData.BlockDeviceMappings.0.Ebs.VolumeSize',
+    )
 
     this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
       vpc: this.vpc,

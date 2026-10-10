@@ -203,7 +203,7 @@ describe('EFS access requires IAM and TLS', () => {
     const ap = accessPointId(template)
     const fsId = fileSystem(template).id
     const all = lines(template)
-    expect(all).toContain(`mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
+    expect(all).toContain(`retry mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
     expect(all).toContain(
       `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
@@ -277,8 +277,9 @@ describe('the root volume', () => {
   it('is an explicitly encrypted gp3 volume on the AMI root device', () => {
     expect(launchTemplateData(template).BlockDeviceMappings).toEqual([
       {
+        // No VolumeSize: the AMI snapshot's size, whatever it grows to.
         DeviceName: '/dev/xvda',
-        Ebs: { DeleteOnTermination: true, Encrypted: true, VolumeSize: 8, VolumeType: 'gp3' },
+        Ebs: { DeleteOnTermination: true, Encrypted: true, VolumeType: 'gp3' },
       },
     ])
   })
@@ -329,6 +330,19 @@ describe('the worker systemd unit is sandboxed', () => {
     'ProtectSystem=strict',
     'ProtectHome=tmpfs',
     'PrivateTmp=yes',
+    'PrivateDevices=yes',
+    'ProtectProc=invisible',
+    'ProtectKernelTunables=yes',
+    'ProtectKernelModules=yes',
+    'ProtectKernelLogs=yes',
+    'ProtectControlGroups=yes',
+    'ProtectClock=yes',
+    'ProtectHostname=yes',
+    'RestrictNamespaces=yes',
+    'RestrictSUIDSGID=yes',
+    'RestrictRealtime=yes',
+    'LockPersonality=yes',
+    'SystemCallArchitectures=native',
     'CapabilityBoundingSet=',
     'ReadWritePaths=/mnt/efs',
   ]

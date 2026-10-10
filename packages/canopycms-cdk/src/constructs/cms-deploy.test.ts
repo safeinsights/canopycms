@@ -1425,7 +1425,9 @@ describe('CanopyCmsService B1: Lambda and worker see the workspace at the same p
     const fsId = fileSystemId(template)
     const lines = workerUserDataScript(template).split('\n')
 
-    expect(lines).toContain(`mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
+    expect(lines).toContain(
+      `retry mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`,
+    )
     expect(lines).toContain(
       `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
@@ -1595,6 +1597,7 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
       'retry dnf install -y git',
       'retry dnf install -y nodejs22',
       'retry dnf install -y amazon-efs-utils',
+      'retry mount -t efs',
       'retry aws s3 cp',
       'retry dnf install -y amazon-cloudwatch-agent',
     ]) {
