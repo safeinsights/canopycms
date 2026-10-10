@@ -568,4 +568,12 @@ describe('the worker systemd unit is sandboxed', () => {
       expect(writable).toEqual(['ReadWritePaths=/mnt/efs'])
     }
   })
+
+  // systemd opens the append: log as root, following symlinks, before the
+  // sandbox applies; LogsDirectory= would chown its directory to the worker.
+  it('gives the worker no ownership of its log directory', () => {
+    for (const unit of [lines(template), checkedIn]) {
+      expect(unit.filter((l) => l.startsWith('LogsDirectory'))).toEqual([])
+    }
+  })
 })

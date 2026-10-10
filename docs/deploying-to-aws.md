@@ -1135,9 +1135,12 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   which boots while the old one drains. Saves keep working; publishing, pull requests and sync
   wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
   12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
-- **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its log
-  directory, its state directory and a private `/tmp` are writable, not its own code;
-  `ProtectHome=tmpfs`, no capabilities, and the kernel, device and namespace protections.
+- **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its state
+  directory and a private `/tmp` are writable, not its own code or its log;
+  `ProtectHome=tmpfs`, no capabilities, and the kernel, device and namespace protections. The
+  log directory and file are root-owned, because systemd opens the log as root, following
+  symlinks, before the sandbox applies: a worker owning them could redirect its output into any
+  file on the host.
 - **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
   only in a private mirror in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
   Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are

@@ -26,13 +26,15 @@ SuccessExitStatus=75
 # File output, not journal: the CloudWatch agent cannot read journald,
 # so it tails this file instead (agent config lives in the cms-service.ts
 # user-data, which writes the deployed copy of this unit).
-# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd
-# opens append: targets before it creates LogsDirectory= dirs
-# (systemd#27591), so without the pre-created dir the exec fails with
-# 209/STDOUT and Restart=always crash-loops forever. The deployed user-data
-# runs mkdir first; do the same if you install this unit by hand.
-# LogsDirectory= is kept for ownership management on subsequent starts.
-LogsDirectory=canopy-worker
+# systemd opens append: targets as root, following symlinks, before it
+# applies the sandbox or drops to User=. So the worker must own neither the
+# file nor its directory: one that could swap worker.log for a symlink would
+# have its output appended to any file on the host as root. Hence no
+# LogsDirectory=, which chowns the directory to User=. Create both, root-owned,
+# BEFORE the first start (without the directory the exec fails with 209/STDOUT
+# and Restart=always crash-loops):
+#   install -d -o root -g root -m 0755 /var/log/canopy-worker
+#   install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log
 StandardOutput=append:/var/log/canopy-worker/worker.log
 StandardError=append:/var/log/canopy-worker/worker.log
 
@@ -47,8 +49,8 @@ EnvironmentFile=/opt/canopy-worker/.env
 # src/constructs/worker-lifecycle.ts); a bundle needing more refuses to start.
 Environment=CANOPYCMS_WORKER_CONTRACT=1
 
-# Sandbox. Writable: the workspace, the log dir (LogsDirectory=), the state dir
-# (StateDirectory=) and a private /tmp.
+# Sandbox. Writable: the workspace, the state dir (StateDirectory=) and a
+# private /tmp.
 # ProtectHome=tmpfs, not yes: every git call reads per-user files under $HOME
 # (~/.config/git/attributes, ignore), and an inaccessible /home makes each read
 # warn "Permission denied"; an empty one is a silent ENOENT.
