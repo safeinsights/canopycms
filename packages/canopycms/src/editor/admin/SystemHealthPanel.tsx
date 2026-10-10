@@ -43,6 +43,7 @@ import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
+import { branchStatusPresentation } from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -184,14 +185,6 @@ function baseRefreshWarning(report: BaseRefreshReport | undefined): string | nul
     )
   }
   return lines.length > 0 ? lines.join('\n') : null
-}
-
-// Mirrors BranchManager.tsx's statusColorMap -- kept local (not exported
-// there) rather than shared, same tiny lookup either way.
-const branchStatusColorMap: Record<string, string> = {
-  editing: 'brand',
-  submitted: 'green',
-  approved: 'teal',
 }
 
 const TASK_STATUS_OPTIONS: { label: string; value: AdminTaskStatus }[] = [
@@ -339,7 +332,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="sm" c="dimmed">
           No status available.
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()}>
+        <Button variant="light" onClick={() => refresh()}>
           Refresh
         </Button>
       </Stack>
@@ -461,7 +454,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
-      <Paper withBorder p="sm" radius="md">
+      <Paper withBorder p="sm">
         <Text size="sm" fw={600}>
           Build
         </Text>
@@ -520,7 +513,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       </Paper>
 
       {lastGitSync && (
-        <Paper withBorder p="sm" radius="md">
+        <Paper withBorder p="sm">
           <Text size="sm" fw={600}>
             Last git sync
           </Text>
@@ -569,7 +562,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
 
       <SimpleGrid cols={5} spacing="xs">
         {(['pending', 'processing', 'completed', 'failed', 'corrupt'] as const).map((key) => (
-          <Paper key={key} withBorder p="xs" radius="md" ta="center">
+          <Paper key={key} withBorder p="xs" ta="center">
             <Text size="xs" c="dimmed" tt="capitalize">
               {key}
             </Text>
@@ -595,7 +588,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="dimmed">
           Generated at {status.generatedAt}
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()} loading={statusLoading}>
+        <Button variant="light" onClick={() => refresh()} loading={statusLoading}>
           Refresh
         </Button>
       </Group>
@@ -696,7 +689,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                       </Table.Td>
                       <Table.Td>
                         <Button
-                          size="xs"
                           variant="light"
                           color="red"
                           data-testid={`delete-task-${file.fileName}`}
@@ -732,7 +724,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                         <Group gap="xs">
                           {taskStatus === 'failed' && (
                             <Button
-                              size="xs"
                               variant="light"
                               data-testid={`retry-task-${task.id}`}
                               onClick={() => handleRetryClick(task)}
@@ -742,7 +733,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                           )}
                           {canDelete && (
                             <Button
-                              size="xs"
                               variant="light"
                               color="red"
                               data-testid={`delete-task-${task.id}`}
@@ -973,7 +963,8 @@ function BranchHealthRow({
           </Group>
         </Table.Td>
         <Table.Td>
-          <Badge color={branchStatusColorMap[b.status] ?? 'neutral'} variant="light">
+          {/* Colour from the shared map; the raw status text stays, since admin-branch-health e2e reads it. */}
+          <Badge color={branchStatusPresentation(b.status)?.color ?? 'neutral'} variant="light">
             {b.status}
           </Badge>
         </Table.Td>
@@ -1093,7 +1084,6 @@ function BranchHealthRow({
         <Table.Td>
           {canMarkMerged && (
             <Button
-              size="xs"
               variant="light"
               data-testid={`mark-merged-${b.name}`}
               onClick={() => onMarkMerged(b.name)}
@@ -1131,7 +1121,6 @@ function BranchHealthRow({
         <Table.Td>
           <Group gap="xs" wrap="nowrap">
             <Button
-              size="xs"
               variant="light"
               data-testid={`repair-dir-${entry.dirName}`}
               onClick={() => onRepair(entry.dirName)}
@@ -1141,7 +1130,6 @@ function BranchHealthRow({
             <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
               <span>
                 <Button
-                  size="xs"
                   variant="light"
                   color="red"
                   disabled={purgeGate.disabled}
@@ -1184,7 +1172,6 @@ function BranchHealthRow({
         <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
           <span>
             <Button
-              size="xs"
               variant="light"
               color="red"
               disabled={purgeGate.disabled}

@@ -66,7 +66,6 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
         <ActionIcon
           variant="filled"
           color="red"
-          size="sm"
           radius="xl"
           style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
           aria-label={`Delete ${asset.filename}`}

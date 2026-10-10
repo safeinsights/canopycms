@@ -326,7 +326,7 @@ function RetryNotice(props: { title: string; error: string; onRetry: () => void 
     <Alert color="red" title={props.title} maw={480} data-testid="canopy-auth-error">
       <Stack gap="xs" align="flex-start">
         <Text size="sm">{props.error}</Text>
-        <Button size="xs" variant="light" onClick={props.onRetry}>
+        <Button variant="light" onClick={props.onRetry}>
           Retry
         </Button>
       </Stack>
@@ -337,7 +337,7 @@ function RetryNotice(props: { title: string; error: string; onRetry: () => void 
 /** Re-checks rather than reloading: in the overlay, a reload would discard the unsaved edits. */
 function DefaultSignedOutNotice({ onSignedIn, sessionRejected }: EditorSignInProps) {
   return (
-    <Paper withBorder p="xl" radius="md" maw={420}>
+    <Paper withBorder p="xl" maw={420}>
       <Stack gap="sm">
         <Title order={3}>Sign in required</Title>
         <Text size="sm">
@@ -349,7 +349,9 @@ function DefaultSignedOutNotice({ onSignedIn, sessionRejected }: EditorSignInPro
             Still not signed in.
           </Text>
         )}
-        <Button onClick={onSignedIn}>Continue</Button>
+        <Button size="sm" onClick={onSignedIn}>
+          Continue
+        </Button>
       </Stack>
     </Paper>
   )

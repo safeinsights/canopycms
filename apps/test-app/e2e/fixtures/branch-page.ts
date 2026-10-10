@@ -184,15 +184,16 @@ export class BranchPage {
   }
 
   /**
-   * Get the status text of a branch.
+   * Get the raw workflow status of a branch, read from the badge's `data-status`
+   * (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
-   * @returns The status text (e.g., 'editing', 'submitted')
+   * @returns The status (e.g., 'editing', 'submitted')
    */
   async getBranchStatus(branchName: string): Promise<string> {
     const badge = this.getBranchStatusBadge(branchName)
     await badge.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    return (await badge.textContent()) || ''
+    return (await badge.getAttribute('data-status')) || ''
   }
 
   /**
@@ -377,14 +378,15 @@ export class BranchPage {
   }
 
   /**
-   * Verify the branch status changed to expected value.
+   * Verify the branch status changed to expected value, compared against the badge's
+   * `data-status` (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
    * @param expectedStatus - Expected status (editing, submitted, archived, etc.)
    */
   async verifyBranchStatus(branchName: string, expectedStatus: string): Promise<void> {
     const badge = this.getBranchStatusBadge(branchName)
-    await expect(badge).toContainText(expectedStatus, {
+    await expect(badge).toHaveAttribute('data-status', expectedStatus, {
       timeout: STANDARD_TIMEOUT,
     })
   }

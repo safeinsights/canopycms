@@ -213,7 +213,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         <Alert icon={<IconAlertCircle size={16} />} color="red" data-testid="media-library-error">
           <Stack gap={4}>
             <Text size="sm">{listError}</Text>
-            <Button size="xs" variant="light" onClick={() => void loadFirstPage()}>
+            <Button variant="light" onClick={() => void loadFirstPage()}>
               Retry
             </Button>
           </Stack>
@@ -247,7 +247,6 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           <Group justify="center" py="sm">
             <Button
               variant="light"
-              size="xs"
               loading={loadingMore}
               onClick={() => void handleLoadMore()}
               data-testid="media-library-load-more"

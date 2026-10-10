@@ -26,7 +26,7 @@ export function UserSwitcherModal({ opened, onClose, currentUserId }: Props) {
     <Modal opened={opened} onClose={onClose} title="Switch Development User">
       <Stack gap="md">
         <DevUserList onSelect={switchUser} currentUserId={currentUserId} />
-        <Button variant="subtle" leftSection={<IconLogout size={16} />} onClick={signOut}>
+        <Button variant="subtle" size="sm" leftSection={<IconLogout size={16} />} onClick={signOut}>
           Sign out
         </Button>
       </Stack>

@@ -3,6 +3,8 @@
 import React, { useMemo } from 'react'
 
 import {
+  ActionIcon,
+  Button,
   DEFAULT_THEME,
   MantineProvider,
   getDefaultZIndex,
@@ -71,6 +73,12 @@ const toScale = (
   return fallbackScale
 }
 
+// The editor's default control sizes; a per-call `size` is only for a deliberate exception.
+const canopyComponents = {
+  Button: Button.extend({ defaultProps: { size: 'xs' } }),
+  ActionIcon: ActionIcon.extend({ defaultProps: { size: 'sm' } }),
+}
+
 export const createCanopyTheme = (
   options?: Pick<CanopyThemeOptions, 'colors' | 'themeOverride'>,
 ) => {
@@ -94,6 +102,7 @@ export const createCanopyTheme = (
     },
     fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
     ...themeOverride,
+    components: { ...canopyComponents, ...(themeOverride?.components ?? {}) },
   })
 }
 

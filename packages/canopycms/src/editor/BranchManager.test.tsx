@@ -951,6 +951,14 @@ describe('BranchManager', () => {
     expect(screen.getByTestId('branch-protected-badge-main')).toBeDefined()
   })
 
+  it('labels the status badge by presentation and exposes the raw status as data-status', () => {
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
+    const badge = screen.getByTestId('branch-status-badge-feature/test')
+    expect(baseBranches[1].status).toBe('submitted')
+    expect(badge.textContent).toBe('In review')
+    expect(badge.getAttribute('data-status')).toBe('submitted')
+  })
+
   it('does not show a Protected badge for a non-protected branch', () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
     expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()

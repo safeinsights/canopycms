@@ -224,10 +224,11 @@ export function EntryCreateModal({
         </Text>
 
         <Group justify="flex-end" gap="sm">
-          <Button variant="subtle" onClick={onClose} disabled={isCreating}>
+          <Button size="sm" variant="subtle" onClick={onClose} disabled={isCreating}>
             Cancel
           </Button>
           <Button
+            size="sm"
             onClick={handleCreate}
             loading={isCreating}
             disabled={!canCreate}

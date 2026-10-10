@@ -33,7 +33,7 @@ export const EditorCrashBoundary: React.FC<{
     fallback={(caught) => (
       <CanopyCMSProvider {...themeOptions} withNotifications={false}>
         <Center mih="100vh" p="md" data-testid="editor-crash-screen">
-          <Paper withBorder radius="md" p="xl" maw={560}>
+          <Paper withBorder p="xl" maw={560}>
             <Stack gap="md">
               <Group gap="sm">
                 <IconAlertTriangle size={24} color="var(--mantine-color-red-6)" />
@@ -49,12 +49,14 @@ export const EditorCrashBoundary: React.FC<{
               </Text>
               <Group gap="sm">
                 <Button
+                  size="sm"
                   leftSection={<IconRefresh size={16} />}
                   onClick={() => window.location.reload()}
                 >
                   Reload
                 </Button>
                 <Button
+                  size="sm"
                   variant="default"
                   leftSection={<IconArrowLeft size={16} />}
                   onClick={() => window.location.assign(entriesUrl(window.location.href))}
