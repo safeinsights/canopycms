@@ -117,6 +117,17 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
     const githubRepo = env.CANOPYCMS_GITHUB_REPO
     if (!githubRepo) throw new Error('CANOPYCMS_GITHUB_REPO is required')
 
+    // systemd's StateDirectory= (/var/lib/canopy-worker): the root volume, which the CMS Lambda
+    // cannot reach. The GitHub credential is only ever used in a git repository there.
+    const stateDirectory = env.STATE_DIRECTORY?.split(':')[0]
+    if (!stateDirectory) {
+      throw new Error(
+        'StateDirectory=canopy-worker is not set on the worker unit. The worker keeps its private ' +
+          'GitHub mirror there, so it does not start without it. Add it to the [Service] section ' +
+          'of canopy-worker.service (see "The worker instance" in docs/deploying-to-aws.md).',
+      )
+    }
+
     // Secrets from Secrets Manager or env vars.
     //
     // The ARN is resolved to `undefined` when the plain env var supplied the
@@ -201,6 +212,7 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
 
     const worker = deps.createWorker({
       workspacePath,
+      stateDirectory,
       githubOwner,
       githubRepo,
       githubToken,

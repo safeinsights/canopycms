@@ -12,11 +12,7 @@ import {
   sweepProvisioningLeftovers,
 } from '../branch-provisioning'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import {
-  GITHUB_TRACKING_REF_PREFIX,
-  ensureGitExcludePattern,
-  gitNetworkChildEnv,
-} from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, ensureGitExcludePattern } from '../git-manager'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
@@ -40,6 +36,13 @@ import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { maintainRemoteGit } from './remote-git-maintenance'
 import { decideBaseAdvance } from './schema-gate'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
+  assertSharedRepoConfig,
+  fetchFromRemoteGit,
+  sharedRepoGit,
+} from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
 import type { WorkerContext } from './worker-context'
 
@@ -83,6 +86,7 @@ export type GitSyncContext = Pick<
   | 'taskTimeoutMs'
   | 'log'
   | 'buildGitHubUrl'
+  | 'githubMirror'
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'isRunning'
@@ -198,11 +202,15 @@ export async function pushSettingsBranches(
     }
 
     try {
-      // Resolved in place, not hoisted: this is the only push in the function,
-      // so there is no second call to keep consistent, and hoisting would move
-      // the resolution out to syncGit and change this signature -- which
-      // cms-worker.test.ts pins by calling the method through the instance.
-      await git.push(await ctx.buildGitHubUrl(), settingsBranch)
+      // `git` is remote.git, read for the commit to send; the push itself runs in the
+      // worker's private mirror, which alone ever sees the credential.
+      const sha = (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
+      const githubUrl = await ctx.buildGitHubUrl()
+      await ctx
+        .githubMirror()
+        .exclusive((mirror) =>
+          mirror.pushToGitHub(githubUrl, settingsBranch, sha, { signal: ctx.shutdownSignal() }),
+        )
       workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
     } catch (err) {
       // Non-fatal: the branch may already be up to date, and this call site has
@@ -441,25 +449,14 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   // canopycms-cdk worker-lifecycle.ts); changing its text breaks the alarm.
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
-  const gitOptions = {
-    baseDir: ctx.remoteGitPath,
-    // DEP-H1: a hung fetch/push would stall the sync loop forever
-    // (scheduleLoop only reschedules after completion). The block timeout
-    // is inactivity-based, so a slow-but-flowing transfer is unaffected.
+  // remote.git's config is Lambda-writable: every git here runs pinned (worker/shared-repo-git.ts),
+  // and everything that carries the credential runs in the worker's private mirror instead.
+  const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
+    // DEP-H1: a hung git would stall the sync loop forever (scheduleLoop only
+    // reschedules after completion). Inactivity-based, so a slow-but-flowing
+    // transfer is unaffected.
     timeout: { block: ctx.taskTimeoutMs },
-  }
-  const git = simpleGit(gitOptions)
-  // The fetch and the settings push, which reach GitHub, are killed at the drain
-  // deadline; a killed ref update leaves the ref as it was or fully moved.
-  // `reconcileTrackedBranches` gets `git`, which nothing aborts: the schema gate
-  // fails open on a read error, so a killed read could advance a held base and
-  // drop the hold's first-seen times.
-  const networkGit = simpleGit({ ...gitOptions, abort: ctx.shutdownSignal() })
-  // gitNetworkChildEnv because the fetch and push here reach GitHub, and
-  // because pushSettingsBranches below needs its stable-English guarantee
-  // to classify a rejected settings-branch push.
-  git.env(gitNetworkChildEnv())
-  networkGit.env(gitNetworkChildEnv())
+  })
 
   // The whole cycle is wrapped so both outcomes -- success and hard failure
   // (e.g. the fetch throwing against a poisoned remote.git) -- record a
@@ -481,24 +478,31 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     } catch (err) {
       workerLogWarn(`Sparse-checkout cone update failed: ${getErrorMessage(err)}`)
     }
+    // Refuses the whole cycle: everything after this runs git in remote.git, and every branch
+    // clone fetches from it.
+    await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
     try {
       await maintainRemoteGit(ctx.remoteGitPath)
     } catch (err) {
       workerLogWarn(`remote.git maintenance failed: ${getErrorMessage(err)}`)
     }
+    try {
+      await ctx.githubMirror().maintain()
+    } catch (err) {
+      workerLogWarn(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
+    }
 
     if (stoppedForDrain(ctx, 'the GitHub fetch')) return
 
-    // Direct URL (no named remote), into the GITHUB_TRACKING_REF_PREFIX
-    // remote-tracking namespace rather than refs/heads/* -- see that constant's
-    // doc comment for the destructive-fetch bug this avoids. Raw git, because
-    // simple-git's fetch() with a URL does not support --prune.
-    await networkGit.raw([
-      'fetch',
-      await ctx.buildGitHubUrl(),
-      '--prune',
-      `+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`,
-    ])
+    // Into the mirror, then into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than
+    // refs/heads/* -- see that constant's doc comment for the destructive-fetch bug this avoids.
+    // Both are killed at the drain deadline; a killed ref update leaves the ref as it was or
+    // fully moved.
+    const githubUrl = await ctx.buildGitHubUrl()
+    await ctx.githubMirror().exclusive(async (mirror) => {
+      await mirror.fetchFromGitHub(githubUrl, ctx.shutdownSignal())
+      await mirror.publishTrackingRefs(ctx.shutdownSignal())
+    })
     workerLog('Fetched from GitHub')
 
     const {
@@ -518,7 +522,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // Ordering relative to the fetch/reconcile above is no longer a
     // correctness dependency now that the fetch can't clobber refs/heads/*
     // -- this could run before or after them just as safely.
-    await pushSettingsBranches(ctx, networkGit, trackedNames)
+    await pushSettingsBranches(ctx, git, trackedNames)
 
     if (stoppedForDrain(ctx, 'the base-branch refresh')) return
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
@@ -812,14 +816,10 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     // Idempotent, and applied every cycle so any clone lacking it gets it.
     await ensureGitExcludePattern(basePath, `${CANOPY_META_DIR}/`)
 
-    const baseGit = simpleGit({
-      baseDir: basePath,
-      // Keep git non-interactive during the merge so it never blocks on an
-      // editor. simple-git >=3.32 requires opting in to set core.editor; the
-      // value is a hardcoded literal ("true", the shell no-op), not user input,
-      // so allowUnsafeEditor carries no injection risk here.
-      config: ['core.editor=true'],
-      unsafe: { allowUnsafeEditor: true },
+    // A planted key would run in this worker's merge or checkout; the catch below reports it.
+    await assertSharedRepoConfig(basePath, 'worktree')
+    // The pins also keep the merge non-interactive (core.editor=true).
+    const baseGit = sharedRepoGit(basePath, 'worktree', {
       // DEP-H1: a hung fetch/merge against this EFS-backed clone would stall
       // the sync loop forever (scheduleLoop only reschedules after completion).
       // Inactivity-based, so a slow-but-flowing transfer is unaffected.
@@ -839,14 +839,14 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
       }
     }
 
-    let status = await baseGit.status()
+    let status = await baseGit.status([...SHARED_REPO_STATUS_ARGS])
     const lostBeforeRestore = lockLost()
     if (lostBeforeRestore) return lostBeforeRestore
     if (await restoreRetiredSchemaCache(baseGit, status)) {
       workerLog(
         `Base branch workspace (${ctx.baseBranch}): restored the retired in-tree schema cache`,
       )
-      status = await baseGit.status()
+      status = await baseGit.status([...SHARED_REPO_STATUS_ARGS])
     }
 
     // Nothing makes this clone read-only, and a direct edit here wedges every
@@ -875,7 +875,7 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
     // Raw (unsanitized) name from here on: these are git ref operations
     // against remote.git's <baseBranch>, not filesystem paths, so they must use
     // the same name GitHub knows the branch by.
-    await baseGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+    await fetchFromRemoteGit(baseGit, ctx.remoteGitPath, ctx.baseBranch)
 
     // rev-list, not status.behind, which needs an upstream tracking branch that
     // is not guaranteed here. Against the just-fetched tip: a fetch by path
@@ -903,6 +903,8 @@ export async function refreshBaseBranchWorkspace(ctx: GitSyncContext): Promise<B
           `Base branch workspace (${ctx.baseBranch}): stopped tracking ${droppedUpstream.join(', ')}, as upstream has`,
         )
       }
+      // Outside the try below: a refusal is not a diverged history.
+      await assertNoIncomingSubmodules(baseGit, basePath, 'HEAD', fetchedTip)
       try {
         await baseGit.merge(['--ff-only', fetchedTip])
       } catch (err) {

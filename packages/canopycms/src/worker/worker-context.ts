@@ -2,6 +2,7 @@ import type { Octokit } from '@octokit/rest'
 import type { SanitizedBranchName } from '../paths/types'
 import type { Task, TaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { WorkerStatusReport } from '../types'
+import type { GitHubMirror } from './github-mirror'
 
 /**
  * The slice of {@link import('./cms-worker').CmsWorker} that its extracted
@@ -81,6 +82,11 @@ export interface WorkerContext {
    * branch.json or a task file goes through `redactCredentials` first.
    */
   buildGitHubUrl(): Promise<string>
+  /**
+   * The worker's private GitHub mirror (worker/github-mirror.ts): every git command given a
+   * `buildGitHubUrl()` URL runs inside one of its sessions, never in `remote.git` or a clone.
+   */
+  githubMirror(): GitHubMirror
   /**
    * Re-read the GitHub credential because an operation that used it just
    * failed, read at call time. Best-effort and NEVER throws: a failed read, or

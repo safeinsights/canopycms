@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises'
-import { simpleGit } from 'simple-git'
 import {
   completeTask,
   dequeueTask,
@@ -20,7 +19,6 @@ import {
   getBranchMetadataFileManager,
 } from '../branch-metadata'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
-import { gitNetworkChildEnv } from '../git-manager'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import {
   isNonFastForwardRejection,
@@ -30,6 +28,7 @@ import {
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
+import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -62,6 +61,7 @@ export type TaskRunnerContext = Pick<
   | 'log'
   | 'octokit'
   | 'buildGitHubUrl'
+  | 'githubMirror'
   | 'refreshGitHubCredential'
   | 'branchWorkspacePath'
   // Both are implemented in THIS module and are still reached through the
@@ -682,41 +682,20 @@ export async function pushBranchToGitHub(
   branch: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const git = simpleGit({
-    baseDir: ctx.remoteGitPath,
-    // DEP-H1: kill the git process if it produces no output for taskTimeoutMs
-    // (network stall, credential prompt) instead of letting it hang past the
-    // task timeout.
-    timeout: { block: ctx.taskTimeoutMs },
-    // Kills the push when the task times out or the worker's drain deadline
-    // hits, so an abandoned push never races the retry. GitHub moves the ref
-    // only after receiving the whole pack: a push killed before that changes
-    // nothing, and one killed after it is found already done by the re-run.
-    abort: signal,
-  })
-  // Force stable (English) git output so isNonFastForwardRejection below can
-  // match it -- git's rejection text is gettext-translated, so a non-English
-  // host would silently turn that classifier into a no-op. gitNetworkChildEnv
-  // (NOT gitChildEnv) because this call talks to GitHub: it keeps ambient
-  // HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND, which gitChildEnv's local-ops
-  // allowlist deliberately drops.
-  git.env(gitNetworkChildEnv())
+  // The credential's only repository is the worker's private mirror (worker/github-mirror.ts);
+  // remote.git's config is Lambda-writable. The pushes below send exactly `outgoingSha`, the
+  // commit remote.git held when it was read, so what the marker logic at the end compares is
+  // what GitHub received.
+  await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
 
   // Resolve the tokenized URL ONCE, here: all three pushes below use this
   // const and none calls ctx.buildGitHubUrl() again. A correctness
-  // requirement, not tidiness, since resolution is async:
-  //
-  // - the retry push sits INSIDE the stale-lease catch, and a resolution that
-  //   threw there would replace the push error being classified, so neither
-  //   isStaleLeaseRejection nor isNonFastForwardRejection would run and a
-  //   genuinely diverged branch would be retried instead of raising
-  //   PermanentTaskError;
-  // - readPublishedSha below captures remote.git's tip BEFORE the push, and
-  //   that value decides whether the [SYNC-H1] marker is cleared at the end.
-  //   An awaited resolution in between widens the window in which the tip can
-  //   move underneath that decision.
-  //
-  // It also means all three pushes provably carry the same credential.
+  // requirement, not tidiness, since resolution is async: the retry push sits
+  // INSIDE the stale-lease catch, and a resolution that threw there would
+  // replace the push error being classified, so neither isStaleLeaseRejection
+  // nor isNonFastForwardRejection would run and a genuinely diverged branch
+  // would be retried instead of raising PermanentTaskError. It also means every
+  // push provably carries the same credential.
   const githubUrl = await ctx.buildGitHubUrl()
 
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
@@ -727,86 +706,89 @@ export async function pushBranchToGitHub(
   const branchPath = ctx.branchWorkspacePath(branch)
   const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
   const marker = metaFile?.branch.historyRewrittenFrom
-  // What this push will actually send: remote.git's tip for the branch.
   const outgoingSha = await readPublishedSha(ctx, branch)
+  if (outgoingSha === null) {
+    throw new Error(`Branch "${branch}" is not in remote.git, so there is nothing to push`)
+  }
+  // The whole exchange, retry included, is one mirror session; the mirror kills its git when
+  // `signal` aborts (the task timed out, or the worker's drain deadline hit). GitHub moves the ref
+  // only after receiving the whole pack: a push killed before that changes nothing, and one
+  // killed after it is found already done by the re-run.
+  const outcome = await ctx.githubMirror().exclusive(async (mirror) => {
+    const push = (lease?: string) =>
+      mirror.pushToGitHub(githubUrl, branch, outgoingSha, { lease, signal })
+    try {
+      await push(marker)
+      return 'pushed'
+    } catch (err) {
+      const message = getErrorMessage(err)
+      throwIfWorkflowRefusal(branch, message)
 
-  try {
-    if (marker) {
-      await git.raw([
-        'push',
-        `--force-with-lease=${branch}:${marker}`,
-        '--end-of-options',
-        githubUrl,
-        `${branch}:${branch}`,
-      ])
-    } else {
-      // Pass URL directly to avoid persisting the token in remote.git/config
-      await git.push(githubUrl, branch)
-    }
-  } catch (err) {
-    const message = getErrorMessage(err)
-    throwIfWorkflowRefusal(branch, message)
-
-    // A refused lease means GitHub is not at the commit we rewrote, so the
-    // marker is stale -- routine, not exceptional: tasks are re-run after a
-    // crash (recoverOrphanedTasks) and the marker survives any failure to
-    // clear it. The two benign shapes that reach here (GitHub already holds
-    // the rewritten history, or the branch moved past it) are ordinary
-    // fast-forwards a lease has no business blocking.
-    //
-    // So retry PLAIN and let git adjudicate: a non-forced push succeeds if and
-    // only if it fast-forwards, so it can never destroy anything, with no
-    // ancestry check to get wrong and no extra round trip to read GitHub's
-    // tip. Only if THAT is also rejected has the branch genuinely diverged.
-    //
-    // (git evaluates the lease only when it actually has an update to apply,
-    // so an up-to-date ref with a stale lease prints "Everything up-to-date",
-    // exits 0, and is absorbed above without reaching here.)
-    if (marker && isStaleLeaseRejection(message)) {
-      try {
-        await git.push(githubUrl, branch)
-      } catch (retryErr) {
-        const retryMessage = getErrorMessage(retryErr)
-        throwIfWorkflowRefusal(branch, retryMessage)
-        if (isNonFastForwardRejection(retryMessage)) {
-          throw new PermanentTaskError(
-            `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
-              `deployment last published nor an ancestor of what it is pushing, so the branch ` +
-              `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
-              `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
-          )
+      // A refused lease means GitHub is not at the commit we rewrote, so the
+      // marker is stale -- routine, not exceptional: tasks are re-run after a
+      // crash (recoverOrphanedTasks) and the marker survives any failure to
+      // clear it. The two benign shapes that reach here (GitHub already holds
+      // the rewritten history, or the branch moved past it) are ordinary
+      // fast-forwards a lease has no business blocking.
+      //
+      // So retry PLAIN and let git adjudicate: a non-forced push succeeds if and
+      // only if it fast-forwards, so it can never destroy anything, with no
+      // ancestry check to get wrong and no extra round trip to read GitHub's
+      // tip. Only if THAT is also rejected has the branch genuinely diverged.
+      //
+      // (git evaluates the lease only when it actually has an update to apply,
+      // so an up-to-date ref with a stale lease prints "Everything up-to-date",
+      // exits 0, and is absorbed above without reaching here.)
+      if (marker && isStaleLeaseRejection(message)) {
+        try {
+          await push()
+        } catch (retryErr) {
+          const retryMessage = getErrorMessage(retryErr)
+          throwIfWorkflowRefusal(branch, retryMessage)
+          if (isNonFastForwardRejection(retryMessage)) {
+            throw new PermanentTaskError(
+              `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
+                `deployment last published nor an ancestor of what it is pushing, so the branch ` +
+                `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
+                `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
+            )
+          }
+          throw retryErr
         }
-        throw retryErr
+        return 'pushed-past-stale-lease'
       }
-      // The lease was refused, so GitHub is provably not at the marker: it
-      // has moved past the rewritten commit and the marker is spent.
-      await clearHistoryRewrittenMarker(ctx, branchPath, branch)
-      await recordPushedToGitHub(ctx, branchPath, branch)
-      workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
-      return
-    }
 
-    // An ordinary non-fast-forward rejection: GitHub has commits this
-    // deployment never published, so retrying the identical push can never
-    // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply) and
-    // it fails fast instead of burning the retry budget. Deliberately does NOT
-    // advise renaming the branch: one reaching this point usually has an open
-    // PR, which renaming would orphan.
-    if (isNonFastForwardRejection(message)) {
-      throw new PermanentTaskError(
-        `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
-          `published, so the branch has diverged and needs reconciling. Something else moved it ` +
-          `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
-      )
+      // An ordinary non-fast-forward rejection: GitHub has commits this
+      // deployment never published, so retrying the identical push can never
+      // succeed (DEP-L1's git-failure-is-transient carve-out does NOT apply) and
+      // it fails fast instead of burning the retry budget. Deliberately does NOT
+      // advise renaming the branch: one reaching this point usually has an open
+      // PR, which renaming would orphan.
+      if (isNonFastForwardRejection(message)) {
+        throw new PermanentTaskError(
+          `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
+            `published, so the branch has diverged and needs reconciling. Something else moved it ` +
+            `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
+        )
+      }
+      throw err
     }
-    throw err
+  })
+
+  if (outcome === 'pushed-past-stale-lease') {
+    // The lease was refused, so GitHub is provably not at the marker: it
+    // has moved past the rewritten commit and the marker is spent.
+    await clearHistoryRewrittenMarker(ctx, branchPath, branch)
+    await recordPushedToGitHub(ctx, branchPath, branch)
+    workerLog(`Pushed ${branch} to GitHub (GitHub had already moved past the rewritten commit)`)
+    return
   }
 
   // Clear the marker only once GitHub is confirmed to hold something other
   // than the commit we rewrote. A push that sent nothing new (remote.git
   // still at the marker because its own publish has not landed yet) must
   // leave the marker set -- it is the sole trigger for the self-heal pass.
-  if (marker && outgoingSha && outgoingSha !== marker) {
+  if (marker && outgoingSha !== marker) {
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
   }
   await recordPushedToGitHub(ctx, branchPath, branch)

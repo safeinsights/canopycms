@@ -72,6 +72,7 @@ replaces each `next` with its number.
 | 109  | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
 | 109  | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                |
 | 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
+| next | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--hand-installed-units-only)                                                                              | Hand-installed units    |
 | next | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
@@ -429,6 +430,14 @@ key, grant the Auto Scaling service-linked role on it. Pass `workerMaxInstanceLi
 
 **Now deletable.** Any override adding `MetadataOptions`, an encrypted root volume or an EFS
 `FileSystemPolicy`, or narrowing the worker role's asset-bucket grant.
+
+### `canopycms-cdk`: the worker needs a state directory — **hand-installed units only**
+
+**What changed.** (next int) The worker's git keeps the GitHub credential in a private mirror
+under the unit's `StateDirectory=`, and the worker does not start without it.
+
+**To adopt.** Nothing with `CanopyCmsService`. A hand-installed unit needs
+`StateDirectory=canopy-worker` under `[Service]`.
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 

@@ -1,11 +1,11 @@
 import path from 'node:path'
-import { simpleGit } from 'simple-git'
+
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { gitChildEnv } from '../git-manager'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isStaleLeaseRejection } from '../utils/git'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
+import { pinnedReceivePack, sharedRepoGit } from './shared-repo-git'
 import { workerLog, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
 
@@ -37,19 +37,16 @@ export type HistoryRewriteContext = Pick<
  * What `remote.git` currently holds for `branchRef`, or null when this branch
  * was never published there (never submitted) or the ref is unreadable.
  *
- * Explicit `--git-dir`, like verifyBaseBranchExists() in cms-worker.ts:
- * reading a bare repo that way does not depend on `safe.bareRepository` being
- * permissive, which is why prod code takes this route rather than the config
- * override the test-only `openBareRepo` helper uses.
+ * Names the repository outright (sharedRepoGit's GIT_DIR), like
+ * verifyBaseBranchExists() in cms-worker.ts: reading a bare repo that way does
+ * not depend on `safe.bareRepository` being permissive.
  */
 export async function readPublishedSha(
   ctx: Pick<HistoryRewriteContext, 'remoteGitPath'>,
   branchRef: string,
 ): Promise<string | null> {
   try {
-    const out = await simpleGit().raw([
-      '--git-dir',
-      ctx.remoteGitPath,
+    const out = await sharedRepoGit(ctx.remoteGitPath, 'bare').raw([
       'rev-parse',
       '--verify',
       `refs/heads/${branchRef}`,
@@ -139,17 +136,16 @@ export async function forcePublishToLocalRemote(
   branchRef: string,
   expectedSha: string,
 ): Promise<boolean> {
-  // A dedicated instance rather than the caller's: `.env()` replaces the whole
-  // child environment, and the rebase loop's instance must keep its ambient
-  // one. gitChildEnv (not gitNetworkChildEnv) because this push targets the
-  // local bare repo -- and its locale pin is what keeps isStaleLeaseRejection
-  // below from silently becoming a no-op on a non-English host.
-  const pushGit = simpleGit({ baseDir: branchPath, timeout: { block: ctx.taskTimeoutMs } })
-  pushGit.env(gitChildEnv({}))
+  // sharedRepoGit's env is gitChildEnv's, whose C-locale pin is what keeps
+  // isStaleLeaseRejection below from silently becoming a no-op on a
+  // non-English host.
+  const pushGit = sharedRepoGit(branchPath, 'worktree', { timeout: { block: ctx.taskTimeoutMs } })
   try {
     await pushGit.raw([
       'push',
       `--force-with-lease=${branchRef}:${expectedSha}`,
+      // Otherwise remote.git's own hooks run, as the worker.
+      `--receive-pack=${pinnedReceivePack()}`,
       // Real flags must precede --end-of-options; everything after it is
       // positional (see GitManager.push() for the same guard).
       '--end-of-options',

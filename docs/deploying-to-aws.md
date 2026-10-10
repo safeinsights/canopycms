@@ -25,17 +25,9 @@ Lambda (VPC, no internet)               EC2 Worker (t4g.nano)
 **Why this architecture?**
 
 - **No NAT Gateway** — Lambda has no internet access, saving ~$32/month
-- **Secrets stay on the worker** — Lambda only has public keys and config. The worker
-  does not leave the GitHub bot token on the shared filesystem: `remote.git` is
-  cloned under a staging name and renamed into place only after the token-bearing
-  `remote.origin.url` is removed and verified gone, and an existing `remote.git` is
-  re-checked (and scrubbed) on every worker start, so a token left by an older build
-  self-heals. Stated precisely, this is a bounded window rather than "never": the
-  initial bare clone does write the token into the _staging_ copy's config until the
-  scrub runs moments later, and a crash in that gap leaves it there until the next
-  worker boot deletes the staging directory. What is eliminated is unbounded
-  persistence under the real `remote.git` name. Closing the window entirely needs a
-  credential helper instead of a token-bearing clone URL
+- **Secrets stay on the worker** — Lambda only has public keys and config, and the worker's
+  git uses the GitHub credential only in a repository on its own disk, so no token is ever
+  written to EFS ([The worker instance](#the-worker-instance))
 - **Same app, two builds** — The adopter's Next.js app builds as both a static export (public site) and a standalone server (CMS Lambda)
 
 ## Prerequisites
@@ -1125,8 +1117,13 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
   12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
 - **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its log
-  directory and a private `/tmp` are writable, not its own code; `ProtectHome=tmpfs`, no
-  capabilities, and the kernel, device and namespace protections.
+  directory, its state directory and a private `/tmp` are writable, not its own code;
+  `ProtectHome=tmpfs`, no capabilities, and the kernel, device and namespace protections.
+- **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
+  only in a private mirror in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
+  Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
+  off, and a repository whose config holds a key CanopyCMS never writes, or with a repository in
+  a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB the worker warns.
 - **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
   exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
   their vault refuses deletes until you change its access policy.
@@ -1179,7 +1176,13 @@ environment, and without the prop the internet-less Lambda hangs on sign-in fetc
 What dropping the middleware gives up is under [Dual Build Support](#dual-build-support); the
 shape without it has not been run against a real Clerk instance, so test sign-in early.
 
-If the CMS Lambda is compromised, an attacker can read/write content on EFS but cannot exfiltrate data, push to GitHub, or access any external service.
+If the CMS Lambda is compromised, an attacker can read and write content on EFS, but cannot
+reach GitHub or any external service itself. It can also write the git state the worker reads,
+and one gap stays open: by racing the worker, writing a filter or merge driver into a clone
+between its check and git's own read, or an `exec` line into a rebase it has stopped, it runs a
+command as the worker, which can then fetch the credential
+(`.claude/future-tasks/worker-shared-repo-git-process-split.md`). The worker's host, system git
+config and image stay trusted.
 
 ### CloudFront OAC and request body signing
 
