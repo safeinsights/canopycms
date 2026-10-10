@@ -39,7 +39,8 @@ StandardError=append:/var/log/canopy-worker/worker.log
 # Environment
 EnvironmentFile=/opt/canopy-worker/.env
 
-# Sandbox. Writable: the workspace, and the log dir (LogsDirectory=).
+# Sandbox. Writable: the workspace, the log dir (LogsDirectory=) and a private
+# /tmp.
 # ProtectHome=tmpfs, not yes: every git call reads per-user files under $HOME
 # (~/.config/git/attributes, ignore), and an inaccessible /home makes each read
 # warn "Permission denied"; an empty one is a silent ENOENT.
