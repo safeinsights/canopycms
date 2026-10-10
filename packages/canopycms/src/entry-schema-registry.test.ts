@@ -293,6 +293,26 @@ describe('createEntrySchemaRegistry: markdown field options', () => {
     ).toThrow('Field "body": mdxAllow.htmlTags.0 must be one of the HTML tags')
   })
 
+  it('throws on a field in an inline group, and on a renderAs other than mdx', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'seo',
+            type: 'group',
+            fields: [{ name: 'text', type: 'markdown', mdxAllow: {} }],
+          },
+        ],
+      }),
+    ).toThrow('Field "text": mdxAllow applies to MDX')
+    const renderAs: unknown = 'markdown'
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [{ name: 'body', type: 'markdown', renderAs } as EntrySchema[number]],
+      }),
+    ).toThrow(`Field "body": renderAs must be 'mdx'`)
+  })
+
   it('accepts a narrow allowlist on a markdown field rendered as MDX', () => {
     expect(() =>
       createEntrySchemaRegistry({

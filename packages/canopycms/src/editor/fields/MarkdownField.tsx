@@ -4,7 +4,7 @@ import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, use
 
 import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 
-import type { MDXEditorMethods } from '@mdxeditor/editor'
+import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
 import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
 import { createMarkdownFidelityPlugin } from './markdown-fidelity-visitors'
@@ -79,27 +79,39 @@ export const MDXEditorLazy = React.lazy(async () => {
     $isImageNode,
     createRootEditorSubscription$,
     realmPlugin,
+    Cell,
     // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
     // a separately resolved copy would throw inside this editor's `read()`.
-    lexical: { $getNodeByKey, TextNode },
+    lexical: { $getNodeByKey, COMMAND_PRIORITY_CRITICAL, FORMAT_TEXT_COMMAND },
   } = mdx
   const mdxJsxPlugins = createMdxJsxPlugins(mdx)
 
+  /** The text formats whose tag the field refuses, kept current as props change. */
+  const refusedFormats$ = Cell<readonly string[]>([])
+  const refusedFormats = (htmlTags: ReadonlySet<string> | undefined) =>
+    TAG_FORMATS.filter(([, tag]) => htmlTags?.has(tag) === false).map(([format]) => format)
+
   /**
-   * Drops each text format whose tag the field refuses, however it was applied: the toolbar, a
-   * shortcut (Cmd+U) or a paste.
+   * Refuses applying a format whose tag the field refuses, from the toolbar or a shortcut (Cmd+U).
+   * Lexical passes a nested editor's commands (table cells, component children) up to the root's.
+   * Content is never rewritten: a stored tag stays, for the server's unchanged-field rule to judge.
    */
-  const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> }>({
+  const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> | undefined }>({
     init(realm, params) {
-      const refused = TAG_FORMATS.filter(([, tag]) => params?.htmlTags.has(tag) === false)
-      if (refused.length === 0) return
-      realm.pub(createRootEditorSubscription$, (editor) =>
-        editor.registerNodeTransform(TextNode, (node) => {
-          for (const [format] of refused) if (node.hasFormat(format)) node.toggleFormat(format)
-        }),
-      )
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+      const guard: EditorSubscription = (editor) =>
+        editor.registerCommand(
+          FORMAT_TEXT_COMMAND,
+          (format) => realm.getValue(refusedFormats$).includes(format),
+          COMMAND_PRIORITY_CRITICAL,
+        )
+      realm.pub(createRootEditorSubscription$, guard)
+    },
+    update(realm, params) {
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
     },
   })
+
   const markdownFidelityPlugin = createMarkdownFidelityPlugin(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
@@ -183,7 +195,7 @@ export const MDXEditorLazy = React.lazy(async () => {
           tablePlugin(),
           ...mdxJsxPlugins(),
           markdownFidelityPlugin(),
-          ...(htmlTags === undefined ? [] : [tagFormatGuardPlugin({ htmlTags })]),
+          tagFormatGuardPlugin({ htmlTags }),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {

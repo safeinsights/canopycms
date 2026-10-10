@@ -8,7 +8,13 @@
  * still runs on what the allowlist accepts.
  */
 
-import type { FieldConfig, MarkdownFieldConfig, MdxAllowlist, MdxPropAllow } from '../config/types'
+import type {
+  ContentFormat,
+  FieldConfig,
+  MarkdownFieldConfig,
+  MdxAllowlist,
+  MdxPropAllow,
+} from '../config/types'
 
 /** HTML tags an MDX body may use: content elements whose attributes carry no code. */
 export const SAFE_HTML_TAGS: ReadonlySet<string> = new Set([
@@ -154,12 +160,37 @@ export function isMarkdownField(field: FieldConfig): field is MarkdownFieldConfi
   return field.type === 'markdown' || field.type === 'mdx'
 }
 
+/** How a field's content is checked: as markdown or MDX, and what MDX it accepts. */
+export interface MarkdownPolicy {
+  dialect: 'md' | 'mdx'
+  allow: ResolvedMdxAllowlist
+}
+
+/**
+ * The policy the server enforces and the editor follows, or undefined for an `executable` field. A
+ * field is MDX when typed `mdx` or set `renderAs: 'mdx'`; an entry's body (`bodyFormat` given, its
+ * field possibly undeclared) is also MDX in an `mdx` entry.
+ */
+export function markdownPolicyOf(
+  field: MarkdownFieldConfig | undefined,
+  site: MdxAllowlist | undefined,
+  bodyFormat?: ContentFormat,
+): MarkdownPolicy | undefined {
+  if (field?.executable === true) return undefined
+  const mdx = bodyFormat === 'mdx' || field?.type === 'mdx' || field?.renderAs === 'mdx'
+  return { dialect: mdx ? 'mdx' : 'md', allow: resolveMdxAllowlist(field?.mdxAllow, site) }
+}
+
 /**
  * Why a markdown or mdx field's `renderAs`, `mdxAllow` and `executable` contradict each other, or
  * undefined. An allowlist that cannot apply would look like protection it is not.
  */
 export function markdownFieldOptionsError(field: MarkdownFieldConfig): string | undefined {
-  if (field.renderAs !== undefined && field.type === 'mdx') {
+  const renderAs: unknown = field.renderAs
+  if (renderAs !== undefined && renderAs !== 'mdx') {
+    return `Field "${field.name}": renderAs must be 'mdx'`
+  }
+  if (renderAs !== undefined && field.type === 'mdx') {
     return `Field "${field.name}": renderAs applies to markdown fields; an mdx field always renders as MDX`
   }
   if (field.mdxAllow === undefined) return undefined

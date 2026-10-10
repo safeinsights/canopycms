@@ -1211,6 +1211,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             onAddComment={handleAddComment}
                             onResolveThread={handleResolveThread}
                             fieldErrors={fieldErrors}
+                            format={currentEntry.format}
                             conflictNotice={
                               !!(
                                 currentEntry?.contentId &&

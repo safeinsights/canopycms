@@ -34,7 +34,7 @@ import { mdxFromMarkdown } from 'mdast-util-mdx'
 import { gfm } from 'micromark-extension-gfm'
 import { mdxjs } from 'micromark-extension-mdxjs'
 
-import type { ContentFormat, EntrySchema, FieldConfig, MdxAllowlist } from '../config'
+import type { ContentFormat, EntrySchema, MdxAllowlist } from '../config'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { getErrorMessage } from '../utils/error'
@@ -45,9 +45,10 @@ import {
   SAFE_HTML_TAGS,
   isComponentName,
   isMarkdownField,
+  markdownPolicyOf,
   resolveMdxAllowlist,
 } from './mdx-allowlist'
-import type { ResolvedMdxAllowlist } from './mdx-allowlist'
+import type { MarkdownPolicy, ResolvedMdxAllowlist } from './mdx-allowlist'
 
 type MarkdownDialect = 'md' | 'mdx'
 
@@ -600,27 +601,10 @@ function toFieldError(fieldPath: string, issues: MarkdownSafetyIssue[]): EntryFi
   return { fieldPath, message: `${first?.message ?? ''}${more}` }
 }
 
-/** How one field is checked: as markdown or MDX, and what MDX it accepts. */
-interface FieldPolicy {
-  dialect: MarkdownDialect
-  allow: ResolvedMdxAllowlist
-}
-
-function policyOfField(
-  field: FieldConfig,
-  site: MdxAllowlist | undefined,
-): FieldPolicy | undefined {
-  if (!isMarkdownField(field) || field.executable === true) return undefined
-  return {
-    dialect: field.type === 'mdx' || field.renderAs === 'mdx' ? 'mdx' : 'md',
-    allow: resolveMdxAllowlist(field.mdxAllow, site),
-  }
-}
-
 function findInValue(
   fieldPath: string,
   value: unknown,
-  { dialect, allow }: FieldPolicy,
+  { dialect, allow }: MarkdownPolicy,
 ): MarkdownSafetyFinding[] {
   const values = Array.isArray(value) ? value : [value]
   const findings: MarkdownSafetyFinding[] = []
@@ -638,10 +622,9 @@ function findInValue(
 
 /**
  * The policy's issues in one entry's on-disk-shaped data, the body merged in under the schema's
- * body field name. The body of an `mdx` entry is MDX whatever its field's type; the body of an
- * `md` entry is MDX only when its field sets `renderAs: 'mdx'`. The body is checked when the
- * schema declares no body field, and is exempt only when its field is `executable`. `siteAllow`
- * is the config's `mdxAllow`, under each field's own.
+ * body field name. The body is checked as `markdownPolicyOf` says for its field and the entry's
+ * format, even when the schema declares no body field; it is exempt only when its field is
+ * `executable`. `siteAllow` is the config's `mdxAllow`, under each field's own.
  */
 export function findMarkdownSafetyIssues(
   fields: EntrySchema,
@@ -656,19 +639,14 @@ export function findMarkdownSafetyIssues(
   if (hasBody && bodyName !== undefined) {
     const found = flattenGroupFields(fields).find((field) => field.name === bodyName)
     const bodyField = found !== undefined && isMarkdownField(found) ? found : undefined
-    if (bodyField?.executable !== true) {
-      const policy: FieldPolicy = {
-        dialect: format === 'mdx' || bodyField?.renderAs === 'mdx' ? 'mdx' : 'md',
-        allow: resolveMdxAllowlist(bodyField?.mdxAllow, siteAllow),
-      }
-      findings.push(...findInValue(bodyName, data[bodyName], policy))
-    }
+    const policy = markdownPolicyOf(bodyField, siteAllow, format)
+    if (policy !== undefined) findings.push(...findInValue(bodyName, data[bodyName], policy))
   }
 
   findings.push(
     ...traverseFields<MarkdownSafetyFinding>(fields, data, ({ field, value, path }) => {
-      if (path === bodyName) return []
-      const policy = policyOfField(field, siteAllow)
+      if (path === bodyName || !isMarkdownField(field)) return []
+      const policy = markdownPolicyOf(field, siteAllow)
       return policy === undefined ? [] : findInValue(path, value, policy)
     }),
   )
@@ -679,10 +657,20 @@ export function findMarkdownSafetyIssues(
 const site = (fieldPath: string) => fieldPath.replace(/\[\d+\]/g, '')
 
 /**
- * Splits a save's issues into those it adds, which refuse it, and those of a field saved exactly as
- * the stored entry held it, which it keeps. Issues are matched by key and counted, so a second copy
- * of a stored field is refused, as is one moved to a field of another name. An issue with no key,
- * such as a body that does not parse, is never kept.
+ * The field occurrence a finding stands for: its site and key, which every one of its issues
+ * carries. Undefined when an issue has no key, such as a body that does not parse.
+ */
+function occurrenceOf(finding: MarkdownSafetyFinding): string | undefined {
+  const keys = new Set(finding.issues.map((item) => item.key))
+  const [key] = keys
+  return keys.size === 1 && key !== undefined ? `${site(finding.fieldPath)}\0${key}` : undefined
+}
+
+/**
+ * Splits a save's findings into those it adds, which refuse it, and those of a field saved exactly
+ * as the stored entry held it, which it keeps. Fields are matched by site and key, one stored field
+ * for one saved field, so a second copy of a stored field is refused, as is one moved to a field of
+ * another name. A finding with an unkeyed issue is never kept.
  */
 export function splitByStored(
   found: readonly MarkdownSafetyFinding[],
@@ -691,39 +679,28 @@ export function splitByStored(
   const available = new Map<string, number>()
   const storedSites = new Set(stored.map((finding) => site(finding.fieldPath)))
   for (const finding of stored) {
-    for (const { key } of finding.issues) {
-      if (key === undefined) continue
-      const id = `${site(finding.fieldPath)}\0${key}`
-      available.set(id, (available.get(id) ?? 0) + 1)
-    }
+    const id = occurrenceOf(finding)
+    if (id !== undefined) available.set(id, (available.get(id) ?? 0) + 1)
   }
   const refused: EntryFieldError[] = []
   const kept: EntryFieldError[] = []
   for (const finding of found) {
-    const added: MarkdownSafetyIssue[] = []
-    const held: MarkdownSafetyIssue[] = []
-    for (const item of finding.issues) {
-      const id = item.key === undefined ? undefined : `${site(finding.fieldPath)}\0${item.key}`
-      const count = id === undefined ? 0 : (available.get(id) ?? 0)
-      if (id !== undefined && count > 0) {
-        available.set(id, count - 1)
-        held.push(item)
-      } else {
-        added.push(item)
-      }
+    const id = occurrenceOf(finding)
+    const count = id === undefined ? 0 : (available.get(id) ?? 0)
+    if (id !== undefined && count > 0) {
+      available.set(id, count - 1)
+      kept.push(toFieldError(finding.fieldPath, finding.issues))
+      continue
     }
-    if (added.length > 0) {
-      const error = toFieldError(finding.fieldPath, added)
-      refused.push(
-        storedSites.has(site(finding.fieldPath))
-          ? {
-              ...error,
-              message: `This field already holds content it refuses, so it saves only unchanged or with that content removed. ${error.message}`,
-            }
-          : error,
-      )
-    }
-    if (held.length > 0) kept.push(toFieldError(finding.fieldPath, held))
+    const error = toFieldError(finding.fieldPath, finding.issues)
+    refused.push(
+      storedSites.has(site(finding.fieldPath))
+        ? {
+            ...error,
+            message: `This field already holds content it refuses, so it saves only unchanged or with that content removed. ${error.message}`,
+          }
+        : error,
+    )
   }
   return { refused, kept }
 }

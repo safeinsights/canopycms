@@ -294,8 +294,17 @@ describe('findMarkdownSafetyIssues', () => {
       expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
     })
 
-    it('is markdown in an md entry even when its field is typed mdx', () => {
-      expect(findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: '{x()}' })).toEqual([])
+    it('is MDX in an md entry when its field is typed mdx, with its mdxAllow', () => {
+      const errors = findMarkdownSafetyIssues(withBody('mdx'), 'md', { content: '{x()}' })
+      expect(errors.map((e) => e.fieldPath)).toEqual(['content'])
+      const narrowed: EntrySchema = [
+        { name: 'content', type: 'mdx', isBody: true, mdxAllow: { htmlTags: [] } },
+      ]
+      expect(findMarkdownSafetyIssues(narrowed, 'md', { content: 'a <u>b</u>' })).toHaveLength(1)
+    })
+
+    it('is markdown in an md entry when its field is typed markdown', () => {
+      expect(findMarkdownSafetyIssues(withBody('markdown'), 'md', { content: '{x()}' })).toEqual([])
     })
 
     it('is checked when the schema declares no body field', () => {
@@ -437,6 +446,33 @@ describe('splitByStored', () => {
       })
     expect(splitByStored(found('rich'), found('note')).refused).toHaveLength(1)
     expect(splitByStored(found('rich'), found('rich')).refused).toEqual([])
+  })
+
+  it('keeps one saved field per stored field, whatever the policies count as issues', () => {
+    // Under `components: {}` the text is one issue; under the base policy it is two.
+    const blocks: EntrySchema = [
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [
+          { name: 'a', fields: [{ name: 'm', type: 'mdx', mdxAllow: { components: {} } }] },
+          { name: 'b', fields: [{ name: 'm', type: 'mdx' }] },
+        ],
+      },
+    ]
+    const text = '<Foo a="javascript:alert(1)" b="javascript:alert(2)" />'
+    const stored = findMarkdownSafetyIssues(blocks, 'json', {
+      blocks: [{ template: 'b', value: { m: text } }],
+    })
+    const saved = findMarkdownSafetyIssues(blocks, 'json', {
+      blocks: [
+        { template: 'a', value: { m: text } },
+        { template: 'a', value: { m: text } },
+      ],
+    })
+    const { refused, kept } = splitByStored(saved, stored)
+    expect(kept.map((e) => e.fieldPath)).toEqual(['blocks[0].m'])
+    expect(refused.map((e) => e.fieldPath)).toEqual(['blocks[1].m'])
   })
 
   it('never keeps a body that does not parse, which cannot be checked', () => {
