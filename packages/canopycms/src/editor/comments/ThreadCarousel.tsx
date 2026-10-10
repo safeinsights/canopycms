@@ -239,19 +239,13 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
           <Group gap="xs">
             {sortedThreads.length > 1 && (
               <>
-                <ActionIcon
-                  size="sm"
-                  variant="subtle"
-                  onClick={handlePrevious}
-                  disabled={currentIndex === 0}
-                >
+                <ActionIcon variant="subtle" onClick={handlePrevious} disabled={currentIndex === 0}>
                   <IconChevronLeft size={16} />
                 </ActionIcon>
                 <Text size="xs" fw={500}>
                   {currentIndex + 1}/{sortedThreads.length}
                 </Text>
                 <ActionIcon
-                  size="sm"
                   variant="subtle"
                   onClick={handleNext}
                   disabled={currentIndex === sortedThreads.length - 1}
@@ -268,11 +262,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               </>
             )}
 
-            <Button
-              size="xs"
-              variant="light"
-              onClick={() => setShowNewThreadBox(!showNewThreadBox)}
-            >
+            <Button variant="light" onClick={() => setShowNewThreadBox(!showNewThreadBox)}>
               + New
             </Button>
           </Group>
@@ -304,7 +294,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
               />
               <Group gap="xs">
                 <Button
-                  size="xs"
                   onClick={handleCreateNewThread}
                   loading={isSubmitting}
                   disabled={!newThreadText.trim()}
@@ -313,7 +302,6 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   Create Thread
                 </Button>
                 <Button
-                  size="xs"
                   variant="subtle"
                   onClick={() => {
                     setShowNewThreadBox(false)

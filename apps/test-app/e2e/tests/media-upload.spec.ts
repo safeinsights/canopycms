@@ -180,9 +180,9 @@ test.describe('Assets / Media pipeline', () => {
 
     await test.step('attempt to save is blocked client-side', async () => {
       await editorPage.save()
-      await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Cannot save yet' }),
-      ).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await expect(editorPage.notification('Cannot save yet')).toBeVisible({
+        timeout: STANDARD_TIMEOUT,
+      })
       // Scoped to the field: the same message also appears in FormRenderer's
       // form-level error summary ("heroImage.alt: Image alt text is
       // required"), which would otherwise make this a strict-mode violation.

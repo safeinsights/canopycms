@@ -56,9 +56,8 @@ export class BranchPage {
   readonly page: Page
 
   // Branch menu and buttons
-  readonly branchDropdownButton: Locator
-  readonly branchMenu: Locator
-  readonly manageBranchesMenuItem: Locator
+  private readonly branchDropdownButton: Locator
+  private readonly manageBranchesMenuItem: Locator
 
   // Branch manager modal/drawer
   readonly branchManager: Locator
@@ -75,7 +74,6 @@ export class BranchPage {
 
     // Branch dropdown in header
     this.branchDropdownButton = page.locator('[data-testid="branch-dropdown-button"]')
-    this.branchMenu = page.locator('[data-testid="branch-menu"]')
     this.manageBranchesMenuItem = page.locator('[data-testid="manage-branches-menu-item"]')
 
     // Branch manager
@@ -90,10 +88,17 @@ export class BranchPage {
   }
 
   /**
+   * Open the header's branch menu.
+   */
+  async openBranchMenu(): Promise<void> {
+    await this.branchDropdownButton.click()
+  }
+
+  /**
    * Open the branch manager modal/drawer.
    */
   async openBranchManager(): Promise<void> {
-    await this.branchDropdownButton.click()
+    await this.openBranchMenu()
     await this.manageBranchesMenuItem.click()
     await this.branchManager.waitFor({
       state: 'visible',
@@ -184,15 +189,16 @@ export class BranchPage {
   }
 
   /**
-   * Get the status text of a branch.
+   * Get the raw workflow status of a branch, read from the badge's `data-status`
+   * (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
-   * @returns The status text (e.g., 'editing', 'submitted')
+   * @returns The status (e.g., 'editing', 'submitted')
    */
   async getBranchStatus(branchName: string): Promise<string> {
     const badge = this.getBranchStatusBadge(branchName)
     await badge.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    return (await badge.textContent()) || ''
+    return (await badge.getAttribute('data-status')) || ''
   }
 
   /**
@@ -377,14 +383,15 @@ export class BranchPage {
   }
 
   /**
-   * Verify the branch status changed to expected value.
+   * Verify the branch status changed to expected value, compared against the badge's
+   * `data-status` (the badge text is a display label such as "In review").
    *
    * @param branchName - The name of the branch
    * @param expectedStatus - Expected status (editing, submitted, archived, etc.)
    */
   async verifyBranchStatus(branchName: string, expectedStatus: string): Promise<void> {
     const badge = this.getBranchStatusBadge(branchName)
-    await expect(badge).toContainText(expectedStatus, {
+    await expect(badge).toHaveAttribute('data-status', expectedStatus, {
       timeout: STANDARD_TIMEOUT,
     })
   }

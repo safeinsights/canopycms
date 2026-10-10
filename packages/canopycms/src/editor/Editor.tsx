@@ -57,6 +57,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
@@ -258,8 +259,17 @@ const EditorContent: React.FC<EditorProps> = ({
   // for its own admin-only actions.
   const showSystemHealth = isAdmin(userContext?.groups)
 
-  const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } =
-    useEditorLayout()
+  const {
+    layout,
+    setLayout,
+    highlightEnabled,
+    setHighlightEnabled,
+    sideSplitPercent,
+    stackedSplitPercent,
+    setSplitPercent,
+    headerRef,
+    headerHeight,
+  } = useEditorLayout({ storageKey: editorLayoutStorageKey(basePath) })
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -1171,6 +1181,9 @@ const EditorContent: React.FC<EditorProps> = ({
                 <EditorPanes
                   layout={layout}
                   onLayoutChange={(next) => setLayout(next)}
+                  sideSplitPercent={sideSplitPercent}
+                  stackedSplitPercent={stackedSplitPercent}
+                  onSplitPercentChange={setSplitPercent}
                   preview={
                     renderPreview && currentEntry && !currentEntryUnavailable
                       ? renderPreview(currentEntry, effectiveValue)
@@ -1275,12 +1288,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
-                          <ActionIcon
-                            variant="subtle"
-                            color="gray"
-                            size="sm"
-                            aria-label="Content actions"
-                          >
+                          <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
                             <IconDots size={16} />
                           </ActionIcon>
                         </Menu.Target>
@@ -1307,7 +1315,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    size="sm"
                     onClick={handleCollapseAll}
                     title="Collapse all folders"
                     aria-label="Collapse all folders"
@@ -1317,7 +1324,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    size="sm"
                     onClick={handleExpandAll}
                     title="Expand all folders"
                     aria-label="Expand all folders"

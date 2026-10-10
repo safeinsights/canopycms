@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import { notifications } from '@mantine/notifications'
 import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
@@ -56,7 +56,7 @@ const showSubmitConfirmation = (
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Submit Branch for Review',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
@@ -100,7 +100,7 @@ const showWithdrawConfirmation = (
     'Change the branch status back to "editing"',
     'Remove from review queue',
   ].filter((b): b is string => b !== undefined)
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Withdraw Branch from Review',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
@@ -134,7 +134,7 @@ const showDeleteConfirmation = (
       : undefined,
     'Discard any unsaved or unmerged changes',
   ].filter((b): b is string => b !== undefined)
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Delete Branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>

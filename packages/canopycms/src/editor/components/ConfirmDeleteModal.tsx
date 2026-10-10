@@ -36,10 +36,11 @@ export function ConfirmDeleteModal({
         {children}
 
         <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={onClose} disabled={loading}>
+          <Button size="sm" variant="default" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
           <Button
+            size="sm"
             color="red"
             onClick={onConfirm}
             loading={loading}

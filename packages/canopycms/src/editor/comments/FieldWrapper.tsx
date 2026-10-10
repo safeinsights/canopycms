@@ -93,7 +93,6 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
           }}
         >
           <Button
-            size="xs"
             variant="subtle"
             color="gray"
             onClick={() => setShowCarousel(true)}

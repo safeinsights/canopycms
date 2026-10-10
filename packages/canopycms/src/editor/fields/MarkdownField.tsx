@@ -268,7 +268,7 @@ export const MDXEditorLazy = React.lazy(async () => {
 })
 
 const editorWrapperStyle: React.CSSProperties = {
-  background: '#fff',
+  background: 'var(--mantine-color-white)',
   border: '1px solid var(--mantine-color-gray-4, #ced4da)',
   borderRadius: 'var(--mantine-radius-sm, 4px)',
   overflow: 'hidden',

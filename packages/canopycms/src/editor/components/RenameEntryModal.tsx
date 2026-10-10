@@ -130,10 +130,11 @@ export function RenameEntryModal({
         </Text>
 
         <Group justify="flex-end" gap="sm">
-          <Button variant="subtle" onClick={onClose} disabled={isSaving}>
+          <Button size="sm" variant="subtle" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button
+            size="sm"
             onClick={handleSave}
             loading={isSaving}
             disabled={!canSave}

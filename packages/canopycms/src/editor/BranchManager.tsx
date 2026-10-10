@@ -25,6 +25,7 @@ import { UserBadge } from './components/UserBadge'
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { formatRelativeTime } from './relative-time'
+import { PROTECTED_BRANCH_PRESENTATION, branchStatusPresentation } from './branch-status'
 
 /** @internal Exported for tests. */
 export interface BranchSummary {
@@ -152,11 +153,6 @@ export const getBranchPermissions = (
   return { canSubmit, canWithdraw, canDelete, canRequestChanges }
 }
 
-const statusColorMap: Record<string, { color: string; variant?: 'light' | 'filled' }> = {
-  editing: { color: 'brand', variant: 'light' },
-  submitted: { color: 'green', variant: 'light' },
-}
-
 export interface BranchManagerProps {
   branches: BranchSummary[]
   mode: OperatingMode
@@ -282,7 +278,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           </Button>
 
           <Collapse in={showCreateForm}>
-            <Paper withBorder p="md" radius="md">
+            <Paper withBorder p="md">
               <Stack gap="sm">
                 <TextInput
                   label="Branch Name"
@@ -311,6 +307,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   data-testid="branch-description-textarea"
                 />
                 <Button
+                  size="sm"
                   onClick={handleCreate}
                   disabled={!newBranchName.trim()}
                   loading={creating}
@@ -333,16 +330,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         ) : (
           <Stack gap="sm">
             {branches.map((b) => {
-              const statusColor = statusColorMap[b.status] ?? {
-                color: 'neutral',
-                variant: 'light' as const,
-              }
+              const statusBadge = branchStatusPresentation(b.status)
               const perms = getBranchPermissions(b, user)
               return (
                 <Paper
                   key={b.name}
                   withBorder
-                  radius="md"
                   p="md"
                   shadow="xs"
                   data-testid={`branch-list-item-${b.name}`}
@@ -351,13 +344,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                     <Stack gap={4}>
                       <Group gap="xs">
                         <Text fw={600}>{b.name}</Text>
-                        <Badge
-                          color={statusColor.color}
-                          variant={statusColor.variant}
-                          data-testid={`branch-status-badge-${b.name}`}
-                        >
-                          {b.status}
-                        </Badge>
+                        {statusBadge && (
+                          <Badge
+                            color={statusBadge.color}
+                            variant={statusBadge.variant}
+                            data-testid={`branch-status-badge-${b.name}`}
+                            data-status={b.status}
+                          >
+                            {statusBadge.label}
+                          </Badge>
+                        )}
                         {b.status === 'archived' && b.mergedAt && (
                           <Badge
                             color="teal"
@@ -369,11 +365,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         )}
                         {b.isProtected && (
                           <Badge
-                            color="neutral"
-                            variant="outline"
+                            color={PROTECTED_BRANCH_PRESENTATION.color}
+                            variant={PROTECTED_BRANCH_PRESENTATION.variant}
                             data-testid={`branch-protected-badge-${b.name}`}
                           >
-                            Protected
+                            {PROTECTED_BRANCH_PRESENTATION.label}
                           </Badge>
                         )}
                         {b.pullRequestNumber && (
@@ -532,7 +528,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                     </Stack>
                     <Group gap={8}>
                       <Button
-                        size="xs"
                         variant="light"
                         onClick={() => onSelect?.(b.name)}
                         data-testid={`switch-to-branch-button-${b.name}`}
@@ -547,7 +542,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           disabled={perms.canWithdraw}
                         >
                           <Button
-                            size="xs"
                             variant="light"
                             color="orange"
                             onClick={() => onWithdraw?.(b.name)}
@@ -573,7 +567,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           disabled={perms.canSubmit}
                         >
                           <Button
-                            size="xs"
                             variant="light"
                             color="green"
                             onClick={() => onSubmit?.(b.name)}
@@ -593,7 +586,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         disabled={perms.canRequestChanges}
                       >
                         <Button
-                          size="xs"
                           variant="outline"
                           color="neutral"
                           onClick={() => onRequestChanges?.(b.name)}
@@ -619,7 +611,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         disabled={perms.canDelete}
                       >
                         <Button
-                          size="xs"
                           variant="outline"
                           color="red"
                           onClick={() => onDelete?.(b.name)}

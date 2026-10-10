@@ -198,7 +198,6 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           <Stack gap={4}>
             <Text size="sm">{error}</Text>
             <Button
-              size="xs"
               variant="light"
               onClick={handleRetry}
               data-testid={`reference-retry-${dataCanopyField}`}
