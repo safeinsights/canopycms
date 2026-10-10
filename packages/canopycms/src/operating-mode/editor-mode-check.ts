@@ -14,7 +14,7 @@ export const EDITOR_MODE_HEADER = 'x-canopy-editor-mode'
 /** Not 409, which the editor reads as a save conflict to reload past. */
 export const EDITOR_MODE_MISMATCH_STATUS = 412
 
-export function otherOperatingMode(mode: OperatingMode): OperatingMode {
+function otherOperatingMode(mode: OperatingMode): OperatingMode {
   return mode === 'prod' ? 'dev' : 'prod'
 }
 

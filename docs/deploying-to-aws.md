@@ -239,9 +239,10 @@ you hand-edit the stack or the Dockerfile, or build the image some other way:
   is the override working.
 - **Without it, the browser resolves `dev`,** and the scaffolded edit page
   (`edit-page.tsx.template`) would select dev auth against a server that
-  accepts only Clerk tokens. The server refuses an editor built for the other
-  mode before sign-in, logs it once, and the editor shows a blocking screen
-  naming this variable.
+  accepts only Clerk tokens. The server refuses that editor before sign-in and
+  logs it once; the editor shows a blocking screen naming this variable.
+  Locally, set both variables or neither: `next dev` with only
+  `NEXT_PUBLIC_CANOPY_MODE=prod` is stopped the same way.
 - **Don't compute `mode` in `canopycms.config.ts` from either variable.** Not
   from `NEXT_PUBLIC_CANOPY_MODE`: it is set while `next build` runs, and
   Next.js inlines `NEXT_PUBLIC_*` into server bundles too, so the build would
