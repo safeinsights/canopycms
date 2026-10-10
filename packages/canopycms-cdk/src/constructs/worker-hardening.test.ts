@@ -345,6 +345,8 @@ describe('the worker systemd unit is sandboxed', () => {
     'SystemCallArchitectures=native',
     'CapabilityBoundingSet=',
     'ReadWritePaths=/mnt/efs',
+    // The private GitHub mirror, which the worker refuses to start without.
+    'StateDirectory=canopy-worker',
   ]
   const checkedIn = readFileSync(
     path.join(__dirname, '../../worker/canopy-worker.service'),

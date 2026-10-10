@@ -144,17 +144,15 @@ describe('CmsWorker.ensureRemoteGit() remote.git config', () => {
   it('stops a push into remote.git from starting gc', async () => {
     await simpleGit().raw(['clone', '-q', '--bare', githubPath, remoteGitPath])
     await bare(remoteGitPath, ['remote', 'remove', 'origin'])
-    for (const [key, value] of [
-      ['receive.autogc', 'true'],
-      ['gc.auto', '1'],
-      ['gc.autoPackLimit', '1'],
-      ['gc.autoDetach', 'false'],
-    ]) {
-      await bare(remoteGitPath, ['config', key, value])
-    }
+    await bare(remoteGitPath, ['config', 'receive.autogc', 'true'])
+    await bare(remoteGitPath, ['config', 'gc.auto', '1'])
     await bare(remoteGitPath, ['repack', '-a', '-d', '-q'])
 
     await makeWorker().ensureRemoteGit()
+    // After the worker's boot, which refuses any key it never writes: these make the next push
+    // start gc unless receive.autogc is off.
+    await bare(remoteGitPath, ['config', 'gc.autoPackLimit', '1'])
+    await bare(remoteGitPath, ['config', 'gc.autoDetach', 'false'])
 
     const work = await workingClone(remoteGitPath, 'pusher')
     const traceFile = path.join(tmpDir, 'push.trace')
@@ -246,6 +244,9 @@ describe('CmsWorker.syncGit() remote.git maintenance', () => {
     // The worker's own config (one pack per push, no auto-housekeeping): without it, git 2.55's
     // post-push `maintenance run --auto` consolidates the packs before the worker sees them.
     await ensureRemoteGitConfig(remoteGitPath)
+    // A first cycle gives remote.git its GitHub tracking refs. Until it has them, the mirror's
+    // push cannot use remote.git's own tips as common ground and re-sends GitHub's objects once.
+    await makeWorker().syncGit()
     const work = await workingClone(remoteGitPath, 'pusher')
     await pushCommits(work, 'packed', 8)
     expect((await counts(remoteGitPath)).packs).toBeGreaterThan(6)

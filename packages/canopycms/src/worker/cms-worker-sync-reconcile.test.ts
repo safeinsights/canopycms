@@ -116,7 +116,6 @@ async function commitOnto(
   }
   await scratchGit.addConfig('user.name', 'Test Bot')
   await scratchGit.addConfig('user.email', 'test@canopycms.test')
-  await scratchGit.addConfig('core.editor', 'true')
 
   for (const [name, content] of Object.entries(files)) {
     const fullPath = path.join(scratchDir, name)

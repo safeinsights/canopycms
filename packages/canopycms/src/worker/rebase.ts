@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { simpleGit, type SimpleGit } from 'simple-git'
+import type { SimpleGit } from 'simple-git'
 import {
   BranchMetadataFileManager,
   buildMergedBranchUpdate,
@@ -35,6 +35,13 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
+  assertSharedRepoConfig,
+  fetchFromRemoteGit,
+  sharedRepoGit,
+} from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -310,7 +317,7 @@ async function runRebaseRounds(
       completed = true
     } catch (rebaseErr) {
       nextAction = 'continue'
-      const st = await branchGit.status()
+      const st = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
 
       if (st.conflicted.length > 0) {
         await ctx.afterConflictDetectedForTesting()
@@ -347,7 +354,7 @@ async function runRebaseRounds(
             } else if (kind === 'DU') {
               await branchGit.raw(['add', '--sparse', '--', file])
             } else {
-              await branchGit.raw(['checkout', '--theirs', file])
+              await branchGit.raw(['checkout', '--theirs', '--', file])
               await branchGit.raw(['add', '--sparse', '--', file])
             }
           } catch (resolveErr: unknown) {
@@ -702,15 +709,11 @@ async function rebaseOneBranch(
       return { kind: 'none' }
     }
 
-    const branchGit = simpleGit({
-      baseDir: branchPath,
-      // Keep git non-interactive during rebase/merge so it never blocks on an
-      // editor. simple-git >=3.32 requires opting in to set core.editor; the
-      // value is a hardcoded literal ("true", the shell no-op), not user input,
-      // so allowUnsafeEditor carries no injection risk here.
-      config: ['core.editor=true'],
-      unsafe: { allowUnsafeEditor: true },
-    })
+    // Throws into the catch below, which records the refusal on the branch: a planted key here
+    // would run in this worker's rebase, merge and checkout.
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    // The pins also keep git non-interactive (core.editor=true): a rebase never waits on an editor.
+    const branchGit = sharedRepoGit(branchPath, 'worktree')
 
     // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
     // dirty check, and hold it for the whole rebase. The dirty check alone is
@@ -780,7 +783,7 @@ async function rebaseOneBranch(
       // happen SILENTLY, so anything modified beyond the rebase's own conflict
       // state is logged by path first. That log is the operator's only record.
       if (await isRebaseInProgress(branchPath)) {
-        const preAbort = await branchGit.status().catch(() => null)
+        const preAbort = await branchGit.status([...SHARED_REPO_STATUS_ARGS]).catch(() => null)
         // Keyed on the WORKING-TREE column ONLY. The two porcelain columns mean
         // different things here, and conflating them reports false data loss on
         // essentially every conflict-wedged recovery (verified against real
@@ -833,10 +836,10 @@ async function rebaseOneBranch(
       // Skip dirty branches — the editor has changes that cannot be rebased.
       // Inside the lock, so no write can land between this check and the rebase
       // below. canopycms's own untracked state is not dirt.
-      let dirtyCheck = await branchGit.status()
+      let dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       if (await restoreRetiredSchemaCache(branchGit, dirtyCheck)) {
         workerLog(`  ${branchDir}: restored the retired in-tree schema cache`)
-        dirtyCheck = await branchGit.status()
+        dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       }
       const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
       if (editorDirt.length > 0) {
@@ -851,7 +854,7 @@ async function rebaseOneBranch(
       // the bytes stay untouched, and the wedge is recorded for an operator.
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
-        await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+        await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         const { stillTracked } = await splitByUpstreamTracking(branchGit, trackedState, baseTip)
         const reason =
@@ -889,7 +892,7 @@ async function rebaseOneBranch(
         })
       }
 
-      await branchGit.fetch(ctx.remoteGitPath, ctx.baseBranch)
+      await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
 
       // rev-list, not status.behind, which needs an upstream tracking branch
       // that checkoutBranch's fallback paths do not always configure. Against
@@ -945,6 +948,7 @@ async function rebaseOneBranch(
       // the rebase makes unreadable.
       const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
       const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
       const { completed, conflictedFiles, failureReason } = await runRebaseRounds(
         ctx,

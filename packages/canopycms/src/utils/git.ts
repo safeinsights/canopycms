@@ -238,10 +238,12 @@ export async function detectHeadBranch(
  * Throws when HEAD is detached, unreadable, or names a branch with no commit.
  *
  * `--git-dir` rather than cwd discovery, which `safe.bareRepository=explicit` refuses for bare
- * repos.
+ * repos. `git` is how the worker passes the instance it runs a shared repository with.
  */
-export async function readHeadBranch(gitDir: string): Promise<string> {
-  const git = simpleGit()
+export async function readHeadBranch(
+  gitDir: string,
+  git: SimpleGit = simpleGit(),
+): Promise<string> {
   const ref = (await git.raw(['--git-dir', gitDir, 'symbolic-ref', 'HEAD'])).trim()
   if (!ref.startsWith('refs/heads/')) {
     throw new Error(`its HEAD does not name a branch (${ref || 'empty'})`)
