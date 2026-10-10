@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useReducer, useRef } from 'react'
-import { Badge, Button, Drawer, Group, Text, Title } from '@mantine/core'
+import { Badge, Button, Drawer, Fieldset, Group, Text, Title } from '@mantine/core'
 import { modals } from '@mantine/modals'
 
 export interface StagedChangesDrawerProps {
@@ -127,7 +127,11 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
       size={size}
       overlayProps={{ blur: 2 }}
     >
-      {children}
+      {/* Inert while saving: the reload after a save replaces the panel's state, so an edit
+          made meanwhile would vanish with the panel marked clean. */}
+      <Fieldset variant="unstyled" disabled={isSaving} aria-busy={isSaving}>
+        {children}
+      </Fieldset>
 
       {canEdit && isDirty && (
         // The drawer's content box is the scroll container, so a sticky bar stays in view

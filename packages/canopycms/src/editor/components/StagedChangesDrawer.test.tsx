@@ -131,6 +131,21 @@ describe('StagedChangesDrawer', () => {
       expect(openConfirmModal).toHaveBeenCalledTimes(2)
     })
 
+    it("disables the panel's controls while a save is in flight", () => {
+      const { rerenderWith } = renderDrawer({
+        isDirty: true,
+        children: <button type="button">Remove member</button>,
+      })
+      const control = screen.getByRole('button', { name: 'Remove member' }) as HTMLButtonElement
+      expect(control.matches(':disabled')).toBe(false)
+      rerenderWith({
+        isDirty: true,
+        isSaving: true,
+        children: <button type="button">Remove member</button>,
+      })
+      expect(control.matches(':disabled')).toBe(true)
+    })
+
     it('ignores close while a save is in flight', () => {
       const { props } = renderDrawer({ isDirty: true, isSaving: true })
       pressEscape()
