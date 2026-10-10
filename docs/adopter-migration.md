@@ -48,7 +48,7 @@ is still a read of `git log`.
 | 93  | Branches | [Submit names the user; refuses an empty branch](#submit-names-the-submitting-user-and-refuses-a-branch-with-nothing-to-submit) (108)                                                       | Scripts           |
 | 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers    |
 | 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required          |
-| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (101, 103)                                                                              | Required          |
+| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required          |
 | 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required          |
 | 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired     |
 | 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional          |
@@ -98,7 +98,8 @@ URL.
 
 - (int.94) The context's `createPreviewPage({ views })` serves a `[[...path]]` route at
   `editor.previewPrefix`, rendering `?branch=` through `views[entryType]`, so a static-export site
-  can preview a branch. `previewView({ view, load })` feeds a view server-read `extras`.
+  can preview a branch.
+- (int.95) `previewView({ view, load })` feeds a view server-read `extras`.
 - (int.101) `withCanopyPreview` and `CanopyPreviewViewProps` come from `canopycms-next/preview`, and
   preview hooks like `useCanopyPreview` from `canopycms/preview`. The `/client` entries are the
   editor: they put Mantine's unlayered CSS over the site's styles in the preview, and ship the
@@ -247,7 +248,7 @@ entry-type gate. Keep a rule checking that the body compiles.
 **To adopt.** Nothing.
 
 **Now deletable.** A formatter pass or `.prettierignore` entry over CMS-written content that only
-undoes the editor's re-folding or restyling.
+undoes the editor's re-folding, restyling or date rewriting.
 
 ### The markdown editor runs MDXEditor 4.3
 
@@ -628,7 +629,7 @@ an existing `middleware.ts` unless you confirm or pass `--force`; either replace
 - A signed-out gate around the editor page, such as `<SignedOut>` wrappers or a `useAuth()` check
   rendering `<RedirectToSignIn />`, and reload-on-401 or "session expired" handling.
 - A `clerkMiddleware` kept only to send signed-out visitors to sign-in, or written by an earlier
-  `init`, and with it `CLERK_SECRET_KEY` in the deployed CMS runtime.
+  `init` if you never chose the edge check, and with it `CLERK_SECRET_KEY` in the deployed CMS runtime.
 
 #### A worker credential can be one field of a JSON secret
 
@@ -647,8 +648,7 @@ prop. The scaffolded stack fills them from the repository _variables_
 `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`
 ([why the prefix](deploying-to-aws.md#repository-secrets-and-variables)); a stack scaffolded earlier
 adds the props to `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts`, or re-runs the
-generator and diffs. `cdk synth`
-refuses a `…JsonField` prop without its `…SecretArn`, and an ARN carrying the ECS `:KEY::` suffix
+generator and diffs. `cdk synth` refuses a `…JsonField` prop without its `…SecretArn`, and an ARN carrying the ECS `:KEY::` suffix
 (also in `secretsArns`). Don't use CDK's `secretValueFromJson`: it puts the plaintext in the
 template. Only `CLERK_SECRET_KEY` goes through Secrets Manager; `CLERK_JWT_KEY` and the publishable
 key are public material ([Security Model](deploying-to-aws.md#security-model)).
@@ -673,8 +673,9 @@ anyone holding an App's key can mint a token for any of its installations
    **Contents: read & write** and **Pull requests: read & write**, and store its PEM private key in
    Secrets Manager. `canopycms init-github-app create -- <command>` does this from a manifest: it
    pipes the key to your command's standard input (or `--key-out <path>` writes a `0600` file), and
-   `verify` checks an existing installation's permissions. It needs an interactive terminal and
-   never edits an existing JSON secret
+   `verify` checks an existing installation's permissions: run it, since an App missing a
+   permission retries silently into `sync-failed`. It needs an interactive terminal and
+   never edits an existing JSON secret (create one and point the JSON-field prop at it)
    ([details](deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
 2. Set the three props and **remove `githubTokenSecretArn`** (with its JSON field). A partial set
    of the three is refused at synth, and so is an App alongside a token.
@@ -767,7 +768,8 @@ const uploads = new cloudfront.Distribution(this, 'AssetUploads', {
 **To adopt.** Optional. Don't move an existing deployment from `AssetSupport.uploadBehavior()` to
 the function: its three CloudFront resources would get new logical IDs and be replaced.
 
-**Now deletable.** An `AssetSupport` instantiated only to reach `uploadBehavior()`.
+**Now deletable.** An `AssetSupport` instantiated only to reach `uploadBehavior()`. Cross-account,
+also check the bucket policy for its grant.
 
 #### The CMS image builds without git, `CanopyCmsService` defaults to arm64, and the CDK app is type-checked — **breaking (deploy), for a stack that sets `platform` without `architecture`**
 
@@ -915,7 +917,8 @@ the synthesized `CacheBehaviors` order.
 **To adopt.** Optional. Core 3 needs `<ClerkProvider>` inside `<body>`, not around `<html>`
 (`apps/example1/app/layout.tsx`); a dual-build editor layout is already inside `<body>`. If you
 render `AccountComponent` yourself with `afterSignOutUrl`/`signOutUrl`, move them to
-`ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`. `CLERK_ENCRYPTION_KEY` does not apply to
+`ClerkProvider`'s `afterSignOutUrl` or a `SignOutButton`. If you keep `clerkMiddleware`, it needs a non-empty `secretKey`, more strictly than 6.x.
+`CLERK_ENCRYPTION_KEY` does not apply to
 the scaffolded middleware, which passes only `jwtKey`. Node must be >= 22.12.0 for every CanopyCMS
 package regardless.
 
@@ -959,7 +962,7 @@ deploy at synth while it is unset. Check that `bin/app.ts` passes `CLERK_SECRET_
 These now return `null`: `/<collection>/<entryTypeName>` (which reached the collection's index
 entry) and `/<collection>/<entryTypeName>/<slug>`; and an entry whose type token on disk its
 collection does not declare (a type renamed without renaming files, or a collection declaring no
-entry types), which such entries already were missing from listings, static params and the sitemap.
+entry types); such entries were already missing from listings, static params and the sitemap.
 Those entries stay editable, renameable and deletable. `read({ entryPath: 'content/home' })` still
 addresses a singleton, defaulting the slug to the entry type's name. A legacy untyped file
 (`overview.json`) is still readable by URL but invisible to listings; rename it into the
@@ -968,7 +971,8 @@ addresses a singleton, defaulting the slug to the entry type's name. A legacy un
 **To adopt.** On a catch-all route, request `/<collection>/<entryTypeName>` and
 `/<collection>/<entryTypeName>/<some-slug>` for a few type names and confirm a 404 (under
 `next dev` or `output: 'standalone'` they were served). If you renamed an entry type without
-renaming its files, rename them or declare the type: `listEntries()` shows them, a build does not.
+renaming its files, rename them or declare the type. A build does not flag them; they are the files missing from
+`listEntries()`.
 
 **Now deletable.** Per-route `entryType` gates that only reject a URL that should not have resolved
 (keep a branch that dispatches between templates), catch-all filters dropping entry-type names, and
@@ -1054,7 +1058,8 @@ narrow to `never` silently.
 - `includeBody: true` on a reference field adds the target's body, under the target type's body
   field name.
 - `TypeFromEntrySchema` adds `ResolvedReferenceMeta` (`id`, `slug`, `collection`, `urlPath`), which
-  are reserved: they win over target fields of those names.
+  are reserved: they win over target fields of those names; read the target directly for its own
+  field.
 - A save collapses a resolved reference back to its id. A reference saved through the editor on an
   earlier version may hold an object instead of a 12-character id: replace it with its own `id`.
 
@@ -1118,12 +1123,12 @@ editor-side checks for a contested URL.
 
 #### Sitemap `pathFor`, and modelling a page served at `/` as a root `index` entry
 
-**What changed.** An entry with slug `index` at the content root has `urlPath: '/'`. For a URL that
+**What changed.** An entry with slug `index` answers at its collection's path (`/` at the root). For a URL that
 can't be modelled, `generateContentSitemap` takes `pathFor: (entry) => string | null`, keeping the
 entry's `noindex`, `lastModified` and `priority` handling; `null` keeps the structural path, and an
 empty string throws. `extraUrls` is for URLs with no entry behind them.
 
-**To adopt.** To re-model a home page served at `/`:
+**To adopt.** To re-model a singleton served at its collection's path (such as home at `/`):
 
 1. `git mv home.home.<id>.json home.index.<id>.json`; type and id are unchanged.
 2. Change `read({ entryPath: 'content/home' })` to `readByUrlPath('/')` (or pass `slug: 'index'`).
@@ -1206,7 +1211,8 @@ return entryToMetadata(result?.data, {
 ```
 
 Exclude entry types with no page of their own. Pass `seo` once to `createNextCanopyContext`, not
-per call. Add `defineSeoFieldGroup()` to schemas with SEO fields; map an existing group with
+per call. With `defineSeoFieldGroup({ group: 'seo' })`, include the same `group` in
+that `seo` option. Add `defineSeoFieldGroup()` to schemas with SEO fields; map an existing group with
 `{ fields: { title: 'yourName' } }` rather than keeping both. Pass a `lastModified` callback for a
 real content date. Write `app/robots.ts` yourself.
 
@@ -1220,8 +1226,8 @@ dot-separated segments, or three whose first names an entry type in that collect
 `README.md` or a `5NVkkrB1MJUv.profile.json` sibling artifact builds clean; dot- and
 underscore-prefixed files are skipped.
 
-**To adopt.** Move a sibling artifact relocated to dodge the guard back beside its entry, where
-`readSibling` reads it.
+**To adopt.** Move back, or rename back, a sibling artifact you moved or renamed to dodge the guard;
+`readSibling` reads it beside its entry.
 
 #### `canopycms init` scaffolds `defaultBranchAccess: 'deny'` and public read
 
@@ -1252,7 +1258,9 @@ you restore it.
 default type and `entryId` is `undefined`, and it may name a type the schema no longer declares.
 `updatedAt` is a filesystem mtime, reset by a fresh clone. `createBuildCanopy` bypasses all ACLs:
 scripts only, never request handling. `buildPath` still replaces the default rather than composing
-with it. Composing search documents is left to you; these are the shared pieces.
+with it. Composing search documents is left to you; these are the shared pieces. To find a filename
+parser, look for `.split('.')` or `lastIndexOf('.')` on content filenames, often in link-check or
+slug-collision tests.
 
 **To adopt.**
 
@@ -1274,7 +1282,8 @@ re-checked an entry's type (a `switch` on `meta.entryType` can merge them into o
 
 #### `BlockComponentRegistry`: exhaustive block → component types (#13)
 
-**What changed.** `BlockComponentRegistry<Blocks>` (types only, from `canopycms`) requires exactly
+**What changed.** `BlockComponentRegistry<Blocks>` (types only, from `canopycms`; `BlockValueOf<Blocks, 'hero'>`
+gives one template's value type) requires exactly
 one component per block template name when written as an object literal. See
 [Block Component Registries](../README.md#block-component-registries) and
 `apps/example1/app/components/PostView.tsx`.
