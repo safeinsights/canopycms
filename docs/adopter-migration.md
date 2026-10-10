@@ -503,7 +503,7 @@ most 100 ids and resolving to the users found. The Permissions and Groups panels
 in one request. The Clerk and dev plugins implement it.
 
 **To adopt.** Nothing under `createNextCanopyContext` with a plugin implementing `verifyTokenOnly`:
-lookups come from the worker's file cache. Otherwise core calls your plugin, caching answers for
+lookups come from the file-based auth cache. Otherwise core calls your plugin, caching answers for
 five minutes per process; without `getUsersMetadata` it makes up to 8 concurrent `getUserMetadata`
 calls. Implement it with your provider's list-by-ids call, rejecting on a provider failure: an
 omitted id is cached as unknown.

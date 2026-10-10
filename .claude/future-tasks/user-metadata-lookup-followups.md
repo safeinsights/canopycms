@@ -9,7 +9,7 @@ summary: >-
 **Priority: P3 [BOTH].** `auth/user-metadata-lookup.ts` caches and batches user lookups for the
 `/users/:userId` and `/users/batch` endpoints. Two gaps remain, neither a load problem today.
 Both apply only to a plugin core calls directly: canopycms-next wraps any plugin with
-`verifyTokenOnly` in `CachingAuthPlugin`, which answers from the worker's file cache
+`verifyTokenOnly` in `CachingAuthPlugin`, which answers from the file-based auth cache
 (`packages/canopycms-next/src/context-wrapper.ts:324`).
 
 1. **Submit's editor attribution bypasses it.** `api/branch-status.ts` passes
