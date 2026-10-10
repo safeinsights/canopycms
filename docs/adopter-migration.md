@@ -36,7 +36,8 @@ is still a read of `git log`.
 
 **int** is the first int prerelease carrying an entry, and each part of the entry is labelled
 `(int.N)` the same way; a number in parentheses after a change is a later int that added a part.
-**Action** says who must act.
+**Action** says who must act. `next` marks a change no published int carries yet; publishing an int
+replaces each `next` with its number.
 
 | int | Area     | Change                                                                                                                                                                                      | Action                  |
 | --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
@@ -65,7 +66,7 @@ is still a read of `git log`.
 | 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config               |
 | 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                 |
 | 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                    |
-| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109)                                                                                   | Required                |
+| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, next)                                                                             | Required                |
 | 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                  |
 | 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys             |
 | 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint       |
@@ -219,7 +220,9 @@ plain values, `import`/`export`, and tags, attributes and URL schemes outside a 
 markdown refuses those URLs. New: field option `executable`; type `MarkdownFieldConfig`. (int.109)
 A `markdown` field with `renderAs: 'mdx'` is checked as MDX, and `mdxAllow` narrows the safe set per
 field or site-wide. New: field options `renderAs`, `mdxAllow`; config key `mdxAllow`; type
-`MdxAllowlist`. See [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
+`MdxAllowlist`. (next int) A component prop allowance can be `'string'` (or
+`{ type: 'string', maxLength }`): a quoted value only, never bare or `{…}`. See
+[MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `renderAs: 'mdx'` on each `markdown` field your site compiles as MDX, and
 `mdxAllow` to what your renderer takes. Set `executable: true` only on a field whose editors you
@@ -577,11 +580,11 @@ asset URLs.
 
 <!--
 Template for each entry — copy, don't improvise. File it under its area heading, add a row to the
-table above, and label it with the int prerelease that will carry it.
+table above, and label it `(next int)`.
 
 ### <short title>
 
-**What changed.** (int.N) One or two sentences.
+**What changed.** (next int) One or two sentences.
 
 **To adopt.** Concrete steps, with the import path and the call shape.
 

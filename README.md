@@ -551,7 +551,15 @@ Plainly named components (`<Callout type="tip">`) are your code and pass. Other 
 
 ```typescript
 mdxAllow: {
-  components: { Callout: { props: { type: ['info', 'warning'] } } }, // {}: none; no `props`: any
+  components: {
+    Callout: {
+      props: {
+        type: ['info', 'warning'], // these values only; [true, false] for a boolean
+        title: 'string', // title="…" only, never bare or {…}; or { type: 'string', maxLength: 120 }
+        icon: true, // any value the base policy accepts, a bare `icon` included
+      }, // {}: none; no `props`: any
+    },
+  }, // {}: none
   htmlTags: [], // from the safe set; omitted: all of it
   expressions: false, // refuses comments and `{300}` too
   fragments: false,

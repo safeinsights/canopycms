@@ -638,6 +638,77 @@ describe('findUnsafeMarkdown with an mdxAllow allowlist', () => {
     expect(messages('<>x</>')).toEqual([])
   })
 
+  describe("the 'string' prop allowance", () => {
+    const quoted = (prop: string) =>
+      `Prop ${prop} on <Callout> must be a quoted string, e.g. ${prop}="…" (line 1)`
+    const plain: MdxAllowlist = { components: { Callout: { props: { title: 'string' } } } }
+    const capped = (maxLength?: number): MdxAllowlist => ({
+      components: {
+        Callout: { props: { title: { type: 'string', ...(maxLength ? { maxLength } : {}) } } },
+      },
+    })
+
+    it('accepts a double-quoted, a single-quoted and an empty string', () => {
+      expect(messages('<Callout title="Hello" />', plain)).toEqual([])
+      expect(messages("<Callout title='Hello' />", plain)).toEqual([])
+      expect(messages('<Callout title="" />', plain)).toEqual([])
+    })
+
+    it('refuses a bare attribute', () => {
+      expect(messages('<Callout title />', plain)).toEqual([quoted('title')])
+    })
+
+    it('refuses a string, a template literal and a number in braces', () => {
+      expect(messages('<Callout title={"Hello"} />', plain)).toEqual([quoted('title')])
+      expect(messages('<Callout title={`Hello`} />', plain)).toEqual([quoted('title')])
+      expect(messages('<Callout title={300} />', plain)).toEqual([quoted('title')])
+    })
+
+    it('reports a brace value once when expressions is false', () => {
+      expect(messages('<Callout title={"Hello"} />', { ...plain, expressions: false })).toEqual([
+        'title on <Callout> must be a plain "string": {…} values are not allowed here (line 1)',
+      ])
+    })
+
+    it('caps the length in characters, counting a code point once', () => {
+      expect(messages('<Callout title="abcde" />', capped(5))).toEqual([])
+      expect(messages('<Callout title="abcdef" />', capped(5))).toEqual([
+        'Prop title on <Callout> must be at most 5 characters; it has 6 (line 1)',
+      ])
+      expect(messages('<Callout title="😀😀😀😀😀" />', capped(5))).toEqual([])
+      expect(messages('<Callout title="😀😀😀😀😀😀" />', capped(5))).toEqual([
+        'Prop title on <Callout> must be at most 5 characters; it has 6 (line 1)',
+      ])
+    })
+
+    it('takes any length when the object form sets no maxLength', () => {
+      expect(messages(`<Callout title="${'x'.repeat(5000)}" />`, capped())).toEqual([])
+    })
+
+    it('refuses a bare attribute and a brace value under the object form', () => {
+      expect(messages('<Callout title />', capped(5))).toEqual([quoted('title')])
+      expect(messages('<Callout title={"abc"} />', capped(5))).toEqual([quoted('title')])
+    })
+
+    it('leaves `true` taking a bare attribute and a brace value', () => {
+      const any: MdxAllowlist = { components: { Callout: { props: { title: true } } } }
+      expect(messages('<Callout title />', any)).toEqual([])
+      expect(messages('<Callout title={"x"} />', any)).toEqual([])
+    })
+
+    it('still runs the base policy first', () => {
+      const allow: MdxAllowlist = { components: { Link: { props: { href: 'string' } } } }
+      expect(messages('<Link href="javascript:alert(1)" />', allow)).toHaveLength(1)
+      expect(messages('<Link href="/ok" />', allow)).toEqual([])
+    })
+
+    it('still refuses a prop outside the map', () => {
+      expect(messages('<Callout kind="x" />', plain)).toEqual([
+        'Prop kind on <Callout> is not allowed here; allowed: title (line 1)',
+      ])
+    })
+  })
+
   describe('only narrows the base policy', () => {
     it('still refuses a script URL in an allowed prop', () => {
       const allow: MdxAllowlist = { components: { Link: { props: { href: true } } } }
