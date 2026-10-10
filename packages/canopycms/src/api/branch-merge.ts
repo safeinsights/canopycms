@@ -80,7 +80,7 @@ const markAsMergedHandler = async (
   //   }
   // }
 
-  // Comments.json is already in the branch workspace at .canopycms/comments.json
+  // Comments.json is already in the branch workspace at .canopy-meta/comments.json
   // It will be preserved with the archived branch - no action needed
 
   return {
