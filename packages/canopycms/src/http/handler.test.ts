@@ -831,6 +831,97 @@ describe('createCanopyRequestHandler', () => {
     })
   })
 
+  describe('editor mode check', () => {
+    const withEditorMode = (value: string | null): CanopyRequest =>
+      createMockRequest({
+        header: (name) => (name.toLowerCase() === 'x-canopy-editor-mode' ? value : null),
+      })
+
+    /** The reported case: a dev editor bundle against a prod server. */
+    const prodHandler = (authPlugin: AuthPlugin) => {
+      const base = createMockServices()
+      const services = {
+        ...base,
+        config: { ...base.config, mode: 'prod' as const },
+      } as unknown as CanopyServices
+      return createCanopyRequestHandler({
+        services,
+        authPlugin: { ...authPlugin, verifiesCredentials: true },
+        getBranchContext: async () => null,
+      })
+    }
+
+    it('refuses an editor built for the other mode with 412, before authenticating', async () => {
+      const authPlugin = createMockAuthPlugin()
+      const authenticate = vi.spyOn(authPlugin, 'authenticate')
+      const handler = prodHandler(authPlugin)
+
+      const response = await handler(withEditorMode('dev'), ['branches'])
+
+      expect(response.status).toBe(412)
+      expect(response.body).toMatchObject({
+        ok: false,
+        status: 412,
+        code: 'EDITOR_MODE_MISMATCH',
+      })
+      const error = (response.body as { error?: string }).error ?? ''
+      expect(error).toContain('built for "dev" mode')
+      expect(error).toContain('NEXT_PUBLIC_CANOPY_MODE=prod')
+      expect(authenticate).not.toHaveBeenCalled()
+    })
+
+    it('answers before building context, so an unavailable workspace cannot mask it', async () => {
+      // Building services from this incomplete config throws: a context that cannot be built.
+      const handler = createCanopyRequestHandler({
+        config: { mode: 'prod', deployedAs: 'server' } as CanopyConfig,
+        authPlugin: { ...createMockAuthPlugin(), verifiesCredentials: true },
+      })
+
+      expect((await handler(withEditorMode('dev'), ['branches'])).status).toBe(412)
+      expect((await handler(withEditorMode('prod'), ['branches'])).status).toBe(500)
+    })
+
+    it('logs the mismatch once per handler, naming both modes', async () => {
+      const consoleSpy = mockConsole()
+      const handler = prodHandler(createMockAuthPlugin())
+
+      await handler(withEditorMode('dev'), ['branches'])
+      await handler(withEditorMode('dev'), ['branches'])
+
+      const logged = consoleSpy
+        .all()
+        .warn.filter((line) => line.includes('NEXT_PUBLIC_CANOPY_MODE'))
+      expect(logged).toHaveLength(1)
+      expect(logged[0]).toContain('NEXT_PUBLIC_CANOPY_MODE="dev"')
+      expect(logged[0]).toContain('runs in "prod" mode')
+    })
+
+    it('refuses a prod editor against a dev server too', async () => {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async () => null,
+      })
+
+      const response = await handler(withEditorMode('prod'), ['branches'])
+
+      expect(response.status).toBe(412)
+      expect((response.body as { error?: string }).error).toContain('NEXT_PUBLIC_CANOPY_MODE=dev')
+    })
+
+    // A rejecting plugin's 401 shows the request went on to authentication.
+    it('lets an editor built for the same mode through to authentication', async () => {
+      const handler = prodHandler(createRejectingAuthPlugin())
+      expect((await handler(withEditorMode('prod'), ['branches'])).status).toBe(401)
+    })
+
+    it('does not check a request without the header or with an unrecognized value', async () => {
+      const handler = prodHandler(createRejectingAuthPlugin())
+      expect((await handler(withEditorMode(null), ['branches'])).status).toBe(401)
+      expect((await handler(withEditorMode('production'), ['branches'])).status).toBe(401)
+    })
+  })
+
   describe('auth plugin mode guard (SEC-C1)', () => {
     /** Same shape as DevAuthPlugin: verifyTokenOnly implemented, no verifiesCredentials marker. */
     const unmarkedDevPlugin: AuthPlugin = {

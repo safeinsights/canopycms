@@ -76,6 +76,7 @@ replaces each `next` with its number.
 | 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
 | next | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
 | next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
+| next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -496,6 +497,15 @@ framing.
 
 **To adopt.** (int.102) Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on
 the editor's origin; the editor still detects sign-out. Otherwise nothing.
+
+### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
+
+**What changed.** (next int) `Dockerfile.cms` defaults `NEXT_PUBLIC_CANOPY_MODE` to `prod`, not
+`dev`, and fails its build on any value but `prod` or `dev`. An editor built for the other mode than its
+server runs now gets a blocking screen naming that variable, not a sign-in that never succeeds.
+
+**To adopt.** A hand-built image running a dev-mode server passes
+`--build-arg NEXT_PUBLIC_CANOPY_MODE=dev`.
 
 ### Prod detects an unset `defaultBaseBranch` instead of assuming `main` — **behaviour change: startup can fail**
 

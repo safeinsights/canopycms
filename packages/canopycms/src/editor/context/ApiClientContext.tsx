@@ -9,18 +9,19 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { createApiClient } from '../../api'
 import { joinUrlPrefix } from '../../utils/url-prefix'
+import type { OperatingMode } from '../../operating-mode/types'
 
 export type ApiClient = ReturnType<typeof createApiClient>
 
 const ApiClientContext = createContext<ApiClient | null>(null)
 
-/** Fan-out for the client's 401 notifications (`ApiClientOptions.onUnauthorized`). */
-interface UnauthorizedSignal {
+/** Fan-out for one of the client's notifications (`onUnauthorized`, `onEditorModeMismatch`). */
+interface ClientSignal {
   emit: () => void
   subscribe: (listener: () => void) => () => void
 }
 
-function createUnauthorizedSignal(): UnauthorizedSignal {
+function createClientSignal(): ClientSignal {
   const listeners = new Set<() => void>()
   return {
     emit: () => {
@@ -35,7 +36,8 @@ function createUnauthorizedSignal(): UnauthorizedSignal {
   }
 }
 
-const UnauthorizedSignalContext = createContext<UnauthorizedSignal | null>(null)
+const UnauthorizedSignalContext = createContext<ClientSignal | null>(null)
+const EditorModeMismatchSignalContext = createContext<ClientSignal | null>(null)
 
 export interface ApiClientProviderProps {
   children: React.ReactNode
@@ -48,34 +50,47 @@ export interface ApiClientProviderProps {
    * when `client` is supplied directly. Unset/empty is a no-op (same as today).
    */
   basePath?: string
+  /** The mode this bundle was built for (`CanopyClientConfig.mode`); see `ApiClientOptions.editorMode`. */
+  editorMode?: OperatingMode
 }
 
 /**
  * Provider that creates and provides the API client.
  * Use the client prop to inject a mock client for testing.
  */
-export function ApiClientProvider({ children, client, basePath }: ApiClientProviderProps) {
-  const [unauthorized] = useState(createUnauthorizedSignal)
+export function ApiClientProvider({
+  children,
+  client,
+  basePath,
+  editorMode,
+}: ApiClientProviderProps) {
+  const [unauthorized] = useState(createClientSignal)
+  const [modeMismatch] = useState(createClientSignal)
   // Memoized on identity, not just for cost: several consumers now list the client in their
   // effect deps (useUserContext, useReferenceResolution, ReferenceField), so a fresh client each
   // render would turn those one-shot fetches into a loop. A caller injecting an inline
   // `client={createApiClient()}` would reintroduce exactly that.
   //
-  // Only a client built HERE reports 401s to `useOnUnauthorized`; an injected `client` is used
-  // as-is, so its 401s reach the auth gate only through the gate's own whoami result.
+  // Only a client built HERE reports to `useOnUnauthorized` and `useOnEditorModeMismatch`; an
+  // injected `client` is used as-is, so its 401s and mode mismatches reach the auth gate only
+  // through the gate's own whoami result.
   const apiClient = useMemo(() => {
     return (
       client ??
       createApiClient({
         baseUrl: joinUrlPrefix(basePath, '/api/canopycms'),
         onUnauthorized: unauthorized.emit,
+        editorMode,
+        onEditorModeMismatch: modeMismatch.emit,
       })
     )
-  }, [client, basePath, unauthorized])
+  }, [client, basePath, editorMode, unauthorized, modeMismatch])
 
   return (
     <UnauthorizedSignalContext.Provider value={unauthorized}>
-      <ApiClientContext.Provider value={apiClient}>{children}</ApiClientContext.Provider>
+      <EditorModeMismatchSignalContext.Provider value={modeMismatch}>
+        <ApiClientContext.Provider value={apiClient}>{children}</ApiClientContext.Provider>
+      </EditorModeMismatchSignalContext.Provider>
     </UnauthorizedSignalContext.Provider>
   )
 }
@@ -87,6 +102,12 @@ export function ApiClientProvider({ children, client, basePath }: ApiClientProvi
  */
 export function useOnUnauthorized(listener: () => void): void {
   const signal = useContext(UnauthorizedSignalContext)
+  useEffect(() => signal?.subscribe(listener), [signal, listener])
+}
+
+/** As {@link useOnUnauthorized}, for responses refusing the editor's mode (`EDITOR_MODE_MISMATCH`). */
+export function useOnEditorModeMismatch(listener: () => void): void {
+  const signal = useContext(EditorModeMismatchSignalContext)
   useEffect(() => signal?.subscribe(listener), [signal, listener])
 }
 

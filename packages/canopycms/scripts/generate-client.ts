@@ -260,6 +260,8 @@ function generateClientCode(namespaces: NamespaceRoutes[]): string {
 import { computeContentSha256Hex } from './request-body-hash'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
+import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'
+import type { OperatingMode } from '../operating-mode/types'
 
 ${responseTypeImports}
 
@@ -282,6 +284,17 @@ export interface ApiClientOptions {
    * notification, not a retry; the editor's auth gate uses it to show sign-in.
    */
   onUnauthorized?: () => void
+
+  /**
+   * The mode this bundle was built for, sent on every request so the server refuses a bundle built
+   * for the other mode (operating-mode/editor-mode-check.ts). Set by the editor from
+   * \`config.mode\`; a client without it is not checked.
+   * @internal
+   */
+  editorMode?: OperatingMode
+
+  /** Called whenever the server refuses \`editorMode\` (code \`EDITOR_MODE_MISMATCH\`). @internal */
+  onEditorModeMismatch?: () => void
 }
 
 /**
@@ -299,6 +312,8 @@ export class CanopyApiClient {
   private fetchFn: typeof fetch
   private trailingSlash: boolean
   private onUnauthorized: (() => void) | undefined
+  private editorMode: OperatingMode | undefined
+  private onEditorModeMismatch: (() => void) | undefined
 
 ${namespacesCode}
 
@@ -308,6 +323,8 @@ ${namespacesCode}
     this.fetchFn = options.fetch ?? (typeof window !== 'undefined' ? fetch.bind(window) : fetch)
     this.trailingSlash = options.trailingSlash ?? readTrailingSlashEnv()
     this.onUnauthorized = options.onUnauthorized
+    this.editorMode = options.editorMode
+    this.onEditorModeMismatch = options.onEditorModeMismatch
   }
 
   private buildPath(template: string, params: Record<string, string>): string {
@@ -353,6 +370,7 @@ ${namespacesCode}
     const requestHeaders: Record<string, string> = {
       ...headers,
     }
+    if (this.editorMode) requestHeaders[EDITOR_MODE_HEADER] = this.editorMode
 
     let requestBody: BodyInit | undefined
 
@@ -404,6 +422,13 @@ ${namespacesCode}
     if (response.status === 401 || (isApiResponseBody(parsed) && parsed.status === 401)) {
       this.onUnauthorized?.()
       return { ok: false, status: 401, error: errorFromBody(parsed) ?? 'Unauthorized' } as T
+    }
+    if (
+      isApiResponseBody(parsed) &&
+      parsed.status === EDITOR_MODE_MISMATCH_STATUS &&
+      parsed.code === 'EDITOR_MODE_MISMATCH'
+    ) {
+      this.onEditorModeMismatch?.()
     }
     if (isApiResponseBody(parsed)) return parsed as T
     const converted = {
