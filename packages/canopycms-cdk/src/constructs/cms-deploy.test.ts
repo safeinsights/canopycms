@@ -2673,7 +2673,8 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     // As a directive at the start of a unit line (the blob is JSON, so `\n` is
     // literal); the unit's comment names it.
     expect(all).not.toMatch(/\\nLogsDirectory=/)
-    expect(all).not.toMatch(/chown [^ ]*ec2-user[^ ]* \/var\/log\/canopy-worker/)
+    // User-data has no legitimate chown or chmod of the log path at all.
+    expect(all).not.toMatch(/\\n\s*ch(own|mod)[^\\]*\/var\/log\/canopy-worker/)
     expect(all).toContain('install -d -o root -g root -m 0755 /var/log/canopy-worker')
     expect(all).toContain(
       'install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log',

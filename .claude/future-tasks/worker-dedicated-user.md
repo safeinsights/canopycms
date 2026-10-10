@@ -10,8 +10,9 @@ summary: >-
 **Found:** 2026-10-10, planning
 [worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) (its R2).
 
-Today `canopy-worker.service` has `User=ec2-user`. On AL2023 that user has NOPASSWD sudo and the
-`adm`, `wheel` and `systemd-journal` groups, which the unit inherits through initgroups. What
+Today `canopy-worker.service` has `User=ec2-user`. AL2023's cloud-init default user config gives
+that user NOPASSWD sudo and (as recalled, not yet checked on a live instance) the `adm`, `wheel`
+and `systemd-journal` groups, which the unit inherits through initgroups. What
 stands between code running as the worker and those privileges is the sandbox:
 `NoNewPrivileges`, `ProtectHome=tmpfs`, `ProtectSystem=strict`, and (in the split)
 `InaccessiblePaths` on the journal.
