@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import { z } from 'zod'
+
 import type { BranchContext } from './types'
 // The leaf, NOT './branch-metadata': that module imports this one back, so the
 // pair would be a runtime import cycle. See branch-metadata-file.ts.
-import { readBranchMetadataFile } from './branch-metadata-file'
+import { branchMetadataSchema, readBranchMetadataFile } from './branch-metadata-file'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 // canopyLogWarn, not console.warn: registry regeneration is reached from every
@@ -32,6 +34,26 @@ const RESOURCE = 'branch-registry'
 
 /** Throttle for the get() suspicious-miss backstop; mirrors content-store's FORCED_REFRESH_MIN_INTERVAL_MS. */
 const GET_MISS_REFRESH_MIN_INTERVAL_MS = 5000
+
+/**
+ * What a current-version `branches.json` must hold to be served. Each entry's
+ * branch is held to branch.json's own schema, since guards read the listed
+ * status and ACLs as if they came from branch.json.
+ */
+const snapshotSchema = z.object({
+  version: z.literal(REGISTRY_VERSION),
+  branches: z.array(
+    z.object({ branch: branchMetadataSchema, branchRoot: z.string(), baseRoot: z.string() }),
+  ),
+  generation: z.string().nullable(),
+})
+
+/**
+ * Registry paths whose unreadable snapshot has been reported, so a snapshot that
+ * cannot be rewritten (an unreadable marker) does not log on every list().
+ * Cleared by the next valid read.
+ */
+const reportedUnreadable = new Set<string>()
 
 /** @internal Exported for tests. */
 export interface BranchRegistrySnapshot {
@@ -81,12 +103,16 @@ export class BranchRegistry {
   /**
    * Returns all branches. Uses the cached snapshot if its embedded generation
    * token matches the live marker, regenerates otherwise.
+   *
+   * An unparseable or wrong-shaped snapshot is treated like an absent one: the
+   * snapshot is a cache of the branch directories, so rebuilding it loses
+   * nothing, while rethrowing would fail every editor's branch listing until
+   * someone deleted the file. Other read failures (permissions, IO) propagate.
    */
   async list(): Promise<BranchContext[]> {
-    let parsed: BranchRegistrySnapshot
+    let raw: string
     try {
-      const raw = await fs.readFile(this.registryPath, 'utf8')
-      parsed = JSON.parse(raw) as BranchRegistrySnapshot
+      raw = await fs.readFile(this.registryPath, 'utf8')
     } catch (err: unknown) {
       if (isNotFoundError(err)) {
         return await this.regenerate()
@@ -94,18 +120,52 @@ export class BranchRegistry {
       throw err
     }
 
-    // Strict version check, not truthiness: a snapshot from an older version
-    // left on EFS by a rolling deploy has no `generation` field, and an
-    // `undefined` token breaks the freshness comparison below.
-    if (parsed.version !== REGISTRY_VERSION || !Array.isArray(parsed.branches)) {
-      return await this.regenerate()
-    }
+    const parsed = this.parseSnapshot(raw)
+    if (!parsed) return await this.regenerate()
 
     const read = await readResourceGeneration(this.root, RESOURCE)
     if (isGenerationCurrent(parsed.generation, read)) {
       return parsed.branches
     }
     return await this.regenerate()
+  }
+
+  /** The snapshot in `raw`, or null when it must be rebuilt. */
+  private parseSnapshot(raw: string): BranchRegistrySnapshot | null {
+    let json: unknown
+    try {
+      json = JSON.parse(raw)
+    } catch (err: unknown) {
+      this.reportUnreadable(getErrorMessage(err))
+      return null
+    }
+    // Checked before the shape: a snapshot from another version, which a
+    // rolling deploy leaves on EFS, is expected and rebuilt silently.
+    if (
+      typeof json === 'object' &&
+      json !== null &&
+      'version' in json &&
+      typeof json.version === 'number' &&
+      json.version !== REGISTRY_VERSION
+    ) {
+      return null
+    }
+    const result = snapshotSchema.safeParse(json)
+    if (!result.success) {
+      this.reportUnreadable('it does not have the registry snapshot shape')
+      return null
+    }
+    reportedUnreadable.delete(this.registryPath)
+    const snapshot: BranchRegistrySnapshot = result.data
+    return snapshot
+  }
+
+  private reportUnreadable(reason: string): void {
+    if (reportedUnreadable.has(this.registryPath)) return
+    reportedUnreadable.add(this.registryPath)
+    canopyLogWarn(
+      `CanopyCMS: Branch registry snapshot ${this.registryPath} is unreadable (${reason}); regenerating it from the branch directories`,
+    )
   }
 
   /**

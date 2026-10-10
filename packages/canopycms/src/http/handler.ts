@@ -12,6 +12,7 @@ import { recordConfiguredSparseCone } from '../branch-sparse'
 import { recordServedSchemaRegistry } from '../schema-registry-record'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
@@ -394,6 +395,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
       const notReady = workerNotReadyResponse(err)
       if (notReady) return notReady
+      // Its message is a path and a parse error, neither of which helps an editor.
+      if (err instanceof BranchMetadataCorruptError) {
+        return jsonResponse({ ok: false, status: 500, error: BRANCH_METADATA_CORRUPT_MESSAGE }, 500)
+      }
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }

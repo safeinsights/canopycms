@@ -368,6 +368,68 @@ describe('BranchMetadataFileManager', () => {
     })
   })
 
+  describe('a branch.json that fails the read-boundary schema', () => {
+    it.each([
+      ['invalid JSON', '{ this is not json'],
+      [
+        'no status',
+        JSON.stringify({ schemaVersion: 1, version: 2, branch: { name: 'feature/x', access: {} } }),
+      ],
+      ['no branch object', JSON.stringify({ schemaVersion: 1, version: 2, committed: true })],
+    ])('save() refuses to merge defaults over %s, writing nothing', async (_label, raw) => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const filePath = path.join(root, '.canopy-meta', 'branch.json')
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(filePath, raw, 'utf8')
+      const onlyIf = vi.fn(() => true)
+
+      await expect(
+        createMeta(root, registryDir).saveIf({ branch: { conflictStatus: 'clean' } }, onlyIf),
+      ).rejects.toThrow(BranchMetadataCorruptError)
+
+      expect(onlyIf).not.toHaveBeenCalled()
+      expect(await fs.readFile(filePath, 'utf8')).toBe(raw)
+    })
+
+    it('keeps fields it does not know through a load -> save round trip', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const filePath = path.join(root, '.canopy-meta', 'branch.json')
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({
+          schemaVersion: 1,
+          version: 1,
+          futureEnvelopeField: { a: 1 },
+          branch: {
+            name: 'feature/x',
+            status: 'editing',
+            access: { allowedUsers: ['u1'], futureAclField: true },
+            createdBy: 'u1',
+            createdAt: '2026-10-01T00:00:00.000Z',
+            updatedAt: '2026-10-01T00:00:00.000Z',
+            futureBranchField: 'kept',
+          },
+        }),
+      )
+
+      await createMeta(root, registryDir).save({ branch: { title: 'Renamed' } })
+
+      const raw = JSON.parse(await fs.readFile(filePath, 'utf8')) as Record<string, unknown>
+      expect(raw).toMatchObject({
+        version: 2,
+        futureEnvelopeField: { a: 1 },
+        branch: {
+          title: 'Renamed',
+          futureBranchField: 'kept',
+          access: { allowedUsers: ['u1'], futureAclField: true },
+        },
+      })
+    })
+  })
+
   describe('saveIf', () => {
     it('writes when the predicate accepts the metadata on disk', async () => {
       const root = await tmpDir()

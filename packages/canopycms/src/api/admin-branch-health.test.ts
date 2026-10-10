@@ -7,7 +7,7 @@ import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser, initTestRepo } from '../test-utils'
 import { BranchRegistry } from '../branch-registry'
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { acquireProvisioningLock } from '../utils/provisioning-lock'
 import { mockConsole } from '../test-utils/console-spy'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
@@ -272,6 +272,31 @@ describe('admin branch-health api', () => {
         'utf-8',
       )
       expect(() => JSON.parse(newContent)).not.toThrow()
+    })
+
+    it('repairs a branch.json that parses but fails the schema, end to end', async () => {
+      const shapeBroken = JSON.stringify({ schemaVersion: 1, version: 4, branch: { name: 'x' } })
+      const metaDir = path.join(branchesRoot, 'shape-broken', '.canopy-meta')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(path.join(metaDir, 'branch.json'), shapeBroken, 'utf-8')
+
+      const scanned = await branchHealthHandler(ctx, req)
+      const entry = scanned.data?.entries.find((e) => e.dirName === 'shape-broken')
+      expect(entry?.kind).toBe('corrupt-metadata')
+      expect(entry?.parseError).toBe('Not branch metadata. Missing: branch.status, branch.access')
+
+      const result = await repairHandler(ctx, req, { dirName: 'shape-broken' })
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.branch.status).toBe('editing')
+      expect(await fs.readFile(path.join(metaDir, result.data!.archivedAs), 'utf-8')).toBe(
+        shapeBroken,
+      )
+      const repaired = await BranchMetadataFileManager.loadOnly(
+        path.join(branchesRoot, 'shape-broken'),
+      )
+      expect(repaired?.branch).toMatchObject({ name: 'shape-broken', status: 'editing' })
+      expect((await registry.list()).map((b) => b.branch.name)).toContain('shape-broken')
     })
 
     it('reports the reset status/access/createdBy so the admin knows they were not recovered (August 2026 baseline review)', async () => {
