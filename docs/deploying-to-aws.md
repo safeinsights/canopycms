@@ -997,6 +997,7 @@ new CanopyCmsService(this, 'Cms', { /* ... */ alarmTopic: new sns.Topic(this, 'C
 A deploy or spot replacement fits inside 30 minutes, so it does not page; a
 crash loop, boot loop, or worker that never started or stopped looping does.
 Then read System health in the editor's admin panel and the worker log group.
+It also hears once when a boot starts the worker [unpatched](#the-worker-instance).
 
 ## Worker capacity
 
@@ -1105,12 +1106,12 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   customer-managed key, grant the Auto Scaling service-linked role on it.
 - **Patched between deploys, except the kernel.** AL2023 pins `dnf` to its AMI's repository
   release, so every boot first upgrades to the latest release. The kernel is excluded, because a
-  new one applies only at a reboot. The running kernel is therefore always the AMI's, and it moves
-  only when a deploy resolves a newer AMI: deploy now and then even when nothing else changed.
-  The upgrade adds an estimated 1–3 minutes to a boot (not measured). It also makes boots
-  non-deterministic: a replacement can get newer git, Node or efs-utils than the AMI. A boot that
-  fails shuts the instance down and the group launches another. The trap prints the failing line to that
-  instance's `aws ec2 get-console-output`.
+  new one applies only at a reboot, so it moves only when a deploy resolves a newer AMI: deploy now
+  and then even when nothing else changed. A replacement can get newer git, Node or efs-utils than
+  the AMI. dnf needs more memory than a `t4g.nano` has free, so a 1 GiB swap file goes on first
+  (`vm.swappiness` 10). An upgrade that fails 5 attempts starts the worker unpatched and notifies
+  `alarmTopic`; the next boot retries. Any other failed step before the worker starts shuts the
+  instance down for the group to replace, and `aws ec2 get-console-output` names the step.
 - **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
   which boots while the old one drains. Saves keep working; publishing, pull requests and sync

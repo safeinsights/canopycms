@@ -1,16 +1,19 @@
 /**
  * The worker instance's hardening: IMDSv2, the integrity-checked and narrowly
  * readable bundle, IAM- and TLS-only EFS, the encrypted root volume, patching
- * between deploys, EFS backups and the systemd sandbox.
+ * between deploys and a boot that survives a failed upgrade, EFS backups and
+ * the systemd sandbox.
  */
 
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
-import { aws_ecr as ecr, aws_iam as iam, aws_lambda as lambda } from 'aws-cdk-lib'
+import { aws_ecr as ecr, aws_iam as iam, aws_lambda as lambda, aws_sns as sns } from 'aws-cdk-lib'
 
 import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
@@ -203,7 +206,9 @@ describe('EFS access requires IAM and TLS', () => {
     const ap = accessPointId(template)
     const fsId = fileSystem(template).id
     const all = lines(template)
-    expect(all).toContain(`retry mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`)
+    expect(all).toContain(
+      `retry 'EFS mount' mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`,
+    )
     expect(all).toContain(
       `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
     )
@@ -289,7 +294,9 @@ describe('patching between deploys', () => {
   it('moves to the latest AL2023 release before installing anything', () => {
     const all = lines(template)
     const upgrade = lineIndex(all, 'dnf upgrade')
-    expect(all[upgrade]).toBe("retry dnf upgrade --releasever=latest --exclude='kernel*' -y")
+    expect(all[upgrade]).toBe(
+      "if ! retry 'dnf upgrade' dnf upgrade --releasever=latest --exclude='kernel*' -y; then",
+    )
     expect(upgrade).toBeLessThan(lineIndex(all, 'dnf install'))
     expect(upgrade).toBeGreaterThan(lineIndex(all, 'retry() {'))
   })
@@ -311,6 +318,189 @@ describe('patching between deploys', () => {
 
   it('refuses a lifetime Auto Scaling would reject', () => {
     expect(() => synth({ workerMaxInstanceLifetime: Duration.hours(12) })).toThrow(/1 and 365 days/)
+  })
+})
+
+describe('boot memory', () => {
+  const all = lines(template)
+
+  it('turns on swap before the first dnf', () => {
+    const firstDnf = all.findIndex((l) => /^\s*(if ! )?retry '[^']+' dnf /.test(l))
+    expect(firstDnf).toBeGreaterThan(0)
+    expect(lineIndex(all, 'if ! setup_swap; then')).toBeLessThan(firstDnf)
+  })
+
+  it('makes a 1 GiB swap file once, keeps it across reboots, and swaps reluctantly', () => {
+    for (const line of [
+      '  swapon --show=NAME --noheadings | grep -qx /swapfile && return 0',
+      '  if [ "$(stat -c %s /swapfile 2>/dev/null)" != 1073741824 ]; then',
+      '    fallocate -l 1G /swapfile || return 1',
+      '  chmod 600 /swapfile || return 1',
+      '  mkswap /swapfile || return 1',
+      '  swapon /swapfile || return 1',
+      "  grep -qs '^/swapfile ' /etc/fstab || echo '/swapfile none swap defaults 0 0' >> /etc/fstab || return 1",
+      '  mkdir -p /etc/sysctl.d || return 1',
+      "  echo 'vm.swappiness = 10' > /etc/sysctl.d/90-canopy-worker-swap.conf || return 1",
+      '  sysctl -q -w vm.swappiness=10',
+    ]) {
+      expect(all).toContain(line)
+    }
+  })
+})
+
+describe('boot failures name their step', () => {
+  const all = lines(template)
+
+  it('gives every retried step its own name', () => {
+    const calls = all.filter((l) => /^\s*(if ! )?retry /.test(l))
+    const names = calls.map((l) => /retry '([^']+)' /.exec(l)?.[1])
+    expect(names).toEqual([
+      'dnf upgrade',
+      'dnf install git',
+      'dnf install nodejs22',
+      'dnf install amazon-efs-utils',
+      'EFS mount',
+      'worker bundle download',
+      'dnf install amazon-cloudwatch-agent logrotate',
+    ])
+    expect(all).toContain(`      echo "canopy-worker boot: '$step' failed after $n attempts" >&2`)
+  })
+
+  it('writes the unpatched line the alarm counts, in the worker log format', () => {
+    const withTopic = synth((stack) => ({ alarmTopic: new sns.Topic(stack, 'Alerts') }))
+    const filters = Object.entries(withTopic.findResources('AWS::Logs::MetricFilter'))
+    const [, unpatched] = filters.find(([id]) => id.startsWith('CmsWorkerUnpatchedBoots'))!
+    const pattern = (unpatched.Properties as { FilterPattern: string }).FilterPattern
+    const phrase = JSON.parse(pattern) as string
+    const logLine = all.find((l) => l.includes('>> /var/log/canopy-worker/worker.log'))
+    expect(logLine).toBe(
+      `  echo "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ERROR canopy-worker boot: 'dnf upgrade' failed; ${phrase}" >> /var/log/canopy-worker/worker.log`,
+    )
+    expect(all).toContain(`  echo "canopy-worker boot: ${phrase}" >&2`)
+    // Written before the worker starts, so it is the first line of the log.
+    expect(all.indexOf(logLine!)).toBeLessThan(lineIndex(all, 'systemctl start canopy-worker'))
+  })
+})
+
+/**
+ * Runs user data up to the EFS mount under bash, with dnf, sleep, shutdown and
+ * the swap probes replaced by stubs on PATH, so a step's failure is observed
+ * as bash handles it: `set -e`, the ERR trap, and conditions that suspend both.
+ */
+describe('a failed boot step, run', () => {
+  let stubs: string
+
+  const stub = (name: string, body: string) => {
+    const file = path.join(stubs, name)
+    writeFileSync(file, `#!/bin/sh\n${body}\n`)
+    chmodSync(file, 0o755)
+  }
+
+  beforeEach(() => {
+    stubs = mkdtempSync(path.join(os.tmpdir(), 'canopy-boot-'))
+    stub(
+      'dnf',
+      [
+        `echo "$*" >> "${stubs}/dnf.calls"`,
+        'case "$*" in',
+        '  $DNF_FAIL)',
+        `    n=$(($(cat "${stubs}/fails" 2>/dev/null || echo 0) + 1))`,
+        `    echo "$n" > "${stubs}/fails"`,
+        '    [ "$n" -le "$DNF_FAIL_TIMES" ] && exit 1 ;;',
+        'esac',
+        'exit 0',
+      ].join('\n'),
+    )
+    stub('sleep', 'exit 0')
+    stub('shutdown', 'echo "SHUTDOWN $*"')
+    stub('swapon', 'case "$1" in --show*) [ -n "$SWAP_ACTIVE" ] && echo /swapfile ;; esac\nexit 0')
+    stub('stat', 'exit 1')
+    stub('df', 'printf "Avail\\n  100\\n"')
+    stub('fallocate', `echo "fallocate $*" >> "${stubs}/swap.calls"; exit 1`)
+  })
+
+  afterEach(() => {
+    rmSync(stubs, { recursive: true, force: true })
+  })
+
+  function boot(env: { DNF_FAIL?: string; DNF_FAIL_TIMES?: number; SWAP_ACTIVE?: string } = {}) {
+    const all = lines(template)
+    const prelude = all.slice(0, lineIndex(all, 'mkdir -p /mnt/efs')).join('\n')
+    // --norc and no stdin: bash sources ~/.bashrc when stdin is a socket,
+    // which is what Node hands a child, and a .bashrc can reorder PATH.
+    const run = spawnSync('bash', ['--norc', '-c', `${prelude}\necho REACHED-END`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        HOME: stubs,
+        PATH: `${stubs}:${process.env.PATH ?? ''}`,
+        DNF_FAIL: env.DNF_FAIL ?? '__never__',
+        DNF_FAIL_TIMES: String(env.DNF_FAIL_TIMES ?? 99),
+        SWAP_ACTIVE: env.SWAP_ACTIVE ?? '1',
+      },
+    })
+    let dnf: string[] = []
+    try {
+      dnf = readFileSync(path.join(stubs, 'dnf.calls'), 'utf8').trim().split('\n')
+    } catch {
+      // dnf never ran.
+    }
+    return { ...run, dnf }
+  }
+
+  const installs = ['install -y git', 'install -y nodejs22', 'install -y amazon-efs-utils']
+
+  it('boots through when every step succeeds', () => {
+    const run = boot()
+    expect(run.stderr).not.toContain('canopy-worker')
+    expect(run.stdout).toContain('REACHED-END')
+    expect(run.status).toBe(0)
+    expect(run.dnf).toEqual(['upgrade --releasever=latest --exclude=kernel* -y', ...installs])
+  })
+
+  it('absorbs three failed upgrade attempts, as a nano without swap saw', () => {
+    const run = boot({ DNF_FAIL: 'upgrade*', DNF_FAIL_TIMES: 3 })
+    expect(run.stderr).not.toContain('canopy-worker')
+    expect(run.status).toBe(0)
+    expect(run.dnf.filter((c) => c.startsWith('upgrade'))).toHaveLength(4)
+  })
+
+  it('starts unpatched when the upgrade exhausts its attempts, and says so', () => {
+    const run = boot({ DNF_FAIL: 'upgrade*' })
+    expect(run.stderr).toContain("canopy-worker boot: 'dnf upgrade' failed after 5 attempts")
+    expect(run.stderr).toContain('canopy-worker boot: running unpatched on the AMI packages')
+    expect(run.stdout).not.toContain('SHUTDOWN')
+    expect(run.stdout).toContain('REACHED-END')
+    expect(run.status).toBe(0)
+    expect(run.dnf.slice(-3)).toEqual(installs)
+  })
+
+  it.each([
+    ['git', 'dnf install git'],
+    ['nodejs22', 'dnf install nodejs22'],
+    ['amazon-efs-utils', 'dnf install amazon-efs-utils'],
+  ])('fails the boot when installing %s exhausts its attempts', (pkg, step) => {
+    const run = boot({ DNF_FAIL: `install -y ${pkg}` })
+    expect(run.stderr).toContain(`canopy-worker boot: '${step}' failed after 5 attempts`)
+    expect(run.stderr).toContain('canopy-worker user-data FAILED')
+    expect(run.stdout).toContain('SHUTDOWN -h now')
+    expect(run.stdout).not.toContain('REACHED-END')
+    expect(run.status).not.toBe(0)
+  })
+
+  it('warns and carries on when swap cannot be set up', () => {
+    const run = boot({ SWAP_ACTIVE: '' })
+    expect(run.stderr).toContain('canopy-worker boot: under 3 GiB free on /, so no swap file')
+    expect(run.stderr).toContain("canopy-worker boot: 'swap' setup failed; continuing without swap")
+    expect(run.stdout).toContain('REACHED-END')
+    expect(run.status).toBe(0)
+    expect(run.dnf[0]).toMatch(/^upgrade/)
+  })
+
+  it('leaves an active swap file alone', () => {
+    const run = boot()
+    expect(run.stderr).not.toContain('swap')
+    expect(() => readFileSync(path.join(stubs, 'swap.calls'))).toThrow()
   })
 })
 

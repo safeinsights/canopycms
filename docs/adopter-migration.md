@@ -78,6 +78,7 @@ replaces each `next` with its number.
 | next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 | next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 | next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
+| next | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                  |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -472,6 +473,17 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
 
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
 worker, and a hand-built alarm on the worker log group.
+
+### `canopycms-cdk`: a `t4g.nano` worker boots reliably — **behaviour change: a deploy replaces the worker**
+
+**What changed.** (next int) The boot's `dnf upgrade` could be OOM-killed on every retry. A 1 GiB
+swap file now goes on first; an upgrade that still fails starts the worker unpatched and notifies
+`alarmTopic`; a failed step names itself. See
+[The worker instance](deploying-to-aws.md#the-worker-instance).
+
+**To adopt.** Deploy, which replaces the worker instance.
+
+**Now deletable.** An instance type above `t4g.nano` chosen only to get the boot through.
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 

@@ -1423,7 +1423,7 @@ describe('CanopyCmsService B1: Lambda and worker see the workspace at the same p
     const lines = workerUserDataScript(template).split('\n')
 
     expect(lines).toContain(
-      `retry mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`,
+      `retry 'EFS mount' mount -t efs -o tls,iam,accesspoint=<${ap}> <${fsId}>:/ /mnt/efs`,
     )
     expect(lines).toContain(
       `echo '<${fsId}>:/ /mnt/efs efs _netdev,tls,iam,accesspoint=<${ap}> 0 0' >> /etc/fstab`,
@@ -1590,13 +1590,13 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
     const all = workerUserDataBlobs(synth())
     expect(all).toContain('retry()')
     for (const step of [
-      'retry dnf upgrade --releasever=latest',
-      'retry dnf install -y git',
-      'retry dnf install -y nodejs22',
-      'retry dnf install -y amazon-efs-utils',
-      'retry mount -t efs',
-      'retry aws s3 cp',
-      'retry dnf install -y amazon-cloudwatch-agent',
+      "retry 'dnf upgrade' dnf upgrade --releasever=latest",
+      "retry 'dnf install git' dnf install -y git",
+      "retry 'dnf install nodejs22' dnf install -y nodejs22",
+      "retry 'dnf install amazon-efs-utils' dnf install -y amazon-efs-utils",
+      "retry 'EFS mount' mount -t efs",
+      "retry 'worker bundle download' aws s3 cp",
+      "retry 'dnf install amazon-cloudwatch-agent logrotate' dnf install -y amazon-cloudwatch-agent",
     ]) {
       expect(all).toContain(step)
     }

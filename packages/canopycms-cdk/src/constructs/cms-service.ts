@@ -70,6 +70,13 @@ const isValidDeploymentName = (name: string): boolean =>
 const EFS_MOUNT_PATH = '/mnt/efs'
 
 /**
+ * The text of the worker.log line user data writes when the boot's package
+ * upgrade failed and the worker runs on the AMI's packages. The unpatched
+ * alarm's metric filter counts it.
+ */
+const WORKER_UNPATCHED_LOG_PHRASE = 'running unpatched on the AMI packages until the next boot'
+
+/**
  * The worker unit's sandbox, also in worker/canopy-worker.service. Node and git
  * need none of what these take away; `MemoryDenyWriteExecute` is left out
  * because V8's JIT writes executable memory.
@@ -934,6 +941,9 @@ export interface CanopyCmsServiceProps {
    * minutes, which covers a crash loop, a boot loop, a worker that never
    * started and a worker whose loops have stopped. A deploy or a spot
    * replacement does not trip it. See `workerDownAlarm`.
+   *
+   * The topic is also notified when a worker boot could not upgrade its
+   * packages and started on the AMI's. See `workerUnpatchedAlarm`.
    */
   alarmTopic?: sns.ITopic
 
@@ -1100,6 +1110,9 @@ export class CanopyCmsService extends Construct {
 
   /** Alarms when the worker logs no git-sync cycle for 30 minutes. Set only with `alarmTopic`. */
   public readonly workerDownAlarm?: cloudwatch.Alarm
+
+  /** Alarms when a worker boot started without its package upgrade. Set only with `alarmTopic`. */
+  public readonly workerUnpatchedAlarm?: cloudwatch.Alarm
 
   /**
    * With `workerCode: { source: 'parameter' }`: the bucket worker bundles are
@@ -1644,6 +1657,30 @@ export class CanopyCmsService extends Construct {
       const topicAction = new cloudwatchActions.SnsAction(props.alarmTopic)
       this.workerDownAlarm.addAlarmAction(topicAction)
       this.workerDownAlarm.addOkAction(topicAction)
+
+      const unpatchedPrefix = 'WorkerUnpatchedBoots-'
+      const unpatchedBoots = new logs.MetricFilter(this, 'WorkerUnpatchedBoots', {
+        logGroup: this.workerLogGroup,
+        filterPattern: logs.FilterPattern.literal(`"${WORKER_UNPATCHED_LOG_PHRASE}"`),
+        metricNamespace: 'CanopyCMS',
+        metricName: `${unpatchedPrefix}${Names.uniqueResourceName(this, { maxLength: 255 - unpatchedPrefix.length })}`,
+        metricValue: '1',
+      })
+      // One line per unpatched boot, so the alarm returns to OK one period
+      // later on its own; an OK notification would only repeat the alarm.
+      this.workerUnpatchedAlarm = new cloudwatch.Alarm(this, 'WorkerUnpatchedAlarm', {
+        metric: unpatchedBoots.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription:
+          `A CMS worker boot could not upgrade its packages and started on the AMI's. It is ` +
+          `working, and the next boot retries the upgrade. The boot's console output ` +
+          `(aws ec2 get-console-output) and the worker log group ` +
+          `${this.workerLogGroup.logGroupName} name the failure.`,
+      })
+      this.workerUnpatchedAlarm.addAlarmAction(topicAction)
     }
 
     const workerBundle = workerBundleSource(
@@ -1736,7 +1773,9 @@ export class CanopyCmsService extends Construct {
       'set -euo pipefail',
       '',
       '# FAIL-FAST. Every step below is required for the worker to exist at',
-      '# all, and until this trap existed a failure in any of them aborted',
+      '# all, except the swap and the package upgrade, which are written as',
+      '# conditions so that they cannot trip it. Until this trap existed a',
+      '# failure in any of them aborted',
       '# user-data BEFORE the systemd unit was written -- leaving an instance',
       "# that runs, passes the ASG's EC2-only health check indefinitely, and",
       '# does nothing. cfn-signal is deliberately not used here (it would',
@@ -1755,18 +1794,53 @@ export class CanopyCmsService extends Construct {
       '',
       '# Bounded retry for the network-dependent steps. Package mirrors and S3',
       '# have transient failures; a single flake should cost seconds, not an',
-      '# instance replacement.',
+      '# instance replacement. The first argument names the step in the message',
+      '# an exhausted step leaves on the console.',
       'retry() {',
-      '  local n=0',
+      '  local step=$1 n=0',
+      '  shift',
       '  until "$@"; do',
       '    n=$((n + 1))',
       '    if [ "$n" -ge 5 ]; then',
-      '      echo "canopy-worker: command failed after $n attempts: $*" >&2',
+      `      echo "canopy-worker boot: '$step' failed after $n attempts" >&2`,
       '      return 1',
       '    fi',
       '    sleep $((n * 5))',
       '  done',
       '}',
+      '',
+      '# Swap, before the first dnf: loading the repository metadata takes more',
+      '# memory than a t4g.nano has free after boot, and the kernel OOM-kills',
+      '# dnf. It stays on afterwards at low swappiness, as headroom for git and',
+      '# the CloudWatch agent rather than working memory. It is on the encrypted',
+      '# root volume, so memory paged out of the worker is encrypted at rest.',
+      '# fallocate is safe here: XFS, the root file system, supports',
+      '# preallocated swap files. A failure only warns, because dnf may still fit',
+      '# and a boot that stopped here would put the group into a replacement',
+      '# loop. Each command carries `|| return 1` because errexit does not apply',
+      '# inside a function called as a condition.',
+      'setup_swap() {',
+      '  swapon --show=NAME --noheadings | grep -qx /swapfile && return 0',
+      '  if [ "$(stat -c %s /swapfile 2>/dev/null)" != 1073741824 ]; then',
+      '    # The file, plus 2 GiB for packages, logs and the GitHub mirror.',
+      `    if [ "$(df --output=avail -m / | tail -n 1 | tr -d ' ')" -lt 3072 ]; then`,
+      '      echo "canopy-worker boot: under 3 GiB free on /, so no swap file" >&2',
+      '      return 1',
+      '    fi',
+      '    rm -f /swapfile || return 1',
+      '    fallocate -l 1G /swapfile || return 1',
+      '  fi',
+      '  chmod 600 /swapfile || return 1',
+      '  mkswap /swapfile || return 1',
+      '  swapon /swapfile || return 1',
+      "  grep -qs '^/swapfile ' /etc/fstab || echo '/swapfile none swap defaults 0 0' >> /etc/fstab || return 1",
+      '  mkdir -p /etc/sysctl.d || return 1',
+      "  echo 'vm.swappiness = 10' > /etc/sysctl.d/90-canopy-worker-swap.conf || return 1",
+      '  sysctl -q -w vm.swappiness=10',
+      '}',
+      'if ! setup_swap; then',
+      `  echo "canopy-worker boot: 'swap' setup failed; continuing without swap" >&2`,
+      'fi',
       '',
       '# Patch first. AL2023 locks dnf to the repository release its AMI was',
       '# built from, so a relaunch from the AMI resolved at the last deploy',
@@ -1775,9 +1849,21 @@ export class CanopyCmsService extends Construct {
       '# from. The kernel is left out: a new one applies only at a reboot,',
       '# which nothing here performs, so it would cost boot time and change',
       '# nothing. Kernel fixes arrive with the AMI a deploy resolves.',
-      "retry dnf upgrade --releasever=latest --exclude='kernel*' -y",
+      '#',
+      "# A failed upgrade does not stop the boot: the worker starts on the AMI's",
+      '# packages and the next boot (the weekly recycle at the latest) tries',
+      '# again. Failing here would put the group into a replacement loop with',
+      '# no worker at all. The installs below then resolve from the AMI release,',
+      '# which carries all of them from 2023.7.20250428 (the first with',
+      '# nodejs22). The failure is written to worker.log below, for the',
+      '# unpatched alarm.',
+      'WORKER_UNPATCHED=0',
+      "if ! retry 'dnf upgrade' dnf upgrade --releasever=latest --exclude='kernel*' -y; then",
+      '  WORKER_UNPATCHED=1',
+      `  echo "canopy-worker boot: ${WORKER_UNPATCHED_LOG_PHRASE}" >&2`,
+      'fi',
       '',
-      'retry dnf install -y git',
+      "retry 'dnf install git' dnf install -y git",
       "# Node comes from AL2023's own repos, NOT a piped third-party installer.",
       '# The previous boot curled the NodeSource RPM setup script straight into',
       '# bash, so every instance replacement -- which the ASG performs on every',
@@ -1795,15 +1881,15 @@ export class CanopyCmsService extends Construct {
       '# below), not the bare `node`: AL2023 installs versioned binaries and',
       '# points `/usr/bin/node` at one of them through `alternatives`, whose',
       '# selection AWS documents as able to change at any time.',
-      'retry dnf install -y nodejs22',
+      "retry 'dnf install nodejs22' dnf install -y nodejs22",
       '',
       '# Mount EFS through the same access point, at the same path, as the',
       '# Lambda (see EFS_MOUNT_PATH). amazon-efs-utils refuses an access-point',
       '# mount without tls (efs_utils_common/mount_options.py).',
-      'retry dnf install -y amazon-efs-utils',
+      "retry 'dnf install amazon-efs-utils' dnf install -y amazon-efs-utils",
       `mkdir -p ${EFS_MOUNT_PATH}`,
       '# Retried: an `iam` mount also fetches instance-role credentials.',
-      `retry mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
+      `retry 'EFS mount' mount -t efs -o ${efsMountOptions} ${this.fileSystem.fileSystemId}:/ ${EFS_MOUNT_PATH}`,
       '# Persist the mount across instance reboots: user-data runs once per',
       '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
       '# empty local dir and the worker would clone a divergent remote.git',
@@ -1813,7 +1899,7 @@ export class CanopyCmsService extends Construct {
       '# The bundle runs only if its sha256 is the one given here (synthesized,',
       '# or the workerCode parameter); a mismatch fails the boot under the trap',
       '# above.',
-      `retry aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
+      `retry 'worker bundle download' aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
       `echo '${workerBundle.sha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
       '# Root-owned, and read-only to the service (ProtectSystem=strict below).',
       `install -D -m 0644 ${WORKER_BUNDLE_DOWNLOAD_PATH} /opt/canopy-worker/index.js`,
@@ -1896,6 +1982,14 @@ export class CanopyCmsService extends Construct {
       'mkdir -p /var/log/canopy-worker',
       'chown ec2-user:ec2-user /var/log/canopy-worker',
       '',
+      '# In the worker log format (canopycms worker/log.ts), so the CloudWatch',
+      '# agent ships it as its own event: the agent reads a file it has no saved',
+      '# position for from the start.',
+      'if [ "$WORKER_UNPATCHED" = 1 ]; then',
+      `  echo "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ERROR canopy-worker boot: 'dnf upgrade' failed; ${WORKER_UNPATCHED_LOG_PHRASE}" >> /var/log/canopy-worker/worker.log`,
+      '  chown ec2-user:ec2-user /var/log/canopy-worker/worker.log',
+      'fi',
+      '',
       '# Start worker',
       'systemctl daemon-reload',
       'systemctl enable canopy-worker',
@@ -1917,7 +2011,7 @@ export class CanopyCmsService extends Construct {
       '# best-effort behaviour this section has always documented.',
       'trap - ERR',
       'set +e',
-      'retry dnf install -y amazon-cloudwatch-agent logrotate',
+      "retry 'dnf install amazon-cloudwatch-agent logrotate' dnf install -y amazon-cloudwatch-agent logrotate",
       '',
       '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
       '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
