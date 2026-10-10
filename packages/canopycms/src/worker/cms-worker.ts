@@ -195,7 +195,8 @@ class RemoteGitKeptError extends Error {}
  * holds GitHub's own branches, mapped to the object it names. A ref missing from this list is one
  * a replacement would discard unchecked, so it throws when git reports anything on stderr
  * (`for-each-ref` skips a ref it cannot read with only a warning and exit 0) and when git is killed
- * by a signal, which simple-git otherwise resolves as empty output.
+ * by a signal, which simple-git otherwise resolves as empty output. A dangling symbolic ref is
+ * skipped without a warning, and names nothing to lose.
  */
 async function listRemoteGitRefs(gitDir: string): Promise<Map<string, string>> {
   let stderr = ''
@@ -975,7 +976,7 @@ export class CmsWorker {
    * reads too (GitManager.detectBaseBranch); before remote.git exists, it is GitHub's default
    * branch, which the clone then records as that HEAD. So it is too when remote.git has no branch
    * outside the settings namespace: no base branch is there for HEAD to name, and ensureRemoteGit
-   * replaces it from GitHub. Never assumes 'main'.
+   * replaces it from GitHub unless something in it is at stake. Never assumes 'main'.
    */
   private async resolveBaseBranch(): Promise<void> {
     if (this.resolvedBaseBranch) return
@@ -1212,18 +1213,19 @@ export class CmsWorker {
 
   /**
    * Replace an existing remote.git that has no base branch with a fresh seed from GitHub, but only
-   * when every ref in it names a commit a GitHub branch contains, so replacing it loses nothing.
-   * Otherwise refuse, naming the refs at stake: unpushed work such as a settings branch.
+   * when every ref in it names a commit a GitHub branch contains, so replacing it loses no commit;
+   * a branch name GitHub lacks, such as a merged branch deleted there, goes. Otherwise refuse,
+   * naming the refs at stake: unpushed work such as a settings branch.
    *
    * The refs are compared in the same mirror session that fetches GitHub and seeds the
    * replacement, and listed again just before the swap, since the Lambda can push into remote.git
-   * while the seed runs. The swap is two renames, so a reader sees the old repo, the new one, or
-   * for an instant neither, never a half-deleted one.
+   * while the seed runs. The swap is two renames, so the name remote.git resolves to the old repo,
+   * the new one, or for an instant nothing, never a half-built or half-deleted one.
    */
   private async replacePoisonedRemoteGit(): Promise<void> {
     const poisoned =
-      `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned ` +
-      `while the GitHub repository was empty)`
+      `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (cloned while the ` +
+      `GitHub repository was empty, or the base branch is set to one it never had)`
     const notReplaced = (reason: string) =>
       new Error(`${poisoned}, and it was not replaced: ${reason}`)
 
@@ -1301,8 +1303,9 @@ export class CmsWorker {
       await discardStaging()
       throw err
     }
-    // A push that resolved remote.git before the rename can still land in the old repo; it is
-    // kept when one did.
+    // A push that resolved remote.git before the rename can still land in the old repo. One that
+    // lands before this listing keeps it; a later one is lost from remote.git, though the clone
+    // that pushed still has its commit.
     const after = await listRemoteGitRefs(replaced).catch(() => null)
     if (after !== null && sameRefs(refs, after)) {
       // remote.git is already replaced, so a push still writing here costs only this directory.

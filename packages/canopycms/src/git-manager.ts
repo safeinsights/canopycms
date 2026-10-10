@@ -226,8 +226,9 @@ export async function repackBareRemoteIfNeeded(
 /**
  * simple-git reads a git that exited by signal (exit code null, often with no stderr) as success,
  * so a clone or checkout the OOM killer stopped would pass for complete. Given as `errors` to a
- * GitManager's own instance and to `cloneRepo`'s; its static helpers and the bare-remote functions
- * do not pass it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
+ * GitManager's own instance, to `cloneRepo`'s, and to the worker's ref probes of an existing
+ * remote.git (worker/cms-worker.ts); its static helpers and the bare-remote functions do not pass
+ * it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
  */
 export function failOnSignalExit(
   error: Buffer | Error | undefined,

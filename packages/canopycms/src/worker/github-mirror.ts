@@ -232,8 +232,9 @@ export class MirrorSession {
   }
 
   /**
-   * Whether a branch GitHub had at the last fetch contains the commit `id`. False for an object
-   * the mirror does not have, or one git cannot read as a commit.
+   * Whether a branch GitHub had at the last fetch contains the commit `id`, or the commit an
+   * annotated tag `id` points at. False for an object the mirror does not have, or one git cannot
+   * read as a commit.
    */
   async isOnGitHub(id: string): Promise<boolean> {
     if (!isObjectId(id)) return false

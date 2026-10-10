@@ -447,13 +447,13 @@ under the unit's `StateDirectory=`, and the worker does not start without it.
 ### The worker replaces a `remote.git` cloned from an empty repository — **behaviour change**
 
 **What changed.** A `remote.git` with no base branch, as cloning an empty repository leaves it, is
-replaced from GitHub when the worker starts, unless it holds a ref GitHub lacks (System health
-names it), a ref git cannot read, or a config key CanopyCMS never writes. With `baseBranch` unset,
-one holding only settings branches takes GitHub's default branch.
+replaced from GitHub at worker start, unless it holds a commit no GitHub branch has (System
+health names the ref), a ref git cannot read, or a config key CanopyCMS never writes. With
+`baseBranch` unset, one holding only settings branches takes GitHub's default branch.
 
 **To adopt.** Nothing.
 
-**Now deletable.** Runbook steps deleting `remote.git` after a first deploy to an empty repository.
+**Now deletable.** Runbook steps deleting `remote.git` after deploying to an empty repository.
 
 ### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
 

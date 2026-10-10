@@ -13,7 +13,8 @@ worker logs one `workerLogError` line. Nothing records it in `worker-status.json
 deletes it later, so in prod, with no EFS shell, the ref inside is never recovered and the
 directory sits there for ever.
 
-The window is narrow, and the commit normally survives in the Lambda's own clone, which pushes it
-again. Options: record kept directories in the worker status report so System health shows them,
+The window is narrow, and the commit survives in the clone that pushed it: the worker's queued
+push task for that branch fails first, against a remote.git without the commit, and the clone's
+next publish pushes it again. Options: record kept directories in the worker status report so System health shows them,
 or have a later boot compare each one against the GitHub mirror and fetch any ref GitHub lacks
 into `remote.git` before deleting it.
