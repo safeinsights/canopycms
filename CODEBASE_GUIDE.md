@@ -499,6 +499,7 @@ Top-level components and helpers:
 - `branch-status.ts` — shared status label/colour map
 - `copy.ts` — fixed action verbs
 - `utils/env.ts` — `getNotificationDuration`, longer under test
+- `utils/confirm-modal.ts` — `openConfirm`, confirm dialogs at `sm`
 - `utils/editor-errors.ts` — `reportEditorError` (one logging point), `formatErrorDetails`
 - `test-setup.ts` / `setup-test-dom.ts` — vitest DOM setup for editor suites
 
@@ -526,7 +527,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
-- `useEditorLayout.ts` — persisted layout preferences
+- `useEditorLayout.ts` — persisted layout prefs
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
@@ -548,7 +549,7 @@ Field components, in `editor/fields/`:
 - `BlockField.tsx` — blocks
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
-- `MdxImageDialog.tsx` — markdown image dialog
+- `MdxImageDialog.tsx` — image dialog
 - `FieldLabel.tsx` — label row with comment/action slots
 - `FieldDescription.tsx` — `description` without Mantine's native prop
 - `entry-link/EntryLinkContext.tsx` — context supplying `EntryLinkOption[]` to toolbar components
