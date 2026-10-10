@@ -1595,8 +1595,8 @@ export class CanopyCmsService extends Construct {
       // schema gate holds the base branch. 30 minutes leaves room for a normal
       // replacement: the terminating hook's drain
       // (`workerTerminationHeartbeat`, 5 minutes by default), a boot of a few
-      // minutes plus its package upgrade, and the first sync. So a deploy or a spot replacement does not page,
-      // while a crash loop, a boot loop, a worker that never started and a
+      // minutes plus its package upgrade, and the first sync. So a deploy or a
+      // spot replacement does not page, while a crash loop, a boot loop, a worker that never started and a
       // worker whose loops have stopped all go silent and do. Missing data
       // counts as a breach because a boot loop dies before the CloudWatch agent
       // is installed and so writes no events at all. The construct does not
