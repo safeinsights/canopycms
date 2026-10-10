@@ -164,6 +164,11 @@ describe("workerCode: { source: 'parameter' }", () => {
         ],
       },
     })
+    // An overwrite of `<sha>.js` leaves a version that is the same bytes or
+    // wrong ones; nothing a launch template names is ever noncurrent.
+    expect(bucket.props.LifecycleConfiguration).toEqual({
+      Rules: [{ NoncurrentVersionExpiration: { NoncurrentDays: 30 }, Status: 'Enabled' }],
+    })
     const statements = (
       only(parameterMode.findResources('AWS::S3::BucketPolicy')).props.PolicyDocument as {
         Statement: Array<Record<string, unknown>>

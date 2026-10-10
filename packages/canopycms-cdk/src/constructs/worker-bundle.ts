@@ -7,6 +7,7 @@ import {
   CfnCondition,
   CfnOutput,
   CfnParameter,
+  Duration,
   Fn,
   RemovalPolicy,
   Token,
@@ -45,7 +46,9 @@ function sha256OfFile(file: string): string {
  * - `'parameter'`: a bucket of bundles keyed by sha256, chosen by a template
  *   parameter, so a parameter-only change set (`--use-previous-template`)
  *   can roll the worker. While the parameter is empty the worker runs the
- *   template's own asset, as in `'asset'` mode.
+ *   template's own asset, as in `'asset'` mode. Once set, the parameter
+ *   outlives template deploys: `cdk deploy` keeps a parameter's previous
+ *   value.
  */
 export type WorkerCode = { source: 'asset' } | { source: 'parameter' }
 
@@ -88,6 +91,9 @@ export function workerBundleSource(
     encryption: s3.BucketEncryption.S3_MANAGED,
     enforceSSL: true,
     removalPolicy: RemovalPolicy.RETAIN,
+    // Re-uploading a bundle under its own hash leaves a noncurrent version of
+    // the same bytes; a launch template only ever names current ones.
+    lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(30) }],
   })
   // A bundle a running or rolled-back launch template names must stay
   // downloadable. Not PutBucketPolicy too: that would lock CloudFormation out
