@@ -57,6 +57,7 @@ import {
   resolveCollectionPath,
 } from './content-id-index'
 import { registerContentIndexForInvalidation } from './content-index-registry'
+import { isPlainRecord } from './validation/field-traversal'
 import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
@@ -1879,20 +1880,17 @@ export class ContentStore {
         if (objectField.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((item, index) =>
-              typeof item === 'object' && item !== null
-                ? this.resolveReferencesInData(
-                    item as Record<string, unknown>,
-                    objectField.fields,
-                    cache,
-                    access,
-                    { entry: trail.entry, prefix: `${fieldPath}[${index}]` },
-                  )
+              isPlainRecord(item)
+                ? this.resolveReferencesInData(item, objectField.fields, cache, access, {
+                    entry: trail.entry,
+                    prefix: `${fieldPath}[${index}]`,
+                  })
                 : item,
             ),
           )
-        } else if (typeof value === 'object') {
+        } else if (isPlainRecord(value)) {
           resolved[field.name] = await this.resolveReferencesInData(
-            value as Record<string, unknown>,
+            value,
             objectField.fields,
             cache,
             access,
@@ -1903,15 +1901,16 @@ export class ContentStore {
         const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
           (value as unknown[]).map(async (block, index) => {
-            const b = block as Record<string, unknown>
-            if (!b || typeof b.value !== 'object') return block
-            const template = blockField.templates.find((t) => t.name === b.template)
+            // An item or value that is not a record (null, an array, a scalar) passes through
+            // untouched: it has no named fields, and reshaping it here would be saved to the file.
+            if (!isPlainRecord(block) || !isPlainRecord(block.value)) return block
+            const template = blockField.templates.find((t) => t.name === block.template)
             if (!template) return block
 
             return {
-              ...b,
+              ...block,
               value: await this.resolveReferencesInData(
-                b.value as Record<string, unknown>,
+                block.value,
                 template.fields,
                 cache,
                 access,

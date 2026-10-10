@@ -31,7 +31,7 @@ const requestChangesHandler = async (
     branch: { name: branchContext.branch.name, status: 'editing' },
   })
 
-  // TODO: Optionally record comment in .canopycms/comments.json when comment system is implemented
+  // TODO: Optionally record comment in .canopy-meta/comments.json when comment system is implemented
 
   return {
     ok: true,

@@ -23,6 +23,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 
 import type { BlockConfig, FieldConfig } from '../../config'
+import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
 
@@ -261,7 +262,7 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                                 block.value?.[f.name],
                                 (next) =>
                                   updateBlockValue(idx, {
-                                    ...block.value,
+                                    ...(isPlainRecord(block.value) ? block.value : {}),
                                     [f.name]: next,
                                   }),
                                 [...currentPath, f.name],
