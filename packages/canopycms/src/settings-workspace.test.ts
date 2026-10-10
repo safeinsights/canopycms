@@ -50,7 +50,7 @@ async function seedBareRemote(tmpRoot: string): Promise<string> {
   await fs.writeFile(path.join(seedPath, 'readme.md'), '# seed', 'utf8')
   await seedGit.add(['.'])
   await seedGit.commit('initial commit')
-  await simpleGit().raw(['init', '--bare', barePath])
+  await simpleGit().raw(['init', '--bare', '--initial-branch=main', barePath])
   await seedGit.addRemote('origin', barePath)
   await seedGit.push('origin', 'main')
   return barePath
