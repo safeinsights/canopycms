@@ -348,7 +348,7 @@ async function runRebaseRounds(
             } else if (kind === 'DU') {
               await branchGit.raw(['add', '--sparse', '--', file])
             } else {
-              await branchGit.raw(['checkout', '--theirs', file])
+              await branchGit.raw(['checkout', '--theirs', '--', file])
               await branchGit.raw(['add', '--sparse', '--', file])
             }
           } catch (resolveErr: unknown) {

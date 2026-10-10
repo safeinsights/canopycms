@@ -8,6 +8,7 @@ import {
   repackBareRemoteIfNeeded,
   type BareRemoteRepackResult,
 } from '../git-manager'
+import { getErrorMessage, redactCredentials } from '../utils/error'
 import { workerLogWarn } from './log'
 import { mirrorGitOptions, pinnedReceivePack, pinnedUploadPack } from './shared-repo-git'
 
@@ -23,7 +24,11 @@ import { mirrorGitOptions, pinnedReceivePack, pinnedUploadPack } from './shared-
  * commit being pushed for the length of that push. A cache: deleting it costs one full fetch.
  *
  * One process owns it, and {@link GitHubMirror.exclusive} runs one session at a time, so a fetch's
- * `--prune` and a repack never meet a push half way.
+ * `--prune` never meets a push half way. A repack runs beside them: it drops nothing reachable and
+ * deletes only packs it listed (git-manager.ts `repackBareRemoteIfNeeded`).
+ *
+ * Every transfer runs with `--progress`: simple-git's timeout is inactivity, and a quiet fetch of a
+ * whole repository would otherwise be killed for its size rather than for a stall.
  */
 export class GitHubMirror {
   readonly gitDir: string
@@ -66,33 +71,46 @@ export class GitHubMirror {
     return this.exclusive(async () => undefined)
   }
 
-  /** Create the mirror, or recreate one that is not a readable bare repository. */
+  /**
+   * Create the mirror, or recreate one that is not a readable bare repository, and drop staging
+   * refs a killed push left: one at `<branch>` blocks a later `<branch>/<x>`.
+   */
   private async create(): Promise<void> {
-    if (await isBareRepository(this.gitDir)) return
-    await fs.rm(this.gitDir, { recursive: true, force: true })
-    await fs.mkdir(this.gitDir, { recursive: true, mode: 0o700 })
-    await simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() })
-      .env(mirrorEnv(this.gitDir))
-      .raw(['init', '--quiet', '--bare'])
+    await fs.mkdir(path.dirname(this.gitDir), { recursive: true, mode: 0o700 })
+    await assertOwnDirectory(path.dirname(this.gitDir))
+    if (!(await isBareRepository(this.gitDir))) {
+      await fs.rm(this.gitDir, { recursive: true, force: true })
+      await fs.mkdir(this.gitDir, { mode: 0o700 })
+      await simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() })
+        .env(mirrorEnv(this.gitDir))
+        .raw(['init', '--quiet', '--bare'])
+    }
+    await assertOwnDirectory(this.gitDir)
+    const git = simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() }).env(
+      mirrorEnv(this.gitDir),
+    )
+    const staged = (await git.raw(['for-each-ref', '--format=%(refname)', STAGING_PREFIX]))
+      .split('\n')
+      .filter(Boolean)
+    for (const ref of staged) await git.raw(['update-ref', '-d', '--end-of-options', ref])
   }
 
   /** Repack when it needs it, and say once if it has grown past {@link MIRROR_SIZE_WARN_KIB}. */
-  maintain(): Promise<BareRemoteRepackResult> {
-    return this.exclusive(async () => {
-      const result = await repackBareRemoteIfNeeded(this.gitDir, mirrorGitOptions())
-      if (!this.warnedSize) {
-        const kib = await objectStoreKiB(this.gitDir)
-        if (kib > MIRROR_SIZE_WARN_KIB) {
-          this.warnedSize = true
-          workerLogWarn(
-            `The worker's GitHub mirror (${this.gitDir}) holds ${Math.round(kib / 1024)} MiB of ` +
-              `objects, on the instance's root volume. See "The worker instance" in ` +
-              `docs/deploying-to-aws.md for the headroom it assumes.`,
-          )
-        }
+  async maintain(): Promise<BareRemoteRepackResult> {
+    await this.ensure()
+    const result = await repackBareRemoteIfNeeded(this.gitDir, mirrorGitOptions())
+    if (!this.warnedSize) {
+      const kib = await objectStoreKiB(this.gitDir)
+      if (kib > MIRROR_SIZE_WARN_KIB) {
+        this.warnedSize = true
+        workerLogWarn(
+          `The worker's GitHub mirror (${this.gitDir}) holds ${Math.round(kib / 1024)} MiB of ` +
+            `objects, on the instance's root volume. See "The worker instance" in ` +
+            `docs/deploying-to-aws.md for the headroom it assumes.`,
+        )
       }
-      return result
-    })
+    }
+    return result
   }
 }
 
@@ -101,6 +119,23 @@ export class GitHubMirror {
  * also holds the OS, Node and the log.
  */
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
+
+const STAGING_PREFIX = 'refs/canopy/outgoing/'
+
+/**
+ * Refuse a directory the worker does not own outright: another local user could have created a
+ * predictable path (the `os.tmpdir()` default) first, with a mirror config of their own.
+ */
+async function assertOwnDirectory(dir: string): Promise<void> {
+  const stat = await fs.lstat(dir)
+  const uid = process.getuid?.()
+  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0) {
+    throw new Error(
+      `${dir} must be a directory this worker owns and no one else can write, for the GitHub ` +
+        `credential is used in the repository there`,
+    )
+  }
+}
 
 /** What one {@link GitHubMirror.exclusive} call may do. */
 export class MirrorSession {
@@ -119,15 +154,58 @@ export class MirrorSession {
     }).env(mirrorEnv(this.gitDir))
   }
 
-  /** Bring `refs/heads/*` to exactly what GitHub holds. `githubUrl` carries the credential. */
+  /**
+   * Bring `refs/heads/*` to exactly what GitHub holds. `githubUrl` carries the credential. An empty
+   * mirror (every new instance) first takes what `remote.git` already has, so GitHub sends only the
+   * difference; the GitHub fetch then overwrites and prunes every ref that seeding set.
+   */
   async fetchFromGitHub(githubUrl: string, signal?: AbortSignal): Promise<void> {
-    await this.git(signal).raw([
+    const git = this.git(signal)
+    if ((await git.raw(['for-each-ref', '--count=1', 'refs/heads/'])).trim() === '') {
+      await this.seedFromRemoteGit(signal)
+    }
+    await git.raw([
       'fetch',
       '--prune',
+      '--progress',
       '--no-write-fetch-head',
       '--end-of-options',
       githubUrl,
       '+refs/heads/*:refs/heads/*',
+    ])
+  }
+
+  /**
+   * Best-effort: a `remote.git` that does not exist yet (the first boot) or that fails the object
+   * check costs only a full fetch from GitHub.
+   */
+  private async seedFromRemoteGit(signal?: AbortSignal): Promise<void> {
+    if (!(await fs.stat(this.remoteGitPath).catch(() => null))) return
+    try {
+      await this.fetchFromRemoteGit([`+${GITHUB_TRACKING_REF_PREFIX}*:refs/heads/*`], signal)
+    } catch (err) {
+      workerLogWarn(
+        `Could not seed the GitHub mirror from remote.git, fetching all of it from GitHub: ` +
+          redactCredentials(getErrorMessage(err)),
+      )
+    }
+  }
+
+  /**
+   * Fetch from `remote.git` through {@link pinnedUploadPack}, checking every object: these are the
+   * objects the Lambda can write.
+   */
+  private async fetchFromRemoteGit(refspecs: string[], signal?: AbortSignal): Promise<void> {
+    await this.git(signal).raw([
+      '-c',
+      'fetch.fsckObjects=true',
+      'fetch',
+      '--progress',
+      '--no-write-fetch-head',
+      `--upload-pack=${pinnedUploadPack()}`,
+      '--end-of-options',
+      this.remoteGitPath,
+      ...refspecs,
     ])
   }
 
@@ -169,6 +247,7 @@ export class MirrorSession {
   ): Promise<void> {
     await this.git(signal).raw([
       'push',
+      '--progress',
       ...(prune ? ['--prune'] : []),
       `--receive-pack=${pinnedReceivePack()}`,
       '--end-of-options',
@@ -190,20 +269,16 @@ export class MirrorSession {
     sha: string,
     options: { lease?: string; signal?: AbortSignal } = {},
   ): Promise<void> {
-    if (!isObjectId(sha)) throw new Error(`Not a commit ID: ${JSON.stringify(sha)}`)
-    const staging = `refs/canopy/outgoing/${branch}`
+    for (const id of [sha, ...(options.lease === undefined ? [] : [options.lease])]) {
+      if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
+    }
+    const staging = `${STAGING_PREFIX}${branch}`
     const git = this.git(options.signal)
     try {
-      await git.raw([
-        'fetch',
-        '--no-write-fetch-head',
-        `--upload-pack=${pinnedUploadPack()}`,
-        '--end-of-options',
-        this.remoteGitPath,
-        `+${sha}:${staging}`,
-      ])
+      await this.fetchFromRemoteGit([`+${sha}:${staging}`], options.signal)
       await git.raw([
         'push',
+        '--progress',
         ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
         '--end-of-options',
         githubUrl,

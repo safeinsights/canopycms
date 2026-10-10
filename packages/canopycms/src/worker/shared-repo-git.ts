@@ -84,6 +84,16 @@ const SHARED_REPO_PINS: readonly string[] = [
   'commit.gpgSign=false',
   'tag.gpgSign=false',
   'push.gpgSign=false',
+  // A merge that verifies signatures runs the signing program on whatever signature a commit in
+  // remote.git carries; the programs are pinned too, so nothing else that verifies runs one.
+  'merge.verifySignatures=false',
+  'pull.verifySignatures=false',
+  'log.showSignature=false',
+  'gpg.program=false',
+  'gpg.ssh.program=false',
+  'gpg.x509.program=false',
+  // Negotiating a push runs the destination's upload-pack, unpinned.
+  'push.negotiate=false',
   'submodule.recurse=false',
   'fetch.recurseSubmodules=false',
   'push.recurseSubmodules=no',
@@ -97,13 +107,12 @@ const BARE_PINS: readonly string[] = ['core.bare=true']
 /**
  * What the worker's private GitHub mirror runs with (worker/github-mirror.ts). Nothing the Lambda
  * writes reaches that repository's config, so these are depth, not the boundary: the same pins,
- * HTTPS allowed for GitHub, no credential helper ever handed the token, and every object arriving
- * from GitHub or from `remote.git` checked.
+ * HTTPS allowed for GitHub, and no credential helper ever handed the token. Objects from `remote.git`
+ * are checked where they are fetched (worker/github-mirror.ts).
  */
 const MIRROR_PINS: readonly string[] = [
   ...SHARED_REPO_PINS.filter((pin) => pin !== 'protocol.https.allow=never'),
   'protocol.https.allow=always',
-  'transfer.fsckObjects=true',
   ...BARE_PINS,
 ]
 
@@ -115,6 +124,7 @@ const PIN_OPT_INS = {
   allowUnsafeCredentialHelper: true,
   allowUnsafeAskPass: true,
   allowUnsafeProtocolOverride: true,
+  allowUnsafeGpgProgram: true,
   allowUnsafePack: true,
 } as const
 
@@ -159,6 +169,9 @@ export function sharedRepoGit(
     gitChildEnv({
       GIT_DIR: gitDirOf(absolute, kind),
       ...(kind === 'worktree' ? { GIT_WORK_TREE: absolute } : {}),
+      // A missing object would otherwise be fetched from a promisor remote the config names, by
+      // that remote's own upload-pack command (git 2.45+; older git ignores it).
+      GIT_NO_LAZY_FETCH: '1',
     }),
   )
 }
@@ -307,8 +320,18 @@ export async function assertSharedRepoConfig(
   const gitDir = gitDirOf(absolute, kind)
   let listing: string
   try {
-    // `git config --list` runs outside a repository too, reading no repository config at all.
-    if (!(await fs.stat(gitDir)).isDirectory()) throw new Error(`${gitDir} is not a directory`)
+    // `git config --list` runs outside a repository too, reading no repository config at all. A
+    // symlink, or a `commondir` file, would aim the operation at another repository, such as the
+    // worker's own mirror.
+    for (const entry of kind === 'bare' ? [gitDir] : [absolute, gitDir]) {
+      const stat = await fs.lstat(entry)
+      if (!stat.isDirectory()) throw new Error(`${entry} is not a directory`)
+    }
+    if (await pathExists(path.join(gitDir, 'commondir'))) {
+      throw new Error(
+        `${path.join(gitDir, 'commondir')} exists, and git would use another repository`,
+      )
+    }
     // receive-pack, given a bare repository's path, uses `<path>/.git` when there is one.
     if (kind === 'bare' && (await pathExists(path.join(gitDir, '.git')))) {
       throw new Error(`${path.join(gitDir, '.git')} exists, and git would use it instead`)

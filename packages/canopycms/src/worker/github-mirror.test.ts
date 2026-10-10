@@ -201,6 +201,123 @@ describe('GitHubMirror', () => {
     expect(await tip(githubPath, 'refs/heads/malformed')).toBeNull()
   })
 
+  it('seeds an empty mirror from remote.git, then makes every ref exactly what GitHub holds', async () => {
+    // A commit no GitHub history contains, so only seeding can bring it into the mirror.
+    const tree = await git('--git-dir', remoteGitPath, 'rev-parse', 'main^{tree}')
+    const onlyInRemoteGit = await git(
+      '--git-dir',
+      remoteGitPath,
+      '-c',
+      'user.name=x',
+      '-c',
+      'user.email=x@y',
+      'commit-tree',
+      tree,
+      '-m',
+      'only here',
+    )
+    await git(
+      '--git-dir',
+      remoteGitPath,
+      'update-ref',
+      'refs/remotes/github/stale',
+      onlyInRemoteGit,
+    )
+    await git(
+      '--git-dir',
+      remoteGitPath,
+      'update-ref',
+      'refs/remotes/github/main',
+      'refs/heads/main',
+    )
+    const upstream = await commitAndPush(githubPath, 'refs/heads/main', 'upstream.txt')
+
+    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+
+    // Seeded: the object only remote.git had is in the mirror, and its ref is pruned.
+    expect(await git('--git-dir', mirror.gitDir, 'cat-file', '-t', onlyInRemoteGit)).toBe('commit')
+    expect(await refs(mirror.gitDir)).toEqual(['refs/heads/main'])
+    expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(upstream)
+  })
+
+  it('falls back to GitHub alone when remote.git cannot seed it', async () => {
+    await fs.rm(path.join(remoteGitPath, 'objects'), { recursive: true, force: true })
+    await git('init', '-q', '--bare', remoteGitPath)
+    await fs.writeFile(path.join(remoteGitPath, 'packed-refs'), 'not a ref line\n')
+
+    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+
+    expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
+      await tip(githubPath, 'refs/heads/main'),
+    )
+  })
+
+  it('does not object-check what it fetches from GitHub, only what comes from remote.git', async () => {
+    const tree = await git('--git-dir', githubPath, 'rev-parse', 'main^{tree}')
+    const file = path.join(root, 'old-commit')
+    await fs.writeFile(
+      file,
+      `tree ${tree}\nauthor No Email 1700000000 +0000\ncommitter x <x@y> 1700000000 +0000\n\nold\n`,
+    )
+    const sha = await git(
+      '--git-dir',
+      githubPath,
+      'hash-object',
+      '--literally',
+      '-t',
+      'commit',
+      '-w',
+      file,
+    )
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/imported-history', sha)
+    await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/remotes/github/main')
+
+    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+
+    expect(await tip(mirror.gitDir, 'refs/heads/imported-history')).toBe(sha)
+  })
+
+  it('drops a staging ref a killed push left, so a branch under that name can be pushed', async () => {
+    await mirror.ensure()
+    const leftover = await commitAndPush(remoteGitPath, 'refs/heads/a', 'a.txt')
+    await git(
+      '--git-dir',
+      mirror.gitDir,
+      'fetch',
+      '-q',
+      remoteGitPath,
+      `${leftover}:refs/canopy/outgoing/a`,
+    )
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt').catch(
+      async () => {
+        await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/heads/a')
+        return commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt')
+      },
+    )
+
+    const restarted = new GitHubMirror(path.join(root, 'state'), remoteGitPath, 30_000)
+    await restarted.exclusive((m) => m.pushToGitHub(githubPath, 'a/b', published))
+
+    expect(await tip(githubPath, 'refs/heads/a/b')).toBe(published)
+  })
+
+  it('refuses a lease that is not an object ID', async () => {
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
+    await expect(
+      mirror.exclusive((m) =>
+        m.pushToGitHub(githubPath, 'feature', published, { lease: 'refs/heads/main' }),
+      ),
+    ).rejects.toThrow(/Not a commit ID: "refs\/heads\/main"/)
+  })
+
+  it('refuses a state directory others can write', async () => {
+    const state = path.join(root, 'shared-state')
+    await fs.mkdir(state)
+    await fs.chmod(state, 0o777)
+    const exposed = new GitHubMirror(state, remoteGitPath, 30_000)
+    await expect(exposed.ensure()).rejects.toThrow(/must be a directory this worker owns/)
+  })
+
   it('refuses a commit argument that is not an object ID', async () => {
     await expect(
       mirror.exclusive((m) => m.pushToGitHub(githubPath, 'feature', 'main:refs/heads/x')),

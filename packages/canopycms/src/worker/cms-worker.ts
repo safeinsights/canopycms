@@ -387,7 +387,9 @@ export class CmsWorker {
 
   constructor(private config: CmsWorkerConfig) {
     this.taskDir = path.join(config.workspacePath, '.tasks')
-    this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
+    // Absolute: git honours a `remote.<name>.url` in a clone's config for a relative remote path,
+    // never for one that starts with '/'.
+    this.remoteGitPath = path.join(path.resolve(config.workspacePath), 'remote.git')
     this.stateDirectory = path.resolve(
       config.stateDirectory ?? defaultStateDirectory(config.workspacePath),
     )

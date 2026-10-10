@@ -257,6 +257,26 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
   })
 })
 
+describe('assertSharedRepoConfig: a repository that is really somewhere else', () => {
+  it('refuses a clone whose .git, or a bare repository that, is a symlink', async () => {
+    const { remote, clone } = await sharedPair()
+    const elsewhere = path.join(root, 'elsewhere.git')
+    await fs.rename(path.join(clone, '.git'), elsewhere)
+    await fs.symlink(elsewhere, path.join(clone, '.git'))
+    await expect(assertSharedRepoConfig(clone, 'worktree')).rejects.toThrow(/is not a directory/)
+
+    const linked = path.join(root, 'linked-remote.git')
+    await fs.symlink(remote, linked)
+    await expect(assertSharedRepoConfig(linked, 'bare')).rejects.toThrow(/is not a directory/)
+  })
+
+  it('refuses a .git that names a common directory elsewhere', async () => {
+    const { clone } = await sharedPair()
+    await fs.writeFile(path.join(clone, '.git', 'commondir'), `${root}/remote.git\n`)
+    await expect(assertSharedRepoConfig(clone, 'worktree')).rejects.toThrow(/commondir exists/)
+  })
+})
+
 describe('sharedRepoGit', () => {
   it('never runs in a repository above a clone whose .git has gone', async () => {
     const outer = path.join(root, 'outer')
@@ -400,6 +420,50 @@ describe('the pins, with the check skipped (a key planted after it ran)', () => 
     await fetchFromRemoteGit(cloneGit, remote, 'main')
 
     expect((await cloneGit.revparse(['FETCH_HEAD'])).trim()).toBe(realTip)
+  })
+
+  it('stop a merge from running a signing program on a signed commit in remote.git', async () => {
+    const { remote, clone, cloneGit: plain } = await sharedPair()
+    await plain.raw(['checkout', '-q', 'main'])
+    // A commit carrying a signature, written straight into remote.git as the Lambda could.
+    const parent = (
+      await execFileAsync('git', ['--git-dir', remote, 'rev-parse', 'main'])
+    ).stdout.trim()
+    const tree = (
+      await execFileAsync('git', ['--git-dir', remote, 'rev-parse', 'main^{tree}'])
+    ).stdout.trim()
+    const commitFile = path.join(root, 'signed-commit')
+    await fs.writeFile(
+      commitFile,
+      `tree ${tree}\nparent ${parent}\nauthor A <a@b.c> 1700000000 +0000\n` +
+        `committer A <a@b.c> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n` +
+        ` AAAA\n -----END PGP SIGNATURE-----\n\nsigned\n`,
+    )
+    const signed = (
+      await execFileAsync('git', [
+        '--git-dir',
+        remote,
+        'hash-object',
+        '-t',
+        'commit',
+        '-w',
+        commitFile,
+      ])
+    ).stdout.trim()
+    await execFileAsync('git', ['--git-dir', remote, 'update-ref', 'refs/heads/main', signed])
+    const program = path.join(root, 'gpg.sh')
+    await fs.writeFile(program, `#!/bin/sh\n${record('gpg')}\nexit 1\n`)
+    await fs.chmod(program, 0o755)
+    const config = path.join(clone, '.git', 'config')
+    await setConfig(config, 'merge.verifySignatures', 'true')
+    await setConfig(config, 'gpg.program', program)
+
+    const cloneGit = sharedRepoGit(clone, 'worktree')
+    await fetchFromRemoteGit(cloneGit, remote, 'main')
+    await cloneGit.raw(['merge', '--ff-only', 'FETCH_HEAD'])
+
+    expect((await cloneGit.revparse(['HEAD'])).trim()).toBe(signed)
+    expect(await sentinelLines()).toEqual([])
   })
 
   it('do NOT stop filter or merge drivers: the allowlist check is what refuses those', async () => {
