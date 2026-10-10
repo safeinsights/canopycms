@@ -2636,7 +2636,6 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
     expect(all).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
-    expect(all).toContain('LogsDirectory=canopy-worker')
     expect(all).not.toContain('StandardOutput=journal')
     expect(all).toContain('/etc/logrotate.d/canopy-worker')
   })
@@ -2666,7 +2665,22 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     }
   })
 
-  it('pre-creates /var/log/canopy-worker BEFORE starting the worker (systemd#27591 crash-loop guard)', () => {
+  it('keeps the worker log root-owned: no LogsDirectory=, no chown of it to the worker user', () => {
+    // systemd opens append: targets as root, following symlinks, before it
+    // drops to User=; a worker owning the directory could swap worker.log for
+    // a symlink and have its output appended to any file on the host.
+    const all = workerUserDataBlobs(synth())
+    // As a directive at the start of a unit line (the blob is JSON, so `\n` is
+    // literal); the unit's comment names it.
+    expect(all).not.toMatch(/\\nLogsDirectory=/)
+    expect(all).not.toMatch(/chown [^ ]*ec2-user[^ ]* \/var\/log\/canopy-worker/)
+    expect(all).toContain('install -d -o root -g root -m 0755 /var/log/canopy-worker')
+    expect(all).toContain(
+      'install -o root -g root -m 0644 /dev/null /var/log/canopy-worker/worker.log',
+    )
+  })
+
+  it('pre-creates /var/log/canopy-worker and worker.log BEFORE starting the worker (crash-loop guard)', () => {
     const template = synth()
     const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
     const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
@@ -2676,16 +2690,17 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     ]
     expect(blobs.length).toBeGreaterThan(0)
     for (const blob of blobs) {
-      // systemd opens StandardOutput=append: targets before it creates
-      // LogsDirectory= dirs (systemd#27591): if this mkdir ever moves after
-      // the first `systemctl start canopy-worker`, every fresh instance
-      // fails exec with 209/STDOUT and Restart=always crash-loops forever —
-      // the worker would be silently down while the ASG sees a healthy box.
-      const mkdirIdx = blob.indexOf('mkdir -p /var/log/canopy-worker')
+      // systemd opens StandardOutput=append: targets before the unit runs:
+      // if the directory is created after the first `systemctl start
+      // canopy-worker`, every fresh instance fails exec with 209/STDOUT and
+      // Restart=always crash-loops forever -- the worker silently down while
+      // the ASG sees a healthy box.
+      const dirIdx = blob.indexOf('install -d -o root -g root -m 0755 /var/log/canopy-worker')
+      const fileIdx = blob.indexOf('/dev/null /var/log/canopy-worker/worker.log')
       const startIdx = blob.indexOf('systemctl start canopy-worker')
-      expect(mkdirIdx).toBeGreaterThanOrEqual(0)
-      expect(startIdx).toBeGreaterThanOrEqual(0)
-      expect(mkdirIdx).toBeLessThan(startIdx)
+      expect(dirIdx).toBeGreaterThanOrEqual(0)
+      expect(fileIdx).toBeGreaterThan(dirIdx)
+      expect(startIdx).toBeGreaterThan(fileIdx)
     }
   })
 })
