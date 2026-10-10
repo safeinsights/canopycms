@@ -1055,6 +1055,34 @@ execs, crash-loop or not. To confirm a redeploy took, check the new instance's
 log stream (see [Worker observability](#worker-observability)), not
 `cdk deploy`'s exit code.
 
+### Rolling the worker from CI
+
+By default the worker bundle is a CDK asset, so only a template deploy moves it. A pipeline
+that deploys the editor with parameter-only change sets (`--use-previous-template`) leaves the
+worker on its old version after every canopycms upgrade. `workerCode: { source: 'parameter' }`
+makes the bundle a parameter instead. It adds a bucket of bundles, a `WorkerBundleSha256`
+parameter, and two stack outputs: the bucket's name and the parameter's logical id, which a
+change-set gate can allowlist. While the parameter is empty, the worker runs the template's own
+bundle, so the first deploy needs nothing uploaded.
+
+**`cdk deploy` keeps a parameter's previous value.** Once CI has set the hash, a human
+`cdk deploy`, even of a newer canopycms, keeps running the bundle CI chose. Pass
+`--parameters <logical id>=<sha256>` to change it.
+
+To roll the worker, upload the bundle your installed package ships, under its hash. Then put the
+hash in the change set beside your image parameter:
+
+```bash
+dist=node_modules/canopycms-cdk/worker/dist
+(cd "$dist" && sha256sum -c index.js.sha256)
+sha=$(cut -d' ' -f1 "$dist/index.js.sha256")
+aws s3 cp "$dist/index.js" "s3://$WORKER_BUNDLE_BUCKET/canopy-worker/$sha.js"
+```
+
+The parameter both names the object and is the hash it is checked against, so a wrong upload
+fails the boot rather than running. The bucket refuses deletes, so a rollback's bundle stays
+downloadable.
+
 ## The worker instance
 
 The worker holds the GitHub credential, so its instance is the stack's most sensitive part.

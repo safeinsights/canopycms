@@ -84,7 +84,7 @@
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 9591,
-      "words": 16580
+      "words": 16652
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -94,7 +94,7 @@
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1766,
-      "words": 9641
+      "words": 9822
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,

@@ -2,6 +2,7 @@ import { Construct } from 'constructs'
 import {
   Annotations,
   ArnFormat,
+  CfnParameter,
   Duration,
   RemovalPolicy,
   Stack,
@@ -12,12 +13,13 @@ import {
   aws_iam as iam,
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
-  aws_s3_assets as s3assets,
+  aws_s3 as s3,
   aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 import { attachLambdaExecutionPolicies } from './lambda-execution-role'
-import { WORKER_BUNDLE_DOWNLOAD_PATH, WORKER_BUNDLE_PATH, sha256OfFile } from './worker-bundle'
+import { WORKER_BUNDLE_DOWNLOAD_PATH, workerBundleSource } from './worker-bundle'
+import type { WorkerCode } from './worker-bundle'
 import { attachEditorBehaviors } from './editor-routing'
 import type { CanopyCmsAttachOptions } from './editor-routing'
 import {
@@ -649,6 +651,13 @@ export interface CanopyCmsServiceProps {
   workerMaxInstanceLifetime?: Duration | null
 
   /**
+   * Where the worker's bundle comes from (default `{ source: 'asset' }`).
+   * `{ source: 'parameter' }` lets a parameter-only change set roll the
+   * worker; see "Rolling the worker from CI" in docs/deploying-to-aws.md.
+   */
+  workerCode?: WorkerCode
+
+  /**
    * ADDITIONAL Secrets Manager ARNs the worker may read.
    *
    * You do NOT need to repeat `githubTokenSecretArn` or
@@ -1066,6 +1075,18 @@ export class CanopyCmsService extends Construct {
 
   /** The EC2 worker's CloudWatch log group (worker stdout/stderr) */
   public readonly workerLogGroup: logs.LogGroup
+
+  /**
+   * With `workerCode: { source: 'parameter' }`: the bucket worker bundles are
+   * uploaded to, as `canopy-worker/<sha256>.js`.
+   */
+  public readonly workerBundleBucket?: s3.Bucket
+
+  /**
+   * With `workerCode: { source: 'parameter' }`: the template parameter naming
+   * the bundle to run by its sha256; its logical id is also a stack output.
+   */
+  public readonly workerBundleSha256Parameter?: CfnParameter
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
@@ -1552,17 +1573,13 @@ export class CanopyCmsService extends Construct {
     // the group is pre-created by CFN so the agent never needs CreateLogGroup).
     this.workerLogGroup.grantWrite(workerRole)
 
-    const workerAsset = new s3assets.Asset(this, 'WorkerCode', { path: WORKER_BUNDLE_PATH })
-    const workerBundleSha256 = sha256OfFile(WORKER_BUNDLE_PATH)
-    // This one object, not `workerAsset.grantRead`'s whole bootstrap bucket. No
-    // KMS grant: the bootstrap bucket's key (aws/s3, or the key bootstrap
-    // creates) lets any principal in the account decrypt through S3.
-    workerRole.addToPolicy(
-      new iam.PolicyStatement({
-        actions: ['s3:GetObject'],
-        resources: [workerAsset.bucket.arnForObjects(workerAsset.s3ObjectKey)],
-      }),
+    const workerBundle = workerBundleSource(
+      this,
+      props.workerCode ?? { source: 'asset' },
+      workerRole,
     )
+    this.workerBundleBucket = workerBundle.bundleBucket
+    this.workerBundleSha256Parameter = workerBundle.sha256Parameter
 
     // Name/value PAIRS rather than pre-formatted lines: every value then flows
     // through `assertEnvSafe` in the single `map` below, so a value added here
@@ -1720,8 +1737,8 @@ export class CanopyCmsService extends Construct {
       '',
       '# The bundle runs only if it is byte-for-byte the file synthesized; a',
       '# mismatch fails the boot under the trap above.',
-      `retry aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
-      `echo '${workerBundleSha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
+      `retry aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
+      `echo '${workerBundle.sha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
       '# Root-owned, and read-only to the service (ProtectSystem=strict below).',
       `install -D -m 0644 ${WORKER_BUNDLE_DOWNLOAD_PATH} /opt/canopy-worker/index.js`,
       '# The worker bundle is ESM (esbuild --format=esm). Without this marker a',
