@@ -225,6 +225,29 @@ describe('scanBranchHealth', () => {
       ])
       expect(build).toHaveBeenCalledTimes(1)
     })
+
+    it('starts no later branch once a scan has timed out, even if Date.now() lags the timer', async () => {
+      const root = await tmpDir()
+      await createHealthyBranch(root, 'a-slow')
+      await createHealthyBranch(root, 'b-next')
+      const build = vi
+        .spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+        .mockImplementation(() => new Promise<void>(() => {}))
+      // A frozen clock never reaches the deadline, which is the early-timer
+      // case at its extreme: only the timer can say the budget is gone.
+      const frozen = Date.now()
+      vi.spyOn(Date, 'now').mockReturnValue(frozen)
+
+      const entries = await scanBranchHealth(root, {
+        baseBranchName: 'main',
+        duplicateIdScan: { budgetMs: 50 },
+      })
+      expect(entries.map((e) => e.duplicateIdScan)).toEqual([
+        { state: 'unknown', reason: 'out-of-time' },
+        { state: 'unknown', reason: 'out-of-time' },
+      ])
+      expect(build).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('classifies a directory with invalid-JSON branch.json as corrupt-metadata', async () => {
