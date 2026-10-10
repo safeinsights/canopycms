@@ -31,6 +31,8 @@ export interface MarkdownFieldProps {
   dataCanopyField?: string
   /** The HTML tags the field accepts; the toolbar offers no action writing another. Omitted: any. */
   htmlTags?: ReadonlySet<string>
+  /** Shows the content without accepting edits, in the rich-text editor or as source. */
+  readOnly?: boolean
 }
 
 /** Text formats MDXEditor exports as an HTML tag, with that tag. */
@@ -183,6 +185,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     imageUploadHandler: (file: File) => Promise<string>
     imagePreviewHandler: (src: string) => Promise<string>
     htmlTags?: ReadonlySet<string>
+    readOnly?: boolean
   }> = ({
     markdown,
     onChange,
@@ -192,12 +195,14 @@ export const MDXEditorLazy = React.lazy(async () => {
     imageUploadHandler,
     imagePreviewHandler,
     htmlTags,
+    readOnly,
   }) => {
     const underline = htmlTags?.has('u') ?? true
     return (
       <MDXEditor
         ref={editorRef}
         markdown={markdown}
+        readOnly={readOnly}
         onChange={onChange}
         onError={onError}
         toMarkdownOptions={MARKDOWN_EXPORT_OPTIONS}
@@ -317,13 +322,9 @@ const EditorContentStyles: React.FC = () => (
   `}</style>
 )
 
-const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>> = ({
-  value,
-  onChange,
-}) => (
+const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value'>> = ({ value }) => (
   <Textarea
     value={value}
-    onChange={(e) => onChange(e.currentTarget.value)}
     placeholder="Loading markdown editor..."
     autosize
     minRows={6}
@@ -338,13 +339,15 @@ export const MarkdownSourceEditor: React.FC<{
   value: string
   onChange: (value: string) => void
   failure?: string
-}> = ({ label, value, onChange, failure }) => (
+  readOnly?: boolean
+}> = ({ label, value, onChange, failure, readOnly = false }) => (
   <>
     {failure !== undefined && (
       <Alert color="yellow" variant="light" mb="xs" data-testid="markdown-source-fallback">
         <Text size="sm">
-          This content couldn&apos;t be opened in the visual editor. You can still edit the text and
-          save.
+          {readOnly
+            ? "This content couldn't be opened in the visual editor, so it is shown as text."
+            : "This content couldn't be opened in the visual editor. You can still edit the text and save."}
         </Text>
         <Text size="xs" c="dimmed" mt={4}>
           {failure}
@@ -353,7 +356,10 @@ export const MarkdownSourceEditor: React.FC<{
     )}
     <Textarea
       value={value}
-      onChange={(e) => onChange(e.currentTarget.value)}
+      readOnly={readOnly}
+      onChange={(e) => {
+        if (!readOnly) onChange(e.currentTarget.value)
+      }}
       aria-label={label ? `${label} (source)` : 'Markdown source'}
       data-testid="markdown-source-editor"
       autosize
@@ -372,6 +378,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   onChange,
   dataCanopyField,
   htmlTags,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -418,11 +425,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   const emitChange = useCallback(
     (newValue: string) => {
+      if (readOnly) return
       lastExternalValue.current = newValue
       setRejectedInsert(null)
       onChange(newValue)
     },
-    [onChange],
+    [onChange, readOnly],
   )
 
   // Dropped: MDXEditor's re-serialization of the document it was mounted with
@@ -521,14 +529,16 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
         ) : (
           <span />
         )}
-        <Button
-          variant="subtle"
-          size="compact-xs"
-          data-testid="markdown-mode-toggle"
-          onClick={toggleMode}
-        >
-          {showSource ? 'Rich text' : 'Edit source'}
-        </Button>
+        {!readOnly && (
+          <Button
+            variant="subtle"
+            size="compact-xs"
+            data-testid="markdown-mode-toggle"
+            onClick={toggleMode}
+          >
+            {showSource ? 'Rich text' : 'Edit source'}
+          </Button>
+        )}
       </Group>
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
@@ -538,6 +548,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           value={value}
           onChange={handleSourceChange}
           failure={failure}
+          readOnly={readOnly}
         />
       ) : (
         <div style={editorWrapperStyle}>
@@ -563,7 +574,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
             fallback={() => null}
             onCaught={handleEditorCrash}
           >
-            <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
+            <Suspense fallback={<FallbackTextarea value={value} />}>
               <MDXEditorLazy
                 key={editorGeneration}
                 markdown={value}
@@ -574,6 +585,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
                 imageUploadHandler={imageUploadHandler}
                 imagePreviewHandler={imagePreviewHandler}
                 htmlTags={htmlTags}
+                readOnly={readOnly}
               />
             </Suspense>
           </EditorErrorBoundary>

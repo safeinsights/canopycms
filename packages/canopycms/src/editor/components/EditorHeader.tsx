@@ -137,6 +137,8 @@ export interface EditorHeaderProps {
    * Whether the current entry has unsaved changes.
    */
   hasUnsavedChanges: boolean
+  /** Writing drafts to localStorage failed, so they live only in this tab. */
+  draftStorageFailed?: boolean
 
   /**
    * Current branch status (undefined if unknown).
@@ -213,6 +215,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     onSave,
     onSubmit,
     hasUnsavedChanges,
+    draftStorageFailed = false,
     branchStatus,
     onWithdraw,
     userContext,
@@ -430,6 +433,17 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap">
+            {hasUnsavedChanges && (
+              <Text
+                size="xs"
+                c={draftStorageFailed ? 'orange.9' : 'gray.7'}
+                data-testid="unsaved-indicator"
+              >
+                {draftStorageFailed
+                  ? 'Unsaved · not kept on this device'
+                  : 'Unsaved · kept on this device'}
+              </Text>
+            )}
             <Tooltip
               label={
                 branchReadOnly

@@ -53,6 +53,8 @@ export interface CustomFieldRenderProps {
   onChange: (v: unknown) => void
   path: Array<string | number>
   id: string
+  /** The user can't change this content (a locked branch, no edit access); `onChange` is ignored. */
+  readOnly: boolean
 }
 
 export type CustomFieldRenderers = Record<
@@ -83,6 +85,35 @@ const normalizeOptions = (
 }
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
+
+const noop = (): void => {}
+
+const FENCE_STYLE: React.CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 }
+const FENCE_CLASS = 'canopy-read-only-fence'
+
+/** Mantine fades a disabled input to 60% grey; read-only content still has to be read. */
+const ReadOnlyFenceStyles: React.FC = () => (
+  <style>{`
+    .${FENCE_CLASS} .mantine-Input-input:is(:disabled, [data-disabled], :has(input:disabled)) {
+      opacity: 1;
+      color: var(--mantine-color-text);
+    }
+  `}</style>
+)
+
+/**
+ * Disables the native controls of one leaf field on a read-only form. It wraps the control, never
+ * its `FieldWrapper`, so review comments stay open; portals and contenteditables escape it, so
+ * each field also honours `readOnly`.
+ */
+const ReadOnlyFence: React.FC<{ readOnly: boolean; children: React.ReactNode }> = ({
+  readOnly,
+  children,
+}) => (
+  <fieldset disabled={readOnly} role="presentation" className={FENCE_CLASS} style={FENCE_STYLE}>
+    {children}
+  </fieldset>
+)
 
 /** Builds the control inside the field's boundary: a custom renderer is called, not mounted. */
 const FieldControl: React.FC<{ build: () => React.ReactNode }> = ({ build }) => <>{build()}</>
@@ -151,6 +182,8 @@ export interface FormRendererProps {
   fieldErrors?: Record<string, string>
   /** The entry's format, which decides how its body field is checked. */
   format?: ContentFormat
+  /** Shows the value without accepting edits; `onChange` is never called. Comments stay open. */
+  readOnly?: boolean
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -170,7 +203,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   conflictNotice = false,
   fieldErrors,
   format,
+  readOnly = false,
 }) => {
+  const emit = readOnly ? noop : onChange
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
@@ -242,7 +277,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               label={field.label ?? field.name}
               fieldType={field.type}
               value={currentValue}
-              onChange={update}
+              onChange={readOnly ? undefined : update}
               caught={caught}
               dataCanopyField={canopyPath}
             />
@@ -279,15 +314,16 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     const custom = customRenderers?.[field.type]
     if (custom) {
       const renderedField = (
-        <div key={fieldKey(path)}>
+        <ReadOnlyFence key={fieldKey(path)} readOnly={readOnly}>
           {custom({
             field,
             value: currentValue,
-            onChange: update,
+            onChange: readOnly ? noop : update,
             path,
             id: fieldId,
+            readOnly,
           })}
-        </div>
+        </ReadOnlyFence>
       )
 
       if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
@@ -335,10 +371,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       return renderedField
     }
 
+    const wrapLeaf = (control: React.ReactNode) =>
+      wrapWithComments(<ReadOnlyFence readOnly={readOnly}>{control}</ReadOnlyFence>)
+
     switch (field.type) {
       case 'string':
         if (field.list) {
-          return wrapWithComments(
+          return wrapLeaf(
             <StringListField
               key={fieldKey(path)}
               id={fieldId}
@@ -347,10 +386,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={Array.isArray(currentValue) ? (currentValue as string[]) : []}
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
+              readOnly={readOnly}
             />,
           )
         }
-        return wrapWithComments(
+        return wrapLeaf(
           <TextField
             key={fieldKey(path)}
             id={fieldId}
@@ -359,10 +399,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={(currentValue as string) ?? ''}
             onChange={update}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       case 'boolean':
-        return wrapWithComments(
+        return wrapLeaf(
           <ToggleField
             key={fieldKey(path)}
             id={fieldId}
@@ -372,11 +413,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(v) => update(Boolean(v))}
             dataCanopyField={normalizeCanopyPath(path)}
             testId={`field-toggle-${field.name}`}
+            readOnly={readOnly}
           />,
         )
       case 'number':
         if (field.list) {
-          return wrapWithComments(
+          return wrapLeaf(
             <NumberListField
               key={fieldKey(path)}
               id={fieldId}
@@ -389,10 +431,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               }
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
+              readOnly={readOnly}
             />,
           )
         }
-        return wrapWithComments(
+        return wrapLeaf(
           <NumberField
             key={fieldKey(path)}
             id={fieldId}
@@ -401,10 +444,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={typeof currentValue === 'number' ? currentValue : undefined}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       case 'datetime':
-        return wrapWithComments(
+        return wrapLeaf(
           <DateTimeField
             key={fieldKey(path)}
             id={fieldId}
@@ -413,6 +457,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={typeof currentValue === 'string' ? currentValue : ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       case 'markdown':
@@ -423,7 +468,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           siteMdxAllow,
           isBody ? format : undefined,
         )
-        return wrapWithComments(
+        return wrapLeaf(
           <MarkdownField
             key={fieldKey(path)}
             id={fieldId}
@@ -433,6 +478,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             htmlTags={policy?.dialect === 'mdx' ? policy.allow.htmlTags : undefined}
+            readOnly={readOnly}
           />,
         )
       }
@@ -440,7 +486,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         const selectField = field as SelectFieldConfig
         const options = normalizeOptions(selectField.options)
         const isMulti = Boolean(selectField.list)
-        return wrapWithComments(
+        return wrapLeaf(
           <SelectField
             key={fieldKey(path)}
             id={fieldId}
@@ -457,6 +503,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             multiple={isMulti}
             onChange={(next) => update(next)}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       }
@@ -466,7 +513,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           ? normalizeOptions(referenceField.options)
           : undefined
         const isMulti = Boolean(referenceField.list)
-        return wrapWithComments(
+        return wrapLeaf(
           <ReferenceField
             key={fieldKey(path)}
             id={fieldId}
@@ -490,12 +537,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             multiple={isMulti}
             onChange={(next) => update(next)}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       }
       case 'image': {
         const imageField = field as ImageFieldConfig
-        return wrapWithComments(
+        return wrapLeaf(
           <ImageField
             key={fieldKey(path)}
             id={fieldId}
@@ -511,6 +559,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               alt: fieldErrors?.[`${canopyPath}.alt`],
               crop: fieldErrors?.[`${canopyPath}.crop`],
             }}
+            readOnly={readOnly}
           />,
         )
       }
@@ -528,6 +577,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             renderField={renderField}
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       }
@@ -553,12 +603,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                   description={field.description}
                   descriptionBaseId={fieldId}
                   actions={
-                    <Button
-                      variant="light"
-                      onClick={() => update([...items, {} as Record<string, unknown>])}
-                    >
-                      Add item
-                    </Button>
+                    !readOnly && (
+                      <Button
+                        variant="light"
+                        onClick={() => update([...items, {} as Record<string, unknown>])}
+                      >
+                        Add item
+                      </Button>
+                    )
                   }
                 />
                 <Stack gap="sm">
@@ -581,13 +633,15 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                           <FieldLabel
                             label={itemTitle}
                             actions={
-                              <Button
-                                variant="subtle"
-                                color="red"
-                                onClick={() => update(items.filter((_, i) => i !== idx))}
-                              >
-                                {EDITOR_ACTIONS.remove}
-                              </Button>
+                              !readOnly && (
+                                <Button
+                                  variant="subtle"
+                                  color="red"
+                                  onClick={() => update(items.filter((_, i) => i !== idx))}
+                                >
+                                  {EDITOR_ACTIONS.remove}
+                                </Button>
+                              )
                             }
                           />
                           <ObjectField
@@ -608,7 +662,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                   })}
                   {items.length === 0 && (
                     <Text size="xs" c="dimmed">
-                      No items yet. Add one to get started.
+                      {readOnly ? 'No items.' : 'No items yet. Add one to get started.'}
                     </Text>
                   )}
                 </Stack>
@@ -626,7 +680,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         // already has a value, and labeled "Clear" rather than "Remove" so it
         // doesn't read as deleting the field from the schema.
         const hasValue = currentValue !== undefined && currentValue !== null
-        const canClear = objectField.required !== true && hasValue
+        const canClear = !readOnly && objectField.required !== true && hasValue
 
         return wrapWithComments(
           <ObjectField
@@ -645,7 +699,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         )
       }
       case 'code':
-        return wrapWithComments(
+        return wrapLeaf(
           <CodeField
             key={fieldKey(path)}
             id={fieldId}
@@ -654,6 +708,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={typeof currentValue === 'string' ? currentValue : ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
           />,
         )
       default:
@@ -667,6 +722,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
   return (
     <Stack gap="md" data-form-renderer>
+      {readOnly && <ReadOnlyFenceStyles />}
       {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
         <EntryComments
           comments={comments}
@@ -721,7 +777,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                 description={groupField.description}
                 fields={groupField.fields}
                 value={value}
-                onChange={onChange}
+                onChange={emit}
                 renderField={renderField}
                 path={[]}
               />
@@ -733,7 +789,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         const path = [field.name]
         return (
           <div key={fieldKey(path)}>
-            {renderField(field, val, (next) => onChange({ ...value, [field.name]: next }), path)}
+            {renderField(field, val, (next) => emit({ ...value, [field.name]: next }), path)}
           </div>
         )
       })}

@@ -163,6 +163,8 @@ export interface UseDraftManagerReturn {
    * errors disappear as fields are fixed.
    */
   fieldErrors: Record<string, string>
+  /** True while the last write of drafts to localStorage failed. */
+  draftStorageFailed: boolean
 }
 
 /**
@@ -193,6 +195,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //             preceded the entry's first load); treated as safe, matching
   //             the behavior before base versions existed.
   const draftBaseVersionsRef = useRef<Record<string, number | null>>({})
+  const [draftStorageFailed, setDraftStorageFailed] = useState(false)
+  const [saveInFlight, setSaveInFlight] = useState(false)
   // contentId -> the token held when a save came back WRITE_OUTCOME_UNKNOWN. That save may have
   // landed, so re-sending the token would bounce off the user's own write; held until re-read.
   const reloadRequiredRef = useRef<Record<string, number | undefined>>({})
@@ -427,10 +431,24 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         baseVersions: draftBaseVersionsRef.current,
       }
       window.localStorage.setItem(storageKey, JSON.stringify(payload))
+      setDraftStorageFailed(false)
     } catch (err) {
       console.warn('Failed to persist drafts', err)
+      setDraftStorageFailed(true)
     }
   }, [drafts, storageKey])
+
+  // Drafts survive a reload in localStorage, so leaving is guarded only when it loses work.
+  const leaveLosesWork = saveInFlight || (draftStorageFailed && modifiedCount > 0)
+  useEffect(() => {
+    if (!leaveLosesWork || typeof window === 'undefined') return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [leaveLosesWork])
 
   // A draft equal to its entry's loaded value is not an edit. Drops it so it
   // neither counts as dirty nor lingers in storage.
@@ -691,6 +709,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     setErrorState(null)
 
     options.setBusy(true)
+    setSaveInFlight(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
       // Drop the draft now that it has been persisted, rather than
@@ -762,6 +781,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       }
     } finally {
+      setSaveInFlight(false)
       options.setBusy(false)
     }
   }
@@ -987,5 +1007,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     whenDraftsVerified,
     resolveUnsaved,
     fieldErrors,
+    draftStorageFailed,
   }
 }

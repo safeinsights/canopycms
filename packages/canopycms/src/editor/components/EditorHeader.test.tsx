@@ -276,3 +276,24 @@ describe('EditorHeader - comments indicator', () => {
     expect(screen.getByTestId('comments-button')).toBeDefined()
   })
 })
+
+describe('EditorHeader - unsaved indicator', () => {
+  it('says unsaved changes are kept on this device', () => {
+    renderHeader({ hasUnsavedChanges: true })
+    expect(screen.getByTestId('unsaved-indicator').textContent).toBe(
+      'Unsaved · kept on this device',
+    )
+  })
+
+  it('says they are not kept when storing drafts failed', () => {
+    renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
+    expect(screen.getByTestId('unsaved-indicator').textContent).toBe(
+      'Unsaved · not kept on this device',
+    )
+  })
+
+  it('is absent with nothing unsaved', () => {
+    renderHeader({ hasUnsavedChanges: false })
+    expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
+  })
+})

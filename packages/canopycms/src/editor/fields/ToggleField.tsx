@@ -12,6 +12,8 @@ export interface ToggleFieldProps {
   onChange: (value: boolean) => void
   dataCanopyField?: string
   testId?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const ToggleField: React.FC<ToggleFieldProps> = ({
@@ -22,6 +24,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
   onChange,
   dataCanopyField,
   testId,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -34,7 +37,10 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
         label={label}
         aria-describedby={description ? fieldDescriptionId(inputId) : undefined}
         checked={value}
-        onChange={(e) => onChange(e.currentTarget.checked)}
+        disabled={readOnly}
+        onChange={(e) => {
+          if (!readOnly) onChange(e.currentTarget.checked)
+        }}
         size="md"
         data-canopy-field={dataCanopyField}
         wrapperProps={testId ? { 'data-testid': testId } : undefined}

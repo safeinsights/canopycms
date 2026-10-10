@@ -72,3 +72,8 @@ export const ProtectedBaseBranch: Story = {
     hasUnsavedChanges: false,
   },
 }
+
+/** The browser refused to store drafts, so leaving the page would lose them. */
+export const UnsavedNotKept: Story = {
+  args: { draftStorageFailed: true },
+}

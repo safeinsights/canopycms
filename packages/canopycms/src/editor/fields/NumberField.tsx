@@ -9,6 +9,8 @@ export interface NumberFieldProps {
   value: number | undefined
   onChange: (value: number | undefined) => void
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 /**
@@ -43,6 +45,7 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -59,7 +62,9 @@ export const NumberField: React.FC<NumberFieldProps> = ({
       description={description}
       value={displayValue}
       size="sm"
+      readOnly={readOnly}
       onChange={(next) => {
+        if (readOnly) return
         setInputValue(next)
         onChange(toNumericValue(next))
       }}

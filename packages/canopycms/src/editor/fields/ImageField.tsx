@@ -37,6 +37,8 @@ export interface ImageFieldProps {
   altOptional?: boolean
   dataCanopyField?: string
   errors?: ImageFieldErrors
+  /** No upload, pick, crop or remove; the alt text is read-only. */
+  readOnly?: boolean
 }
 
 /** Which image the crop step is currently cropping. */
@@ -54,6 +56,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   altOptional,
   dataCanopyField,
   errors,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -94,9 +97,13 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     }
   }, [value?.src])
 
+  const edit = (next: ImageFieldValue | undefined) => {
+    if (!readOnly) onChange(next)
+  }
+
   const commitAsset = (asset: AssetRecord, crop?: CropRect) => {
     justCommittedRef.current = true
-    onChange({
+    edit({
       src: asset.src,
       // Preserves the current alt text on replace (it often still fits); an
       // empty field has no prior alt, so it stays ''.
@@ -129,18 +136,18 @@ export const ImageField: React.FC<ImageFieldProps> = ({
 
   const handleAltChange = (nextAlt: string) => {
     if (!value) return
-    onChange({ ...value, alt: nextAlt })
+    edit({ ...value, alt: nextAlt })
   }
 
   const handleRemove = () => {
-    onChange(undefined)
+    edit(undefined)
   }
 
   const handleCropConfirm = (rect: CropRect) => {
     if (cropRequest?.kind === 'new') {
       commitAsset(cropRequest.asset, rect)
     } else if (cropRequest?.kind === 'existing' && value) {
-      onChange({ ...value, crop: rect })
+      edit({ ...value, crop: rect })
     }
     setCropRequest(null)
   }
@@ -167,7 +174,11 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       )}
       <FieldDescription baseId={inputId} description={description} />
 
-      {!hasValue ? (
+      {!hasValue && readOnly ? (
+        <Text size="sm" c="dimmed" data-testid={`image-field-empty-${dataCanopyField}`}>
+          No image
+        </Text>
+      ) : !hasValue ? (
         <Stack gap="xs">
           <Dropzone
             onDrop={(files) => void handleDrop(files)}
@@ -249,38 +260,41 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             ref={altInputRef}
             label="Alt text"
             required={!altOptional}
+            readOnly={readOnly}
             value={value!.alt}
             onChange={(event) => handleAltChange(event.currentTarget.value)}
             error={errors?.alt}
             size="sm"
             data-testid={`image-field-alt-${dataCanopyField}`}
           />
-          <Group gap="xs">
-            <Button
-              variant="light"
-              onClick={() => setPickerOpen(true)}
-              data-testid={`image-field-replace-${dataCanopyField}`}
-            >
-              Replace
-            </Button>
-            {canCrop && (
+          {!readOnly && (
+            <Group gap="xs">
               <Button
                 variant="light"
-                onClick={() => setCropRequest({ kind: 'existing' })}
-                data-testid={`image-field-crop-${dataCanopyField}`}
+                onClick={() => setPickerOpen(true)}
+                data-testid={`image-field-replace-${dataCanopyField}`}
               >
-                Crop
+                Replace
               </Button>
-            )}
-            <Button
-              variant="subtle"
-              color="red"
-              onClick={handleRemove}
-              data-testid={`image-field-remove-${dataCanopyField}`}
-            >
-              Remove
-            </Button>
-          </Group>
+              {canCrop && (
+                <Button
+                  variant="light"
+                  onClick={() => setCropRequest({ kind: 'existing' })}
+                  data-testid={`image-field-crop-${dataCanopyField}`}
+                >
+                  Crop
+                </Button>
+              )}
+              <Button
+                variant="subtle"
+                color="red"
+                onClick={handleRemove}
+                data-testid={`image-field-remove-${dataCanopyField}`}
+              >
+                Remove
+              </Button>
+            </Group>
+          )}
           {errors?.crop && (
             <Text size="xs" c="red">
               {errors.crop}
@@ -289,14 +303,16 @@ export const ImageField: React.FC<ImageFieldProps> = ({
         </Stack>
       )}
 
-      <MediaLibrary
-        opened={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        mode="picker"
-        onSelect={handleAssetReady}
-      />
+      {!readOnly && (
+        <MediaLibrary
+          opened={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          mode="picker"
+          onSelect={handleAssetReady}
+        />
+      )}
 
-      {aspectRatio !== undefined && (
+      {aspectRatio !== undefined && !readOnly && (
         <CropStep
           opened={cropRequest !== null}
           onClose={() => setCropRequest(null)}

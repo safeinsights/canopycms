@@ -1313,11 +1313,12 @@ import config from '../../canopycms.config'
 
 const customRenderers: CustomFieldRenderers = {
   // Every field declared `type: 'number'` now renders this instead.
-  number: ({ value, onChange, id, field }) => (
+  number: ({ value, onChange, id, field, readOnly }) => (
     <label htmlFor={id}>
       {field.label ?? field.name}
       <input
         id={id}
+        disabled={readOnly}
         type="range"
         value={typeof value === 'number' ? value : 0}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -1336,10 +1337,11 @@ Each renderer receives `CustomFieldRenderProps`:
 - `onChange` — call with the new value to update the draft
 - `path` — canonical path to this field, e.g. `['blocks', 0, 'title']`
 - `id` — the id the default control would have used; attach it to your input
+- `readOnly` — true on a locked branch or an entry the user can't edit; show the value only (`onChange` is ignored, native inputs disabled)
 
-Renderers apply **by field type, everywhere** — top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer if you need one. `customRenderers` is also accepted directly by `<CanopyEditor>` and `<Editor>` if you compose the editor yourself instead of using the page factory.
+Renderers apply **by field type, everywhere**: top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer. `customRenderers` is also accepted by `<CanopyEditor>` and `<Editor>` when you compose the editor yourself.
 
-**The value you pass to `onChange` must still satisfy the field's declared type.** CanopyCMS validates entries at the server write boundary with the same rules regardless of what rendered the input, so a renderer storing a string into a `type: 'number'` field produces a `422` on save rather than a bad file. Custom rendering changes the control, not the schema contract.
+**The value you pass to `onChange` must still satisfy the field's declared type.** The server validates entries on write by the same rules whatever rendered the input, so a renderer storing a string into a `type: 'number'` field gets a `422` on save, not a bad file.
 
 ## Content Tree Builder
 

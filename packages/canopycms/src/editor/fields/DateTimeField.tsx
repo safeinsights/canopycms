@@ -9,6 +9,8 @@ export interface DateTimeFieldProps {
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 /**
@@ -65,6 +67,7 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -76,9 +79,10 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
         step={1}
         size="sm"
         value={isoToDatetimeLocalValue(value)}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-          onChange(datetimeLocalValueToIso(e.currentTarget.value))
-        }
+        readOnly={readOnly}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+          if (!readOnly) onChange(datetimeLocalValueToIso(e.currentTarget.value))
+        }}
         data-canopy-field={dataCanopyField}
       />
     </Input.Wrapper>

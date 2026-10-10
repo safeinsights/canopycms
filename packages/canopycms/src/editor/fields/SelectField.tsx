@@ -17,6 +17,8 @@ export interface SelectFieldProps {
   multiple?: boolean
   placeholder?: string
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const SelectField: React.FC<SelectFieldProps> = ({
@@ -29,6 +31,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
   multiple,
   placeholder = 'Select…',
   dataCanopyField,
+  readOnly = false,
 }) => {
   const normalizedValue = multiple
     ? Array.isArray(value)
@@ -49,9 +52,12 @@ export const SelectField: React.FC<SelectFieldProps> = ({
           description={description}
           data={options}
           value={normalizedValue as string[]}
-          onChange={(next) => onChange(next)}
+          readOnly={readOnly}
+          onChange={(next) => {
+            if (!readOnly) onChange(next)
+          }}
           searchable
-          placeholder={placeholder}
+          placeholder={readOnly ? undefined : placeholder}
           size="sm"
         />
       ) : (
@@ -61,14 +67,17 @@ export const SelectField: React.FC<SelectFieldProps> = ({
           description={description}
           data={options}
           value={normalizedValue as string}
-          onChange={(next) => onChange(next ?? '')}
+          readOnly={readOnly}
+          onChange={(next) => {
+            if (!readOnly) onChange(next ?? '')
+          }}
           searchable
           clearable
-          placeholder={placeholder}
+          placeholder={readOnly ? undefined : placeholder}
           size="sm"
         />
       )}
-      {multiple && (
+      {multiple && !readOnly && (
         <Text size="xs" c="dimmed">
           Searchable multi-select; start typing to filter.
         </Text>

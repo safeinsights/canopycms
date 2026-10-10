@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 
 import type { FieldConfig } from '../config'
 import { FormRenderer } from './FormRenderer'
+import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 
 type HeroBlock = {
   template: 'hero'
@@ -171,33 +172,35 @@ const Preview: React.FC<{ value: PostValue }> = ({ value }) => {
   )
 }
 
+const initialPost: PostValue = {
+  title: 'Hello World',
+  author: 'authors/alice',
+  tags: ['typed', 'fast'],
+  published: false,
+  body: 'Some **MDX** content that mirrors another example.',
+  seo: {
+    title: 'Hello World | CanopyCMS',
+    description: 'Welcome to the demo story.',
+  },
+  features: [
+    { title: 'Fast', description: 'Built for speed' },
+    { title: 'Typed', description: 'Type-safe content' },
+  ],
+  blocks: [
+    {
+      template: 'hero',
+      value: { headline: 'Hero block', body: 'Hero copy' },
+    },
+    {
+      template: 'cta',
+      value: { title: 'Try CanopyCMS', ctaText: 'Click me' },
+    },
+  ],
+}
+
 export const Default: Story = {
   render: () => {
-    const [value, setValue] = useState<PostValue>({
-      title: 'Hello World',
-      author: 'authors/alice',
-      tags: ['typed', 'fast'],
-      published: false,
-      body: 'Some **MDX** content that mirrors another example.',
-      seo: {
-        title: 'Hello World | CanopyCMS',
-        description: 'Welcome to the demo story.',
-      },
-      features: [
-        { title: 'Fast', description: 'Built for speed' },
-        { title: 'Typed', description: 'Type-safe content' },
-      ],
-      blocks: [
-        {
-          template: 'hero',
-          value: { headline: 'Hero block', body: 'Hero copy' },
-        },
-        {
-          template: 'cta',
-          value: { title: 'Try CanopyCMS', ctaText: 'Click me' },
-        },
-      ],
-    })
+    const [value, setValue] = useState<PostValue>(initialPost)
 
     return (
       <div className="grid grid-cols-2 gap-4">
@@ -210,4 +213,21 @@ export const Default: Story = {
       </div>
     )
   },
+}
+
+/** A locked branch: every field shows its value disabled, with no add, remove or reorder. */
+export const ReadOnly: Story = {
+  render: () => (
+    <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
+  ),
+}
+
+/** As the editor shows a read-only entry that has a draft kept from earlier. */
+export const ReadOnlyWithKeptDraft: Story = {
+  render: () => (
+    <div>
+      <ReadOnlyDraftNotice onDiscard={() => {}} />
+      <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
+    </div>
+  ),
 }

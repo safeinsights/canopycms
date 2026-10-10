@@ -40,6 +40,8 @@ export interface ReferenceFieldProps {
   onChange: (value: string | string[]) => void
   multiple?: boolean
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 export const ReferenceField: React.FC<ReferenceFieldProps> = ({
@@ -55,6 +57,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   onChange,
   multiple,
   dataCanopyField,
+  readOnly = false,
 }) => {
   // Configured with the deployment's basePath when rendered inside an
   // ApiClientProvider (always true in the real Editor tree); `null` outside one
@@ -223,9 +226,12 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           description={description}
           data={data}
           value={normalizedValue as string[]}
-          onChange={(next) => onChange(next)}
+          readOnly={readOnly}
+          onChange={(next) => {
+            if (!readOnly) onChange(next)
+          }}
           searchable
-          placeholder="Select reference…"
+          placeholder={readOnly ? undefined : 'Select reference…'}
           size="sm"
         />
       ) : (
@@ -235,10 +241,13 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           description={description}
           data={data}
           value={normalizedValue as string}
-          onChange={(next) => onChange(next ?? '')}
+          readOnly={readOnly}
+          onChange={(next) => {
+            if (!readOnly) onChange(next ?? '')
+          }}
           searchable
           clearable
-          placeholder="Select reference…"
+          placeholder={readOnly ? undefined : 'Select reference…'}
           size="sm"
         />
       )}
