@@ -38,6 +38,15 @@ export type ResolveCommentResponse = ApiResponse<{ resolved: boolean }>
 // Zod Schemas for Validation
 // ============================================================================
 
+/**
+ * Path rules are globs over the canonical spelling, so an alias such as `content/./secret/plan`
+ * or `content//secret/plan` would miss a rule written for `content/secret/**`. Thread entry
+ * paths are held to that spelling, on the way in and when read back.
+ */
+function isCanonicalEntryPath(entryPath: string): boolean {
+  return entryPath.split('/').every((segment) => segment !== '' && segment !== '.')
+}
+
 const threadParamSchema = z.object({
   branch: branchNameSchema,
   threadId: z.string().min(1),
@@ -47,7 +56,9 @@ const addCommentBodySchema = z.object({
   text: z.string().min(1),
   threadId: z.string().optional(),
   type: z.enum(['field', 'entry', 'branch']),
-  entryPath: logicalPathSchema.optional(),
+  entryPath: logicalPathSchema
+    .refine(isCanonicalEntryPath, 'entryPath must have no empty or "." segments')
+    .optional(),
   canopyPath: z.string().optional(), // Canopy field path, not a file path
 })
 
@@ -56,7 +67,7 @@ const addCommentBodySchema = z.object({
  * read needs, so a thread discloses nothing about an entry its reader could not open. A
  * field thread is governed by its entry. A thread with no entry path (a branch thread) is
  * governed by branch access alone, which the `branchAccess` guard has already passed. An
- * entry path that does not parse as a logical path is denied: comments.json is read without
+ * entry path that is not a canonical logical path is denied: comments.json is read without
  * schema validation.
  */
 const canReadThreadEntry = (
@@ -65,7 +76,7 @@ const canReadThreadEntry = (
 ): boolean => {
   if (entryPath === undefined) return true
   const parsed = parseLogicalPath(entryPath)
-  return parsed.ok && checkAccess(parsed.path, 'read').allowed
+  return parsed.ok && isCanonicalEntryPath(parsed.path) && checkAccess(parsed.path, 'read').allowed
 }
 
 const createChecker = (ctx: ApiContext, req: ApiRequest, branchContext: BranchContext) =>

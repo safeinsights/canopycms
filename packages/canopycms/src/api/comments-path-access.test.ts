@@ -199,6 +199,71 @@ describe('comment threads honour path read rules', () => {
     expect([reply.status, branchComment.status, adminOnSecret.status]).toEqual([201, 201, 201])
   })
 
+  it('refuses a new thread whose entry path aliases a read-denied entry', async () => {
+    for (const alias of [
+      'content/./secret/plan',
+      'content//secret/plan',
+      'content/secret/./plan',
+    ]) {
+      const validated = COMMENT_ROUTES.add.validate({
+        params: { branch },
+        body: { text: 'sneaky', type: 'entry', entryPath: alias },
+      })
+      expect(validated.ok, alias).toBe(false)
+
+      // The handler refuses it too, for a caller that skips the route's validation.
+      const res = await add(editor, {
+        text: 'sneaky',
+        type: 'entry',
+        entryPath: unsafeAsLogicalPath(alias),
+      })
+      expect(res.status, alias).toBe(403)
+    }
+    expect(await store.listThreads()).toHaveLength(4)
+  })
+
+  it('gates a branch-typed comment that names a read-denied entry by that entry', async () => {
+    const res = await add(editor, {
+      text: 'sneaky',
+      type: 'branch',
+      entryPath: unsafeAsLogicalPath(SECRET_ENTRY),
+    })
+
+    expect(res.status).toBe(403)
+  })
+
+  it('lets an admin reply to a thread on a read-denied entry', async () => {
+    const res = await add(admin, {
+      text: 'admin reply',
+      threadId: threadIds.secretEntry,
+      type: 'entry',
+      entryPath: unsafeAsLogicalPath(SECRET_ENTRY),
+    })
+
+    expect(res.status).toBe(201)
+  })
+
+  it('never resolves to an inherited property for a thread id like __proto__', async () => {
+    const reviewer = { ...editor, groups: [RESERVED_GROUPS.REVIEWERS] }
+    for (const threadId of ['__proto__', 'constructor', 'toString']) {
+      expect((await resolve(reviewer, threadId)).status, threadId).toBe(404)
+      expect((await add(reviewer, { text: 'x', threadId, type: 'branch' })).status, threadId).toBe(
+        404,
+      )
+    }
+    expect(Object.prototype).not.toHaveProperty('resolved')
+  })
+
+  it('hides a thread whose stored entry path is not canonical', async () => {
+    const data = await store.load()
+    data.threads[threadIds.open].entryPath = 'content/./posts/hello'
+    await fs.writeFile(path.join(root, '.canopy-meta', 'comments.json'), JSON.stringify(data))
+
+    const res = await list(admin)
+
+    expect(res.data?.threads.map((t) => t.id)).not.toContain(threadIds.open)
+  })
+
   it('hides a thread whose stored entry path is not a logical path', async () => {
     const data = await store.load()
     data.threads[threadIds.open].entryPath = '../escape'
