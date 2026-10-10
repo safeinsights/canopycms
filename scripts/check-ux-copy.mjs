@@ -102,8 +102,13 @@ function titleCaseWords(text) {
       if (PHRASE_END.test(token)) position = 0
       continue
     }
-    if (!inQuote && position > 0 && /^[A-Z][a-z]+$/.test(word) && !PROPER_NOUNS.has(word)) {
-      flagged.push(word)
+    if (!inQuote) {
+      const parts = word.replace(/['’]s$/, '').split('-')
+      parts.forEach((part, i) => {
+        if ((position > 0 || i > 0) && /^[A-Z][a-z]+$/.test(part) && !PROPER_NOUNS.has(part)) {
+          flagged.push(part)
+        }
+      })
     }
     position = PHRASE_END.test(token) ? 0 : position + 1
   }
@@ -153,29 +158,46 @@ function tagName(node) {
   return node.tagName.getText()
 }
 
-/** Most variants of one element's text checked; beyond it the rest are dropped. */
-const MAX_VARIANTS = 64
+const isJsx = (expr) =>
+  ts.isJsxElement(expr) || ts.isJsxSelfClosingElement(expr) || ts.isJsxFragment(expr)
+const RENDERS_NOTHING = new Set(['null', 'undefined', 'true', 'false'])
 
 /**
- * Every text an element can show: one variant per combination of its
- * children's alternatives. A child expression with no literal value stands in
- * as SLOT; an element child or a JSX comment contributes no word.
+ * What a JSX child expression can render, as text: a literal is its text, an
+ * element is a word break, null/undefined/booleans render nothing, `&&` renders
+ * its right side or nothing, and any other value stands in as SLOT.
  */
-function elementTexts(element) {
-  let variants = ['']
-  for (const child of element.children) {
-    let options
-    if (ts.isJsxText(child)) options = [child.text]
-    else if (ts.isJsxExpression(child)) {
-      if (!child.expression) options = ['']
-      else {
-        const strings = stringsOf(child.expression).map((s) => s.text)
-        options = strings.length > 0 ? strings : [` ${SLOT} `]
-      }
-    } else options = [' ']
-    variants = variants.flatMap((v) => options.map((o) => v + o)).slice(0, MAX_VARIANTS)
+function childOptions(expr) {
+  if (!expr) return ['']
+  if (ts.isParenthesizedExpression(expr)) return childOptions(expr.expression)
+  if (isJsx(expr)) return [' ']
+  if (RENDERS_NOTHING.has(expr.getText())) return ['']
+  if (ts.isConditionalExpression(expr)) {
+    return [...childOptions(expr.whenTrue), ...childOptions(expr.whenFalse)]
   }
-  return variants.map((v) => v.replace(/\s+/g, ' ').trim())
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind
+    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+      return [...childOptions(expr.left), ...childOptions(expr.right)]
+    }
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) return [...childOptions(expr.right), '']
+  }
+  const strings = stringsOf(expr)
+  return strings.length > 0 ? strings.map((s) => s.text) : [` ${SLOT} `]
+}
+
+/** Every text an element can show, one per combination of its children's options. */
+function* elementTexts(element) {
+  const lists = element.children.map((child) => {
+    if (ts.isJsxText(child)) return [child.text]
+    if (ts.isJsxExpression(child)) return [...new Set(childOptions(child.expression))]
+    return [' ']
+  })
+  function* combine(i, prefix) {
+    if (i === lists.length) yield prefix.replace(/\s+/g, ' ').trim()
+    else for (const option of lists[i]) yield* combine(i + 1, prefix + option)
+  }
+  yield* combine(0, '')
 }
 
 function propertyKey(name) {
@@ -189,12 +211,13 @@ function isSkipped(node) {
     parent &&
     (ts.isTemplateSpan(parent) ||
       ts.isTemplateExpression(parent) ||
+      ts.isTemplateLiteralTypeSpan(parent) ||
       ts.isParenthesizedExpression(parent))
   ) {
     parent = parent.parent
   }
   if (!parent) return false
-  if (ts.isLiteralTypeNode(parent)) return true
+  if (ts.isLiteralTypeNode(parent) || ts.isTemplateLiteralTypeNode(parent)) return true
   if (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) return true
   if (ts.isExternalModuleReference(parent)) return true
   if (ts.isCallExpression(parent)) {
@@ -240,8 +263,12 @@ function scanSource(fileName, source) {
     }
 
     if (ts.isJsxElement(node) && LABEL_ELEMENTS.has(tagName(node.openingElement))) {
-      const flagged = elementTexts(node).find((text) => titleCaseWords(text).length > 0)
-      if (flagged !== undefined) add('title-case', node, flagged)
+      for (const text of elementTexts(node)) {
+        if (titleCaseWords(text).length > 0) {
+          add('title-case', node, text)
+          break
+        }
+      }
     }
     if (ts.isJsxAttribute(node) && LABEL_KEYS.has(node.name.getText()) && node.initializer) {
       const init = node.initializer
@@ -284,6 +311,9 @@ function selfTest() {
     ['Rename “Home Page” Entry', ['Entry']],
     ['+ New', []],
     ['Write a Reply', ['Reply']],
+    ['Open Sign-In', ['Sign', 'In']],
+    ['Read-Only mode', ['Only']],
+    ['Open the Editor’s menu', ['Editor']],
     [`${SLOT} : Select all`, []],
     [`${SLOT} : Select All`, ['All']],
     [`Delete ${SLOT} Branch`, ['Branch']],
@@ -320,6 +350,15 @@ function selfTest() {
     ['<Button>{/* note */}Delete branch</Button>', []],
     ['<Menu.Item><IconX /> Reload page</Menu.Item>', []],
     ['<Button>{count} Files</Button>', ['title-case']],
+    ['<Button>{open ? "Show panel" : "Hide Panel"}</Button>', ['title-case']],
+    ['<Button>{a ? "Save" : "Delete"}{b ? " all" : " All"}</Button>', ['title-case']],
+    ['<Button>Retry{done && "."} Now</Button>', ['title-case']],
+    ['<Button>{count ?? ""} Files</Button>', ['title-case']],
+    ['<Button>{loading && <Loader />} Save</Button>', []],
+    ['<Button>{x ? null : "Show"} panel</Button>', []],
+    ['<Button>{busy ? null : ""} Delete branch</Button>', []],
+    ['console.log((`Retrying ${n}...`))', []],
+    ['type T = `Saving ${string}...`', []],
     ['console.error(`Retrying ${n}...`)', []],
     ['type Mode = "..."', []],
   ]
@@ -390,7 +429,7 @@ if (args.includes('--write-baseline')) {
         raises.push(`${file} ${rule} ${baseline[file]?.[rule] ?? 0} -> ${count}`)
     }
   }
-  if (raises.length > 0 && Object.keys(baseline).length > 0 && !args.includes('--allow-raise')) {
+  if (raises.length > 0 && existsSync(baselinePath) && !args.includes('--allow-raise')) {
     console.error(
       `❌ refusing to raise ${raises.length} count(s); pass --allow-raise to do it on purpose:`,
     )

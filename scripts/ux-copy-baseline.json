@@ -40,7 +40,7 @@
       "title-case": 6
     },
     "packages/canopycms/src/editor/EntryNavigator.tsx": {
-      "title-case": 9
+      "title-case": 10
     },
     "packages/canopycms/src/editor/fields/BlockField.tsx": {
       "ellipsis": 1
