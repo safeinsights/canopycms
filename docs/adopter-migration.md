@@ -108,7 +108,7 @@ options `executable`, `renderAs`, `mdxAllow`; config key `mdxAllow`; types `Mark
 `MdxAllowlist`. See [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `renderAs: 'mdx'` on each `markdown` field your site compiles as MDX, and
-`mdxAllow` to what your renderer takes. Set `executable: true` only on a field whose editors you
+`mdxAllow` to what your renderer takes (`title: 'string'`: quoted only). Set `executable: true` only on a field whose editors you
 trust as code authors; an entry type with no `isBody` field needs one declared to opt its body out.
 Content already there is kept, with a warning, while its field is saved unchanged; a production
 build lists it.
