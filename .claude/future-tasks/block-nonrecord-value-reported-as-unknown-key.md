@@ -52,6 +52,13 @@ A `null` block item, such as YAML `blocks: [null]` or an empty `- ` entry, reach
 untouched. There `BlockField`'s `findTemplate(templates, block.template)` throws, and the field's
 error boundary shows its crash fallback for the whole block list. No data is written.
 
+## Editing replaces a non-record value without saying so
+
+Editing a field inside a block or object whose `value` is an array replaces the array with
+`{ <field>: <new value> }`. The array's contents are dropped and nothing tells the editor. That is
+the intended alternative to writing an index-keyed mix, but the fix above is a natural place to add
+a notice before the first edit ("this block's stored value isn't an object and will be replaced").
+
 ## Related
 
 - [resolved/block-value-null-or-array-breaks-resolution.md](resolved/block-value-null-or-array-breaks-resolution.md),
