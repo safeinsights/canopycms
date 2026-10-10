@@ -16,8 +16,8 @@ summary: >-
 ## What happened
 
 A site allowed `<Callout title="…">` with any text as `props: { title: true }`. `true` also admits
-a bare `<Callout title>`, which MDX gives the value `true`, and any `{…}` value. The site's renderer
-requires a string `title`, so such a body saved cleanly, previewed as "Not shown in preview", and
+a bare `<Callout title>`, which the check reads as the value `true`, and any `{…}` value. The site's renderer
+requires a string `title`, so such a body saved cleanly, did not render in preview, and
 then failed the static build on the editor's PR, with no message the author could act on.
 
 ## Resolution

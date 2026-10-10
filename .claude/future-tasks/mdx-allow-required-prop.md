@@ -16,8 +16,8 @@ summary: >-
 `mdxAllow` checks only the props an element writes. A `'string'` allowance
 (`packages/canopycms/src/config/types.ts`, `MdxPropAllow`) refuses a bare attribute and any `{…}`
 value, but an element that omits the prop passes, as does an empty or whitespace-only quoted
-string. A renderer that requires a non-empty `title` then receives `undefined` or `""`, shows
-"Not shown in preview", and fails the static build, the failure the `'string'` allowance exists to
+string. A renderer that requires a non-empty `title` then receives `undefined` or `""`,
+does not render in preview, and fails the static build, the failure the `'string'` allowance exists to
 prevent for bare attributes.
 
 ## Possible fix
