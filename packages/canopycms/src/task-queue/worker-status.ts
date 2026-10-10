@@ -30,11 +30,11 @@ import type { WorkerStatusReport } from '../types'
 export const WORKER_STATUS_FILE = 'worker-status.json'
 
 /**
- * What a new worker carries from the previous status file into its first
- * snapshot: `lastFatalError`, so a crash loop keeps its alert, and how the
- * previous worker stopped. A `lastShutdown` written by an earlier worker than
- * the file's own means the last one stopped without draining. Tolerant like
- * every reader: a missing or unreadable file yields neither.
+ * What a new worker carries from the previous status file into its first snapshot:
+ * `lastFatalError`, so a crash loop keeps its alert, and how the last worker that ran stopped.
+ * A `lastShutdown` written by an earlier worker than the file's own means the last one stopped
+ * without draining, unless the file's own worker failed to start: it never ran, so the carried
+ * record still holds. Tolerant like every reader: a missing or unreadable file yields neither.
  */
 export async function readCarriedOverStatus(
   taskDir: string,
@@ -48,7 +48,9 @@ export async function readCarriedOverStatus(
   }
   const { lastFatalError, startedAt, updatedAt } = previous
   let { lastShutdown } = previous
-  if (startedAt && updatedAt && lastShutdown?.workerStartedAt !== startedAt) {
+  const failedStart =
+    lastFatalError?.phase === 'startup' && lastFatalError.workerStartedAt === startedAt
+  if (startedAt && updatedAt && !failedStart && lastShutdown?.workerStartedAt !== startedAt) {
     lastShutdown = {
       reason: 'stopped without draining',
       at: updatedAt,

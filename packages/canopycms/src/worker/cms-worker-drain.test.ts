@@ -13,7 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
-import { CmsWorker } from './cms-worker'
+import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
@@ -537,4 +537,51 @@ describe('lastShutdown across a worker replacement', () => {
       await successor.stop()
     }
   })
+
+  const readStatus = async (): Promise<WorkerStatusReport> =>
+    JSON.parse(await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'))
+
+  it.each([
+    [
+      'start()',
+      async () => {
+        const failing = makeWorker()
+        ;(failing as unknown as { ensureRemoteGit(): Promise<void> }).ensureRemoteGit =
+          async () => {
+            throw new Error('clone failed')
+          }
+        await expect(failing.start()).rejects.toThrow('clone failed')
+      },
+    ],
+    [
+      'recordWorkerStartupFailure',
+      () => recordWorkerStartupFailure({ workspacePath, error: new Error('clone failed') }),
+    ],
+  ])(
+    'a failed start through %s keeps the drained shutdown before it, and the next worker still reports it',
+    async (_via, failToStart) => {
+      const old = makeWorker()
+      await old.start()
+      await old.stop({ reason: 'SIGTERM' })
+      const drained = (await readStatus()).lastShutdown
+      expect(drained).toMatchObject({ reason: 'SIGTERM', outcome: 'drained' })
+
+      await failToStart()
+      const failed = await readStatus()
+      expect(failed.lastShutdown).toEqual(drained)
+      expect(failed.lastFatalError).toMatchObject({
+        message: 'clone failed',
+        phase: 'startup',
+        workerStartedAt: failed.startedAt,
+      })
+
+      const successor = makeWorker()
+      try {
+        await successor.start()
+        expect((await readStatus()).lastShutdown).toEqual(drained)
+      } finally {
+        await successor.stop()
+      }
+    },
+  )
 })

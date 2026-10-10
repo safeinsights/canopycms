@@ -486,7 +486,7 @@ export class CmsWorker {
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears
     // it. Two fields carry into the report itself: `lastShutdown`, which
-    // describes the previous worker until this worker's own stop() replaces it,
+    // describes the last worker that ran until this worker's own stop() replaces it,
     // and the schema gate's hold, so its bound keeps counting from the first
     // worker that saw each schema missing.
     try {

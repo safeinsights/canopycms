@@ -169,6 +169,64 @@ describe('readCarriedOverStatus', () => {
     expect((await readCarriedOverStatus(tmpDir)).lastShutdown?.outcome).toBe('not-drained')
   })
 
+  it("keeps the last running worker's shutdown when the file's own worker failed to start", async () => {
+    const lastShutdown = {
+      reason: 'SIGTERM',
+      at: '2026-01-01T00:01:00.000Z',
+      workerStartedAt: '2026-01-01T00:00:00.000Z',
+      outcome: 'drained' as const,
+      drainMs: 10,
+    }
+    const lastFatalError = {
+      message: 'clone failed',
+      at: '2026-01-02T00:00:05.000Z',
+      phase: 'startup' as const,
+      workerStartedAt: '2026-01-02T00:00:00.000Z',
+    }
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown,
+      lastFatalError,
+    })
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError, lastShutdown })
+
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: 'x',
+      lastFatalError,
+    })
+    expect(await readCarriedOverStatus(tmpDir)).toEqual({ lastFatalError })
+  })
+
+  it('reports not drained when a worker carried a failed start forward and then died', async () => {
+    await writeWorkerStatus(tmpDir, {
+      version: 1,
+      startedAt: '2026-01-03T00:00:00.000Z',
+      updatedAt: 'x',
+      lastShutdown: {
+        reason: 'SIGTERM',
+        at: '2026-01-01T00:01:00.000Z',
+        workerStartedAt: '2026-01-01T00:00:00.000Z',
+        outcome: 'drained',
+        drainMs: 10,
+      },
+      lastFatalError: {
+        message: 'clone failed',
+        at: '2026-01-02T00:00:05.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-01-02T00:00:00.000Z',
+      },
+    })
+
+    expect((await readCarriedOverStatus(tmpDir)).lastShutdown).toMatchObject({
+      workerStartedAt: '2026-01-03T00:00:00.000Z',
+      outcome: 'not-drained',
+    })
+  })
+
   it('returns nothing when there is no readable status file', async () => {
     expect(await readCarriedOverStatus(tmpDir)).toEqual({})
     await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')

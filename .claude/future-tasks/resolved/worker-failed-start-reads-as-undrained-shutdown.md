@@ -2,7 +2,7 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  A worker whose start fails leaves a status snapshot with its own `startedAt` and no `lastShutdown` of its own, so the next worker's carry-over (`readCarriedOverStatus`) replaces the previous real shutdown record with "stopped without draining (a crash or a forced stop)". One failed boot in a crash loop therefore erases how the last healthy worker stopped, and System health shows a misleading crash. Decide what a failed start's snapshot carries forward
+  RESOLVED: `readCarriedOverStatus` leaves a snapshot alone when its own worker recorded a startup failure (`lastFatalError.phase === 'startup'` with `workerStartedAt` equal to the file's `startedAt`), so the carried `lastShutdown` keeps describing the last worker that ran. System health shows that shutdown and a separate "Last start failed at" line
 ---
 # A failed start erases the last real shutdown record
 
