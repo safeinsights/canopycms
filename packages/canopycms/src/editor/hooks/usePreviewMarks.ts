@@ -9,7 +9,9 @@ const NO_MARKS: InexactMark[] = []
 /**
  * What the framed page reports of its marks while highlighting is on, kept for the `src` that
  * said so: whether it marks nothing, and which marks name no field of the entry. Each such mark
- * is a console warning once per page, since the toggle's note only counts them.
+ * is a console warning once per page, since the toggle's note only counts them. Marks are
+ * checked against the draft as it was when they were reported, which is what the page rendered,
+ * not the draft since: a block whose template just changed would otherwise flag its old marks.
  */
 export function usePreviewMarks({
   src,
@@ -22,13 +24,16 @@ export function usePreviewMarks({
   fields: readonly FieldConfig[]
   data: unknown
 }) {
-  const [marks, setMarks] = useState<(PreviewMarks & { src: string }) | null>(null)
+  const [marks, setMarks] = useState<(PreviewMarks & { src: string; data: unknown }) | null>(null)
   const current = highlightEnabled && marks !== null && marks.src === src ? marks : null
-  const paths = current?.paths
+  const latestData = useRef(data)
+  useEffect(() => {
+    latestData.current = data
+  })
 
   const inexactMarks = useMemo(
-    () => (paths ? findInexactMarks(fields, data, paths) : NO_MARKS),
-    [paths, fields, data],
+    () => (current?.paths ? findInexactMarks(fields, current.data, current.paths) : NO_MARKS),
+    [current?.paths, current?.data, fields],
   )
 
   const warned = useRef(new Set<string>())
@@ -45,7 +50,7 @@ export function usePreviewMarks({
   }, [inexactMarks, src])
 
   const onMarks = useCallback(
-    (reported: PreviewMarks) => setMarks({ ...reported, src: src ?? '' }),
+    (reported: PreviewMarks) => setMarks({ ...reported, src: src ?? '', data: latestData.current }),
     [src],
   )
   const clearMarks = useCallback(() => setMarks(null), [])

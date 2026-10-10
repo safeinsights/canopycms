@@ -357,10 +357,12 @@ describe('Editor preview marks', () => {
         "2 preview marks don't match a field: byline.person.name, subtitle. The browser console names the nearest field of each.",
       ),
     )
-    expect(warnings()).toEqual([
-      '[canopycms] The preview marks "byline.person.name", which names no field of this entry; its nearest field is "byline.person".',
-      '[canopycms] The preview marks "subtitle", which names no field of this entry.',
-    ])
+    await waitFor(() =>
+      expect(warnings()).toEqual([
+        '[canopycms] The preview marks "byline.person.name", which names no field of this entry; its nearest field is "byline.person".',
+        '[canopycms] The preview marks "subtitle", which names no field of this entry.',
+      ]),
+    )
 
     report(['title', 'byline.person.name', 'subtitle', 'blocks[0]'])
     await new Promise((resolve) => setTimeout(resolve, 50))

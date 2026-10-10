@@ -219,6 +219,27 @@ describe('FieldProps types', () => {
     })
   })
 
+  it('leaves a nested unknown untyped below it', () => {
+    const loose = createFieldProps<{
+      meta: unknown
+      data: Record<string, unknown>
+      title: string
+    }>()
+    loose(['meta', 'x', 0])
+    loose('meta.x.y')
+    loose(['data', 'a', 'b'])
+    // @ts-expect-error - typed members stay checked
+    loose(['title', 'x'])
+  })
+
+  it('refuses a template literal with a number hole, like any computed string', () => {
+    // @ts-expect-error - computed paths go in as segments
+    fieldProps(`sections[${i}]`)
+    // @ts-expect-error - computed paths go in as segments
+    fieldProps(`sections.${i}.headline`)
+    fieldProps(['sections', i, 'headline'])
+  })
+
   it('treats nullable content as its non-null value', () => {
     const maybe = createFieldProps<Page | undefined>()
     maybe('title')

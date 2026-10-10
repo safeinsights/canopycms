@@ -16,7 +16,10 @@ type IsDigits<S extends string> = S extends `${Digit}${infer Rest}`
     ? true
     : IsDigits<Rest>
   : false
-type ParseSegment<S extends string> = IsDigits<S> extends true ? number : S
+/** A template literal's `${number}` hole: a computed path, so untyped. */
+type TemplateHole = { readonly templateHole: true }
+type ParseSegment<S extends string> =
+  IsDigits<S> extends true ? number : `${number}` extends S ? TemplateHole : S
 type ParseBrackets<S extends string> = S extends `${infer Key}[${infer Index}]${infer Rest}`
   ? [...(Key extends '' ? [] : [ParseSegment<Key>]), ParseSegment<Index>, ...ParseBrackets<Rest>]
   : S extends ''
@@ -63,12 +66,12 @@ type Child<V, S> = unknown extends V
   : V extends unknown
     ? V extends readonly (infer E)[]
       ? S extends number
-        ? NonNullable<ListItem<NonNullable<E>>>
+        ? Defined<ListItem<Defined<E>>>
         : never
       : IsLeaf<V> extends true
         ? never
         : S extends keyof V
-          ? NonNullable<V[S]>
+          ? Defined<V[S]>
           : never
     : never
 
@@ -118,12 +121,14 @@ type StringArg<V, S extends string> = unknown extends V
   ? S
   : string extends S
     ? ComputedPathError
-    : IsFieldPath<V, ParsePath<S>> extends true
-      ? S
-      : Completions<V, ParsePath<S>>
+    : TemplateHole extends ParsePath<S>[number]
+      ? ComputedPathError
+      : IsFieldPath<V, ParsePath<S>> extends true
+        ? S
+        : Completions<V, ParsePath<S>>
 
 /** `NonNullable<unknown>` is `{}`, which would make untyped content typed. */
-type Content<T> = unknown extends T ? unknown : NonNullable<T>
+type Defined<T> = unknown extends T ? unknown : NonNullable<T>
 
 declare const fieldPropsContent: unique symbol
 
@@ -134,7 +139,7 @@ declare const fieldPropsContent: unique symbol
  * is below a reference or image. Any template's fields compile after a block's index; the
  * editor warns about the rest. `FieldProps` alone (`T = unknown`) takes any path.
  */
-export type FieldProps<T = unknown> = FieldPropsCall<Content<T>> & {
+export type FieldProps<T = unknown> = FieldPropsCall<Defined<T>> & {
   /** Bivariant, so a block scope's `FieldProps<Union>` fits one template's component. */
   readonly [fieldPropsContent]?: { bivariant(content: T): void }['bivariant']
 }
@@ -151,20 +156,17 @@ const markField: UntypedFieldProps = (path) => {
   return normalized ? { 'data-canopy-path': normalized } : {}
 }
 
-/**
- * An empty path marks nothing, so a component's root mark (`[]`) emits no attribute unscoped.
- * @internal `useCanopyPreview` is its only caller.
- */
+/** An empty path marks nothing. @internal `useCanopyPreview` is its only caller. */
 export const createFieldProps = <T>(): FieldProps<T> => markField
 
 /** `fieldProps(path)`, or nothing on a public page; `[]` marks the field a caller scoped to. */
 export function fieldAttrs<T, const S extends string>(
   fieldProps: FieldProps<T> | undefined,
-  path: StringArg<Content<T>, S>,
+  path: StringArg<Defined<T>, S>,
 ): FieldAttrs
 export function fieldAttrs<T, const P extends readonly CanopyPathSegment[]>(
   fieldProps: FieldProps<T> | undefined,
-  path: SegmentsArg<Content<T>, P>,
+  path: SegmentsArg<Defined<T>, P>,
 ): FieldAttrs
 export function fieldAttrs(
   fieldProps: UntypedFieldProps | undefined,
@@ -180,12 +182,12 @@ export function fieldAttrs(
  */
 export function scopeFieldProps<T, const S extends string>(
   fieldProps: FieldProps<T> | undefined,
-  prefix: StringArg<Content<T>, S>,
-): FieldProps<ValueAt<Content<T>, ParsePath<S>>> | undefined
+  prefix: StringArg<Defined<T>, S>,
+): FieldProps<ValueAt<Defined<T>, ParsePath<S>>> | undefined
 export function scopeFieldProps<T, const P extends readonly CanopyPathSegment[]>(
   fieldProps: FieldProps<T> | undefined,
-  prefix: SegmentsArg<Content<T>, P>,
-): FieldProps<ValueAt<Content<T>, P>> | undefined
+  prefix: SegmentsArg<Defined<T>, P>,
+): FieldProps<ValueAt<Defined<T>, P>> | undefined
 export function scopeFieldProps(
   fieldProps: UntypedFieldProps | undefined,
   prefix: string | readonly CanopyPathSegment[],
