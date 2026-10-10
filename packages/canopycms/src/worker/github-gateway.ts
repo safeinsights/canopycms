@@ -16,14 +16,19 @@ import { workerLog, workerLogError, workerLogWarn } from './log'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
 interface GitHubFetchResult {
-  /** Every GitHub branch at the fetch, mapped to the commit it names. */
-  branches: ReadonlyMap<string, string>
   /** The objects the caller lacks, as a bundle to download; always null in-process. */
   bundleId: string | null
 }
 
-/** Which GitHub branches reached each of a list of commits, at the last fetch. */
+const inMirrorSession = Symbol('inMirrorSession')
+
+/**
+ * Which GitHub branches reached each of a list of commits, at the last fetch, asked inside a
+ * mirror session that is already held. Branded so the gateway itself, whose own `onGitHub` takes
+ * that session, cannot be passed in its place: the session is not re-entrant.
+ */
 export interface GitHubReachability {
+  readonly [inMirrorSession]: true
   onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>>
 }
 
@@ -81,8 +86,7 @@ export interface GitHubGateway {
   defaultBranch(signal?: AbortSignal): Promise<string>
   /**
    * Fetch every GitHub branch, and copy them into remote.git's tracking namespace in the same
-   * mirror session, pruning the ones GitHub no longer has. `have` is ignored. The remote.git
-   * write moves to the worker, through a bundle, once objects travel as bundles.
+   * mirror session, pruning the ones GitHub no longer has. `have` is ignored.
    */
   fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult>
   /** Of `ids`, the ones a GitHub branch contained at the last fetch. */
@@ -90,7 +94,9 @@ export interface GitHubGateway {
   /**
    * Seed the bare repository at `gitDir` with every GitHub branch, in one mirror session: fetch
    * GitHub, run `beforeSeed` (whose throw stops the seed), require `baseBranch` on GitHub, run
-   * `createRepository` to make the empty repository at `gitDir`, then push into it.
+   * `createRepository` to make the empty repository at `gitDir`, then push into it. `beforeSeed`
+   * runs inside that session, so it asks GitHub only through the object it is given, never
+   * through the gateway.
    */
   seedBareRepository(
     gitDir: string,
@@ -256,11 +262,11 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<GitHubFetchResult> {
     const githubUrl = await this.buildGitHubUrl()
-    return this.mirror.exclusive(async (mirror) => {
+    await this.mirror.exclusive(async (mirror) => {
       await mirror.fetchFromGitHub(githubUrl, signal)
       await mirror.publishTrackingRefs(signal)
-      return { branches: await mirror.branchTips(signal), bundleId: null }
     })
+    return { bundleId: null }
   }
 
   onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>> {
@@ -278,7 +284,10 @@ class LocalGitHubGateway implements GitHubGateway {
     const githubUrl = await this.buildGitHubUrl()
     await this.mirror.exclusive(async (mirror) => {
       await mirror.fetchFromGitHub(githubUrl)
-      await options.beforeSeed?.({ onGitHub: (ids) => idsOnGitHub(mirror, ids) })
+      await options.beforeSeed?.({
+        [inMirrorSession]: true,
+        onGitHub: (ids) => idsOnGitHub(mirror, ids),
+      })
       if ((await mirror.branchTip(options.baseBranch)) === null) {
         throw new Error(`GitHub has no branch '${options.baseBranch}'`)
       }
@@ -414,16 +423,35 @@ class LocalGitHubGateway implements GitHubGateway {
     try {
       await Promise.race([this.options.auth.refreshCredential(), timedOut])
     } catch (err) {
-      // [REDACT] The message can name the secret and, on a malformed-secret path, quote what was
-      // read.
-      workerLogError(
-        'Failed to re-read the GitHub credential after a failure:',
-        redactCredentials(getErrorMessage(err)),
-      )
+      logFailedCredentialRefresh(err)
     } finally {
       clearTimeout(timer)
     }
   }
+}
+
+/**
+ * `github().refreshCredential()`, for its two call sites. Never throws, even when `github()`
+ * does: building the gateway resolves the credential, and a half-configured one is logged as a
+ * failed re-read so the failure each caller is reporting stays the one that propagates.
+ */
+export async function refreshGitHubCredential(github: () => GitHubGateway): Promise<void> {
+  let gateway: GitHubGateway
+  try {
+    gateway = github()
+  } catch (err) {
+    logFailedCredentialRefresh(err)
+    return
+  }
+  await gateway.refreshCredential()
+}
+
+function logFailedCredentialRefresh(err: unknown): void {
+  // [REDACT] The message can name the secret and, on a malformed-secret path, quote what was read.
+  workerLogError(
+    'Failed to re-read the GitHub credential after a failure:',
+    redactCredentials(getErrorMessage(err)),
+  )
 }
 
 /** Of `ids`, the ones a GitHub branch contained at the last fetch, asked one at a time. */

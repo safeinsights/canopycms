@@ -181,6 +181,22 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       await expect(wrapperOf(worker).syncGitWithCredentialRefresh()).rejects.toThrow()
       expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
     })
+
+    it('rethrows the SYNC error when the gateway cannot even be built', async () => {
+      // No credential at all, and no gateway installed: building one throws.
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        baseBranch: 'main',
+      })
+      wrapperOf(worker).syncGit = vi.fn().mockRejectedValue(new Error('fetch rejected by GitHub'))
+
+      await expect(wrapperOf(worker).syncGitWithCredentialRefresh()).rejects.toThrow(
+        'fetch rejected by GitHub',
+      )
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
+    })
   })
 
   describe('on a failing task', () => {
@@ -330,6 +346,34 @@ describe('CmsWorker credential refresh on a failing sync', () => {
       expect(pending.retryCount).toBe(1)
       expect(pending.error).toMatch(/Authentication failed/)
       expect(pending.error).not.toMatch(/AccessDenied/)
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
+    })
+
+    it('keeps draining the queue when the gateway cannot even be built', async () => {
+      // No credential at all, and no gateway installed: building one throws.
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        baseBranch: 'main',
+        maxRetries: MAX_RETRIES,
+      })
+      const internals = worker as unknown as TaskInternals
+      internals.running = true
+      internals.pushBranchToGitHub = vi.fn().mockRejectedValue(new Error('push refused'))
+      const first = await enqueuePush()
+      const second = await enqueueTask(path.join(workspacePath, '.tasks'), {
+        action: 'push-branch',
+        payload: { branch: 'feature-2' },
+      })
+
+      await worker.processTaskQueue()
+
+      for (const id of [first, second]) {
+        const pending = JSON.parse(await fs.readFile(taskPath('pending', id), 'utf-8'))
+        expect(pending.retryCount).toBe(1)
+        expect(pending.error).toMatch(/push refused/)
+      }
       expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential')
     })
 

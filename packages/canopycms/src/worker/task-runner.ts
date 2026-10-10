@@ -17,7 +17,7 @@ import {
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
-import { GitHubPushError, type GitHubPushOutcome } from './github-gateway'
+import { GitHubPushError, refreshGitHubCredential, type GitHubPushOutcome } from './github-gateway'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -277,7 +277,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       // Ungated, and AFTER the outcome is recorded rather than before: the task
       // is safely in pending/ or failed/ while a network read runs, and that
       // read is bounded and never throws. See GitHubGateway.refreshCredential.
-      await ctx.github().refreshCredential()
+      await refreshGitHubCredential(() => ctx.github())
     }
     processed++
   }

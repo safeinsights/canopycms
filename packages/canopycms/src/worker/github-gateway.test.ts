@@ -21,6 +21,7 @@ import {
   GitHubPushError,
   createLocalGitHubGateway,
   type GitHubGateway,
+  type GitHubReachability,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
 import { RefusedPushError } from './github-mirror'
@@ -81,32 +82,28 @@ afterEach(async () => {
 })
 
 describe('fetch', () => {
-  it("returns GitHub's branch map and publishes it into remote.git's tracking namespace", async () => {
+  it("publishes GitHub's branches into remote.git's tracking namespace", async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const feature = await commitAndPush(githubPath, 'refs/heads/feature/x', 'feature.txt')
 
     const result = await gateway().fetch({ have: [] })
 
-    expect(result.bundleId).toBeNull()
-    expect([...result.branches].sort()).toEqual([
-      ['feature/x', feature],
-      ['main', main],
-    ])
+    expect(result).toEqual({ bundleId: null })
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}main`)).toBe(main)
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}feature/x`)).toBe(feature)
   })
 
-  it('prunes a branch GitHub no longer has, from the map and from remote.git', async () => {
+  it('prunes a branch GitHub no longer has from remote.git', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     await commitAndPush(githubPath, 'refs/heads/gone', 'gone.txt')
     const github = gateway()
     await github.fetch({ have: [] })
     await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/gone')
 
-    const result = await github.fetch({ have: [] })
+    await github.fetch({ have: [] })
 
-    expect([...result.branches.keys()]).toEqual(['main'])
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}gone`)).toBeNull()
+    expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}main`)).not.toBeNull()
   })
 
   it('resolves a function-valued remoteUrl on every use', async () => {
@@ -158,6 +155,12 @@ describe('seedBareRepository', () => {
 
     expect(order).toEqual([`beforeSeed:${main}`, 'createRepository'])
     expect(await tip(target(), 'refs/heads/main')).toBe(main)
+  })
+
+  it('hands the check an in-session object, which the gateway itself cannot stand in for', () => {
+    const check = (github: GitHubReachability) => github
+    // @ts-expect-error The gateway's own onGitHub waits on the session the check runs inside.
+    check(gateway())
   })
 
   it('stops before creating anything when the check throws', async () => {
