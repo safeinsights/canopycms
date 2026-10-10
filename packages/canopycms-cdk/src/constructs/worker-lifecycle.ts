@@ -37,8 +37,8 @@ export const WORKER_CAPACITY_ENV = 'CANOPYCMS_WORKER_CAPACITY'
  *
  * A unit with no stamp predates the stamp, so its version is read from what
  * it observably provides: 1 when `STATE_DIRECTORY` is set (systemd sets it
- * from `StateDirectory=`), else 0. Nothing later is observable that way, so
- * from version 2 on only an explicit stamp satisfies a bundle.
+ * from `StateDirectory=`), else 0. Inference never reads past 1, so from
+ * version 2 on only an explicit stamp satisfies a bundle.
  *
  * Append an entry ONLY when the bundle starts to need something new from the
  * unit or template. Anything a bundle merely tolerates the absence of does
@@ -59,18 +59,27 @@ export const WORKER_CONTRACT_VERSION = WORKER_CONTRACT_REQUIREMENTS.length
 export const WORKER_CONTRACT_ENV = 'CANOPYCMS_WORKER_CONTRACT'
 
 /**
+ * The unit's worker contract version, read from the worker's environment as
+ * {@link WORKER_CONTRACT_REQUIREMENTS} describes, or `NaN` for a stamp that is
+ * not a whole number.
+ */
+export function unitWorkerContract(env: Readonly<Record<string, string | undefined>>): number {
+  const stamp = env[WORKER_CONTRACT_ENV]
+  if (stamp === undefined) return env.STATE_DIRECTORY ? 1 : 0
+  return /^\d+$/.test(stamp) ? Number(stamp) : NaN
+}
+
+/**
  * The fatal line for a unit older than this bundle, or `undefined` when the
- * unit's contract, read from the worker's environment as
- * {@link WORKER_CONTRACT_REQUIREMENTS} describes, is new enough.
+ * unit's contract is new enough.
  */
 export function workerContractShortfall(
   env: Readonly<Record<string, string | undefined>>,
 ): string | undefined {
-  const stamp = env[WORKER_CONTRACT_ENV]
-  if (stamp !== undefined && !/^\d+$/.test(stamp)) {
-    return `canopy-worker: ${WORKER_CONTRACT_ENV}=${JSON.stringify(stamp)} on the worker unit is not a whole number`
+  const unit = unitWorkerContract(env)
+  if (Number.isNaN(unit)) {
+    return `canopy-worker: ${WORKER_CONTRACT_ENV}=${JSON.stringify(env[WORKER_CONTRACT_ENV])} on the worker unit is not a whole number`
   }
-  const unit = stamp !== undefined ? Number(stamp) : env.STATE_DIRECTORY ? 1 : 0
   if (unit >= WORKER_CONTRACT_VERSION) return undefined
   return (
     `canopy-worker: template too old for this bundle: needs worker contract ` +

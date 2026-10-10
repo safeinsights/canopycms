@@ -14,6 +14,7 @@ import {
   EXIT_WORKER_SELF_STOPPED,
   WORKER_CONTRACT_ENV,
   WORKER_CONTRACT_VERSION,
+  unitWorkerContract,
 } from '../src/constructs/worker-lifecycle'
 import { readGitHubAppEnv, runWorker, type RunWorkerDeps, type WorkerHandle } from './run'
 
@@ -62,6 +63,24 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+// The inferred value, not just whether the worker runs: once the contract
+// passes 1, an unstamped unit must still read as 1 and be refused.
+describe("unitWorkerContract: the unit's contract version", () => {
+  it.each<[string, number, NodeJS.ProcessEnv]>([
+    ['unstamped, with a state directory', 1, { STATE_DIRECTORY: '/var/lib/canopy-worker' }],
+    ['unstamped, without one', 0, {}],
+    ['unstamped, with an empty one', 0, { STATE_DIRECTORY: '' }],
+    ['stamped 0, with a state directory', 0, { [WORKER_CONTRACT_ENV]: '0', STATE_DIRECTORY: '/x' }],
+    ['stamped 3', 3, { [WORKER_CONTRACT_ENV]: '3' }],
+  ])('%s is %i', (_case, expected, env) => {
+    expect(unitWorkerContract(env)).toBe(expected)
+  })
+
+  it('is NaN for a stamp that is not a whole number', () => {
+    expect(unitWorkerContract({ [WORKER_CONTRACT_ENV]: '1.0' })).toBeNaN()
+  })
 })
 
 describe('readGitHubAppEnv: the all-or-nothing App trio', () => {
