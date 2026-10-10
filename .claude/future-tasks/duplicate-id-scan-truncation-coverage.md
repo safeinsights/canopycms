@@ -14,11 +14,12 @@ on one filesystem, so when the budget runs out it runs out on the same branches 
 health honestly shows them as "IDs not checked", but **Check again** cannot reach them.
 
 The branch whose scan is still running at the deadline is abandoned, not stopped: its recursive
-readdir keeps going until it settles. Within a Lambda that is bounded by the invocation; in dev or a
-long-lived server, repeated checks can stack abandoned scans on a slow filesystem.
+readdir keeps going until it settles. A Lambda freezes it with the execution environment once the
+response is sent, and it resumes on that environment's next invocation; a long-lived server keeps
+running it. Either way, repeated checks on a slow filesystem can stack abandoned scans.
 
 Nothing is wrong today: truncation needs a content tree and branch count large enough to spend
-20 s in readdir. Track it because the live KB site is the first deployment likely to approach it.
+20 s in readdir. Track it before a deployment grows that large.
 
 ## Fix direction
 

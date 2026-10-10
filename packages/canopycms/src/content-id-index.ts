@@ -202,8 +202,8 @@ export class ContentIdIndex {
                 `embed this ID. Keeping "${kept}" for ID-based lookups (reads, references, ` +
                 `listings); "${dropped}" is excluded from those lookups for now but has NOT ` +
                 `been deleted -- it is still on disk at that path, and saves addressed to it are ` +
-                `refused until this is resolved. An admin can resolve this via ` +
-                `the repair-content-duplicates admin action for this branch, which archives ` +
+                `refused until this is resolved. An admin can resolve this in System health ` +
+                `(Branches tab), whose repair-content-duplicates action archives ` +
                 `"${dropped}" with a dot-prefixed name so future scans stop flagging it. ` +
                 `Root: ${this.root}`,
             )

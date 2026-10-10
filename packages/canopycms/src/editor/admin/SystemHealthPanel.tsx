@@ -938,9 +938,9 @@ function BranchHealthRow({
   /** The base branch's last refresh problem, from worker status; null on other rows. */
   baseWarning: string | null
   /**
-   * This row's result from the last duplicate-ID scan: `undefined` while no
-   * scan has completed (the tab summary says so), `null` when the scan did
-   * not include this row.
+   * This row's result from the last duplicate-ID scan: `undefined` when there
+   * is no scan result (none yet, or the last request failed; the tab summary
+   * says which), `null` when the scan did not include this row.
    */
   duplicateIdScan: DuplicateIdScan | null | undefined
   onMarkMerged: (branchName: string) => void

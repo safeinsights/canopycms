@@ -46,7 +46,8 @@ const PROVISIONING_LOCK_FRESH_MS = 5 * 60_000
 
 /**
  * Wall-clock budget the opt-in duplicate-ID scan shares across every healthy
- * branch: well inside the API Lambda's 60 s timeout, leaving the rest of the
+ * branch: well inside the CMS Lambda's default 60 s timeout
+ * (`DEFAULT_CMS_LAMBDA_TIMEOUT` in canopycms-cdk), leaving the rest of the
  * request its headroom.
  * @internal Exported for tests.
  */
