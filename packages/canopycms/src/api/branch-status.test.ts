@@ -408,9 +408,9 @@ describe('branch status api', () => {
     })
 
     it('fails closed when the status is unreadable', async () => {
-      // branch.json is read with a bare JSON.parse (no schema validation), so a
-      // damaged or hand-repaired file can yield status: undefined at runtime --
-      // the same condition getBranchWriteProtection refuses writes for.
+      // A context with no status, which getBranchWriteProtection also refuses
+      // writes for. From disk, such a branch.json is refused as corrupt
+      // (guards.test.ts, "guards over a corrupt branch.json on disk").
       mockMetadataUpdate.mockClear()
       const { ctx } = makeStatusCtx(undefined)
 

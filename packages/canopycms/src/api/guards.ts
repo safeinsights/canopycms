@@ -6,6 +6,11 @@
 
 import type { BranchContext, BranchContextWithSchema } from '../types'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import {
+  BRANCH_METADATA_CORRUPT_MESSAGE,
+  BranchMetadataCorruptError,
+} from '../branch-metadata-error'
+import { canopyLogError } from '../utils/logger'
 import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
 import { getBranchProtection, getBranchWriteProtection } from '../authorization/protected-branch'
 
@@ -201,8 +206,8 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     const error =
       branchStatus === 'submitted'
         ? `Branch "${context.branch.name}" is submitted for review and cannot be edited. Withdraw it or request changes to resume editing.`
-        : // Unreadable status: branch.json parses without schema validation, so a
-          // damaged file reaches here with no status. Refuse rather than guess.
+        : // A branch.json without a status is refused as corrupt before this
+          // point; a context built elsewhere can still lack one. Refuse rather than guess.
           branchStatus === undefined
           ? `Branch "${context.branch.name}" has no readable workflow status and cannot be edited until its metadata is repaired.`
           : `Branch "${context.branch.name}" is ${branchStatus} and cannot be edited.`
@@ -305,7 +310,19 @@ export async function executeGuards<T extends readonly GuardId[]>(
 
   for (const guardId of guards) {
     const runner = GUARD_RUNNERS[guardId]
-    const result = await runner(ctx, req, params, accumulated)
+    let result: GuardRunnerResult
+    try {
+      result = await runner(ctx, req, params, accumulated)
+    } catch (err: unknown) {
+      // Every branch guard resolves the branch from its branch.json, and a
+      // corrupt one has no status or ACL anyone can trust: deny, whatever the guard.
+      if (!(err instanceof BranchMetadataCorruptError)) throw err
+      canopyLogError(`CanopyCMS: ${err.message}`)
+      return {
+        ok: false,
+        response: { ok: false, status: 500, error: BRANCH_METADATA_CORRUPT_MESSAGE },
+      }
+    }
     if (!result.ok) {
       return { ok: false, response: result.response }
     }

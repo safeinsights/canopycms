@@ -7,7 +7,7 @@
  * worker-status.json, which the next worker carries forward.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -88,8 +88,18 @@ describe('CmsWorker.stop() drains the task queue', () => {
       return { pushed: true }
     }
 
-    const first = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'a' } })
-    const second = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'b' } })
+    // Both tasks get one `createdAt`, so the queue breaks the tie by random id
+    // and either may be claimed first.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    let ids: string[]
+    try {
+      ids = [
+        await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'a' } }),
+        await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'b' } }),
+      ]
+    } finally {
+      vi.useRealTimers()
+    }
 
     void w.trackOperation('task queue', worker.processTaskQueue())
     expect(await waitFor(() => executed.length === 1)).toBe(true)
@@ -98,9 +108,12 @@ describe('CmsWorker.stop() drains the task queue', () => {
     finishFirst()
     await stopping
 
-    expect(executed).toEqual([first])
-    expect((await readTaskFile(taskDir, 'completed', first))?.status).toBe('completed')
-    expect((await readTaskFile(taskDir, 'pending', second))?.status).toBe('pending')
+    expect(executed).toHaveLength(1)
+    const [claimed] = executed
+    const other = ids.find((id) => id !== claimed)!
+    expect(ids).toContain(claimed)
+    expect((await readTaskFile(taskDir, 'completed', claimed))?.status).toBe('completed')
+    expect((await readTaskFile(taskDir, 'pending', other))?.status).toBe('pending')
   })
 
   it('at the deadline, aborts the in-flight task and releases it to pending with no retry spent', async () => {
