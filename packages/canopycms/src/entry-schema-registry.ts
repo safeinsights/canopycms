@@ -19,6 +19,7 @@ import {
   ensureItemTitleFieldsExist,
   ensureNoFlattenedFieldNameCollisions,
   ensureNoGroupsInsideComplexFields,
+  ensureMarkdownFieldOptions,
 } from './config/validation'
 
 /** Look up a field's type by dotted path (e.g., "meta.order").
@@ -57,7 +58,7 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
  * `RESOLVED_REFERENCE_KEYS`; a top-level or inline-group field named `unavailable`. This is also the one
  * place the shared field-shape checks run: field names a path can spell, select fields must have options,
  * reference fields must have `collections` or `entryTypes`, no inline groups
- * inside object/block fields, no field-name collisions after group flattening.
+ * inside object/block fields, no field-name collisions after group flattening, valid `mdxAllow`.
  *
  * @example
  * ```typescript
@@ -132,6 +133,7 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     ensureReferenceFieldsHaveScope(schema)
     ensureItemTitleFieldsExist(schema)
     ensureNoGroupsInsideComplexFields(schema)
+    ensureMarkdownFieldOptions(schema)
     ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }
 

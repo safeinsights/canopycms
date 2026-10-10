@@ -4,7 +4,7 @@ import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, use
 
 import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
 
-import type { MDXEditorMethods } from '@mdxeditor/editor'
+import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
 import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
 import { createMarkdownFidelityPlugin } from './markdown-fidelity-visitors'
@@ -29,7 +29,16 @@ export interface MarkdownFieldProps {
   value: string
   onChange: (value: string) => void
   dataCanopyField?: string
+  /** The HTML tags the field accepts; the toolbar offers no action writing another. Omitted: any. */
+  htmlTags?: ReadonlySet<string>
 }
+
+/** Text formats MDXEditor exports as an HTML tag, with that tag. */
+const TAG_FORMATS = [
+  ['underline', 'u'],
+  ['subscript', 'sub'],
+  ['superscript', 'sup'],
+] as const
 
 /** @internal Exported for the round-trip corpus test, which drives exactly this editor. */
 export const MDXEditorLazy = React.lazy(async () => {
@@ -68,11 +77,65 @@ export const MDXEditorLazy = React.lazy(async () => {
     imageDialogState$,
     activeEditor$,
     $isImageNode,
+    createRootEditorSubscription$,
+    realmPlugin,
+    Cell,
     // MDXEditor's own lexical instance: lexical keeps the active editor state per module, so
     // a separately resolved copy would throw inside this editor's `read()`.
-    lexical: { $getNodeByKey },
+    lexical: {
+      $getNodeByKey,
+      $getSelection,
+      $isRangeSelection,
+      COMMAND_PRIORITY_CRITICAL,
+      FORMAT_TEXT_COMMAND,
+      SET_TEXT_FORMAT_COMMAND,
+      mergeRegister,
+    },
   } = mdx
   const mdxJsxPlugins = createMdxJsxPlugins(mdx)
+
+  /** The text formats whose tag the field refuses, kept current as props change. */
+  const refusedFormats$ = Cell<readonly string[]>([])
+  const refusedFormats = (htmlTags: ReadonlySet<string> | undefined) =>
+    TAG_FORMATS.filter(([, tag]) => htmlTags?.has(tag) === false).map(([format]) => format)
+
+  /**
+   * Refuses adding a format whose tag the field refuses (toolbar, Cmd+U) and lets removing one
+   * through: Lexical toggles a range off when its selection has the format, and passes a nested
+   * editor's input commands up to the root's. Content is never rewritten: a stored tag stays for
+   * the server's unchanged-field rule, and a pasted one reaches the server, which refuses it.
+   */
+  const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> | undefined }>({
+    init(realm, params) {
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+      const refused = (format: string) => realm.getValue(refusedFormats$).includes(format)
+      const guard: EditorSubscription = (editor) =>
+        mergeRegister(
+          editor.registerCommand(
+            FORMAT_TEXT_COMMAND,
+            (format, fromEditor) => {
+              if (!refused(format)) return false
+              // Lexical formats the dispatching editor's pending selection; inside the root's
+              // update, where this runs for a nested command, `$getSelection()` is the root's.
+              const selection = fromEditor.read('pending', () => $getSelection())
+              return !($isRangeSelection(selection) && selection.hasFormat(format))
+            },
+            COMMAND_PRIORITY_CRITICAL,
+          ),
+          editor.registerCommand(
+            SET_TEXT_FORMAT_COMMAND,
+            (formats) =>
+              Object.entries(formats).some(([format, on]) => on === true && refused(format)),
+            COMMAND_PRIORITY_CRITICAL,
+          ),
+        )
+      realm.pub(createRootEditorSubscription$, guard)
+    },
+    update(realm, params) {
+      realm.pub(refusedFormats$, refusedFormats(params?.htmlTags))
+    },
+  })
+
   const markdownFidelityPlugin = createMarkdownFidelityPlugin(mdx)
 
   const EntryLinkToolbarButton: React.FC<{
@@ -119,6 +182,7 @@ export const MDXEditorLazy = React.lazy(async () => {
     editorRef?: React.Ref<MDXEditorMethods>
     imageUploadHandler: (file: File) => Promise<string>
     imagePreviewHandler: (src: string) => Promise<string>
+    htmlTags?: ReadonlySet<string>
   }> = ({
     markdown,
     onChange,
@@ -127,7 +191,9 @@ export const MDXEditorLazy = React.lazy(async () => {
     editorRef,
     imageUploadHandler,
     imagePreviewHandler,
+    htmlTags,
   }) => {
+    const underline = htmlTags?.has('u') ?? true
     return (
       <MDXEditor
         ref={editorRef}
@@ -147,10 +213,13 @@ export const MDXEditorLazy = React.lazy(async () => {
             imageUploadHandler,
             imagePreviewHandler,
             ImageDialog: MdxImageDialogBridge,
+            // A resized image exports as `<img>`.
+            disableImageResize: htmlTags?.has('img') === false,
           }),
           tablePlugin(),
           ...mdxJsxPlugins(),
           markdownFidelityPlugin(),
+          tagFormatGuardPlugin({ htmlTags }),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
             codeBlockLanguages: {
@@ -173,7 +242,7 @@ export const MDXEditorLazy = React.lazy(async () => {
               <>
                 <UndoRedo />
                 <Separator />
-                <BoldItalicUnderlineToggles />
+                <BoldItalicUnderlineToggles options={underline ? undefined : ['Bold', 'Italic']} />
                 <CodeToggle />
                 <Separator />
                 <BlockTypeSelect />
@@ -302,6 +371,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  htmlTags,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -503,6 +573,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
                 editorRef={editorRef}
                 imageUploadHandler={imageUploadHandler}
                 imagePreviewHandler={imagePreviewHandler}
+                htmlTags={htmlTags}
               />
             </Suspense>
           </EditorErrorBoundary>

@@ -54,6 +54,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         mode,
         entryLinkUrl,
         basePath,
+        mdxAllow,
       } = validated
       // flatSchema is loaded dynamically by the editor via API (from .collection.json files)
       const clientConfig: CanopyClientConfig = {
@@ -64,6 +65,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         mode,
         entryLinkUrl,
         basePath,
+        mdxAllow,
         flatSchema: [],
       }
 

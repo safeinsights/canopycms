@@ -7,16 +7,21 @@ import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
 
 import type {
   BlockFieldConfig,
+  ContentFormat,
   EntrySchema,
   FieldConfig,
   ImageFieldConfig,
   ImageFieldValue,
   InlineGroupFieldConfig,
+  MarkdownFieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
   SelectFieldConfig,
 } from '../config'
 import { MarkdownField } from './fields/MarkdownField'
+import { useSiteMdxAllow } from './context'
+import { markdownPolicyOf } from '../validation/mdx-allowlist'
+import { findBodyFieldName } from '../utils/body-field'
 import { StringListField } from './fields/StringListField'
 import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
@@ -142,6 +147,8 @@ export interface FormRendererProps {
    * in useDraftManager and by server 422 rejections.
    */
   fieldErrors?: Record<string, string>
+  /** The entry's format, which decides how its body field is checked. */
+  format?: ContentFormat
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -160,8 +167,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onResolveThread,
   conflictNotice = false,
   fieldErrors,
+  format,
 }) => {
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
+  const siteMdxAllow = useSiteMdxAllow()
+  const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
 
   // Object-list item keys. An object listed once keeps the key it was first shown with, so an
   // append remounts no item and a removal never hands a crashed item's boundary to the next one.
@@ -404,7 +414,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           />,
         )
       case 'markdown':
-      case 'mdx':
+      case 'mdx': {
+        const isBody = path.length === 1 && path[0] === bodyName
+        const policy = markdownPolicyOf(
+          field as MarkdownFieldConfig,
+          siteMdxAllow,
+          isBody ? format : undefined,
+        )
         return wrapWithComments(
           <MarkdownField
             key={fieldKey(path)}
@@ -414,8 +430,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             value={(currentValue as string) ?? ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
+            htmlTags={policy?.dialect === 'mdx' ? policy.allow.htmlTags : undefined}
           />,
         )
+      }
       case 'select': {
         const selectField = field as SelectFieldConfig
         const options = normalizeOptions(selectField.options)

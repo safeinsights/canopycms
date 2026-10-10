@@ -305,6 +305,79 @@ describe('createEntrySchemaRegistry', () => {
   })
 })
 
+describe('createEntrySchemaRegistry: markdown field options', () => {
+  it('throws on mdxAllow on a markdown field without renderAs, inside a block', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        page: [
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [
+              { name: 'prose', fields: [{ name: 'text', type: 'markdown', mdxAllow: {} }] },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(`Field "text": mdxAllow applies to MDX; set renderAs: 'mdx'`)
+  })
+
+  it('throws on an mdxAllow its schema refuses, naming where', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'meta',
+            type: 'object',
+            fields: [{ name: 'body', type: 'mdx', mdxAllow: { htmlTags: ['script'] } }],
+          },
+        ],
+      }),
+    ).toThrow('Field "body": mdxAllow.htmlTags.0 must be one of the HTML tags')
+  })
+
+  it('throws on a field in an inline group, and on a renderAs other than mdx', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'seo',
+            type: 'group',
+            fields: [{ name: 'text', type: 'markdown', mdxAllow: {} }],
+          },
+        ],
+      }),
+    ).toThrow('Field "text": mdxAllow applies to MDX')
+    const renderAs: unknown = 'markdown'
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [{ name: 'body', type: 'markdown', renderAs } as EntrySchema[number]],
+      }),
+    ).toThrow(`Field "body": renderAs must be 'mdx'`)
+  })
+
+  it('accepts a narrow allowlist on a markdown field rendered as MDX', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'body',
+            type: 'markdown',
+            isBody: true,
+            renderAs: 'mdx',
+            mdxAllow: {
+              components: { Callout: { props: { type: ['info', 'warning'] } } },
+              htmlTags: [],
+              expressions: false,
+              fragments: false,
+            },
+          },
+        ],
+      }),
+    ).not.toThrow()
+  })
+})
+
 describe('validateEntrySchemaRegistry', () => {
   const testDir = join(process.cwd(), '.test-content-validate')
 
