@@ -6,7 +6,7 @@ import { modals } from '@mantine/modals'
 
 export interface StagedChangesDrawerProps {
   opened: boolean
-  /** Closes the drawer. Called directly when clean, and only after a confirmed discard when dirty. */
+  /** Closes the drawer. Called directly when clean, only after a confirmed discard when dirty, and never while saving. */
   onClose: () => void
   title: string
   description: string
@@ -27,8 +27,8 @@ export interface StagedChangesDrawerProps {
 
 /**
  * A key that changes each time the drawer finishes closing. A panel keyed with it, and passing
- * `onExited` through, holds its state for exactly one opening, the same lifetime the drawer gives
- * its own children.
+ * `onExited` through, gets fresh state for each opening, as the drawer's own children do. A
+ * reopen during the close transition cancels it, so that opening keeps the previous state.
  */
 export function useOpeningKey(): { key: number; onExited: () => void } {
   const [key, onExited] = useReducer((n: number) => n + 1, 0)
@@ -72,7 +72,7 @@ export const StagedChangesDrawer: React.FC<StagedChangesDrawerProps> = ({
   children,
 }) => {
   // A ref, not state: @mantine/modals runs the confirm's onClose inside its reducer, during
-  // render, where setting another component's state is an error. While the confirm is open the
+  // render, where setting another component's state draws a React warning. While the confirm is open the
   // drawer still hears Escape, so requestClose must ignore it.
   const confirmOpenRef = useRef(false)
   useBeforeUnloadWhileDirty(isDirty)

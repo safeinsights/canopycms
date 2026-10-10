@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  RESOLVED 2026-10-10, branch `fix/staged-acl-changes-unsaved-guard`, base `int-202610-b` (adopter request 107). Manage Groups and Manage Permissions keep batch save, and both now render through one shared `editor/components/StagedChangesDrawer.tsx`: while dirty the drawer title carries an "Unsaved changes" badge, the Discard/Save bar is sticky at the bottom of the drawer's scroll area, closing (Escape, overlay, X) opens a Discard / Keep editing confirm, and a `beforeunload` handler is registered only while dirty. New or edited groups show an "Unsaved" row badge (`useGroupState.unsavedGroupIds`), and the group dialog's buttons read "Add" and "Apply". Escape inside the group dialog no longer reaches the drawer. Covered by `StagedChangesDrawer.test.tsx` and e2e D6 in `permissions-groups.spec.ts`.
+  RESOLVED 2026-10-10, branch `fix/staged-acl-changes-unsaved-guard`, base `int-202610-b` (adopter request 107). Manage Groups and Manage Permissions keep batch save, and both now render through one shared `editor/components/StagedChangesDrawer.tsx`: while dirty the drawer title carries an "Unsaved changes" badge, the Discard/Save bar is sticky at the bottom of the drawer's scroll area, closing (Escape, overlay, X) opens a Discard / Keep editing confirm, a `beforeunload` handler is registered only while dirty, and the panel is inert while a save is in flight. New or edited groups show an "Unsaved" row badge (`useGroupState.unsavedGroupIds`), and the group dialog's buttons read "Add" and "Apply". Escape inside the group dialog no longer closes the drawer. Covered by `StagedChangesDrawer.test.tsx` and e2e D6 in `permissions-groups.spec.ts`.
 ---
 
 # Staged group and permission changes are easy to lose silently
@@ -29,6 +29,9 @@ admin could walk away believing a removal had taken effect.
 
 The managers own their drawer now (`opened`/`onClose` props), so the component holding the
 staged state decides whether closing may proceed. `StagedChangesDrawer` holds the badge,
-sticky bar, close confirm and `beforeunload` guard for both. Mantine listens for Escape on
-`window` in the capture phase, so the drawer stops closing on Escape while its confirm or the
-group dialog is open.
+sticky bar, close confirm and `beforeunload` guard for both. It also ignores close, and
+disables the panel, while a save is in flight. Mantine listens for Escape on `window` in the
+capture phase, so the drawer ignores Escape while its confirm or the group dialog is open.
+
+Because the managers now stay mounted while closed, each is keyed by `useOpeningKey` so its
+state lasts one opening, and PermissionManager loads groups only while open.
