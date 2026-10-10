@@ -412,7 +412,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
 
   // [REDACT] task.error is persisted to failed/<id>.json and served to the
   // browser by the admin panel's Tasks tab. A git push failure's message
-  // can embed the bot token (buildGitHubUrl() builds
+  // can embed the bot token (the gateway's buildGitHubUrl() builds
   // https://x-access-token:TOKEN@github.com/...), so it must be redacted
   // before it reaches disk.
   it('redacts a token-bearing error message before persisting task.error via failTask', async () => {
@@ -1423,14 +1423,14 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   })
 
   // -------------------------------------------------------------------------
-  // buildGitHubUrl() resolves asynchronously.
+  // The gateway's buildGitHubUrl() resolves asynchronously.
   //
   // The credential behind the URL need not be a value the worker already holds
   // -- a credential that has to be fetched or minted cannot be read out of
-  // config synchronously -- so the gateway's buildGitHubUrl returns a Promise.
-  // Every `remoteUrl` above returns a BARE STRING, and `await` on a string is a
-  // no-op, so those cannot tell a correct conversion from a missing one: a
-  // dropped `await` on the URL fails only the three tests below.
+  // config synchronously -- so the gateway resolves the URL per operation, and
+  // a push awaits it. The tests below pin what that resolution must not change:
+  // a resolver returning a real promise, one resolution for both of a push's
+  // attempts, and a tip that moves while it resolves.
   // -------------------------------------------------------------------------
 
   type AsyncPushBranchInternals = {
@@ -1438,12 +1438,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   }
 
   it('pushes when buildGitHubUrl resolves a real promise rather than a bare string', async () => {
-    // The one stub in this file whose `await` actually suspends. A conversion
-    // that dropped the `await` hands git a Promise where a remote belongs and
-    // fails here, where every bare-string stub above would pass. (Measured: it
-    // does NOT surface as "[object Promise]" -- simple-git's push() filters
-    // non-string arguments out, so the remote is dropped entirely and git
-    // fails with "The current branch main has no upstream branch".)
+    // A resolver that returns a promise rather than a bare string.
     await seedBranchInRemoteGit('feature-async-url', 'hello')
     const worker = makePushWorker()
     useLocalGitHubGateway(worker, { remoteUrl: () => Promise.resolve(githubFixture) })
@@ -1454,17 +1449,17 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(consoleSpy).toHaveLogged('Pushed feature-async-url to GitHub')
   })
 
-  it('resolves the URL once for all three pushes, so a later resolution failure cannot displace the stale-lease classification', async () => {
-    // Pins the hoist in pushBranchToGitHub. The retry push sits INSIDE the
-    // stale-lease catch block: if the URL were resolved per-push instead of
-    // once up front, a resolution that threw there would replace the push
+  it('resolves the URL once for both push attempts, so a later resolution failure cannot displace the stale-lease classification', async () => {
+    // Pins the single resolution in GitHubGateway.push. The retry push sits
+    // INSIDE the stale-lease catch block: if the URL were resolved per attempt
+    // instead of once up front, a resolution that threw there would replace the push
     // error being classified, so neither isStaleLeaseRejection nor
     // isNonFastForwardRejection would run and this genuinely diverged branch
     // would be retried instead of failing fast.
     //
     // The resolver below succeeds exactly once and throws afterwards -- a real
     // shape for an on-demand credential, and the shape that tells the two
-    // implementations apart. Revert the hoist and this goes red: the second
+    // implementations apart. Resolve it per attempt and this goes red: the second
     // resolution throws, `caught` is that plain Error, and the
     // PermanentTaskError assertion fails.
     await seedBranchInGitHubFixture('feature-once', 'someone else')
@@ -1502,7 +1497,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       'has genuinely diverged and nothing was overwritten',
     )
     expect((caught as Error).message).not.toContain('credential resolution failed')
-    // Resolved once, so all three pushes provably carry the same credential.
+    // Resolved once, so both attempts provably carry the same credential.
     expect(resolutions).toBe(1)
     // Nothing was overwritten, and the marker is kept for a reconciled retry.
     expect(await shaOf(githubFixture, 'refs/heads/feature-once')).toBe(foreignTip)
@@ -1983,7 +1978,7 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     // A local nonexistent path (no `://`) so git fails immediately without
     // any network attempt, while still echoing the literal string back
     // verbatim in its fatal message -- simulating a fetch/push error whose
-    // text embeds the bot token, same shape as buildGitHubUrl()'s
+    // text embeds the bot token, same shape as the gateway's buildGitHubUrl()
     // https://x-access-token:TOKEN@github.com/... URLs.
     useLocalGitHubGateway(worker, {
       remoteUrl: () =>

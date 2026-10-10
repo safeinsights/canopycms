@@ -30,8 +30,8 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `shared-repo-git.ts`        | How the worker runs git in `remote.git` and the clones: the pins, the pinned pack commands, the config allowlist check                                                                                                          |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
-`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-gateway` sits outside that chain: `cms-worker` creates it, the clusters reach it
-only through `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` are leaves. `pnpm lint:cycles` enforces that the graph stays
+`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-gateway` sits outside that chain: `cms-worker` creates the instance, clusters reach it
+via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit below it. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 

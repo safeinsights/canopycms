@@ -16,7 +16,7 @@
  *
  *     octokit.pulls.list(...)              github-service.ts, module function
  *     this.octokit.git.deleteRef(...)      github-service.ts, worker/github-gateway.ts
- *     ctx.octokit().pulls.create(...)      through an accessor
+ *     ctx.octokit().pulls.create(...)      an accessor, which no file uses today
  *
  * and one of them can span lines (`await ctx\n  .octokit()\n  .graphql(`), which no
  * single-line regex matches at all. Three spellings is the point at which the
@@ -569,7 +569,7 @@ describe('the source-level backstop', () => {
   }
 
   it('finds Octokit calls in exactly the files the behavioural guard drives', () => {
-    // A set comparison, both directions at once. A FOURTH file appearing means
+    // A set comparison, both directions at once. Any other file appearing means
     // the behavioural guard above is no longer watching everything — it only
     // sees what its harness drives, and this is what notices that.
     expect(filesWithOctokitCalls()).toEqual(['github-service.ts', 'worker/github-gateway.ts'])
