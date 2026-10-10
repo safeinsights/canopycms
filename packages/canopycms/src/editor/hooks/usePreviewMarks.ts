@@ -9,9 +9,9 @@ const NO_MARKS: InexactMark[] = []
 /**
  * What the framed page reports of its marks while highlighting is on, kept for the `src` that
  * said so: whether it marks nothing, and which marks name no field of the entry. Each such mark
- * is a console warning once per page, since the toggle's note only counts them. Marks are
- * checked against the draft as it was when they were reported, which is what the page rendered,
- * not the draft since: a block whose template just changed would otherwise flag its old marks.
+ * is a console warning once per page and path, since the toggle's note only counts them. A report
+ * is checked against the draft as it stood when the report arrived, not the draft since, and the
+ * page reports after each draft (`usePreviewHighlight`), so the two stay in step.
  */
 export function usePreviewMarks({
   src,

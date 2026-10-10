@@ -1578,7 +1578,7 @@ The editor previews your actual site pages in an iframe, updated as you type. Cl
 
 Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` from `canopycms-next/preview`, which carry no editor code or CSS, so pages preview in their own styles.
 
-**Marking fields.** `fieldProps` is typed against the view's content: `fieldProps(['sections', i, 'heading'])` compiles only if that field exists, and the error lists those that do. **Build a path from variables as segments, never a template string**: a computed string compiles only on plain `FieldProps` from `canopycms`, the untyped escape hatch. A block's fields follow its index (`sections[0].heading`), and nothing is below a reference or image.
+**Marking fields.** `fieldProps` is typed against the view's content: `fieldProps(['sections', i, 'heading'])` compiles only if that field exists, and the error lists those that do. **Build a path from variables as literal segments, never a template string**: a computed string or array compiles only on plain `FieldProps` from `canopycms`, the untyped escape hatch. A block's fields follow its index (`sections[0].heading`), and nothing is below a reference or image.
 
 A section component marks paths relative to its part, and its caller scopes it. `fieldAttrs` and `scopeFieldProps` come from `canopycms`, so server components can call them too:
 
@@ -1590,12 +1590,12 @@ function Hero({ data, fieldProps }: { data: Page['hero']; fieldProps?: FieldProp
 }
 
 // in the page view
-;<Hero data={data.hero} fieldProps={scopeFieldProps(fieldProps, ['hero'])} />
+const hero = <Hero data={data.hero} fieldProps={scopeFieldProps(fieldProps, ['hero'])} />
 ```
 
 **Default `fieldProps` to `undefined`, never a no-op function.** A public page rendering shared views as server components would pass it to client components, which Next refuses; both helpers take `undefined`. A block component types its prop for its template, `FieldProps<BlockValueOf<Section, 'hero'>>`; a block's scope fits any template's.
 
-With highlighting on, the toggle counts marks that name no schema field (a click focuses their nearest field), and the browser console names each.
+With highlighting on, the toggle counts marks that name no schema field, and the browser console names each.
 
 **Security model.** Preview pages accept messages only when framed, and only from their direct parent window with a matching origin (same-origin by default), so a standalone page, even one a hostile site opened with `window.open`, never accepts draft data. For a cross-origin editor deployment, pass `editorOrigin: 'https://editor.example.com'` to `useCanopyPreview`. As defense in depth, serve your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows: it severs `window.opener` handles.
 

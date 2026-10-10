@@ -274,7 +274,7 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
   }, [editorOrigin])
 
   // Reported after the render that turned highlighting on, whenever the marks change (content
-  // rendered after hydration), and after every draft even when they do not: the editor checks a
+  // rendered after hydration), and after every trusted draft even when they do not: the editor checks a
   // report against its draft as it stood when the report arrived, so a block whose template
   // changed under unchanged marks needs a fresh one.
   useEffect(() => {
@@ -302,8 +302,8 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
     }
     report()
     // A trailing throttle, so steady DOM churn cannot hold the report back, on a timer rather
-    // than requestAnimationFrame, which a hidden frame never runs. It also lets a draft render
-    // before the report it triggers.
+    // than requestAnimationFrame, which a hidden frame never runs. It also gives a draft time to
+    // render before the report it triggers.
     let timer: ReturnType<typeof setTimeout> | undefined
     const schedule = () => {
       timer ??= setTimeout(() => {

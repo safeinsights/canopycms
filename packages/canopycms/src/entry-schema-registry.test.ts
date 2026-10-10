@@ -195,6 +195,7 @@ describe('createEntrySchemaRegistry', () => {
   )
 
   it.each([
+    ['empty', [{ type: 'string', name: '' }], ''],
     ['all digits', [{ type: 'string', name: '2024' }], '2024'],
     ['containing a dot', [{ type: 'string', name: 'meta.title' }], 'meta.title'],
     [
@@ -224,7 +225,7 @@ describe('createEntrySchemaRegistry', () => {
         page: [{ type: 'string', name: 'title' }, ...fields] as EntrySchema,
       }),
     ).toThrow(
-      `Field "${name}": field names can't be all digits or contain '.', '[' or ']'; they're used in field paths`,
+      `Field "${name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
     )
   })
 

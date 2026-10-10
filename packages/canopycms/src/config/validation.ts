@@ -52,7 +52,7 @@ export const ensureFieldNamesSpellInPaths = (fields: unknown): void => {
     const f = field as Record<string, unknown>
     if (f?.type !== 'group' && typeof f?.name === 'string' && !isPathFieldName(f.name)) {
       throw new Error(
-        `Field "${f.name}": field names can't be all digits or contain '.', '[' or ']'; they're used in field paths`,
+        `Field "${f.name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
       )
     }
     if (f?.type === 'group' || f?.type === 'object') {

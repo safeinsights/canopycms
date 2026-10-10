@@ -136,13 +136,13 @@ declare const fieldPropsContent: unique symbol
 
 /**
  * Marks the element rendering a field: `<h1 {...fieldProps('title')}>`. A path is a string
- * literal or segments (`['blocks', i, 'title']`, for anything computed), checked against `T`
+ * literal or literal segments (`['blocks', i, 'title']`, for anything computed), checked against `T`
  * the way the form names fields: a block's fields follow its index (no `.value`), and nothing
  * is below a reference or image. Any template's fields compile after a block's index; the
  * editor warns about the rest. `FieldProps` alone (`T = unknown`) takes any path.
  */
 export type FieldProps<T = unknown> = FieldPropsCall<Defined<T>> & {
-  /** Bivariant, so a block scope's `FieldProps<Union>` fits one template's component. */
+  /** Bivariant, so any typed `FieldProps` still assigns to plain `FieldProps`. */
   readonly [fieldPropsContent]?: { bivariant(content: T): void }['bivariant']
 }
 
