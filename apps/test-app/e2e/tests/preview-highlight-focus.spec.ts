@@ -9,8 +9,7 @@ import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
  * `useCanopyPreview` itself at `/`, and posts render through `createPreviewPage`'s route.
  */
 
-const previewOf = (page: Page): FrameLocator =>
-  page.frameLocator('[data-testid="preview-pane"] iframe')
+const previewOf = (page: Page): FrameLocator => new EditorPage(page).previewFrame()
 
 const outlineStyle = (element: Locator) =>
   element.evaluate((node) => getComputedStyle(node).outlineStyle)

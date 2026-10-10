@@ -29,7 +29,7 @@ test.describe('Preview Bridge', () => {
     await test.step('wait for preview iframe to sync home content', async () => {
       // The preview iframe loads /?branch=main (the config's previewBase); after preview bridge sync,
       // the title element (with data-canopy-path="title") should show content.
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       const titleEl = previewFrame.locator('[data-canopy-path="title"]')
       await titleEl.waitFor({ state: 'visible', timeout: 20000 })
       // Verify the preview content was synced (shows the actual title)
@@ -37,7 +37,7 @@ test.describe('Preview Bridge', () => {
     })
 
     await test.step('click title in preview pane', async () => {
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       await previewFrame.locator('[data-canopy-path="title"]').click()
     })
 
@@ -55,8 +55,8 @@ test.describe('Preview Bridge', () => {
     })
   })
 
-  test('preview reflects live edits without saving', async ({ page }) => {
-    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+  test('preview reflects live edits without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
     const previewTitle = previewFrame.locator('[data-canopy-path="title"]')
 
     await test.step('open editor and select Home Page', async () => {
@@ -85,8 +85,8 @@ test.describe('Preview Bridge', () => {
     })
   })
 
-  test('preview resolves a reference inside an object without saving', async ({ page }) => {
-    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+  test('preview resolves a reference inside an object without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
     const spotlight = previewFrame.locator('[data-testid="spotlight"]')
 
     await test.step('create a post, then open Home Page', async () => {

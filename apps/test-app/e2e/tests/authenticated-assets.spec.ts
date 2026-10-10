@@ -73,9 +73,7 @@ test.describe('Editor and preview images use the authenticated asset route', () 
     })
 
     await test.step('the preview renders all 24 widths through the raw route', async () => {
-      const images = page
-        .frameLocator('[data-testid="preview-pane"] iframe')
-        .locator('[data-testid="hero-widths"] img')
+      const images = editorPage.previewFrame().locator('[data-testid="hero-widths"] img')
       await expectAllLoaded(images, 24)
       const srcs = await images.evaluateAll((els) => els.map((el) => el.getAttribute('src')))
       for (const src of srcs) {

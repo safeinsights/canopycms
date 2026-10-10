@@ -1,4 +1,4 @@
-import { type Page, type Locator, expect } from '@playwright/test'
+import { type FrameLocator, type Page, type Locator, expect } from '@playwright/test'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 import { BranchPage } from './branch-page'
 
@@ -52,6 +52,13 @@ export class EditorPage {
     this.allFilesMenuItem = page.locator('[data-testid="all-files-menu-item"]')
 
     this.contentNavigator = page.locator('[data-testid="entry-navigator"]')
+  }
+
+  /**
+   * The previewed site page inside the preview pane.
+   */
+  previewFrame(): FrameLocator {
+    return this.page.frameLocator('[data-testid="preview-pane"] iframe')
   }
 
   /**
