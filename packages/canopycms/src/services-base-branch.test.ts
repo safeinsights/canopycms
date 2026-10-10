@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { BranchWorkspaceManager } from './branch-workspace'
 import { defineCanopyTestConfig } from './config-test'
 import { RemoteNotReadyError } from './git-manager'
 import { clearStrategyCache } from './operating-mode/client-unsafe-strategy'
@@ -138,6 +139,22 @@ describe('prod base branch resolution', () => {
 
     expect(services.config.defaultBaseBranch).toBe('production')
     expect(services.config.defaultActiveBranch).toBe('staging')
+  })
+
+  it('provisions a prod branch from the remote HEAD when given an unresolved config', async () => {
+    const config = defineCanopyTestConfig({ schema: {}, mode: 'prod' })
+    const open = () =>
+      new BranchWorkspaceManager(config).openOrCreateBranch({
+        branchName: 'feature-x',
+        mode: 'prod',
+        createdBy: 'editor-1',
+      })
+
+    await expect(open()).rejects.toThrow(RemoteNotReadyError)
+
+    await createRemoteGit('production')
+    const context = await open()
+    expect(context.branch.baseBranch).toBe('production')
   })
 
   it('fails loudly at creation when remote.git HEAD names no branch with a commit', async () => {
