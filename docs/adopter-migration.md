@@ -18,8 +18,8 @@ in your repo.
 
 ## Picking a target version
 
-Resolve your target when you plan the upgrade, with `npm view canopycms version`, never from a
-number in this document: `main` auto-publishes a patch on every push.
+Resolve your target with `npm view canopycms version`, never from a number in this document:
+`main` auto-publishes a patch on every push.
 
 Read every entry between your pin and your target, not just the newest: deletable-code lists
 compound, and a later entry can supersede an earlier one's workaround.
@@ -113,10 +113,30 @@ status 75 handling; the worker role may complete its own group's hook.
 
 **To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
 or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
-deploy that brings this version rolls the worker before the hook exists; the drain applies from the
-next.
+drain applies from the deploy after this one.
 
 **Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
+### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
+
+**What changed.** After a recorded failed start, the prod not-ready 503 is `WORKER_FAILED`: no
+`Retry-After`, the failure named to admins, account ids masked. `CmsWorker.selfStopped` settles when
+the worker stops itself (a lost EFS lock); the `canopycms-cdk` entrypoint then exits 69.
+`recordWorkerStartupFailure` records a failure before `start()`.
+
+**To adopt.** A hand-written entrypoint calls `recordWorkerStartupFailure` on a pre-`start()`
+failure and exits non-zero on `selfStopped`, with a code outside `RestartPreventExitStatus=`.
+
+**Now deletable.** A watchdog that restarts an idle worker process.
+
+### `canopycms-cdk`: optional worker-down alarm — **new prop `alarmTopic`**
+
+**What changed.** `CanopyCmsService` alarms when the worker logs no git sync for 30 minutes. See
+[Worker-down alarm](deploying-to-aws.md#worker-down-alarm).
+
+**To adopt.** Optional: pass `alarmTopic`.
+
+**Now deletable.** A hand-built alarm on the worker log group.
 
 ### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
 

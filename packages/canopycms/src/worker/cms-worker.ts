@@ -17,9 +17,13 @@ import { ensureRemoteGitConfig } from '../git-manager'
 import { type SanitizedBranchName } from '../paths/types'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
-import type { BaseRefreshReport, WorkerStatusReport } from '../types'
+import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { readCarriedOverStatus, writeWorkerStatus } from '../task-queue/worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStatusStartedAt,
+  writeWorkerStatus,
+} from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
@@ -175,6 +179,111 @@ async function settlesWithin(operations: Promise<unknown>[], ms: number): Promis
  * Auth-agnostic (no specific auth provider) and cloud-agnostic (git/Octokit
  * directly, no AWS SDK dependency).
  */
+/** Why a worker stopped itself; see {@link CmsWorker.selfStopped}. */
+export interface WorkerSelfStop {
+  reason: string
+}
+
+// Shown as the last shutdown's reason in System health, so it reads as a sentence there.
+const LOCK_COMPROMISED_REASON = 'the worker lost its lock on the shared workspace'
+
+/**
+ * Take the cross-host worker lock (see {@link CmsWorker}'s `acquireLock`), retrying for up to
+ * `waitMs`. Rejects with ELOCKED while another holder keeps it fresh.
+ */
+function lockWorkerTaskDir(
+  taskDir: string,
+  lockStaleMs: number,
+  options: { waitMs?: number; onCompromised: (err: Error) => void },
+): Promise<() => Promise<void>> {
+  const waitMs = options.waitMs ?? 0
+  const intervalMs = Math.max(250, Math.min(5_000, Math.floor(lockStaleMs / 4)))
+  return lockfile.lock(taskDir, {
+    lockfilePath: path.join(taskDir, '.worker-lock'),
+    stale: lockStaleMs,
+    onCompromised: options.onCompromised,
+    ...(waitMs > 0
+      ? {
+          retries: {
+            retries: Math.ceil(waitMs / intervalMs),
+            factor: 1,
+            minTimeout: intervalMs,
+            maxTimeout: intervalMs,
+          },
+        }
+      : {}),
+  })
+}
+
+/**
+ * The fields a new status snapshot carries from the previous file: `lastFatalError` and
+ * `lastShutdown` (task-queue/worker-status.ts) and the schema gate's hold, so its bound keeps
+ * counting from the first worker that saw each schema missing.
+ */
+async function readCarriedFields(
+  taskDir: string,
+): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold'>> {
+  const { lastFatalError, lastShutdown } = await readCarriedOverStatus(taskDir)
+  const baseHold = await readCarriedBaseHold(taskDir)
+  return {
+    ...(lastFatalError ? { lastFatalError } : {}),
+    ...(lastShutdown ? { lastShutdown } : {}),
+    ...(baseHold ? { baseHold } : {}),
+  }
+}
+
+/**
+ * Record a worker that failed before {@link CmsWorker.start} as `lastFatalError` (phase
+ * `startup`), so System health and the API's not-ready answer say why. For an entrypoint's own
+ * boot steps (its environment, its secrets); start() records its own failures.
+ *
+ * Writes under the worker lock like every status write, and writes nothing while the lock looks
+ * held (fresher than twice `lockStaleMs`, see recordLockLoss): its holder owns the file. Never
+ * throws, since its caller is already exiting.
+ */
+export async function recordWorkerStartupFailure(options: {
+  workspacePath: string
+  error: unknown
+  lockStaleMs?: number
+}): Promise<void> {
+  const taskDir = path.join(options.workspacePath, '.tasks')
+  let release: (() => Promise<void>) | undefined
+  try {
+    await fs.mkdir(taskDir, { recursive: true })
+    // Twice the usual staleness, for the reason recordLockLoss gives: a lost record costs
+    // nothing, a removed live lock costs a worker.
+    release = await lockWorkerTaskDir(taskDir, 2 * (options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS), {
+      onCompromised: (err) =>
+        workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
+    })
+    const now = new Date().toISOString()
+    const { lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    await writeWorkerStatus(taskDir, {
+      version: 1,
+      workerVersion: CANOPYCMS_VERSION,
+      startedAt: now,
+      updatedAt: now,
+      ...(lastShutdown ? { lastShutdown } : {}),
+      ...(baseHold ? { baseHold } : {}),
+      lastFatalError: {
+        // [REDACT] Served to the browser by the admin panel and the API's not-ready answer.
+        message: redactCredentials(getErrorMessage(options.error)),
+        at: now,
+        phase: 'startup',
+        workerStartedAt: now,
+      },
+    })
+  } catch (err) {
+    workerLogError(
+      isNodeError(err) && err.code === 'ELOCKED'
+        ? 'Not recording the startup failure: another worker holds the lock and owns worker-status.json'
+        : `Failed to record the startup failure: ${getErrorMessage(err)}`,
+    )
+  } finally {
+    await release?.().catch(() => {})
+  }
+}
+
 export class CmsWorker {
   // Built by ensureGitHubAuth(), not the constructor, so a credential config
   // error is throwable somewhere start()'s catch can record it. A FIELD rather
@@ -224,6 +333,22 @@ export class CmsWorker {
   // by ensureGitHubAuth(), NOT in the constructor (see that method):
   // `undefined` means "not resolved yet", never "no credential".
   private githubAuth?: ResolvedGitHubAuth
+  // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
+  private lockLostMessage?: string
+  // Who wrote worker-status.json when this worker took the lock: until its own first write
+  // lands, the file is still that worker's, and recordLockLoss may replace it.
+  private statusWriterAtLock?: string
+  private settleSelfStopped!: (stop: WorkerSelfStop) => void
+
+  /**
+   * Settles once the worker has stopped for a reason it chose itself (its lock was
+   * compromised), after the drain and its record in worker-status.json. Never settles for a
+   * stop() the entrypoint asked for. Nothing else ends the process, so an entrypoint exits
+   * non-zero on it and its process manager starts a fresh worker.
+   */
+  readonly selfStopped: Promise<WorkerSelfStop> = new Promise((resolve) => {
+    this.settleSelfStopped = resolve
+  })
 
   constructor(private config: CmsWorkerConfig) {
     this.taskDir = path.join(config.workspacePath, '.tasks')
@@ -272,12 +397,12 @@ export class CmsWorker {
    * as foreign and never pushes it.
    *
    * DEFERRED out of the constructor deliberately, which is the whole point of
-   * the method existing: canopycms-cdk/worker/index.ts constructs the worker
-   * before calling start(), so a throw during `new CmsWorker(...)` lands BEFORE
-   * the only code that writes `lastFatalError` -- start()'s catch. Under
-   * systemd `Type=simple` + `Restart=always` with no cfn-signal, that is an
-   * invisible ~5s crash-loop that `cdk deploy` reports as success while the
-   * admin panel shows the worker 'absent' with no fatal error to explain it.
+   * the method existing: an entrypoint constructs the worker before calling
+   * start(), so a throw during `new CmsWorker(...)` lands BEFORE start()'s
+   * catch, which records `lastFatalError` for every entrypoint. Only one that
+   * calls `recordWorkerStartupFailure` (canopycms-cdk/worker/run.ts does) would
+   * record it otherwise; under systemd `Restart=always` the rest crash-loop
+   * every ~5s with System health showing the worker 'absent' and no reason.
    *
    * Lazy rather than start()-only so unit tests driving pushSettingsBranches()
    * still see the value, exactly as ensureStatusReport() above. Idempotent: the
@@ -365,11 +490,10 @@ export class CmsWorker {
     // and the schema gate's hold, so its bound keeps counting from the first
     // worker that saw each schema missing.
     try {
-      const { lastFatalError, lastShutdown } = await readCarriedOverStatus(this.taskDir)
-      const carriedHold = await readCarriedBaseHold(this.taskDir)
+      const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(this.taskDir)
       const report = this.ensureStatusReport()
       if (lastShutdown) report.lastShutdown = lastShutdown
-      if (carriedHold) report.baseHold = carriedHold
+      if (baseHold) report.baseHold = baseHold
       await writeWorkerStatus(this.taskDir, {
         ...report,
         ...(lastFatalError ? { lastFatalError } : {}),
@@ -455,6 +579,7 @@ export class CmsWorker {
         message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
+        workerStartedAt: report.startedAt,
       }
       try {
         await writeWorkerStatus(this.taskDir, report)
@@ -507,8 +632,8 @@ export class CmsWorker {
    *    lossily; anything still unsettled after a short grace is abandoned to
    *    the process exit.
    * 4. Record `lastShutdown` in worker-status.json -- only while this worker
-   *    still holds the lock, since after a compromise another worker owns the
-   *    file -- and release the lock. Release comes last, so a successor starts
+   *    still holds the lock, or after a compromise that started this stop once
+   *    it has retaken it (recordLockLoss) -- and release the lock. Release comes last, so a successor starts
    *    only once this worker's work has settled or been abandoned.
    */
   stop(options: { reason?: string; deadlineMs?: number } = {}): Promise<void> {
@@ -553,19 +678,22 @@ export class CmsWorker {
     }
 
     const drainMs = Date.now() - startedAt
+    const shutdown: WorkerShutdownRecord = {
+      reason,
+      at: new Date().toISOString(),
+      workerStartedAt: this.ensureStatusReport().startedAt,
+      outcome: abandoned.length > 0 ? 'deadline' : 'drained',
+      drainMs,
+      ...(abandoned.length > 0 ? { abandoned } : {}),
+    }
     if (this.releaseLockFn) {
       const report = this.ensureStatusReport()
-      report.lastShutdown = {
-        reason,
-        at: new Date().toISOString(),
-        workerStartedAt: report.startedAt,
-        outcome: abandoned.length > 0 ? 'deadline' : 'drained',
-        drainMs,
-        ...(abandoned.length > 0 ? { abandoned } : {}),
-      }
+      report.lastShutdown = shutdown
       await writeWorkerStatus(this.taskDir, report).catch((err) =>
         workerLogError('Failed to write worker status on shutdown:', getErrorMessage(err)),
       )
+    } else if (this.lockLostMessage !== undefined) {
+      await this.recordLockLoss(shutdown, this.lockLostMessage)
     }
     await this.releaseLock()
     workerLog(
@@ -600,16 +728,21 @@ export class CmsWorker {
   private async acquireLock(): Promise<void> {
     await fs.mkdir(this.taskDir, { recursive: true })
     try {
-      this.releaseLockFn = await lockfile.lock(this.taskDir, {
-        lockfilePath: this.lockFilePath,
-        stale: this.lockStaleMs,
+      this.releaseLockFn = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs, {
         onCompromised: (err) => {
           // The heartbeat could not be maintained (lock deleted or taken over),
           // so another worker may now be consuming the queue: abort at once,
-          // with no drain, to restore the single-consumer invariant.
+          // with no drain, to restore the single-consumer invariant. Unless a
+          // stop was already under way, this worker chose to stop, which
+          // selfStopped reports once the drain has recorded it.
           workerLogError('Worker lock compromised, shutting down:', getErrorMessage(err))
           this.releaseLockFn = null // the lock is already lost; nothing to release
-          void this.stop({ reason: 'worker lock compromised', deadlineMs: 0 })
+          const selfStop = this.stopping === null
+          if (selfStop) this.lockLostMessage = redactCredentials(getErrorMessage(err))
+          const stopped = this.stop({ reason: LOCK_COMPROMISED_REASON, deadlineMs: 0 })
+          if (selfStop) {
+            void stopped.then(() => this.settleSelfStopped({ reason: LOCK_COMPROMISED_REASON }))
+          }
         },
       })
     } catch (err) {
@@ -620,6 +753,7 @@ export class CmsWorker {
       }
       throw err
     }
+    this.statusWriterAtLock = await readWorkerStatusStartedAt(this.taskDir).catch(() => undefined)
   }
 
   private async releaseLock(): Promise<void> {
@@ -630,6 +764,61 @@ export class CmsWorker {
       await release()
     } catch {
       // Lock already released or compromised
+    }
+  }
+
+  /**
+   * Record a lock compromise in worker-status.json, under the lock: retake it, waiting out its
+   * staleness window, and write only if that succeeds and the file is still this worker's (or
+   * the one it took the lock from). A worker that took the lock over keeps it fresh, or has
+   * written the file since, and owns it, so nothing is written. A heartbeat this worker merely
+   * failed to refresh (an EFS hiccup) goes stale, and the record lands where the restarted
+   * worker carries `lastShutdown` forward. The restart waits for it: 65 s at the default `lockStaleMs`.
+   */
+  private async recordLockLoss(shutdown: WorkerShutdownRecord, message: string): Promise<void> {
+    let release: (() => Promise<void>) | undefined
+    try {
+      // Twice the usual staleness: a successor's live heartbeat can look a refresh interval
+      // plus an EFS attribute-cache window old from here, and taking it would remove its lock.
+      release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs * 2, {
+        // A refresh failure fires the compromise once this worker's own lock has gone
+        // unrefreshed for `lockStaleMs`, or up to a second less (proper-lockfile rounds the
+        // first mtime up). So the wait covers the remaining `lockStaleMs`, that second and a
+        // retry interval, and stays inside the unit's TimeoutStopSec when a SIGTERM lands
+        // mid-wait. A deleted lock is retaken at once; a foreign mtime is a successor's.
+        waitMs: this.lockStaleMs + 2_000,
+        onCompromised: (err) =>
+          workerLogError('Worker lock lost again while recording the loss:', getErrorMessage(err)),
+      })
+      const report = this.ensureStatusReport()
+      // A successor that took the lock and released it during the wait owns the file now.
+      const writtenBy = await readWorkerStatusStartedAt(this.taskDir)
+      if (
+        writtenBy !== undefined &&
+        writtenBy !== report.startedAt &&
+        writtenBy !== this.statusWriterAtLock
+      ) {
+        workerLogError(
+          'Not recording the lock loss: another worker has written worker-status.json since',
+        )
+        return
+      }
+      report.lastShutdown = shutdown
+      report.lastFatalError = {
+        message: `The worker lost its lock on the shared workspace and stopped; it restarts on its own. ${message}`,
+        at: shutdown.at,
+        phase: 'run',
+        workerStartedAt: report.startedAt,
+      }
+      await writeWorkerStatus(this.taskDir, report)
+    } catch (err) {
+      workerLogError(
+        isNodeError(err) && err.code === 'ELOCKED'
+          ? 'Not recording the lock loss: another worker holds the lock and owns worker-status.json'
+          : `Failed to record the lock loss: ${getErrorMessage(err)}`,
+      )
+    } finally {
+      await release?.().catch(() => {})
     }
   }
 
@@ -897,8 +1086,8 @@ export class CmsWorker {
    * `ensureSettingsBranch()` is and for the reason that method records:
    * `resolveWorkerGitHubAuth` throws for a half-configured credential (both
    * set, neither set, an unusable mint timeout or refresh interval), and a
-   * throw during `new CmsWorker(...)` lands BEFORE the only code that writes
-   * `lastFatalError` — start()'s catch.
+   * throw during `new CmsWorker(...)` lands BEFORE start()'s catch, which
+   * records `lastFatalError` for every entrypoint.
    *
    * Idempotent, and it does NOT replace an `octokit` a test has already
    * assigned onto the instance — see the field's comment.

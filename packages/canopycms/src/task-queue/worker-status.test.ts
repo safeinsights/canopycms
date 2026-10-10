@@ -9,7 +9,12 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { readCarriedOverStatus, writeWorkerStatus, WORKER_STATUS_FILE } from './worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStartupFailure,
+  writeWorkerStatus,
+  WORKER_STATUS_FILE,
+} from './worker-status'
 import type { WorkerStatusReport } from '../types'
 
 describe('writeWorkerStatus', () => {
@@ -168,5 +173,79 @@ describe('readCarriedOverStatus', () => {
     expect(await readCarriedOverStatus(tmpDir)).toEqual({})
     await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')
     expect(await readCarriedOverStatus(tmpDir)).toEqual({})
+  })
+})
+
+describe('readWorkerStartupFailure', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-startup-failure-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const write = (report: Partial<WorkerStatusReport>) =>
+    fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), JSON.stringify(report))
+
+  it('is current when the snapshot that recorded it is the attempt that failed', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:00:00.000Z', phase: 'startup' },
+    })
+    expect(await readWorkerStartupFailure(tmpDir)).toEqual({
+      message: 'boom',
+      at: '2026-10-09T10:00:00.000Z',
+      current: true,
+    })
+  })
+
+  it('is not current once a newer worker has carried it forward', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:05.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:00:00.000Z', phase: 'startup' },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
+  })
+
+  it('decides by the worker that recorded it, not by clocks that can disagree across hosts', async () => {
+    // A successor whose clock runs behind the failed worker's.
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:30.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:29.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(false)
+
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: {
+        message: 'boom',
+        at: '2026-10-09T10:00:05.000Z',
+        phase: 'startup',
+        workerStartedAt: '2026-10-09T10:00:00.000Z',
+      },
+    })
+    expect((await readWorkerStartupFailure(tmpDir))?.current).toBe(true)
+  })
+
+  it('ignores a failure while running, which a missing remote cannot follow', async () => {
+    await write({
+      startedAt: '2026-10-09T10:00:00.000Z',
+      lastFatalError: { message: 'boom', at: '2026-10-09T10:01:00.000Z', phase: 'run' },
+    })
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
+  })
+
+  it('returns nothing when there is no readable status file', async () => {
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
+    await fs.writeFile(path.join(tmpDir, WORKER_STATUS_FILE), '{not json')
+    expect(await readWorkerStartupFailure(tmpDir)).toBeUndefined()
   })
 })

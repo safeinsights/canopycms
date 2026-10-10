@@ -55,6 +55,7 @@ export interface ApiResponse<TData = unknown> {
 
 /**
  * `SCHEMA_UNAVAILABLE`: the entry's type names an entry schema the running code lacks (a 503,
- * see `SchemaUnavailableError`).
+ * see `SchemaUnavailableError`). `WORKER_FAILED`: the CMS worker recorded that its latest start
+ * failed, so a retry will not help until an admin fixes it (a 503 with no `Retry-After`).
  */
-export type ApiErrorCode = 'SCHEMA_UNAVAILABLE'
+export type ApiErrorCode = 'SCHEMA_UNAVAILABLE' | 'WORKER_FAILED'

@@ -16,6 +16,7 @@ import type { CanopyCmsServiceProps } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
 import {
   EXIT_DRAINED_FOR_TERMINATION,
+  EXIT_WORKER_SELF_STOPPED,
   WORKER_CAPACITY_ENV,
   WORKER_DRAIN_HOOK_NAME,
 } from './worker-lifecycle'
@@ -215,10 +216,39 @@ describe('the worker systemd unit drains on stop', () => {
   })
 
   it.each(drainLines)('the checked-in copy of the unit carries %s', (line) => {
-    const unit = readFileSync(
-      path.join(__dirname, '../../worker/canopy-worker.service'),
-      'utf-8',
-    ).split('\n')
-    expect(unit).toContain(line)
+    expect(checkedInUnit()).toContain(line)
+  })
+
+  // A worker that stopped itself exits EXIT_WORKER_SELF_STOPPED and must be
+  // restarted: it is in neither exit-status list, and the unit restarts always.
+  const units: Array<[string, () => string[]]> = [
+    // `userData` is JSON, so the script's newlines are the two characters `\n`.
+    ['deployed', () => userData(onDemand).split('\\n')],
+    ['checked-in', checkedInUnit],
+  ]
+
+  describe.each(units)('the %s unit restarts a worker that stopped itself', (_name, lines) => {
+    it('restarts always', () => {
+      expect(lines()).toContain('Restart=always')
+    })
+
+    it.each(['RestartPreventExitStatus=', 'SuccessExitStatus='])(
+      'does not list the self-stop status in %s',
+      (key) => {
+        const listed = lines().filter((line) => line.startsWith(key))
+        expect(listed.length).toBeGreaterThan(0)
+        for (const line of listed) {
+          expect(line.slice(key.length).split(/\s+/)).not.toContain(
+            String(EXIT_WORKER_SELF_STOPPED),
+          )
+        }
+      },
+    )
   })
 })
+
+function checkedInUnit(): string[] {
+  return readFileSync(path.join(__dirname, '../../worker/canopy-worker.service'), 'utf-8').split(
+    '\n',
+  )
+}
