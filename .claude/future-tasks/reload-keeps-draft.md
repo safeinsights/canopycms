@@ -43,8 +43,9 @@ A second reload action, "Reload and keep my edits":
   copy if one is cheap, or at least a notice that the entry changed underneath.
 - Release the `WRITE_OUTCOME_UNKNOWN` hold, as a plain reload does.
 
-Decide whether the conflict notifications offer both actions, or whether keep-my-edits becomes the
-default with discard as the explicit choice. That is a product call. The draft-retention rules in
+**Decided (JP, 2026-10-10):** keep-my-edits sits next to the existing discarding Reload; it does
+not replace it as the default. The conflict notifications and the confirm modal offer both, and
+the "(your unsaved edits will be lost)" copy then applies only to the discarding action. The draft-retention rules in
 [draft-publish-lifecycle.md](draft-publish-lifecycle.md) apply.
 
 [BOTH]
