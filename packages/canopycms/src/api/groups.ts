@@ -256,6 +256,7 @@ const updateInternalGroupsHandler = async (
       branchRoot: context.branchRoot,
       fileName: 'groups.json',
       message: 'Update internal groups',
+      actor: req.user,
       mode,
     })
 
