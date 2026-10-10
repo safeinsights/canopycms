@@ -387,14 +387,19 @@ export class RemoteNotReadyError extends Error {
   /**
    * @param workerStartupFailure - The startup failure the worker recorded, if it recorded one;
    *   a current one means the worker is not coming without an admin's fix.
+   * @param configured - `expectedRemotePath` is a configured local remote, not the auto-detected one.
    */
   constructor(
     public readonly expectedRemotePath: string,
     public readonly workerStartupFailure?: WorkerStartupFailure,
+    configured = false,
   ) {
     super(
-      `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
-        `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
+      configured
+        ? `CanopyCMS: no git remote is available yet. The configured remote ${expectedRemotePath} ` +
+            `does not exist; the worker may still be starting.`
+        : `CanopyCMS: no git remote is available yet. defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is ` +
+            `not set and the CMS worker has not created ${expectedRemotePath}; the worker may still be starting.`,
     )
     this.name = 'RemoteNotReadyError'
   }
@@ -1192,7 +1197,9 @@ export class GitManager {
     // same not-yet-created remote the auto-detected one is.
     if (await fs.stat(remoteGitDir).then(() => false, isNotFoundError)) {
       if (whenNoRemote === 'pending') return undefined
-      throw (await GitManager.remoteNotReadyError('prod')) ?? new RemoteNotReadyError(remoteGitDir)
+      const notReady = await GitManager.remoteNotReadyError('prod')
+      if (notReady?.expectedRemotePath === path.resolve(remoteGitDir)) throw notReady
+      throw new RemoteNotReadyError(remoteGitDir, notReady?.workerStartupFailure, true)
     }
     return resolveBaseBranch({ mode: 'prod', remoteGitDir })
   }

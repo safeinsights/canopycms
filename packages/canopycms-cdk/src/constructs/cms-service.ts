@@ -838,9 +838,10 @@ export interface CanopyCmsServiceProps {
    * (packages/canopycms/src/worker/cms-worker.ts) throws, `worker/index.ts`
    * exits 1, and systemd's `Restart=always` repeats that forever.
    *
-   * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`.
-   * Leaving both unset is safe: the worker points remote.git's HEAD at the
-   * branch it uses, and the Lambda reads that HEAD. Setting only one is not:
+   * MUST match the shared repo's `canopycms.config.ts`'s `defaultBaseBranch`
+   * whenever that is set. Leaving `defaultBaseBranch` unset is safe whether or
+   * not this is set: the worker points remote.git's HEAD at the branch it uses,
+   * and the Lambda reads that HEAD. Setting `defaultBaseBranch` alone is not:
    * the two are resolved by different processes, and a Lambda configured with
    * one name against a worker that detected another forks and rebases against
    * different lineages. `infrastructure/lib/cms-stack.ts`, as scaffolded by
@@ -1146,9 +1147,10 @@ export class CanopyCmsService extends Construct {
     // Both are interpolated into a git ref and the worker's `.env` heredoc, so
     // both are guarded at synth - see their doc comments for the failure each
     // prevents. Each stays `undefined` (not stamped at all) unless the adopter
-    // explicitly set it: an absent env var and an empty one are NOT the same to
-    // the worker, which detects the base branch, and computes the settings
-    // branch name, only when the variable is unset entirely.
+    // explicitly set it, so the worker detects the base branch and computes the
+    // settings branch name. For the settings branch an absent env var and an
+    // empty one are NOT the same: the worker computes the name only when
+    // `CANOPYCMS_SETTINGS_BRANCH` is unset entirely.
     const baseBranch =
       props.baseBranch !== undefined
         ? assertValidGitBranchName('baseBranch', props.baseBranch)

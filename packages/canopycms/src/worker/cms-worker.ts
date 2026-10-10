@@ -94,7 +94,7 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   gitSyncInterval?: number
   /** Auth cache refresh interval in ms (default: 15 * 60 * 1000) */
   authCacheRefreshInterval?: number
-  /** Base branch name (default: 'main') */
+  /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */
   baseBranch?: string
   /**
    * Names THIS worker's own settings branch
@@ -922,7 +922,7 @@ export class CmsWorker {
     const current = await readHeadBranch(gitDir).catch(() => undefined)
     if (current === this.baseBranch) return
     await simpleGit().raw(['--git-dir', gitDir, 'symbolic-ref', 'HEAD', ref])
-    workerLog(`remote.git HEAD now names the base branch '${this.baseBranch}'`)
+    workerLog(`${path.basename(gitDir)} HEAD now names the base branch '${this.baseBranch}'`)
   }
 
   /**

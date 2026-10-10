@@ -257,7 +257,8 @@ export async function readHeadBranch(gitDir: string): Promise<string> {
  * "Branch Identity"): a configured `defaultBaseBranch` always wins in both modes; dev mode
  * otherwise detects the current git HEAD, so workspaces fork from the developer's checked-out
  * branch, falling back to 'main'; prod otherwise reads the HEAD of `remoteGitDir`, the bare repo
- * the workspaces clone from, and throws when it cannot. Prod never assumes 'main'.
+ * the workspaces clone from, and throws when it is not given one or cannot read it. Prod never
+ * assumes 'main'.
  *
  * Static deployments never reach git operations, so callers on static paths must short-circuit
  * before calling this (see createCanopyServices).

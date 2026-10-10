@@ -6,7 +6,7 @@ span files.
 
 ## Where each rule lives
 
-- `base-branch.ts` (`baseBranchOf`): every read of a resolved base branch; prod throws rather
+- `base-branch.ts` (`baseBranchOf`): each prod read of the base branch; it throws rather
   than assume `'main'`. services.ts resolves it through `GitManager.detectBaseBranch`, from the
   `remote.git` HEAD worker/cms-worker.ts records.
 - `content-serialize.ts` (module header, `looksLikeSameItem`): `ContentStore.write`'s

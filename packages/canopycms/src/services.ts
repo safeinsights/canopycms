@@ -158,7 +158,8 @@ export interface CanopyServices {
   /**
    * Resolve a prod base branch that was still pending at creation because the worker had not yet
    * created the remote it is read from; a no-op once resolved. Rejects with RemoteNotReadyError
-   * (a 503) until the remote exists. Every request entry point awaits it before reading
+   * (a 503) until the remote exists. The HTTP handler (http/handler.ts) and
+   * createCanopyContext's getContext (context.ts) await it before reading
    * `config.defaultBaseBranch`.
    */
   resolvePendingBaseBranch: () => Promise<void>
@@ -287,9 +288,9 @@ async function _createCanopyServicesInternal(
   const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
   const explicitBaseBranch = config.defaultBaseBranch
-  // Unset, the base branch follows resolveBaseBranch in utils/git.ts, the
-  // canonical definition workspace provisioning uses: dev detects git HEAD, prod
-  // reads the remote's HEAD and fails loudly when it cannot. Prod stays pending
+  // Unset, the base branch follows the rule workspace provisioning uses
+  // (GitManager.resolveWorkspaceBaseBranch): dev detects git HEAD, prod reads
+  // the remote's HEAD and fails loudly when it cannot. Prod stays pending
   // (undefined) only while the worker has not created the remote yet; see
   // resolvePendingBaseBranch.
   const defaultBaseBranch =

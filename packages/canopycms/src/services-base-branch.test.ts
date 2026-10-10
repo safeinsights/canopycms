@@ -131,6 +131,17 @@ describe('prod base branch resolution', () => {
     },
   )
 
+  it('names a configured remote, not the auto-detected one, while it does not exist', async () => {
+    const configured = path.join(workspaceRoot, 'elsewhere', 'site.git')
+    const services = await makeServices({ defaultRemoteUrl: configured })
+
+    const err = await services.resolvePendingBaseBranch().catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(RemoteNotReadyError)
+    expect((err as RemoteNotReadyError).expectedRemotePath).toBe(configured)
+    expect((err as Error).message).toContain(`The configured remote ${configured} does not exist`)
+  })
+
   it('keeps a configured active branch when the base branch resolves later', async () => {
     const services = await makeServices({ defaultActiveBranch: 'staging' })
     await createRemoteGit('production')

@@ -13,8 +13,9 @@ export class BaseBranchUnresolvedError extends Error {
 
 /**
  * `config`'s resolved base branch. Prod resolves an unset one from the remote's HEAD
- * (createCanopyServices), so an unset value in prod means a path skipped that resolution, and it
- * throws rather than guessing 'main'. In the other modes a config that never went through
+ * (createCanopyServices, then resolvePendingBaseBranch per request), so an unset value in prod
+ * means that has not happened yet, or the path skipped it, and it throws rather than guessing
+ * 'main'. In the other modes a config that never went through
  * services keeps the 'main' default; services itself resolves dev's from git HEAD.
  */
 export function baseBranchOf(config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>): string {
