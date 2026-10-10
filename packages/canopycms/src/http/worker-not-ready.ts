@@ -29,7 +29,7 @@ const ACCOUNT_ID =
 /**
  * The 503 for a worker that recorded a startup failure. The worker's message, sanitized and with
  * account ids masked, is included only with `detail`: it names secrets, paths and the repository,
- * so it is for a caller the handler has authenticated, never an anonymous one.
+ * so it is for an admin the handler has authenticated, never anyone else.
  */
 function workerFailureResponse(
   failure: WorkerStartupFailure,
@@ -66,7 +66,7 @@ function workerFailureResponse(
  * The 503 for a request that hit {@link RemoteNotReadyError},
  * {@link BranchProvisioningBusyError} or {@link SchemaUnavailableError}, or `undefined` for any
  * other error. Retriable (with `Retry-After`) unless the worker recorded that its latest start
- * failed; `workerFailureDetail` names that failure, for an authenticated caller only. The single
+ * failed; `workerFailureDetail` names that failure, for an authenticated admin only. The single
  * mapping point for the core handler, the AI route and every framework adapter's backstop, so
  * the message and `Retry-After` cannot diverge.
  */

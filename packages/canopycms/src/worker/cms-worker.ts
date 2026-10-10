@@ -19,7 +19,11 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
-import { readCarriedOverStatus, writeWorkerStatus } from '../task-queue/worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStatusStartedAt,
+  writeWorkerStatus,
+} from '../task-queue/worker-status'
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
@@ -245,7 +249,9 @@ export async function recordWorkerStartupFailure(options: {
   let release: (() => Promise<void>) | undefined
   try {
     await fs.mkdir(taskDir, { recursive: true })
-    release = await lockWorkerTaskDir(taskDir, options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS, {
+    // Twice the usual staleness, for the reason recordLockLoss gives: a lost record costs
+    // nothing, a removed live lock costs a worker.
+    release = await lockWorkerTaskDir(taskDir, 2 * (options.lockStaleMs ?? DEFAULT_LOCK_STALE_MS), {
       onCompromised: (err) =>
         workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
     })
@@ -771,11 +777,23 @@ export class CmsWorker {
       // This worker's own lock, if still there, went unrefreshed for `lockStaleMs` before the
       // compromise fired, so the wait still reaches its staleness.
       release = await lockWorkerTaskDir(this.taskDir, this.lockStaleMs * 2, {
-        waitMs: Math.ceil(this.lockStaleMs * 1.5),
+        // Its own lock can be up to a second younger than `lockStaleMs` when the compromise
+        // fires (proper-lockfile rounds the first mtime up), so the wait covers the remaining
+        // `lockStaleMs`, that second and a retry interval. Still inside the unit's
+        // TimeoutStopSec when a SIGTERM lands mid-wait.
+        waitMs: this.lockStaleMs + 2_000,
         onCompromised: (err) =>
           workerLogError('Worker lock lost again while recording the loss:', getErrorMessage(err)),
       })
       const report = this.ensureStatusReport()
+      // A successor that took the lock and released it during the wait owns the file now.
+      const writtenBy = await readWorkerStatusStartedAt(this.taskDir)
+      if (writtenBy !== undefined && writtenBy !== report.startedAt) {
+        workerLogError(
+          'Not recording the lock loss: another worker has written worker-status.json since',
+        )
+        return
+      }
       report.lastShutdown = shutdown
       report.lastFatalError = {
         message: `The worker lost its lock on the shared workspace and stopped; it restarts on its own. ${message}`,

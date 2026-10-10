@@ -58,6 +58,18 @@ export async function readCarriedOverStatus(
   return { lastFatalError, lastShutdown }
 }
 
+/** `startedAt` of the worker that wrote the status file, or `undefined` when there is none to read. */
+export async function readWorkerStatusStartedAt(taskDir: string): Promise<string | undefined> {
+  try {
+    const report = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    ) as Partial<WorkerStatusReport>
+    return typeof report.startedAt === 'string' ? report.startedAt : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A startup failure the worker recorded; see {@link readWorkerStartupFailure}. */
 export interface WorkerStartupFailure {
   /** Already redacted by the worker. */

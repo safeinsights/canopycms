@@ -19,9 +19,11 @@ import { createCanopyRequestHandlerFromConfig } from './handler'
 import { isCanopyBinaryResponse } from './types'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 
+let signedInAs = 'admin-1'
+
 const authPlugin: AuthPlugin = {
   verifiesCredentials: true,
-  authenticate: async () => ({ success: true, user: { userId: 'editor-1', externalGroups: [] } }),
+  authenticate: async () => ({ success: true, user: { userId: signedInAs, externalGroups: [] } }),
   searchUsers: async () => [],
   getUserMetadata: async () => null,
   getGroupMetadata: async () => null,
@@ -31,6 +33,7 @@ const authPlugin: AuthPlugin = {
 describe('the not-ready 503 under real prod provisioning', () => {
   let workspaceRoot: string
   let previousRoot: string | undefined
+  let previousAdmins: string | undefined
   let consoleSpy: MockConsole
 
   beforeEach(async () => {
@@ -38,12 +41,17 @@ describe('the not-ready 503 under real prod provisioning', () => {
     workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-not-ready-'))
     previousRoot = process.env.CANOPYCMS_WORKSPACE_ROOT
     process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    previousAdmins = process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+    process.env.CANOPY_BOOTSTRAP_ADMIN_IDS = 'admin-1'
+    signedInAs = 'admin-1'
     clearStrategyCache()
   })
 
   afterEach(async () => {
     if (previousRoot === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
     else process.env.CANOPYCMS_WORKSPACE_ROOT = previousRoot
+    if (previousAdmins === undefined) delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+    else process.env.CANOPY_BOOTSTRAP_ADMIN_IDS = previousAdmins
     clearStrategyCache()
     consoleSpy.restore()
     await fs.rm(workspaceRoot, { recursive: true, force: true })
@@ -102,6 +110,20 @@ describe('the not-ready 503 under real prod provisioning', () => {
       'arn:aws:secretsmanager:us-east-1:************:secret:bot-token has no field "token" (read for <path>).',
     )
     expect(error).not.toMatch(/[0-9]{12}/)
+  })
+
+  it('names the failure to admins only, as System health does', async () => {
+    await recordStatus('2026-10-09T10:00:00.000Z', '2026-10-09T10:00:02.000Z')
+    signedInAs = 'editor-1'
+
+    const response = await getBranches()
+
+    expect(response.status).toBe(503)
+    expect(response.headers?.['Retry-After']).toBeUndefined()
+    expect(response.body).toMatchObject({ ok: false, code: 'WORKER_FAILED' })
+    const { error } = response.body as { error: string }
+    expect(error).toContain('The CMS worker failed to start.')
+    expect(error).not.toContain('secretsmanager')
   })
 
   it('stays retriable while a newer worker starts again after the failure', async () => {

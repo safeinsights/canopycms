@@ -105,6 +105,47 @@ describe('CmsWorker.selfStopped', () => {
     await release()
   })
 
+  /**
+   * Age the held lock so the heartbeat's next refresh, within a second, finds an mtime that is
+   * not its own. A second short of `lockStaleMs`: the youngest a refresh failure past the
+   * threshold leaves it, so the retake has the longest wait it can need.
+   */
+  const ageHeldLock = async () => {
+    const aged = new Date(Date.now() - (LOCK_STALE_MS - 1000))
+    await fs.utimes(path.join(taskDir, '.worker-lock'), aged, aged)
+  }
+
+  it('retakes its own abandoned lock to record the loss', async () => {
+    const worker = makeWorker()
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    trackAbortable(worker)
+
+    await ageHeldLock()
+
+    expect(await settledWithin(worker, 15_000)).toEqual({
+      reason: 'the worker lost its lock on the shared workspace',
+    })
+    expect((await readStatus())?.lastFatalError?.phase).toBe('run')
+  }, 25_000)
+
+  it('records nothing over a status file another worker wrote during the wait', async () => {
+    const worker = makeWorker()
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    trackAbortable(worker)
+
+    await ageHeldLock()
+    const successor = { version: 1, startedAt: '2026-10-09T10:00:00.000Z', updatedAt: 'x' }
+    await fs.writeFile(path.join(taskDir, WORKER_STATUS_FILE), JSON.stringify(successor))
+
+    expect(await settledWithin(worker, 15_000)).not.toBe('pending')
+    expect(await readStatus()).toEqual(successor)
+    expect(consoleSpy).toHaveErrored('another worker has written worker-status.json since')
+  }, 25_000)
+
   it('writes nothing while a worker that took the lock over keeps it fresh', async () => {
     const worker = makeWorker()
     const w = internals(worker)
@@ -112,23 +153,26 @@ describe('CmsWorker.selfStopped', () => {
     w.running = true
     trackAbortable(worker)
 
+    // The successor is another process, so it is a lock dir whose heartbeat stays fresh: a
+    // second proper-lockfile lock in this process would share the worker's entry in its lock
+    // table and stop the worker's own heartbeat instead.
     const lockPath = path.join(taskDir, '.worker-lock')
     await fs.rm(lockPath, { recursive: true, force: true })
-    const releaseSuccessor = await lockfile.lock(taskDir, {
-      lockfilePath: lockPath,
-      stale: LOCK_STALE_MS,
-      onCompromised: () => {},
-    })
+    await fs.mkdir(lockPath)
+    const heartbeat = setInterval(() => {
+      const now = new Date()
+      void fs.utimes(lockPath, now, now).catch(() => {})
+    }, 100)
     try {
-      expect(await settledWithin(worker, 8000)).toEqual({
+      expect(await settledWithin(worker, 15_000)).toEqual({
         reason: 'the worker lost its lock on the shared workspace',
       })
       expect(await readStatus()).toBeNull()
       expect(consoleSpy).toHaveErrored('Not recording the lock loss')
     } finally {
-      await releaseSuccessor()
+      clearInterval(heartbeat)
     }
-  }, 15_000)
+  }, 25_000)
 
   // On EFS a live successor's heartbeat can look older than it is (its refresh interval plus the
   // attribute cache), so the retake must not treat a lock just past `lockStaleMs` as abandoned.
@@ -149,7 +193,7 @@ describe('CmsWorker.selfStopped', () => {
     await lookOld()
     const lagging = setInterval(() => void lookOld(), 100)
     try {
-      expect(await settledWithin(worker, 8000)).toEqual({
+      expect(await settledWithin(worker, 15_000)).toEqual({
         reason: 'the worker lost its lock on the shared workspace',
       })
       expect(await readStatus()).toBeNull()
@@ -157,7 +201,7 @@ describe('CmsWorker.selfStopped', () => {
     } finally {
       clearInterval(lagging)
     }
-  }, 15_000)
+  }, 25_000)
 
   it('never settles for a stop the entrypoint asked for, even if the lock is lost during it', async () => {
     const worker = makeWorker()
@@ -169,8 +213,11 @@ describe('CmsWorker.selfStopped', () => {
 
     const stopping = worker.stop({ reason: 'SIGTERM' })
     await fs.rm(path.join(taskDir, '.worker-lock'), { recursive: true, force: true })
+    // The heartbeat notices at its next refresh, up to half of LOCK_STALE_MS away.
     await expect
-      .poll(() => consoleSpy.all().error.some((line) => line.includes('Worker lock compromised')))
+      .poll(() => consoleSpy.all().error.some((line) => line.includes('Worker lock compromised')), {
+        timeout: 5000,
+      })
       .toBe(true)
     finish()
     await stopping
@@ -245,6 +292,23 @@ describe('recordWorkerStartupFailure', () => {
     expect((await readWorkerStartupFailure(taskDir))?.current).toBe(true)
     // And the lock is free again.
     await expect(fs.access(path.join(taskDir, '.worker-lock'))).rejects.toThrow()
+  })
+
+  it("leaves a lock alone that looks only just stale, since a live holder's can", async () => {
+    await fs.mkdir(taskDir, { recursive: true })
+    const lockPath = path.join(taskDir, '.worker-lock')
+    await fs.mkdir(lockPath)
+    const seen = new Date(Date.now() - LOCK_STALE_MS * 1.25)
+    await fs.utimes(lockPath, seen, seen)
+
+    await recordWorkerStartupFailure({
+      workspacePath: tmpDir,
+      error: new Error('boom'),
+      lockStaleMs: LOCK_STALE_MS,
+    })
+
+    await expect(fs.access(path.join(taskDir, WORKER_STATUS_FILE))).rejects.toThrow()
+    await expect(fs.stat(lockPath)).resolves.toBeTruthy()
   })
 
   it('writes nothing while another worker holds the lock', async () => {
