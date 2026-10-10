@@ -1,0 +1,111 @@
+{
+  "$comment": "Per-file copy-rule counts read by scripts/check-ux-copy.mjs (pnpm lint:ux-copy). Regenerate with `node scripts/check-ux-copy.mjs --write-baseline`; a rewrite that raises a count is refused without --allow-raise.",
+  "files": {
+    "packages/canopycms/src/editor/admin/SystemHealthPanel.tsx": {
+      "ellipsis": 3,
+      "title-case": 2
+    },
+    "packages/canopycms/src/editor/BranchManager.tsx": {
+      "title-case": 6
+    },
+    "packages/canopycms/src/editor/comments/BranchComments.tsx": {
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/comments/EntryComments.tsx": {
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/comments/InlineCommentThread.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/comments/ThreadCarousel.tsx": {
+      "ellipsis": 1,
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/CommentsPanel.tsx": {
+      "ellipsis": 2,
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/components/EditorHeader.tsx": {
+      "title-case": 9,
+      "ellipsis": 2
+    },
+    "packages/canopycms/src/editor/components/EditorSidebar.tsx": {
+      "title-case": 2
+    },
+    "packages/canopycms/src/editor/components/EntryCreateModal.tsx": {
+      "title-case": 1,
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/Editor.tsx": {
+      "title-case": 6
+    },
+    "packages/canopycms/src/editor/EntryNavigator.tsx": {
+      "title-case": 10
+    },
+    "packages/canopycms/src/editor/fields/BlockField.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/fields/entry-link/InsertEntryLink.tsx": {
+      "title-case": 1,
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/fields/MarkdownField.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/group-manager/ExternalGroupsTab.tsx": {
+      "ellipsis": 2,
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/group-manager/GroupForm.tsx": {
+      "title-case": 3
+    },
+    "packages/canopycms/src/editor/group-manager/index.tsx": {
+      "ellipsis": 1,
+      "title-case": 4
+    },
+    "packages/canopycms/src/editor/group-manager/InternalGroupsTab.tsx": {
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/group-manager/MemberList.tsx": {
+      "ellipsis": 1,
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/hooks/useBranchActions.tsx": {
+      "title-case": 2
+    },
+    "packages/canopycms/src/editor/hooks/useBranchManager.tsx": {
+      "title-case": 6
+    },
+    "packages/canopycms/src/editor/hooks/useEntryManager.ts": {
+      "successfully": 1
+    },
+    "packages/canopycms/src/editor/hooks/useGroupManager.ts": {
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/hooks/usePermissionManager.ts": {
+      "title-case": 1
+    },
+    "packages/canopycms/src/editor/media/MediaLibraryBody.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/permission-manager/GroupSelector.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/permission-manager/index.tsx": {
+      "title-case": 4,
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/permission-manager/PermissionEditor.tsx": {
+      "title-case": 3
+    },
+    "packages/canopycms/src/editor/permission-manager/UserSelector.tsx": {
+      "ellipsis": 1
+    },
+    "packages/canopycms/src/editor/schema-editor/CollectionEditor.tsx": {
+      "title-case": 7
+    },
+    "packages/canopycms/src/editor/schema-editor/EntryTypeEditor.tsx": {
+      "title-case": 4
+    }
+  }
+}

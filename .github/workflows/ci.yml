@@ -193,6 +193,16 @@ jobs:
       - name: Lint comment budget
         run: pnpm lint:comments
 
+      # Editor UX ratchets: copy rules (Title Case labels, ASCII "...",
+      # "successfully") against scripts/ux-copy-baseline.json, and jsx-a11y
+      # against ESLint's bulk suppressions in scripts/a11y-suppressions.json.
+      # docs/ux-guidelines.md holds the rules both enforce.
+      - name: Lint editor copy
+        run: pnpm lint:ux-copy
+
+      - name: Lint editor accessibility (jsx-a11y)
+        run: pnpm lint:a11y
+
       # Unused exports in canopycms and canopycms-next (knip, production mode, so
       # an export only tests import must carry an @internal tag). knip.json holds
       # the entries and the ignored workspaces.
