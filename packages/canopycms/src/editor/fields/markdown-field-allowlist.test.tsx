@@ -225,6 +225,41 @@ describe('a field whose allowlist leaves out a formatting tag', () => {
       }
     })
 
+    it('decides by the selection the command acts on, when dispatched in an update', async () => {
+      const { mounted, nested } = await nestedOf(
+        '<Callout>\n  <u>alpha</u> words\n</Callout>\n',
+        new Set(),
+      )
+      try {
+        const lx = mdx.lexical
+        const select = (text: string) => {
+          const queue = [...lx.$getRoot().getChildren()]
+          while (queue.length > 0) {
+            const node = queue.shift()
+            if (lx.$isTextNode(node) && node.getTextContent().includes(text)) {
+              const start = node.getTextContent().indexOf(text)
+              node.select(start, start + text.length).format = node.getFormat()
+              return
+            }
+            if (lx.$isElementNode(node)) queue.push(...node.getChildren())
+          }
+        }
+        await act(async () => {
+          nested.update(() => select('alpha'), { discrete: true })
+          nested.update(
+            () => {
+              select('words')
+              nested.dispatchCommand(lx.FORMAT_TEXT_COMMAND, 'underline')
+            },
+            { discrete: true },
+          )
+        })
+        expect(formatOf(nested, 'words')).toBe(0)
+      } finally {
+        mounted.unmount()
+      }
+    })
+
     it('decides by the nested selection, not the root one', async () => {
       const { mounted, root, nested } = await nestedOf(
         'Some <u>under</u> words.\n\n<Callout>\n  alpha words\n</Callout>\n',
