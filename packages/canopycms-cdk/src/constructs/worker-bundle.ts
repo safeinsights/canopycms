@@ -15,6 +15,7 @@ import {
   aws_s3 as s3,
   aws_s3_assets as s3assets,
 } from 'aws-cdk-lib'
+import { WORKER_CONTRACT_VERSION } from './worker-lifecycle'
 
 // This package is `"type": "module"`, so `__dirname` is not a global in its
 // compiled output. Vitest shims it, so this file's tests would not notice.
@@ -130,6 +131,13 @@ export function workerBundleSource(
   new CfnOutput(scope, 'WorkerBundleSha256ParameterName', {
     description: 'The template parameter that selects the worker bundle',
     value: sha256Parameter.logicalId,
+  })
+  // Read by a change-set gate before a parameter-only roll: the bundle's
+  // `index.js.contract` must not exceed it, because such a change set runs the
+  // new bundle under this template's unit.
+  new CfnOutput(scope, 'WorkerContract', {
+    description: 'The worker contract version this template provides',
+    value: String(WORKER_CONTRACT_VERSION),
   })
   new CfnOutput(scope, 'WorkerBundleBucketName', {
     description: `The bucket holding worker bundles, as ${WORKER_BUNDLE_KEY_PREFIX}<sha256>.js`,

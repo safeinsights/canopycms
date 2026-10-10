@@ -15,10 +15,14 @@ import {
   type ResolvedGitHubAuth,
 } from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
-import { ensureRemoteGitConfig } from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
 import { readHeadBranch } from '../utils/git'
 import { type SanitizedBranchName } from '../paths/types'
-import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
+import {
+  isSettingsBranchName,
+  sanitizeBranchName,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+} from '../paths/branch-name'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
@@ -31,7 +35,7 @@ import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
 import type { WorkerContext } from './worker-context'
-import { GitHubMirror } from './github-mirror'
+import { GitHubMirror, type MirrorSession } from './github-mirror'
 import {
   SharedRepoRefusalError,
   UntrustedRepoConfigError,
@@ -178,6 +182,44 @@ async function realpathOfNearest(target: string): Promise<string> {
 function defaultStateDirectory(workspacePath: string): string {
   const key = createHash('sha256').update(path.resolve(workspacePath)).digest('hex').slice(0, 16)
   return path.join(os.tmpdir(), `canopycms-worker-${key}`)
+}
+
+/** How many refs a refusal to replace remote.git names before summarising the rest. */
+const MAX_REFS_LISTED = 20
+
+/** A refusal to replace a poisoned remote.git because it holds work GitHub does not have. */
+class RemoteGitKeptError extends Error {}
+
+/**
+ * Every ref in the bare repo at `gitDir` outside the GitHub tracking namespace, which only ever
+ * holds GitHub's own branches, mapped to the object it names. A ref missing from this list is one
+ * a replacement would discard unchecked, so it throws when git reports anything on stderr
+ * (`for-each-ref` skips a ref it cannot read with only a warning and exit 0) and when git is killed
+ * by a signal, which simple-git otherwise resolves as empty output. A dangling symbolic ref is
+ * skipped without a warning, and names nothing to lose.
+ */
+async function listRemoteGitRefs(gitDir: string): Promise<Map<string, string>> {
+  let stderr = ''
+  const output = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit })
+    .outputHandler((_command, _stdout, err) => {
+      err.on('data', (chunk: Buffer | string) => {
+        stderr += String(chunk)
+      })
+    })
+    .raw(['for-each-ref', '--format=%(objectname) %(refname)'])
+  if (stderr.trim() !== '') throw new Error(stderr.trim())
+  const refs = new Map<string, string>()
+  for (const line of output.split('\n')) {
+    const space = line.indexOf(' ')
+    if (space === -1) continue
+    const ref = line.slice(space + 1)
+    if (!ref.startsWith(GITHUB_TRACKING_REF_PREFIX)) refs.set(ref, line.slice(0, space))
+  }
+  return refs
+}
+
+function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
+  return a.size === b.size && [...a].every(([ref, id]) => b.get(ref) === id)
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
@@ -932,7 +974,9 @@ export class CmsWorker {
   /**
    * An unconfigured base branch is the one remote.git's HEAD names, which is what the Lambda
    * reads too (GitManager.detectBaseBranch); before remote.git exists, it is GitHub's default
-   * branch, which the clone then records as that HEAD. Never assumes 'main'.
+   * branch, which the clone then records as that HEAD. So it is too when remote.git has no branch
+   * outside the settings namespace: no base branch is there for HEAD to name, and ensureRemoteGit
+   * replaces it from GitHub unless something in it is at stake. Never assumes 'main'.
    */
   private async resolveBaseBranch(): Promise<void> {
     if (this.resolvedBaseBranch) return
@@ -957,10 +1001,11 @@ export class CmsWorker {
     }
     // Before the first git to read it, and on its own: a refusal is recorded as itself, not as a
     // base branch to configure or a remote.git to delete.
-    if (remoteGitExists) await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    if (remoteGitExists) await this.assertRemoteGitConfig()
     let name: string
     try {
-      name = remoteGitExists
+      const fromRemoteGit = remoteGitExists && (await this.hasContentBranch(this.remoteGitPath))
+      name = fromRemoteGit
         ? await readHeadBranch(this.remoteGitPath, sharedRepoGit(this.remoteGitPath, 'bare'))
         : (
             await this.octokitClient().repos.get({
@@ -973,6 +1018,35 @@ export class CmsWorker {
     }
     this.setBaseBranch(name)
     workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Check remote.git's config at boot. A refusal is never a case for replacement: it reports that
+   * something wrote there, and listing the refs a replacement would lose means running git under
+   * that config. The message says so, so System health does not read it as a routine failure.
+   */
+  private async assertRemoteGitConfig(): Promise<void> {
+    try {
+      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+    } catch (err) {
+      if (!(err instanceof SharedRepoRefusalError)) throw err
+      throw new SharedRepoRefusalError(
+        `${err.message.replace(/\.$/, '')}. This needs an operator: the worker never repairs or ` +
+          `replaces a remote.git whose config was tampered with or cannot be read.`,
+      )
+    }
+  }
+
+  /** Whether the bare repo at `gitDir` has a branch that is not a settings branch. */
+  private async hasContentBranch(gitDir: string): Promise<boolean> {
+    const branches = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit }).raw([
+      'for-each-ref',
+      '--format=%(refname:strip=2)',
+      'refs/heads/',
+    ])
+    return branches
+      .split('\n')
+      .some((branch) => branch !== '' && !isSettingsBranchName(branch, this.ensureSettingsBranch()))
   }
 
   /**
@@ -1116,7 +1190,7 @@ export class CmsWorker {
    * pushed) succeeds and leaves a refs-less repo that `fs.stat` cannot tell from a healthy one, so
    * left unchecked it silently poisons remote.git and the stat short-circuit means it never heals.
    * The base branch is therefore verified right after seeding AND on the already-exists fast
-   * path, since a previous run can have left a poisoned remote.git behind.
+   * path, where a poisoned remote.git is replaced (`replacePoisonedRemoteGit`).
    */
   private async ensureRemoteGit(): Promise<void> {
     let exists: boolean
@@ -1130,7 +1204,7 @@ export class CmsWorker {
     if (exists) {
       // At boot, so a refusal lands in worker-status.json as a startup failure, and first: the
       // scrub is git reading this config too.
-      await assertSharedRepoConfig(this.remoteGitPath, 'bare')
+      await this.assertRemoteGitConfig()
       // SELF-HEAL, before anything else changes this repo: a remote.git cloned from GitHub by an
       // older worker recorded the token-bearing clone URL in its config.
       await this.scrubPersistedRemote(this.remoteGitPath)
@@ -1139,19 +1213,141 @@ export class CmsWorker {
         await this.verifyBaseBranchExists(this.remoteGitPath)
       } catch (err) {
         workerLogError(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
-        // Do NOT auto-delete: an existing remote.git can hold unpushed
-        // canopycms-settings-* branches or other state worth preserving, so
-        // deletion is the operator's call.
-        throw new Error(
-          `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
-        )
+        await this.replacePoisonedRemoteGit()
+        return
       }
       await this.applyRemoteGitConfig(this.remoteGitPath)
       return // Already exists and has the base branch
     }
 
     workerLog('Initializing remote.git from GitHub...')
+    const stagingPath = await this.seedRemoteGitStaging()
+    await fs.rename(stagingPath, this.remoteGitPath)
+    workerLog('remote.git initialized')
+  }
 
+  /**
+   * Replace an existing remote.git that has no base branch with a fresh seed from GitHub, but only
+   * when every ref in it names a commit a GitHub branch contains, so replacing it loses no commit;
+   * a branch name GitHub lacks, such as a merged branch deleted there, goes. Otherwise refuse,
+   * naming the refs at stake: unpushed work such as a settings branch.
+   *
+   * The refs are compared in the same mirror session that fetches GitHub and seeds the
+   * replacement, and listed again just before the swap, since the Lambda can push into remote.git
+   * while the seed runs. The swap is two renames, so the name remote.git resolves to the old repo,
+   * the new one, or for an instant nothing, never a half-built or half-deleted one.
+   */
+  private async replacePoisonedRemoteGit(): Promise<void> {
+    const poisoned =
+      `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (cloned while the ` +
+      `GitHub repository was empty, or the base branch is set to one it never had)`
+    const notReplaced = (reason: string) =>
+      new Error(`${poisoned}, and it was not replaced: ${reason}`)
+
+    let refs: Map<string, string>
+    try {
+      refs = await listRemoteGitRefs(this.remoteGitPath)
+    } catch (err) {
+      throw notReplaced(
+        `its refs could not all be read (${redactCredentials(getErrorMessage(err)).trim()}), so ` +
+          `the worker cannot tell whether replacing it would lose work. Deleting ` +
+          `${this.remoteGitPath} and restarting the worker re-clones it and discards every ref in it.`,
+      )
+    }
+
+    // Only a base branch the listing confirms absent: a check that failed for any other reason
+    // is no evidence the repo is poisoned.
+    if (refs.has(`refs/heads/${this.baseBranch}`)) {
+      throw new Error(
+        `remote.git at ${this.remoteGitPath} has branch '${this.baseBranch}', but git could not ` +
+          `verify it, so the worker will not replace remote.git. Restarting the worker checks again.`,
+      )
+    }
+
+    workerLog(
+      `remote.git has no branch '${this.baseBranch}': replacing it if GitHub has every ref in it`,
+    )
+    const stagingPath = await this.seedRemoteGitStaging(async (mirror) => {
+      const unpushed: string[] = []
+      for (const [ref, id] of refs) {
+        if (!(await mirror.isOnGitHub(id))) unpushed.push(ref)
+      }
+      if (unpushed.length === 0) return
+      const shown = unpushed.slice(0, MAX_REFS_LISTED)
+      const more = unpushed.length - shown.length
+      throw new RemoteGitKeptError(
+        `${poisoned}, and it holds ${unpushed.length === 1 ? 'a ref' : `${unpushed.length} refs`} ` +
+          `GitHub does not have, so the worker will not replace it: ${shown.join(', ')}` +
+          `${more > 0 ? ` and ${more} more` : ''}. Deleting ${this.remoteGitPath} and restarting ` +
+          `the worker re-clones it and discards ${unpushed.length === 1 ? 'that ref' : 'those refs'}.`,
+      )
+    }).catch((err: unknown) => {
+      if (err instanceof RemoteGitKeptError) throw err
+      throw notReplaced(redactCredentials(getErrorMessage(err)))
+    })
+
+    const discardStaging = () => fs.rm(stagingPath, { recursive: true, force: true })
+    let current: Map<string, string>
+    try {
+      current = await listRemoteGitRefs(this.remoteGitPath)
+    } catch (err) {
+      await discardStaging()
+      throw notReplaced(
+        `its refs could not all be read again (${getErrorMessage(err).trim()}). Restarting the ` +
+          `worker checks again.`,
+      )
+    }
+    if (!sameRefs(refs, current)) {
+      await discardStaging()
+      throw notReplaced(
+        'its refs changed while the worker seeded its replacement. Restarting the worker checks again.',
+      )
+    }
+
+    const replaced = `${this.remoteGitPath}.replaced-${Date.now()}`
+    try {
+      await fs.rename(this.remoteGitPath, replaced)
+    } catch (err) {
+      await discardStaging()
+      throw err
+    }
+    try {
+      await fs.rename(stagingPath, this.remoteGitPath)
+    } catch (err) {
+      await fs.rename(replaced, this.remoteGitPath)
+      await discardStaging()
+      throw err
+    }
+    // A push that resolved remote.git before the rename can still land in the old repo. One that
+    // lands before this listing keeps it; a later one is lost from remote.git, though the clone
+    // that pushed still has its commit.
+    const after = await listRemoteGitRefs(replaced).catch(() => null)
+    if (after !== null && sameRefs(refs, after)) {
+      // remote.git is already replaced, so a push still writing here costs only this directory.
+      await fs
+        .rm(replaced, { recursive: true, force: true, maxRetries: 3 })
+        .catch((err: unknown) => {
+          workerLogWarn(
+            `Could not remove the replaced remote.git at ${replaced}: ${getErrorMessage(err)}`,
+          )
+        })
+    } else {
+      workerLogError(
+        `Kept the replaced remote.git at ${replaced}: its refs changed as it was swapped out, so ` +
+          `it may hold work GitHub does not have.`,
+      )
+    }
+    workerLog('remote.git replaced')
+  }
+
+  /**
+   * Seed a new bare repo from GitHub at `<remote.git>.cloning`, verified and configured, and
+   * return its path for the caller to rename into place. `check` runs in the mirror session right
+   * after the GitHub fetch, and its throw stops the seed. Throws with the staging directory gone.
+   */
+  private async seedRemoteGitStaging(
+    check?: (mirror: MirrorSession) => Promise<void>,
+  ): Promise<string> {
     // Seeded under a TEMP name and renamed into place only once verified, so a crash mid-seed
     // leaves only this staging directory, which the next boot deletes, rather than a poisoned
     // `remote.git` that fs.stat cannot distinguish from a healthy one.
@@ -1162,6 +1358,7 @@ export class CmsWorker {
       const githubUrl = await this.buildGitHubUrl()
       await this.githubMirror.exclusive(async (mirror) => {
         await mirror.fetchFromGitHub(githubUrl)
+        await check?.(mirror)
         if ((await mirror.branchTip(this.baseBranch)) === null) {
           throw new Error(`GitHub has no branch '${this.baseBranch}'`)
         }
@@ -1177,11 +1374,14 @@ export class CmsWorker {
       await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
     } catch (err) {
-      workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
+      if (!(err instanceof RemoteGitKeptError)) {
+        workerLogError(`remote.git seeding failed: ${redactCredentials(getErrorMessage(err))}`)
+      }
       // Deleting before throwing is what makes this recoverable: the next
       // start() sees no remote.git and re-clones, instead of sticking forever
       // behind a poisoned bare repo fs.stat alone cannot detect.
       await fs.rm(stagingPath, { recursive: true, force: true })
+      if (err instanceof RemoteGitKeptError) throw err
       if (err instanceof SharedRepoRefusalError) {
         // Not the refusal's own advice: the directory it names is gone.
         throw new SharedRepoRefusalError(
@@ -1197,9 +1397,7 @@ export class CmsWorker {
         `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} failed or has no branch '${this.baseBranch}' - the GitHub repository may be empty, or the base branch may not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
       )
     }
-
-    await fs.rename(stagingPath, this.remoteGitPath)
-    workerLog('remote.git initialized')
+    return stagingPath
   }
 
   /**

@@ -1663,20 +1663,16 @@ describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
     expect(await fileExists(remoteGitPath())).toBe(true)
   })
 
-  it('rejects an already-existing remote.git that lacks the base branch, without deleting it', async () => {
-    // Simulate a remote.git left behind by a pre-guard worker run (or any
-    // other means) that never got a base branch: an empty bare repo created
-    // directly at the workspace's remote.git path, with no fixture clone
-    // involved.
+  it('keeps an already-existing remote.git that lacks the base branch while GitHub lacks it too', async () => {
+    // An empty bare repo at remote.git's path, as an empty GitHub repo's clone
+    // leaves it. GitHub is still empty, so there is nothing to replace it with;
+    // cms-worker-poisoned-remote-git.test.ts covers the replacement itself.
     await simpleGit().raw(['init', '--bare', remoteGitPath()])
 
     const worker = makeGuardWorker()
     const internals = worker as unknown as RemoteGitInternals
 
-    await expect(internals.ensureRemoteGit()).rejects.toThrow(/no branch/)
-    // Existing repos are not auto-deleted -- they may hold unpushed
-    // canopycms-settings-* branches or other state; removal is the
-    // operator's call, per the error message's recovery hint.
+    await expect(internals.ensureRemoteGit()).rejects.toThrow(/no branch.*not replaced/s)
     expect(await fileExists(remoteGitPath())).toBe(true)
   })
 

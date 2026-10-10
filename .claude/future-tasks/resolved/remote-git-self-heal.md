@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Worker-side self-heal for a poisoned pre-existing remote.git: auto-re-clone when no unpushed refs exist, keep refusing (with the ref list) when they do. `ensureRemoteGit` still throws "Delete `<path>` and restart the worker"; the System health panel surfaces the state but recovery needs an operator. A months-in operational risk, not a first-deploy blocker.
+  RESOLVED: at boot the worker replaces an existing remote.git that has no base branch, staging the new copy and swapping it in by rename, once the GitHub mirror shows every ref in it is on GitHub. It keeps the repo, and the error names the refs at stake, when GitHub lacks any of them, a ref is unreadable, the mirror cannot fetch, or the config is refused. With the base branch unset, a remote.git holding only settings branches takes GitHub's default branch.
 ---
 # Worker-side self-heal for a poisoned pre-existing remote.git
 

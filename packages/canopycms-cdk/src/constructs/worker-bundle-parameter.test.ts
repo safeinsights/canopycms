@@ -14,6 +14,7 @@ import { Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-lib'
 
 import { CanopyCmsService } from './cms-service'
+import { WORKER_CONTRACT_ENV, WORKER_CONTRACT_VERSION } from './worker-lifecycle'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
 
@@ -127,6 +128,15 @@ describe("workerCode: { source: 'parameter' }", () => {
     expect(outputs.map((o) => o.Value)).toEqual(
       expect.arrayContaining([paramId, { Ref: bucket.id }]),
     )
+  })
+
+  it("outputs the template's worker contract version, for the same gate", () => {
+    const outputs = Object.entries(parameterMode.toJSON().Outputs ?? {}) as Array<
+      [string, { Value: unknown }]
+    >
+    const contract = outputs.filter(([id]) => id.includes('WorkerContract'))
+    expect(contract).toHaveLength(1)
+    expect(contract[0][1].Value).toBe(String(WORKER_CONTRACT_VERSION))
   })
 
   it('runs the bundle keyed by the parameter, checked against the same value', () => {
@@ -251,6 +261,10 @@ describe('the bundle the npm package ships', () => {
     )
   })
 
+  it('ships the worker contract version it needs beside it', () => {
+    expect(readFileSync(`${BUNDLE}.contract`, 'utf-8')).toBe(`${WORKER_CONTRACT_VERSION}\n`)
+  })
+
   it('is in the published files', () => {
     const files = (
       JSON.parse(readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf-8')) as {
@@ -258,5 +272,25 @@ describe('the bundle the npm package ships', () => {
       }
     ).files
     expect(files).toContain('worker/dist')
+  })
+})
+
+describe('the worker contract', () => {
+  const stamp = `Environment=${WORKER_CONTRACT_ENV}=${WORKER_CONTRACT_VERSION}`
+
+  it.each([
+    ['asset', assetMode],
+    ['parameter', parameterMode],
+  ])('is stamped into the unit %s mode writes', (_mode, t) => {
+    const conditions = Object.fromEntries(
+      Object.keys(t.toJSON().Conditions ?? {}).map((id) => [id, true]),
+    )
+    expect(userData(t, conditions)).toContain(stamp)
+  })
+
+  it('is stamped into the checked-in unit', () => {
+    expect(
+      readFileSync(path.join(PACKAGE_ROOT, 'worker/canopy-worker.service'), 'utf-8').split('\n'),
+    ).toContain(stamp)
   })
 })

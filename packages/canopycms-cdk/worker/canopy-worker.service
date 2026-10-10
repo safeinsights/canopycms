@@ -43,6 +43,9 @@ StateDirectory=canopy-worker
 
 # Environment
 EnvironmentFile=/opt/canopy-worker/.env
+# The worker contract this unit provides (WORKER_CONTRACT_VERSION in
+# src/constructs/worker-lifecycle.ts); a bundle needing more refuses to start.
+Environment=CANOPYCMS_WORKER_CONTRACT=1
 
 # Sandbox. Writable: the workspace, the log dir (LogsDirectory=), the state dir
 # (StateDirectory=) and a private /tmp.
