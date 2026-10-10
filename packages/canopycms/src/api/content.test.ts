@@ -65,15 +65,15 @@ vi.mock('../content-store', () => {
     // [F1] Same reasoning as BranchSyncingError above: a real
     // ContentConflictError subclass, so the handler's `instanceof` chain
     // behaves here the way it does in production. The constructor mirrors the
-    // real one's shape (id + paths -> a message naming the state that needs
-    // an administrator) so the handler test can assert on a realistic
+    // real one's shape (id + paths -> a message naming the administrator
+    // who fixes it) so the handler test can assert on a realistic
     // message; the exact wording is asserted against the real class in
     // content-store.test.ts.
     DuplicateContentIdError: class DuplicateContentIdError extends MockContentConflictError {
       constructor(contentId: string, paths: readonly string[]) {
         super(
           `Content ID ${contentId} is on more than one file (${paths.join(', ')}); ` +
-            `an administrator needs to resolve the duplicate on the server.`,
+            `an administrator can fix this in System health.`,
         )
       }
     },

@@ -136,6 +136,11 @@ export class AdminPage {
     return this.panel.getByTestId(`mark-merged-${branchName}`)
   }
 
+  /** The duplicate-content-ID badge on a healthy row; it opens the repair dialog. */
+  duplicateIdsBadge(dirName: string): Locator {
+    return this.panel.getByTestId(`duplicate-content-ids-${dirName}`)
+  }
+
   /** The yellow "failing since" indicator on a branch-health row. */
   rebaseFailureIcon(dirName: string): Locator {
     return this.panel.getByTestId(`rebase-failure-${dirName}`)

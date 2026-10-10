@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  The `repair-content-duplicates` endpoint and its generated client method exist; no UI invokes either. System Health shows a read-only `N duplicate IDs` badge per branch, deliberately with no button, because its row also holds **Purge** (which trashes the whole branch directory). The action needs its own confirmed surface; unit suites mock `@mantine/modals`, so a confirmation is assertable only in e2e
+  RESOLVED 2026-10-10, branch `fix/health-duplicate-ids-bounded-repair`, base `int-202610-b`. System health's duplicate-ID badge is now a button that opens its own `modals.openConfirmModal` ("Fix duplicate content IDs") listing each content ID's kept path and the path(s) to archive; confirm calls only `repairContentDuplicates`, then re-runs the duplicate scan. Healthy rows carry no Purge button, and the dialog is reachable only from the badge. Covered by an e2e test (apps/test-app/e2e/tests/admin-branch-health.spec.ts: dialog shown, Cancel sends no request and moves no file, confirm archives only the dropped file). The editor's 409 now tells the editor an administrator can fix it in System health. Shipped together with item 2 of pr229-review-followups.md (the opt-in, time-bounded scan)
 ---
 # [P2] No UI triggers the duplicate-content-ID repair action
 
@@ -46,5 +46,5 @@ Two things to carry into that work:
 - Unit suites mock `@mantine/modals` wholesale, so a new confirmation dialog is
   **structurally invisible** to them — this needs an e2e assertion, not just a unit test.
 - `scanDuplicateContentIds` is expensive per request; if it gets gated behind a query flag
-  (see item 2 of [pr229-review-followups.md](pr229-review-followups.md)), this UI has to
+  (see item 2 of [pr229-review-followups.md](../pr229-review-followups.md)), this UI has to
   pass the flag.
