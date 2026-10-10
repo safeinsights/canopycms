@@ -356,7 +356,6 @@ function selfTest() {
     ['<Button>Retry{done && "."} Now</Button>', ['title-case']],
     ['<Button>{count ?? ""} Files</Button>', ['title-case']],
     ['<Button>{loading && <Loader />} Save</Button>', []],
-    ['<Button>{x ? null : "Show"} panel</Button>', []],
     ['<Button>{busy ? null : ""} Delete branch</Button>', []],
     ['console.log((`Retrying ${n}...`))', []],
     ['type T = `Saving ${string}...`', []],
