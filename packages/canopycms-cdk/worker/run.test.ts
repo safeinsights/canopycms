@@ -270,11 +270,9 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.record).toHaveBeenCalledWith({
       workspacePath: WORKSPACE,
       error: expect.objectContaining({
-        message: expect.stringMatching(
-          new RegExp(
-            `^canopy-worker: template too old for this bundle: needs worker contract ` +
-              `${WORKER_CONTRACT_VERSION}, unit has 0 \\(StateDirectory=canopy-worker[,)]`,
-          ),
+        message: expect.stringContaining(
+          `canopy-worker: template too old for this bundle: needs worker contract ` +
+            `${WORKER_CONTRACT_VERSION}, unit has 0 (StateDirectory=canopy-worker`,
         ),
       }),
     })
@@ -301,19 +299,24 @@ describe('runWorker: a failure before worker.start()', () => {
     expect(h.createWorker).not.toHaveBeenCalled()
   })
 
-  it('refuses a contract stamp that is not a whole number', async () => {
-    const h = harness({ env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: '1.0' } })
+  // '' is what systemd passes for `Environment=CANOPYCMS_WORKER_CONTRACT=`.
+  it.each(['1.0', ''])(
+    'refuses a contract stamp of %j, which is not a whole number',
+    async (stamp) => {
+      const h = harness({ env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: stamp } })
 
-    await runWorker(h.deps)
+      await runWorker(h.deps)
 
-    expect(h.record).toHaveBeenCalledWith({
-      workspacePath: WORKSPACE,
-      error: expect.objectContaining({
-        message: `canopy-worker: ${WORKER_CONTRACT_ENV}="1.0" on the worker unit is not a whole number`,
-      }),
-    })
-    expect(h.createWorker).not.toHaveBeenCalled()
-  })
+      expect(h.record).toHaveBeenCalledWith({
+        workspacePath: WORKSPACE,
+        error: expect.objectContaining({
+          message: `canopy-worker: ${WORKER_CONTRACT_ENV}=${JSON.stringify(stamp)} on the worker unit is not a whole number`,
+        }),
+      })
+      expect(h.exitCodes()).toEqual([1])
+      expect(h.createWorker).not.toHaveBeenCalled()
+    },
+  )
 
   it('starts under a unit stamped newer than the bundle', async () => {
     const h = harness({
