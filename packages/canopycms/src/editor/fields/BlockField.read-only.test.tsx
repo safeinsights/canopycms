@@ -1,6 +1,6 @@
 /**
- * BlockField's drag sensors follow `readOnly` both ways, including a block list that first
- * renders read-only (the branch list still loading) and then unlocks.
+ * BlockField's dragging follows `readOnly` both ways, including a block list that first renders
+ * read-only (the branch list still loading) and then unlocks, without changing the sensor count.
  */
 import React from 'react'
 import { describe, it, expect, afterEach, vi } from 'vitest'
@@ -48,16 +48,18 @@ describe('BlockField readOnly', () => {
     sensorCounts.length = 0
   })
 
-  it('turns dragging on when a read-only block list unlocks, and off again when it locks', () => {
+  it('turns dragging off per block while read-only, and back on when the list unlocks', () => {
     const { rerender } = render(field(true))
-    expect(sensorCounts.at(-1)).toBe(0)
     expect(screen.queryAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(0)
 
     rerender(field(false))
-    expect(sensorCounts.at(-1)).toBe(2)
-    expect(screen.getAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(2)
+    const handles = screen.getAllByRole('button', { name: 'Drag to reorder' })
+    expect(handles).toHaveLength(2)
+    expect(handles.map((h) => h.getAttribute('aria-disabled'))).toEqual(['false', 'false'])
 
     rerender(field(true))
-    expect(sensorCounts.at(-1)).toBe(0)
+    expect(screen.queryAllByRole('button', { name: 'Drag to reorder' })).toHaveLength(0)
+    // DndContext's hooks depend on the sensor count, so it never changes.
+    expect(new Set(sensorCounts)).toEqual(new Set([2]))
   })
 })

@@ -136,12 +136,13 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     setItemKeys((prev) => prev.slice(0, value.length))
   }
 
-  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
-  const keyboardSensor = useSensor(KeyboardSensor, {
-    coordinateGetter: sortableKeyboardCoordinates,
-  })
-  // Fixed arity: useSensors memoises on its arguments, and a changing count never re-memoises.
-  const sensors = useSensors(readOnly ? null : pointerSensor, readOnly ? null : keyboardSensor)
+  // Constant: DndContext's hooks depend on the sensor count; read-only disables each item instead.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  )
 
   const emit = (next: BlockInstance[]) => {
     if (!readOnly) onChange(next)

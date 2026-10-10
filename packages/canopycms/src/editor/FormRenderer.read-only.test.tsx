@@ -81,6 +81,15 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('string: a read-only value can be focused and selected, so it can be copied', () => {
+    renderReadOnly([{ name: 'title', type: 'string', label: 'Title' }], { title: 'Hello' })
+    const input = screen.getByRole('textbox', { name: 'Title' }) as HTMLInputElement
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    input.setSelectionRange(0, 5)
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5])
+  })
+
   it('string list: the tags input is locked and Enter adds nothing', () => {
     const { onChange } = renderReadOnly(
       [{ name: 'tags', type: 'string', label: 'Tags', list: true }],

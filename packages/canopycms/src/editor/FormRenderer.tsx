@@ -100,6 +100,9 @@ const ReadOnlyFormStyles: React.FC = () => (
     .${READ_ONLY_FORM_CLASS} .canopy-mdx-content {
       background-color: var(--mantine-color-gray-1);
     }
+    .${READ_ONLY_FORM_CLASS} .mantine-Switch-label {
+      color: var(--mantine-color-text);
+    }
   `}</style>
 )
 
