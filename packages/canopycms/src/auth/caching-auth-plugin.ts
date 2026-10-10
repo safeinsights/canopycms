@@ -116,6 +116,16 @@ export class CachingAuthPlugin implements AuthPlugin {
     }
   }
 
+  /** One cache read for the whole set, where `getUserMetadata` per id re-stats the files each time. */
+  async getUsersMetadata(userIds: CanopyUserId[]): Promise<UserSearchResult[]> {
+    try {
+      const wanted = new Set(userIds)
+      return (await this.cache.getAllUsers()).filter((u) => wanted.has(u.id))
+    } catch {
+      return []
+    }
+  }
+
   async getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null> {
     try {
       return await this.cache.getGroup(groupId)

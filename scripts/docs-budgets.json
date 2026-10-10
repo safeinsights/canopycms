@@ -69,7 +69,7 @@
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4191
+      "words": 4206
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -84,12 +84,12 @@
     "docs/adopter-migration.md": {
       "historyMarkers": null,
       "maxSectionWords": 4659,
-      "words": 9201
+      "words": 9252
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1280,
-      "words": 5628
+      "words": 5667
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,

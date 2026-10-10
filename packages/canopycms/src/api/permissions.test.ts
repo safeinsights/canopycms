@@ -30,6 +30,7 @@ vi.mock('../authorization', async (importOriginal) => {
 import { PERMISSION_ROUTES } from './permissions'
 import * as authorization from '../authorization'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
+import { MAX_USER_METADATA_BATCH } from './users-constants'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -43,6 +44,7 @@ const updatePermissions = PERMISSION_ROUTES.update.handler
 const searchUsers = PERMISSION_ROUTES.searchUsers.handler
 const listGroups = PERMISSION_ROUTES.listGroups.handler
 const getUserMetadata = PERMISSION_ROUTES.getUserMetadata.handler
+const batchGetUserMetadata = PERMISSION_ROUTES.batchGetUserMetadata.handler
 
 describe('permissions API', () => {
   let mockContext: ApiContext
@@ -766,6 +768,86 @@ describe('permissions API', () => {
         expect((result.data as { user: UserSearchResult | null }).user).toBeNull()
       }
       expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledWith('non-existent')
+    })
+  })
+
+  describe('batchGetUserMetadata', () => {
+    const admin: ApiRequest<undefined> = {
+      user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+    }
+    const userFor = (id: string): UserSearchResult => ({ id, name: id, email: `${id}@x.test` })
+
+    it('answers from getUsersMetadata in one plugin call, omitting unknown ids', async () => {
+      mockAuthPlugin.getUsersMetadata = vi.fn(async (ids: string[]) =>
+        ids.filter((id) => id !== 'ghost').map(userFor),
+      )
+
+      const result = await batchGetUserMetadata(mockContext, admin, {
+        userIds: ['a', 'b', 'ghost', 'a'],
+      })
+
+      expect(result).toMatchObject({ ok: true, status: 200 })
+      expect(result.ok && result.data?.users).toEqual([userFor('a'), userFor('b')])
+      expect(mockAuthPlugin.getUsersMetadata).toHaveBeenCalledTimes(1)
+      expect(mockAuthPlugin.getUsersMetadata).toHaveBeenCalledWith(['a', 'b', 'ghost'])
+      expect(mockAuthPlugin.getUserMetadata).not.toHaveBeenCalled()
+    })
+
+    it('falls back to single lookups when the plugin has no getUsersMetadata', async () => {
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockImplementation(async (id) =>
+        id === 'ghost' ? null : userFor(id),
+      )
+
+      const result = await batchGetUserMetadata(mockContext, admin, { userIds: ['a', 'ghost'] })
+
+      expect(result.ok && result.data?.users).toEqual([userFor('a')])
+      expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledTimes(2)
+    })
+
+    it('allows reviewers and denies regular users, as getUserMetadata does', async () => {
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(null)
+      const reviewer: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'r-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+      }
+      const regular: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'u-1', groups: [] },
+      }
+
+      expect((await batchGetUserMetadata(mockContext, reviewer, { userIds: ['a'] })).status).toBe(
+        200,
+      )
+      const denied = await batchGetUserMetadata(mockContext, regular, { userIds: ['b'] })
+      expect(denied).toMatchObject({ ok: false, status: 403 })
+      expect(mockAuthPlugin.getUserMetadata).not.toHaveBeenCalledWith('b')
+    })
+
+    it('returns 501 without an auth plugin and 500 when the provider fails', async () => {
+      mockAuthPlugin.getUsersMetadata = vi.fn().mockRejectedValue(new Error('Clerk down'))
+      expect(await batchGetUserMetadata(mockContext, admin, { userIds: ['a'] })).toMatchObject({
+        ok: false,
+        status: 500,
+        error: 'Clerk down',
+      })
+
+      mockContext.authPlugin = undefined
+      expect(await batchGetUserMetadata(mockContext, admin, { userIds: ['a'] })).toMatchObject({
+        ok: false,
+        status: 501,
+      })
+    })
+
+    it('validates the id list: non-empty, capped, and each id a bounded non-empty string', () => {
+      const validate = (userIds: unknown) =>
+        PERMISSION_ROUTES.batchGetUserMetadata.validate({ body: { userIds } }).ok
+      const ids = (n: number) => Array.from({ length: n }, (_, i) => `user-${i}`)
+
+      expect(validate(ids(MAX_USER_METADATA_BATCH))).toBe(true)
+      expect(validate(ids(MAX_USER_METADATA_BATCH + 1))).toBe(false)
+      expect(validate([])).toBe(false)
+      expect(validate([''])).toBe(false)
+      expect(validate(['x'.repeat(257)])).toBe(false)
+      expect(validate([42])).toBe(false)
+      expect(validate('user-1')).toBe(false)
     })
   })
 

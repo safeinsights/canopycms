@@ -118,7 +118,7 @@ Route handlers, one file per endpoint namespace:
 - `assets.ts` — `/assets`: presign, finalize, upload, list, delete, plus the raw-object route (on-demand transforms, presigned S3 redirects)
 - `comments.ts` — `/comments`: comment CRUD
 - `groups.ts` — `/groups`: internal group management
-- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list
+- `permissions.ts` — `/permissions`: path permissions, and the merged internal-plus-external group list; the `/users` lookups
 - `reference-options.ts` — `/reference-options`: reference field option lookup
 - `resolve-references.ts` — `/resolve-references`: resolves reference IDs for the editor's live preview, through `ContentStore.resolveReferenceTarget` and the request's path ACLs
 - `user.ts` — `/user`: current user info
@@ -134,7 +134,7 @@ Support files:
 - `guards.ts` — the declarative guard system; see [ARCHITECTURE.md](ARCHITECTURE.md#declarative-guard-system)
 - `validators.ts` — Zod schemas for branded types at API boundaries; see [Zod Validators](#zod-validators-for-api-boundaries)
 - `settings-helpers.ts` — settings-branch context resolution and commit helpers
-- `entries-constants.ts`, `branch-create-window.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window. Dependency-free so the editor bundle can import them
+- `entries-constants.ts`, `branch-create-window.ts`, `users-constants.ts` — entries pagination caps, `ENTRY_CHANGED_MESSAGE`; the idempotent branch-create window; `MAX_USER_METADATA_BATCH`. Dependency-free so the editor bundle can import them
 - `request-body-hash.ts` — computes the `x-amz-content-sha256` CloudFront OAC requires on a body-carrying request
 - `types.ts` — `ApiContext`, `ApiRequest`, `ApiResponse`
 - `index.ts` — response-type re-exports
@@ -144,7 +144,7 @@ Handlers reach git through [service methods](#git-operations-service-methods) an
 `context.branchRoot` / `context.baseRoot`. Module boundaries, held by dependency-cruiser rules in
 `.dependency-cruiser.mjs` under `pnpm lint:cycles`: `http/` value-imports `api/` only via
 `routes.ts`; `api/` never imports `worker/`; `editor/` imports only `client.ts`, `index.ts` and
-the two dependency-free modules above.
+the dependency-free modules above.
 
 ## Authentication & Permissions
 
@@ -152,7 +152,8 @@ the two dependency-free modules above.
 
 **Location**: `packages/canopycms/src/auth/`
 
-- `plugin.ts` — `AuthPlugin` interface, `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
+- `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
+- `user-metadata-lookup.ts` — `lookupUsersMetadata`: the `/users` lookups' per-process cache and batching
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
@@ -521,8 +522,9 @@ Manager hooks, in `editor/hooks/` — see
 - `useSchemaManager.ts` — schema mutations, returning result objects rather than booleans
 - `useCommentSystem.ts` — comment CRUD
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
+- `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
 - `useEditorLayout.ts` — panel layout
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and user metadata
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README

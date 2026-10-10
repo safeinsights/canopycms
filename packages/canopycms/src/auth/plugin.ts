@@ -28,6 +28,16 @@ export interface AuthPlugin {
 
   getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null>
 
+  /**
+   * Looks up many users in as few provider calls as possible, resolving to the users found, in
+   * any order; unknown ids are omitted. Core never passes more than 100 ids at once. Without
+   * it, core falls back to concurrent `getUserMetadata` calls, a few at a time.
+   *
+   * Reject on a provider failure rather than omitting ids: core caches an omitted id as unknown,
+   * as it does a `null` from the `getUserMetadata` fallback.
+   */
+  getUsersMetadata?(userIds: CanopyUserId[]): Promise<UserSearchResult[]>
+
   getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null>
 
   /** For permission UI dropdowns. */

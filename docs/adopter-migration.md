@@ -77,6 +77,7 @@ replaces each `next` with its number.
 | next | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
 | next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 | next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
+| next | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins          |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -497,6 +498,14 @@ framing.
 
 **To adopt.** (int.102) Set `unauthenticatedStatus: 419` if your pages sit behind HTTP Basic auth on
 the editor's origin; the editor still detects sign-out. Otherwise nothing.
+
+### Auth plugins look users up in batches
+
+**What changed.** (next int) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, and the
+editor batches its user-badge lookups.
+
+**To adopt.** Nothing. A custom auth plugin may implement it; otherwise the server falls back to
+bounded single lookups.
 
 ### The CMS image builds a prod editor, and a mode mismatch blocks the editor — **behaviour change: a hand-built image can fail its build**
 

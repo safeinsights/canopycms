@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
+import { SWRConfig } from 'swr'
 import { UserBadge } from './UserBadge'
 import type { UserSearchResult } from '../../auth/types'
 
@@ -30,8 +31,11 @@ beforeAll(() => {
   }
 })
 
+// A fresh SWR cache per render, so one test's user never answers another's.
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
-  <MantineProvider>{children}</MantineProvider>
+  <SWRConfig value={{ provider: () => new Map() }}>
+    <MantineProvider>{children}</MantineProvider>
+  </SWRConfig>
 )
 
 describe('UserBadge', () => {
