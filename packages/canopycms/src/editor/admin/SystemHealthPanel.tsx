@@ -434,6 +434,11 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
             {lastShutdown.outcome === 'not-drained' && ' (a crash or a forced stop)'}
           </Text>
         )}
+        {lastFatalError?.phase === 'startup' && (
+          <Text size="xs" c="orange" data-testid="build-failed-start">
+            Last start failed at {lastFatalError.at}
+          </Text>
+        )}
         <Text size="xs" c="dimmed" data-testid="build-media">
           Media storage:{' '}
           {status.assetStore.configured ? 'configured' : 'not configured — uploads are disabled'}

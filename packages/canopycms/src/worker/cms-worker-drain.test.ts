@@ -13,9 +13,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
-import { CmsWorker } from './cms-worker'
+import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
-import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import {
+  readCarriedOverStatus,
+  readWorkerStartupFailure,
+  WORKER_STATUS_FILE,
+} from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { Task } from '../task-queue/cms-task-queue'
@@ -537,4 +541,96 @@ describe('lastShutdown across a worker replacement', () => {
       await successor.stop()
     }
   })
+
+  const readStatus = async (): Promise<WorkerStatusReport> =>
+    JSON.parse(await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'))
+
+  it('a start() retried on the same worker is a new worker, not the failed start', async () => {
+    const old = makeWorker()
+    await old.start()
+    await old.stop({ reason: 'SIGTERM' })
+    const taskDir = path.join(workspacePath, '.tasks')
+
+    const worker = makeWorker()
+    const clone = worker as unknown as { ensureRemoteGit(): Promise<void> }
+    const ensureRemoteGit = clone.ensureRemoteGit.bind(worker)
+    let duringRetry:
+      | {
+          status: WorkerStatusReport
+          failure: Awaited<ReturnType<typeof readWorkerStartupFailure>>
+          carried: Awaited<ReturnType<typeof readCarriedOverStatus>>
+        }
+      | undefined
+    clone.ensureRemoteGit = async () => {
+      clone.ensureRemoteGit = async () => {
+        duringRetry = {
+          status: await readStatus(),
+          failure: await readWorkerStartupFailure(taskDir),
+          carried: await readCarriedOverStatus(taskDir),
+        }
+        await ensureRemoteGit()
+      }
+      throw new Error('clone failed')
+    }
+    await expect(worker.start()).rejects.toThrow('clone failed')
+    const failed = await readStatus()
+    try {
+      await worker.start()
+      expect(duringRetry?.status.startedAt).not.toBe(failed.startedAt)
+      expect(duringRetry?.status.lastShutdown).toEqual(failed.lastShutdown)
+      expect(duringRetry?.failure).toMatchObject({ message: 'clone failed', current: false })
+      // Were it to die before its first sync, the next worker would report a crash.
+      expect(duringRetry?.carried.lastShutdown).toMatchObject({
+        workerStartedAt: duringRetry?.status.startedAt,
+        outcome: 'not-drained',
+      })
+      expect((await readStatus()).lastFatalError).toBeUndefined()
+    } finally {
+      await worker.stop()
+    }
+  })
+
+  it.each([
+    [
+      'start()',
+      async () => {
+        const failing = makeWorker()
+        ;(failing as unknown as { ensureRemoteGit(): Promise<void> }).ensureRemoteGit =
+          async () => {
+            throw new Error('clone failed')
+          }
+        await expect(failing.start()).rejects.toThrow('clone failed')
+      },
+    ],
+    [
+      'recordWorkerStartupFailure',
+      () => recordWorkerStartupFailure({ workspacePath, error: new Error('clone failed') }),
+    ],
+  ])(
+    'a failed start through %s keeps the drained shutdown before it, and the next worker still reports it',
+    async (_via, failToStart) => {
+      const old = makeWorker()
+      await old.start()
+      await old.stop({ reason: 'SIGTERM' })
+      const drained = (await readStatus()).lastShutdown
+      expect(drained).toMatchObject({ reason: 'SIGTERM', outcome: 'drained' })
+
+      await failToStart()
+      const failed = await readStatus()
+      expect(failed.lastShutdown).toEqual(drained)
+      expect(failed.lastFatalError).toMatchObject({
+        message: 'clone failed',
+        phase: 'startup',
+        workerStartedAt: failed.startedAt,
+      })
+
+      const successor = makeWorker()
+      try {
+        await successor.start()
+        expect((await readStatus()).lastShutdown).toEqual(drained)
+      } finally {
+        await successor.stop()
+      }
+    },
+  )
 })

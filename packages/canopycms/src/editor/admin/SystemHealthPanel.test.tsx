@@ -236,6 +236,63 @@ describe('SystemHealthPanel', () => {
         expect(text).not.toContain('drained in')
       })
 
+      it('shows the last drained shutdown and, separately, a failed start after it', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastShutdown: {
+                reason: 'SIGTERM',
+                at: '2026-01-01T00:00:00.000Z',
+                workerStartedAt: '2025-12-31T00:00:00.000Z',
+                outcome: 'drained',
+                drainMs: 1_500,
+              },
+              lastFatalError: {
+                message: 'clone failed',
+                at: '2026-01-02T00:00:05.000Z',
+                phase: 'startup',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-last-shutdown')).toBeTruthy())
+        const shutdown = screen.getByTestId('build-last-shutdown').textContent ?? ''
+        expect(shutdown).toContain('SIGTERM at 2026-01-01T00:00:00.000Z')
+        expect(shutdown).toContain('drained in 1.5s')
+        expect(shutdown).not.toContain('a crash or a forced stop')
+        expect(screen.getByTestId('build-failed-start').textContent).toBe(
+          'Last start failed at 2026-01-02T00:00:05.000Z',
+        )
+      })
+
+      it('shows no failed-start line for a failure while running', async () => {
+        const base = statusWithWorkerVersion('1.2.3')
+        mockClient.admin.status.mockResolvedValueOnce(
+          mockSuccess({
+            ...base,
+            workerStatus: {
+              ...base.workerStatus!,
+              lastFatalError: {
+                message: 'lost lock',
+                at: '2026-01-02T00:00:05.000Z',
+                phase: 'run',
+              },
+            },
+          }),
+        )
+
+        renderPanel()
+
+        await waitFor(() => expect(screen.getByTestId('build-worker-version')).toBeTruthy())
+        expect(screen.queryByTestId('build-failed-start')).toBeNull()
+      })
+
       it('shows no shutdown line when the status file has none', async () => {
         mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithWorkerVersion('1.2.3')))
 
