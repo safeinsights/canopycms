@@ -11,7 +11,12 @@ import {
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isStaleLeaseRejection, workflowPushRefusalFile } from '../utils/git'
 import { isTransientAuthFailure, type ResolvedGitHubAuth } from './github-auth'
-import { GitHubMirror, RefusedPushError, type MirrorSession } from './github-mirror'
+import {
+  GitHubMirror,
+  RefusedPushError,
+  type GitHubRefUpdate,
+  type MirrorSession,
+} from './github-mirror'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
@@ -42,7 +47,11 @@ interface GitHubPushRequest {
   protectedBranches: readonly string[]
 }
 
-export type GitHubPushOutcome = 'pushed' | 'pushed-past-stale-lease'
+/**
+ * What a push did to GitHub's ref, and whether it got there by the plain retry after GitHub
+ * refused a stale lease, which proves GitHub was not at the lease's commit.
+ */
+export type GitHubPushOutcome = GitHubRefUpdate & { pastStaleLease: boolean }
 
 /**
  * A push to GitHub failed: `rejected` on the first attempt, `rejected-after-stale-lease` on the
@@ -58,6 +67,12 @@ export class GitHubPushError extends Error {
     super(getErrorMessage(cause))
     this.name = 'GitHubPushError'
   }
+}
+
+/** A moved ref for a log line: `<old7>..<new7>`, or `new branch at <new7>`. */
+export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>): string {
+  const to = update.to.slice(0, 7)
+  return update.from === null ? `new branch at ${to}` : `${update.from.slice(0, 7)}..${to}`
 }
 
 /** The fields of a pull request the worker reads. */
@@ -107,8 +122,8 @@ export interface GitHubGateway {
     },
   ): Promise<void>
   /**
-   * Push `sha` to GitHub's `refs/heads/<branch>`. A refused lease is retried once without one,
-   * which succeeds only as a fast-forward. Throws {@link RefusedPushError} for a push the worker
+   * Push `sha` to GitHub's `refs/heads/<branch>`, resolving with whether GitHub's ref moved. A
+   * refused lease is retried once without one, which succeeds only as a fast-forward. Throws {@link RefusedPushError} for a push the worker
    * never makes, {@link GitHubPushError} when the push fails, and anything else as is.
    */
   push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome>
@@ -311,8 +326,7 @@ class LocalGitHubGateway implements GitHubGateway {
           protectedBranches: request.protectedBranches,
         })
       try {
-        await attempt(request.lease)
-        return 'pushed'
+        return { ...(await attempt(request.lease)), pastStaleLease: false }
       } catch (err) {
         if (err instanceof RefusedPushError) throw err
         const message = getErrorMessage(err)
@@ -327,12 +341,13 @@ class LocalGitHubGateway implements GitHubGateway {
           isStaleLeaseRejection(message) &&
           workflowPushRefusalFile(message) === null
         ) {
+          let update: GitHubRefUpdate
           try {
-            await attempt()
+            update = await attempt()
           } catch (retryErr) {
             throw new GitHubPushError('rejected-after-stale-lease', retryErr)
           }
-          return 'pushed-past-stale-lease'
+          return { ...update, pastStaleLease: true }
         }
         throw new GitHubPushError('rejected', err)
       }

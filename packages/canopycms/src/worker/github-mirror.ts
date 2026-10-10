@@ -354,14 +354,14 @@ export class MirrorSession {
    * `refs/heads/<branch>`. `lease` is the commit GitHub must still be at for the push to replace
    * it (`--force-with-lease`); without one the push is an ordinary fast-forward. Fetching the
    * commit from `remote.git` first is the step that brings the Lambda's objects across, through
-   * the pinned `upload-pack`.
+   * the pinned `upload-pack`. Resolves with what the push did to GitHub's ref.
    */
   async pushToGitHub(
     githubUrl: string,
     branch: string,
     sha: string,
     options: { lease?: string; signal?: AbortSignal; protectedBranches: readonly string[] },
-  ): Promise<void> {
+  ): Promise<GitHubRefUpdate> {
     for (const id of [sha, ...(options.lease === undefined ? [] : [options.lease])]) {
       if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
     }
@@ -382,14 +382,16 @@ export class MirrorSession {
     const git = this.git(options.signal)
     try {
       await this.fetchFromRemoteGit([`+${sha}:${staging}`], options.signal)
-      await git.raw([
+      const status = await git.raw([
         'push',
+        '--porcelain',
         '--progress',
         ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
         '--end-of-options',
         githubUrl,
         `${sha}:refs/heads/${branch}`,
       ])
+      return parsePushStatus(status, branch, sha)
     } finally {
       // A deleted branch's leftover ref would block a later `<branch>/<x>` (a directory/file
       // conflict in the ref namespace).
@@ -398,6 +400,31 @@ export class MirrorSession {
         .catch(() => undefined)
     }
   }
+}
+
+/** What a push did to GitHub's `refs/heads/<branch>`. */
+export type GitHubRefUpdate =
+  | { moved: false }
+  /** `from` is git's abbreviation of the old tip, null for a new branch; `to` is the full SHA pushed. */
+  | { moved: true; from: string | null; to: string }
+
+/**
+ * Read `refs/heads/<branch>`'s line from `git push --porcelain`'s stdout: `=` up to date, ` ` a
+ * fast-forward (`old..new`), `+` a forced update (`old...new`), `*` a new branch. A rejected ref
+ * (`!`) makes git exit non-zero before this runs. Output with no such line throws, rather than
+ * report a push this did not see.
+ * @internal Exported for tests.
+ */
+export function parsePushStatus(stdout: string, branch: string, sha: string): GitHubRefUpdate {
+  for (const line of stdout.split('\n')) {
+    const [flag, refs, summary] = line.split('\t')
+    if (summary === undefined || !refs.endsWith(`:refs/heads/${branch}`)) continue
+    if (flag === '=') return { moved: false }
+    if (flag === '*') return { moved: true, from: null, to: sha }
+    const range = /^([0-9a-f]+)\.\.\.?[0-9a-f]+/.exec(summary)
+    if ((flag === ' ' || flag === '+') && range) return { moved: true, from: range[1], to: sha }
+  }
+  throw new Error(`git push reported no readable status for refs/heads/${branch}`)
 }
 
 /**
