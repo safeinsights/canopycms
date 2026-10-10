@@ -40,6 +40,16 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### `canopycms-cdk`: the worker needs a state directory — **hand-installed units only**
+
+**What changed.** The worker's git keeps the GitHub credential in a private mirror under the
+unit's `StateDirectory=`, and the worker does not start without it.
+
+**To adopt.** Nothing with `CanopyCmsService`. A hand-installed unit needs
+`StateDirectory=canopy-worker` under `[Service]`.
+
+**Now deletable.** Nothing.
+
 ### `canopycms-cdk`: CI can roll the worker with a parameter — **new, opt-in**
 
 **What changed.** `workerCode: { source: 'parameter' }` on `CanopyCmsService` selects the worker

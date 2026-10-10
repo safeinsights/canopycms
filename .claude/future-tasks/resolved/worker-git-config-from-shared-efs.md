@@ -2,12 +2,14 @@
 priority: P1
 adopters: BOTH
 summary: >-
-  New 2026-10-09, from the security review of request 100. The Lambda and the worker share one EFS access point with full write, and the worker runs git in repositories whose `.git/config` and hooks the Lambda can write. A compromised Lambda can set `url.<x>.insteadOf`, `credential.helper`, `core.hooksPath`, `core.fsmonitor` or `http.proxy`, or drop a hook, and the worker's next push runs it, or hands it the GitHub token, as the worker user with internet egress. Pin the config the worker's git runs with
+  RESOLVED 2026-10-09, branch `fix/worker-git-config-isolation`, base `int-202610-b`. Every git command carrying the GitHub credential runs in a worker-private mirror under the unit's `StateDirectory=` (worker/github-mirror.ts), moving objects to and from `remote.git` only through pinned `upload-pack --strict`/`receive-pack` commands. Every other worker git in `remote.git` or a clone runs through `sharedRepoGit` (explicit GIT_DIR, hooks and config hooks, fsmonitor, helpers, signing and non-local transports pinned off) after `assertSharedRepoConfig` refuses any repository-config key CanopyCMS never writes (worker/shared-repo-git.ts). The race that check leaves for filter and merge drivers is filed as worker-shared-repo-git-process-split.md (P1)
 ---
 # [P1] The worker trusts git config and hooks the Lambda can write
 
+**Status: RESOLVED 2026-10-09**, branch `fix/worker-git-config-isolation`; see the summary.
+
 **Priority:** P1 [BOTH]. **Found:** 2026-10-09, by the security review of
-[worker-instance-hardening.md](resolved/worker-instance-hardening.md); pre-existing.
+[worker-instance-hardening.md](worker-instance-hardening.md); pre-existing.
 
 ## Problem
 
@@ -40,3 +42,15 @@ None of the instance hardening helps: the process is doing its normal job.
   repository config, but `insteadOf` and `http.*` keys need an explicit override or an allowlist.
 - Add a test that writes each hostile key into a fixture repository and asserts the worker's push
   ignores it.
+
+## Resolution
+
+Measured at git 2.55: `-c` cannot neutralize `url.<x>.insteadOf` (a prefix match on
+`https://x-access-token` carries the token to another host), url-scoped `http.<url>.*`, or
+filter and merge drivers, and `core.hooksPath` does not stop config-defined hooks
+(`hook.<name>.command`), which `hook.<event>.enabled=false` does. Hence the private mirror for
+everything that carries the credential, and the pins plus the allowlist check for the rest.
+Decisions: the mirror is on the instance's root volume, not a worker-only EFS path; the CDK
+runner refuses to start without `$STATE_DIRECTORY`, while the core library falls back to
+`os.tmpdir()` for dev and tests; an unexpected key is refused, not warned about. Pinned by
+`cms-worker-hostile-git-config.test.ts`, `shared-repo-git.test.ts` and `github-mirror.test.ts`.
