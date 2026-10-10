@@ -15,7 +15,7 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
 import { enqueueTask } from '../task-queue/cms-task-queue'
-import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import { readCarriedOverStatus, WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import type { Task } from '../task-queue/cms-task-queue'
@@ -540,6 +540,35 @@ describe('lastShutdown across a worker replacement', () => {
 
   const readStatus = async (): Promise<WorkerStatusReport> =>
     JSON.parse(await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'))
+
+  it('a start() retried on the same worker after a failed one does not keep reporting it', async () => {
+    const old = makeWorker()
+    await old.start()
+    await old.stop({ reason: 'SIGTERM' })
+
+    const worker = makeWorker()
+    const internalsWithClone = worker as unknown as { ensureRemoteGit(): Promise<void> }
+    const ensureRemoteGit = internalsWithClone.ensureRemoteGit.bind(worker)
+    internalsWithClone.ensureRemoteGit = async () => {
+      internalsWithClone.ensureRemoteGit = ensureRemoteGit
+      throw new Error('clone failed')
+    }
+    await expect(worker.start()).rejects.toThrow('clone failed')
+    try {
+      await worker.start()
+      const running = await readStatus()
+      expect(running.lastFatalError).toBeUndefined()
+      // Were it to die now, the next worker would report a crash, not a failed start.
+      expect(
+        (await readCarriedOverStatus(path.join(workspacePath, '.tasks'))).lastShutdown,
+      ).toMatchObject({
+        workerStartedAt: running.startedAt,
+        outcome: 'not-drained',
+      })
+    } finally {
+      await worker.stop()
+    }
+  })
 
   it.each([
     [

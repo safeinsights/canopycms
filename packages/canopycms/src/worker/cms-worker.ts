@@ -570,9 +570,11 @@ export class CmsWorker {
       // Surface a startup failure (e.g. the empty-remote guard's poisoned
       // remote.git) to the admin panel via worker-status.json, not only
       // journald/CloudWatch. Best-effort and BEFORE releaseLock(): a
-      // status-write failure must never block releasing the lock.
+      // status-write failure must never block releasing the lock. The failure
+      // rides in this snapshot only: a start() retried on this instance must
+      // not report it again, nor have a later crash read as this failed start.
       const report = this.ensureStatusReport()
-      report.lastFatalError = {
+      const lastFatalError: WorkerStatusReport['lastFatalError'] = {
         // [REDACT] Persisted to worker-status.json and served to the browser by
         // the admin panel -- must never carry the bot token a poisoned or
         // failed git URL (buildGitHubUrl()) can embed.
@@ -582,7 +584,7 @@ export class CmsWorker {
         workerStartedAt: report.startedAt,
       }
       try {
-        await writeWorkerStatus(this.taskDir, report)
+        await writeWorkerStatus(this.taskDir, { ...report, lastFatalError })
       } catch (writeErr) {
         workerLogError(
           'Failed to write worker status on startup failure:',
