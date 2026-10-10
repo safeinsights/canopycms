@@ -382,8 +382,8 @@ can pass `schemaHoldMaxMs` to `CmsWorker`.
 ### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
 
 **What changed.** (int.108) The worker is one on-demand `t4g.nano` by default (about $3 a month,
-against spot's $1–2); a spot shortage could leave no worker: on a first deploy `/edit` answers 500, and later
-publishes wait. Spot is
+against spot's $1–2); a spot shortage could leave no worker: on a first deploy the editor's API answers 503 "CMS worker not
+ready", and later publishes wait. Spot is
 opt-in: `workerCapacity: { type: 'spot' }`, a mixed-instances policy that still cannot guarantee a
 worker. A terminating lifecycle hook (`canopycms-worker-drain`, heartbeat
 `workerTerminationHeartbeat`, default 5 minutes) lets the old worker finish in-flight work for up
@@ -1010,25 +1010,28 @@ ships an empty build id from an empty variable. Also a post-build step rewriting
 
 **What changed.**
 
-- `CanopyCmsDistribution` takes `originReadTimeout`, defaulting to the CMS Lambda's default
-  `timeout` (60 seconds, exposed as `cmsService.timeout`); synth refuses more than 60 seconds.
-  Without a `certificate`, it refuses a stack region other than `us-east-1`, where CloudFront
-  needs its certificate.
+- `CanopyCmsDistribution` takes `originReadTimeout`, defaulting to 60 seconds, the CMS Lambda's
+  default `timeout` (`cmsService.timeout` exposes the actual one); synth refuses more than 60
+  seconds. Without a `certificate`, it refuses a stack region other than `us-east-1`, where
+  CloudFront needs its certificate, when the region is known at synth.
 - The worker installs Node 22 with `dnf` and runs `/usr/bin/node-22`; a failed boot step shuts the
   instance down so the group replaces it. Its IAM policy covers `githubTokenSecretArn` and
   `clerkSecretKeySecretArn` as well as `secretsArns`. The bot token never stays in
   `remote.git`'s config on EFS, and one an earlier worker left there is scrubbed.
-- An `/assets/t/` URL whose slug is not the asset's own answers 404; `assetUrl` always uses the
-  real slug.
+- An `/assets/t/` URL whose slug is not the asset's own answers 404; `assetUrl` keeps the stored
+  `src`'s slug, so the URLs it builds are unaffected.
 - `canopycms worker run-once` exits 1 on an unknown `CANOPY_AUTH_MODE`.
 
 **To adopt.** If you override `CanopyCmsService`'s `timeout`, pass
-`originReadTimeout: cmsService.timeout` (the generated stack does). A hand-installed unit copies
-`ExecStart` from `worker/canopy-worker.service`.
+`originReadTimeout: cmsService.timeout` (the generated stack does). A hand-installed worker runs
+`dnf install -y nodejs22` and copies `ExecStart` from `worker/canopy-worker.service`. The generated
+workflow reads the bot-token ARN from the secret `CANOPY_GITHUB_TOKEN_SECRET_ARN` (GitHub refuses
+`GITHUB_`-prefixed names): store it under that name. In a kept `Dockerfile.cms`, change both
+`node:20-slim` stages to `node:22-slim`; in `deploy-cms.yml`, set `node-version: 22`.
 
 #### `canopycms init` scaffold fixes
 
-**What changed.** `init` writes `middleware.ts` beside the app directory's parent (`src/` for
+**What changed.** `init` writes `middleware.ts` in the app directory's parent (`src/` for
 `--app-dir src/app`), leaves an existing `next.config.js`/`.mjs` alone and prints the wiring,
 creates `.gitignore` with `.canopy-dev/` when absent, and the generated workflow deploys on
 `next.config.*`, `middleware.ts` and `public/**` changes.
@@ -1278,7 +1281,8 @@ underscore-prefixed files are skipped.
 
 **To adopt.** An older scaffold's `defaultBranchAccess: 'allow'` is wider than recommended;
 consider `'deny'`. If you deleted `defaultPathAccess: { read: 'allow' }`, anonymous visitors get no content until you
-restore it: `readByUrlPath` pages 404, `read()` throws, API calls 403.
+restore it: `readByUrlPath` pages 404 and `read()` throws; signed-in users without a path rule get 403 from
+the API.
 
 #### Read and listing helpers replace hand-rolled parsing (#1, #2, #3, #4, #17)
 
