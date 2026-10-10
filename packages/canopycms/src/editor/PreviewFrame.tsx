@@ -12,10 +12,22 @@ import {
   type DraftUpdateMessage,
   type HighlightMessage,
   isOpaqueOrigin,
+  MARK_REPORT_LIMITS,
   type PreviewErrorMessage,
   type PreviewMarksMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
+
+/** What the preview reports of its marks; see `PreviewMarksMessage`. */
+export interface PreviewMarks {
+  count: number
+  paths?: string[]
+}
+
+const isMarkPaths = (paths: unknown): paths is string[] =>
+  Array.isArray(paths) &&
+  paths.length <= MARK_REPORT_LIMITS.paths &&
+  paths.every((path) => typeof path === 'string' && path.length <= MARK_REPORT_LIMITS.pathLength)
 
 const sendDraftUpdate = (
   iframe: HTMLIFrameElement | null,
@@ -41,7 +53,7 @@ export const PreviewFrame = ({
   style,
   highlightEnabled,
   onPreviewError,
-  onMarkCount,
+  onMarks,
   assetBase,
 }: {
   src: string
@@ -58,8 +70,11 @@ export const PreviewFrame = ({
   assetBase?: string
   /** Called when the preview reports a draft compile/render error; null clears it. */
   onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
-  /** Called with how many elements the preview marks, while highlighting is on. */
-  onMarkCount?: (count: number) => void
+  /**
+   * Called with how many elements the preview marks, while highlighting is on, and their
+   * distinct paths when the preview sends them within `MARK_REPORT_LIMITS`.
+   */
+  onMarks?: (marks: PreviewMarks) => void
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -116,12 +131,12 @@ export const PreviewFrame = ({
   const postRef = useRef(post)
   const postHighlightRef = useRef(postHighlight)
   const onPreviewErrorRef = useRef(onPreviewError)
-  const onMarkCountRef = useRef(onMarkCount)
+  const onMarksRef = useRef(onMarks)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
     onPreviewErrorRef.current = onPreviewError
-    onMarkCountRef.current = onMarkCount
+    onMarksRef.current = onMarks
   })
 
   useEffect(() => {
@@ -159,9 +174,9 @@ export const PreviewFrame = ({
             : { message: msg.message, ...(fieldPath ? { fieldPath } : {}) },
         )
       } else if (type === CANOPY_PREVIEW_MARKS) {
-        const { count } = event.data as Partial<PreviewMarksMessage>
+        const { count, paths } = event.data as Partial<PreviewMarksMessage>
         if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
-          onMarkCountRef.current?.(count)
+          onMarksRef.current?.({ count, ...(isMarkPaths(paths) ? { paths } : {}) })
         }
       }
     }

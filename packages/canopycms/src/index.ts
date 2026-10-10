@@ -43,3 +43,7 @@ export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
 export { assetUrl, assetSrcSet } from './assets/asset-url'
 export type { AssetRef, AssetUrlOptions } from './assets/asset-url'
 export type { OutputFormat, CropRect, TransformDirectives } from './assets/transform-directives'
+// Preview field marks — pure, so server components call them too (`canopycms/preview` is
+// 'use client'); see editor/field-props.ts.
+export { fieldAttrs, scopeFieldProps } from './editor/field-props'
+export type { FieldAttrs, FieldProps } from './editor/field-props'
