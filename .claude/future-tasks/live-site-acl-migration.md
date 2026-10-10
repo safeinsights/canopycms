@@ -8,6 +8,8 @@ summary: >-
 
 ## Priority: P2 [KB]
 
+**Parked:** KB work is paused for several weeks from 2026-10-10. Pick this up when the KB resumes.
+
 The marketing site already runs group path rules on its deployed editor; what remains is sequencing
 the same migration for the KB before it deploys.
 
