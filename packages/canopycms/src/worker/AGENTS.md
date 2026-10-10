@@ -44,6 +44,8 @@ lint and still break the layering above. Keep the direction by review.
 - Schema gate scope, fail-open and bound: `schema-gate.ts`, `decideBaseAdvance`.
 - Push ONLY this deployment's settings branch: `git-sync.ts`, `pushSettingsBranches`'s doc.
 - The drain's rules: `cms-worker.ts`'s `stop()`.
+- Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
+  loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
   function (it is part of provisioning, so it stays there).
 - `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
@@ -62,7 +64,7 @@ lint and still break the layering above. Keep the direction by review.
   (INVARIANT); enforced by eslint `no-restricted-syntax` on `**/worker/**`, which a new file
   here inherits.
 - The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
-  `canopycms-cdk/worker/index.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
+  `canopycms-cdk/worker/run.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
 - github-auth's invariants (fail-closed boot, mint timeouts, no token caching, no re-wrapped
   mint rejection): `github-auth.ts`, at each rule.
 

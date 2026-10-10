@@ -18,8 +18,8 @@ in your repo.
 
 ## Picking a target version
 
-Resolve your target when you plan the upgrade, with `npm view canopycms version`, never from a
-number in this document: `main` auto-publishes a patch on every push.
+Resolve your target with `npm view canopycms version`, never from a number in this document:
+`main` auto-publishes a patch on every push.
 
 Read every entry between your pin and your target, not just the newest: deletable-code lists
 compound, and a later entry can supersede an earlier one's workaround.
@@ -40,23 +40,39 @@ ships within hours: move it under its version in `## Released`, demoting `###` t
 `pnpm lint:docs` fails when a release tag reachable from `HEAD` has no `### <version>` section;
 which entries belong to it is still a read of `git log`.
 
+### Preview `fieldProps` is typed, with server-safe helpers — **breaking (types and schemas)**
+
+**What changed.** `fieldProps` checks each path against the view's content type, and `canopycms`
+exports `FieldProps`, `FieldAttrs`, `fieldAttrs` and `scopeFieldProps`, callable from server
+components. A string path marks the form's spelling (`'a.0.b'` marks `a[0].b`), and an empty path
+marks nothing. The editor counts and logs marks naming no field. `createEntrySchemaRegistry` refuses a field name that is empty, all digits or contains `.`,
+`[` or `]`. See [Live Preview](../README.md#live-preview).
+
+**To adopt.** Fix each path that stops compiling; the error lists valid ones. Rewrite computed
+paths as literal segments, or type that component's prop as plain `FieldProps`. Pass `fieldProps`
+as `undefined` on public pages. Rename refused fields and their content keys.
+
+**Now deletable.** A local `FieldProps` type, `fieldAttrs`/`scopeFieldProps` helpers and no-op
+`fieldProps` defaults; schema-walking tests for misspelled mark paths, once components are
+typed (the editor flags another block template's field).
+
 ### `mdx` content that runs code is refused at save — **breaking (behaviour)**
 
-**What changed.** An `mdx` field or body, and a `markdown` field with `renderAs: 'mdx'`, refuse
+**What changed.** An `mdx` field or body, and a `markdown` one with `renderAs: 'mdx'`, refuse
 `{…}` expressions other than comments and plain values, `import`/`export`, and tags, attributes and
 URL schemes outside a safe set; other markdown refuses those URLs. `mdxAllow` narrows this per
-field or site-wide: components, props, values, tags. New: field
+field or site-wide. New: field
 options `executable`, `renderAs`, `mdxAllow`; config key `mdxAllow`; types `MarkdownFieldConfig`,
 `MdxAllowlist`. See [MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `renderAs: 'mdx'` on each `markdown` field your site compiles as MDX, and
-`mdxAllow` to what your renderer supports. Set `executable: true` only on a field whose editors you
+`mdxAllow` to what your renderer takes. Set `executable: true` only on a field whose editors you
 trust as code authors; an entry type with no `isBody` field needs one declared to opt its body out.
 Content already there is kept, with a warning, while its field is saved unchanged; a production
 build lists it.
 
 **Now deletable.** A `validateEntry` rule refusing expressions, ESM, tags, components or
-`javascript:` links in MDX or in markdown rendered as MDX, and the path-prefix matching behind its
+`javascript:` links in MDX or markdown rendered as MDX, and the path-prefix matching behind its
 entry-type gate. Keep a rule checking that the body compiles.
 
 ### `canopycms-cdk`: the worker drains before replacement and runs on-demand — **breaking (props): `spotMaxPrice` is removed; behaviour and cost change**
@@ -71,10 +87,30 @@ status 75 handling; the worker role may complete its own group's hook.
 
 **To adopt.** Replace `spotMaxPrice: '…'` with `workerCapacity: { type: 'spot', maxPrice: '…' }`,
 or drop it. A hand-installed unit copies the new lines from `worker/canopy-worker.service`. The
-deploy that brings this version rolls the worker before the hook exists; the drain applies from the
-next.
+drain applies from the deploy after this one.
 
 **Now deletable.** Any override stripping `InstanceMarketOptions` from the worker's launch template.
+
+### A failed or stopped worker says why — **behaviour change on the not-ready 503; new worker APIs**
+
+**What changed.** After a recorded failed start, the prod not-ready 503 is `WORKER_FAILED`: no
+`Retry-After`, the failure named to admins, account ids masked. `CmsWorker.selfStopped` settles when
+the worker stops itself (a lost EFS lock); the `canopycms-cdk` entrypoint then exits 69.
+`recordWorkerStartupFailure` records a failure before `start()`.
+
+**To adopt.** A hand-written entrypoint calls `recordWorkerStartupFailure` on a pre-`start()`
+failure and exits non-zero on `selfStopped`, with a code outside `RestartPreventExitStatus=`.
+
+**Now deletable.** A watchdog that restarts an idle worker process.
+
+### `canopycms-cdk`: optional worker-down alarm — **new prop `alarmTopic`**
+
+**What changed.** `CanopyCmsService` alarms when the worker logs no git sync for 30 minutes. See
+[Worker-down alarm](deploying-to-aws.md#worker-down-alarm).
+
+**To adopt.** Optional: pass `alarmTopic`.
+
+**Now deletable.** A hand-built alarm on the worker log group.
 
 ### Submit refuses a branch with nothing to submit — **behaviour change on the submit API**
 

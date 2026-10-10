@@ -218,7 +218,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
@@ -287,7 +287,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `src/index.ts` — public package exports, including the `assetUploadBehavior` free function
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
-- `worker/index.ts` — EC2 worker entrypoint: reads secrets, wires auth-cache refresh, runs `CmsWorker`
+- `worker/index.ts` — EC2 worker entrypoint; boots through `worker/run.ts`'s injectable `runWorker`
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
@@ -486,7 +486,9 @@ Top-level components and helpers:
 - `preview-path.ts` — `normalizePreviewPath`/`isSamePreviewPath`, the page identity both bridge ends compare
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
-- `canopy-path.ts` — canonical `canopyPath` string form for a list of path segments
+- `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
+- `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
 - `relative-time.ts` — `formatRelativeTime`, shared by the branch, comment and thread views
 - `theme.tsx` — Mantine theme helpers
@@ -619,7 +621,7 @@ Message types: `canopycms:draft:update`, `canopycms:preview:focus`, `canopycms:p
 `canopycms:preview:marks`, `canopycms:preview:ready`, `canopycms:preview:error`.
 
 - `PreviewFrame` — editor-side iframe wrapper: pins the preview origin, posts drafts and highlights, validates inbound messages
-- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, `fieldProps()`, `reportError()`
+- `useCanopyPreview` — site-side hook: draft `data`, `highlightEnabled`, typed `fieldProps()`, `reportError()`
 - `usePreviewData` / `usePreviewHighlight` / `usePreviewFocusEmitter` — site-side primitives it wraps
 - `isTrustedEditorMessage` / `resolveMessageOrigin` — origin resolution and the inbound trust check
 
@@ -633,7 +635,8 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`
-- `branch-metadata-file.ts` — reading `branch.json`'s file format and nothing else; a deliberate leaf module
+- `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
+- `branch-metadata-error.ts` — the corrupt-metadata error, node-free
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
 - `branch-provisioning.ts` — crash-safe provisioning: stage, publish by rename, residue classification and quarantine, `sweepProvisioningLeftovers`; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
@@ -856,7 +859,7 @@ Static generation lives in `packages/canopycms/src/build/` —
 - `types.ts` — `CanopyRequest` and `CanopyResponse`
 - `router.ts` — route matching and dispatch over `buildCanopyRoutes()`
 - `handler.ts` — the request handler factory; answers anonymous callers `unauthenticatedStatus` before base-branch provisioning
-- `worker-not-ready.ts` — `workerNotReadyResponse`: the retriable 503 for worker-not-ready, provisioning-busy and `SchemaUnavailableError`
+- `worker-not-ready.ts` — `workerNotReadyResponse`: the 503 for worker-not-ready or failed, provisioning-busy and `SchemaUnavailableError`
 - `index.ts` — module exports
 
 ## Test Utilities

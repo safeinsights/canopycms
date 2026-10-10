@@ -100,11 +100,10 @@ export const MDXEditorLazy = React.lazy(async () => {
     TAG_FORMATS.filter(([, tag]) => htmlTags?.has(tag) === false).map(([format]) => format)
 
   /**
-   * Refuses adding a format whose tag the field refuses, from the toolbar or a shortcut (Cmd+U), and
-   * lets removing one through. Lexical toggles a range off when the selection already has the
-   * format, and passes a nested editor's input commands (table cells, component children) up to the
-   * root's. Content is never rewritten: a stored tag stays for the server's unchanged-field rule,
-   * and a pasted one reaches the server, which refuses it.
+   * Refuses adding a format whose tag the field refuses (toolbar, Cmd+U) and lets removing one
+   * through: Lexical toggles a range off when its selection has the format, and passes a nested
+   * editor's input commands up to the root's. Content is never rewritten: a stored tag stays for
+   * the server's unchanged-field rule, and a pasted one reaches the server, which refuses it.
    */
   const tagFormatGuardPlugin = realmPlugin<{ htmlTags: ReadonlySet<string> | undefined }>({
     init(realm, params) {
@@ -116,9 +115,8 @@ export const MDXEditorLazy = React.lazy(async () => {
             FORMAT_TEXT_COMMAND,
             (format, fromEditor) => {
               if (!refused(format)) return false
-              // Lexical formats the dispatching editor's pending selection, and runs this root
-              // listener for a nested editor's command inside the root's update, where
-              // `$getSelection()` would be the root's.
+              // Lexical formats the dispatching editor's pending selection; inside the root's
+              // update, where this runs for a nested command, `$getSelection()` is the root's.
               const selection = fromEditor.read('pending', () => $getSelection())
               return !($isRangeSelection(selection) && selection.hasFormat(format))
             },

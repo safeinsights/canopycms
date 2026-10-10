@@ -24,6 +24,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicWriteFile } from '../utils/atomic-write'
+import { isNotFoundError } from '../utils/error'
 import type { WorkerStatusReport } from '../types'
 
 export const WORKER_STATUS_FILE = 'worker-status.json'
@@ -56,6 +57,71 @@ export async function readCarriedOverStatus(
     }
   }
   return { lastFatalError, lastShutdown }
+}
+
+/**
+ * `startedAt` of the worker that wrote the status file, or `undefined` when there is no file or
+ * it names no worker. Throws on any other read error: a caller deciding whether the file is its
+ * own must not take an unreadable one for an absent one.
+ */
+export async function readWorkerStatusStartedAt(taskDir: string): Promise<string | undefined> {
+  let content: string
+  try {
+    content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return undefined
+    throw err
+  }
+  try {
+    const report = JSON.parse(content) as Partial<WorkerStatusReport>
+    return typeof report.startedAt === 'string' ? report.startedAt : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** A startup failure the worker recorded; see {@link readWorkerStartupFailure}. */
+export interface WorkerStartupFailure {
+  /** Already redacted by the worker. */
+  message: string
+  at: string
+  /**
+   * The attempt that wrote the file is the one that failed. False while a newer worker carries
+   * an older failure forward and is starting again.
+   */
+  current: boolean
+}
+
+/**
+ * The startup failure in `{taskDir}/worker-status.json`, for a request that found no remote to
+ * clone. A failure is current when the worker that recorded it is the one the snapshot
+ * describes: a worker that starts again writes its own `startedAt` and carries the previous
+ * failure forward, so a retry in progress (a first clone can take minutes) is not reported as a
+ * dead worker. Compared by identity, not by clock, since the two workers can run on different
+ * hosts. Tolerant like every reader: a missing or unreadable file yields none.
+ */
+export async function readWorkerStartupFailure(
+  taskDir: string,
+): Promise<WorkerStartupFailure | undefined> {
+  let report: Partial<WorkerStatusReport>
+  try {
+    report = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    ) as Partial<WorkerStatusReport>
+  } catch {
+    return undefined
+  }
+  const fatal = report.lastFatalError
+  if (fatal?.phase !== 'startup' || typeof fatal.message !== 'string') return undefined
+  let current: boolean
+  if (fatal.workerStartedAt !== undefined) {
+    current = fatal.workerStartedAt === report.startedAt
+  } else {
+    // A file from a worker that does not link the two: compare clocks instead.
+    const startedAt = report.startedAt ? Date.parse(report.startedAt) : NaN
+    current = Number.isNaN(startedAt) || !(Date.parse(fatal.at) < startedAt)
+  }
+  return { message: fatal.message, at: fatal.at, current }
 }
 
 /**

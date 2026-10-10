@@ -318,10 +318,18 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       </Group>
 
       {isRecentFatalError && lastFatalError && (
-        <Alert color="red" icon={<IconAlertCircle size={16} />} title="Worker crash detected">
+        <Alert
+          color="red"
+          icon={<IconAlertCircle size={16} />}
+          title={
+            lastFatalError.phase === 'startup'
+              ? 'The worker failed to start'
+              : 'The worker stopped while running'
+          }
+        >
           <Text size="sm">{lastFatalError.message}</Text>
           <Text size="xs" c="dimmed" mt={4}>
-            at {lastFatalError.at} ({lastFatalError.phase})
+            at {lastFatalError.at}
           </Text>
         </Alert>
       )}

@@ -225,7 +225,16 @@ export interface WorkerStatusReport {
       rewritten?: string[]
     }
   }
-  lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+  lastFatalError?: {
+    message: string
+    at: string
+    phase: 'startup' | 'run'
+    /**
+     * `startedAt` of the worker that recorded it. Equal to the snapshot's own `startedAt` until a
+     * newer worker carries the failure forward. Optional: older workers do not write it.
+     */
+    workerStartedAt?: string
+  }
   /**
    * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
    * into a restarted worker's first snapshot, so the bound survives restarts.

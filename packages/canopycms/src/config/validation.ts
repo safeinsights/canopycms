@@ -14,6 +14,7 @@ import { normalizePathValue } from './flatten'
 // client-unsafe strategy (node:fs/node:path) and this file is reachable from
 // `canopycms/client` (the generated editor page imports the adopter's config).
 import { resolveOperatingMode } from '../operating-mode/mode-env'
+import { isPathFieldName } from '../editor/canopy-path'
 import type { CanopyConfig, FieldConfig } from './types'
 
 /**
@@ -37,6 +38,31 @@ export const ensureSelectFieldsHaveOptions = (fields: unknown): void => {
     if (f?.type === 'block' && Array.isArray(f.templates)) {
       for (const template of f.templates as Array<{ fields?: unknown }>) {
         ensureSelectFieldsHaveOptions(template.fields)
+      }
+    }
+  }
+}
+
+/**
+ * Check that every data field's name can be spelled as a field path segment (`isPathFieldName`):
+ * the form, the preview's marks, validation errors and comment threads all name a field by its
+ * path. An inline group's own name is not part of any path, so only its children are checked.
+ */
+export const ensureFieldNamesSpellInPaths = (fields: unknown): void => {
+  if (!Array.isArray(fields)) return
+  for (const field of fields) {
+    const f = field as Record<string, unknown>
+    if (f?.type !== 'group' && typeof f?.name === 'string' && !isPathFieldName(f.name)) {
+      throw new Error(
+        `Field "${f.name}": field names can't be empty, all digits, or contain '.', '[' or ']'; they're used in field paths`,
+      )
+    }
+    if (f?.type === 'group' || f?.type === 'object') {
+      ensureFieldNamesSpellInPaths(f.fields)
+    }
+    if (f?.type === 'block' && Array.isArray(f.templates)) {
+      for (const template of f.templates as Array<{ fields?: unknown }>) {
+        ensureFieldNamesSpellInPaths(template.fields)
       }
     }
   }

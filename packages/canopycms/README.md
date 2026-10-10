@@ -442,7 +442,7 @@ export function PostView({ data }: { data: PostContent }) {
 - `data`: The current content data (initial data on first render, then live updates from editor)
 - `isLoading`: Object mirroring your data structure with boolean loading states for reference fields
 - `highlightEnabled`: Boolean indicating if field highlighting is active in the editor
-- `fieldProps`: Helper function to add `data-canopy-path` attributes for editor integration
+- `fieldProps`: marks the element rendering a field (`data-canopy-path`), with the path typed against your content; `fieldAttrs` and `scopeFieldProps` from `canopycms` thread it through section components (see the root README's Live Preview)
 
 **Reference fields and loading states:**
 

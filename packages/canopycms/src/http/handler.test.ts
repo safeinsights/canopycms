@@ -6,6 +6,7 @@ import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { RemoteNotReadyError } from '../git-manager'
 import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
@@ -277,6 +278,37 @@ describe('createCanopyRequestHandler', () => {
       // corrupt one.
       expect(response.status).toBe(200)
       expect(consoleSpy).toHaveErrored(/corrupt metadata/)
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('answers a handler that meets a corrupt branch.json with a plain-language 500', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      const handler = createCanopyRequestHandler({
+        services: createMockServices() as unknown as CanopyServices,
+        authPlugin: createMockAuthPlugin(),
+        getBranchContext: async (branch) => {
+          if (branch !== 'feature-x') return null
+          throw new BranchMetadataCorruptError(
+            '/mnt/efs/workspace/content-branches/feature-x',
+            'Not branch metadata. Missing: branch.status',
+          )
+        },
+      })
+
+      const req = createMockRequest({
+        method: 'DELETE',
+        url: 'http://localhost:3000/api/canopycms/feature-x',
+      })
+      // Branch delete, which resolves the branch itself rather than through a guard.
+      const response = await handler(req, ['feature-x'])
+
+      expect(response.status).toBe(500)
+      expect((response.body as { error?: string }).error).toBe(BRANCH_METADATA_CORRUPT_MESSAGE)
+      // The path and the cause stay in the server log.
+      expect(consoleSpy).toHaveErrored(/content-branches\/feature-x.*Missing: branch\.status/)
     } finally {
       consoleSpy.restore()
     }

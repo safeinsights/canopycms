@@ -304,6 +304,79 @@ describe('BranchRegistry', () => {
       expect(snapshot.version).toBe(2)
     })
 
+    it.each([
+      ['not JSON', '{"version": 2, "branches": ['],
+      ['valid JSON of the wrong shape', JSON.stringify({ version: 2, branches: [{ nope: 1 }] })],
+      [
+        'a branch entry with no status',
+        JSON.stringify({
+          version: 2,
+          generation: null,
+          branches: [
+            { branch: { name: 'ghost', access: {} }, branchRoot: '/x/ghost', baseRoot: '/x' },
+          ],
+        }),
+      ],
+      ['a non-object', 'null'],
+    ])(
+      'regenerates over a snapshot that is %s, leaves a valid one, and warns once',
+      async (_label, raw) => {
+        const root = await tmpDir()
+        await createBranchWithMetadata(root, 'feature-a')
+        await fs.writeFile(path.join(root, 'branches.json'), raw)
+
+        const consoleSpy = mockConsole()
+        try {
+          const registry = new BranchRegistry(root)
+          const branches = await registry.list()
+          expect(branches.map((b) => b.branch.name)).toEqual(['feature-a'])
+
+          const snapshot = await readRegistrySnapshot(root)
+          expect(snapshot.version).toBe(2)
+          expect(snapshot.branches.map((b) => b.branch.name)).toEqual(['feature-a'])
+
+          // The rewritten snapshot is served from then on, with no second warning.
+          await new BranchRegistry(root).list()
+          const warnings = consoleSpy.all().warn
+          expect(warnings).toHaveLength(1)
+          expect(warnings[0]).toMatch(/branches\.json.*unreadable.*regenerat/i)
+        } finally {
+          consoleSpy.restore()
+        }
+      },
+    )
+
+    it('warns once about a corrupt snapshot it cannot rewrite, however often it is listed', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      await fs.writeFile(path.join(root, 'branches.json'), '{ truncated')
+      // An unreadable marker: list() serves its scan without persisting it.
+      const markerPath = resourceGenerationPath(root, 'branch-registry')
+      await fs.rm(markerPath, { force: true })
+      await fs.mkdir(markerPath, { recursive: true })
+
+      const consoleSpy = mockConsole()
+      try {
+        for (let i = 0; i < 3; i++) {
+          const branches = await new BranchRegistry(root).list()
+          expect(branches.map((b) => b.branch.name)).toEqual(['feature-a'])
+        }
+        expect(await fs.readFile(path.join(root, 'branches.json'), 'utf8')).toBe('{ truncated')
+        expect(consoleSpy.all().warn).toHaveLength(1)
+      } finally {
+        consoleSpy.restore()
+      }
+    })
+
+    it('propagates a snapshot read failure that is not a parse failure', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      await fs.rm(path.join(root, 'branches.json'))
+      await fs.mkdir(path.join(root, 'branches.json'))
+
+      await expect(new BranchRegistry(root).list()).rejects.toMatchObject({ code: 'EISDIR' })
+    })
+
     it('regenerates and does not persist when the marker is unreadable', async () => {
       const root = await tmpDir()
       await createBranchWithMetadata(root, 'feature-a')

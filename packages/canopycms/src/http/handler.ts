@@ -12,6 +12,7 @@ import { recordConfiguredSparseCone } from '../branch-sparse'
 import { recordServedSchemaRegistry } from '../schema-registry-record'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { BranchMetadataCorruptError } from '../branch-metadata'
+import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
@@ -205,6 +206,12 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       return unauthenticatedResponse(apiCtx.services.config, authResult.error)
     }
 
+    // Whether a worker's recorded failure may be named in a not-ready 503: admins only, as in
+    // System health. With no remote there are no internal groups, so this is the bootstrap
+    // admins, and /admin is behind the same 503, so this answer is where they read it.
+    const mayReadWorkerFailure = () =>
+      isAdmin(authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds).groups)
+
     // Provision the base/active branch workspace on first request, so the many
     // endpoints that assume it exists (registry reads and the like) don't return
     // confusing empty results on a cold start. A real provisioning error fails
@@ -229,7 +236,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         console.error(
           `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
         )
-        const notReady = workerNotReadyResponse(err)
+        const notReady = workerNotReadyResponse(err, {
+          workerFailureDetail: mayReadWorkerFailure(),
+        })
         if (notReady) return notReady
         return jsonResponse(
           {
@@ -267,7 +276,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       // No remote means no settings workspace, so /admin cannot load either:
       // the worker has not created the remote yet, so every caller gets the
       // not-ready 503, bootstrap admins included.
-      const notReady = workerNotReadyResponse(err)
+      const notReady = workerNotReadyResponse(err, {
+        workerFailureDetail: mayReadWorkerFailure(),
+      })
       if (notReady) return notReady
 
       // Same trade as the base-branch degradation above: /admin is the recovery
@@ -384,6 +395,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
       const notReady = workerNotReadyResponse(err)
       if (notReady) return notReady
+      // Its message is a path and a parse error, neither of which helps an editor.
+      if (err instanceof BranchMetadataCorruptError) {
+        return jsonResponse({ ok: false, status: 500, error: BRANCH_METADATA_CORRUPT_MESSAGE }, 500)
+      }
       return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }

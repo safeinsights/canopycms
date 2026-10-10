@@ -26,15 +26,15 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 interface FrameProps {
   data?: unknown
   isLoading?: unknown
-  onMarkCount?: (count: number) => void
+  onMarks?: (marks: { count: number; paths?: string[] }) => void
 }
 
 /** Every `data`/`isLoading` pair the editor hands the preview frame, in render order. */
 const frames: FrameProps[] = []
 
 vi.mock('./PreviewFrame', () => ({
-  PreviewFrame: ({ data, isLoading, onMarkCount }: FrameProps) => {
-    frames.push({ data, isLoading, onMarkCount })
+  PreviewFrame: ({ data, isLoading, onMarks }: FrameProps) => {
+    frames.push({ data, isLoading, onMarks })
     return <iframe title="preview" />
   },
 }))
@@ -304,12 +304,12 @@ describe('Editor preview marks', () => {
   it('notes a preview that marks nothing only while highlighting is on, from a count sent since', async () => {
     stubApi()
     renderEditor()
-    await waitFor(() => expect(frames.some((frame) => frame.onMarkCount)).toBe(true), {
+    await waitFor(() => expect(frames.some((frame) => frame.onMarks)).toBe(true), {
       timeout: 10_000,
     })
     const reportCount = (count: number) =>
       act(() => {
-        frames[frames.length - 1].onMarkCount?.(count)
+        frames[frames.length - 1].onMarks?.({ count })
       })
     const note = () => screen.queryByText(/marks no editable elements/)
     const toggle = screen.getByRole('button', { name: 'Toggle highlights' })
@@ -334,5 +334,45 @@ describe('Editor preview marks', () => {
     fireEvent.click(toggle)
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(note()).toBeNull()
+  })
+
+  it('counts the marks that name no field on the toggle, and warns once for each', async () => {
+    stubApi()
+    renderEditor()
+    await waitFor(() => expect(frames.some((frame) => frame.onMarks)).toBe(true), {
+      timeout: 10_000,
+    })
+    const report = (paths: string[]) =>
+      act(() => {
+        frames[frames.length - 1].onMarks?.({ count: paths.length, paths })
+      })
+    const toggle = screen.getByRole('button', { name: 'Toggle highlights' })
+    const warnings = () =>
+      consoleSpy.all().warn.filter((message) => message.includes('[canopycms]'))
+
+    fireEvent.click(toggle)
+    report(['title', 'byline.person', 'byline.person.name', 'subtitle'])
+    await waitFor(() =>
+      expect(toggle.getAttribute('aria-description')).toBe(
+        "2 preview marks don't match a field: byline.person.name, subtitle. The browser console names the nearest field of each.",
+      ),
+    )
+    await waitFor(() =>
+      expect(warnings()).toEqual([
+        '[canopycms] The preview marks "byline.person.name", which names no field of this entry; its nearest field is "byline.person".',
+        '[canopycms] The preview marks "subtitle", which names no field of this entry.',
+      ]),
+    )
+
+    report(['title', 'byline.person.name', 'subtitle', 'blocks[0]'])
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(warnings()).toHaveLength(2)
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle.getAttribute('aria-description')).toBeNull())
+    report(['subtitle', 'heading'])
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(toggle.getAttribute('aria-description')).toBeNull()
+    expect(warnings()).toHaveLength(2)
   })
 })
