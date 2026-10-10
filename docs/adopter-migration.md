@@ -354,9 +354,9 @@ a format check.
 - (int.93) Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section that
   re-submits replace, keeping human text. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
   ([reference](../README.md#definecanopyconfig-options)).
-- (next int) The trailers and the PR-body section name every user whose edits the commit carries,
-  not only the submitter, and settings commits (permissions, groups) carry the acting user's
-  trailer.
+- (next int) Submit-commit trailers name every user who saved since the last submit commit, and
+  the PR-body section every user who edited the branch, not only the submitter; settings commits
+  (permissions, groups) carry the acting user's trailer.
 - (int.108) Submit answers 400 when a branch's saved content matches its base. `BranchMetadata`
   gains optional `submittedAt` and `pushedToGitHubAt`.
 
@@ -975,8 +975,8 @@ package regardless.
 **To adopt.** Regenerate `cms-stack.ts` or copy the import and two lines; your own stack sets both
 props to match `canopycms.config.ts`. **Do this now if your default branch is not `main` or you set
 `settingsBranch`**: the worker otherwise exits at start or syncs a different settings branch than
-the Lambda writes. From the next int, an unset base branch follows the repository's default branch
-([Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)).
+the Lambda writes. From the next int, prod detects an unset base branch from the repository's
+default branch ([Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)).
 
 **Now deletable.** Runbook steps keeping `CANOPYCMS_BASE_BRANCH` or a settings-branch override in
 sync with `canopycms.config.ts` by hand.
