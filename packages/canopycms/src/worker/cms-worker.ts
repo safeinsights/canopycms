@@ -15,7 +15,7 @@ import {
   type ResolvedGitHubAuth,
 } from './github-auth'
 import type { BranchMetadataFile } from '../branch-metadata'
-import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig } from '../git-manager'
+import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
 import { readHeadBranch } from '../utils/git'
 import { type SanitizedBranchName } from '../paths/types'
 import {
@@ -192,13 +192,14 @@ class RemoteGitKeptError extends Error {}
 
 /**
  * Every ref in the bare repo at `gitDir` outside the GitHub tracking namespace, which only ever
- * holds GitHub's own branches, mapped to the object it names. Throws when git reports anything on
- * stderr: `for-each-ref` skips a ref it cannot read with only a warning and exit 0, and a ref
- * missing from this list is one a replacement would discard unchecked.
+ * holds GitHub's own branches, mapped to the object it names. A ref missing from this list is one
+ * a replacement would discard unchecked, so it throws when git reports anything on stderr
+ * (`for-each-ref` skips a ref it cannot read with only a warning and exit 0) and when git is killed
+ * by a signal, which simple-git otherwise resolves as empty output.
  */
 async function listRemoteGitRefs(gitDir: string): Promise<Map<string, string>> {
   let stderr = ''
-  const output = await sharedRepoGit(gitDir, 'bare')
+  const output = await sharedRepoGit(gitDir, 'bare', { errors: failOnSignalExit })
     .outputHandler((_command, _stdout, err) => {
       err.on('data', (chunk: Buffer | string) => {
         stderr += String(chunk)
@@ -1290,7 +1291,14 @@ export class CmsWorker {
     // kept when one did.
     const after = await listRemoteGitRefs(replaced).catch(() => null)
     if (after !== null && sameRefs(refs, after)) {
-      await fs.rm(replaced, { recursive: true, force: true })
+      // remote.git is already replaced, so a push still writing here costs only this directory.
+      await fs
+        .rm(replaced, { recursive: true, force: true, maxRetries: 3 })
+        .catch((err: unknown) => {
+          workerLogWarn(
+            `Could not remove the replaced remote.git at ${replaced}: ${getErrorMessage(err)}`,
+          )
+        })
     } else {
       workerLogError(
         `Kept the replaced remote.git at ${replaced}: its refs changed as it was swapped out, so ` +

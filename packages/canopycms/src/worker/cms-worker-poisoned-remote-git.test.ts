@@ -150,6 +150,61 @@ describe('a poisoned remote.git with nothing GitHub lacks', () => {
   })
 })
 
+describe('swapping in the replacement', () => {
+  it('keeps the old repo when a push lands in it as it is swapped out', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '--orphan', 'canopycms-settings-prod'])
+    const settings = await commit('permissions.json')
+    const rename = fs.rename.bind(fs)
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      await rename(from, to)
+      // A Lambda that resolved remote.git before the rename pushes into the old repo.
+      if (String(from) === remoteGitPath) {
+        await push(String(to), 'HEAD:refs/heads/canopycms-settings-prod')
+      }
+    })
+    try {
+      await internals(makeWorker()).ensureRemoteGit()
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/main'])
+    const kept = (await workspaceEntries()).filter((e) => e.startsWith('remote.git.replaced-'))
+    expect(kept).toHaveLength(1)
+    expect(
+      (
+        await simpleGit().raw([
+          '--git-dir',
+          path.join(workspacePath, kept[0]),
+          'rev-parse',
+          'canopycms-settings-prod',
+        ])
+      ).trim(),
+    ).toBe(settings)
+  })
+
+  it('puts the old repo back when the replacement cannot be renamed into place', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await push(remoteGitPath, 'HEAD:refs/heads/feature')
+    const rename = fs.rename.bind(fs)
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).endsWith('.cloning')) throw new Error('rename refused')
+      await rename(from, to)
+    })
+    try {
+      await expect(internals(makeWorker()).ensureRemoteGit()).rejects.toThrow(/rename refused/)
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/feature'])
+    expect(await workspaceEntries()).toEqual(['remote.git'])
+  })
+})
+
 describe('a poisoned remote.git that is kept', () => {
   it('names the refs GitHub does not have, and leaves them in place', async () => {
     await commit('one.md')

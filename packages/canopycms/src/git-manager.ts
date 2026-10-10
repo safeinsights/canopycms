@@ -229,7 +229,7 @@ export async function repackBareRemoteIfNeeded(
  * GitManager's own instance and to `cloneRepo`'s; its static helpers and the bare-remote functions
  * do not pass it yet (.claude/future-tasks/simple-git-signal-exit-reads-as-success.md).
  */
-function failOnSignalExit(
+export function failOnSignalExit(
   error: Buffer | Error | undefined,
   result: { exitCode: number },
 ): Buffer | Error | undefined {
