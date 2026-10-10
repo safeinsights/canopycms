@@ -8,6 +8,7 @@ import {
   repackBareRemoteIfNeeded,
   type BareRemoteRepackResult,
 } from '../git-manager'
+import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { workerLogWarn } from './log'
 import { mirrorGitOptions, pinnedReceivePack, pinnedUploadPack } from './shared-repo-git'
@@ -147,6 +148,48 @@ async function assertOwnDirectory(dir: string): Promise<void> {
   }
 }
 
+/**
+ * A push the worker never makes: to a name that is not a plain branch name, to the base branch, or
+ * to GitHub's default branch. No CanopyCMS flow asks for any of these, so a task that does was not
+ * written by CanopyCMS.
+ */
+export class RefusedPushError extends Error {
+  constructor(
+    readonly branch: string,
+    reason: 'invalid' | 'protected',
+  ) {
+    super(
+      reason === 'invalid'
+        ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
+        : `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default ` +
+            `branch, which the CanopyCMS worker never pushes. Nothing in CanopyCMS queues such a ` +
+            `push; find out what wrote this task.`,
+    )
+    this.name = 'RefusedPushError'
+  }
+}
+
+/**
+ * Throw {@link RefusedPushError} unless `branch` is a plain branch name: one
+ * `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
+ * follows it in a refspec as another destination), `..`, `^`, `~`, `@{`, spaces and a leading
+ * `-`, so `refs/heads/<branch>` is exactly the ref a push names.
+ */
+export async function assertPlainBranchName(branch: string): Promise<void> {
+  let normalized: string
+  try {
+    normalized = (await simpleGit().raw(['check-ref-format', '--branch', branch])).trim()
+  } catch (err) {
+    // Only git's own verdict is a refusal; a failure to run git at all is transient.
+    if (/is not a valid branch name/.test(getErrorMessage(err))) {
+      throw new RefusedPushError(branch, 'invalid')
+    }
+    throw err
+  }
+  // `@{-1}` and the like resolve to some other name.
+  if (normalized !== branch) throw new RefusedPushError(branch, 'invalid')
+}
+
 /** What one {@link GitHubMirror.exclusive} call may do. */
 export class MirrorSession {
   constructor(
@@ -217,6 +260,25 @@ export class MirrorSession {
       this.remoteGitPath,
       ...refspecs,
     ])
+  }
+
+  /**
+   * The branch GitHub's HEAD names, or null for a repository with none (empty, or HEAD unborn). A
+   * failure to reach GitHub throws, so a push that cannot learn it does not happen.
+   */
+  private async githubDefaultBranch(
+    githubUrl: string,
+    signal?: AbortSignal,
+  ): Promise<string | null> {
+    const out = await this.git(signal).raw([
+      'ls-remote',
+      '--symref',
+      '--end-of-options',
+      githubUrl,
+      'HEAD',
+    ])
+    const match = /^ref: refs\/heads\/(.+)\tHEAD$/m.exec(out)
+    return match ? match[1] : null
   }
 
   /** The mirror's tip for `branch`, or null when GitHub had no such branch at the last fetch. */
@@ -298,10 +360,23 @@ export class MirrorSession {
     githubUrl: string,
     branch: string,
     sha: string,
-    options: { lease?: string; signal?: AbortSignal } = {},
+    options: { lease?: string; signal?: AbortSignal; protectedBranches: readonly string[] },
   ): Promise<void> {
     for (const id of [sha, ...(options.lease === undefined ? [] : [options.lease])]) {
       if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
+    }
+    // Here, at the one place every GitHub push (plain or under a lease) goes through, so no caller
+    // can skip it, and before any git runs with `branch` in a refspec. The task queue, remote.git
+    // and the lease marker are all Lambda-writable, and the worker's base branch comes from
+    // Lambda-writable state when it is not configured (`CmsWorker.resolveBaseBranch`); GitHub's default branch is read from GitHub
+    // itself, per push.
+    await assertPlainBranchName(branch)
+    const protectedNames = [...options.protectedBranches]
+    const githubDefault = await this.githubDefaultBranch(githubUrl, options.signal)
+    if (githubDefault !== null) protectedNames.push(githubDefault)
+    const target = sanitizeBranchName(branch)
+    if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
+      throw new RefusedPushError(branch, 'protected')
     }
     const staging = `${STAGING_PREFIX}${branch}`
     const git = this.git(options.signal)
