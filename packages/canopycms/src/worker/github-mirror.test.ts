@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo } from '../test-utils'
+import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { GitHubMirror } from './github-mirror'
 
 const execFileAsync = promisify(execFile)
@@ -26,6 +26,7 @@ let remoteGitPath: string
 let seed: SimpleGit
 let seedPath: string
 let mirror: GitHubMirror
+let consoleSpy: MockConsole
 
 const git = async (...args: string[]) => (await execFileAsync('git', args)).stdout.trim()
 const tip = async (gitDir: string, ref: string) =>
@@ -64,6 +65,7 @@ async function plantHostileRemoteGit(): Promise<void> {
 }
 
 beforeEach(async () => {
+  consoleSpy = mockConsole()
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-github-mirror-')))
   sentinel = path.join(root, 'sentinel.log')
   githubPath = path.join(root, 'github.git')
@@ -82,6 +84,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  consoleSpy.restore()
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -249,6 +252,9 @@ describe('GitHubMirror', () => {
 
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
       await tip(githubPath, 'refs/heads/main'),
+    )
+    expect(consoleSpy).toHaveWarned(
+      /Could not seed the GitHub mirror from remote\.git, fetching all of it from GitHub/,
     )
   })
 
