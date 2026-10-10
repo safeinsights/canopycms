@@ -149,12 +149,11 @@ describe('getBranchWriteProtection', () => {
     },
   )
 
-  // Fail-closed contract. branch.json is read with a bare cast and no schema
-  // validation (branch-metadata.ts), so a hand-repaired or partially-written
-  // file reaches this predicate with no status -- and corrupt branch metadata
-  // is a condition this codebase already handles elsewhere (quarantine /
-  // branch-health). A branch whose review state is unknown must NOT be
-  // writable: allowing the write is the one outcome we can never take back.
+  // Fail-closed contract. A branch.json with no status is refused as corrupt
+  // at its read boundary (branch-metadata-file.ts), but a status can still
+  // arrive unset from a context built elsewhere. A branch whose review state is
+  // unknown must NOT be writable: allowing the write is the one outcome we can
+  // never take back.
   it('blocks writes when the status is missing at runtime', () => {
     const result = getBranchWriteProtection(
       prod,

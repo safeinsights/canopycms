@@ -100,10 +100,11 @@ export function getBranchProtection(
  * branches-list wire flag and the editor.
  *
  * `status` is REQUIRED and admits `undefined` because a missing status must
- * FAIL CLOSED: `branch.json` is read with a bare `JSON.parse(...) as
- * BranchMetadataFile` (branch-metadata.ts), so it can be absent at runtime.
- * Required, not optional, so "argument omitted" and "file had no status" stay
- * distinguishable -- the safe answer differs.
+ * FAIL CLOSED. A branch.json without one never gets this far (its read
+ * boundary, branch-metadata-file.ts, rejects it as corrupt), but a status can
+ * still arrive unset from a context built anywhere else. Required, not
+ * optional, so "argument omitted" and "status unknown" stay distinguishable --
+ * the safe answer differs.
  */
 export function getBranchWriteProtection(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,
