@@ -20,9 +20,8 @@ interface CachedUser {
 }
 
 /**
- * Per-process, in-memory, never persisted: each warm Lambda instance keeps its own copy, so a
- * changed name or avatar shows everywhere within one TTL. Keyed by plugin so two plugins never
- * share answers.
+ * Per-process, in-memory, never persisted: each process keeps its own copy, so a changed name or
+ * avatar shows everywhere within one TTL. Keyed by plugin so two plugins never share answers.
  */
 const caches = new WeakMap<AuthPlugin, LRUCache<CanopyUserId, CachedUser>>()
 
@@ -37,16 +36,17 @@ function cacheFor(plugin: AuthPlugin): LRUCache<CanopyUserId, CachedUser> {
 
 /**
  * Resolves each id to its user, or `null` when the provider does not know it. Unknown ids are
- * cached like found ones, so a stale id in permissions.json costs one provider call per TTL.
- * A provider failure rejects and caches nothing.
+ * cached like found ones, so a stale id in permissions.json costs a process one provider call
+ * per TTL. A rejection caches nothing; a `getUserMetadata` that answers `null` on failure is
+ * cached as unknown.
  */
 export async function lookupUsersMetadata(
   plugin: AuthPlugin,
   userIds: readonly CanopyUserId[],
 ): Promise<Map<CanopyUserId, UserSearchResult | null>> {
   const unique = [...new Set(userIds)]
-  // Already answered from an in-memory copy of the worker-written file cache; a TTL on top
-  // would only delay the worker's refreshes.
+  // Answered from an in-memory copy of the worker-written file cache; a TTL on top would only
+  // delay the worker's refreshes. canopycms-next wraps every plugin with `verifyTokenOnly`.
   if (plugin instanceof CachingAuthPlugin) return fetchFromPlugin(plugin, unique)
 
   const cache = cacheFor(plugin)

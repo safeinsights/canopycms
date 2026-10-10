@@ -360,9 +360,10 @@ Named A/B/C/E for continuity with the original analysis
 - OCC cross-host blind spot (layer 2's non-guarantee) — closed by layer 3 where it
   matters.
 - **User metadata** (`auth/user-metadata-lookup.ts`): a per-process LRU in front of the
-  auth plugin, never persisted or shared, so each warm Lambda can show a renamed user's
-  old name until its 5-minute TTL lapses. `CachingAuthPlugin` bypasses it: its answers
-  already come from the worker-written file cache.
+  auth plugin, never persisted or shared, so each process can show a renamed user's old
+  name until its 5-minute TTL lapses. `CachingAuthPlugin` bypasses it, answering from the
+  worker-written file cache; canopycms-next wraps every plugin with `verifyTokenOnly` in
+  one (`packages/canopycms-next/src/context-wrapper.ts:324`).
 
 All are bounded by per-request store lifetimes, throttled backstops, a TTL, and the next
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is

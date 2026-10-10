@@ -500,12 +500,13 @@ the editor's origin; the editor still detects sign-out. Otherwise nothing.
 
 **What changed.** (next int) `AuthPlugin` gains an optional `getUsersMetadata(userIds)`, given at
 most 100 ids and resolving to the users found. The Permissions and Groups panels fetch their users
-in one request, and the server caches each answer for five minutes per process. The Clerk and dev
-plugins implement it.
+in one request. The Clerk and dev plugins implement it.
 
-**To adopt.** A custom plugin without it gets up to 8 concurrent `getUserMetadata` calls; implement
-it with your provider's list-by-ids call. Reject on a provider failure: an omitted id is cached as
-unknown.
+**To adopt.** Nothing under `createNextCanopyContext` with a plugin implementing `verifyTokenOnly`:
+lookups come from the worker's file cache. Otherwise core calls your plugin, caching answers for
+five minutes per process; without `getUsersMetadata` it makes up to 8 concurrent `getUserMetadata`
+calls. Implement it with your provider's list-by-ids call, rejecting on a provider failure: an
+omitted id is cached as unknown.
 
 **Now deletable.** A cache in front of a custom plugin's `getUserMetadata`.
 

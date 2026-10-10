@@ -3,7 +3,7 @@ import type { ApiClient } from '../context'
 import type { UserSearchResult } from '../../auth/types'
 import { MAX_USER_METADATA_BATCH } from '../../api/users-constants'
 
-/** Gathers every badge a panel mounts in one render, effect cascades included. */
+/** Long enough to gather every badge one render mounts. */
 const BATCH_WINDOW_MS = 10
 
 /**

@@ -33,7 +33,7 @@ export type GetUserMetadataResponse = ApiResponse<{
   user: UserSearchResult | null
 }>
 
-/** Response type for batch user metadata: the users found, in no order; unknown ids are absent */
+/** Response type for batch user metadata: the users found, in no guaranteed order; unknown ids are absent */
 export type BatchGetUserMetadataResponse = ApiResponse<{ users: UserSearchResult[] }>
 
 const permissionTargetSchema = z.object({

@@ -33,7 +33,8 @@ export interface AuthPlugin {
    * any order; unknown ids are omitted. Core never passes more than 100 ids at once. Without
    * it, core falls back to concurrent `getUserMetadata` calls, a few at a time.
    *
-   * Reject on a provider failure rather than omitting ids: core caches an omitted id as unknown.
+   * Reject on a provider failure rather than omitting ids: core caches an omitted id as unknown,
+   * as it does a `null` from the `getUserMetadata` fallback.
    */
   getUsersMetadata?(userIds: CanopyUserId[]): Promise<UserSearchResult[]>
 

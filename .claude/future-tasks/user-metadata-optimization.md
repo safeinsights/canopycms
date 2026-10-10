@@ -8,8 +8,8 @@ summary: >-
 
 **Priority: P3 [BOTH].** Badges now batch: `useUserMetadata` is SWR-backed per user, and
 `editor/hooks/user-metadata-batcher.ts` sends a render's ids as one `POST /users/batch` (capped
-at `MAX_USER_METADATA_BATCH`), answered through `auth/user-metadata-lookup.ts`'s per-process TTL
-cache and the plugin's optional `getUsersMetadata`. What is left is structural and optional.
+at `MAX_USER_METADATA_BATCH`), answered by `auth/user-metadata-lookup.ts`: from the worker's file
+cache under canopycms-next, else a per-process TTL cache over the plugin's `getUsersMetadata`. What is left is structural and optional.
 
 Re-check before doing Part 2: with batching plus SWR, comment and branch badges already cost one
 request per render, so embedding mainly saves that request.

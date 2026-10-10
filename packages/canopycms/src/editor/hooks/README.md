@@ -14,7 +14,7 @@ automatic on-mount/on-branch-change fetch:
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
   `canopy:comments:${branch}`
 - `useUserMetadata` (`useUserMetadata.ts`) -- key `canopy:user:${userId}`, one per
-  badge; `user-metadata-batcher.ts` sends a render's ids as one POST /users/batch
+  badge; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
 
 Each manager hook (`useBranchManager`, `useEntryManager`,
 `useCommentSystem`) consumes its data hook's reactive `data`/`error`/

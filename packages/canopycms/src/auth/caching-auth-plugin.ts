@@ -116,7 +116,7 @@ export class CachingAuthPlugin implements AuthPlugin {
     }
   }
 
-  /** One cache read for the whole set, where `getUserMetadata` per id would revalidate each time. */
+  /** One cache read for the whole set, where `getUserMetadata` per id re-stats the files each time. */
   async getUsersMetadata(userIds: CanopyUserId[]): Promise<UserSearchResult[]> {
     try {
       const wanted = new Set(userIds)
