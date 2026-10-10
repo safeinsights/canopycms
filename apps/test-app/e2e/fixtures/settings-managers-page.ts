@@ -1,19 +1,18 @@
 import { type Page, type Locator, expect } from '@playwright/test'
+import { EditorPage } from './editor-page'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page objects for the Group Manager and Permission Manager drawers
  * (Settings gear -> "Manage Groups" / "Manage Permissions").
  *
- * Unlike the media/admin surfaces, neither module carries `data-testid`
- * attributes on its interactive elements (see EditorSidebar.tsx,
- * group-manager/**, permission-manager/**) — every locator here goes
- * through `getByRole` / visible text, matching what a screen-reader user
- * would rely on. Selectors were confirmed against the component source,
- * not guessed:
- *  - Settings menu: `aria-label="Settings"` action icon; items are Mantine
- *    `Menu.Item`s (role="menuitem") with the exact labels below
- *    (EditorSidebar.tsx).
+ * The Settings entry point goes through `EditorPage.openSettingsItem`
+ * (testid-based, shared with the other Settings surfaces). Inside the
+ * drawers neither module carries `data-testid` attributes on its
+ * interactive elements (see group-manager/**, permission-manager/**) —
+ * every locator there goes through `getByRole` / visible text, matching
+ * what a screen-reader user would rely on. Selectors were confirmed
+ * against the component source, not guessed:
  *  - Both drawers are plain Mantine `<Drawer title={...}>` (not the
  *    compound Drawer.Root API used by the entry navigator), so the
  *    dialog's accessible name is the concatenation of the bold title and
@@ -25,12 +24,6 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
  *  - PermissionEditor's group-search input is a raw `<input
  *    aria-label="Search groups">` (GroupSelector.tsx).
  */
-
-const SETTINGS_BUTTON_NAME = 'Settings'
-
-async function openSettingsMenu(page: Page): Promise<void> {
-  await page.getByRole('button', { name: SETTINGS_BUTTON_NAME }).click()
-}
 
 export class GroupManagerPage {
   readonly page: Page
@@ -45,8 +38,7 @@ export class GroupManagerPage {
 
   /** Open via Settings -> "Manage Groups" and wait for the drawer. */
   async open(): Promise<void> {
-    await openSettingsMenu(this.page)
-    await this.page.getByRole('menuitem', { name: 'Manage Groups' }).click()
+    await new EditorPage(this.page).openSettingsItem('Groups')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
@@ -116,8 +108,7 @@ export class PermissionManagerPage {
 
   /** Open via Settings -> "Manage Permissions" and wait for the drawer. */
   async open(): Promise<void> {
-    await openSettingsMenu(this.page)
-    await this.page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
+    await new EditorPage(this.page).openSettingsItem('Permissions')
     await expect(this.drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 

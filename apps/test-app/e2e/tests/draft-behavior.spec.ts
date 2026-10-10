@@ -18,11 +18,11 @@ test.describe('Draft Behavior', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
-  test('discard file draft reverts field to last-saved state', async ({ page }) => {
+  test('discard file draft reverts field to last-saved state', async () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -37,23 +37,15 @@ test.describe('Draft Behavior', () => {
     })
 
     await test.step('discard file draft via file dropdown menu', async () => {
-      await editorPage.fileDropdownButton.click()
-      const discardItem = page.locator('[data-testid="discard-file-draft-menu-item"]')
-      await discardItem.waitFor({ state: 'visible', timeout: 5000 })
-      await discardItem.click()
-
-      // Discarding a dirty draft now asks for confirmation ("truthful draft
-      // lifecycle" UX rework) — confirm through the dialog.
-      const confirmDialog = page.getByRole('dialog', { name: 'Discard draft' })
+      // Discarding a dirty draft asks for confirmation — confirm through the dialog.
+      const confirmDialog = await editorPage.discardEntryDraft()
       await expect(confirmDialog).toBeVisible({ timeout: 5000 })
-      await confirmDialog.getByRole('button', { name: 'Discard' }).click()
+      await editorPage.confirmDiscard(confirmDialog)
 
       // Verify notification appears
-      await expect(
-        page.locator('.mantine-Notification-root', {
-          hasText: 'Draft cleared for file',
-        }),
-      ).toBeVisible({ timeout: 5000 })
+      await expect(editorPage.notification('Draft cleared for file')).toBeVisible({
+        timeout: 5000,
+      })
     })
 
     await test.step('verify field reverts and save button is disabled', async () => {
@@ -68,7 +60,7 @@ test.describe('Draft Behavior', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 

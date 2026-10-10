@@ -371,7 +371,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
                     Reload All Files
                   </Menu.Item>
-                  <Menu.Item onClick={onBranchDiscardDrafts} disabled={!branchName}>
+                  <Menu.Item
+                    data-testid="discard-all-drafts-menu-item"
+                    onClick={onBranchDiscardDrafts}
+                    disabled={!branchName}
+                  >
                     Discard All File Drafts
                   </Menu.Item>
                   <Menu.Divider />

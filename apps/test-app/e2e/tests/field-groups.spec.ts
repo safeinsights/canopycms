@@ -24,11 +24,10 @@ test.describe('Inline field group UI', () => {
     await test.step('open editor and load Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       // Close navigator so form pane is fully interactive
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
   })
 

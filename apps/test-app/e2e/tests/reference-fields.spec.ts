@@ -1,5 +1,5 @@
 import { BASE_URL } from '../fixtures/base-url'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
@@ -8,7 +8,7 @@ import {
   readContentFile,
   findContentFile,
 } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 /**
  * E2E tests for reference field functionality.
@@ -36,10 +36,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page entry', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('verify relatedPost reference field loads options', async () => {
@@ -68,10 +67,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('select the reference option', async () => {
@@ -106,15 +104,14 @@ test.describe('Reference Fields', () => {
     })
   })
 
-  test('single reference field: clear selection', async ({ page }) => {
+  test('single reference field: clear selection', async () => {
     await test.step('set up: create post, select reference, save', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('clearable-post', 'Clearable Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
       await editorPage.selectReferenceOption('relatedPost', 'Clearable Post')
       await editorPage.saveAndVerify()
     })
@@ -143,10 +140,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('select both posts in featuredPosts multi-select', async () => {
@@ -190,7 +186,7 @@ test.describe('Reference Fields', () => {
     })
   })
 
-  test('reference field search filters options', async ({ page }) => {
+  test('reference field search filters options', async () => {
     await test.step('create three posts with distinct titles', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
@@ -200,10 +196,9 @@ test.describe('Reference Fields', () => {
     })
 
     await test.step('navigate to Home Page', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('open dropdown and type to filter', async () => {
@@ -218,44 +213,37 @@ test.describe('Reference Fields', () => {
       await expect(options).toHaveText(['Banana'], { timeout: STANDARD_TIMEOUT })
     })
   })
-  test('deleting a referenced post names the referencing entry, then deletes on confirm', async ({
-    page,
-  }) => {
+  test('deleting a referenced post names the referencing entry, then deletes on confirm', async () => {
     await test.step('reference a new post from the Home Page and save', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('doomed-post', 'Doomed Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
       await editorPage.selectReferenceOption('relatedPost', 'Doomed Post')
       await editorPage.saveAndVerify()
     })
 
-    const modal = page.locator('[data-testid="confirm-delete-modal"]')
+    let modal: Locator
 
     await test.step('delete the post: the dialog names the Home Page', async () => {
-      await editorPage.openEntryNavigator()
-      await page.locator('[data-testid="entry-menu-doomed-post"]').click()
-      await page.locator('[data-testid="delete-entry-menu-item"]').click()
-      await expect(modal).toBeVisible()
-      await page.locator('[data-testid="confirm-delete-submit"]').click()
+      await editorPage.openContentNavigator()
+      modal = await editorPage.startDeleteEntry('Doomed Post')
+      await editorPage.deleteConfirmButton().click()
 
       const list = modal.locator('[data-testid="referenced-by-list"]')
       await expect(list).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(list).toContainText('Home Page')
       await expect(list).toContainText('relatedPost')
-      await expect(page.locator('[data-testid="confirm-delete-submit"]')).toHaveText(
-        'Delete anyway',
-      )
+      await expect(editorPage.deleteConfirmButton()).toHaveText('Delete anyway')
       expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).not.toBeNull()
     })
 
     await test.step('Delete anyway removes the post', async () => {
-      await page.locator('[data-testid="confirm-delete-submit"]').click()
+      await editorPage.deleteConfirmButton().click()
       await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
-      await expect(page.locator('[data-testid="entry-nav-item-doomed-post"]')).not.toBeVisible({
+      await expect(editorPage.navigatorItem('Doomed Post')).not.toBeVisible({
         timeout: STANDARD_TIMEOUT,
       })
       expect(await findContentFile('posts.qrstuvwxyz12/post.doomed-post.')).toBeNull()
