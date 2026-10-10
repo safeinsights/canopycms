@@ -368,7 +368,7 @@ export class MirrorSession {
     // Here, at the one place every GitHub push (plain or under a lease) goes through, so no caller
     // can skip it, and before any git runs with `branch` in a refspec. The task queue, remote.git
     // and the lease marker are all Lambda-writable, and the worker's base branch comes from
-    // Lambda-writable state when it is not configured; GitHub's default branch is read from GitHub
+    // Lambda-writable state when it is not configured (`CmsWorker.resolveBaseBranch`); GitHub's default branch is read from GitHub
     // itself, per push.
     await assertPlainBranchName(branch)
     const protectedNames = [...options.protectedBranches]
