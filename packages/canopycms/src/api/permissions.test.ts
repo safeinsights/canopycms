@@ -277,6 +277,10 @@ describe('permissions API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
+      // The bot authors settings commits, so the trailer is git's only record of the actor.
+      expect(mockContext.services.commitToSettingsBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Update permissions\n\nEdited-by: admin-1' }),
+      )
       expect(consoleSpy).toHaveWarned('committed but not pushed')
       consoleSpy.restore()
     })

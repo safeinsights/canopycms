@@ -452,10 +452,11 @@ extension in logical form (`content/blog/**`, `content/about`).
 
 **Now deletable.** A content-root grant working around inert collection grants.
 
-### Submit commits and pull requests name the submitting user
+### Commits and pull requests name the editing users
 
-**What changed.** Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section
-that re-submits replace, keeping human text.
+**What changed.** Commits gain `Edited-by: Name (id)` trailers: a submit names its submitter and
+whoever saved since the last submit, a permissions or groups commit whoever made the change. PR
+bodies gain a section, replaced on re-submit, naming everyone who saved.
 
 **To adopt.** Nothing. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
 ([reference](../README.md#definecanopyconfig-options)).

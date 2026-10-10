@@ -137,6 +137,7 @@ const updatePermissionsHandler = async (
       branchRoot: context.branchRoot,
       fileName: 'permissions.json',
       message: 'Update permissions',
+      actor: req.user,
       mode,
     })
 

@@ -74,7 +74,7 @@ API handlers receive the container on `ApiContext`, content readers take it at c
 CanopyCMS is entirely file system based: no external database, no cache server, and no worker process by default. Git already provides versioning and the filesystem provides persistence, so there is no state to synchronize between a database and git, and nothing extra to operate — which suits serverless plus attached storage directly. What gets stored:
 
 - **Content**: MD/MDX/JSON/YAML files under the content directory, committed to git.
-- **Branch metadata**: `.canopy-meta/branch.json` per workspace — state, the recorded base branch (the immutable fork point set at creation), PR references, sync status, conflict tracking. Excluded from git via info/exclude.
+- **Branch metadata**: `.canopy-meta/branch.json` per workspace — state, the recorded base branch (the immutable fork point set at creation), PR references, sync status, conflict tracking, and the ids of users who have edited it. Excluded from git via info/exclude.
 - **Branch registry**: `branches.json` at the branches root, an inventory of all branches, gitignored.
 - **Comments**: `.canopy-meta/comments.json` per branch, not committed, automatically excluded.
 - **Schema cache**: the resolved schema per branch, kept inside the clone's `.git/` directory rather than `.canopy-meta/`. `info/exclude` cannot hide a file an adopter has already committed, whereas nothing under `.git/` is ever tracked or shown by `git status`. `.canopy-meta/` is never content: stage-all operations skip it and dirty checks ignore it ([docs/concurrency.md](docs/concurrency.md)).
@@ -477,7 +477,7 @@ Saves run through server-side validation in the content write handler:
 
 ### Submitting for Review
 
-Submit commits all changes and pushes to the remote via `submitBranch()`, creates a GitHub PR when GitHub integration is configured, and moves the branch to `submitted`.
+Submit commits all changes and pushes to the remote via `submitBranch()`, creates a GitHub PR when GitHub integration is configured, and moves the branch to `submitted`. The bot authors the commit; its `Edited-by:` trailers name the submitter and whoever saved since the last submit, and the PR body everyone who saved.
 
 **Clicking "Submit" requests publication — it does not publish.** Content goes live only once the PR is merged and the site is rebuilt and deployed, which means CanopyCMS does not control the publication moment: the CI/CD pipeline does. This flow applies to editing branches; the base branch can never be submitted (see [Protected Base Branch](#protected-base-branch)).
 
@@ -869,7 +869,7 @@ Two consequences. CDK attaches baseline execution policies, and a VPC-attached f
 
 ### Why do settings use a separate branch?
 
-So that permission updates never interfere with content editing and content PRs cannot accidentally carry permission changes. The branch's history is the audit trail for who changed access and when.
+So that permission updates never interfere with content editing and content PRs cannot accidentally carry permission changes. The branch's history is the audit trail for who changed access and when; each commit's `Edited-by:` trailer names the user who made the change.
 
 ### Why does `canopycms init` scaffold `defaultBranchAccess: 'deny'`?
 

@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  Phase 1 only: record the acting editor on settings (ACL and group) commits so "who changed this rule" is answerable. Group path rules are live, and today that question can only be answered from bot-authored commits; the trailer builder from #368 can carry the editor cheaply (`api/settings-helpers.ts`)
+  Structured audit trail for permission and group changes beyond git history: a queryable log, notifications, structured commit diffs and compliance reports. Git already answers "who changed this rule": each settings commit names the acting user in an `Edited-by:` trailer (`api/settings-helpers.ts`, done 2026-10-09 on `feat/submission-editor-attribution`). What remains needs no git access to query.
 ---
 # Audit Logging for Permissions and Groups
 
@@ -15,7 +15,9 @@ Add comprehensive audit logging for permission and group changes beyond git hist
 **What we have:**
 
 - `updatedAt` and `updatedBy` fields in permissions.json and groups.json
-- Git history provides commit-level tracking
+- Git history provides commit-level tracking, and each settings commit names the acting user in
+  an `Edited-by:` trailer (`commitSettings` in `api/settings-helpers.ts`), under the same
+  `gitEditedByTrailers` / `gitCoAuthoredByTrailers` config as submit commits
 
 **Limitations:**
 

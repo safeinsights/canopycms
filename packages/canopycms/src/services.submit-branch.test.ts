@@ -267,7 +267,11 @@ describe('services submitBranch', () => {
     it('commits the content change but never canopycms state, tracked or not', async () => {
       await trackCanopyMetaUpstream()
       await fs.writeFile(path.join(localPath, CACHE), '{"rewritten":"per branch"}', 'utf8')
-      await fs.writeFile(path.join(localPath, '.canopy-meta', 'branch.json'), '{}', 'utf8')
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({ branch: { name: 'feature-1', status: 'editing', access: {} } }),
+        'utf8',
+      )
       await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
 
       await services.submitBranch({ context, message: 'submit' })

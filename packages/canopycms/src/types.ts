@@ -97,6 +97,14 @@ export interface BranchMetadata {
    * and the next successful sync task, so a stale reason never outlives it.
    */
   syncFailureReason?: string
+  /**
+   * Every user whose successful change to the branch's working tree is recorded, in first-save
+   * order (recordBranchEditor in branch-metadata.ts). Never reset, because each submit rebuilds
+   * the whole PR body and credits them all. User ids only: names are looked up at submit.
+   */
+  editors?: CanopyUserId[]
+  /** The `editors` who saved since the last submit commit, whose trailers name them. */
+  uncommittedEditors?: CanopyUserId[]
 }
 
 export interface BranchPaths {

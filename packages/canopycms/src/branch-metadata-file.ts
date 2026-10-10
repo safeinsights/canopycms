@@ -106,6 +106,8 @@ const branchMetadataShape = {
     .optional(),
   historyRewrittenFrom: z.string().optional(),
   syncFailureReason: z.string().optional(),
+  editors: z.array(z.string()).optional(),
+  uncommittedEditors: z.array(z.string()).optional(),
 } satisfies { [K in keyof BranchMetadata]-?: z.ZodTypeAny }
 
 /** The `branch` object, also embedded in the registry snapshot (branch-registry.ts). */

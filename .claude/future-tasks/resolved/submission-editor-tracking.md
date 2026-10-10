@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-04. Submit commits and PR bodies name the submitting user, but nothing records who saved what on a branch. Edits other users made are attributed to whoever pressed Submit. The trailer and PR-body builders already take a list of editors; what's missing is a per-branch record of content-save authors (a `.canopy-meta/` read-modify-write, so read docs/concurrency.md first)
+  RESOLVED 2026-10-09, branch `feat/submission-editor-attribution`, base `int-202610-b`. branch.json records user ids in `editors` (never reset: each submit rebuilds the whole PR body, which names them all) and `uncommittedEditors` (whom the next submit commit's `Edited-by:` trailers name; that submit removes them). Every successful `writableBranch` endpoint records its user (route-builder.ts), so content saves, renames, deletes and schema changes count, and asset uploads, which change no branch file, do not. A save that later proves a no-op still counts. Names and emails come from the auth plugin at submit.
 ---
 # Record every editor who touched a branch, not just the submitter
 
@@ -27,7 +27,7 @@ attributed to whoever pressed Submit.
 
 - Record the user id (and, at the time of the write, the display name) of each
   content save, per branch. `.canopy-meta/` is the natural home; any
-  read-modify-write there needs [docs/concurrency.md](../../docs/concurrency.md)
+  read-modify-write there needs [docs/concurrency.md](../../../docs/concurrency.md)
   first, because saves from several users on one branch race.
 - At submit, pass the editors since the last submit to `buildEditorTrailers`
   (one trailer each) and all editors on the branch to `buildPrSection`.
