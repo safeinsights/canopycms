@@ -431,7 +431,7 @@ export default defineCanopyConfig({
 })
 ```
 
-The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every content save that passes schema validation and the [MDX code check](#mdx-content-cannot-run-code); `entryType` is the type the entry is written as, even when the request omits it, so a type-gated rule always applies. `error` issues reject the save, showing the editor the message; `warning` issues save with a notification. **It gates content writes only**, not renames or deletes. Pair it with the preview error channel ([Live Preview](#live-preview)) so authors see compile failures while typing.
+The hook receives `{ entryPath, branch, entryType?, format, data, body }` for every content save that passes schema validation and the [MDX code check](#mdx-content-cannot-run-code); `entryType` is the type the entry is written as, even when the request omits it. `error` issues reject the save, showing the editor the message; `warning` issues save with a notification. **It gates content writes only**, not renames or deletes. Pair it with the preview error channel ([Live Preview](#live-preview)) so authors see compile failures while typing.
 
 ### Comments in Content Files Survive Editing
 
@@ -496,7 +496,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 ### Field Types
 
 - `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
-- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. Content that would run code is refused unless the field sets `executable: true`; see [MDX content cannot run code](#mdx-content-cannot-run-code)
+- `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. See [MDX content cannot run code](#mdx-content-cannot-run-code)
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `resolvedSchema?`
@@ -533,19 +533,32 @@ That fix is not free: the wrapper and its markdown subtree ship to the browser a
 
 #### MDX content cannot run code
 
-MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which runs wherever a body renders with `evaluate`, `run` or `next-mdx-remote`: in the editor's preview as the viewer, in a server render inside the CMS, and on CI, which may build a content branch's PR before anyone reviews it. So an `mdx` field, and an `mdx` body, refuse at save:
+MDX compiles `{expressions}`, `import`/`export` and tags into JavaScript, which runs wherever a body renders: in the editor's preview as the viewer, in a server render, and on CI, which may build a content branch before anyone reviews it. So an `mdx` field or body, or a `markdown` one with `renderAs: 'mdx'`, refuses at save:
 
 - `{…}` expressions other than comments and plain values (`{/* note */}`, `{300}`), and `import`/`export`;
 - HTML tags outside a safe set (`<script>`, `<iframe>`, `<svg>`…), and on a tag any attribute outside a safe set, since a script your site loads can give one meaning (Alpine's `x-init`); event handlers (`onClick`), `srcdoc` and `dangerouslySetInnerHTML` on components too;
 - URL schemes other than http(s), mailto, tel, `entry:` and raster `data:` images; React 18 renders a `javascript:` href as given.
 
-Plainly named components (`<Callout type="tip">`) are your code and pass. `markdown` fields and `md` bodies get the URL check. A save adding such code is refused, naming the line. Code the entry already held is kept, with a warning, only in a field saved unchanged, since kept code reads what surrounds it; removing it is always accepted, and a production build lists every entry holding some.
+Plainly named components (`<Callout type="tip">`) are your code and pass. Other markdown gets the URL check. A save adding such code is refused, naming the line. Code the entry already held is kept, with a warning, only in a field saved unchanged; removing it is always accepted, and a production build lists every entry holding some.
 
 ```typescript
 { name: 'body', type: 'mdx', isBody: true, executable: true } // editors of this field are code authors
 ```
 
 `executable: true` turns the check off for one field, giving its editors the equivalent of repository write access. With no `isBody` field, the body is checked unless a field named `body` sets `executable`. The policy assumes `md` renders as markdown without raw HTML (`rehype-raw`), and `mdx` as MDX.
+
+`mdxAllow`, on a field or site-wide in the config, narrows what MDX passes, never widens it; a field's keys replace the site's:
+
+```typescript
+mdxAllow: {
+  components: { Callout: { props: { type: ['info', 'warning'] } } }, // {}: none; no `props`: any
+  htmlTags: [], // from the safe set; omitted: all of it
+  expressions: false, // refuses comments and `{300}` too
+  fragments: false,
+}
+```
+
+The editor's toolbar writes no tag a field refuses.
 
 ### Field Groups
 

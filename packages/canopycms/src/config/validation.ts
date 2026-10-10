@@ -7,13 +7,15 @@
  */
 
 import { CanopyConfigSchema } from './schemas/config'
+import { mdxAllowlistSchema } from './schemas/field'
+import { isMarkdownField, markdownFieldOptionsError } from '../validation/mdx-allowlist'
 import { normalizePathValue } from './flatten'
 // Leaf module, NOT the `operating-mode` barrel: the barrel re-exports the
 // client-unsafe strategy (node:fs/node:path) and this file is reachable from
 // `canopycms/client` (the generated editor page imports the adopter's config).
 import { resolveOperatingMode } from '../operating-mode/mode-env'
 import { isPathFieldName } from '../editor/canopy-path'
-import type { CanopyConfig } from './types'
+import type { CanopyConfig, FieldConfig } from './types'
 
 /**
  * Recursively check that all select fields have options defined.
@@ -251,6 +253,35 @@ export const ensureNoGroupsInsideComplexFields = (fields: unknown): void => {
   }
 
   checkFields(Array.isArray(fields) ? fields : undefined)
+}
+
+/**
+ * Check every markdown and mdx field's `mdxAllow` against its schema and its `renderAs`,
+ * `mdxAllow` and `executable` against each other. Throws on the first problem.
+ */
+export const ensureMarkdownFieldOptions = (fields: readonly FieldConfig[]): void => {
+  for (const field of fields) {
+    if (isMarkdownField(field)) {
+      if (field.mdxAllow !== undefined) {
+        const parsed = mdxAllowlistSchema.safeParse(field.mdxAllow)
+        if (!parsed.success) {
+          const [first] = parsed.error.issues
+          const where = first?.path.join('.') ?? ''
+          throw new Error(
+            `Field "${field.name}": mdxAllow${where === '' ? '' : `.${where}`} ${first?.message ?? 'is invalid'}`,
+          )
+        }
+      }
+      const message = markdownFieldOptionsError(field)
+      if (message !== undefined) throw new Error(message)
+    }
+    if (field.type === 'group' || field.type === 'object') {
+      if ('fields' in field && Array.isArray(field.fields)) ensureMarkdownFieldOptions(field.fields)
+    }
+    if (field.type === 'block' && 'templates' in field && Array.isArray(field.templates)) {
+      for (const template of field.templates) ensureMarkdownFieldOptions(template.fields)
+    }
+  }
 }
 
 /**

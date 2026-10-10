@@ -1267,3 +1267,18 @@ describe('editor.previewBase validation', () => {
     ).toThrow(/previewBase/)
   })
 })
+
+describe('mdxAllow site default', () => {
+  const mdxAllow = { components: { Callout: {} }, htmlTags: [], expressions: false }
+
+  it('is kept by validation and reaches the client config', () => {
+    expect(validateCanopyConfig({ ...gitAuthor, mdxAllow }).mdxAllow).toEqual(mdxAllow)
+    expect(defineCanopyConfig({ ...gitAuthor, mdxAllow }).client().mdxAllow).toEqual(mdxAllow)
+  })
+
+  it('refuses a tag outside the base policy', () => {
+    expect(() =>
+      validateCanopyConfig({ ...gitAuthor, mdxAllow: { htmlTags: ['iframe'] } }),
+    ).toThrow(/HTML tags the base MDX policy accepts/)
+  })
+})

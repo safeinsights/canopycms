@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 
+import type { MdxAllowlist } from '../config'
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
@@ -149,7 +150,7 @@ async function enumerateRoutableEntries<T>(
   // page whose reference is broken still has its own route and data.
   if (isBuildMode()) {
     warnUnknownEntryKeys(entries, phaseLabel)
-    warnUnsafeMarkdown(entries, phaseLabel)
+    warnUnsafeMarkdown(entries, phaseLabel, ctx.services?.config.mdxAllow)
     assertRoutableSlugs(entries, phaseLabel)
     assertBuildEntriesValid(entries, phaseLabel)
     assertNoDuplicateUrlPaths(entries, phaseLabel)
@@ -409,6 +410,7 @@ export interface EntryWithUnsafeMarkdown {
  */
 export function findEntriesWithUnsafeMarkdown(
   items: readonly BuildScanItem[],
+  siteAllow?: MdxAllowlist,
 ): EntryWithUnsafeMarkdown[] {
   const found: EntryWithUnsafeMarkdown[] = []
   for (const item of items) {
@@ -417,6 +419,7 @@ export function findEntriesWithUnsafeMarkdown(
       item.schema,
       item.format,
       item.data as Record<string, unknown>,
+      siteAllow,
     )
     if (fieldPaths.length > 0) found.push({ entryPath: item.entryPath, fieldPaths })
   }
@@ -433,6 +436,7 @@ function unsafeFieldPaths(
   schema: NonNullable<BuildScanItem['schema']>,
   format: BuildScanItem['format'],
   data: Record<string, unknown>,
+  siteAllow: MdxAllowlist | undefined,
 ): string[] {
   let bySchema = unsafeFieldPathsMemo.get(schema)
   if (bySchema === undefined) {
@@ -440,19 +444,23 @@ function unsafeFieldPaths(
     unsafeFieldPathsMemo.set(schema, bySchema)
   }
   const key = createHash('sha256')
-    .update(`${format ?? ''}\0${JSON.stringify(data)}`)
+    .update(`${format ?? ''}\0${JSON.stringify(siteAllow ?? null)}\0${JSON.stringify(data)}`)
     .digest('hex')
   let fieldPaths = bySchema.get(key)
   if (fieldPaths === undefined) {
-    fieldPaths = findMarkdownSafetyIssues(schema, format, data).map((f) => f.fieldPath)
+    fieldPaths = findMarkdownSafetyIssues(schema, format, data, siteAllow).map((f) => f.fieldPath)
     bySchema.set(key, fieldPaths)
   }
   return fieldPaths
 }
 
-/** Warn — never throw — about entries holding code in markdown or MDX that is not `executable`. */
-export function warnUnsafeMarkdown(items: readonly BuildScanItem[], phaseLabel: string): void {
-  const found = findEntriesWithUnsafeMarkdown(items)
+/** Warn — never throw — about entries holding markdown or MDX that a save of a changed field refuses. */
+export function warnUnsafeMarkdown(
+  items: readonly BuildScanItem[],
+  phaseLabel: string,
+  siteAllow?: MdxAllowlist,
+): void {
+  const found = findEntriesWithUnsafeMarkdown(items, siteAllow)
   if (found.length === 0) return
   // Capped and counted for the reason `warnUnknownEntryKeys` gives.
   const shown = found.slice(0, UNKNOWN_KEY_REPORT_LIMIT)
@@ -463,8 +471,8 @@ export function warnUnsafeMarkdown(items: readonly BuildScanItem[], phaseLabel: 
     lines.push(`  …and ${found.length - shown.length} more`)
   }
   console.warn(
-    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry holds' : 'entries hold'} markdown or MDX that runs code during ${phaseLabel}:\n${lines.join('\n')}\n` +
-      `A save keeps it but refuses adding more. Move it into a component, or set \`executable: true\` on a field whose editors you trust as code authors.`,
+    `CanopyCMS static build: ${found.length} ${found.length === 1 ? 'entry holds' : 'entries hold'} markdown or MDX that runs code, or that \`mdxAllow\` excludes, during ${phaseLabel}:\n${lines.join('\n')}\n` +
+      `A save keeps it but refuses adding more. Move code into a component, allow a component or tag in \`mdxAllow\`, or set \`executable: true\` on a field whose editors you trust as code authors.`,
   )
 }
 

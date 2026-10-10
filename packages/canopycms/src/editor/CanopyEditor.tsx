@@ -15,6 +15,7 @@ export interface CanopyEditorProps extends Omit<
   | 'collections'
   | 'previewBaseByCollection'
   | 'previewPrefix'
+  | 'mdxAllow'
   | 'title'
   | 'subtitle'
   | 'themeOptions'
@@ -66,6 +67,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
           entryLinkUrl={config.entryLinkUrl}
           previewBaseByCollection={config.editor?.previewBase}
           previewPrefix={config.editor?.previewPrefix}
+          mdxAllow={config.mdxAllow}
           basePath={config.basePath}
           themeOptions={resolvedTheme}
           AccountComponent={config.editor?.AccountComponent}

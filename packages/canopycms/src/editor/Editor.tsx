@@ -27,7 +27,7 @@ type TreeController = ReturnType<typeof useTree>
 
 const noop = (): void => {}
 
-import type { ContentFormat, EntrySchema, EntryTypeUnavailable } from '../config'
+import type { ContentFormat, EntrySchema, EntryTypeUnavailable, MdxAllowlist } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
@@ -73,7 +73,12 @@ import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
-import { AssetContextProvider, authenticatedAssetBase, useApiClient } from './context'
+import {
+  AssetContextProvider,
+  SiteMdxAllowContext,
+  authenticatedAssetBase,
+  useApiClient,
+} from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
 
@@ -141,6 +146,8 @@ export interface EditorProps {
   previewBaseByCollection?: Record<string, string | false>
   /** `editor.previewPrefix` from config: put in front of every preview iframe `src` (see `buildPreviewSrc`). */
   previewPrefix?: string
+  /** `mdxAllow` from config: what fields checked as MDX accept, so the toolbar writes nothing else. */
+  mdxAllow?: MdxAllowlist
   currentUser?: string
   canResolveComments?: boolean
   /**
@@ -196,6 +203,7 @@ const EditorContent: React.FC<EditorProps> = ({
   operatingMode,
   previewBaseByCollection,
   previewPrefix,
+  mdxAllow,
   currentUser = 'current-user',
   canResolveComments = true,
   basePath,
@@ -1187,33 +1195,36 @@ const EditorContent: React.FC<EditorProps> = ({
                       <NoEditPermissionNotice entryPath={currentEntry.path} />
                     ) : schema.length > 0 && effectiveValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
-                        <FormRenderer
-                          fields={schema}
-                          value={effectiveValue}
-                          onChange={(next) => {
-                            const contentId = currentEntry?.contentId
-                            if (contentId) {
-                              setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                        <SiteMdxAllowContext.Provider value={mdxAllow}>
+                          <FormRenderer
+                            fields={schema}
+                            value={effectiveValue}
+                            onChange={(next) => {
+                              const contentId = currentEntry?.contentId
+                              if (contentId) {
+                                setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                              }
+                            }}
+                            customRenderers={customRenderers}
+                            branch={branchNameState}
+                            comments={comments}
+                            currentEntryPath={selectedPath}
+                            currentUserId={currentUser}
+                            canResolve={canResolveComments}
+                            focusedFieldPath={focusedFieldPath}
+                            highlightThreadId={highlightThreadId}
+                            onAddComment={handleAddComment}
+                            onResolveThread={handleResolveThread}
+                            fieldErrors={fieldErrors}
+                            format={currentEntry.format}
+                            conflictNotice={
+                              !!(
+                                currentEntry?.contentId &&
+                                currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                              )
                             }
-                          }}
-                          customRenderers={customRenderers}
-                          branch={branchNameState}
-                          comments={comments}
-                          currentEntryPath={selectedPath}
-                          currentUserId={currentUser}
-                          canResolve={canResolveComments}
-                          focusedFieldPath={focusedFieldPath}
-                          highlightThreadId={highlightThreadId}
-                          onAddComment={handleAddComment}
-                          onResolveThread={handleResolveThread}
-                          fieldErrors={fieldErrors}
-                          conflictNotice={
-                            !!(
-                              currentEntry?.contentId &&
-                              currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                            )
-                          }
-                        />
+                          />
+                        </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
                     ) : (
                       <CenteredMessage>No fields to edit.</CenteredMessage>
