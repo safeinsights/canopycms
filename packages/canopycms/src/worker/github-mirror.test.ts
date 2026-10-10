@@ -93,7 +93,9 @@ describe('GitHubMirror', () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
 
-    await mirror.exclusive((m) => m.pushToGitHub(githubPath, 'feature', published))
+    await mirror.exclusive((m) =>
+      m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] }),
+    )
 
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
     expect(await refs(mirror.gitDir)).not.toContain('refs/canopy/outgoing/feature')
@@ -107,7 +109,10 @@ describe('GitHubMirror', () => {
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', next, { lease: notGitHubsTip }),
+        m.pushToGitHub(githubPath, 'feature', next, {
+          lease: notGitHubsTip,
+          protectedBranches: [],
+        }),
       ),
     ).rejects.toThrow(/stale info/)
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(first)
@@ -122,7 +127,7 @@ describe('GitHubMirror', () => {
     await mirror.exclusive(async (m) => {
       await m.fetchFromGitHub(githubPath)
       await m.publishTrackingRefs()
-      await m.pushToGitHub(githubPath, 'feature', published)
+      await m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] })
     })
 
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
@@ -199,7 +204,9 @@ describe('GitHubMirror', () => {
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/malformed', sha)
 
     await expect(
-      mirror.exclusive((m) => m.pushToGitHub(githubPath, 'malformed', sha)),
+      mirror.exclusive((m) =>
+        m.pushToGitHub(githubPath, 'malformed', sha, { protectedBranches: [] }),
+      ),
     ).rejects.toThrow(/fsck|missingEmail|bad/i)
     expect(await tip(githubPath, 'refs/heads/malformed')).toBeNull()
   })
@@ -302,7 +309,9 @@ describe('GitHubMirror', () => {
     )
 
     const restarted = new GitHubMirror(path.join(root, 'state'), remoteGitPath, 30_000)
-    await restarted.exclusive((m) => m.pushToGitHub(githubPath, 'a/b', published))
+    await restarted.exclusive((m) =>
+      m.pushToGitHub(githubPath, 'a/b', published, { protectedBranches: [] }),
+    )
 
     expect(await tip(githubPath, 'refs/heads/a/b')).toBe(published)
   })
@@ -311,7 +320,10 @@ describe('GitHubMirror', () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', published, { lease: 'refs/heads/main' }),
+        m.pushToGitHub(githubPath, 'feature', published, {
+          lease: 'refs/heads/main',
+          protectedBranches: [],
+        }),
       ),
     ).rejects.toThrow(/Not a commit ID: "refs\/heads\/main"/)
   })
@@ -339,7 +351,9 @@ describe('GitHubMirror', () => {
 
   it('refuses a commit argument that is not an object ID', async () => {
     await expect(
-      mirror.exclusive((m) => m.pushToGitHub(githubPath, 'feature', 'main:refs/heads/x')),
+      mirror.exclusive((m) =>
+        m.pushToGitHub(githubPath, 'feature', 'main:refs/heads/x', { protectedBranches: [] }),
+      ),
     ).rejects.toThrow(/Not a commit ID/)
   })
 })

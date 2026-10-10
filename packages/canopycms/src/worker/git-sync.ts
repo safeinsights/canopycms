@@ -206,11 +206,12 @@ export async function pushSettingsBranches(
       // worker's private mirror, which alone ever sees the credential.
       const sha = (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
       const githubUrl = await ctx.buildGitHubUrl()
-      await ctx
-        .githubMirror()
-        .exclusive((mirror) =>
-          mirror.pushToGitHub(githubUrl, settingsBranch, sha, { signal: ctx.shutdownSignal() }),
-        )
+      await ctx.githubMirror().exclusive((mirror) =>
+        mirror.pushToGitHub(githubUrl, settingsBranch, sha, {
+          signal: ctx.shutdownSignal(),
+          protectedBranches: [ctx.baseBranch],
+        }),
+      )
       workerLog(`Pushed settings branch ${settingsBranch} to GitHub`)
     } catch (err) {
       // Non-fatal: the branch may already be up to date, and this call site has

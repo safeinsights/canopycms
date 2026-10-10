@@ -25,6 +25,7 @@ import {
   isStaleLeaseRejection,
   workflowPushRefusalFile,
 } from '../utils/git'
+import { ProtectedBranchPushError } from './github-mirror'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -716,11 +717,17 @@ export async function pushBranchToGitHub(
   // killed after it is found already done by the re-run.
   const outcome = await ctx.githubMirror().exclusive(async (mirror) => {
     const push = (lease?: string) =>
-      mirror.pushToGitHub(githubUrl, branch, outgoingSha, { lease, signal })
+      mirror.pushToGitHub(githubUrl, branch, outgoingSha, {
+        lease,
+        signal,
+        protectedBranches: [ctx.baseBranch],
+      })
     try {
       await push(marker)
       return 'pushed'
     } catch (err) {
+      // A retry can never make the branch not protected.
+      if (err instanceof ProtectedBranchPushError) throw new PermanentTaskError(err.message)
       const message = getErrorMessage(err)
       throwIfWorkflowRefusal(branch, message)
 
