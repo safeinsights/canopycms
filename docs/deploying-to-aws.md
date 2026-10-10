@@ -1033,8 +1033,8 @@ worker bundle (every canopycms upgrade), an AMI refresh, a role or user-data
 change. Without it, CloudFormation would leave the old worker running.
 
 Because `minInstancesInService` must be `0` here, every such deploy leaves no
-worker while the replacement boots (installing packages and mounting EFS,
-typically about 2 minutes). This is expected and safe:
+worker while the replacement boots (patching, installing packages and mounting EFS; see
+[The worker instance](#the-worker-instance)). This is expected and safe:
 
 - The task queue and branch workspaces live on EFS, so the replacement worker
   picks up where the old one left off.
@@ -1052,7 +1052,7 @@ typically about 2 minutes). This is expected and safe:
 - No worker starts until the old one releases the worker lock on EFS.
 
 **The boot script fails fast on anything the worker needs.** A failed package
-install, EFS mount, bundle unpack or service start shuts the instance down so
+install, EFS mount, bundle download or checksum, or service start shuts the instance down so
 the ASG replaces it — the only automatic recovery here, since a half-booted
 instance passes the EC2-only health check forever. The best-effort CloudWatch
 agent setup runs after fail-fast is turned off, so a mirror hiccup there cannot
@@ -1063,6 +1063,43 @@ There is deliberately no `cfn-signal` readiness gate: the unit is `Type=simple`
 with `Restart=always`, so `systemctl start` succeeds the instant the process
 execs, crash-loop or not. To confirm a redeploy took, check the new instance's
 log stream (see [Worker observability](#worker-observability)).
+
+## The worker instance
+
+The worker holds the GitHub credential, so `CanopyCmsService` hardens its instance:
+
+- **Public subnet, no inbound traffic.** It reaches GitHub and AWS through the internet
+  gateway; a NAT gateway would cost more than the rest of the stack. Its security group admits
+  nothing inbound.
+- **IMDSv2 only**, with a hop limit of 1: metadata answers only processes on the host.
+- **The bundle runs only if its sha256 matches** the hash taken at synth; a mismatch fails the
+  boot. The worker can read that one object, not the whole CDK asset bucket.
+- **EFS refuses clients without TLS or IAM** (`efsEnforceIamAndTls`, default `true`). The worker
+  mounts with `tls,iam` through the access point its role is granted. The Lambda mounts with
+  IAM through the same access point, and
+  [uses TLS for every file-system connection](https://docs.aws.amazon.com/lambda/latest/dg/security-dataprotection.html).
+  Anything else that mounts this file system needs both, plus `ClientMount`.
+- **An encrypted gp3 root volume**, at the AMI's size. If your account's default EBS key is a
+  customer-managed key, grant the Auto Scaling service-linked role on it.
+- **Patched between deploys, except the kernel.** AL2023 pins `dnf` to its AMI's repository
+  release, so every boot first upgrades to the latest release. The kernel is excluded, because a
+  new one applies only at a reboot. The running kernel is therefore always the AMI's, and it moves
+  only when a deploy resolves a newer AMI: deploy now and then even when nothing else changed.
+  The upgrade adds an estimated 1–3 minutes to a boot (not measured). It also makes boots
+  non-deterministic: a replacement can get newer git, Node or efs-utils than the AMI. A boot that
+  fails shuts the instance down and the group launches another. The trap prints the failing line to that
+  instance's `aws ec2 get-console-output`.
+- **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
+  Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
+  which boots while the old one drains. Saves keep working; publishing, pull requests and sync
+  wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
+  12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
+- **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its log
+  directory and a private `/tmp` are writable, not its own code; `ProtectHome=tmpfs`, no
+  capabilities, and the kernel, device and namespace protections.
+- **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
+  exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
+  their vault refuses deletes until you change its access policy.
 
 ## Security Model
 
@@ -1088,10 +1125,11 @@ endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ v
 rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
 argument, not an impossibility argument.
 
-The worker's own AWS permissions are correspondingly narrow: EFS client access, Secrets
-Manager reads for its specific secrets, SSM core (the Session Manager channel, for
-operators whose roles allow it), read access to the CDK asset bucket holding its code
-bundle, and write-only access to its one CloudWatch log group.
+The worker's own AWS permissions are correspondingly narrow: EFS mount and write through
+the shared access point, Secrets Manager reads for its specific secrets, SSM core (the Session
+Manager channel, for operators whose roles allow it), read on its one bundle object, and
+write-only access to its one CloudWatch log group. [The worker instance](#the-worker-instance)
+covers the instance itself.
 
 Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 `CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
