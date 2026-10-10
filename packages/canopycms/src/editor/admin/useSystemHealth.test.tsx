@@ -2,6 +2,10 @@ import { renderHook, waitFor, act } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSystemHealth } from './useSystemHealth'
 import type { MockApiClient } from '../../api/__test__/mock-client'
+import { mockSuccess } from '../../api/__test__/mock-client'
+import type { BranchHealthData, BranchHealthResponse } from '../../api/admin-branch-health'
+import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
+import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
 
 // Mock the API client module
@@ -205,5 +209,160 @@ describe('useSystemHealth', () => {
     })
     expect(mockClient.admin.status).not.toHaveBeenCalled()
     expect(result.current).toBeDefined()
+  })
+
+  describe('duplicate-ID scan', () => {
+    const healthy = (dirName: string, duplicateIdScan?: DuplicateIdScan): BranchHealthEntry => ({
+      dirName,
+      kind: 'healthy',
+      branch: {
+        name: dirName,
+        status: 'editing',
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      },
+      ...(duplicateIdScan ? { duplicateIdScan } : {}),
+    })
+    const found: DuplicateIdScan = {
+      state: 'found',
+      duplicates: [
+        {
+          id: unsafeAsContentId('a1b2c3d4e5f6'),
+          keptPath: unsafeAsPhysicalPath('content/posts/a.a1b2c3d4e5f6.json'),
+          droppedPaths: [unsafeAsPhysicalPath('content/posts/b.a1b2c3d4e5f6.json')],
+        },
+      ],
+    }
+    const scanned = (entries: BranchHealthEntry[], truncated = false): BranchHealthData => ({
+      entries,
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      duplicateIdScan: { budgetMs: 20_000, truncated },
+    })
+    const flaggedCalls = () =>
+      mockClient.admin.branchHealth.mock.calls.filter(([p]) => p?.duplicates === '1').length
+
+    it('scans once on open, keyed by dirName, and the 30s poll never asks for it', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      mockClient.admin.branchHealth.mockImplementation(async (params) =>
+        mockSuccess(
+          params?.duplicates === '1'
+            ? scanned([healthy('a', found), healthy('b', { state: 'none' })], true)
+            : { entries: [healthy('a'), healthy('b')], generatedAt: '2026-01-01T00:00:00.000Z' },
+        ),
+      )
+      const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+
+      await vi.waitFor(() => expect(result.current.duplicateIdScan).not.toBeNull())
+      expect(result.current.duplicateIdScan?.byDir).toEqual({ a: found, b: { state: 'none' } })
+      expect(result.current.duplicateIdScan?.truncated).toBe(true)
+      expect(flaggedCalls()).toBe(1)
+      expect(mockClient.admin.branchHealth).toHaveBeenCalledWith({})
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(mockClient.admin.branchHealth.mock.calls.length).toBeGreaterThanOrEqual(4)
+      expect(flaggedCalls()).toBe(1)
+    })
+
+    it('clears the previous scan and reports the error when a scan request fails', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(mockSuccess(scanned([healthy('a', found)])))
+      const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+      await waitFor(() => expect(result.current.duplicateIdScan).not.toBeNull())
+
+      mockClient.admin.branchHealth.mockResolvedValue({ ok: false, status: 500, error: 'EIO' })
+      await act(async () => {
+        await result.current.checkDuplicateIds()
+      })
+
+      expect(result.current.duplicateIdScanError).toBe('EIO')
+      expect(result.current.duplicateIdScan).toBeNull()
+      expect(result.current.duplicateIdScanLoading).toBe(false)
+    })
+
+    it('repairDuplicateIds archives, notifies, and re-scans', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      mockClient.admin.branchHealth.mockResolvedValue(mockSuccess(scanned([healthy('a', found)])))
+      mockClient.admin.repairContentDuplicates.mockResolvedValueOnce(
+        mockSuccess({
+          resolved: [
+            {
+              id: 'a1b2c3d4e5f6',
+              keptPath: 'content/posts/a.a1b2c3d4e5f6.json',
+              archivedAs: ['content/posts/.duplicate-content-id.20260101T000000Z.b.json'],
+            },
+          ],
+        }),
+      )
+      const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+      await waitFor(() => expect(result.current.duplicateIdScan).not.toBeNull())
+      const before = flaggedCalls()
+
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess(scanned([healthy('a', { state: 'none' })])),
+      )
+      await act(async () => {
+        await result.current.repairDuplicateIds('a')
+      })
+
+      expect(mockClient.admin.repairContentDuplicates).toHaveBeenCalledWith({ dirName: 'a' })
+      expect(mockClient.admin.purgeBranchDir).not.toHaveBeenCalled()
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: 'Archived 1 duplicate file',
+        color: 'green',
+      })
+      expect(flaggedCalls()).toBe(before + 1)
+      expect(result.current.duplicateIdScan?.byDir.a).toEqual({ state: 'none' })
+    })
+
+    it('re-scans after a failed repair too, and shows the server error', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      mockClient.admin.branchHealth.mockResolvedValue(mockSuccess(scanned([healthy('a', found)])))
+      mockClient.admin.repairContentDuplicates.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'No duplicate content IDs found',
+      })
+      const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+      await waitFor(() => expect(result.current.duplicateIdScan).not.toBeNull())
+      const before = flaggedCalls()
+
+      await act(async () => {
+        await result.current.repairDuplicateIds('a')
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: 'No duplicate content IDs found',
+        color: 'red',
+      })
+      expect(flaggedCalls()).toBe(before + 1)
+    })
+
+    it('ignores an older scan response that lands after a newer one', async () => {
+      let resolveFirst: (value: BranchHealthResponse) => void = () => {}
+      mockClient.admin.branchHealth.mockImplementation((params) =>
+        params?.duplicates === '1' && flaggedCalls() === 1
+          ? new Promise((resolve) => {
+              resolveFirst = resolve
+            })
+          : Promise.resolve(mockSuccess(scanned([healthy('a', { state: 'none' })]))),
+      )
+      const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+      await waitFor(() => expect(flaggedCalls()).toBe(1))
+
+      await act(async () => {
+        await result.current.checkDuplicateIds()
+      })
+      expect(result.current.duplicateIdScan?.byDir.a).toEqual({ state: 'none' })
+
+      await act(async () => {
+        resolveFirst(mockSuccess(scanned([healthy('a', found)])))
+        await Promise.resolve()
+      })
+      expect(result.current.duplicateIdScan?.byDir.a).toEqual({ state: 'none' })
+      expect(result.current.duplicateIdScanLoading).toBe(false)
+    })
   })
 })

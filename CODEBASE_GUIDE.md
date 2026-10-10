@@ -124,7 +124,7 @@ Route handlers, one file per endpoint namespace:
 - `user.ts` — `/user`: current user info
 - `schema.ts` — `/schema`: collection, entry-type and ordering CRUD, admin only
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
-- `admin-branch-health.ts` — admin branch-health scan, purge and repair-metadata endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
+- `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
 
 Support files:
@@ -260,7 +260,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `init.ts` — `init()`, `initDeployAws()`, `workerRunOnce()` as library functions, no CLI logic
 - `templates.ts` — template generators tailored by `authProvider` and `staticBuild`
 - `template-files/` — the scaffolded files themselves: config, routes, edit page, middleware, Dockerfile, workflow, CDK app
-- `project-detect.ts` — best-effort detection of package manager, default branch, GitHub repo, missing CDK deps
+- `project-detect.ts` — detects package manager, default branch, GitHub repo, missing CDK deps; exports `PLACEHOLDER_GITHUB_REPO`
+- `aws-deploy-example.ts` — `renderAwsDeployExample()` renders `examples/aws-deployment/` (`pnpm generate:aws-example`)
 - `project-root.ts` — `findProjectRoot`, walks up to the nearest `canopycms.config.ts`
 - `sync.ts` — interactive wrapper over `sync-core.ts` for content sync between working tree and branch workspaces
 - `migrate.ts` — converts a plain content tree to CanopyCMS naming conventions, idempotent

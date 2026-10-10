@@ -25,6 +25,9 @@ import {
   bumpBranchRegistry,
   TRASH_NAME_RE,
   CORRUPT_ARCHIVE_RE,
+  POSTS_COLLECTION_DIR,
+  seedDuplicateContentId,
+  listPostsCollectionFiles,
 } from '../fixtures/admin-workspace'
 
 /** Navigate to the editor, open System health, and land on the loaded Branches tab. */
@@ -300,5 +303,60 @@ test.describe('Admin Branch Health', () => {
     // but the server only accepted 'submitted' and 400'd -- this is that
     // regression, end to end.
     await expect.poll(async () => (await readBranchMetadata(branchName)).status).toBe('archived')
+  })
+
+  test('duplicate content IDs: the badge opens its own confirmation; cancel changes nothing, confirm archives the duplicate', async ({
+    page,
+  }) => {
+    const branchName = `dup-ids-${Date.now()}`
+    await createBranchViaAPI(BASE_URL, branchName, 'admin')
+    const { keptFile, droppedFile } = await seedDuplicateContentId(branchName)
+    const repairRequests: string[] = []
+    page.on('request', (req) => {
+      if (req.url().includes('/repair-content-duplicates')) repairRequests.push(req.url())
+    })
+
+    const adminPage = await openBranchesTab(page)
+    const badge = adminPage.duplicateIdsBadge(branchName)
+    await expect(badge).toHaveText('1 duplicate ID')
+    const dialog = page.getByRole('dialog', { name: 'Fix duplicate content IDs' })
+
+    await test.step('the dialog names the kept and archived files; Cancel changes nothing', async () => {
+      await badge.click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog).toContainText(`Keep: ${POSTS_COLLECTION_DIR}/${keptFile}`)
+      await expect(dialog).toContainText(`Archive: ${POSTS_COLLECTION_DIR}/${droppedFile}`)
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(dialog).toBeHidden()
+
+      expect(repairRequests).toEqual([])
+      const files = await listPostsCollectionFiles(branchName)
+      expect(files).toEqual(expect.arrayContaining([keptFile, droppedFile]))
+      expect(files.some((f) => f.startsWith('.duplicate-content-id.'))).toBe(false)
+      await expect(badge).toBeVisible()
+    })
+
+    await test.step('Archive duplicates archives only the dropped file, and the badge clears', async () => {
+      await badge.click()
+      await adminPage.confirmDialog('Fix duplicate content IDs', 'Archive duplicates')
+
+      await expect.poll(() => repairRequests.length).toBe(1)
+      await expect
+        .poll(async () => {
+          const files = await listPostsCollectionFiles(branchName)
+          return {
+            kept: files.includes(keptFile),
+            dropped: files.includes(droppedFile),
+            archived: files.some(
+              (f) => f.startsWith('.duplicate-content-id.') && f.endsWith(droppedFile),
+            ),
+          }
+        })
+        .toEqual({ kept: true, dropped: false, archived: true })
+      await expect(badge).toHaveCount(0)
+      await expect(adminPage.panel.getByTestId('duplicate-id-summary')).toHaveText(
+        'No duplicate content IDs found.',
+      )
+    })
   })
 })

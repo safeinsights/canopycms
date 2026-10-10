@@ -25,6 +25,7 @@
     "lint:actions": "node scripts/check-action-pins.mjs",
     "lint:scripts": "eslint scripts/ *.mjs *.ts packages/*/vitest.config.ts --max-warnings 0",
     "check:esm": "node scripts/add-js-extensions.mjs --self-test && node scripts/check-esm-imports.mjs",
+    "generate:aws-example": "pnpm --filter canopycms run generate:aws-example",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "pnpm -r --no-bail run test",

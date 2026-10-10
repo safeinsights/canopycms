@@ -269,6 +269,35 @@ export async function patchBranchMetadata(
   return nextBranch
 }
 
+/** The test app's posts collection directory, relative to a branch's root. */
+export const POSTS_COLLECTION_DIR = 'content/posts.qrstuvwxyz12'
+
+/**
+ * Write two post files embedding the same content ID into a branch's posts
+ * collection — the state a crash inside `renameEntry()` leaves behind. The
+ * scan keeps the lexicographically smaller path, so `keptFile` is `first`.
+ */
+export async function seedDuplicateContentId(
+  dirName: string,
+): Promise<{ id: string; keptFile: string; droppedFile: string }> {
+  const id = 'dupE2eTest12'
+  const keptFile = `post.first.${id}.json`
+  const droppedFile = `post.second.${id}.json`
+  const dir = path.join(BRANCHES_DIR, dirName, POSTS_COLLECTION_DIR)
+  await fs.mkdir(dir, { recursive: true })
+  for (const file of [keptFile, droppedFile]) {
+    await fs.writeFile(path.join(dir, file), JSON.stringify({ title: file }, null, 2), 'utf8')
+  }
+  return { id, keptFile, droppedFile }
+}
+
+/** File names in a branch's posts collection, dot-prefixed archives included. */
+export async function listPostsCollectionFiles(dirName: string): Promise<string[]> {
+  return fs
+    .readdir(path.join(BRANCHES_DIR, dirName, POSTS_COLLECTION_DIR))
+    .catch(() => [] as string[])
+}
+
 /** Directory names directly under content-branches/ (includes dot-prefixed). */
 export async function listBranchDirs(): Promise<string[]> {
   const entries = await fs.readdir(BRANCHES_DIR, { withFileTypes: true }).catch(() => [])

@@ -329,8 +329,8 @@ export class CanopyApiClient {
 
   readonly admin = {
     /** GET /admin/branch-health */
-    branchHealth: (): Promise<BranchHealthResponse> => {
-      return this.request('GET', '/admin/branch-health')
+    branchHealth: (params: Record<string, string>): Promise<BranchHealthResponse> => {
+      return this.request('GET', this.buildPath('/admin/branch-health', params))
     },
 
     /** POST /admin/branch-dirs/:dirName/purge */

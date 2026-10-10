@@ -74,6 +74,8 @@ replaces each `next` with its number.
 | 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                |
 | 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--hand-installed-units-only)                                                                              | Hand-installed units    |
 | 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default     |
+| next | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand       |
+| next | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts       |
 | next | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images       |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
@@ -542,6 +544,22 @@ worker version, media-storage state) and warns when API and worker versions diff
 (`CANOPY_SOURCE_SHA: ${{ github.sha }}`).
 
 **Now deletable.** Hand-rolled version or commit stamping, or a build-info endpoint.
+
+### The AWS example workflow gains the template's triggers and dependency checks
+
+**What changed.** (next) Like the one `init-deploy aws` writes, `examples/aws-deployment/deploy-cms.yml`
+now deploys on `next.config.*`, `middleware.ts` and `public/**` changes, and checks `canopycms` and
+`aws-cdk` are installed.
+
+**To adopt.** If you copied it by hand, add those `paths:` and packages.
+
+### `GET /admin/branch-health` scans for duplicate content IDs only on request — **behaviour change**
+
+**What changed.** (next int) The duplicate-ID scan runs only with `?duplicates=1`, under a 20 s
+budget. Each healthy entry then carries `duplicateIdScan` (`none`, `found` or `unknown`), replacing
+`duplicateContentIds`, and `duplicateIdScan.truncated` says whether the budget cut the scan short.
+
+**To adopt.** Scripts reading `duplicateContentIds`: pass `duplicates=1`, read `duplicateIdScan`.
 
 ### `canopycms-cdk`: `AssetSupport` serves images from S3 only — **breaking**
 

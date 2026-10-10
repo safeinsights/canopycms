@@ -2,12 +2,15 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { scanBranchHealth } from './branch-health'
 import { getBranchMetadataFileManager } from './branch-metadata'
+import { ContentIdIndex } from './content-id-index'
 import { generateId } from './id'
 import { mockConsole } from './test-utils/console-spy'
+
+const SCAN = { duplicateIdScan: { budgetMs: 10_000 } }
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branch-health-'))
 
@@ -78,7 +81,7 @@ describe('scanBranchHealth', () => {
     expect(feature?.branch?.name).toBe('feature-x')
   })
 
-  it('omits duplicateContentIds for a healthy branch with no duplicates', async () => {
+  it('reports none for a scanned healthy branch with no duplicates, and nothing when the scan was not requested', async () => {
     const root = await tmpDir()
     await createHealthyBranch(root, 'clean-branch')
     await fs.mkdir(path.join(root, 'clean-branch', 'content', 'posts'), { recursive: true })
@@ -88,9 +91,12 @@ describe('scanBranchHealth', () => {
       'utf-8',
     )
 
-    const entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+    const entries = await scanBranchHealth(root, { baseBranchName: 'main', ...SCAN })
     expect(entries[0].kind).toBe('healthy')
-    expect(entries[0].duplicateContentIds).toBeUndefined()
+    expect(entries[0].duplicateIdScan).toEqual({ state: 'none' })
+
+    const unscanned = await scanBranchHealth(root, { baseBranchName: 'main' })
+    expect(unscanned[0].duplicateIdScan).toBeUndefined()
   })
 
   it('classifies a healthy branch with a duplicate content ID, reporting it without downgrading kind (the branch stays usable)', async () => {
@@ -112,7 +118,7 @@ describe('scanBranchHealth', () => {
     const consoleSpy = mockConsole()
     let entries: Awaited<ReturnType<typeof scanBranchHealth>>
     try {
-      entries = await scanBranchHealth(root, { baseBranchName: 'main' })
+      entries = await scanBranchHealth(root, { baseBranchName: 'main', ...SCAN })
       expect(consoleSpy).toHaveWarned(dupId)
     } finally {
       consoleSpy.restore()
@@ -122,11 +128,15 @@ describe('scanBranchHealth', () => {
     // for that one ID, it does not make branch.json (or the branch) corrupt.
     expect(entries[0].kind).toBe('healthy')
     expect(entries[0].branch?.name).toBe('dup-branch')
-    expect(entries[0].duplicateContentIds).toHaveLength(1)
-    expect(entries[0].duplicateContentIds?.[0]).toMatchObject({
-      id: dupId,
-      keptPath: `content/posts/post.new-slug.${dupId}.json`,
-      droppedPaths: [`content/posts/post.old-slug.${dupId}.json`],
+    expect(entries[0].duplicateIdScan).toEqual({
+      state: 'found',
+      duplicates: [
+        {
+          id: dupId,
+          keptPath: `content/posts/post.new-slug.${dupId}.json`,
+          droppedPaths: [`content/posts/post.old-slug.${dupId}.json`],
+        },
+      ],
     })
   })
 
@@ -146,11 +156,11 @@ describe('scanBranchHealth', () => {
     const quietSpy = mockConsole()
     let withDefault: Awaited<ReturnType<typeof scanBranchHealth>>
     try {
-      withDefault = await scanBranchHealth(root, { baseBranchName: 'main' })
+      withDefault = await scanBranchHealth(root, { baseBranchName: 'main', ...SCAN })
     } finally {
       quietSpy.restore()
     }
-    expect(withDefault[0].duplicateContentIds).toBeUndefined()
+    expect(withDefault[0].duplicateIdScan).toEqual({ state: 'none' })
 
     const consoleSpy = mockConsole()
     let withCustomRoot: Awaited<ReturnType<typeof scanBranchHealth>>
@@ -158,12 +168,63 @@ describe('scanBranchHealth', () => {
       withCustomRoot = await scanBranchHealth(root, {
         baseBranchName: 'main',
         contentRootName: 'my-content',
+        ...SCAN,
       })
       expect(consoleSpy).toHaveWarned(dupId)
     } finally {
       consoleSpy.restore()
     }
-    expect(withCustomRoot[0].duplicateContentIds).toHaveLength(1)
+    expect(withCustomRoot[0].duplicateIdScan?.state).toBe('found')
+  })
+
+  describe('duplicate-ID scan that does not finish', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('reports unknown/failed, never none, when a branch scan throws', async () => {
+      const root = await tmpDir()
+      await createHealthyBranch(root, 'unreadable')
+      vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames').mockRejectedValue(
+        Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+      )
+
+      const entries = await scanBranchHealth(root, { baseBranchName: 'main', ...SCAN })
+      expect(entries[0].kind).toBe('healthy')
+      expect(entries[0].duplicateIdScan).toEqual({ state: 'unknown', reason: 'failed' })
+    })
+
+    it('reports unknown/out-of-time for a branch reached after the budget is spent', async () => {
+      const root = await tmpDir()
+      await createHealthyBranch(root, 'late')
+      const build = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+
+      const entries = await scanBranchHealth(root, {
+        baseBranchName: 'main',
+        duplicateIdScan: { budgetMs: 0 },
+      })
+      expect(entries[0].duplicateIdScan).toEqual({ state: 'unknown', reason: 'out-of-time' })
+      expect(build).not.toHaveBeenCalled()
+    })
+
+    it('gives up on a scan still running at the deadline, and later branches are not scanned', async () => {
+      const root = await tmpDir()
+      await createHealthyBranch(root, 'a-slow')
+      await createHealthyBranch(root, 'b-next')
+      const build = vi
+        .spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+        .mockImplementation(() => new Promise<void>(() => {}))
+
+      const entries = await scanBranchHealth(root, {
+        baseBranchName: 'main',
+        duplicateIdScan: { budgetMs: 50 },
+      })
+      expect(entries.map((e) => e.duplicateIdScan)).toEqual([
+        { state: 'unknown', reason: 'out-of-time' },
+        { state: 'unknown', reason: 'out-of-time' },
+      ])
+      expect(build).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('classifies a directory with invalid-JSON branch.json as corrupt-metadata', async () => {
