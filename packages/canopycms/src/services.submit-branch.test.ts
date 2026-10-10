@@ -10,6 +10,7 @@ import { GitManager, ensureGitExcludePattern } from './git-manager'
 import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import type { BranchContext } from './types'
 import { NothingToSubmitError, type CanopyServices } from './services'
+import { BranchMetadataFileManager } from './branch-metadata'
 import { ContentWriteLockBusyError, tryAcquireContentWriteLock } from './utils/content-write-lock'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
@@ -460,7 +461,10 @@ describe('services submitBranch', () => {
       expect(await trailers()).toContain('Edited-by: Raj Patel (user_raj)')
     })
 
-    it('keeps the uncommitted editors when there is nothing to submit', async () => {
+    it('keeps the uncommitted editors when a commit is undone for having nothing to submit', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      await services.submitBranch({ context, message: 'first submit' })
+      await fs.rm(path.join(localPath, 'a.txt'))
       await writeEditors(['user_raj'], ['user_raj'])
 
       await expect(services.submitBranch({ context, submitter: jane })).rejects.toThrow(
@@ -468,6 +472,46 @@ describe('services submitBranch', () => {
       )
 
       expect((await recordedOnDisk()).uncommittedEditors).toEqual(['user_raj'])
+    })
+
+    it('names, by id, an editor recorded after the names were looked up', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+
+      await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => {
+          if (id === 'user_raj')
+            await writeEditors(['user_raj', 'user_late'], ['user_raj', 'user_late'])
+          return people[id] ?? null
+        },
+      })
+
+      expect(await trailers()).toBe(
+        'Edited-by: Jane Doe (user_2abc)\nEdited-by: Raj Patel (user_raj)\nEdited-by: user_late',
+      )
+    })
+
+    it('lists in the PR an editor recorded after the commit read the editors', async () => {
+      await writeEditors(['user_raj'], ['user_raj'])
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'content', 'utf8')
+      const markCommitted = BranchMetadataFileManager.prototype.markEditorsCommitted
+      vi.spyOn(BranchMetadataFileManager.prototype, 'markEditorsCommitted').mockImplementation(
+        async function (this: BranchMetadataFileManager, ids) {
+          await markCommitted.call(this, ids)
+          await writeEditors(['user_raj', 'user_ana'], ['user_ana'])
+        },
+      )
+
+      const result = await services.submitBranch({
+        context,
+        submitter: jane,
+        lookupEditor: async (id) => people[id] ?? null,
+      })
+
+      expect(await trailers()).not.toContain('user_ana')
+      expect(result.editors.map((e) => e.userId)).toEqual(['user_raj', 'user_ana'])
     })
 
     it('credits an editor by id when the lookup finds no one', async () => {

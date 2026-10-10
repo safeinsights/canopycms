@@ -552,7 +552,7 @@ const repairContentDuplicatesHandler = async (
   const resolved: RepairedContentDuplicate[] = []
 
   try {
-    const result = await withContentWriteLock(
+    return await withContentWriteLock(
       dirPath,
       async (): Promise<RepairContentDuplicatesResponse> => {
         // Re-derive under the lock -- never trust a pre-lock scan; a
@@ -595,11 +595,6 @@ const repairContentDuplicatesHandler = async (
       },
       DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
     )
-    // The archived files leave the branch at its next submit, so the admin is one of its editors.
-    // No `writableBranch` guard can say so: this route names a directory, not a branch.
-    if (result.ok)
-      await ctx.services.recordBranchEditor({ branchRoot: dirPath, baseRoot }, req.user)
-    return result
   } catch (err: unknown) {
     if (err instanceof ContentWriteLockBusyError) {
       return { ok: false, status: 409, error: err.message }
@@ -611,6 +606,13 @@ const repairContentDuplicatesHandler = async (
       error: completed.length
         ? `${getErrorMessage(err)} (partially repaired first - already archived: ${completed.join(', ')})`
         : getErrorMessage(err),
+    }
+  } finally {
+    // Archived files leave the branch at its next submit, a partial repair's included, so the
+    // admin is one of its editors. No `writableBranch` guard can say so: this route names a
+    // directory, not a branch.
+    if (resolved.length > 0) {
+      await ctx.services.recordBranchEditor({ branchRoot: dirPath, baseRoot }, req.user)
     }
   }
 }
