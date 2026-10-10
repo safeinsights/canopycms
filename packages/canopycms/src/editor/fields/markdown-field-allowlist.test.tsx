@@ -148,16 +148,110 @@ describe('a field whose allowlist leaves out a formatting tag', () => {
     expect(exported).toContain('**words**')
   })
 
-  it('refuses the format in a nested editor too', async () => {
-    const mounted = await mountEditor('<Callout>\n  alpha words\n</Callout>\n', new Set())
-    try {
-      const nested = mounted.editors()[1]
-      if (nested === undefined) throw new Error('no nested editor')
-      await applyFormat(nested, 'alpha', 'underline')
-      expect(mounted.exported()).not.toContain('<u>')
-    } finally {
-      mounted.unmount()
+  describe('in a nested editor', () => {
+    // A nested edit reaches the export only through the parent node's update, which jsdom does not
+    // drive, so these read the nested editor's own state.
+    const formatOf = (editor: Editor, text: string) =>
+      editor.getEditorState().read(() => {
+        const lx = mdx.lexical
+        const queue = [...lx.$getRoot().getChildren()]
+        while (queue.length > 0) {
+          const node = queue.shift()
+          if (lx.$isTextNode(node) && node.getTextContent().includes(text)) return node.getFormat()
+          if (lx.$isElementNode(node)) queue.push(...node.getChildren())
+        }
+        throw new Error(`no text node "${text}"`)
+      })
+    const underline = 8
+
+    /** Selects `text` in `editor`, with the format a real selection change gives it, and toggles. */
+    const toggleUnderline = async (editor: Editor, text: string) => {
+      const lx = mdx.lexical
+      await act(async () => {
+        editor.update(
+          () => {
+            const queue = [...lx.$getRoot().getChildren()]
+            while (queue.length > 0) {
+              const node = queue.shift()
+              const start = lx.$isTextNode(node) ? node.getTextContent().indexOf(text) : -1
+              if (lx.$isTextNode(node) && start >= 0) {
+                node.select(start, start + text.length).format = node.getFormat()
+                return
+              }
+              if (lx.$isElementNode(node)) queue.push(...node.getChildren())
+            }
+          },
+          { discrete: true },
+        )
+        editor.dispatchCommand(lx.FORMAT_TEXT_COMMAND, 'underline')
+      })
     }
+
+    const nestedOf = async (body: string, htmlTags?: ReadonlySet<string>) => {
+      const mounted = await mountEditor(body, htmlTags)
+      const [root, nested] = mounted.editors()
+      if (root === undefined || nested === undefined) throw new Error('no nested editor')
+      return { mounted, root, nested }
+    }
+
+    it('refuses adding a refused format, and adds an allowed one', async () => {
+      const body = '<Callout>\n  alpha words\n</Callout>\n'
+      const allowed = await nestedOf(body)
+      try {
+        await toggleUnderline(allowed.nested, 'alpha')
+        expect(formatOf(allowed.nested, 'alpha')).toBe(underline)
+      } finally {
+        allowed.mounted.unmount()
+      }
+      const refused = await nestedOf(body, new Set())
+      try {
+        await toggleUnderline(refused.nested, 'alpha')
+        expect(formatOf(refused.nested, 'alpha')).toBe(0)
+      } finally {
+        refused.mounted.unmount()
+      }
+    })
+
+    it('lets a refused format be removed', async () => {
+      const { mounted, nested } = await nestedOf(
+        '<Callout>\n  <u>alpha</u> words\n</Callout>\n',
+        new Set(),
+      )
+      try {
+        await toggleUnderline(nested, 'alpha')
+        expect(formatOf(nested, 'alpha')).toBe(0)
+      } finally {
+        mounted.unmount()
+      }
+    })
+
+    it('decides by the nested selection, not the root one', async () => {
+      const { mounted, root, nested } = await nestedOf(
+        'Some <u>under</u> words.\n\n<Callout>\n  alpha words\n</Callout>\n',
+        new Set(),
+      )
+      try {
+        const lx = mdx.lexical
+        await act(async () => {
+          root.update(
+            () => {
+              const paragraph = lx.$getRoot().getFirstChild()
+              const under = lx.$isElementNode(paragraph)
+                ? paragraph.getChildren().find((node) => node.getTextContent() === 'under')
+                : undefined
+              if (lx.$isTextNode(under)) {
+                under.select(0, under.getTextContentSize()).format = under.getFormat()
+              }
+            },
+            { discrete: true },
+          )
+        })
+        await toggleUnderline(nested, 'alpha')
+        expect(formatOf(nested, 'alpha')).toBe(0)
+      } finally {
+        mounted.unmount()
+      }
+    })
   })
 
   it('leaves a stored tag alone, and reports no change on opening', async () => {

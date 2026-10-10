@@ -114,11 +114,16 @@ export const MDXEditorLazy = React.lazy(async () => {
         mergeRegister(
           editor.registerCommand(
             FORMAT_TEXT_COMMAND,
-            (format) => {
-              const selection = $getSelection()
-              return (
-                refused(format) && !($isRangeSelection(selection) && selection.hasFormat(format))
-              )
+            (format, fromEditor) => {
+              if (!refused(format)) return false
+              // Lexical formats the dispatching editor's selection, and runs this root listener
+              // for a nested editor's command inside the root's update, where `$getSelection()`
+              // would be the root's.
+              const selection =
+                fromEditor === editor
+                  ? $getSelection()
+                  : fromEditor.getEditorState().read(() => $getSelection())
+              return !($isRangeSelection(selection) && selection.hasFormat(format))
             },
             COMMAND_PRIORITY_CRITICAL,
           ),
