@@ -870,6 +870,17 @@ describe('createCanopyRequestHandler', () => {
       expect(authenticate).not.toHaveBeenCalled()
     })
 
+    it('answers before building context, so an unavailable workspace cannot mask it', async () => {
+      // Building services from this config throws, as a cold start with no workspace would.
+      const handler = createCanopyRequestHandler({
+        config: { mode: 'prod', deployedAs: 'server' } as CanopyConfig,
+        authPlugin: { ...createMockAuthPlugin(), verifiesCredentials: true },
+      })
+
+      expect((await handler(withEditorMode('dev'), ['branches'])).status).toBe(412)
+      expect((await handler(withEditorMode('prod'), ['branches'])).status).toBe(500)
+    })
+
     it('logs the mismatch once per handler, naming both modes', async () => {
       const consoleSpy = mockConsole()
       const handler = prodHandler(createMockAuthPlugin())

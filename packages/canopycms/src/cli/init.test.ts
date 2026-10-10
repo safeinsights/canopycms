@@ -551,7 +551,7 @@ describe('canopycms init-deploy aws', () => {
       return fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
     }
 
-    /** The template's own RUN check, joined across its `\` continuations, run under `sh`. */
+    /** The template's own RUN check, joined as Docker joins `\` continuations, run under `sh`. */
     function runModeCheck(dockerfile: string, value: string): number | null {
       const lines = dockerfile.split('\n')
       const start = lines.findIndex((line) =>
@@ -563,7 +563,7 @@ describe('canopycms init-deploy aws', () => {
         script.push(line.replace(/\\$/, ''))
         if (!line.endsWith('\\')) break
       }
-      const result = spawnSync('sh', ['-c', script.join('\n').replace(/^RUN /, '')], {
+      const result = spawnSync('sh', ['-c', script.join('').replace(/^RUN /, '')], {
         env: { PATH: process.env.PATH, NEXT_PUBLIC_CANOPY_MODE: value },
         encoding: 'utf-8',
       })

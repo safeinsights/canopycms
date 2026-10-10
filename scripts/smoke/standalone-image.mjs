@@ -679,6 +679,16 @@ async function assertContainer(baseUrl, container) {
     return userId
   })
 
+  // The dev server must refuse an editor that declares the other mode (editor-mode-check.ts).
+  await check('GET /api/canopycms/whoami refuses an editor built for prod with 412', async () => {
+    const response = await request(baseUrl, '/api/canopycms/whoami', {
+      headers: { 'x-canopy-editor-mode': 'prod' },
+    })
+    if (response.status !== 412) throw new SmokeError(`status ${response.status}`)
+    const code = json(response)?.code
+    if (code !== 'EDITOR_MODE_MISMATCH') throw new SmokeError(`code ${JSON.stringify(code)}`)
+  })
+
   await check(
     `GET /${PAGE.slug} renders the page from the ${BASE_BRANCH} branch clone at request time`,
     async () => {

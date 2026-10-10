@@ -61,7 +61,9 @@ beforeEach(() => {
       json: async () =>
         whoamiStatus === 200
           ? { ok: true, status: 200, data: { userId: 'u1', groups: [] } }
-          : { ok: false, status: whoamiStatus, error: 'Unauthorized' },
+          : whoamiStatus === 412
+            ? { ok: false, status: 412, code: 'EDITOR_MODE_MISMATCH', error: 'mismatch' }
+            : { ok: false, status: whoamiStatus, error: 'Unauthorized' },
     })),
   )
 })
@@ -120,14 +122,26 @@ describe('CanopyEditor', () => {
     expect(screen.queryByTestId('mock-editor')).toBeNull()
     expect(capturedProps).toBeUndefined()
   })
+
+  it('sends config.mode with each request and names it when the server refuses it', async () => {
+    whoamiStatus = 412
+    renderComponent({}, {}, { mode: 'prod' })
+
+    const notice = await screen.findByTestId('canopy-mode-mismatch')
+    expect(notice.textContent).toContain('built for "prod" mode')
+    const [, init] = vi.mocked(fetch).mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ 'x-canopy-editor-mode': 'prod' })
+  })
 })
 
 function renderComponent(
   extraProps: Partial<Omit<React.ComponentProps<typeof CanopyEditor>, 'config'>> = {},
   editorOverrides: NonNullable<CanopyClientConfig['editor']> = {},
+  configOverrides: Partial<CanopyClientConfig> = {},
 ) {
   const config = {
     ...baseConfig,
+    ...configOverrides,
     editor: { ...baseConfig.editor, ...editorOverrides },
     flatSchema: flattenSchema(baseConfig.schema, baseConfig.contentRoot),
   } as unknown as CanopyClientConfig
