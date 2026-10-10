@@ -113,8 +113,9 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
     workspacePath = env.CANOPYCMS_WORKSPACE_ROOT
     if (!workspacePath) throw new Error('CANOPYCMS_WORKSPACE_ROOT is required')
 
-    // Before anything the unit supplies: under a unit too old for this bundle,
-    // the checks below would report one missing setting as a generic failure.
+    // First after the workspace root, which recording the failure needs: under a
+    // unit too old for this bundle, the checks below would report one missing
+    // setting as a generic failure.
     const contractShortfall = workerContractShortfall(env[WORKER_CONTRACT_ENV])
     if (contractShortfall) throw new Error(contractShortfall)
 

@@ -37,14 +37,14 @@ export const WORKER_CAPACITY_ENV = 'CANOPYCMS_WORKER_CAPACITY'
  *
  * Append an entry ONLY when the bundle starts to need something new from the
  * unit or template. Anything a bundle merely tolerates the absence of does
- * not count. Every entry is named in the bundle's "template too old" line, so
- * write it as the setting an operator would add.
+ * not count. The bundle's "template too old" line names every entry above the
+ * unit's version, so write it as the setting an operator would add.
  */
 const WORKER_CONTRACT_REQUIREMENTS = ['StateDirectory=canopy-worker'] as const
 
 /**
- * The worker contract version: stamped into the unit and the
- * `WorkerContract` stack output by the construct, and published beside the
+ * The worker contract version: stamped into the unit by the construct (and,
+ * in parameter mode, into the `WorkerContract` stack output), and published beside the
  * bundle as `worker/dist/index.js.contract`, so a change-set gate can compare
  * the two before rolling a bundle. See {@link WORKER_CONTRACT_REQUIREMENTS}.
  */
@@ -65,8 +65,11 @@ export function workerContractShortfall(unitValue: string | undefined): string |
   if (unit >= WORKER_CONTRACT_VERSION) return undefined
   return (
     `canopy-worker: template too old for this bundle: needs worker contract ` +
-    `${WORKER_CONTRACT_VERSION}, unit has ${unit} ` +
-    `(${WORKER_CONTRACT_REQUIREMENTS.slice(unit).join(', ')}). Deploy the stack template ` +
+    `${WORKER_CONTRACT_VERSION}, unit has ${unit} (` +
+    WORKER_CONTRACT_REQUIREMENTS.slice(unit)
+      .map((setting, i) => `contract ${unit + i + 1} adds ${setting}`)
+      .join('; ') +
+    `). Deploy the stack template ` +
     `before rolling this bundle.`
   )
 }

@@ -483,9 +483,10 @@ unstamped unit, logging `template too old for this bundle`. Parameter mode outpu
 
 **To adopt.** Parameter mode: `cdk deploy` the template before CI rolls this bundle, then gate
 bundle-only rolls on the contract ([recipe](deploying-to-aws.md#rolling-the-worker-from-ci)). A
-hand-installed unit adds `Environment=CANOPYCMS_WORKER_CONTRACT=1`.
+hand-installed unit copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from
+`worker/canopy-worker.service`.
 
-**Now deletable.** Reading the template diff to decide whether a bundle-only roll is safe.
+**Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 

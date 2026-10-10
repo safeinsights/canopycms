@@ -18,7 +18,8 @@ CI").
 **The option.** Add a second parameter, `WorkerBundleContract`, with
 `AllowedValues: ['', '0', …, String(WORKER_CONTRACT_VERSION)]`. CI passes the bundle's contract
 beside its sha256. A template too old for the bundle then rejects the change set at creation, and
-a template from before the parameter rejects it as an unknown parameter.
+a template from before the parameter rejects it as an unknown parameter, since CloudFormation
+refuses a parameter the template does not declare.
 
 **Why it waited.** It is a second parameter that CI must pass and the gate must allowlist, and it
 protects nothing when CI omits it. Do it only if an adopter's gate cannot run the shell check.

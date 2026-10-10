@@ -272,7 +272,7 @@ describe('runWorker: a failure before worker.start()', () => {
       error: expect.objectContaining({
         message: expect.stringContaining(
           `canopy-worker: template too old for this bundle: needs worker contract ` +
-            `${WORKER_CONTRACT_VERSION}, unit has 0 (StateDirectory=canopy-worker`,
+            `${WORKER_CONTRACT_VERSION}, unit has 0 (contract 1 adds StateDirectory=canopy-worker`,
         ),
       }),
     })
