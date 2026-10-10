@@ -34,7 +34,7 @@ import { mdxFromMarkdown } from 'mdast-util-mdx'
 import { gfm } from 'micromark-extension-gfm'
 import { mdxjs } from 'micromark-extension-mdxjs'
 
-import type { ContentFormat, EntrySchema, MdxAllowlist } from '../config'
+import type { ContentFormat, EntrySchema, MdxAllowlist, MdxPropAllow } from '../config'
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { getErrorMessage } from '../utils/error'
@@ -370,6 +370,17 @@ function showAttribute(attributeName: string, value: unknown): string {
 
 const listOf = (names: Iterable<string>) => [...names].sort().join(', ')
 
+/** A string allowance's `maxLength` (`null`: uncapped), or `undefined` for any other allowance. */
+function stringAllowance(
+  allowed: MdxPropAllow | undefined,
+): { maxLength: number | null } | undefined {
+  if (allowed === 'string') return { maxLength: null }
+  if (typeof allowed === 'object' && !Array.isArray(allowed)) {
+    return { maxLength: allowed.maxLength ?? null }
+  }
+  return undefined
+}
+
 function checkJsxElement(node: MdNode, allow: ResolvedMdxAllowlist): MarkdownSafetyIssue[] {
   const name = node.name
   // A fragment (`<>…</>`) renders its children and nothing else.
@@ -456,7 +467,27 @@ function checkJsxElement(node: MdNode, allow: ResolvedMdxAllowlist): MarkdownSaf
       continue
     }
     const values = props?.get(attributeName)
-    if (Array.isArray(values)) {
+    const stringOnly = stringAllowance(values)
+    if (stringOnly !== undefined) {
+      if (typeof value !== 'string') {
+        issues.push(
+          issue(
+            node,
+            `Prop ${attributeName} on ${tag} must be a quoted string, e.g. ${attributeName}="…"`,
+          ),
+        )
+      } else {
+        const length = [...value].length
+        if (stringOnly.maxLength !== null && length > stringOnly.maxLength) {
+          issues.push(
+            issue(
+              node,
+              `Prop ${attributeName} on ${tag} must be at most ${stringOnly.maxLength} characters; it has ${length}`,
+            ),
+          )
+        }
+      }
+    } else if (Array.isArray(values)) {
       const plain = plainValue(value)
       if (plain === undefined || !values.includes(plain)) {
         const allowed = values.map((v) => JSON.stringify(v)).join(', ')
