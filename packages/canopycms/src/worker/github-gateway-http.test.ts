@@ -1404,7 +1404,10 @@ describe('a drain', () => {
     expect(refused).toBeInstanceOf(GitHubGatewayUnreachableError)
     expect(String(refused)).toMatch(/stopping/)
     expect(isPermanentTaskFailure(refused)).toBe(false)
-    expect(consoleSpy).toHaveWarned('Answering requests as stopping')
+    // Once per drain, though two requests met it.
+    expect(
+      consoleSpy.all().warn.filter((line) => line.includes('Answering requests as stopping')),
+    ).toHaveLength(1)
     expect(gateway.isProtectedBranch).not.toHaveBeenCalled()
   })
 
