@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { SWRConfig } from 'swr'
 import { UserBadge } from './UserBadge'
@@ -274,5 +275,57 @@ describe('UserBadge', () => {
 
     // Should render without tooltip wrapper
     expect(screen.getByText('Alice Johnson')).toBeTruthy()
+  })
+
+  describe('in a light comment badge', () => {
+    const badgeProps = { showBadge: true, badgeVariant: 'light' as const, color: 'gray' }
+
+    it('draws the name in body text colour, not the faint badge tint', () => {
+      render(
+        <UserBadge
+          userId="user-1"
+          getUserMetadata={vi.fn()}
+          cachedUser={mockUser}
+          {...badgeProps}
+        />,
+        { wrapper: Wrapper },
+      )
+      expect(screen.getByText('Alice Johnson').style.color).toBe('var(--mantine-color-text)')
+    })
+
+    it('keeps an unnamed user in the same pill, saying the name is unavailable', async () => {
+      const { container } = render(
+        <UserBadge userId="user-9" getUserMetadata={async () => null} {...badgeProps} />,
+        { wrapper: Wrapper },
+      )
+      const id = await screen.findByText('user-9')
+      expect(id.closest('.mantine-Badge-root')).toBeTruthy()
+      expect(id.style.color).toBe('var(--mantine-color-text)')
+
+      await userEvent.hover(id)
+      expect(await screen.findByText('Name unavailable')).toBeTruthy()
+      expect(container.textContent).not.toContain('not found')
+    })
+  })
+
+  it('hides an avatar that repeats the name beside it, and labels one shown alone', async () => {
+    const { container, rerender } = render(
+      <UserBadge userId="user-1" getUserMetadata={vi.fn()} cachedUser={mockUser} />,
+      { wrapper: Wrapper },
+    )
+    const avatar = () => container.querySelector('.mantine-Avatar-root')
+    expect(avatar()?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('img')?.getAttribute('alt')).toBe('')
+
+    rerender(
+      <UserBadge
+        userId="user-1"
+        getUserMetadata={vi.fn()}
+        cachedUser={mockUser}
+        variant="avatar-only"
+      />,
+    )
+    expect(avatar()?.getAttribute('aria-hidden')).toBeNull()
+    expect(container.querySelector('img')?.getAttribute('alt')).toBe('Alice Johnson')
   })
 })

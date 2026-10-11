@@ -4,6 +4,11 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
+import type { UserProfile } from '../auth/types'
+import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
+import { isSystemUserId } from '../system-users'
+import { ANONYMOUS_USER } from '../user'
+import { getErrorMessage } from '../utils/error'
 import { isReviewer } from '../authorization'
 import type { ContentAccessChecker } from '../authorization'
 import { parseLogicalPath } from '../paths/validation'
@@ -22,6 +27,8 @@ export interface AddCommentBody {
 
 interface ListCommentsResponse {
   threads: CommentThread[]
+  /** Profiles of the people who wrote or resolved `threads`, in no order; unknown ids are absent. */
+  users: UserProfile[]
 }
 
 /** Response type for listing comments */
@@ -100,6 +107,58 @@ const createThreadReadCheck = async (
   return (entryPath) => canReadThreadEntry(checkAccess, contentRoot, entryPath)
 }
 
+/** Matches the id bound `/users/batch` accepts; comments.json is read without validation. */
+const MAX_USER_ID_LENGTH = 256
+
+/**
+ * The profile of everyone who wrote or resolved one of `threads`, looked up only for threads
+ * already filtered to what the requester may read, so the list names no one the requester could
+ * not see in a thread. Bots and the anonymous user are left to the editor, which labels them
+ * without a lookup. A failed lookup costs the names, never the threads.
+ */
+const lookupThreadUsers = async (
+  ctx: ApiContext,
+  threads: readonly CommentThread[],
+): Promise<UserProfile[]> => {
+  const authPlugin = ctx.authPlugin
+  if (!authPlugin) return []
+  try {
+    const ids = new Set<unknown>()
+    for (const thread of threads) {
+      ids.add(thread.authorId)
+      ids.add(thread.resolvedBy)
+      // comments.json is parsed without validation, so a thread may lack its comment list.
+      if (Array.isArray(thread.comments)) {
+        for (const comment of thread.comments) ids.add(comment?.userId)
+      }
+    }
+    const wanted = [...ids].filter(
+      (id): id is string =>
+        typeof id === 'string' &&
+        id.length > 0 &&
+        id.length <= MAX_USER_ID_LENGTH &&
+        id !== ANONYMOUS_USER.userId &&
+        !isSystemUserId(id),
+    )
+    if (wanted.length === 0) return []
+    const found = await lookupUsersMetadata(authPlugin, wanted)
+    const users: UserProfile[] = []
+    // Built field by field: a provider's user record carries an email, which this list never does.
+    for (const user of found.values()) {
+      if (user === null) continue
+      users.push(
+        user.avatarUrl === undefined
+          ? { id: user.id, name: user.name }
+          : { id: user.id, name: user.name, avatarUrl: user.avatarUrl },
+      )
+    }
+    return users
+  } catch (error) {
+    console.error('CanopyCMS: Failed to look up comment authors:', getErrorMessage(error))
+    return []
+  }
+}
+
 const listCommentsHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -114,8 +173,9 @@ const listCommentsHandler = async (
     createThreadReadCheck(ctx, req, branchContext),
   ])
   const threads = allThreads.filter((thread) => canRead(thread.entryPath))
+  const users = await lookupThreadUsers(ctx, threads)
 
-  return { ok: true, status: 200, data: { threads } }
+  return { ok: true, status: 200, data: { threads, users } }
 }
 
 const addCommentHandler = async (
@@ -233,7 +293,7 @@ const listComments = defineEndpoint({
   params: branchParamSchema,
   responseType: 'CommentsResponse',
   response: {} as CommentsResponse,
-  defaultMockData: { threads: [] },
+  defaultMockData: { threads: [], users: [] },
   guards: ['branchAccess'] as const,
   handler: listCommentsHandler,
 })

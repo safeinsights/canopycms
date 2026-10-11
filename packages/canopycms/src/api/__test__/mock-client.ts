@@ -58,7 +58,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   comments: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[]})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[],"users":[]})),
     add: vi.fn().mockResolvedValue(mockSuccess({"threadId":"mock-thread-id","commentId":"mock-comment-id"})),
     resolve: vi.fn().mockResolvedValue(mockSuccess({"resolved":true})),
   },
@@ -167,7 +167,7 @@ export function mockBranchMergeResponse(): BranchMergeResponse {
 }
 
 export function mockCommentsResponse(): CommentsResponse {
-  return mockSuccess({"threads":[]})
+  return mockSuccess({"threads":[],"users":[]})
 }
 
 export function mockAddCommentResponse(): AddCommentResponse {

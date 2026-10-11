@@ -535,7 +535,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useGroupManager.ts` / `usePermissionManager.ts` — group and permission operations
 - `user-metadata-batcher.ts` — `createUserMetadataBatcher`: a render's badge lookups as one `POST /users/batch`
 - `useEditorLayout.ts` — persisted layout prefs
-- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata
+- `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`) and SWR-backed user metadata, seeded by `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
 - `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README

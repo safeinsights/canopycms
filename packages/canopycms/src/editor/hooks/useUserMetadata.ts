@@ -1,5 +1,6 @@
-import useSWR from 'swr'
-import type { UserSearchResult } from '../../auth/types'
+import { useCallback } from 'react'
+import useSWR, { useSWRConfig, type ScopedMutator } from 'swr'
+import type { UserProfile, UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { isSystemUserId } from '../../system-users'
 import { SYSTEM_USER_LABEL } from '../user-display'
@@ -19,6 +20,47 @@ const systemUser = (userId: string): UserSearchResult => ({
   email: '',
 })
 
+const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
+
+/**
+ * Caches profiles a response carried, keeping a cached record's email. A record left without one
+ * is refetched: SWR discards a lookup the seed overtook, and with it that lookup's email.
+ */
+export async function seedUserProfiles(
+  mutate: ScopedMutator,
+  users: readonly UserProfile[],
+): Promise<void> {
+  await Promise.all(
+    users.map((user) =>
+      mutate<UserSearchResult | null>(
+        userMetadataKey(user.id),
+        (current) => ({ email: '', ...current, ...user }),
+        { revalidate: (merged) => !merged?.email },
+      ),
+    ),
+  )
+}
+
+const isUserRecord = (value: unknown): value is UserSearchResult =>
+  typeof value === 'object' &&
+  value !== null &&
+  'id' in value &&
+  typeof value.id === 'string' &&
+  'name' in value &&
+  typeof value.name === 'string'
+
+/** Answers from the cache with no request and no email, for a reader who may not look users up. */
+export function useSeededUserResolver(): (userId: string) => Promise<UserSearchResult | null> {
+  const { cache } = useSWRConfig()
+  return useCallback(
+    (userId: string) => {
+      const data: unknown = cache.get(userMetadataKey(userId))?.data
+      return Promise.resolve(isUserRecord(data) ? { ...data, email: '' } : null)
+    },
+    [cache],
+  )
+}
+
 /** One user's metadata under a per-user SWR key, so every badge for that user shares a fetch. */
 export function useUserMetadata(
   userId: CanopyUserId,
@@ -27,7 +69,7 @@ export function useUserMetadata(
 ): UseUserMetadataResult {
   const skip = cachedUser !== undefined || userId === 'anonymous' || isSystemUserId(userId)
   const { data, error, isLoading } = useSWR<UserSearchResult | null, unknown>(
-    skip ? null : `canopy:user:${userId}`,
+    skip ? null : userMetadataKey(userId),
     () => getUserMetadata(userId),
   )
 
@@ -38,7 +80,8 @@ export function useUserMetadata(
   }
   return {
     userMetadata: data ?? null,
-    isLoading,
+    // A seed can land while the lookup is in flight; SWR still reports that lookup as loading.
+    isLoading: isLoading && data === undefined,
     error:
       error === undefined
         ? null

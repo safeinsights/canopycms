@@ -88,6 +88,7 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| next | Editing  | [Comments name their people for every editor](#comments-name-their-people-for-every-editor--behaviour-change-on-the-comments-api)                                                           | Direct API callers           |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -285,6 +286,15 @@ mark unsaved changes, keep the save bar in view, and ask before closing or leavi
 group dialog's buttons read "Add" and "Apply", since neither saves.
 
 **To adopt.** Nothing.
+
+### Comments name their people for every editor — **behaviour change on the comments API**
+
+**What changed.** (next) `GET /:branch/comments` adds `users`: the id, name and avatar URL, never
+the email, of everyone who wrote or resolved a thread the requester may read. Every editor, not
+only admins and reviewers, now sees those names. Your auth plugin answers through the
+`/users/batch` cache; a failed lookup leaves the names out.
+
+**To adopt.** Nothing, unless you call the comments API yourself: read `data.users`.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 

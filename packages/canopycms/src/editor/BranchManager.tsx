@@ -189,8 +189,10 @@ export interface BranchManagerProps {
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
-  /** Optional function to fetch user metadata for displaying user badges */
+  /** Names branch owners and access users; without it they show as ids */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Names the people in branch comments; without it they show as ids */
+  onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const BranchManager: React.FC<BranchManagerProps> = ({
@@ -212,6 +214,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onResolveThread,
   highlightThreadId,
   onGetUserMetadata,
+  onGetCommentUserMetadata,
 }) => {
   const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -261,7 +264,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             onAddComment={onAddComment}
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
-            onGetUserMetadata={onGetUserMetadata}
+            onGetUserMetadata={onGetCommentUserMetadata}
           />
         </Stack>
       )}

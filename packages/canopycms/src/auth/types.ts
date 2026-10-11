@@ -8,6 +8,9 @@ export interface UserSearchResult {
   avatarUrl?: string
 }
 
+/** What a reader who is not privileged may learn about another user: never the email. */
+export type UserProfile = Pick<UserSearchResult, 'id' | 'name' | 'avatarUrl'>
+
 /** Group metadata for the permission UI. */
 export interface GroupMetadata {
   id: CanopyGroupId

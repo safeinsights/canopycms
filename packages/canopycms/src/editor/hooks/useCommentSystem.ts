@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget } from '../field-target'
 import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
-import { commentsKey, fetchComments, useCommentsData } from './useCommentsData'
+import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
+import { useSeededUserResolver } from './useUserMetadata'
 
 export interface UseCommentSystemOptions {
   branchName: string
@@ -28,6 +30,8 @@ export interface UseCommentSystemOptions {
 
 export interface UseCommentSystemReturn {
   comments: CommentThread[]
+  /** Resolves a user from the seeded cache, without email or a request (`useSeededUserResolver`). */
+  getCommentUser: (userId: string) => Promise<UserSearchResult | null>
   focusedFieldPath: string | undefined
   setFocusedFieldPath: (path: string | undefined) => void
   highlightThreadId: string | undefined
@@ -85,6 +89,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // needed.
   const { data: commentsData } = useCommentsData(apiClient, options.branchName)
   const comments = commentsData?.threads ?? []
+  const getCommentUser = useSeededUserResolver()
 
   // Deliberately omits `options.onCommentsChange` from the deps: it's a
   // stable setState passthrough, and this file is plain .ts (not .tsx), so
@@ -101,7 +106,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // bound hook (and the effect above) pick it up.
   const loadComments = async (branch: string) => {
     if (!branch) return
-    const fresh = await fetchComments(apiClient, branch)
+    const fresh = await fetchCommentsSeedingUsers(apiClient, globalMutate, branch)
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
@@ -272,6 +277,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
 
   return {
     comments,
+    getCommentUser,
     focusedFieldPath,
     setFocusedFieldPath,
     highlightThreadId,
