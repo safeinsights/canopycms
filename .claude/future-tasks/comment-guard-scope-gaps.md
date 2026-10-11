@@ -2,7 +2,7 @@
 priority: P3
 adopters: NEITHER
 summary: >-
-  New 2026-09-13, from the manager's review of the guard PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `apps/` is outside the comment budget; `PACKAGE_ROOTS` is hardcoded so a new package is silently unbudgeted; test scaffolding files are still budgeted; multi-line block directives count as code after line one; "stale doc budget" only checks existence; `findLongListItems` stops at a blank line; `--list-long-items` is undocumented
+  New 2026-09-13, from the manager's review of the guard PR in [baseline-quality-202609.md](resolved/baseline-quality-202609.md). `apps/` is outside the comment budget; `PACKAGE_ROOTS` is hardcoded so a new package is silently unbudgeted; test scaffolding files are still budgeted; multi-line block directives count as code after line one; "stale doc budget" only checks existence; `findLongListItems` stops at a blank line; `--list-long-items` is undocumented; check-docs' fence toggle ignores fence type and length; check 9 reads headings without a CommonMark parse; check mode ignores positional arguments
 ---
 # [P3] Comment-budget guard: scope gaps and counting-rule edges
 
@@ -41,3 +41,12 @@ ratchet measures today, so they wait for a maintenance pass.
 - `--list-long-items` is not mentioned in the warning line it extends.
 - The 25-word cap sees only list items and table cells; `packages/canopycms/src/AGENTS.md`'s
   Overview is an 800-word single paragraph it never observes.
+- `extractText`'s fence toggle ignores fence type and length: a four-backtick fence closes
+  at an inner three-backtick line, a `~~~` fence at a backtick line, and an inline
+  ` ```js``` ` span opens a fence. Whole-file, section and list-item counts can then
+  swing a whole region in or out. The changelog entry cap already parses with
+  `mdast-util-from-markdown`; the other counters could share it.
+- Check 9 (released versions need a section) finds `###` headings with
+  `startsWith('### ')`, not a CommonMark parse.
+- In check mode, positional arguments (and a single-dash typo like `-report`) are
+  silently ignored, though the usage header lists `[file...]`.
