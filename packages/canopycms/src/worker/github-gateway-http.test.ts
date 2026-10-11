@@ -420,6 +420,24 @@ describe('the wire format at the server', () => {
     expect(gateway.push).not.toHaveBeenCalled()
   })
 
+  it('quotes nothing of a refused request back, however large', async () => {
+    const gateway = fakeGateway()
+    await serve(gateway)
+
+    const { status, body } = await json('/v1/pull-request/update', {
+      number: 1,
+      state: 'x'.repeat(1024 * 1024),
+    })
+
+    expect(status).toBe(400)
+    expect(body.length).toBeLessThan(1024)
+    expect(body).toContain('invalid_literal at state')
+    expect(gateway.updatePullRequest).not.toHaveBeenCalled()
+    const warned = consoleSpy.all().warn.join('\n')
+    expect(warned.length).toBeLessThan(1024)
+    expect(warned).not.toContain('xxxx')
+  })
+
   it('refuses a push that says it has no bundle and sends one', async () => {
     const gateway = fakeGateway()
     await serve(gateway)
@@ -506,6 +524,42 @@ describe('the wire format at the client', () => {
     await expect(
       connectGitHubGateway(socketPath).push({ branch: 'feature', sha: SHA, prerequisites: [] }),
     ).rejects.toBeInstanceOf(GitHubGatewayProtocolError)
+  })
+
+  it('fails a request the gateway refuses for its shape for good, as the gateway would refuse it', async () => {
+    const gateway = fakeGateway()
+    await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+
+    const oversize = await client.deleteBranch('b'.repeat(5000)).catch((err: unknown) => err)
+    // A push header past node's own header limit: node refuses it, with no JSON.
+    const unheadable = await client
+      .push({ branch: '€'.repeat(4096), sha: SHA, prerequisites: [] })
+      .catch((err: unknown) => err)
+
+    expect(oversize).toBeInstanceOf(GitHubGatewayProtocolError)
+    expect(oversize).toMatchObject({ status: 400 })
+    expect(isPermanentTaskFailure(oversize)).toBe(true)
+    expect(unheadable).toBeInstanceOf(GitHubGatewayProtocolError)
+    expect(unheadable).toMatchObject({ status: 431 })
+    expect(isPermanentTaskFailure(unheadable)).toBe(true)
+    expect(gateway.deleteBranch).not.toHaveBeenCalled()
+    expect(gateway.push).not.toHaveBeenCalled()
+  })
+
+  it('keeps a refusal for being busy transient', async () => {
+    const gateway = fakeGateway()
+    gateway.fetch.mockImplementation(() => new Promise(() => undefined))
+    await serve(gateway)
+    for (let i = 0; i < 8; i++) await json('/v1/fetch', { have: [] })
+
+    const busy = await connectGitHubGateway(socketPath)
+      .fetch({ have: [] })
+      .catch((err: unknown) => err)
+
+    expect(busy).toBeInstanceOf(GitHubGatewayProtocolError)
+    expect((busy as GitHubGatewayProtocolError).status).toBeUndefined()
+    expect(isPermanentTaskFailure(busy)).toBe(false)
   })
 
   it('throws GitHubGatewayUnreachableError, transient, when nothing listens', async () => {
@@ -763,6 +817,22 @@ describe('fetch jobs', () => {
     }
   })
 
+  it('drops the oldest finished job, not a new fetch, when it holds as many as it may', async () => {
+    await serve(fakeGateway())
+    const ids: string[] = []
+    for (let i = 0; i < 65; i++) {
+      const started = await json('/v1/fetch', { have: [] })
+      expect(started.status).toBe(202)
+      const { job } = (JSON.parse(started.body) as { value: { job: string } }).value
+      ids.push(job)
+      // Finished before the next starts, so only the held cap is in play.
+      expect((await raw({ method: 'GET', path: `/v1/fetch/${job}?wait=5000` })).status).toBe(200)
+    }
+
+    expect((await raw({ method: 'GET', path: `/v1/fetch/${ids[0]}?wait=0` })).status).toBe(404)
+    expect((await raw({ method: 'GET', path: `/v1/fetch/${ids[1]}?wait=0` })).status).toBe(200)
+  })
+
   it('refuses a fetch past the running-job cap rather than queue without bound', async () => {
     const gateway = fakeGateway()
     gateway.fetch.mockImplementation(() => new Promise(() => undefined))
@@ -887,6 +957,53 @@ describe('bundles across the socket', () => {
     expect(body.destroyed).toBe(true)
   })
 
+  it('fails the body of a push whose worker goes away part way, so later pushes still run', async () => {
+    // Bundles are taken in one at a time, as the in-process gateway's intake does.
+    const gateway = fakeGateway()
+    let tail: Promise<unknown> = Promise.resolve()
+    const reads: string[] = []
+    gateway.push.mockImplementation((_request: unknown, bundle?: Readable) => {
+      const run = tail.then(async () => {
+        try {
+          for await (const _ of bundle ?? []) {
+            // Read it all, as the intake does.
+          }
+          reads.push('whole')
+        } catch (err) {
+          reads.push(String(err))
+          throw err
+        }
+        return { kind: 'pushed' as const, moved: false as const, pastStaleLease: false }
+      })
+      tail = run.catch(() => undefined)
+      return run
+    })
+    const server = await serve(gateway)
+    const header = Buffer.from(
+      JSON.stringify({ branch: 'feature', sha: SHA, prerequisites: [], bundle: true }),
+    ).toString('base64url')
+    const partial = http.request({
+      socketPath,
+      method: 'POST',
+      path: '/v1/push',
+      agent: false,
+      headers: { [PUSH_REQUEST_HEADER]: header, 'content-type': 'application/x-git-bundle' },
+    })
+    partial.on('error', () => undefined)
+    partial.write(Buffer.alloc(1024))
+    await vi.waitFor(() => expect(gateway.push).toHaveBeenCalledTimes(1))
+    partial.destroy()
+
+    const answer = await connectGitHubGateway(socketPath).push(
+      { branch: 'feature', sha: SHA, prerequisites: [] },
+      Readable.from([Buffer.alloc(1024)]),
+    )
+
+    expect(answer).toMatchObject({ kind: 'pushed' })
+    expect(reads).toEqual([expect.stringMatching(/before the bundle arrived whole/), 'whole'])
+    await server.idle()
+  })
+
   it('streams an outgoing bundle back, and answers a gone one with its error', async () => {
     const gateway = fakeGateway()
     gateway.openBundle.mockImplementation(async (id: string) => {
@@ -906,19 +1023,19 @@ describe('bundles across the socket', () => {
 })
 
 describe('the socket', () => {
-  it('is 0600, in a directory only this user can write', async () => {
+  it('is 0600, in a directory only this user can enter', async () => {
     await serve(fakeGateway())
 
     expect((await fs.stat(socketPath)).mode & 0o777).toBe(0o600)
   })
 
-  it.each(['770', '757', '722'])(
-    'is refused in a directory mode %s lets others write',
+  it.each(['770', '757', '722', '750', '705'])(
+    'is refused in a directory mode %s lets others in',
     async (mode) => {
       await fs.chmod(dir, parseInt(mode, 8))
 
       await expect(serveGitHubGateway(fakeGateway(), { path: socketPath })).rejects.toThrow(
-        /no one else can write/,
+        /no one else can enter/,
       )
       await fs.chmod(dir, 0o700)
     },
@@ -931,7 +1048,7 @@ describe('the socket', () => {
 
     await expect(
       serveGitHubGateway(fakeGateway(), { path: path.join(dir, 'link', 's') }),
-    ).rejects.toThrow(/no one else can write/)
+    ).rejects.toThrow(/no one else can enter/)
   })
 
   it('replaces a socket a killed gateway left, and refuses to replace anything else', async () => {

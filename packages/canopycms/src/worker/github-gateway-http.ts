@@ -39,6 +39,7 @@ import {
   pushAnswer,
   pushRequest,
   readAnswerBody,
+  refusalStatus,
   requests,
   type ErrorEnvelope,
   type JsonOperation,
@@ -65,7 +66,7 @@ const MAX_POLL_WAIT_MS = 25_000
 /** How long a finished fetch job's answer stays readable. */
 const FETCH_JOB_RETENTION_MS = 10 * 60_000
 
-/** The most fetch jobs held at once, running or finished; a start past it is refused. */
+/** The most fetch jobs held at once, running or finished; past it the oldest finished one goes. */
 const MAX_FETCH_JOBS = 64
 
 /** The most fetch jobs running at once. */
@@ -96,8 +97,8 @@ export interface GitHubGatewayServer {
  * as different users, so systemd creates the socket and passes it as `fd`, and the socket unit
  * sets its owner and mode (`SocketUser=`, `SocketMode=`). A `path`, for development and tests,
  * where both ends are the same user, is bound here: only inside a directory this process owns and
- * no one else can write, so no other user can have planted or swap the node, and the node is then
- * made `0600`.
+ * no one else can enter, so no other user can reach, plant or swap the node, which is then made
+ * `0600`.
  *
  * `gateway.prepare()` runs once, on the first `prepare` request; a failure is the gateway's fatal
  * error, answered to every later one.
@@ -147,19 +148,19 @@ function listenOn(server: http.Server, options: { fd: number } | { path: string 
 }
 
 /**
- * Refuse to bind in a directory another user could write: they could replace the socket node
- * between the bind and the `chmod`, or plant one first.
+ * Refuse to bind in a directory another user could enter: they could connect to the socket before
+ * the `chmod`, which is not atomic with the bind, or replace or plant the node if they can write.
  */
 async function assertPrivateDirectory(dir: string): Promise<void> {
   const stat = await fs.lstat(dir)
   const uid = process.getuid?.()
   if (
     !stat.isDirectory() ||
-    (uid !== undefined && (stat.uid !== uid || (stat.mode & 0o022) !== 0))
+    (uid !== undefined && (stat.uid !== uid || (stat.mode & 0o077) !== 0))
   ) {
     throw new Error(
       `Refusing to serve the GitHub gateway in ${dir}: it must be a directory this process owns ` +
-        `and no one else can write`,
+        `and no one else can enter`,
     )
   }
 }
@@ -380,8 +381,18 @@ class GatewayRequestHandler {
       }
       // Not the request itself: the gateway destroys the stream it is given when it is done with
       // it, and destroying the request would destroy the connection the answer goes back on.
-      body = new PassThrough()
-      req.pipe(body)
+      const stream = new PassThrough()
+      // Its reader, if it has one yet, sees an error; an unread one must not crash the gateway.
+      stream.on('error', () => undefined)
+      req.pipe(stream)
+      // A request that dies part way never ends its pipe: fail the body, or its reader waits on it
+      // for ever, holding the gateway's one-at-a-time intake.
+      req.once('close', () => {
+        if (!req.complete) {
+          stream.destroy(new Error('the worker closed the request before the bundle arrived whole'))
+        }
+      })
+      body = stream
     } else if (
       req.headers['content-length'] !== '0' &&
       req.headers['content-length'] !== undefined
@@ -402,8 +413,13 @@ class GatewayRequestHandler {
     const { have } = parseRequest(fetchRequest, await readJsonBody(req), 'fetch')
     this.evictJobs()
     const running = [...this.jobs.values()].filter((job) => job.settledAt === null).length
-    if (running >= MAX_RUNNING_FETCH_JOBS || this.jobs.size >= MAX_FETCH_JOBS) {
+    if (running >= MAX_RUNNING_FETCH_JOBS) {
       throw new RefusedRequest(503, 'too many fetches are under way; retry after one finishes')
+    }
+    // Past the cap, the oldest finished job goes: a poll for it then starts a fetch afresh.
+    for (const [held, job] of this.jobs) {
+      if (this.jobs.size < MAX_FETCH_JOBS) break
+      if (job.settledAt !== null) this.jobs.delete(held)
     }
     const id = randomBytes(16).toString('hex')
     const job: FetchJob = {
@@ -496,7 +512,9 @@ class GatewayRequestHandler {
       return
     }
     if (err instanceof RefusedRequest) {
-      sendJson(req, res, err.status, { error: { kind: 'refused', message: err.message } })
+      sendJson(req, res, err.status, {
+        error: { kind: 'refused', status: err.status, message: err.message },
+      })
     } else {
       sendJson(req, res, 500, { error: encodeError(err) })
     }
@@ -531,7 +549,12 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 function parseRequest<S extends z.ZodTypeAny>(schema: S, value: unknown, op: string): z.infer<S> {
   const parsed = schema.safeParse(value)
   if (!parsed.success) {
-    throw new RefusedRequest(400, `malformed ${op} request: ${parsed.error.message}`)
+    // Codes and paths only: an issue's own text can quote the request back, at any length.
+    const issues = parsed.error.issues
+      .slice(0, 5)
+      .map((issue) => `${issue.code} at ${issue.path.join('.').slice(0, 64) || '(root)'}`)
+      .join('; ')
+    throw new RefusedRequest(400, `malformed ${op} request: ${issues}`)
   }
   return parsed.data as z.infer<S>
 }
@@ -871,8 +894,10 @@ async function readAnswer<S extends z.ZodTypeAny>(
   try {
     if (res.headers['content-type'] !== 'application/json') {
       res.destroy()
+      // node's own refusals (a 431 for an oversize header) carry no JSON.
       throw new GitHubGatewayProtocolError(
         `The GitHub gateway answered ${res.statusCode ?? '?'} with no JSON`,
+        refusalStatus(res.statusCode),
       )
     }
     const chunks: Buffer[] = []

@@ -241,8 +241,8 @@ const errorEnvelope = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('error'), name: z.string().max(256), message }).strict(),
-  /** A transport-level refusal: the request never reached an operation. */
-  z.object({ kind: z.literal('refused'), message }).strict(),
+  /** A transport-level refusal, with its HTTP status: the request never reached an operation. */
+  z.object({ kind: z.literal('refused'), status: z.number().int(), message }).strict(),
   /** A poll named a job the gateway does not hold: it restarted, or the job's record expired. */
   z.object({ kind: z.literal('unknown-job'), message }).strict(),
 ])
@@ -279,12 +279,25 @@ export class GitHubGatewayUnreachableError extends Error {
   }
 }
 
-/** An answer from the gateway that does not fit the wire format. */
+/**
+ * The gateway refused a request before any operation ran, or answered outside the wire format.
+ * `status` is set when the gateway refused the request itself (a 4xx): the same request would be
+ * refused again, as an oversize field the in-process gateway refuses as `GatewayRefusalError` is,
+ * so the task runner fails it for good on that status. Without one it is transient.
+ */
 export class GitHubGatewayProtocolError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
     super(message)
     this.name = 'GitHubGatewayProtocolError'
   }
+}
+
+/** A 4xx status, kept on a {@link GitHubGatewayProtocolError}; anything else is dropped. */
+export function refusalStatus(status: number | undefined): number | undefined {
+  return status !== undefined && status >= 400 && status < 500 ? status : undefined
 }
 
 /**
@@ -405,6 +418,7 @@ export function decodeError(value: unknown): Error {
     case 'refused':
       return new GitHubGatewayProtocolError(
         `The GitHub gateway refused the request: ${envelope.message}`,
+        refusalStatus(envelope.status),
       )
     case 'unknown-job':
       return new UnknownFetchJobError(envelope.message)

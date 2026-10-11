@@ -1131,6 +1131,17 @@ the drain mapping, deadlines, and the self-check helpers.
   client's next write, which can lose the answer.
 - The `worker-http` vitest project runs the gateway and cms-worker suites again through the
   socket. One test is in-process only: the re-read starting after the caller has the failure.
+- A request the gateway refuses for its shape (a 4xx, node's own 431 included) fails the task for
+  good, as the gateway's own refusal of the same field would: `GitHubGatewayProtocolError` keeps
+  the status. A 503 (busy, stopping) stays transient.
+- From 4a's security round, for 4b:
+  - the server serves every operation whether or not `prepare` has run, so a hostile worker can
+    skip the App preflight and the state-directory check; gate operations on `prepare` (and report
+    its failure through `health`), or have `runGateway` prepare before serving;
+  - a client that opens a bundle and never reads it pins that bundle's file until the connection
+    ends; bound the download by write inactivity, with the job's other bounds;
+  - a client that trickles a JSON body holds a connection and `idle()` open (`requestTimeout` is
+    0), so SIGTERM's drain must be bounded in time, not only by `idle()`.
 - 4b: everything in "PR 4 ships as two PRs" above, plus carried items 1 (the worker's clock
   while a reader holds back), 4 (the gateway's own logger in `github-service.ts`) and 6
   ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md)).
