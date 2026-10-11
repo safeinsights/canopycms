@@ -1223,14 +1223,17 @@ the drain mapping, deadlines, and the self-check helpers.
     today's 401/403 gate, the worker writes with core's `writeAuthSnapshot`), `termination` (a poll
     of the gateway's own IMDS watch, ≤ 25 s) and `completeLifecycle`. The last two skip the prepare
     gate, take no identifier, and never arm the GitHub re-read; `completeLifecycle` is refused
-    until the gateway's own watch has seen an Auto Scaling notice, and runs once.
+    unless the gateway's own watch sees an Auto Scaling notice (a restarted gateway watches first,
+    for up to 10 s), and runs once. `authSnapshot` is one fetch for concurrent callers, answered
+    again for 60 s, so a worker asking in a loop cannot hold Clerk's API at its rate limit.
   - A token minted or rotated is registered for the exact scrub as Octokit sends it (its
     `request.fetch`) and after a token-path re-read. The App key is scrubbed line by line, as read
     and normalized, and the Clerk key as each value is handed out.
   - `clerkConfigured` is whether the gateway has a Clerk key. The worker's client waits for fetch
     progress for its task timeout.
   - `CmsWorkerConfig.githubGateway` takes the client; it refuses a credential or `protectedBranches`
-    beside it.
+    beside it, and a split worker unit refuses `CANOPYCMS_PROTECTED_BRANCHES`, which only the
+    gateway enforces.
 - Deviations: `refreshClerkCache` keeps its shape, and the write half is core's `writeAuthSnapshot`
   in `canopycms/auth/cache` rather than a Clerk `writeClerkSnapshot`.
 - PR 6:
@@ -1240,7 +1243,12 @@ the drain mapping, deadlines, and the self-check helpers.
   - `TimeoutStopSec` stays above the 60 s drain plus exit, and `KillMode` stays `mixed`;
   - `ExecStart=… index.js gateway`; `gateway.env` carries the owner, repo, base branch,
     `CANOPYCMS_PROTECTED_BRANCHES`, `CANOPYCMS_WORKER_CAPACITY`, the contract stamp and the secrets;
-    the worker unit carries `CANOPYCMS_GITHUB_GATEWAY_SOCKET` and none of them.
+    the worker unit carries `CANOPYCMS_GITHUB_GATEWAY_SOCKET` and none of them;
+  - nothing checks that the gateway runs as a user other than the worker's: a hand unit missing
+    `User=canopy-github` passes every self-check while the worker can read its environment. A
+    gateway self-check refusing to run as the socket node's owner (`fstat` of fd 3) closes it.
+- Open: an auth snapshot past the 64 MiB answer bound (roughly 100k users) is refused; split mode
+  then never refreshes that auth cache.
 - Open: dev still leaves a running fetch job behind on Ctrl-C
   ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1).
 

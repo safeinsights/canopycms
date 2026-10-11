@@ -76,16 +76,19 @@ let privateKeyLinesLongestFirst: string[] = []
 /**
  * Scrub each line of a PEM key's body from everything that leaves the gateway from now on, so the
  * scrub survives JSON or log escaping, which split a PEM at its newlines. Lines split on real
- * newlines and on the two-character literal `\n` (a key pasted into a single-line config field);
- * the BEGIN/END lines and lines shorter than the secret floor are skipped. A key given as one
- * base64 line (a base64-wrapped PEM) is one entry.
+ * line breaks and on the literal `\n`, `\r\n` or `\r` (a key pasted into a single-line config
+ * field); the BEGIN/END lines and lines shorter than the secret floor are skipped. A key given as
+ * one base64 line (a base64-wrapped PEM) is one entry, and the PEM it wraps is registered too.
  */
 export function registerPrivateKey(pem: string): void {
-  for (const raw of pem.split(/\r?\n|\\n/)) {
+  for (const raw of pem.split(/\r?\n|\r|(?:\\r)?\\n|\\r/)) {
     const line = raw.trim()
     if (line.length < MIN_SECRET_LENGTH || line.startsWith('-----')) continue
     privateKeyLines.delete(line)
     privateKeyLines.add(line)
+    // A base64-wrapped PEM: the key inside it is the one a decoding consumer holds.
+    const decoded = Buffer.from(line, 'base64').toString('utf8')
+    if (decoded.includes('-----BEGIN')) registerPrivateKey(decoded)
   }
   for (const oldest of privateKeyLines) {
     if (privateKeyLines.size <= MAX_PRIVATE_KEY_LINES) break

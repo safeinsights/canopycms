@@ -1468,7 +1468,11 @@ describe('the instance operations over the socket', () => {
   it('refuses a completeLifecycle that comes before any notice, taking no identifier', async () => {
     const complete = vi.fn(async () => undefined)
     await serve(
-      unpreparedGateway({ watchTermination: async () => NOTICE, completeLifecycle: complete }),
+      unpreparedGateway({
+        watchTermination: () => new Promise<GatewayTerminationNotice>(() => undefined),
+        completeLifecycle: complete,
+        terminationPollWaitMs: 50,
+      }),
     )
 
     const asked = await json('/v1/complete-lifecycle', {})

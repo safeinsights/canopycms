@@ -249,27 +249,89 @@ describe.each<Reach>(['in-process', 'socket'])('the instance operations, %s', (r
     })
   })
 
+  describe('authSnapshot, asked for by a worker that may be hostile', () => {
+    it('fetches once for concurrent callers, and answers that snapshot again for a while', async () => {
+      let release: (snapshot: AuthCacheSnapshot) => void = () => undefined
+      const provider = vi.fn(() => new Promise<AuthCacheSnapshot>((resolve) => (release = resolve)))
+      const github = await gateway({ authSnapshot: provider })
+
+      const calls = Array.from({ length: 5 }, () => github.authSnapshot())
+      await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1))
+      release(SNAPSHOT)
+      for (const answer of await Promise.all(calls)) expect(answer).toEqual(SNAPSHOT)
+      expect(await github.authSnapshot()).toEqual(SNAPSHOT)
+
+      expect(provider).toHaveBeenCalledTimes(1)
+    })
+
+    it('fetches again once the reuse window has passed', async () => {
+      const provider = vi.fn(async () => SNAPSHOT)
+      const github = await gateway({ authSnapshot: provider, authSnapshotReuseMs: 0 })
+
+      await github.authSnapshot()
+      await github.authSnapshot()
+
+      expect(provider).toHaveBeenCalledTimes(2)
+    })
+
+    it('lets a later caller join a fetch an earlier caller stopped waiting for', async () => {
+      let release: (snapshot: AuthCacheSnapshot) => void = () => undefined
+      const provider = vi.fn(() => new Promise<AuthCacheSnapshot>((resolve) => (release = resolve)))
+      const github = await gateway({ authSnapshot: provider })
+      const controller = new AbortController()
+
+      const gaveUp = github.authSnapshot(controller.signal).catch((err: unknown) => err)
+      await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1))
+      controller.abort(new Error('timed out'))
+      expect(await gaveUp).toMatchObject({ message: 'timed out' })
+      const joined = github.authSnapshot()
+      release(SNAPSHOT)
+
+      expect(await joined).toEqual(SNAPSHOT)
+      expect(provider).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not reuse a failure: the next call fetches again', async () => {
+      const provider = vi
+        .fn<() => Promise<AuthCacheSnapshot>>()
+        .mockRejectedValueOnce(new Error('Clerk 503'))
+        .mockResolvedValue(SNAPSHOT)
+      const github = await gateway({ authSnapshot: provider })
+
+      await expect(github.authSnapshot()).rejects.toThrow('Clerk 503')
+      expect(await github.authSnapshot()).toEqual(SNAPSHOT)
+      expect(provider).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('completeLifecycle, asked for by a worker that may be hostile', () => {
     it('is refused before any notice, and the provider never runs', async () => {
       const complete = vi.fn(async () => undefined)
-      const github = await gateway({ watchTermination: neverNotified, completeLifecycle: complete })
+      const github = await gateway({
+        watchTermination: neverNotified,
+        completeLifecycle: complete,
+        terminationPollWaitMs: 50,
+      })
 
       await expect(github.completeLifecycle()).rejects.toThrow(/seen no Auto Scaling termination/)
 
       expect(complete).not.toHaveBeenCalled()
     })
 
-    it('is refused when the worker asks first, though a notice is on its way', async () => {
+    it('watches first when asked before any poll, as a restarted gateway is, and completes on a notice it sees', async () => {
       const complete = vi.fn(async () => undefined)
+      const watch = vi.fn(async () => AUTO_SCALING)
       const github = await gateway({
-        watchTermination: async () => AUTO_SCALING,
+        watchTermination: watch,
         completeLifecycle: complete,
+        terminationPollWaitMs: 5_000,
       })
 
-      // The gateway has not started its watch: no `termination()` call was made.
-      await expect(github.completeLifecycle()).rejects.toThrow(/seen no Auto Scaling termination/)
+      // No `termination()` call was made: the worker had its notice from the gateway before it restarted.
+      await github.completeLifecycle()
 
-      expect(complete).not.toHaveBeenCalled()
+      expect(watch).toHaveBeenCalledTimes(1)
+      expect(complete).toHaveBeenCalledTimes(1)
     })
 
     it('is refused after a spot notice', async () => {
@@ -350,5 +412,26 @@ describe.each<Reach>(['in-process', 'socket'])('the instance operations, %s', (r
 
       expect(refresh).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('termination polls, in-process', () => {
+  it('leave nothing behind once each has ended, however it ended', async () => {
+    const github = await gatewayReachedBy('in-process', {
+      watchTermination: neverNotified,
+      terminationPollWaitMs: 1,
+    })
+    const waiters = (github as unknown as { terminationWaiters: Set<unknown> }).terminationWaiters
+
+    for (let i = 0; i < 200; i++) {
+      const controller = new AbortController()
+      const poll = github.termination(controller.signal).catch(() => null)
+      controller.abort(new Error('gone'))
+      await poll
+    }
+    await Promise.all(Array.from({ length: 200 }, () => github.termination()))
+
+    expect(waiters).toBeInstanceOf(Set)
+    expect(waiters.size).toBe(0)
   })
 })

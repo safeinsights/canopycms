@@ -779,8 +779,11 @@ const POLL_WAIT_MS = MAX_POLL_WAIT_MS
 /** How long `health` waits for the gateway: `getSecret` alone has taken 87 s. */
 const HEALTH_WAIT_MS = 300_000
 
-/** How long `authSnapshot` waits: one membership fetch per user, so a large organisation's takes minutes. */
-const AUTH_SNAPSHOT_WAIT_MS = 10 * 60_000
+/**
+ * How long `authSnapshot` waits: a membership request per user, one at a time, so tens of thousands
+ * of users take tens of minutes. A later call joins a fetch an earlier one stopped waiting for.
+ */
+const AUTH_SNAPSHOT_WAIT_MS = 30 * 60_000
 
 /** How long `termination` and `completeLifecycle` wait: a poll's wait is well inside it. */
 const INSTANCE_ROLE_WAIT_MS = 60_000

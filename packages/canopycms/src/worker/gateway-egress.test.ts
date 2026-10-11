@@ -271,6 +271,26 @@ describe('registerPrivateKey', () => {
     expect(redactEgress(`config ${wrapped} end`)).not.toContain(wrapped.slice(0, 64))
   })
 
+  /** A key no other test registered, so only the registration under test can scrub it. */
+  const freshPem = () =>
+    generateKeyPairSync('rsa', { modulusLength: 2048 })
+      .privateKey.export({ type: 'pkcs1', format: 'pem' })
+      .toString()
+
+  it('scrubs the PEM a base64-wrapped key wraps from an answer', () => {
+    const pem = freshPem()
+    registerPrivateKey(Buffer.from(pem).toString('base64'))
+
+    holdsNoBodyLine(JSON.stringify(redactValue({ lines: bodyLines(pem) })), pem)
+  })
+
+  it('scrubs a key registered from its literal backslash-r-backslash-n form from an answer', () => {
+    const pem = freshPem()
+    registerPrivateKey(pem.replace(/\n/g, '\\r\\n'))
+
+    holdsNoBodyLine(JSON.stringify(redactValue({ lines: bodyLines(pem) })), pem)
+  })
+
   it('is not evicted by registering more tokens than the token store holds', () => {
     registerPrivateKey(pems.pkcs1)
     for (let i = 0; i < 40; i++)

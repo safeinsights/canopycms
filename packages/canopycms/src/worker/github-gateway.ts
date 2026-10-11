@@ -75,6 +75,18 @@ interface GitHubFetchJob {
 const TERMINATION_POLL_WAIT_MS = 25_000
 
 /**
+ * How long `completeLifecycle` watches for a notice it has not seen: one read of the instance's
+ * metadata, which a terminating instance answers at once.
+ */
+const LIFECYCLE_NOTICE_WAIT_MS = 10_000
+
+/**
+ * How long a fetched auth snapshot is answered again. Well under any auth-cache refresh interval,
+ * and it holds a worker asking in a loop to one fetch a minute.
+ */
+const AUTH_SNAPSHOT_REUSE_MS = 60_000
+
+/**
  * The longest an operation waits for a credential re-read in flight before it goes on with the
  * credential it has. A provider can take 87 s for one `getSecret`, and an operation that waited it
  * out would die at the task deadline for nothing; the task's retry still sees a rotated token, and
@@ -299,10 +311,12 @@ export interface LocalGitHubGatewayOptions {
    * Fetches the auth provider's snapshot with the provider's key; its presence is
    * `health().clerkConfigured`. Without it, `authSnapshot()` throws.
    */
-  authSnapshot?: (signal?: AbortSignal) => Promise<AuthCacheSnapshot>
+  authSnapshot?: () => Promise<AuthCacheSnapshot>
+  /** Test seam: how long a fetched snapshot is answered again (default {@link AUTH_SNAPSHOT_REUSE_MS}). */
+  authSnapshotReuseMs?: number
   /**
-   * Resolves once the instance is being terminated. Started at the first `termination()` call,
-   * once; a rejection is logged and the next call starts it again.
+   * Resolves once the instance is being terminated. Started at the first `termination()` or
+   * `completeLifecycle()` call, once; a rejection is logged and the next call starts it again.
    */
   watchTermination?: () => Promise<GatewayTerminationNotice>
   /** Completes the Auto Scaling lifecycle action. Never rejects by contract: the provider logs its own failure. */
@@ -349,10 +363,21 @@ class LocalGitHubGateway implements GitHubGateway {
   /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
   private pushes = 0
   private preparing: Promise<void> | null = null
-  /** The termination watch, started by the first `termination()` call; null again if it failed. */
-  private terminationWatch: Promise<GatewayTerminationNotice | null> | null = null
+  /** Whether the termination watch is running: started by a poll, and again by one after it failed. */
+  private terminationWatching = false
+  /** The notice the gateway's own termination watch saw; null until it sees one. */
+  private terminationNotice: GatewayTerminationNotice | null = null
+  /**
+   * The polls waiting for a notice, each removed when its poll ends. A set, not reactions on one
+   * long-lived promise: those would pile up, one per poll, for the instance's whole life.
+   */
+  private readonly terminationWaiters = new Set<(notice: GatewayTerminationNotice) => void>()
   /** Whether the gateway's own watch has seen an Auto Scaling notice: what `completeLifecycle` requires. */
   private sawAutoScalingNotice = false
+  /** The auth snapshot being fetched, which every concurrent caller joins. */
+  private snapshotFetch: Promise<AuthCacheSnapshot> | null = null
+  /** The last snapshot fetched, and when (`performance.now()`). */
+  private lastSnapshot: { snapshot: AuthCacheSnapshot; at: number } | null = null
   /** The one `completeLifecycle` provider call, which every call answers. */
   private lifecycleCompletion: Promise<void> | null = null
   private preflight: GitHubGatewayHealth['preflight'] = 'pending'
@@ -601,56 +626,97 @@ class LocalGitHubGateway implements GitHubGateway {
     return (this.preparing ??= this.prepareOnce())
   }
 
+  /**
+   * One fetch serves every caller: concurrent callers join it, and its result is answered again
+   * for {@link AUTH_SNAPSHOT_REUSE_MS}. A fetch is a request per user, so a worker asking in a loop
+   * would otherwise hold the provider's API at its rate limit. The fetch runs apart from every
+   * caller's signal, which ends only that caller's wait, so a retry after a timed-out wait joins it.
+   */
   async authSnapshot(signal?: AbortSignal): Promise<AuthCacheSnapshot> {
     const provider = this.options.authSnapshot
     if (provider === undefined) {
       throw new Error('The GitHub gateway has no auth provider key configured')
     }
+    const reuseMs = this.options.authSnapshotReuseMs ?? AUTH_SNAPSHOT_REUSE_MS
+    const last = this.lastSnapshot
+    if (last !== null && performance.now() - last.at < reuseMs) return last.snapshot
     // Not `credentialed()`: this never touches GitHub, and a provider failure must not arm the
     // GitHub credential re-read (the provider's own 401/403 re-read lives with the provider).
+    const fetching = (this.snapshotFetch ??= (async () => provider())()
+      .then((snapshot) => {
+        const scrubbed = redactValue(snapshot)
+        this.lastSnapshot = { snapshot: scrubbed, at: performance.now() }
+        return scrubbed
+      })
+      .finally(() => {
+        this.snapshotFetch = null
+      }))
     try {
-      return redactValue(await untilAborted(provider(signal), signal))
+      return await untilAborted(fetching, signal)
     } catch (err) {
       throw redactError(err)
     }
   }
 
   async termination(signal?: AbortSignal): Promise<GatewayTerminationNotice | null> {
-    const wait = this.options.terminationPollWaitMs ?? TERMINATION_POLL_WAIT_MS
-    let timer: NodeJS.Timeout | undefined
-    const pollEnds = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), wait)
-    })
-    try {
-      const watchTermination = this.options.watchTermination
-      const watch =
-        watchTermination === undefined
-          ? pollEnds
-          : (this.terminationWatch ??= this.startTerminationWatch(watchTermination))
-      // A failed watch (null) still waits out the poll, so a client polling in a loop is paced.
-      const noticed = watch.then((notice) => notice ?? pollEnds)
-      return await untilAborted(Promise.race([noticed, pollEnds]), signal)
-    } finally {
-      clearTimeout(timer)
-    }
+    if (this.terminationNotice !== null) return this.terminationNotice
+    this.startTerminationWatch()
+    // A failed watch leaves the poll waiting its whole period, so a client polling in a loop is paced.
+    return this.waitForTerminationNotice(
+      this.options.terminationPollWaitMs ?? TERMINATION_POLL_WAIT_MS,
+      signal,
+    )
   }
 
-  /** Start the termination watch; a failure is logged and forgotten, so the next poll starts it again. */
-  private startTerminationWatch(
-    watchTermination: () => Promise<GatewayTerminationNotice>,
-  ): Promise<GatewayTerminationNotice | null> {
-    const watch: Promise<GatewayTerminationNotice | null> = (async () => watchTermination())().then(
+  /** Start the termination watch unless it runs or has seen a notice; a failure is logged, and the next poll starts it again. */
+  private startTerminationWatch(): void {
+    const watchTermination = this.options.watchTermination
+    if (watchTermination === undefined || this.terminationWatching) return
+    if (this.terminationNotice !== null) return
+    this.terminationWatching = true
+    void (async () => watchTermination())().then(
       (notice) => {
+        this.terminationWatching = false
+        const scrubbed = redactValue(notice)
+        this.terminationNotice = scrubbed
         if (notice.kind === 'auto-scaling') this.sawAutoScalingNotice = true
-        return redactValue(notice)
+        for (const waiter of [...this.terminationWaiters]) waiter(scrubbed)
       },
       (err: unknown) => {
-        if (this.terminationWatch === watch) this.terminationWatch = null
+        this.terminationWatching = false
         gatewayLogError('The termination watch failed:', redactEgress(getErrorMessage(err)))
-        return null
       },
     )
-    return watch
+  }
+
+  /** The watch's notice, or null after `waitMs`; rejects with `signal`'s reason when it aborts first. */
+  private waitForTerminationNotice(
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<GatewayTerminationNotice | null> {
+    if (this.terminationNotice !== null) return Promise.resolve(this.terminationNotice)
+    signal?.throwIfAborted()
+    return new Promise<GatewayTerminationNotice | null>((resolve, reject) => {
+      const end = () => {
+        clearTimeout(timer)
+        this.terminationWaiters.delete(onNotice)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onNotice = (notice: GatewayTerminationNotice) => {
+        end()
+        resolve(notice)
+      }
+      const onAbort = () => {
+        end()
+        reject(signal?.reason)
+      }
+      const timer = setTimeout(() => {
+        end()
+        resolve(null)
+      }, waitMs)
+      this.terminationWaiters.add(onNotice)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
   }
 
   async completeLifecycle(signal?: AbortSignal): Promise<void> {
@@ -662,7 +728,19 @@ class LocalGitHubGateway implements GitHubGateway {
       return
     }
     // Only an Auto Scaling notice this gateway's own watch observed opens it: a worker cannot be
-    // trusted to say the instance is terminating, and completing the action ends the instance.
+    // trusted to say the instance is terminating, and completing the action ends the instance. A
+    // gateway restarted after the worker had its notice has not watched yet, so it watches now,
+    // for a bounded wait, before it refuses.
+    if (!this.sawAutoScalingNotice) {
+      this.startTerminationWatch()
+      await this.waitForTerminationNotice(
+        Math.min(
+          this.options.terminationPollWaitMs ?? TERMINATION_POLL_WAIT_MS,
+          LIFECYCLE_NOTICE_WAIT_MS,
+        ),
+        signal,
+      )
+    }
     if (!this.sawAutoScalingNotice) {
       throw new Error(
         'The GitHub gateway has seen no Auto Scaling termination, so it will not complete the lifecycle action',

@@ -468,6 +468,11 @@ describe('re-reading the credential', () => {
 
     expect(caught).not.toBeInstanceOf(GitHubTransientError)
     expect((caught as { status?: unknown }).status).toBe(404)
+    // The refusal armed a re-read, whose own read of the token fails too; awaited here, so its
+    // line lands in this test's console rather than after it.
+    await vi.waitFor(() =>
+      expect(consoleSpy).toHaveErrored('Failed to re-read the GitHub credential'),
+    )
   })
 
   it("is armed by a failing ls-remote, the push's default-branch read", async () => {

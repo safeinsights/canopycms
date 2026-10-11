@@ -400,6 +400,15 @@ async function buildSplitWorker(
     WORKER_STATE_DIRECTORY_MISSING,
   )
 
+  // The gateway enforces the protected set from its own environment, so a list left here would
+  // protect nothing while looking as if it did.
+  if (parseProtectedBranches(env).length > 0) {
+    throw new Error(
+      `${PROTECTED_BRANCHES_ENV} is set on the worker unit, but beside the GitHub gateway it is ` +
+        "the gateway's setting: move it to the gateway's environment (gateway.env)",
+    )
+  }
+
   // The worker's task timeout is core's default, which createWorker leaves unset.
   const gateway = deps.connectGateway(socketPath, { fetchInactivityMs: DEFAULT_TASK_TIMEOUT })
 

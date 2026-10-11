@@ -733,7 +733,6 @@ describe('runWorker: split mode', () => {
         CANOPYCMS_GITHUB_TOKEN: 'ghp_ignored',
         CANOPYCMS_GITHUB_TOKEN_SECRET_ARN: 'arn:tok',
         CANOPYCMS_GITHUB_APP_ID: '123',
-        CANOPYCMS_PROTECTED_BRANCHES: 'release/*',
         CANOPYCMS_BASE_BRANCH: 'trunk',
       },
     })
@@ -773,6 +772,19 @@ describe('runWorker: split mode', () => {
     }
     expect(h.start).toHaveBeenCalledTimes(1)
     expect(h.exit).not.toHaveBeenCalled()
+  })
+
+  it("refuses CANOPYCMS_PROTECTED_BRANCHES on the worker's unit, which only the gateway enforces", async () => {
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_PROTECTED_BRANCHES: 'release/*' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledTimes(1)
+    const { error } = h.record.mock.calls[0][0] as { error: Error }
+    expect(error.message).toMatch(/CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit/)
+    expect(h.connectGateway).not.toHaveBeenCalled()
+    expect(h.createWorker).not.toHaveBeenCalled()
+    expect(h.exitCodes()).toEqual([1])
   })
 
   it.each(['imds', 'network-namespace', 'proc', 'home', 'secrets-in-env'] as const)(
