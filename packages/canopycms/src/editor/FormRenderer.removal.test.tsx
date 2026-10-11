@@ -36,7 +36,7 @@ const renderForm = (fields: FieldConfig[], value: FormValue) => {
 }
 
 describe('FormRenderer removals', () => {
-  it('reports a removed object-list item, as the same object, with its title', () => {
+  it('reports a removed object-list item, as the same object, named by its content', () => {
     const second = { href: '/b' }
     const { onRemoved, onChange } = renderForm(
       [
@@ -61,7 +61,7 @@ describe('FormRenderer removals', () => {
       listPath: ['links'],
       index: 1,
       item: second,
-      label: 'Links #2',
+      label: '"/b" from Links',
     })
     expect(onRemoved.mock.calls[0][0].item).toBe(second)
   })
@@ -86,7 +86,7 @@ describe('FormRenderer removals', () => {
       listPath: ['blocks'],
       index: 0,
       item: block,
-      label: 'Hero',
+      label: '"Hero" from blocks',
     })
   })
 
@@ -100,7 +100,28 @@ describe('FormRenderer removals', () => {
       kind: 'value',
       path: ['hero'],
       value: image,
-      label: 'Hero image',
+      label: 'the image from Hero image',
     })
+  })
+
+  it('names an item with no text by its position, which the toast then states', () => {
+    const { onRemoved } = renderForm(
+      [
+        {
+          name: 'sizes',
+          type: 'object',
+          label: 'Sizes',
+          list: true,
+          fields: [{ name: 'width', type: 'number' }],
+        },
+      ],
+      { sizes: [{ width: 1 }, { width: 2 }] },
+    )
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Sizes #1' })).getByRole('button', {
+        name: 'Remove',
+      }),
+    )
+    expect(onRemoved.mock.calls[0][0].label).toBe('item 1 from Sizes')
   })
 })

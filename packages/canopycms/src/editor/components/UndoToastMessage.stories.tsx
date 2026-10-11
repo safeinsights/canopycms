@@ -6,7 +6,7 @@ import { UndoToastMessage } from './UndoToastMessage'
 const meta: Meta<typeof UndoToastMessage> = {
   title: 'Editor/UndoToastMessage',
   component: UndoToastMessage,
-  args: { label: 'Key features #2', onUndo: () => {} },
+  args: { label: '"Typed" from Key features', onUndo: () => {} },
   decorators: [
     (Story) => (
       <Notification withCloseButton style={{ maxWidth: 420 }}>

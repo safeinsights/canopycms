@@ -1163,7 +1163,10 @@ describe('useBranchManager', () => {
     })
 
     expect(modals.openConfirmModal).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Request changes' }),
+      expect.objectContaining({
+        title: 'Request changes',
+        confirmProps: expect.objectContaining({ color: 'red' }),
+      }),
     )
     expect(mockClient.workflow.requestChanges).not.toHaveBeenCalled()
   })

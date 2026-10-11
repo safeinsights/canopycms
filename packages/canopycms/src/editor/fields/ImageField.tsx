@@ -142,10 +142,12 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     edit({ ...value, alt: nextAlt })
   }
 
-  const handleRemove = () => {
+  const handleRemove = (event: React.MouseEvent<HTMLElement>) => {
     if (readOnly || !value) return
+    const field = event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
     edit(undefined)
     onRemoved?.(value)
+    field?.focus()
   }
 
   const handleCropConfirm = (rect: CropRect) => {
@@ -171,6 +173,8 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       data-canopy-field={dataCanopyField}
       data-testid={`image-field-${dataCanopyField}`}
       {...groupDescriptionProps(inputId, description)}
+      data-removal-focus
+      tabIndex={-1}
     >
       {label && (
         <Text size="sm" fw={500}>

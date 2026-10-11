@@ -184,6 +184,8 @@ export const BlockField: React.FC<BlockFieldProps> = ({
       p="md"
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
+      data-removal-focus
+      tabIndex={-1}
       shadow="xs"
       {...groupDescriptionProps(descriptionBaseId, description)}
     >
@@ -252,7 +254,16 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                               >
                                 ↓
                               </ActionIcon>
-                              <Button variant="subtle" color="red" onClick={() => removeBlock(idx)}>
+                              <Button
+                                variant="subtle"
+                                color="red"
+                                onClick={(event) => {
+                                  const list =
+                                    event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
+                                  removeBlock(idx)
+                                  list?.focus()
+                                }}
+                              >
                                 {EDITOR_ACTIONS.remove}
                               </Button>
                             </>

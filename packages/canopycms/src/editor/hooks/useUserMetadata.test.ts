@@ -17,7 +17,7 @@ describe('useUserMetadata', () => {
     avatarUrl: 'https://example.com/avatar.jpg',
   }
 
-  it.each(['canopycms-system', 'canopycms-content-reader'])(
+  it.each(['canopycms-system', 'canopycms-content-reader', 'canopycms-context'])(
     'answers the bot id %s as "CanopyCMS bot" without a lookup',
     (botId) => {
       const getUserMetadata = vi.fn()

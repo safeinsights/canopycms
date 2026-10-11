@@ -126,7 +126,7 @@ const showRequestChangesConfirmation = (
       </Text>
     ),
     labels: { confirm: 'Request changes', cancel: 'Cancel' },
-    confirmProps: { color: 'orange', 'data-testid': 'confirm-request-changes' },
+    confirmProps: { color: 'red', 'data-testid': 'confirm-request-changes' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
@@ -619,7 +619,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 if (!result.ok) {
                   throw new Error(result.error || 'Failed to request changes')
                 }
-                notifications.show({ message: 'Changes requested', color: 'orange' })
+                notifications.show({ message: 'Changes requested', color: 'blue' })
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
               } catch (err) {

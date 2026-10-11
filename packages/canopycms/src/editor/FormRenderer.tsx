@@ -80,6 +80,27 @@ const listItemTitle = (
   return fallback
 }
 
+/**
+ * How an Undo toast names a removed object-list item: by its title field or first non-empty
+ * text field, since a positional "#2" title passes to the next item once this one is gone.
+ */
+const removedItemLabel = (
+  item: Record<string, unknown>,
+  objectField: ObjectFieldConfig,
+  listLabel: string,
+  index: number,
+): string => {
+  const named = listItemTitle(item, objectField.itemTitleField, '')
+  const text =
+    named ||
+    objectField.fields
+      .filter((f) => f.type === 'string')
+      .map((f) => item?.[f.name])
+      .find((v): v is string => typeof v === 'string' && v.trim() !== '')
+      ?.trim()
+  return text ? `"${text}" from ${listLabel}` : `item ${index + 1} from ${listLabel}`
+}
+
 const normalizeOptions = (
   options: Array<string | { label: string; value: string }> | undefined,
 ): Array<{ label: string; value: string }> => {
@@ -531,7 +552,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               crop: fieldErrors?.[`${canopyPath}.crop`],
             }}
             readOnly={readOnly}
-            onRemoved={(removed) => onRemoved?.({ kind: 'value', path, value: removed, label })}
+            onRemoved={(removed) =>
+              onRemoved?.({ kind: 'value', path, value: removed, label: `the image from ${label}` })
+            }
           />,
         )
       }
@@ -556,9 +579,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                 listPath: path,
                 index,
                 item: block,
-                label:
+                label: `"${
                   blockField.templates.find((t) => t.name === block.template)?.label ??
-                  block.template,
+                  block.template
+                }" from ${label}`,
               })
             }
           />,
@@ -578,6 +602,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               p="md"
               shadow="xs"
               {...groupDescriptionProps(fieldId, field.description)}
+              data-removal-focus
+              tabIndex={-1}
             >
               <Stack gap="sm">
                 <FieldLabel
@@ -620,14 +646,20 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                                 <Button
                                   variant="subtle"
                                   color="red"
-                                  onClick={() => {
+                                  onClick={(event) => {
+                                    // The row goes, so focus moves to its list, not the page.
+                                    const list =
+                                      event.currentTarget.closest<HTMLElement>(
+                                        '[data-removal-focus]',
+                                      )
                                     update(items.filter((_, i) => i !== idx))
+                                    list?.focus()
                                     onRemoved?.({
                                       kind: 'list-item',
                                       listPath: path,
                                       index: idx,
                                       item,
-                                      label: itemTitle,
+                                      label: removedItemLabel(item, objectField, label, idx),
                                     })
                                   }}
                                 >

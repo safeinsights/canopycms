@@ -302,6 +302,24 @@ describe('GroupManager', () => {
   })
 
   describe('deleting groups', () => {
+    it('deletes a group not saved yet without asking, since nothing stored is lost', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockClear()
+      const unsaved: InternalGroup = {
+        id: 'temp-1' as InternalGroup['id'],
+        name: 'Draft group',
+        members: [],
+      }
+      render(<GroupManager internalGroups={[unsaved]} canEdit={true} onSave={mockOnSave} />, {
+        wrapper,
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group' }))
+
+      expect(modals.openConfirmModal).not.toHaveBeenCalled()
+      expect(screen.queryByText('Draft group')).toBeNull()
+    })
+
     it('asks before deleting a group, and a cancel keeps it', async () => {
       const { modals } = await import('@mantine/modals')
       vi.mocked(modals.openConfirmModal).mockImplementationOnce(() => 'mock-modal-id')

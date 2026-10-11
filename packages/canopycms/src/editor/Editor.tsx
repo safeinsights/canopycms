@@ -536,7 +536,7 @@ const EditorContent: React.FC<EditorProps> = ({
       undoToastsRef.current.delete(id)
       if (!open) {
         notifications.show({
-          message: `Too late to undo removing "${removal.label}".`,
+          message: `Too late to undo removing ${removal.label}.`,
           color: 'yellow',
         })
         return
@@ -551,7 +551,7 @@ const EditorContent: React.FC<EditorProps> = ({
       const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
       if (!now || !restoreRemoval(fields, now, anchored)) {
         notifications.show({
-          message: `Couldn't undo: "${removal.label}" no longer fits where it was.`,
+          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
           color: 'yellow',
         })
         return
@@ -563,13 +563,20 @@ const EditorContent: React.FC<EditorProps> = ({
       })
     }
     undoToastsRef.current.set(id, contentId)
-    notifications.show({
+    const toast = {
       id,
-      message: <UndoToastMessage label={removal.label} onUndo={undo} />,
+      message: (
+        <UndoToastMessage
+          label={removal.label}
+          onUndo={undo}
+          onHold={() => notifications.update({ ...toast, autoClose: false })}
+        />
+      ),
       autoClose: getNotificationDuration(8000),
       withCloseButton: true,
       onClose: () => undoToastsRef.current.delete(id),
-    })
+    }
+    notifications.show(toast)
   }
   useEffect(() => () => dismissUndoToasts(), [currentEntry?.contentId, branchNameState])
   // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.

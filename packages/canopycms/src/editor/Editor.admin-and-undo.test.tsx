@@ -24,7 +24,7 @@ vi.mock('@mantine/modals', () => ({
 
 vi.mock('@mantine/notifications', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mantine/notifications')>()
-  return { ...actual, notifications: { show: vi.fn(), hide: vi.fn() } }
+  return { ...actual, notifications: { show: vi.fn(), hide: vi.fn(), update: vi.fn() } }
 })
 
 // Records the resolver the editor hands the form.
@@ -256,8 +256,8 @@ describe('Undo after Remove', () => {
 
     const toast = undoToast()
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
-    expect(message.getByText('Removed "Links #2"')).toBeTruthy()
-    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
+    expect(message.getByText('Removed "/b" from Links')).toBeTruthy()
+    act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
 
     await waitFor(() => {
       const draft = persistedDraft(hello.contentId)
@@ -265,6 +265,27 @@ describe('Undo after Remove', () => {
       expect(draft?.links).toEqual([{ href: '/a' }, { href: '/b' }])
     })
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
+  })
+
+  it('keeps focus on the list after Remove, and holds the toast open while it has focus', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+
+    const list = screen.getByRole('group', { name: 'Links #2' }).closest('[data-removal-focus]')
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
+        name: 'Remove',
+      }),
+    )
+    expect(document.activeElement).toBe(list)
+
+    const toast = undoToast()
+    const message = render(<MantineProvider>{toast.message}</MantineProvider>)
+    act(() => message.getByRole('button', { name: 'Undo removing "/b" from Links' }).focus())
+    expect(notifications.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: toast.id, autoClose: false }),
+    )
   })
 
   it('closes its toast when another entry opens, so it can never act on that entry', async () => {
@@ -309,7 +330,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
 
     const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
-    const undo = message.getByRole('button', { name: 'Undo' })
+    const undo = message.getByRole('button', { name: /^Undo removing / })
     act(() => fireEvent.click(undo))
     await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
     // The second click of a double-click, landing after the first has rendered.
@@ -342,11 +363,11 @@ describe('Undo is one-shot and ends with the draft', () => {
 
     // The click lands on the closing toast; it adds nothing and says why.
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
-    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
+    act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
     expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Too late to undo removing "Links #2".' }),
+      expect.objectContaining({ message: 'Too late to undo removing "/b" from Links.' }),
     )
   })
 
@@ -369,7 +390,7 @@ describe('Undo is one-shot and ends with the draft', () => {
     await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
 
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
-    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
+    act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
   })
