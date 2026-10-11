@@ -382,7 +382,7 @@ function measureChangelog(content, cap) {
       // Only `## Released` closes the section, so a paragraph that turns into a
       // setext heading over a `---` cannot silently uncap the entries after it.
       if (inUnreleased && !(node.depth === 2 && name === 'Released')) {
-        strayHeadings.push({ heading: name, lineNo: node.position.start.line })
+        strayHeadings.push({ heading: name.replace(/\s+/g, ' '), lineNo: node.position.start.line })
         current = null
         continue
       }
@@ -735,7 +735,21 @@ function selfTest() {
     'entry cap: a setext heading inside Unreleased is reported, and later entries still capped',
     (() => {
       const m = measureChangelog(
-        ['## Unreleased', '### A', 'para', '---', '### B', words(20)].join('\n'),
+        ['## Unreleased', '### A', 'para', 'two', '---', '### B', words(20)].join('\n'),
+        15,
+      )
+      return (
+        m.strayHeadings[0]?.lineNo === 3 &&
+        m.strayHeadings[0]?.heading === 'para two' &&
+        m.over.some((e) => e.heading === 'B')
+      )
+    })(),
+  )
+  expect(
+    'entry cap: an H1 named Released does not close the section',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', '# Released', '### B', words(20)].join('\n'),
         15,
       )
       return m.strayHeadings.length === 1 && m.over.some((e) => e.heading === 'B')
