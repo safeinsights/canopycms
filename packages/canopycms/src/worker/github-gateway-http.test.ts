@@ -840,7 +840,7 @@ describe('bundles across the socket', () => {
   it("reports the bundle's own failure, not the gateway's, when its source fails", async () => {
     const gateway = fakeGateway()
     gateway.push.mockImplementation(async (_request: unknown, bundle?: Readable) => {
-      for await (const _chunk of bundle ?? []) {
+      for await (const _ of bundle ?? []) {
         // Read until the stream breaks.
       }
       return { kind: 'pushed', moved: false, pastStaleLease: false }
