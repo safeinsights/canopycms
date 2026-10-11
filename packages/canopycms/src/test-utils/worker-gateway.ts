@@ -57,8 +57,8 @@ export function localGatewayOf(gateway: GitHubGateway): GitHubGateway {
 }
 
 /**
- * Wait until every served gateway has finished what it is handling. A client's abort returns at
- * once, while the gateway is still stopping the operation; the in-process gateway is done by then.
+ * Wait until every served gateway has finished what it is handling, its fetch jobs included. A
+ * client's abort returns at once, while the gateway may still be stopping the operation.
  */
 export async function gatewaysSettled(): Promise<void> {
   for (const { server } of served) await (await server).idle()

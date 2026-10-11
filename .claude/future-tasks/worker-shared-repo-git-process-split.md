@@ -1105,8 +1105,9 @@ the drain mapping, deadlines, and the self-check helpers.
 - Settled in 4a:
   - The wire is two modules: `worker/github-gateway-wire.ts` (the zod schemas, the envelopes) and
     `worker/github-gateway-http.ts` (server, client, fetch jobs).
-  - The schemas bound shape and size only, above the gateway's own caps, so its refusals cross as
-    themselves; a malformed object ID or a 10 001st `have` is refused by the schema.
+  - Where the gateway refuses a value itself (a branch name, pull request text), the schema's bound
+    sits well above its cap, so its refusal crosses as itself; a malformed object ID or a
+    10 001st `have` is refused by the schema.
   - Errors are rebuilt as their own classes. An Octokit error becomes `GitHubRequestError` with
     `status`, `response.headers` (only `x-ratelimit-remaining` and `retry-after`) and
     `response.data` (dropped past 64 KiB). No stack, `cause` or `request` crosses.
@@ -1121,11 +1122,12 @@ the drain mapping, deadlines, and the self-check helpers.
   - one per `POST fetch`, run with no signal;
   - a poll waits up to 25 s;
   - a finished job's answer is kept 10 minutes;
-  - at most 8 run and 64 are held; past either, a new fetch is refused (transient);
+  - at most 8 run, past which a new fetch is refused (transient); at most 64 are held, past which
+    the job that finished longest ago is dropped;
   - a poll the connection breaks off is retried 3 times, 1 s apart;
   - an unknown job brings one new fetch, and a second loss fails.
-- The server passes every operation its request's own signal, so Octokit always receives one over
-  the socket.
+- The server passes every operation but `prepare` its request's own signal, so Octokit always
+  receives one over the socket.
 - An answer that refuses a body part way is written whole and ended only once the client stops
   sending (cut off after 10 s). Ending it at once makes Node close the connection under the
   client's next write, which can lose the answer.

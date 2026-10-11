@@ -57,7 +57,8 @@ import { gatewayLogWarn } from './gateway-egress'
  * A fetch is a job, not a request: `POST fetch` starts it and answers `202` with the job's id, and
  * the client polls `GET fetch/<id>` until it reports the ref map and the bundle. The job runs
  * detached from every client, so a whole-repository fetch outlasts any one request, and an abort
- * ends only the client's wait. Every other operation is aborted when its client goes away.
+ * ends only the client's wait. Every other operation is given a signal that aborts when its client
+ * goes away; `prepare`, which every caller shares, is not.
  */
 
 /** How long one poll of a fetch job waits for it to finish before answering that it runs on. */
@@ -111,7 +112,7 @@ export async function serveGitHubGateway(
   const server = http.createServer((req, res) => {
     void handler.handle(req, res)
   })
-  // A push's body waits for the mirror as long as the push does; the client bounds its own wait.
+  // A push's body waits for the mirror as long as the push does; the caller's signal bounds that.
   server.requestTimeout = 0
   server.headersTimeout = 60_000
   server.maxHeadersCount = 32
@@ -642,8 +643,8 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 
 /**
  * The worker's {@link GitHubGateway} for a gateway served at `socketPath`. Every answer is
- * validated before the worker sees it, and every error is rebuilt as the class it was thrown as
- * (worker/github-gateway-wire.ts), so the task runner classifies it as it would in-process. A
+ * validated before the worker sees it, and every error is rebuilt (worker/github-gateway-wire.ts,
+ * `decodeError`), so the task runner classifies it as it would in-process. A
  * gateway it cannot reach throws {@link GitHubGatewayUnreachableError}.
  */
 export function connectGitHubGateway(socketPath: string): GitHubGateway {
@@ -803,8 +804,7 @@ class GitHubGatewayClient implements GitHubGateway {
 
   /**
    * Send one request and resolve with the response once it begins. An abort destroys the request
-   * (the gateway then aborts the operation) and rejects with the signal's reason, as the
-   * in-process gateway does. A streamed `body` stops as soon as the answer begins: an answer
+   * (the gateway then aborts the operation) and rejects with the signal's reason. A streamed `body` stops as soon as the answer begins: an answer
    * before the whole body means the gateway refused it, and destroying it stops its writer.
    */
   private send(options: {

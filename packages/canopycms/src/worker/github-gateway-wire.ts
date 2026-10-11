@@ -11,10 +11,10 @@ import { redactEgress } from './gateway-egress'
  * read against these schemas, and a value that fails is refused, never coerced: the server before
  * any operation runs, the client before the worker sees an answer.
  *
- * The schemas bound shape and size only. What a value means (a plain branch name, a pull request's
- * text caps, a protected branch) stays the gateway's to judge (worker/branch-policy.ts), so its
- * refusals cross as themselves and classify as they do in-process: a size bound here sits well
- * above the gateway's own cap for the same field.
+ * The schemas bound shape and size. Where the gateway refuses a value itself (a branch name, a pull
+ * request's text, a protected branch: worker/branch-policy.ts), the bound here sits well above its
+ * cap, so its refusal crosses as itself and classifies as it does in-process. Object IDs and the
+ * `have` and prerequisite counts are held here to the gateway's own rules.
  */
 
 /** Every route's prefix, so a later incompatible format can sit beside this one. */
@@ -26,13 +26,13 @@ export const PUSH_REQUEST_HEADER = 'canopy-push-request'
 /** The content type of a bundle, either way. */
 export const BUNDLE_CONTENT_TYPE = 'application/x-git-bundle'
 
-/** The largest JSON request or answer body, in bytes: `have`'s 10 000 IDs, or a pull request body. */
+/** The largest JSON request body, in bytes: `have`'s 10 000 IDs, or a pull request body. */
 export const MAX_JSON_REQUEST_BYTES = 2 * 1024 * 1024
 
 /** The largest JSON answer, in bytes: a fetch's ref map for every GitHub branch. */
 export const MAX_JSON_ANSWER_BYTES = 64 * 1024 * 1024
 
-/** The longest error message that crosses, in characters: git's stderr is capped at 64 KiB. */
+/** The longest error message that crosses, in characters; a longer one is cut. */
 const MAX_MESSAGE_LENGTH = 256 * 1024
 
 /** The largest Octokit `response.data` that crosses, serialized; a larger one crosses as absent. */
@@ -305,8 +305,8 @@ export class GatewayRequestRefusedError extends GitHubGatewayProtocolError {
 
 /**
  * The statuses that refuse a request for its shape or size. An unknown route or method (404, 405)
- * is not one: a worker newer than its gateway meets it until the gateway restarts, so it stays
- * transient, as does a 503 (busy, stopping).
+ * says nothing about the request's content, so it stays transient, as does a 503 (busy,
+ * stopping).
  */
 const SHAPE_REFUSALS: ReadonlySet<number> = new Set([400, 411, 413, 415, 431])
 
@@ -319,8 +319,9 @@ export function refusedRequestError(message: string, status: number | undefined)
 
 /**
  * The envelope for an error leaving the gateway. Every string in it is scrubbed as an error is,
- * by the exact token forms and `redactCredentials`'s patterns (worker/gateway-egress.ts): the
- * operation already did, and this is the last place anything could slip past it. No stack, no
+ * by the exact token forms and `redactCredentials`'s patterns (worker/gateway-egress.ts): a
+ * credentialed operation already did (`LocalGitHubGateway.credentialed`), and this is the last
+ * place anything could slip past it. No stack, no
  * `cause` and no Octokit `request` crosses.
  */
 export function encodeError(err: unknown): ErrorEnvelope {
@@ -382,7 +383,7 @@ function encodeResponse(response: { headers?: unknown; data?: unknown }): {
     return { headers }
   }
   if (Buffer.byteLength(serialized) > MAX_ERROR_DATA_BYTES) return { headers }
-  // Scrubbed as text, then read back: the patterns never break JSON's own syntax.
+  // Scrubbed as text, then read back; text the scrub left unreadable crosses as absent.
   try {
     return { headers, data: JSON.parse(redactEgress(serialized)) as unknown }
   } catch {
