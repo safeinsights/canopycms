@@ -10,7 +10,12 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
+import {
+  mockConsole,
+  serverRequestOption,
+  useLocalGitHubGateway,
+  type MockConsole,
+} from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
 
@@ -84,7 +89,11 @@ describe('CmsWorker base branch', () => {
   it("detects GitHub's default branch on first boot and records it as remote.git HEAD", async () => {
     expect(await boot(makeWorker())).toBe('production')
 
-    expect(reposGet).toHaveBeenCalledWith({ owner: 'test-owner', repo: 'test-repo' })
+    expect(reposGet).toHaveBeenCalledWith({
+      owner: 'test-owner',
+      repo: 'test-repo',
+      ...serverRequestOption(),
+    })
     expect(await readHeadBranch(remoteGitPath)).toBe('production')
   })
 

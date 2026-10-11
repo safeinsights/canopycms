@@ -1097,6 +1097,59 @@ PR 2, their first user.
     the task runner's `isSettingsBranch`. Protecting the deployment's own configured name
     exactly needs the gateway to know it (D9 territory).
 
+**PR 4 ships as two PRs.** 4a: the transport core (wire format, server, client, fetch jobs,
+envelopes, the contract suite in both modes). 4b: abort and kill, the job's own bounds, `health`,
+the drain mapping, deadlines, and the self-check helpers.
+
+**Carried from 4a** (transport core):
+- Settled in 4a:
+  - The wire is two modules: `worker/github-gateway-wire.ts` (the zod schemas, the envelopes) and
+    `worker/github-gateway-http.ts` (server, client, fetch jobs).
+  - Where the gateway refuses a value itself (a branch name, pull request text), the schema's bound
+    sits well above its cap, so its refusal crosses as itself; a malformed object ID or a
+    10 001st `have` is refused by the schema.
+  - Errors are rebuilt as their own classes. An Octokit error becomes `GitHubRequestError` with
+    `status`, `response.headers` (only `x-ratelimit-remaining` and `retry-after`) and
+    `response.data` (dropped past 64 KiB). No stack, `cause` or `request` crosses.
+  - The ref map crosses as `[name, sha][]`. A push's JSON rides in the `canopy-push-request`
+    header beside its bundle.
+  - `createOrUpdatePullRequest` takes its signal as a parameter. `remoteUrl` stays a constructor
+    option of the in-process gateway, which the server wraps, so it never crosses.
+  - `prepare` runs once per server, and its failure is answered to every later caller.
+  - A bound path needs a private directory, and a socket a running gateway answers on is never
+    replaced.
+- Fetch jobs:
+  - one per `POST fetch`, run with no signal;
+  - a poll waits up to 25 s;
+  - a finished job's answer is kept 10 minutes;
+  - at most 8 run, past which a new fetch is refused (transient); at most 64 are held, past which
+    the job that finished longest ago is dropped;
+  - a poll the connection breaks off is retried 3 times, 1 s apart;
+  - an unknown job brings one new fetch, and a second loss fails.
+- The server passes every operation but `prepare` its request's own signal, so Octokit always
+  receives one over the socket.
+- An answer that refuses a body part way is written whole and ended only once the client stops
+  sending (cut off after 10 s). Ending it at once makes Node close the connection under the
+  client's next write, which can lose the answer.
+- The `worker-http` vitest project runs the gateway and cms-worker suites again through the
+  socket. One test is in-process only: the re-read starting after the caller has the failure.
+- A request the gateway, or node in front of it, refuses for its shape or size (400, 411, 413,
+  415, 431) fails the task for good, as the gateway's own refusal of the same field would: it is
+  `GatewayRequestRefusedError`, its status in `refusedWith`, never `status`, which classifiers read
+  as GitHub's. An unknown route or method (404, 405: a worker newer than its gateway) and a 503
+  (busy, stopping) stay transient.
+- From 4a's security round, for 4b:
+  - the server serves every operation whether or not `prepare` has run, so a hostile worker can
+    skip the App preflight and the state-directory check; gate operations on `prepare` (and report
+    its failure through `health`), or have `runGateway` prepare before serving;
+  - a client that opens a bundle and never reads it pins that bundle's file until the connection
+    ends; bound the download by write inactivity, with the job's other bounds;
+  - a client that trickles a JSON body holds a connection and `idle()` open (`requestTimeout` is
+    0), so SIGTERM's drain must be bounded in time, not only by `idle()`.
+- 4b: everything in "PR 4 ships as two PRs" above, plus carried items 1 (the worker's clock
+  while a reader holds back), 4 (the gateway's own logger in `github-service.ts`) and 6
+  ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md)).
+
 ## 9. Residual risks, and the Security Model afterwards
 
 - **R1 — Gateway authority.** Through the queue and the worker, a compromised Lambda can still:

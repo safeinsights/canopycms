@@ -25,6 +25,10 @@ import {
   startHttpsGitServer,
   type HttpsGitServer,
   type MockConsole,
+  gatewayUnderTest,
+  localGatewayOf,
+  GATEWAY_TRANSPORT,
+  gatewaysSettled,
 } from '../test-utils'
 import {
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
@@ -75,21 +79,23 @@ function gateway(
   refreshGitHubTokenMinIntervalMs = 0,
   token = CANARY,
 ): GitHubGateway {
-  return createLocalGitHubGateway({
-    githubOwner: 'test-owner',
-    githubRepo: 'test-repo',
-    auth: resolveWorkerGitHubAuth({
-      githubToken: token,
-      refreshGitHubToken,
-      refreshGitHubTokenMinIntervalMs,
+  return gatewayUnderTest(
+    createLocalGitHubGateway({
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      auth: resolveWorkerGitHubAuth({
+        githubToken: token,
+        refreshGitHubToken,
+        refreshGitHubTokenMinIntervalMs,
+      }),
+      githubApp: false,
+      stateDirectory,
+      workspacePath: path.join(root, 'workspace'),
+      timeoutMs: 30_000,
+      remoteUrl: githubPath,
+      ...overrides,
     }),
-    githubApp: false,
-    stateDirectory,
-    workspacePath: path.join(root, 'workspace'),
-    timeoutMs: 30_000,
-    remoteUrl: githubPath,
-    ...overrides,
-  })
+  )
 }
 
 /**
@@ -297,6 +303,7 @@ describe('the credential file', () => {
     ).rejects.toThrow()
 
     expect(killedPush).toBe(true)
+    await gatewaysSettled()
     expect(await credentialDirs()).toEqual([])
   })
 
@@ -583,7 +590,7 @@ describe('re-reading the credential', () => {
     await fs.writeFile(lock, '')
     // Maintenance running, as far as the fetch can tell: it holds the mutex for the whole test, so
     // a fetch that waited for it would never finish.
-    const internals = github as unknown as {
+    const internals = localGatewayOf(github) as unknown as {
       mirror: { maintenance: { tryAcquire(): (() => void) | null } }
     }
     const release = internals.mirror.maintenance.tryAcquire()
@@ -635,7 +642,10 @@ describe('re-reading the credential', () => {
         sha: 'not-an-id',
         prerequisites: [],
       }),
-    ).rejects.toThrow(/Not a commit ID/)
+    ).rejects.toThrow(
+      // Over the socket the wire format refuses it, before the gateway sees it.
+      GATEWAY_TRANSPORT === 'http' ? /malformed push request/ : /Not a commit ID/,
+    )
     await expect(github.push({ branch: 'feature', sha: blob, prerequisites: [] })).rejects.toThrow(
       /is not a commit/,
     )
@@ -644,23 +654,28 @@ describe('re-reading the credential', () => {
     expect(provider).not.toHaveBeenCalled()
   })
 
-  it('starts only after the failure has reached the caller', async () => {
-    let delivered = false
-    const startedAfterDelivery: boolean[] = []
-    const provider = vi.fn(async () => {
-      startedAfterDelivery.push(delivered)
-      return undefined
-    })
-
-    await gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
-      .fetch({ have: [] })
-      .catch(() => {
-        delivered = true
+  // In-process only: over the socket the caller is the server, and the worker learns of the
+  // failure from an answer written before the re-read starts but read whenever its I/O runs.
+  it.skipIf(GATEWAY_TRANSPORT === 'http')(
+    'starts only after the failure has reached the caller',
+    async () => {
+      let delivered = false
+      const startedAfterDelivery: boolean[] = []
+      const provider = vi.fn(async () => {
+        startedAfterDelivery.push(delivered)
+        return undefined
       })
-    await settle()
 
-    expect(startedAfterDelivery).toEqual([true])
-  })
+      await gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
+        .fetch({ have: [] })
+        .catch(() => {
+          delivered = true
+        })
+      await settle()
+
+      expect(startedAfterDelivery).toEqual([true])
+    },
+  )
 
   it('is joined by the next credentialed operation, which then uses the new token', async () => {
     const serverRoot = path.join(root, 'served')
@@ -711,6 +726,8 @@ describe('re-reading the credential', () => {
     await expect(joined).rejects.toThrow('task deadline')
     expect(observed).toEqual([])
     await vi.waitFor(() => expect(consoleSpy).toHaveErrored('did not settle within 200ms'))
+    // Over the socket the fetch job outlives the aborted wait, and fails on its own.
+    await gatewaysSettled()
   })
 
   it('reaches the provider once for two failures inside the default floor', async () => {

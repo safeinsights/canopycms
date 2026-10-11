@@ -34,7 +34,7 @@ import {
 } from './gateway-egress'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
-interface GitHubFetchResult {
+export interface GitHubFetchResult {
   /** Every GitHub branch, mapped to its tip, as this fetch left the mirror. */
   refs: ReadonlyMap<string, string>
   /**
@@ -127,14 +127,14 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 }
 
 /** The fields of a pull request the worker reads. */
-type GitHubPullRequest = Pick<
+export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
   'merged' | 'merged_at' | 'state' | 'node_id'
 >
 
-type GitHubCreateOrUpdatePullRequest = Omit<
+export type GitHubCreateOrUpdatePullRequest = Omit<
   CreateOrUpdatePullRequestParams,
-  'octokit' | 'owner' | 'repo'
+  'octokit' | 'owner' | 'repo' | 'signal'
 >
 
 /**
@@ -195,6 +195,7 @@ export interface GitHubGateway {
   getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest>
   createOrUpdatePullRequest(
     request: GitHubCreateOrUpdatePullRequest,
+    signal?: AbortSignal,
   ): Promise<{ number: number; url: string; created: boolean }>
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void>
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
@@ -815,11 +816,12 @@ class LocalGitHubGateway implements GitHubGateway {
 
   createOrUpdatePullRequest(
     request: GitHubCreateOrUpdatePullRequest,
+    signal?: AbortSignal,
   ): Promise<{ number: number; url: string; created: boolean }> {
-    return this.credentialed(request.signal, async (reach) => {
-      await this.assertPullRequestAllowed(reach, request, request.signal)
+    return this.credentialed(signal, async (reach) => {
+      await this.assertPullRequestAllowed(reach, request, signal)
       return this.api(reach, () =>
-        createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request }),
+        createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request, signal }),
       )
     })
   }

@@ -32,6 +32,14 @@ type MergePollInternals = {
   updateBranchMetadata(task: unknown, result: Record<string, unknown>): Promise<void>
 }
 
+/**
+ * `pulls.get`'s answer: the fields GitHub always sends that the gateway carries (`merged_at`,
+ * `node_id`), under the ones a test sets.
+ */
+const pullRequest = (data: Record<string, unknown>) => ({
+  data: { merged_at: null, node_id: 'PR_test', ...data },
+})
+
 describe('CmsWorker.pollMergeState()', () => {
   let tmpDir: string
   let contentBranchesPath: string
@@ -107,9 +115,9 @@ describe('CmsWorker.pollMergeState()', () => {
       pullRequestUrl: 'https://github.com/test-owner/test-repo/pull/42',
       pullRequestState: 'open',
     })
-    octokit.pulls.get.mockResolvedValue({
-      data: { merged: true, state: 'closed', merged_at: '2024-03-15T10:30:00Z' },
-    })
+    octokit.pulls.get.mockResolvedValue(
+      pullRequest({ merged: true, state: 'closed', merged_at: '2024-03-15T10:30:00Z' }),
+    )
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await internals.pollMergeState('feature-merged', branchPath, metaFile)
@@ -131,7 +139,7 @@ describe('CmsWorker.pollMergeState()', () => {
       pullRequestNumber: 43,
       pullRequestState: 'open',
     })
-    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'closed' } })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'closed' }))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await internals.pollMergeState('feature-closed', branchPath, metaFile)
@@ -145,7 +153,7 @@ describe('CmsWorker.pollMergeState()', () => {
   it('records open state on the first poll of an open PR', async () => {
     const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-open', { pullRequestNumber: 44 })
-    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(metaFile?.branch.pullRequestState).toBeUndefined()
@@ -162,7 +170,7 @@ describe('CmsWorker.pollMergeState()', () => {
       pullRequestNumber: 45,
       pullRequestState: 'open',
     })
-    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
 
     const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
@@ -213,7 +221,7 @@ describe('CmsWorker.pollMergeState()', () => {
       pullRequestNumber: 47,
       pullRequestState: 'closed',
     })
-    octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(metaFile?.branch.status).toBe('submitted')
@@ -231,7 +239,7 @@ describe('CmsWorker.pollMergeState()', () => {
       pullRequestNumber: 49,
       pullRequestState: 'open',
     })
-    octokit.pulls.get.mockResolvedValue({ data: { merged: true, state: 'closed' } })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
 
     const saveSpy = vi
       .spyOn(BranchMetadataFileManager.prototype, 'save')
@@ -257,7 +265,7 @@ describe('CmsWorker.pollMergeState()', () => {
         status: 'approved',
         pullRequestNumber: 50,
       })
-      octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
 
       await internals.rebaseActiveBranches()
 
@@ -270,7 +278,7 @@ describe('CmsWorker.pollMergeState()', () => {
         status: 'submitted',
         pullRequestNumber: 52,
       })
-      octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
 
       await internals.rebaseActiveBranches()
 
