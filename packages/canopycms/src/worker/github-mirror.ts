@@ -21,7 +21,6 @@ import {
   objectStoreKiB,
   rebuildPaths,
   recoverRebuild,
-  removeFetchLeftovers,
   sweepLocksAndTemporaries,
   type MirrorCorruption,
 } from './github-mirror-upkeep'
@@ -79,12 +78,14 @@ export class GitHubMirror {
   private lastMaintenanceAt: number
   private corruption: MirrorCorruption = null
   /**
-   * Changes whenever the mirror may no longer hold what the last GitHub fetch put there: a session
-   * failed (so the next one checks it again), it was created anew, or a rebuild replaced it. A
-   * GitHub fetch is reused only within the generation it completed in.
+   * Changes whenever the mirror stops holding what the last GitHub fetch put there: it was
+   * created anew, or a rebuild replaced it. A GitHub fetch is reused only within the generation
+   * it completed in.
    */
   generation = 0
   private rebuildFailedAt = 0
+  /** A sweep the maintenance mutex prevented, done at the next session start that can take it. */
+  private sweepOwed = false
 
   /**
    * `maintenanceIntervalMs` (default {@link MAINTENANCE_INTERVAL_MS}) also delays the first run:
@@ -103,9 +104,10 @@ export class GitHubMirror {
 
   /**
    * Run `fn` with the mirror to itself, after every session started before it. The first session
-   * of a gateway first clears what a killed one left ({@link sweepAtStart}). Creates the mirror if
-   * it is missing, and checks it again (for corruption too) after any session that failed. Deletes
-   * any credential file a killed or failed cleanup left: no session is running, so none is in use.
+   * of a gateway first clears what a killed one left ({@link sweepAtStart}), and any session first
+   * does a sweep that is owed ({@link sweepIfOwed}). Creates the mirror if it is missing, and
+   * checks it again (for corruption too) after any session that failed. Deletes any credential
+   * file a killed or failed cleanup left: no session is running, so none is in use.
    */
   exclusive<T>(fn: (session: MirrorSession) => Promise<T>): Promise<T> {
     const start = async () => {
@@ -114,6 +116,7 @@ export class GitHubMirror {
           await this.sweepAtStart()
           this.swept = true
         }
+        await this.sweepIfOwed()
         if (!this.ready) {
           await this.create()
           this.ready = true
@@ -123,7 +126,6 @@ export class GitHubMirror {
         return await fn(new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs))
       } catch (err) {
         this.ready = false
-        this.generation++
         throw err
       }
     }
@@ -231,11 +233,12 @@ export class GitHubMirror {
   }
 
   /**
-   * The GitHub fetch, inside a session. A failure leaves no pack of its own behind. When git found
-   * a lock of the mirror's own already there, the locks and temporaries are swept and the fetch
-   * tried once more, but only if maintenance, which holds such locks while it runs, is not running:
-   * then the lock is live, and the fetch fails transient instead. The sweep only try-acquires the
-   * mutex, so a push never waits behind a repack.
+   * The GitHub fetch, inside a session. A failure sweeps the mirror's locks and temporaries
+   * ({@link sweepUnlessMaintained}), so it leaves no pack of its own behind; when git failed on
+   * one of the mirror's own leftovers ({@link isOwnLockFailure}) and the sweep ran, the fetch is
+   * tried once more. While maintenance runs, which holds such files live, nothing is swept, the
+   * sweep is owed, and a leftover's failure is transient. Never waits for the mutex, so a push
+   * never waits behind a repack.
    */
   async fetchFromGitHub(
     session: MirrorSession,
@@ -246,28 +249,49 @@ export class GitHubMirror {
       await session.fetchFromGitHub(credential, signal)
       return
     } catch (err) {
-      await removeFetchLeftovers(this.gitDir)
+      const swept = await this.sweepUnlessMaintained('Removed stale locks from the GitHub mirror')
       if (!isOwnLockFailure(getErrorMessage(err))) throw err
-      const release = this.maintenance.tryAcquire()
-      if (release === null) {
+      if (!swept) {
         throw new GitHubTransientError(
           'github-fetch-failed',
           'The GitHub mirror is being maintained, and its fetch met a lock maintenance holds; ' +
             'retrying runs after it',
         )
       }
-      try {
-        const removed = await sweepLocksAndTemporaries(this.gitDir)
-        workerLogWarn(`Removed stale locks from the GitHub mirror: ${removed.join(', ')}`)
-      } finally {
-        release()
-      }
     }
     try {
       await session.fetchFromGitHub(credential, signal)
     } catch (err) {
-      await removeFetchLeftovers(this.gitDir)
+      await this.sweepUnlessMaintained('Removed what a failed fetch left in the GitHub mirror')
       throw err
+    }
+  }
+
+  /**
+   * Inside a session, sweep the mirror's locks and temporaries ({@link sweepLocksAndTemporaries}),
+   * logging what went under `label`, unless maintenance holds the mutex: then the sweep is owed.
+   * Returns whether it swept.
+   */
+  private async sweepUnlessMaintained(label: string): Promise<boolean> {
+    const release = this.maintenance.tryAcquire()
+    if (release === null) {
+      this.sweepOwed = true
+      return false
+    }
+    try {
+      const removed = await sweepLocksAndTemporaries(this.gitDir)
+      if (removed.length > 0) workerLogWarn(`${label}: ${removed.join(', ')}`)
+      this.sweepOwed = false
+      return true
+    } finally {
+      release()
+    }
+  }
+
+  /** At a session's start, the sweep a held mutex prevented, if it can take the mutex now. */
+  private async sweepIfOwed(): Promise<void> {
+    if (this.sweepOwed) {
+      await this.sweepUnlessMaintained('Removed what an interrupted git left in the GitHub mirror')
     }
   }
 
@@ -287,16 +311,22 @@ export class GitHubMirror {
     void this.runMaintenance().finally(release)
   }
 
-  /** One maintenance run, holding the mutex; it never takes a session. */
+  /**
+   * One maintenance run, holding the mutex; it never takes a session. A failed run owes a sweep
+   * of what it left, and the next run waits a whole interval from this one's end.
+   */
   private async runMaintenance(): Promise<void> {
     const started = Date.now()
     try {
-      const { repacked } = await maintainMirror(this.gitDir, (args, { deadlineMs }) =>
+      const { repacked } = await maintainMirror((args, { deadlineMs }) =>
         runInRepo(this.gitDir, deadlineMs, args, { deadlineMs }),
       )
       if (repacked) workerLog(`GitHub mirror repacked in ${Date.now() - started}ms`)
     } catch (err) {
+      this.sweepOwed = true
       workerLogError(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
+    } finally {
+      this.lastMaintenanceAt = Date.now()
     }
   }
 
@@ -550,15 +580,19 @@ async function sweepCredentialConfigs(stateDirectory: string): Promise<void> {
 }
 
 /**
- * Whether git's own output, not a `remote:` line relayed from GitHub, says a lock file was
- * already there: the mirror's own housekeeping holds it, which says nothing about the credential.
+ * Whether git's own output, not a `remote:` line relayed from GitHub, says a lock file or
+ * `packed-refs.new` was already there: the mirror's own housekeeping holds it, or a killed git
+ * left it, which says nothing about the credential.
  * @internal Exported for tests.
  */
 export function isOwnLockFailure(message: string): boolean {
   return message
     .split('\n')
     .some(
-      (line) => !/^\s*remote:/.test(line) && /Unable to create '.*\.lock': File exists/.test(line),
+      (line) =>
+        !/^\s*remote:/.test(line) &&
+        (/Unable to create '.*\.lock': File exists/.test(line) ||
+          /unable to create file \S*packed-refs\.new: File exists/.test(line)),
     )
 }
 
@@ -984,6 +1018,8 @@ export class MirrorSession {
       signal?: AbortSignal
       repo?: string
       protectedBranches: readonly string[]
+      /** Called once the push is allowed, just before git pushes. */
+      onPushing?: () => void
     },
   ): Promise<GitHubRefUpdate> {
     for (const id of [sha, ...(options.lease === undefined ? [] : [options.lease])]) {
@@ -991,6 +1027,7 @@ export class MirrorSession {
     }
     await assertPlainBranchName(branch, this.git())
     await this.assertPushAllowed(credential, branch, options.protectedBranches, options.signal)
+    options.onPushing?.()
     const status = await this.githubBound(
       credential,
       [
@@ -1122,12 +1159,15 @@ async function isBareRepository(gitDir: string): Promise<boolean> {
   }
 }
 
-/** Create an empty bare repository at `gitDir` under the mirror's pins. */
+/**
+ * Create an empty bare repository at `gitDir` under the mirror's pins, with loose and packed refs
+ * whatever a user's config defaults to: the sweeps know that format's leftovers.
+ */
 async function initMirror(gitDir: string): Promise<void> {
   await fs.mkdir(gitDir, { mode: 0o700 })
   await simpleGit({ baseDir: gitDir, ...mirrorGitOptions() })
     .env(mirrorEnv(gitDir))
-    .raw(['init', '--quiet', '--bare', '--end-of-options'])
+    .raw(['-c', 'init.defaultRefFormat=files', 'init', '--quiet', '--bare', '--end-of-options'])
 }
 
 /** git in `repo`, one of the gateway's own, under `config` (the mirror's pins by default). */

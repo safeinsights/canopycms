@@ -41,14 +41,24 @@ export const MAX_FETCH_HAVE = 10_000
 /** How long a completed GitHub fetch is reused: one sync cycle's fetch, reconcile and settings push. */
 const FETCH_COALESCE_MS = 30_000
 
+/**
+ * What a GitHub fetch's session saw, so a later session can tell whether the mirror still holds
+ * GitHub as that fetch left it: the mirror's {@link GitHubMirror.generation} once it fetched, and
+ * how many pushes the gateway had started when it began.
+ */
+interface FetchSnapshot {
+  generation: number
+  pushes: number
+}
+
 /** A GitHub fetch operations join ({@link LocalGitHubGateway.joinGitHubFetch}). */
 interface GitHubFetchJob {
-  readonly done: Promise<void>
+  readonly done: Promise<FetchSnapshot>
   failed: boolean
   /** When it succeeded; null while it runs. */
   completedAt: number | null
-  /** The mirror's generation when it succeeded ({@link GitHubMirror.generation}). */
-  generation: number
+  /** Set when it succeeded. */
+  snapshot: FetchSnapshot | null
 }
 
 /** The most prerequisites one push names. */
@@ -224,6 +234,8 @@ class LocalGitHubGateway implements GitHubGateway {
   private refreshing: Promise<void> | null = null
   /** The GitHub fetch that operations join: in flight, or completed and still reusable. */
   private githubFetch: GitHubFetchJob | null = null
+  /** Pushes and branch deletions started at GitHub: each ends reuse of an earlier fetch. */
+  private pushes = 0
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
@@ -318,7 +330,7 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * Bring the mirror up to GitHub, coalesced: join the GitHub fetch in flight, or reuse one that
-   * completed less than {@link FETCH_COALESCE_MS} ago and that no push has invalidated since, or
+   * completed less than {@link FETCH_COALESCE_MS} ago with no push or rebuild since, or
    * else start one with the credential `resolve` gives, resolved only then, so a joining operation
    * mints no token. A failed fetch is never joined or reused. The fetch is
    * detached from every caller's `signal`, which ends only that caller's wait: a fetch of a whole
@@ -330,40 +342,48 @@ class LocalGitHubGateway implements GitHubGateway {
   private async joinGitHubFetch(
     resolve: () => Promise<GitHubCredential>,
     signal?: AbortSignal,
-  ): Promise<number> {
+  ): Promise<FetchSnapshot> {
     const current = this.githubFetch
     const window = this.options.fetchCoalesceMs ?? FETCH_COALESCE_MS
     const reusable =
       current !== null &&
       !current.failed &&
       (current.completedAt === null ||
-        (Date.now() - current.completedAt < window &&
-          current.generation === this.mirror.generation))
+        (Date.now() - current.completedAt < window && this.isCurrent(current.snapshot)))
     const job = reusable ? current : this.startGitHubFetch(resolve)
-    await untilAborted(job.done, signal)
-    return job.generation
+    return untilAborted(job.done, signal)
+  }
+
+  /** Whether the mirror still holds GitHub as the fetch that saw `snapshot` left it. */
+  private isCurrent(snapshot: FetchSnapshot | null): boolean {
+    return (
+      snapshot !== null &&
+      snapshot.generation === this.mirror.generation &&
+      snapshot.pushes === this.pushes
+    )
   }
 
   /**
    * Run `fn` in a mirror session over what a GitHub fetch put in the mirror: `join` one, and
-   * check inside the session that the mirror is still the one it filled. A session started since
-   * may have re-created it, leaving no heads, which would read as GitHub having none. When it is
-   * not, `join` again, which then fetches afresh; a second miss is transient.
+   * check inside the session that nothing has changed the mirror or GitHub since
+   * ({@link isCurrent}). A session between the two may have re-created the mirror, leaving no
+   * heads, which would read as GitHub having none, or pushed. When something has, `join` again,
+   * which then fetches afresh; a second miss is transient.
    */
   private async afterGitHubFetch<T>(
-    join: () => Promise<number>,
+    join: () => Promise<FetchSnapshot>,
     fn: (session: MirrorSession) => Promise<T>,
   ): Promise<T> {
     for (let attempt = 1; ; attempt++) {
-      const generation = await join()
+      const snapshot = await join()
       const result = await this.mirror.exclusive(async (session) =>
-        this.mirror.generation === generation ? { value: await fn(session) } : null,
+        this.isCurrent(snapshot) ? { value: await fn(session) } : null,
       )
       if (result !== null) return result.value
       if (attempt === 2) {
         throw new GitHubTransientError(
           'github-fetch-failed',
-          'The GitHub mirror was replaced after each of two GitHub fetches',
+          'The GitHub mirror or GitHub changed after each of two GitHub fetches',
         )
       }
     }
@@ -382,22 +402,20 @@ class LocalGitHubGateway implements GitHubGateway {
           credential.onFailure()
         },
       }
-      await this.mirror.exclusive(async (mirror) => {
+      const snapshot = await this.mirror.exclusive(async (mirror) => {
+        const pushes = this.pushes
         await this.mirror.heal(mirror, own)
         await this.mirror.fetchFromGitHub(mirror, own)
+        return { generation: this.mirror.generation, pushes }
       })
       await this.mirror.afterFetch()
+      return snapshot
     }
-    const job: GitHubFetchJob = {
-      failed: false,
-      completedAt: null,
-      generation: this.mirror.generation,
-      done: run(),
-    }
+    const job: GitHubFetchJob = { failed: false, completedAt: null, snapshot: null, done: run() }
     job.done.then(
-      () => {
+      (snapshot) => {
         job.completedAt = Date.now()
-        job.generation = this.mirror.generation
+        job.snapshot = snapshot
       },
       () => {
         job.failed = true
@@ -408,8 +426,9 @@ class LocalGitHubGateway implements GitHubGateway {
     return job
   }
 
-  /** After a push to GitHub: the next fetch must see it. */
+  /** Before a push or branch deletion at GitHub: every later read must come from a fetch after it. */
   private invalidateGitHubFetch(): void {
+    this.pushes++
     this.githubFetch = null
   }
 
@@ -557,9 +576,9 @@ class LocalGitHubGateway implements GitHubGateway {
     const session = (received: ReceivedBundle | null) =>
       this.afterGitHubFetch(
         async () => {
-          const generation = await this.joinGitHubFetchForPush(credential, request.branch, signal)
+          const snapshot = await this.joinGitHubFetchForPush(credential, request.branch, signal)
           await credential()
-          return generation
+          return snapshot
         },
         async (mirror) => this.pushInSession(mirror, await credential(), request, received, signal),
       )
@@ -578,11 +597,12 @@ class LocalGitHubGateway implements GitHubGateway {
     credential: () => Promise<GitHubCredential>,
     branch: string,
     signal?: AbortSignal,
-  ): Promise<number> {
+  ): Promise<FetchSnapshot> {
     try {
       return await this.joinGitHubFetch(credential, signal)
     } catch (err) {
-      if (err instanceof GitHubTransientError) throw err
+      // An HTTP failure is the credential's own (a mint refused), classified by its status.
+      if (err instanceof GitHubTransientError || hasHttpStatus(err)) throw err
       // [REDACT] The message reaches the task's lastError.
       throw new GitHubTransientError(
         'github-fetch-failed',
@@ -626,16 +646,15 @@ class LocalGitHubGateway implements GitHubGateway {
       repo = await mirror.quarantine(received, request, heads, signal)
     }
 
-    const attempt = (lease?: string) => {
-      // Whatever the push does to GitHub, a fetch reused from before it may not show it.
-      this.invalidateGitHubFetch()
-      return mirror.pushToGitHub(credential, branch, sha, {
+    const attempt = (lease?: string) =>
+      mirror.pushToGitHub(credential, branch, sha, {
         lease,
         signal,
         repo,
         protectedBranches: request.protectedBranches,
+        // Whatever the push does to GitHub, a fetch reused from before it may not show it.
+        onPushing: () => this.invalidateGitHubFetch(),
       })
-    }
     try {
       return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
     } catch (err) {
@@ -740,6 +759,7 @@ class LocalGitHubGateway implements GitHubGateway {
 
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
+      this.invalidateGitHubFetch()
       await this.api(reach, () =>
         this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
       )
@@ -814,4 +834,11 @@ async function realpathOfNearest(target: string): Promise<string> {
       current = parent
     }
   }
+}
+
+/** Whether `err` carries an HTTP status, as an Octokit or a token mint's failure does. */
+function hasHttpStatus(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number'
+  )
 }

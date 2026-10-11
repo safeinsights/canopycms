@@ -39,7 +39,10 @@ async function commitAndPush(file: string): Promise<string> {
   return (await seed.revparse(['HEAD'])).trim()
 }
 
-function gateway(remoteUrl: string | (() => Promise<string>) = githubPath): GitHubGateway {
+function gateway(
+  remoteUrl: string | (() => Promise<string>) = githubPath,
+  fetchCoalesceMs?: number,
+): GitHubGateway {
   return createLocalGitHubGateway({
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
@@ -49,6 +52,7 @@ function gateway(remoteUrl: string | (() => Promise<string>) = githubPath): GitH
     workspacePath: path.join(root, 'workspace'),
     timeoutMs: 30_000,
     remoteUrl,
+    ...(fetchCoalesceMs !== undefined ? { fetchCoalesceMs } : {}),
   })
 }
 
@@ -116,6 +120,8 @@ describe('what a stopped gateway left', () => {
       'objects/info/tmp_graph_planted',
       'objects/info/commit-graphs/commit-graph-chain.lock',
       'objects/info/commit-graphs/tmp_graph_planted',
+      'packed-refs.new',
+      'objects/ab/tmp_obj_planted',
     ]
     for (const file of planted) {
       await fs.mkdir(path.dirname(path.join(mirrorDir, file)), { recursive: true })
@@ -201,6 +207,25 @@ describe('a mirror that would lie about GitHub', () => {
       /extensions\.partialclone/,
     ],
     [
+      'an empty loose head, as a crash leaves one',
+      () => fs.writeFile(path.join(mirrorDir, 'refs', 'heads', 'ghost'), ''),
+      /refs\/heads\/ghost is not a ref/,
+    ],
+    [
+      'a loose head that is not an object ID',
+      () => fs.writeFile(path.join(mirrorDir, 'refs', 'heads', 'ghost'), 'not a ref\n'),
+      /refs\/heads\/ghost is not a ref/,
+    ],
+    [
+      'a truncated packed-refs, which every git there then fails on',
+      async () => {
+        await git('--git-dir', mirrorDir, 'pack-refs', '--all')
+        const packed = path.join(mirrorDir, 'packed-refs')
+        await fs.writeFile(packed, (await fs.readFile(packed)).subarray(0, 70))
+      },
+      /git cannot read it/,
+    ],
+    [
       'a promisor pack',
       () => fs.writeFile(path.join(mirrorDir, 'objects', 'pack', 'pack-planted.promisor'), ''),
       /promisor pack \(pack-planted\.promisor\)/,
@@ -265,6 +290,37 @@ describe('a mirror that would lie about GitHub', () => {
   })
 })
 
+describe('git config outside the mirror', () => {
+  /** A home directory whose .gitconfig holds `lines`, for every git the mirror runs from now on. */
+  async function homeConfig(lines: string): Promise<void> {
+    const home = path.join(root, 'home')
+    await fs.mkdir(home)
+    await fs.writeFile(path.join(home, '.gitconfig'), lines)
+    vi.stubEnv('HOME', home)
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("never reads as corruption: a promisor key in the global config is not the mirror's", async () => {
+    await homeConfig('[remote "origin"]\n\tpromisor = true\n')
+    await gateway().fetch({ have: [] })
+    const next = await commitAndPush('next.txt')
+
+    expect((await gateway().fetch({ have: [] })).refs.get('main')).toBe(next)
+    expect(consoleSpy).not.toHaveWarned(/Rebuilt the GitHub mirror/)
+  })
+
+  it('never chooses the ref format the mirror is created with', async () => {
+    await homeConfig('[init]\n\tdefaultRefFormat = reftable\n')
+
+    await gateway().fetch({ have: [] })
+
+    expect(await git('--git-dir', mirrorDir, 'rev-parse', '--show-ref-format')).toBe('files')
+  })
+})
+
 describe('maintenance', () => {
   it('holds the mutex a rebuild waits on, never waits for a session, and both finish', async () => {
     const credential = fixtureCredential(githubPath)
@@ -299,10 +355,14 @@ describe('maintenance', () => {
     const opened = new Promise<void>((resolve) => (open = resolve))
 
     // The session the rebuild runs in is held until maintenance is running.
+    let entered!: () => void
+    const inSession = new Promise<void>((resolve) => (entered = resolve))
     const rebuild = mirror.exclusive(async (session) => {
+      entered()
       await opened
       await mirror.heal(session, credential)
     })
+    await inSession
     await mirror.afterFetch()
     expect(events).toEqual(['acquired 1'])
     open()
@@ -368,5 +428,74 @@ describe('maintenance', () => {
     expect(
       Number(/count: (\d+)/.exec(await git('--git-dir', mirrorDir, 'count-objects', '-v'))?.[1]),
     ).toBe(0)
+  })
+
+  it('owes a sweep after a failed run, done at the next session start', async () => {
+    const credential = fixtureCredential(githubPath)
+    const mirror = new GitHubMirror(stateDirectory, 30_000, 0)
+    await mirror.exclusive((session) => mirror.fetchFromGitHub(session, credential))
+    // commit-graph fails on the lock, as a step killed at its deadline fails; the temporary is
+    // what such a step leaves.
+    const planted = [
+      path.join(mirrorDir, 'objects', 'info', 'commit-graph.lock'),
+      path.join(mirrorDir, 'objects', 'pack', 'tmp_pack_planted'),
+    ]
+    for (const file of planted) await fs.writeFile(file, '')
+    const mutex = (mirror as unknown as MirrorInternals).maintenance
+
+    await mirror.afterFetch()
+    const release = await mutex.acquire()
+    release()
+
+    expect(consoleSpy).toHaveErrored(/GitHub mirror maintenance failed/)
+    for (const file of planted) expect(await exists(file), file).toBe(true)
+
+    await mirror.exclusive(async () => undefined)
+
+    for (const file of planted) expect(await exists(file), file).toBe(false)
+    expect(consoleSpy).toHaveWarned(/Removed what an interrupted git left in the GitHub mirror/)
+  })
+
+  it('leaves its temporaries to it when a fetch fails while it runs, and owes the sweep', async () => {
+    const mirror = new GitHubMirror(stateDirectory, 30_000, 0)
+    await mirror.exclusive((session) =>
+      mirror.fetchFromGitHub(session, fixtureCredential(githubPath)),
+    )
+    // A repack's pack-objects writes these while it runs.
+    const temporary = path.join(mirrorDir, 'objects', 'pack', 'tmp_pack_live')
+    await fs.writeFile(temporary, '')
+    const release = (mirror as unknown as MirrorInternals).maintenance.tryAcquire()
+    expect(release).not.toBeNull()
+
+    const failed = await mirror
+      .exclusive((session) =>
+        mirror.fetchFromGitHub(session, fixtureCredential(path.join(root, 'missing.git'))),
+      )
+      .catch((err: unknown) => err)
+
+    expect(failed).toBeInstanceOf(Error)
+    expect(await exists(temporary)).toBe(true)
+    release?.()
+    await mirror.exclusive(async () => undefined)
+    expect(await exists(temporary)).toBe(false)
+  })
+})
+
+describe('a fetch that meets what a killed git left', () => {
+  it('sweeps a stale packed-refs.new and fetches again past it', async () => {
+    await seed.raw(['push', '-q', githubPath, 'HEAD:refs/heads/gone'])
+    // Fetching GitHub afresh each time, so the second fetch meets the leftover in its session.
+    const github = gateway(githubPath, 0)
+    await github.fetch({ have: [] })
+    await git('--git-dir', mirrorDir, 'pack-refs', '--all')
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/gone')
+    const next = await commitAndPush('next.txt')
+    await fs.writeFile(path.join(mirrorDir, 'packed-refs.new'), '')
+
+    const fetched = await github.fetch({ have: [] })
+
+    expect(fetched.refs.get('main')).toBe(next)
+    expect(fetched.refs.has('gone')).toBe(false)
+    expect(consoleSpy).toHaveWarned(/Removed stale locks from the GitHub mirror: packed-refs\.new/)
   })
 })

@@ -126,6 +126,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     if (code !== 0) return
     exitedCleanly = true
     clearTimeout(inactivity)
+    clearTimeout(deadline)
   })
 
   child.stderr?.on('data', (chunk: Buffer) => {

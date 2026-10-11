@@ -307,12 +307,15 @@ describe('the credential file', () => {
     const decoys = ['.canopy-github-credential-a1B2c3-kept', '.canopy-github-credential-', 'other']
     for (const decoy of decoys) await fs.mkdir(path.join(stateDirectory, decoy))
 
-    await gateway().prepare()
+    const github = gateway()
+    await github.prepare()
 
     await expect(fs.stat(leftover)).rejects.toThrow(/ENOENT/)
     for (const decoy of decoys) {
       expect((await fs.stat(path.join(stateDirectory, decoy))).isDirectory()).toBe(true)
     }
+    // Joins the pre-fetch prepare() started, so it ends before the fixtures are removed.
+    await github.fetch({ have: [] })
   })
 })
 
@@ -432,6 +435,24 @@ describe('re-reading the credential', () => {
     expect((caught as GitHubTransientError).code).toBe('github-fetch-failed')
     expect(observed.filter((s) => s.configFile).map((s) => subcommand(s.args))).toEqual(['fetch'])
     expect(provider).toHaveBeenCalledTimes(1)
+  })
+
+  it("passes a push's refused mint through with its HTTP status, so the task fails for good", async () => {
+    const ahead = await aheadOnRemoteGit('feature')
+    const refusal = Object.assign(new Error('Not Found'), { status: 404 })
+    const auth = {
+      ...resolveWorkerGitHubAuth({ githubToken: CANARY }),
+      resolveGitToken: async () => {
+        throw refusal
+      },
+    }
+
+    const caught = await gateway({ auth })
+      .push({ branch: 'feature', sha: ahead, prerequisites: [], protectedBranches: ['main'] })
+      .catch((err: unknown) => err)
+
+    expect(caught).not.toBeInstanceOf(GitHubTransientError)
+    expect((caught as { status?: unknown }).status).toBe(404)
   })
 
   it("is armed by a failing ls-remote, the push's default-branch read", async () => {

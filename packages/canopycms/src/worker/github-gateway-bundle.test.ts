@@ -14,6 +14,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 
+import type { Octokit } from '@octokit/rest'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1033,5 +1034,65 @@ describe('GitHub fetches, coalesced at the production window', () => {
 
     expect(first.status).toBe('rejected')
     expect(second.status === 'fulfilled' && second.value.refs.get('main')).toBe(main)
+  })
+
+  it('answers a push after refused ones from the fetch they shared', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    const refused = { branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }
+    // The valid push joins the fetch while the first refused push's session runs, so both refusals
+    // fail between its join and its session.
+    let valid: Promise<GitHubPushAnswer> | undefined
+    const observed = spySpawns((spawned) => {
+      if (valid === undefined && subcommand(spawned.args) === 'ls-remote') {
+        valid = github.push(request('copy', main))
+      }
+    })
+
+    const refusals = await Promise.allSettled([github.push(refused), github.push(refused)])
+
+    for (const refusal of refusals) {
+      expect(refusal.status === 'rejected' && refusal.reason).toBeInstanceOf(RefusedPushError)
+    }
+    expect(valid).toBeDefined()
+    expect(await valid).toMatchObject({ kind: 'pushed', moved: true })
+    expect(githubFetches(observed)).toBe(0)
+  })
+
+  it('answers a fetch that joined before a push with a fetch after it', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    // The fetch joins the completed one while the push's session runs, before it pushes.
+    let fetching: Promise<{ refs: ReadonlyMap<string, string> }> | undefined
+    spySpawns((spawned) => {
+      if (fetching === undefined && subcommand(spawned.args) === 'for-each-ref') {
+        fetching = github.fetch({ have: [] })
+      }
+    })
+
+    expect(await github.push(request('copy', main))).toMatchObject({ kind: 'pushed', moved: true })
+
+    expect(fetching).toBeDefined()
+    expect((await fetching!).refs.get('copy')).toBe(main)
+  })
+
+  it('fetches afresh after deleting a branch', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', main)
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(true)
+
+    await github.deleteBranch('gone')
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
   })
 })
