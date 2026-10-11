@@ -1554,7 +1554,7 @@ The base branch itself (the PR target, usually `main`) is protected: it can neve
 
 ### Comments System
 
-Comments enable asynchronous review at three levels: **field**, **entry**, and **branch** (the changeset). They live in each branch workspace's `.canopy-meta/comments.json`, excluded from git. Only users who can read an entry see its field and entry comments or can add to or resolve them; branch comments follow branch access. Threads show each person's name and avatar, never their email.
+Comments enable asynchronous review at three levels: **field**, **entry**, and **branch** (the changeset). They live in each branch workspace's `.canopy-meta/comments.json`, excluded from git. Only users who can read an entry see its field and entry comments or can add to or resolve them; branch comments follow branch access. Threads name their people; only admins and reviewers see emails.
 
 ### Permission Model
 

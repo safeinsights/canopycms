@@ -30,7 +30,7 @@ export interface UseCommentSystemOptions {
 
 export interface UseCommentSystemReturn {
   comments: CommentThread[]
-  /** Resolves a user the comments responses named, sending no request. */
+  /** Resolves a user from the seeded cache, without email or a request (`useSeededUserResolver`). */
   getCommentUser: (userId: string) => Promise<UserSearchResult | null>
   focusedFieldPath: string | undefined
   setFocusedFieldPath: (path: string | undefined) => void
