@@ -14,6 +14,7 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
 import { CmsWorker, recordWorkerStartupFailure } from './cms-worker'
+import { GitHubGatewayUnreachableError } from './github-gateway-wire'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import {
   readCarriedOverStatus,
@@ -161,6 +162,37 @@ describe('CmsWorker.stop() drains the task queue', () => {
     const successor = makeWorker(200)
     await internals(successor).acquireLock()
     await successor.stop()
+  })
+
+  it.each([
+    ['while it drains, releases the task to pending with no retry spent', true],
+    ['otherwise, retries the task as any transient failure', false],
+  ])('when the GitHub gateway cannot be reached %s', async (_, draining) => {
+    const worker = makeWorker(5_000)
+    const w = internals(worker)
+    await w.acquireLock()
+    w.running = true
+    let fail: ((err: unknown) => void) | null = null
+    w.executeTask = () => new Promise((_resolve, reject) => (fail = reject))
+
+    const id = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'a' } })
+    const processing = w.trackOperation('task queue', worker.processTaskQueue())
+    expect(await waitFor(() => fail !== null)).toBe(true)
+    const stopping = draining ? worker.stop({ reason: 'test shutdown' }) : null
+    fail!(new GitHubGatewayUnreachableError('Could not reach the GitHub gateway: ECONNREFUSED'))
+    await processing
+    await stopping
+
+    const pending = await readTaskFile(taskDir, 'pending', id)
+    expect(pending?.status).toBe('pending')
+    if (draining) {
+      expect(pending?.retryCount ?? 0).toBe(0)
+      expect(consoleSpy).toHaveWarned('released to pending for the next worker')
+    } else {
+      expect(pending?.retryCount).toBe(1)
+      expect(consoleSpy).toHaveErrored(/Could not reach the GitHub gateway/)
+      await worker.stop({ reason: 'test' })
+    }
   })
 
   it('aborts at once, with no drain, when the worker lock is compromised', async () => {

@@ -70,6 +70,14 @@ interface GitHubFetchJob {
   snapshot: FetchSnapshot | null
 }
 
+/**
+ * The longest an operation waits for a credential re-read in flight before it goes on with the
+ * credential it has. A provider can take 87 s for one `getSecret`, and an operation that waited it
+ * out would die at the task deadline for nothing; the task's retry still sees a rotated token, and
+ * a re-read a hostile worker armed cannot hold every push for its length.
+ */
+const REFRESH_JOIN_CAP_MS = 15_000
+
 /** The most prerequisites one push names. */
 const MAX_PUSH_PREREQUISITES = 3
 
@@ -256,6 +264,8 @@ export interface LocalGitHubGatewayOptions {
    * a test can change "GitHub" between two operations and have the second see it.
    */
   fetchCoalesceMs?: number
+  /** Test seam: how long an operation waits for a re-read in flight (default {@link REFRESH_JOIN_CAP_MS}). */
+  refreshJoinCapMs?: number
   /**
    * Test seam: whether `prepare()` starts the first GitHub fetch (default true), for a test that
    * counts the gateway's own fetches or sessions from its first operation. A served gateway is
@@ -305,8 +315,8 @@ class LocalGitHubGateway implements GitHubGateway {
   /**
    * Run one operation that uses the credential.
    *
-   * It first JOINS a re-read in flight, bounded by its own `signal`, so the 5s/10s/20s task
-   * retries see a rotated token. Then, if the operation fails after any of its GitHub-bound git
+   * It first JOINS a re-read in flight, bounded by its own `signal` and by
+   * {@link REFRESH_JOIN_CAP_MS}, so the 5s/10s/20s task retries see a rotated token. Then, if the operation fails after any of its GitHub-bound git
    * commands or Octokit calls failed, it ARMS a re-read. Not gated on the failure looking
    * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
    * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
@@ -384,11 +394,22 @@ class LocalGitHubGateway implements GitHubGateway {
     }
   }
 
-  /** Wait for a re-read in flight, unless `signal` aborts first. */
+  /**
+   * Wait for a re-read in flight, for at most {@link REFRESH_JOIN_CAP_MS}, unless `signal` aborts
+   * first; past the cap the operation goes on with the credential as it stands.
+   */
   private async joinRefresh(signal?: AbortSignal): Promise<void> {
     const inFlight = this.refreshing
     if (inFlight === null) return
-    await untilAborted(inFlight, signal)
+    let timer: NodeJS.Timeout | undefined
+    const capped = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.options.refreshJoinCapMs ?? REFRESH_JOIN_CAP_MS)
+    })
+    try {
+      await untilAborted(Promise.race([inFlight, capped]), signal)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**

@@ -19,7 +19,7 @@ import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
 import { GitHubPushError, describeMove, type GitHubPushOutcome } from './github-gateway'
 import { GatewayRefusalError } from './branch-policy'
-import { GatewayRequestRefusedError } from './github-gateway-wire'
+import { GatewayRequestRefusedError, GitHubGatewayUnreachableError } from './github-gateway-wire'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
@@ -241,7 +241,12 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       await completeTask(ctx.taskDir, task.id, result, ctx.log)
       await updateBranchMetadata(ctx, task, result)
     } catch (err) {
-      if (err instanceof TaskAbortedForShutdownError) {
+      // A gateway out of reach while this worker drains is its host going away: the next worker
+      // runs the task, with no retry spent, as after a drain's abort.
+      if (
+        err instanceof TaskAbortedForShutdownError ||
+        (ctx.isDraining() && err instanceof GitHubGatewayUnreachableError)
+      ) {
         // The next worker runs it again from the start, exactly as a retry
         // after a timed-out attempt does.
         await releaseTask(ctx.taskDir, task.id, ctx.log)
