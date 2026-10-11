@@ -72,8 +72,8 @@ test.describe('Permissions and Groups', () => {
 
       await editorPage.openContentNavigator()
       const items = await editorPage.collectionMenuItems('Posts')
-      await expect(items.filter({ hasText: 'Add Entry' })).toHaveCount(1)
-      for (const adminOnly of ['Add Sub-Collection', 'Edit Collection', 'Delete Collection']) {
+      await expect(items.filter({ hasText: 'Add entry…' })).toHaveCount(1)
+      for (const adminOnly of ['Add sub-collection…', 'Edit collection…', 'Delete collection…']) {
         await expect(items.filter({ hasText: adminOnly })).toHaveCount(0)
       }
       await page.keyboard.press('Escape')

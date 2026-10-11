@@ -41,6 +41,58 @@ function findTitleValue(
 }
 
 /**
+ * The data path `resolveEntryTitle` reads the title from for these fields: the `isTitle` field
+ * (found by the walk `extractTitleFromSchema` uses, so inline groups are transparent and
+ * non-list objects are entered), else a top-level plain-string field named `title`, then `name`.
+ * Undefined when the schema has no such field, so a create form has nothing to ask a title for.
+ */
+export function titleFieldPath(fields: readonly FieldConfig[]): readonly string[] | undefined {
+  return (
+    findTitlePath(fields) ??
+    findNamedStringField(fields, 'title') ??
+    findNamedStringField(fields, 'name')
+  )
+}
+
+function findTitlePath(fields: readonly FieldConfig[]): readonly string[] | undefined {
+  for (const field of fields) {
+    if (isGroupField(field)) {
+      const result = findTitlePath(field.fields)
+      if (result) return result
+    } else if ('isTitle' in field && field.isTitle) {
+      return [field.name]
+    } else if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+      const nested = findTitlePath(field.fields)
+      if (nested) return [field.name, ...nested]
+    }
+  }
+  return undefined
+}
+
+function findNamedStringField(
+  fields: readonly FieldConfig[],
+  name: string,
+): readonly string[] | undefined {
+  for (const field of fields) {
+    if (isGroupField(field)) {
+      const result = findNamedStringField(field.fields, name)
+      if (result) return result
+    } else if (field.name === name && field.type === 'string' && !field.list) {
+      return [field.name]
+    }
+  }
+  return undefined
+}
+
+/** Data holding `title` at `path`: `['hero', 'title']` gives `{ hero: { title } }`. */
+export function withTitleAtPath(path: readonly string[], title: string): Record<string, unknown> {
+  return path.reduceRight<unknown>((value, key) => ({ [key]: value }), title) as Record<
+    string,
+    unknown
+  >
+}
+
+/**
  * Convert a slug like "my-cool-page" to "My Cool Page".
  * @internal Exported for tests.
  */

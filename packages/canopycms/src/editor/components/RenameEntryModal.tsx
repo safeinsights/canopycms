@@ -9,6 +9,8 @@ import { useState } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
+import { validateEntrySlug } from '../slug'
+
 export interface RenameEntryModalProps {
   /** Whether the modal is open */
   isOpen: boolean
@@ -24,6 +26,10 @@ export interface RenameEntryModalProps {
   isSaving?: boolean
   /** Error message to display */
   error?: string | null
+  /** Slugs held by the other entries of the collection; the entry's own slug is never a clash. */
+  existingSlugs?: ReadonlySet<string>
+  /** The URL path the entry will be served at for a slug; undefined when it has no page. */
+  previewPath?: (slug: string) => string | undefined
 }
 
 export function RenameEntryModal({
@@ -34,9 +40,11 @@ export function RenameEntryModal({
   onClose,
   isSaving = false,
   error = null,
+  existingSlugs,
+  previewPath,
 }: RenameEntryModalProps) {
   const [newSlug, setNewSlug] = useState(currentSlug)
-  const [validationError, setValidationError] = useState<string | null>(null)
+  const [touched, setTouched] = useState(false)
 
   // Reset state when modal opens (adjust state during render instead of effect)
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen)
@@ -46,37 +54,17 @@ export function RenameEntryModal({
     setPrevSlug(currentSlug)
     if (isOpen) {
       setNewSlug(currentSlug)
-      setValidationError(null)
+      setTouched(false)
     }
   }
 
-  const validateSlug = (slug: string): string | null => {
-    if (!slug.trim()) {
-      return 'Slug cannot be empty'
-    }
-    if (slug.includes('/')) {
-      return 'Slug cannot contain slashes'
-    }
-    if (!/^[a-z0-9][-a-z0-9]*$/.test(slug)) {
-      return 'Slug must start with letter/number and contain only lowercase letters, numbers, and hyphens'
-    }
-    if (slug.length > 64) {
-      return 'Slug must be 64 characters or less'
-    }
-    return null
-  }
+  const validationError = validateEntrySlug(newSlug, { existingSlugs, currentSlug })
 
-  const handleSlugChange = (value: string) => {
-    setNewSlug(value)
-    setValidationError(validateSlug(value))
-  }
-
-  const handleSave = async () => {
-    const validation = validateSlug(newSlug)
-    if (validation) {
-      setValidationError(validation)
-      return
-    }
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (isSaving) return
+    setTouched(true)
+    if (validationError) return
     if (newSlug === currentSlug) {
       onClose()
       return
@@ -84,66 +72,63 @@ export function RenameEntryModal({
     await onSave(newSlug)
   }
 
-  const canSave = !validationError && newSlug.trim() !== '' && newSlug !== currentSlug && !isSaving
+  const slugPath = previewPath?.(newSlug || 'your-slug')
 
   return (
     <Modal
       opened={isOpen}
       onClose={onClose}
-      title={<Text fw={600}>Rename Entry</Text>}
+      title={<Text fw={600}>Rename entry</Text>}
       size="md"
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
     >
-      <Stack gap="md" data-testid="rename-entry-modal">
-        {error && (
-          <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
-            {error}
-          </Alert>
-        )}
-
-        <Text size="sm" c="dimmed">
-          Renaming &quot;{entryLabel}&quot;
-        </Text>
-
-        <TextInput
-          label="Slug"
-          description="URL-friendly identifier (lowercase, alphanumeric + hyphens)"
-          value={newSlug}
-          onChange={(e) => handleSlugChange(e.currentTarget.value)}
-          error={validationError}
-          placeholder="my-entry-slug"
-          required
-          disabled={isSaving}
-          data-autofocus
-          data-testid="rename-slug-input"
-        />
-
-        <Text size="xs" c="dimmed">
-          Current: <code>{currentSlug}</code>
-          {newSlug !== currentSlug && (
-            <>
-              {' → '}
-              New: <code>{newSlug}</code>
-            </>
+      <form onSubmit={handleSubmit} noValidate>
+        <Stack gap="md" data-testid="rename-entry-modal">
+          {error && (
+            <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+              {error}
+            </Alert>
           )}
-        </Text>
 
-        <Group justify="flex-end" gap="sm">
-          <Button size="sm" variant="subtle" onClick={onClose} disabled={isSaving}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            loading={isSaving}
-            disabled={!canSave}
-            data-testid="rename-entry-submit"
-          >
-            Rename
-          </Button>
-        </Group>
-      </Stack>
+          <Text size="sm" c="dimmed">
+            Renaming “{entryLabel}”
+          </Text>
+
+          <TextInput
+            label="Slug"
+            description={
+              slugPath ? `URL path: ${slugPath}` : 'Lowercase letters, numbers and hyphens'
+            }
+            value={newSlug}
+            onChange={(e) => {
+              setNewSlug(e.currentTarget.value)
+              setTouched(true)
+            }}
+            error={touched ? validationError : null}
+            placeholder="my-entry-slug"
+            required
+            disabled={isSaving}
+            data-autofocus
+            data-testid="rename-slug-input"
+          />
+
+          <Group justify="flex-end" gap="sm">
+            <Button size="sm" variant="subtle" onClick={onClose} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              type="submit"
+              loading={isSaving}
+              disabled={newSlug === currentSlug}
+              data-testid="rename-entry-submit"
+            >
+              Rename
+            </Button>
+          </Group>
+        </Stack>
+      </form>
     </Modal>
   )
 }

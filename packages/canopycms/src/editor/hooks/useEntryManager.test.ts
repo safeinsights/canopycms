@@ -697,6 +697,75 @@ describe('useEntryManager', () => {
     expect(result.current.selectedPath).toBe('new-post')
   })
 
+  describe('create payload title', () => {
+    const titledCollections: EditorCollection[] = [
+      {
+        path: unsafeAsLogicalPath('content/posts'),
+        name: 'posts',
+        label: 'Posts',
+        type: 'collection',
+        format: 'mdx',
+        entryTypes: [
+          { name: 'post', format: 'mdx', titleField: ['hero', 'title'] },
+          { name: 'data', format: 'json', titleField: ['title'] },
+          { name: 'plain', format: 'json' },
+        ],
+      },
+    ]
+
+    // The mocked entry list never contains the new entry, so the post-create navigation warns.
+    beforeEach(() => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      vi.mocked(console.warn).mockRestore()
+    })
+
+    const submit = async (entryTypeName: string, title?: string) => {
+      mockClient.content.write.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { format: 'json', data: {} },
+      })
+      const { result } = renderHook(
+        () => useEntryManager({ ...defaultOptions, collections: titledCollections }),
+        { wrapper },
+      )
+      await act(async () => {
+        await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
+      })
+      await act(async () => {
+        await result.current.handleCreateModalSubmit('new-post', entryTypeName, title)
+      })
+      return mockClient.content.write.mock.calls[0][1] as { data: unknown }
+    }
+
+    it('writes the title at the nested title path of a markdown entry', async () => {
+      const body = await submit('post', 'Hello')
+      expect(body).toMatchObject({
+        format: 'mdx',
+        data: { hero: { title: 'Hello' } },
+        body: '',
+        expectedVersion: null,
+      })
+    })
+
+    it('writes the title into the data of a data-only entry', async () => {
+      const body = await submit('data', 'Hello')
+      expect(body).toMatchObject({ format: 'json', data: { title: 'Hello' } })
+    })
+
+    it('writes empty data when the type has no title field', async () => {
+      const body = await submit('plain', 'Ignored')
+      expect(body.data).toEqual({})
+    })
+
+    it('writes empty data when no title is given', async () => {
+      const body = await submit('post')
+      expect(body.data).toEqual({})
+    })
+  })
+
   it('closes modal without creating entry', async () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), {
       wrapper,

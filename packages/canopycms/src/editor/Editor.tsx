@@ -14,6 +14,7 @@ import {
   Skeleton,
   Stack,
   Text,
+  Tooltip,
   useTree,
 } from '@mantine/core'
 import {
@@ -22,6 +23,7 @@ import {
   IconDots,
   IconFolderPlus,
   IconPlus,
+  IconSearch,
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
@@ -66,6 +68,8 @@ import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
+import { QuickOpenPalette } from './components/QuickOpenPalette'
+import { modKeyLabel } from './platform'
 import { EntryCreateModal, type EntryType } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
@@ -119,6 +123,8 @@ export interface EditorEntryType {
   maxItems?: number
   /** Set when the type has no schema in the running code; it cannot be created or edited. */
   unavailable?: EntryTypeUnavailable
+  /** Data path of the field that titles an entry of this type; the create form asks for it first. */
+  titleField?: readonly string[]
 }
 
 export interface EditorCollection {
@@ -236,6 +242,8 @@ const EditorContent: React.FC<EditorProps> = ({
     LogicalPath | undefined
   >(undefined)
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
+
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false)
 
   const [renameModalOpen, setRenameModalOpen] = useState(false)
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
@@ -370,9 +378,32 @@ const EditorContent: React.FC<EditorProps> = ({
         default: et.default,
         maxItems: et.maxItems,
         unavailable: et.unavailable,
+        titleField: et.titleField,
       })) ?? [],
     [createModalCollection],
   )
+
+  // The path a slug will be served at, shown under the slug field. Built by the same rule as the
+  // preview iframe, minus its `?branch=` query; undefined when the entry has no page.
+  const previewPathFor = (entry: {
+    collectionPath: string
+    collectionName?: string
+    slug: string
+    entryType?: string
+  }): string | undefined => {
+    try {
+      const src = buildPreviewSrc(entry, {
+        branchName: branchNameState,
+        previewBaseByCollection,
+        previewPrefix,
+        contentRoot,
+        basePath,
+      })
+      return src === undefined ? undefined : new URL(src, window.location.origin).pathname
+    } catch {
+      return undefined
+    }
+  }
 
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
@@ -1016,8 +1047,10 @@ const EditorContent: React.FC<EditorProps> = ({
       list.push({
         path: entry.path,
         label: entry.label,
+        slug: entry.slug,
         status: entry.status,
         contentId: entry.contentId,
+        readOnly: entry.canEdit === false || undefined,
         conflictNotice: !!(
           entry.contentId && currentBranch?.conflictFiles?.includes(entry.contentId)
         ),
@@ -1033,7 +1066,10 @@ const EditorContent: React.FC<EditorProps> = ({
       // No entry can be created where every entry type is unavailable.
       const allUnavailable =
         !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
-      const canAddEntry = node.type !== 'entry' && !allUnavailable
+      // A collection that holds only collections has no entry type to add (`entryTypes` is
+      // undefined when its list is empty).
+      const canAddEntry =
+        node.type !== 'entry' && !allUnavailable && (node.entryTypes?.length ?? 0) > 0
 
       return {
         path: node.path,
@@ -1076,6 +1112,24 @@ const EditorContent: React.FC<EditorProps> = ({
     schemaUnavailableKeys,
     userIsAdmin,
   ])
+
+  const quickOpenShortcut = modKeyLabel() === '⌘' ? '⌘P' : 'Ctrl+P'
+
+  const dirtyPaths = useMemo<ReadonlySet<string>>(
+    () => new Set(editedFiles.map((file) => file.path)),
+    [editedFiles],
+  )
+
+  // Slugs of the entries beside the one being renamed, for the duplicate check.
+  const renameExistingSlugs = useMemo<ReadonlySet<string>>(
+    () =>
+      new Set(
+        entriesState
+          .filter((e) => e.collectionPath === renamingEntry?.collectionPath && e.slug)
+          .map((e) => e.slug as string),
+      ),
+    [entriesState, renamingEntry],
+  )
 
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
@@ -1474,38 +1528,58 @@ const EditorContent: React.FC<EditorProps> = ({
                               leftSection={<IconPlus size={14} />}
                               onClick={() => navCollections[0].onAdd?.()}
                             >
-                              Add Entry
+                              Add entry…
                             </Menu.Item>
                           )}
                           {navCollections[0].onAddSubCollection && (
-                            <Menu.Item
-                              leftSection={<IconFolderPlus size={14} />}
-                              onClick={() => navCollections[0].onAddSubCollection?.()}
-                            >
-                              Add Collection
-                            </Menu.Item>
+                            <>
+                              {navCollections[0].onAdd && <Menu.Divider />}
+                              <Menu.Label>Admin</Menu.Label>
+                              <Menu.Item
+                                leftSection={<IconFolderPlus size={14} />}
+                                onClick={() => navCollections[0].onAddSubCollection?.()}
+                              >
+                                Add collection…
+                              </Menu.Item>
+                            </>
                           )}
                         </Menu.Dropdown>
                       </Menu>
                     )}
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={handleCollapseAll}
-                    title="Collapse all folders"
-                    aria-label="Collapse all folders"
-                  >
-                    <IconChevronUp size={16} />
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={handleExpandAll}
-                    title="Expand all folders"
-                    aria-label="Expand all folders"
-                  >
-                    <IconChevronDown size={16} />
-                  </ActionIcon>
+                  <Tooltip label={`Quick open (${quickOpenShortcut})`} withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => {
+                        setNavigatorOpen(false)
+                        setQuickOpenOpen(true)
+                      }}
+                      aria-label="Quick open"
+                      data-testid="quick-open-button"
+                    >
+                      <IconSearch size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Collapse all folders" withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={handleCollapseAll}
+                      aria-label="Collapse all folders"
+                    >
+                      <IconChevronUp size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <Tooltip label="Expand all folders" withinPortal>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={handleExpandAll}
+                      aria-label="Expand all folders"
+                    >
+                      <IconChevronDown size={16} />
+                    </ActionIcon>
+                  </Tooltip>
                   <Drawer.CloseButton />
                 </Group>
               </Drawer.Header>
@@ -1519,7 +1593,9 @@ const EditorContent: React.FC<EditorProps> = ({
                         : entriesState.map((e) => ({
                             path: e.path,
                             label: e.label,
+                            slug: e.slug,
                             status: e.status,
+                            readOnly: e.canEdit === false || undefined,
                           }))
                     }
                     selectedPath={selectedPath}
@@ -1536,11 +1612,23 @@ const EditorContent: React.FC<EditorProps> = ({
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
                     readOnly={branchContentLocked}
+                    dirtyPaths={dirtyPaths}
                   />
                 </Box>
               </Drawer.Body>
             </Drawer.Content>
           </Drawer.Root>
+          <QuickOpenPalette
+            opened={quickOpenOpen}
+            onOpen={() => {
+              setNavigatorOpen(false)
+              setQuickOpenOpen(true)
+            }}
+            onClose={() => setQuickOpenOpen(false)}
+            entries={entriesState}
+            collectionLabel={(path) => collectionLabels.get(path)}
+            onSelect={setSelectedPath}
+          />
           <BranchesDrawer
             opened={branchManagerOpen}
             onClose={() => setBranchManagerOpen(false)}
@@ -1678,6 +1766,15 @@ const EditorContent: React.FC<EditorProps> = ({
               }}
               isSaving={renameModalSaving}
               error={renameModalError}
+              existingSlugs={renameExistingSlugs}
+              previewPath={(slug) =>
+                previewPathFor({
+                  collectionPath: renamingEntry.collectionPath ?? '',
+                  collectionName: renamingEntry.collectionName,
+                  slug,
+                  entryType: renamingEntry.entryType,
+                })
+              }
             />
           )}
 
@@ -1691,6 +1788,14 @@ const EditorContent: React.FC<EditorProps> = ({
               isCreating={createModalCreating}
               error={createModalError}
               existingSlugs={createModalExistingSlugs}
+              previewPath={(slug, entryTypeName) =>
+                previewPathFor({
+                  collectionPath: createModalCollection.path,
+                  collectionName: createModalCollection.name,
+                  slug,
+                  entryType: entryTypeName,
+                })
+              }
             />
           )}
 
