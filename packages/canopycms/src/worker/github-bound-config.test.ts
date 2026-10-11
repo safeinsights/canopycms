@@ -1,11 +1,13 @@
 /**
- * simple-git's `allowUnsafeConfigPaths` lets a git be handed a `GIT_CONFIG_GLOBAL`. Only the
- * GitHub-bound commands get it; every other gateway git keeps simple-git's refusal. Each
- * `simpleGit()` instance is recorded with the opt-in it was built with and the commands it ran.
+ * The credential's config file reaches a git only through `GIT_CONFIG_GLOBAL`, and only the three
+ * GitHub-bound commands are given one: they run through worker/git-process.ts, which has no
+ * argument parser, while every other gateway git still runs through simple-git, which refuses the
+ * variable. Each spawned git is recorded with the environment it was given.
  */
 
-import { execFile } from 'node:child_process'
+import childProcess, { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -16,26 +18,22 @@ import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import { createLocalGitHubGateway } from './github-gateway'
 import { pushToGitHub } from './github-transfer'
-import { githubBoundGitOptions, mirrorGitOptions, sharedRepoGitOptions } from './shared-repo-git'
+import { mirrorGitOptions, sharedRepoGitOptions } from './shared-repo-git'
 
-const recorded = vi.hoisted(() => [] as { optedIn: boolean; args: string[] }[])
+const recorded: { args: string[]; configGlobal: string | undefined }[] = []
+const originalSpawn = childProcess.spawn
 
-vi.mock('simple-git', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('simple-git')>()
-  const simpleGit = ((options?: Parameters<typeof actual.simpleGit>[0]) => {
-    const instance = actual.simpleGit(options as Parameters<typeof actual.simpleGit>[0])
-    const optedIn = typeof options === 'object' && options?.unsafe?.allowUnsafeConfigPaths === true
-    const raw = instance.raw.bind(instance) as (args: string[]) => Promise<string>
-    Object.assign(instance, {
-      raw: (args: string[]) => {
-        recorded.push({ optedIn, args: [...args] })
-        return raw(args)
-      },
-    })
-    return instance
-  }) as typeof actual.simpleGit
-  return { ...actual, simpleGit, default: simpleGit }
-})
+/** The first argument that is not an option, after any `-c` pairs: the subcommand. */
+function subcommand(args: readonly string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-c') {
+      i++
+      continue
+    }
+    if (!args[i].startsWith('-')) return args[i]
+  }
+  return ''
+}
 
 const execFileAsync = promisify(execFile)
 const git = async (...args: string[]) => (await execFileAsync('git', args)).stdout.trim()
@@ -47,15 +45,28 @@ beforeEach(async () => {
   consoleSpy = mockConsole()
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-github-bound-opt-in-')))
   recorded.length = 0
+  vi.spyOn(childProcess, 'spawn').mockImplementation(((
+    command: string,
+    args: readonly string[],
+    options: { env?: Record<string, string | undefined> },
+  ) => {
+    if (command === 'git') {
+      recorded.push({ args: [...args], configGlobal: options?.env?.GIT_CONFIG_GLOBAL })
+    }
+    return originalSpawn(command, args, options)
+  }) as typeof childProcess.spawn)
+  syncBuiltinESMExports()
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  syncBuiltinESMExports()
   consoleSpy.restore()
   await fs.rm(root, { recursive: true, force: true })
 })
 
-describe('allowUnsafeConfigPaths', () => {
-  it('is on only for the GitHub fetch, the ls-remote and the push to GitHub', async () => {
+describe('GIT_CONFIG_GLOBAL', () => {
+  it('reaches only the GitHub fetch, the ls-remote and the push to GitHub', async () => {
     const githubPath = path.join(root, 'github.git')
     const remoteGitPath = path.join(root, 'workspace', 'remote.git')
     await git('init', '-q', '--bare', githubPath)
@@ -93,33 +104,27 @@ describe('allowUnsafeConfigPaths', () => {
       async () => sha,
     )
 
-    const optedIn = recorded.filter((call) => call.optedIn).map((call) => call.args[0])
+    const given = recorded.filter((call) => call.configGlobal !== undefined)
     // The one GitHub fetch, which the fetch and both push calls join; then the push's
     // default-branch ls-remote and the push itself.
-    expect(optedIn).toEqual(['fetch', 'ls-remote', 'push'])
-    // Not vacuous: the gateway ran plenty of other git, all without the opt-in.
-    expect(recorded.filter((call) => !call.optedIn).length).toBeGreaterThan(5)
+    expect(given.map((call) => subcommand(call.args))).toEqual(['fetch', 'ls-remote', 'push'])
+    // Not vacuous: the gateway ran plenty of other git, none given the variable.
+    expect(recorded.filter((call) => call.configGlobal === undefined).length).toBeGreaterThan(5)
   })
 
   it.each([
     ['the mirror', mirrorGitOptions()],
     ['a shared bare repository', sharedRepoGitOptions('bare')],
     ['a shared clone', sharedRepoGitOptions('worktree')],
-  ])('is refused for %s', async (_label, options) => {
-    const { simpleGit } = await vi.importActual<typeof import('simple-git')>('simple-git')
-    await expect(
-      simpleGit({ baseDir: root, ...options })
-        .env({ GIT_CONFIG_GLOBAL: '/dev/null' })
-        .raw(['version']),
-    ).rejects.toThrow(/allowUnsafeConfigPaths/)
-  })
-
-  it('is granted for a GitHub-bound command', async () => {
-    const { simpleGit } = await vi.importActual<typeof import('simple-git')>('simple-git')
-    await expect(
-      simpleGit({ baseDir: root, ...githubBoundGitOptions() })
-        .env({ GIT_CONFIG_GLOBAL: '/dev/null', PATH: process.env.PATH ?? '' })
-        .raw(['version']),
-    ).resolves.toMatch(/^git version/)
-  })
+  ])(
+    'is refused for every simple-git the gateway or the worker builds: %s',
+    async (_label, options) => {
+      const { simpleGit } = await vi.importActual<typeof import('simple-git')>('simple-git')
+      await expect(
+        simpleGit({ baseDir: root, ...options })
+          .env({ GIT_CONFIG_GLOBAL: '/dev/null' })
+          .raw(['version']),
+      ).rejects.toThrow(/allowUnsafeConfigPaths/)
+    },
+  )
 })

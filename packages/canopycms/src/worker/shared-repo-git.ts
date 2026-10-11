@@ -227,15 +227,6 @@ function sharedRepoEnv(absolute: string, kind: SharedRepoKind): Record<string, s
   })
 }
 
-/**
- * {@link mirrorGitOptions} for a GitHub-bound command only, the one git that is handed the
- * credential's config file through `GIT_CONFIG_GLOBAL`, which simple-git refuses without
- * `allowUnsafeConfigPaths`. Every other git keeps that refusal.
- */
-export function githubBoundGitOptions(): Pick<SimpleGitOptions, 'config' | 'unsafe'> {
-  return { config: [...MIRROR_PINS], unsafe: { ...PIN_OPT_INS, allowUnsafeConfigPaths: true } }
-}
-
 function packCommand(
   program: string,
   extra: readonly string[],

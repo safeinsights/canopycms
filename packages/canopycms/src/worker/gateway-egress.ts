@@ -94,8 +94,8 @@ function redactAny(value: unknown, depth: number, scrub: (text: string) => strin
 }
 
 /**
- * `err` scrubbed for leaving the gateway: its message and stack, its `cause` chain, and an Octokit
- * error's `response` and `request`. Scrubbed in place, so its class and the fields the task runner
+ * `err` scrubbed for leaving the gateway: its message, stack and `stderr`, its `cause` chain, and
+ * an Octokit error's `response` and `request`. Scrubbed in place, so its class and the fields the task runner
  * classifies on (`status`, `code`, `kind`) survive; a field that cannot be set (a DOMException's
  * message) makes it a plain Error of the same name instead. Only fields that hold a secret are
  * touched. A thrown string is scrubbed; anything else is returned as it is.
@@ -105,7 +105,8 @@ export function redactError(err: unknown, depth = 0): unknown {
   if (!(err instanceof Error) || depth >= MAX_DEPTH) return err
   const fields = err as Error & Record<string, unknown>
   const updates: [string, unknown][] = []
-  for (const key of ['message', 'stack']) {
+  // `stderr`: a GitProcessError (worker/git-process.ts) carries git's own output beside its message.
+  for (const key of ['message', 'stack', 'stderr']) {
     const value = fields[key]
     if (typeof value === 'string' && redactEgress(value) !== value) {
       updates.push([key, redactEgress(value)])

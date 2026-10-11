@@ -30,12 +30,7 @@ import {
   branchNameProblem,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
-import {
-  githubBoundGitOptions,
-  mirrorGitOptions,
-  mirrorPins,
-  quarantinePins,
-} from './shared-repo-git'
+import { mirrorGitOptions, mirrorPins, quarantinePins } from './shared-repo-git'
 
 /**
  * The worker's private bare mirror of the GitHub repository, in a state directory the CMS Lambda
@@ -474,6 +469,9 @@ const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000
 /** How long sessions answer transient after a failed rebuild, rather than retry it each. */
 const REBUILD_BACKOFF_MS = 5 * 60 * 1000
 
+/** The slowest a GitHub transfer may run, sustained, before curl ends it. */
+const LOW_SPEED_BYTES_PER_SECOND = 1024
+
 /** Where a quarantine holds the pushed commit while it is checked and pushed. */
 const STAGING_PREFIX = 'refs/canopy/outgoing/'
 
@@ -732,6 +730,11 @@ export class MirrorSession {
    * `GIT_CONFIG_GLOBAL`, so it is in no argv and in no process's environment. No trace variable
    * reaches this git: trace2 can print config values. Its failure is reported to the credential
    * unless {@link isOwnLockFailure}.
+   *
+   * It runs through worker/git-process.ts, in a process group of its own, so an abort or a kill
+   * reaches what git spawned for the transfer too (`git-remote-https`, `pack-objects`); simple-git
+   * would signal git alone. Besides the inactivity bound, curl's low-speed limit ends a transfer
+   * that trickles: {@link LOW_SPEED_BYTES_PER_SECOND} for as long as the inactivity bound.
    */
   private async githubBound(
     credential: GitHubCredential,
@@ -741,14 +744,18 @@ export class MirrorSession {
   ): Promise<string> {
     return withCredentialConfig(this.stateDirectory, credential, async (configPath) => {
       try {
-        return await simpleGit({
-          baseDir: repo,
-          ...githubBoundGitOptions(),
-          timeout: { block: this.timeoutMs },
-          abort: signal,
+        return await runGit(args, {
+          cwd: repo,
+          env: { ...githubBoundEnv(repo), GIT_CONFIG_GLOBAL: configPath },
+          config: [
+            ...mirrorPins(),
+            `http.lowSpeedLimit=${LOW_SPEED_BYTES_PER_SECOND}`,
+            `http.lowSpeedTime=${Math.max(1, Math.ceil(this.timeoutMs / 1000))}`,
+          ],
+          inactivityTimeoutMs: this.timeoutMs,
+          signal,
+          stdoutInFailure: true,
         })
-          .env({ ...githubBoundEnv(repo), GIT_CONFIG_GLOBAL: configPath })
-          .raw(args)
       } catch (err) {
         if (!isOwnLockFailure(getErrorMessage(err))) credential.onFailure()
         throw err

@@ -210,11 +210,13 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
 
 /**
  * Run `git <config> <args>` to completion and resolve with its stdout, refusing more than
- * `maxStdoutBytes` of it (default 64 MiB).
+ * `maxStdoutBytes` of it (default 64 MiB). With `stdoutInFailure`, a failure's message is what git
+ * printed to stdout and then its own message, as simple-git words one: `push --porcelain` prints
+ * the rejected ref's status, which callers classify, on stdout.
  */
 export async function runGit(
   args: readonly string[],
-  options: GitProcessOptions & { maxStdoutBytes?: number },
+  options: GitProcessOptions & { maxStdoutBytes?: number; stdoutInFailure?: boolean },
 ): Promise<string> {
   const max = options.maxStdoutBytes ?? 64 * 1024 * 1024
   const proc = spawnGit(args, options)
@@ -232,7 +234,18 @@ export async function runGit(
       callback()
     },
   })
-  await Promise.all([pipeline(proc.stdout, collect).catch(() => undefined), proc.exited])
+  try {
+    await Promise.all([pipeline(proc.stdout, collect).catch(() => undefined), proc.exited])
+  } catch (err) {
+    if (options.stdoutInFailure && err instanceof GitProcessError && chunks.length > 0) {
+      throw new GitProcessError(
+        `${Buffer.concat(chunks).toString('utf8')}${err.message}`,
+        err.exitCode,
+        err.stderr,
+      )
+    }
+    throw err
+  }
   return Buffer.concat(chunks).toString('utf8')
 }
 
