@@ -12,6 +12,7 @@ import type {
   GitHubCreateOrUpdatePullRequest,
   GitHubFetchResult,
   GitHubGateway,
+  GitHubGatewayHealth,
   GitHubPullRequest,
   GitHubPushAnswer,
   GitHubPushRequest,
@@ -101,8 +102,8 @@ export interface GitHubGatewayServer {
  * no one else can enter, so no other user can reach, plant or swap the node, which is then made
  * `0600`.
  *
- * `gateway.prepare()` runs once, on the first `prepare` request; a failure is the gateway's fatal
- * error, answered to every later one.
+ * `gateway.prepare()` starts with the server, and every operation but `health` waits for it; a
+ * failure is the gateway's fatal error, answered to each of them.
  */
 export async function serveGitHubGateway(
   gateway: GitHubGateway,
@@ -237,7 +238,12 @@ type JsonRunners = {
 }
 
 class GatewayRequestHandler {
-  private prepared: Promise<void> | null = null
+  /**
+   * The gateway's `prepare()`, started as the server starts. Every operation but `health` waits
+   * for it, and answers its failure: a worker that never asks for it, or asks for an operation
+   * first, still cannot reach one before the App check and the state-directory check have passed.
+   */
+  private readonly prepared: Promise<void>
   private readonly jobs = new Map<string, FetchJob>()
   private closed = false
   private inFlight = 0
@@ -246,14 +252,15 @@ class GatewayRequestHandler {
   private readonly routes: ReadonlyMap<string, JsonOperation>
 
   constructor(private readonly gateway: GitHubGateway) {
+    this.prepared = gateway.prepare()
+    // Answered to every operation; never unhandled while none is asked for.
+    this.prepared.catch(() => undefined)
     this.routes = new Map(
       (Object.entries(JSON_ROUTES) as [JsonOperation, string][]).map(([op, route]) => [route, op]),
     )
     this.runners = {
-      prepare: async () => {
-        await (this.prepared ??= gateway.prepare())
-        return {}
-      },
+      prepare: async () => ({}),
+      health: (_, signal) => gateway.health(signal),
       defaultBranch: async (_, signal) => ({ branch: await gateway.defaultBranch(signal) }),
       isProtectedBranch: async ({ branch }, signal) => ({
         protected: await gateway.isProtectedBranch(branch, signal),
@@ -353,6 +360,7 @@ class GatewayRequestHandler {
     res: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
+    if (op !== 'health') await this.prepared
     const input = parseRequest(requests[op], await readJsonBody(req), op)
     const run = this.runners[op] as (input: unknown, signal: AbortSignal) => Promise<unknown>
     const value = await run(input, signal)
@@ -364,6 +372,7 @@ class GatewayRequestHandler {
     res: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
+    await this.prepared
     const header = req.headers[PUSH_REQUEST_HEADER]
     if (typeof header !== 'string') {
       throw new RefusedRequest(400, `a push carries its request in ${PUSH_REQUEST_HEADER}`)
@@ -413,6 +422,7 @@ class GatewayRequestHandler {
   }
 
   private async startFetch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    await this.prepared
     const { have } = parseRequest(fetchRequest, await readJsonBody(req), 'fetch')
     this.evictJobs()
     const running = [...this.jobs.values()].filter((job) => job.settledAt === null).length
@@ -458,6 +468,7 @@ class GatewayRequestHandler {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    await this.prepared
     this.evictJobs()
     const job = this.jobs.get(id)
     if (job === undefined) {
@@ -504,6 +515,7 @@ class GatewayRequestHandler {
   }
 
   private async bundle(id: string, res: ServerResponse): Promise<void> {
+    await this.prepared
     if (!/^[0-9A-Za-z]{1,128}$/.test(id)) throw new RefusedRequest(404, 'no such bundle')
     const stream = await this.gateway.openBundle(id)
     res.writeHead(200, { 'content-type': BUNDLE_CONTENT_TYPE })
@@ -616,6 +628,9 @@ function sendJson(req: IncomingMessage, res: ServerResponse, status: number, bod
 /** How long the client asks each poll of a fetch job to wait. */
 const POLL_WAIT_MS = MAX_POLL_WAIT_MS
 
+/** How long `health` waits for the gateway: `getSecret` alone has taken 87 s. */
+const HEALTH_WAIT_MS = 300_000
+
 /** How many polls in a row the connection may break off before the fetch fails. */
 const POLL_RETRIES = 3
 
@@ -656,6 +671,12 @@ class GitHubGatewayClient implements GitHubGateway {
 
   async prepare(): Promise<void> {
     await this.call('prepare', {})
+  }
+
+  /** Waits up to {@link HEALTH_WAIT_MS} for a `prepare()` under way: secret reads can be slow. */
+  health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
+    const bound = AbortSignal.timeout(HEALTH_WAIT_MS)
+    return this.call('health', {}, signal === undefined ? bound : AbortSignal.any([signal, bound]))
   }
 
   async defaultBranch(signal?: AbortSignal): Promise<string> {

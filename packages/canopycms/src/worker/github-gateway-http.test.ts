@@ -15,7 +15,8 @@ import {
 } from '../test-utils'
 import { GatewayRefusalError } from './branch-policy'
 import { registerLiveSecret } from './gateway-egress'
-import { GitHubPushError, type GitHubGateway } from './github-gateway'
+import { resolveWorkerGitHubAuth } from './github-auth'
+import { GitHubPushError, createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
 import {
   connectGitHubGateway,
   serveGitHubGateway,
@@ -46,6 +47,13 @@ type FakeGateway = { [K in keyof GitHubGateway]: Mock<GitHubGateway[K]> }
 function fakeGateway(): FakeGateway {
   return {
     prepare: vi.fn(async () => undefined),
+    health: vi.fn(async () => ({
+      ready: true,
+      fatalError: null,
+      preflight: 'not-an-app' as const,
+      clerkConfigured: false,
+      protectedBranches: { configured: ['main'], githubDefault: 'main' },
+    })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
     fetch: vi.fn(async () => ({ refs: new Map([['main', SHA]]), bundleId: null })),
@@ -359,7 +367,11 @@ describe('the wire format at the server', () => {
 
     expect(status).toBe(400)
     expect(JSON.parse(answer)).toMatchObject({ error: { kind: 'refused' } })
-    for (const op of Object.values(gateway)) expect(op).not.toHaveBeenCalled()
+    // prepare() ran as the server started; no operation ran since.
+    expect(gateway.prepare).toHaveBeenCalledTimes(1)
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op).not.toHaveBeenCalled()
+    }
     expect(consoleSpy).toHaveWarned(/Refused a request/)
   })
 
@@ -604,6 +616,108 @@ describe('the wire format at the client', () => {
 
     expect(caught).toBeInstanceOf(GitHubGatewayUnreachableError)
     expect(isPermanentTaskFailure(caught)).toBe(false)
+  })
+})
+
+describe('a worker that skips prepare', () => {
+  const pushHeader = Buffer.from(
+    JSON.stringify({ branch: 'feature', sha: SHA, prerequisites: [], bundle: false }),
+  ).toString('base64url')
+
+  /** Every operation a worker can ask for, raw, as a hostile one would, never calling prepare. */
+  const everyOperation = () => [
+    json('/v1/default-branch', {}),
+    json('/v1/is-protected-branch', { branch: 'main' }),
+    json('/v1/pull-request/create', { head: 'f', base: 'main', title: 'T', body: 'B' }),
+    json('/v1/pull-request/update', { number: 1, state: 'closed' }),
+    json('/v1/pull-request/get', { number: 1 }),
+    json('/v1/pull-request/create-or-update', { head: 'f', base: 'main', title: 'T', body: 'B' }),
+    json('/v1/pull-request/convert-to-draft', { number: 1 }),
+    json('/v1/branch/delete', { branch: 'f' }),
+    json('/v1/fetch', { have: [] }),
+    raw({
+      path: '/v1/push',
+      headers: { [PUSH_REQUEST_HEADER]: pushHeader, 'content-length': '0' },
+    }),
+    raw({ method: 'GET', path: `/v1/fetch/${'e'.repeat(32)}?wait=0` }),
+    raw({ method: 'GET', path: `/v1/bundle/${'e'.repeat(32)}` }),
+  ]
+
+  it('reaches no operation before the gateway has prepared', async () => {
+    const gateway = fakeGateway()
+    gateway.openBundle.mockRejectedValue(new GitHubTransientError('bundle-gone', 'gone'))
+    let finish: () => void = () => undefined
+    gateway.prepare.mockImplementation(
+      () => new Promise<undefined>((resolve) => (finish = () => resolve(undefined))),
+    )
+    await serve(gateway)
+
+    const answers = Promise.all(everyOperation())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op, name).not.toHaveBeenCalled()
+    }
+    finish()
+    await answers
+
+    expect(gateway.defaultBranch).toHaveBeenCalledTimes(1)
+    expect(gateway.push).toHaveBeenCalledTimes(1)
+    expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("answers every operation with a failed prepare's error, running none", async () => {
+    const gateway = fakeGateway()
+    gateway.prepare.mockRejectedValue(new Error('the state directory is shared'))
+    await serve(gateway)
+
+    for (const answer of await Promise.all(everyOperation())) {
+      expect(answer.status).toBe(500)
+      expect(JSON.parse(answer.body)).toMatchObject({
+        error: { message: 'the state directory is shared' },
+      })
+    }
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op, name).not.toHaveBeenCalled()
+    }
+  })
+
+  it('answers health without waiting on prepare: it reports the wait itself', async () => {
+    const gateway = fakeGateway()
+    gateway.prepare.mockImplementation(() => new Promise<undefined>(() => undefined))
+    await serve(gateway)
+
+    const health = await connectGitHubGateway(socketPath).health()
+
+    expect(health).toMatchObject({ ready: true, preflight: 'not-an-app' })
+    expect(gateway.health).toHaveBeenCalledWith(expect.any(AbortSignal))
+  })
+
+  it('never runs the real gateway on a shared state directory, and reports why', async () => {
+    const workspace = path.join(dir, 'workspace')
+    const local = createLocalGitHubGateway({
+      githubOwner: 'o',
+      githubRepo: 'r',
+      auth: resolveWorkerGitHubAuth({ githubToken: 'ghp_hostile_0123456789' }),
+      githubApp: false,
+      workspacePath: workspace,
+      // Where the CMS Lambda can write: prepare() refuses it.
+      stateDirectory: path.join(workspace, 'state'),
+      timeoutMs: 10_000,
+      remoteUrl: path.join(dir, 'nowhere.git'),
+    })
+    await serve(local)
+    const client = connectGitHubGateway(socketPath)
+
+    await expect(client.fetch({ have: [] })).rejects.toThrow(/inside its shared workspace/)
+    await expect(client.push({ branch: 'feature', sha: SHA, prerequisites: [] })).rejects.toThrow(
+      /inside its shared workspace/,
+    )
+    const health = await client.health()
+
+    expect(health.ready).toBe(false)
+    expect(health.fatalError).toMatch(/inside its shared workspace/)
+    // Nothing ran there: no mirror was created.
+    await expect(fs.access(path.join(workspace, 'state', 'github.git'))).rejects.toThrow()
   })
 })
 

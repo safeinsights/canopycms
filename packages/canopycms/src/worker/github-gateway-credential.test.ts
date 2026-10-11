@@ -29,6 +29,7 @@ import {
   localGatewayOf,
   GATEWAY_TRANSPORT,
   gatewaysSettled,
+  closeServedGateways,
 } from '../test-utils'
 import {
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
@@ -194,6 +195,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   vi.unstubAllEnvs()

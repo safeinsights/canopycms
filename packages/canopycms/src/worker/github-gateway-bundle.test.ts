@@ -25,6 +25,7 @@ import {
   gatewayUnderTest,
   localGatewayOf,
   GATEWAY_TRANSPORT,
+  closeServedGateways,
 } from '../test-utils'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import {
@@ -214,6 +215,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   consoleSpy.restore()
@@ -1174,11 +1176,15 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
+      prefetch: false,
       octokit: {
         git: { deleteRef },
         repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
       } as unknown as Octokit,
     })
+    // Counted from the first operation's sessions: a served gateway prepares, and so creates the
+    // mirror in a session of its own, as its server starts.
+    await github.prepare()
     // The deletion starts during the fetch's own session, and GitHub answers during the session
     // of the fetch the caller then joins.
     const mirror = (localGatewayOf(github) as unknown as { mirror: GitHubMirror }).mirror

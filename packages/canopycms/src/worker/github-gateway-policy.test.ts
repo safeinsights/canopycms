@@ -23,6 +23,7 @@ import {
   gatewayUnderTest,
   GATEWAY_TRANSPORT,
   expectRebuiltOctokitError,
+  closeServedGateways,
 } from '../test-utils'
 import { DEFAULT_BRANCH_TTL_MS, GatewayRefusalError } from './branch-policy'
 import { resolveWorkerGitHubAuth } from './github-auth'
@@ -146,6 +147,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   consoleSpy.restore()

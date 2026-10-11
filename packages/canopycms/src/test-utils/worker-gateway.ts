@@ -27,7 +27,11 @@ import type { GitHubCredential } from '../worker/github-mirror'
 export const GATEWAY_TRANSPORT: 'local' | 'http' =
   process.env.CANOPY_TEST_GATEWAY_TRANSPORT === 'http' ? 'http' : 'local'
 
-const served = new Set<{ server: Promise<GitHubGatewayServer>; dir: string }>()
+const served = new Set<{
+  server: Promise<GitHubGatewayServer>
+  dir: string
+  local: GitHubGateway
+}>()
 
 /** Each client {@link gatewayUnderTest} made, mapped to the in-process gateway behind it. */
 const locals = new WeakMap<GitHubGateway, GitHubGateway>()
@@ -38,14 +42,22 @@ const locals = new WeakMap<GitHubGateway, GitHubGateway>()
  */
 export function gatewayUnderTest(local: GitHubGateway): GitHubGateway {
   if (GATEWAY_TRANSPORT === 'local') return local
-  // Short: macOS caps a socket path at 104 bytes.
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'gw-'))
-  const socketPath = path.join(dir, 's')
-  const server = serveGitHubGateway(local, { path: socketPath })
-  served.add({ server, dir })
-  const client = new ServedGateway(server.then(() => connectGitHubGateway(socketPath)))
-  locals.set(client, local)
-  return client
+  // Served at the first call, not now: a server prepares its gateway as it starts, and a gateway a
+  // test installs and then replaces unused must do nothing, as the in-process one does.
+  let client: Promise<GitHubGateway> | null = null
+  const connect = () =>
+    (client ??= (async () => {
+      // Short: macOS caps a socket path at 104 bytes.
+      const dir = mkdtempSync(path.join(os.tmpdir(), 'gw-'))
+      const socketPath = path.join(dir, 's')
+      const server = serveGitHubGateway(local, { path: socketPath })
+      served.add({ server, dir, local })
+      await server
+      return connectGitHubGateway(socketPath)
+    })())
+  const gateway = new ServedGateway(connect)
+  locals.set(gateway, local)
+  return gateway
 }
 
 /**
@@ -105,23 +117,46 @@ export function expectRebuiltOctokitError(caught: unknown, original: Error): voi
 }
 
 /**
- * Close every gateway {@link gatewayUnderTest} served: the `worker-http` project's `afterEach`.
- * @internal Exported for test-utils/gateway-transport-setup.ts.
+ * Close every gateway {@link gatewayUnderTest} served, and wait out the GitHub fetch each runs in
+ * the background: a served gateway prepares as its server starts, and that starts one. A suite
+ * that removes the directories those fetches write calls it first in its own `afterEach`, which
+ * runs before the `worker-http` project's (test-utils/gateway-transport-setup.ts).
  */
 export async function closeServedGateways(): Promise<void> {
   const all = [...served]
   served.clear()
-  for (const { server, dir } of all) {
+  for (const { server, dir, local } of all) {
     await server.then((s) => s.close()).catch(() => undefined)
+    await backgroundFetchSettled(local)
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-/** A client that waits for its server to listen before each call. */
+/**
+ * Wait out the GitHub fetch an in-process gateway runs detached, the boot fetch its server's
+ * `prepare()` started included, so it writes nothing under a directory the test then removes.
+ */
+async function backgroundFetchSettled(local: GitHubGateway): Promise<void> {
+  const internals = local as unknown as { githubFetch?: { done: Promise<unknown> } | null }
+  for (;;) {
+    const job = internals.githubFetch
+    if (job === undefined || job === null) return
+    await job.done.catch(() => undefined)
+    if (internals.githubFetch === job) return
+  }
+}
+
+/** A client that serves its gateway at its first call, and waits for the server before each. */
 class ServedGateway implements GitHubGateway {
-  constructor(private readonly client: Promise<GitHubGateway>) {}
+  constructor(private readonly connect: () => Promise<GitHubGateway>) {}
+  private get client(): Promise<GitHubGateway> {
+    return this.connect()
+  }
   async prepare() {
     return (await this.client).prepare()
+  }
+  async health(signal?: AbortSignal) {
+    return (await this.client).health(signal)
   }
   async defaultBranch(signal?: AbortSignal) {
     return (await this.client).defaultBranch(signal)
@@ -178,6 +213,8 @@ export function useLocalGitHubGateway(
     fetchCoalesceMs?: number
     /** The gateway's own inactivity and re-read bound, apart from the worker's task deadline. */
     timeoutMs?: number
+    /** Whether `prepare()` starts the first GitHub fetch (`LocalGitHubGatewayOptions.prefetch`). */
+    prefetch?: boolean
   } = {},
 ): GitHubGateway {
   const internals = worker as unknown as WorkerGatewayInternals
@@ -187,6 +224,7 @@ export function useLocalGitHubGateway(
     ...(seams.octokit !== undefined ? { octokit: seams.octokit as Octokit } : {}),
     ...(seams.fetchCoalesceMs !== undefined ? { fetchCoalesceMs: seams.fetchCoalesceMs } : {}),
     ...(seams.timeoutMs !== undefined ? { timeoutMs: seams.timeoutMs } : {}),
+    ...(seams.prefetch !== undefined ? { prefetch: seams.prefetch } : {}),
   })
   internals.gateway = gatewayUnderTest(gateway)
   return internals.gateway

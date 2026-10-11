@@ -149,9 +149,15 @@ export type GitHubCreateOrUpdatePullRequest = Omit<
 export interface GitHubGateway {
   /**
    * At startup, before anything uses the credential: prove a GitHub App credential works, refuse
-   * a state directory the Lambda could write, and create the mirror.
+   * a state directory the Lambda could write, and create the mirror. Runs once; every later call
+   * answers the first one's outcome, a failure being the gateway's fatal error.
    */
   prepare(): Promise<void>
+  /**
+   * Whether the gateway is ready, waiting for a `prepare()` under way (until `signal` aborts), and
+   * what the worker reports of it.
+   */
+  health(signal?: AbortSignal): Promise<GitHubGatewayHealth>
   /** GitHub's default branch. */
   defaultBranch(signal?: AbortSignal): Promise<string>
   /** Whether `branch` is in the gateway's protected set (worker/branch-policy.ts). */
@@ -201,6 +207,24 @@ export interface GitHubGateway {
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
 }
 
+/** What {@link GitHubGateway.health} reports. */
+export interface GitHubGatewayHealth {
+  /** `prepare()` has succeeded. */
+  ready: boolean
+  /** `prepare()`'s failure, scrubbed: the gateway's fatal error. Null before it or after a success. */
+  fatalError: string | null
+  /**
+   * The GitHub App check at `prepare()`: `not-an-app` on the token path, `verified`, `unverified`
+   * when it failed in a way that looked transient (the credential is minted again on first use),
+   * or `pending` before it has run.
+   */
+  preflight: 'not-an-app' | 'verified' | 'unverified' | 'pending'
+  /** Whether the gateway holds a Clerk secret key. */
+  clerkConfigured: boolean
+  /** The protected set (worker/branch-policy.ts): configured names and globs, and GitHub's default as last read. */
+  protectedBranches: { configured: string[]; githubDefault: string | null }
+}
+
 export interface LocalGitHubGatewayOptions {
   githubOwner: string
   githubRepo: string
@@ -223,6 +247,8 @@ export interface LocalGitHubGatewayOptions {
   baseBranch?: string
   /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
   protectedBranches?: readonly string[]
+  /** Whether a Clerk secret key is configured, for `health()`. Default false. */
+  clerkConfigured?: boolean
   /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
   maxBundleBytes?: number
   /**
@@ -230,6 +256,12 @@ export interface LocalGitHubGatewayOptions {
    * a test can change "GitHub" between two operations and have the second see it.
    */
   fetchCoalesceMs?: number
+  /**
+   * Test seam: whether `prepare()` starts the first GitHub fetch (default true), for a test that
+   * counts the gateway's own fetches or sessions from its first operation. A served gateway is
+   * prepared as its server starts.
+   */
+  prefetch?: boolean
 }
 
 /** The in-process {@link GitHubGateway}. */
@@ -254,6 +286,8 @@ class LocalGitHubGateway implements GitHubGateway {
   private githubFetch: GitHubFetchJob | null = null
   /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
   private pushes = 0
+  private preparing: Promise<void> | null = null
+  private preflight: GitHubGatewayHealth['preflight'] = 'pending'
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
@@ -472,7 +506,32 @@ class LocalGitHubGateway implements GitHubGateway {
     this.refreshing = refreshing
   }
 
-  async prepare(): Promise<void> {
+  prepare(): Promise<void> {
+    return (this.preparing ??= this.prepareOnce())
+  }
+
+  async health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
+    let ready = false
+    let fatalError: string | null = null
+    if (this.preparing !== null) {
+      try {
+        await untilAborted(this.preparing, signal)
+        ready = true
+      } catch (err) {
+        if (signal?.aborted) throw err
+        fatalError = redactEgress(getErrorMessage(err))
+      }
+    }
+    return {
+      ready,
+      fatalError,
+      preflight: this.preflight,
+      clerkConfigured: this.options.clerkConfigured ?? false,
+      protectedBranches: this.policy.describe(),
+    }
+  }
+
+  private async prepareOnce(): Promise<void> {
     try {
       // Before the mirror's first fetch, whose failure would otherwise blame the repository.
       await this.preflightGitHubAppAuth()
@@ -483,6 +542,7 @@ class LocalGitHubGateway implements GitHubGateway {
     }
     // The first GitHub fetch starts now, detached, so the first operation that needs one joins
     // it under way. Its failure surfaces to whoever joins it.
+    if (this.options.prefetch === false) return
     void this.credentialed(undefined, (reach) =>
       this.joinGitHubFetch(() => this.credential(reach)),
     ).catch(() => undefined)
@@ -499,13 +559,17 @@ class LocalGitHubGateway implements GitHubGateway {
    * `lastFatalError`. No-op on the token path, where the first real request checks as much.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
-    if (!this.options.githubApp) return
+    if (!this.options.githubApp) {
+      this.preflight = 'not-an-app'
+      return
+    }
     try {
       registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       // [REDACT] Both messages below reach worker-status.json and the browser.
       const detail = redactEgress(getErrorMessage(err))
       if (isTransientAuthFailure(err)) {
+        this.preflight = 'unverified'
         gatewayLogWarn(
           `Could not verify GitHub App authentication at startup: ${detail}. ` +
             'Continuing — this looks transient, and the credential is minted again on first use.',
@@ -518,6 +582,7 @@ class LocalGitHubGateway implements GitHubGateway {
           'Check the app id, the installation id, and that the private key belongs to that app.',
       )
     }
+    this.preflight = 'verified'
     gatewayLog('GitHub App authentication verified')
   }
 

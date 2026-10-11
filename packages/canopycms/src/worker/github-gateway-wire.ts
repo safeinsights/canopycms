@@ -66,6 +66,7 @@ const pullRequestText = { title: z.string().max(64 * 1024), body: z.string().max
 
 export const requests = {
   prepare: z.object({}).strict(),
+  health: z.object({}).strict(),
   defaultBranch: z.object({}).strict(),
   isProtectedBranch: z.object({ branch: name }).strict(),
   createPullRequest: z.object({ head: name, base: name, ...pullRequestText }).strict(),
@@ -96,6 +97,17 @@ const pullRequestRef = z.object({ number: prNumber, url: z.string().max(4096) })
 
 export const answers = {
   prepare: empty,
+  health: z
+    .object({
+      ready: z.boolean(),
+      fatalError: message.nullable(),
+      preflight: z.enum(['not-an-app', 'verified', 'unverified', 'pending']),
+      clerkConfigured: z.boolean(),
+      protectedBranches: z
+        .object({ configured: z.array(name).max(1024), githubDefault: name.nullable() })
+        .strict(),
+    })
+    .strict(),
   defaultBranch: z.object({ branch: name }).strict(),
   isProtectedBranch: z.object({ protected: z.boolean() }).strict(),
   createPullRequest: pullRequestRef,
@@ -118,6 +130,7 @@ export type JsonOperation = keyof typeof requests
 /** Where each JSON operation is POSTed. */
 export const JSON_ROUTES: Readonly<Record<JsonOperation, string>> = {
   prepare: `${WIRE_PREFIX}/prepare`,
+  health: `${WIRE_PREFIX}/health`,
   defaultBranch: `${WIRE_PREFIX}/default-branch`,
   isProtectedBranch: `${WIRE_PREFIX}/is-protected-branch`,
   createPullRequest: `${WIRE_PREFIX}/pull-request/create`,
