@@ -1,22 +1,36 @@
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
+  ActionIcon,
   Alert,
   Button,
+  Center,
   Group,
   Loader,
   Progress,
   ScrollArea,
+  SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Text,
   TextInput,
+  Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
 import { openConfirm } from '../utils/confirm-modal'
-import { IconAlertCircle, IconUpload } from '@tabler/icons-react'
+import {
+  IconAlertCircle,
+  IconGridDots,
+  IconLayoutGrid,
+  IconList,
+  IconSearch,
+  IconUpload,
+  IconX,
+} from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
 import { getErrorMessage } from '../../utils/error'
@@ -26,17 +40,62 @@ import { isAdmin } from '../../authorization/helpers'
 import { useApiClient, useAssetContext } from '../context'
 import { useUserContext } from '../hooks'
 import { AssetCard } from './AssetCard'
+import { AssetListRow } from './AssetListRow'
+import { MediaLibrarySkeleton } from './MediaLibrarySkeleton'
+import { useAssetLibrary } from './useAssetLibrary'
 import { useAssetUpload } from './useAssetUpload'
+import { useMediaLibraryPrefs } from './media-library-prefs'
+import {
+  GRID_COLUMNS,
+  assetCountLabel,
+  matchesKind,
+  matchesText,
+  sortAssets,
+  type MediaDensity,
+  type MediaKind,
+  type MediaSort,
+} from './media-library-view'
 import {
   ACCEPTED_ASSET_MIME_TYPES,
   ACCEPTED_IMAGE_MIME_TYPES,
   MAX_UPLOAD_BYTES,
 } from './upload-constants'
 
-const PAGE_SIZE = 40
+/** How many assets render at first, and how many each reveal adds. All of them load regardless. */
+const RENDER_WINDOW = 40
+
+const SORT_OPTIONS: { value: MediaSort; label: string }[] = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'name', label: 'Name' },
+]
+
+const KIND_OPTIONS: { value: MediaKind; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'images', label: 'Images' },
+  { value: 'pdfs', label: 'PDFs' },
+]
+
+/** An icon-only radio segment: the visible icon, a tooltip, and hidden text for the radio's name. */
+const DensityLabel: React.FC<{ icon: React.ReactNode; text: string }> = ({ icon, text }) => (
+  <Tooltip label={text}>
+    <Center>
+      {icon}
+      <VisuallyHidden>{text}</VisuallyHidden>
+    </Center>
+  </Tooltip>
+)
+
+const DENSITY_OPTIONS: { value: MediaDensity; label: React.ReactNode }[] = [
+  { value: 'grid', label: <DensityLabel icon={<IconLayoutGrid size={16} />} text="Grid" /> },
+  {
+    value: 'compact',
+    label: <DensityLabel icon={<IconGridDots size={16} />} text="Compact grid" />,
+  },
+  { value: 'list', label: <DensityLabel icon={<IconList size={16} />} text="List" /> },
+]
 
 export interface MediaLibraryBodyProps {
-  /** Whether the enclosing Drawer/Modal is open - gates the (re)fetch of the first page on each open. */
+  /** Whether the enclosing Drawer/Modal is open - the library (re)loads from page 1 on each open and stops loading on close. */
   opened: boolean
   mode: 'manage' | 'picker'
   /** Present in picker mode - clicking a card (or completing an upload) selects the asset. */
@@ -44,7 +103,7 @@ export interface MediaLibraryBodyProps {
 }
 
 /**
- * Shared grid/upload/filter/pagination/delete core for both MediaLibrary
+ * Shared grid/list/upload/search/delete core for both MediaLibrary
  * presentations (Drawer "manage" mode, Modal "picker" mode) - see
  * MediaLibrary.tsx for the two wrappers.
  */
@@ -67,79 +126,81 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   // `manage` mode (the Editor's Media Library drawer) keeps accepting PDFs.
   const imageOnly = mode === 'picker'
 
-  const [assets, setAssets] = useState<AssetRecord[]>([])
-  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
-  const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [listError, setListError] = useState<string | null>(null)
+  const library = useAssetLibrary(opened)
+  const { sort, density, setSort, setDensity } = useMediaLibraryPrefs()
+  const [kind, setKind] = useState<MediaKind>('all')
   const [filterText, setFilterText] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  const loadFirstPage = useCallback(async () => {
-    setLoading(true)
-    setListError(null)
-    try {
-      const result = await client.assets.list({ limit: String(PAGE_SIZE) })
-      if (!result.ok || !result.data) {
-        setListError(result.error || 'Failed to load assets')
-        return
-      }
-      setAssets(result.data.assets)
-      setNextCursor(result.data.nextCursor)
-    } catch (err) {
-      setListError(getErrorMessage(err))
-    } finally {
-      setLoading(false)
-    }
-  }, [client])
+  // The render window resets whenever the list it windows changes shape; keying it on the
+  // controls avoids an effect and the stale frame an effect would leave.
+  const windowKey = `${filterText}|${sort}|${kind}|${density}`
+  const [windowState, setWindowState] = useState({ key: windowKey, count: RENDER_WINDOW })
+  const visibleCount = windowState.key === windowKey ? windowState.count : RENDER_WINDOW
+  const showMore = useCallback(
+    () => setWindowState({ key: windowKey, count: visibleCount + RENDER_WINDOW }),
+    [windowKey, visibleCount],
+  )
 
+  const needle = filterText.trim().toLowerCase()
+  const effectiveKind: MediaKind = imageOnly ? 'images' : kind
+  // Picker mode is image-only (see `imageOnly` above) - pdf assets are
+  // excluded from the pickable list entirely, not just the upload accept
+  // list, since an already-uploaded pdf could otherwise still be selected.
+  const scopedAssets = useMemo(
+    () => (imageOnly ? library.assets.filter((asset) => asset.kind !== 'pdf') : library.assets),
+    [imageOnly, library.assets],
+  )
+  const kindAssets = useMemo(
+    () => scopedAssets.filter((asset) => matchesKind(asset, effectiveKind)),
+    [scopedAssets, effectiveKind],
+  )
+  const matchedAssets = useMemo(
+    () => sortAssets(kindAssets, sort).filter((asset) => matchesText(asset, needle)),
+    [kindAssets, sort, needle],
+  )
+  const visibleAssets = matchedAssets.slice(0, visibleCount)
+  const hasMore = matchedAssets.length > visibleAssets.length
+
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
-    if (!opened) return
-    void loadFirstPage()
-    // Refetch only when the drawer/modal (re)opens, not on every render where
-    // loadFirstPage's identity happens to change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened])
-
-  const handleLoadMore = async () => {
-    if (!nextCursor) return
-    setLoadingMore(true)
-    setListError(null)
-    try {
-      const result = await client.assets.list({ cursor: nextCursor, limit: String(PAGE_SIZE) })
-      if (!result.ok || !result.data) {
-        setListError(result.error || 'Failed to load more assets')
-        return
-      }
-      const page = result.data
-      setAssets((prev) => [...prev, ...page.assets])
-      setNextCursor(page.nextCursor)
-    } catch (err) {
-      setListError(getErrorMessage(err))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+    if (!sentinel || !hasMore || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) showMore()
+      },
+      { rootMargin: '200px' },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [sentinel, hasMore, showMore])
 
   const handleDrop = async (files: File[]) => {
     const file = files[0]
     if (!file) return
+    setActionError(null)
     const asset = await upload.upload(file)
-    if (asset) {
-      setAssets((prev) => [asset, ...prev])
-    }
+    if (asset) library.prepend(asset)
   }
 
   const handleReject = (rejections: FileRejection[]) => {
-    setListError(rejections[0]?.errors[0]?.message ?? 'File rejected')
+    setActionError(rejections[0]?.errors[0]?.message ?? 'The file was rejected.')
   }
 
   const handleDelete = async (asset: AssetRecord) => {
-    const result = await client.assets.delete({ key: asset.hash32 })
-    if (!result.ok) {
-      setListError(result.error || 'Failed to delete asset')
-      return
+    setActionError(null)
+    try {
+      const result = await client.assets.delete({ key: asset.hash32 })
+      if (!result.ok) {
+        setActionError(
+          `Couldn't remove ${asset.filename} from the library. ${result.error || 'Try again.'}`,
+        )
+        return
+      }
+      library.remove(asset.hash32)
+    } catch (err) {
+      setActionError(`Couldn't remove ${asset.filename} from the library. ${getErrorMessage(err)}`)
     }
-    setAssets((prev) => prev.filter((a) => a.hash32 !== asset.hash32))
   }
 
   const handleDeleteClick = (asset: AssetRecord) => {
@@ -152,7 +213,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           library; the file itself is not deleted.
         </Text>
       ),
-      labels: { confirm: 'Remove', cancel: 'Cancel' },
+      labels: { confirm: 'Remove from library', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         void handleDelete(asset)
@@ -160,14 +221,97 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     })
   }
 
-  // Picker mode is image-only (see `imageOnly` above) - pdf assets are
-  // filtered out of the pickable grid entirely, not just the upload accept
-  // list, since an already-uploaded pdf could otherwise still be selected.
-  const kindFiltered = imageOnly ? assets.filter((asset) => asset.kind !== 'pdf') : assets
-  const normalizedFilter = filterText.trim().toLowerCase()
-  const filteredAssets = normalizedFilter
-    ? kindFiltered.filter((asset) => asset.filename.toLowerCase().includes(normalizedFilter))
-    : kindFiltered
+  const loadStatus = ((): React.ReactNode => {
+    if (library.error || !library.firstPageLoaded) return null
+    if (!library.complete) {
+      return needle ? (
+        <Group gap={6} wrap="nowrap">
+          <Loader size={12} />
+          <span>Searching {assetCountLabel(kindAssets.length)} loaded so far…</span>
+        </Group>
+      ) : (
+        `Loaded ${assetCountLabel(scopedAssets.length)}, loading more…`
+      )
+    }
+    if (needle) {
+      const total = kindAssets.length
+      return `${matchedAssets.length} of ${total} ${total === 1 ? 'asset matches' : 'assets match'}`
+    }
+    return null
+  })()
+
+  const emptyState = ((): React.ReactNode => {
+    if (!library.complete || matchedAssets.length > 0) return null
+    if (scopedAssets.length === 0) {
+      return imageOnly
+        ? 'No images yet. Drop an image above to upload one.'
+        : 'No media yet. Drop a file above to upload one.'
+    }
+    if (needle) return `No assets match “${filterText.trim()}”.`
+    if (effectiveKind === 'pdfs') return 'No PDFs in the library.'
+    return 'No images in the library.'
+  })()
+
+  const renderList = () => {
+    if (density === 'list') {
+      return (
+        <Stack gap={4}>
+          {visibleAssets.map((asset) => (
+            <AssetListRow
+              key={asset.hash32}
+              asset={asset}
+              baseUrl={baseUrl}
+              onSelect={mode === 'picker' ? onSelect : undefined}
+              onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
+            />
+          ))}
+        </Stack>
+      )
+    }
+    return (
+      <SimpleGrid cols={GRID_COLUMNS[density]} spacing="sm">
+        {visibleAssets.map((asset) => (
+          <AssetCard
+            key={asset.hash32}
+            asset={asset}
+            baseUrl={baseUrl}
+            density={density}
+            onSelect={mode === 'picker' ? onSelect : undefined}
+            onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
+          />
+        ))}
+      </SimpleGrid>
+    )
+  }
+
+  const listContent = (
+    <>
+      {!library.firstPageLoaded && !library.error && <MediaLibrarySkeleton density={density} />}
+      {library.firstPageLoaded && visibleAssets.length > 0 && renderList()}
+      {emptyState && (
+        <Stack align="center" gap="xs" py="xl" data-testid="media-library-empty">
+          <Text size="sm" c="dimmed" ta="center">
+            {emptyState}
+          </Text>
+          {needle && (
+            <Button variant="light" size="xs" onClick={() => setFilterText('')}>
+              Clear search
+            </Button>
+          )}
+        </Stack>
+      )}
+      {hasMore && (
+        <>
+          <div ref={setSentinel} aria-hidden="true" style={{ height: 1 }} />
+          <Group justify="center" py="sm">
+            <Button variant="light" onClick={showMore} data-testid="media-library-show-more">
+              Show more
+            </Button>
+          </Group>
+        </>
+      )}
+    </>
+  )
 
   return (
     <Stack gap="sm" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -203,59 +347,117 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       )}
 
       <TextInput
-        placeholder="Filter by filename..."
+        placeholder="Search by filename"
+        aria-label="Search by filename"
+        leftSection={<IconSearch size={16} />}
+        rightSection={
+          filterText ? (
+            <Tooltip label="Clear search">
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="Clear search"
+                onClick={() => setFilterText('')}
+              >
+                <IconX size={14} />
+              </ActionIcon>
+            </Tooltip>
+          ) : null
+        }
         value={filterText}
         onChange={(event) => setFilterText(event.currentTarget.value)}
         data-testid="media-library-filter"
       />
 
-      {listError && (
+      <Group justify="space-between" wrap="wrap" gap="xs">
+        {imageOnly ? (
+          <span />
+        ) : (
+          <SegmentedControl
+            aria-label="Kind"
+            data={KIND_OPTIONS}
+            value={kind}
+            onChange={(value) =>
+              setKind(KIND_OPTIONS.find((o) => o.value === value)?.value ?? 'all')
+            }
+            data-testid="media-library-kind"
+          />
+        )}
+        <Group gap="xs" wrap="wrap">
+          <Select
+            aria-label="Sort by"
+            data={SORT_OPTIONS}
+            value={sort}
+            onChange={(value) => {
+              const next = SORT_OPTIONS.find((option) => option.value === value)
+              if (next) setSort(next.value)
+            }}
+            allowDeselect={false}
+            w={150}
+            data-testid="media-library-sort"
+          />
+          <SegmentedControl
+            aria-label="Layout"
+            data={DENSITY_OPTIONS}
+            value={density}
+            onChange={(value) => {
+              const next = DENSITY_OPTIONS.find((option) => option.value === value)
+              if (next) setDensity(next.value)
+            }}
+            data-testid="media-library-density"
+          />
+        </Group>
+      </Group>
+
+      {loadStatus && (
+        <Text
+          component="div"
+          size="xs"
+          c="dimmed"
+          role="status"
+          aria-live="polite"
+          data-testid="media-library-load-status"
+        >
+          {loadStatus}
+        </Text>
+      )}
+
+      {library.error && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" data-testid="media-library-error">
           <Stack gap={4}>
-            <Text size="sm">{listError}</Text>
-            <Button variant="light" onClick={() => void loadFirstPage()}>
+            <Text size="sm">
+              {library.error.firstPage
+                ? "Couldn't load the media library."
+                : `Couldn't load the rest of the media library. Showing the ${assetCountLabel(library.assets.length)} loaded so far.`}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {library.error.message}
+            </Text>
+            <Button variant="light" onClick={library.retry}>
               Retry
             </Button>
           </Stack>
         </Alert>
       )}
+      {actionError && (
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="red"
+          withCloseButton
+          closeButtonLabel="Dismiss"
+          onClose={() => setActionError(null)}
+          data-testid="media-library-action-error"
+        >
+          {actionError}
+        </Alert>
+      )}
 
-      <ScrollArea style={{ flex: 1 }}>
-        {loading ? (
-          <Group justify="center" py="xl">
-            <Loader size="sm" data-testid="media-library-loading" />
-          </Group>
-        ) : filteredAssets.length === 0 ? (
-          <Text size="sm" c="dimmed" py="xl" ta="center">
-            No assets found.
-          </Text>
-        ) : (
-          <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="sm">
-            {filteredAssets.map((asset) => (
-              <AssetCard
-                key={asset.hash32}
-                asset={asset}
-                baseUrl={baseUrl}
-                onSelect={mode === 'picker' ? onSelect : undefined}
-                onDelete={canDeleteAsset(asset) ? () => handleDeleteClick(asset) : undefined}
-              />
-            ))}
-          </SimpleGrid>
-        )}
-
-        {!loading && nextCursor && (
-          <Group justify="center" py="sm">
-            <Button
-              variant="light"
-              loading={loadingMore}
-              onClick={() => void handleLoadMore()}
-              data-testid="media-library-load-more"
-            >
-              Load more
-            </Button>
-          </Group>
-        )}
-      </ScrollArea>
+      {imageOnly ? (
+        <ScrollArea.Autosize mah="60vh">{listContent}</ScrollArea.Autosize>
+      ) : (
+        <ScrollArea style={{ flex: 1 }}>{listContent}</ScrollArea>
+      )}
     </Stack>
   )
 }

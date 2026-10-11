@@ -1,12 +1,15 @@
 'use client'
 
-import React, { useState } from 'react'
+import React from 'react'
 
 import { ActionIcon, Card, Text, Tooltip } from '@mantine/core'
 import { IconFileTypePdf, IconPhotoOff, IconTrash } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
+import { formatRelativeTime } from '../relative-time'
 import { editorImageSrc } from './editor-image-src'
+import { CARD_THUMBNAIL_HEIGHT } from './media-library-view'
+import { useThumbnailFailure } from './useThumbnailFailure'
 
 export interface AssetCardProps {
   asset: AssetRecord
@@ -16,6 +19,8 @@ export interface AssetCardProps {
   onSelect?: (asset: AssetRecord) => void
   /** Present only for admins in manage mode - renders the trash button. */
   onDelete?: (asset: AssetRecord) => void
+  /** `compact` shrinks the thumbnail and drops the date line. */
+  density?: 'grid' | 'compact'
 }
 
 const THUMBNAIL_WIDTH = 160
@@ -24,19 +29,17 @@ const THUMBNAIL_WIDTH = 160
  * One thumbnail card in the MediaLibrary grid. PDFs have no image to preview, so they render a
  * file-type icon instead.
  */
-export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, onDelete }) => {
-  const uploadedDate = new Date(asset.uploadedAt).toLocaleDateString()
+export const AssetCard: React.FC<AssetCardProps> = ({
+  asset,
+  baseUrl,
+  onSelect,
+  onDelete,
+  density = 'grid',
+}) => {
+  const compact = density === 'compact'
+  const thumbnailHeight = CARD_THUMBNAIL_HEIGHT[density]
   const thumbnailSrc = editorImageSrc(asset.src, baseUrl ?? '', { width: THUMBNAIL_WIDTH })
-  const [thumbnailFailed, setThumbnailFailed] = useState(false)
-  // Reset the error state if the underlying asset/src changes, so a
-  // thumbnail that failed earlier gets another chance to load. Adjusting state
-  // during render (rather than in a useEffect) avoids an extra render pass -
-  // see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  const [prevThumbnailSrc, setPrevThumbnailSrc] = useState(thumbnailSrc)
-  if (thumbnailSrc !== prevThumbnailSrc) {
-    setPrevThumbnailSrc(thumbnailSrc)
-    setThumbnailFailed(false)
-  }
+  const [thumbnailFailed, markThumbnailFailed] = useThumbnailFailure(thumbnailSrc)
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!onSelect) return
@@ -63,39 +66,41 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
       onKeyDown={onSelect ? handleKeyDown : undefined}
     >
       {onDelete && (
-        <ActionIcon
-          variant="filled"
-          color="red"
-          radius="xl"
-          style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
-          aria-label={`Delete ${asset.filename}`}
-          data-testid={`asset-card-delete-${asset.hash32}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onDelete(asset)
-          }}
-        >
-          <IconTrash size={14} />
-        </ActionIcon>
+        <Tooltip label="Remove from library">
+          <ActionIcon
+            variant="filled"
+            color="red"
+            radius="xl"
+            style={{ position: 'absolute', top: 4, right: 4, zIndex: 1 }}
+            aria-label={`Remove ${asset.filename} from library`}
+            data-testid={`asset-card-delete-${asset.hash32}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onDelete(asset)
+            }}
+          >
+            <IconTrash size={14} />
+          </ActionIcon>
+        </Tooltip>
       )}
       <Card.Section>
         {asset.kind === 'pdf' ? (
           <div
             style={{
-              height: 100,
+              height: thumbnailHeight,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               background: 'var(--mantine-color-gray-1)',
             }}
           >
-            <IconFileTypePdf size={40} stroke={1.5} />
+            <IconFileTypePdf size={compact ? 28 : 40} stroke={1.5} />
           </div>
         ) : thumbnailFailed ? (
           <div
             data-testid={`asset-card-thumbnail-fallback-${asset.hash32}`}
             style={{
-              height: 100,
+              height: thumbnailHeight,
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
@@ -105,7 +110,11 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
               background: 'var(--mantine-color-gray-1)',
             }}
           >
-            <IconPhotoOff size={28} stroke={1.5} color="var(--mantine-color-gray-5)" />
+            <IconPhotoOff
+              size={compact ? 20 : 28}
+              stroke={1.5}
+              color="var(--mantine-color-gray-5)"
+            />
             <Text size="xs" c="dimmed">
               Preview unavailable
             </Text>
@@ -114,19 +123,33 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
           <img
             src={thumbnailSrc}
             alt={asset.filename}
-            style={{ width: '100%', height: 100, objectFit: 'cover', display: 'block' }}
-            onError={() => setThumbnailFailed(true)}
+            style={{ width: '100%', height: thumbnailHeight, objectFit: 'cover', display: 'block' }}
+            onError={markThumbnailFailed}
           />
         )}
       </Card.Section>
-      <Tooltip label={asset.filename} openDelay={400}>
+      <Tooltip
+        multiline
+        w={260}
+        openDelay={400}
+        label={
+          <>
+            <div style={{ overflowWrap: 'anywhere' }}>{asset.filename}</div>
+            <div style={{ overflowWrap: 'anywhere' }}>Slug: {asset.slug}</div>
+          </>
+        }
+      >
         <Text size="xs" fw={500} truncate mt={4}>
-          {asset.slug}
+          {asset.filename}
         </Text>
       </Tooltip>
-      <Text size="xs" c="dimmed">
-        {uploadedDate}
-      </Text>
+      {!compact && (
+        <Tooltip label={new Date(asset.uploadedAt).toLocaleString()}>
+          <Text size="xs" c="dimmed" w="fit-content">
+            {formatRelativeTime(asset.uploadedAt)}
+          </Text>
+        </Tooltip>
+      )}
     </Card>
   )
 }
