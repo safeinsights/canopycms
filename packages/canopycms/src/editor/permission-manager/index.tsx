@@ -226,10 +226,10 @@ const PermissionManagerDrawer: React.FC<PermissionManagerProps & { onExited: () 
         )}
 
         <Group gap="xs" pb="sm">
-          <Button size="xs" variant="subtle" onClick={expandAll}>
+          <Button variant="subtle" onClick={expandAll}>
             Expand All
           </Button>
-          <Button size="xs" variant="subtle" onClick={collapseAll}>
+          <Button variant="subtle" onClick={collapseAll}>
             Collapse All
           </Button>
         </Group>

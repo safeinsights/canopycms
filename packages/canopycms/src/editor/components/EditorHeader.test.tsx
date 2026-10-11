@@ -218,3 +218,83 @@ describe('EditorHeader - no leftover placeholder copy', () => {
     expect(document.body.textContent).not.toContain('TODO')
   })
 })
+
+describe('EditorHeader - status badge', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('labels an editing branch "Editing"', () => {
+    renderHeader({ branchStatus: 'editing' })
+    const badge = screen.getByTestId('header-status-badge-editing')
+    expect(badge.textContent).toBe('Editing')
+    expect(badge.getAttribute('data-status')).toBe('editing')
+  })
+
+  it('labels a submitted branch "In review"', () => {
+    renderHeader({ branchStatus: 'submitted', branchWriteBlocked: true })
+    const badge = screen.getByTestId('header-status-badge-submitted')
+    expect(badge.textContent).toBe('In review')
+    expect(badge.getAttribute('data-status')).toBe('submitted')
+  })
+
+  it('labels the protected base branch "Protected" instead of its workflow status', () => {
+    renderHeader({ branchStatus: 'editing', branchIsProtected: true, branchReadOnly: true })
+    const badge = screen.getByTestId('header-status-badge-protected')
+    expect(badge.textContent).toBe('Protected')
+    expect(badge.getAttribute('data-status')).toBe('protected')
+    expect(screen.queryByText('Editing')).toBeNull()
+    expect(screen.queryByTestId('header-status-badge-editing')).toBeNull()
+  })
+
+  it('renders no badge while the branch status is unknown', () => {
+    renderHeader({ branchStatus: undefined })
+    expect(document.querySelector('[data-testid^="header-status-badge-"]')).toBeNull()
+  })
+})
+
+describe('EditorHeader - comments indicator', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('shows the unresolved count, ignoring resolved threads', () => {
+    renderHeader({ comments: [{ resolved: false }, { resolved: true }, { resolved: false }] })
+    expect(screen.getByTestId('comments-unresolved-count').textContent).toBe('2')
+  })
+
+  it('names the unresolved count on the button, and lets clicks pass through the count', () => {
+    renderHeader({ comments: [{ resolved: false }, { resolved: false }] })
+    expect(screen.getByRole('button', { name: 'Comments, 2 unresolved' })).toBeDefined()
+    const count = screen.getByTestId('comments-unresolved-count').parentElement
+    expect(count && getComputedStyle(count).pointerEvents).toBe('none')
+  })
+
+  it('shows no count when every thread is resolved', () => {
+    renderHeader({ comments: [{ resolved: true }] })
+    expect(screen.queryByTestId('comments-unresolved-count')).toBeNull()
+    expect(screen.getByTestId('comments-button')).toBeDefined()
+  })
+})
+
+describe('EditorHeader - unsaved indicator', () => {
+  it('says unsaved changes are kept on this device', () => {
+    renderHeader({ hasUnsavedChanges: true })
+    expect(screen.getByTestId('unsaved-indicator').textContent).toBe(
+      'Unsaved · kept on this device',
+    )
+  })
+
+  it('says they are not kept when storing drafts failed', () => {
+    renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
+    const indicator = screen.getByTestId('unsaved-indicator')
+    expect(indicator.textContent).toContain('Unsaved · not kept on this device')
+    // The tooltip's consequence is mouse-only, so the status text carries it too.
+    expect(indicator.textContent).toContain("Save before you leave or reload, or they'll be lost.")
+  })
+
+  it('is absent with nothing unsaved', () => {
+    renderHeader({ hasUnsavedChanges: false })
+    expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
+  })
+})

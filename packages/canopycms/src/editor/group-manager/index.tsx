@@ -3,13 +3,14 @@
 import React, { useState, useCallback } from 'react'
 import { Alert, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
-import type { GroupManagerProps, InternalGroup, GroupFormData } from './types'
-import { useGroupState } from './hooks/useGroupState'
+import type { CanopyGroupId, GroupManagerProps, InternalGroup, GroupFormData } from './types'
+import { isTempGroupId, useGroupState } from './hooks/useGroupState'
 import { useUserSearch } from './hooks/useUserSearch'
 import { useExternalGroupSearch } from './hooks/useExternalGroupSearch'
 import { InternalGroupsTab } from './InternalGroupsTab'
 import { ExternalGroupsTab } from './ExternalGroupsTab'
 import { GroupForm } from './GroupForm'
+import { openConfirm } from '../utils/confirm-modal'
 import { StagedChangesDrawer, useOpeningKey } from '../components/StagedChangesDrawer'
 
 export const GroupManager: React.FC<GroupManagerProps> = (props) => {
@@ -52,6 +53,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
   const externalGroupSearch = useExternalGroupSearch({ onSearchExternalGroups })
 
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<InternalGroup | null>(null)
   const [formData, setFormData] = useState<GroupFormData>({
     name: '',
@@ -63,6 +65,33 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
     setFormData({ name: '', description: '' })
     setIsModalOpen(true)
   }, [])
+
+  // Save Groups applies a delete with no further look; a group not yet saved has nothing to lose.
+  const confirmDeleteGroup = useCallback(
+    (groupId: CanopyGroupId) => {
+      if (isTempGroupId(groupId)) {
+        deleteGroup(groupId)
+        return
+      }
+      const group = groups.find((g) => g.id === groupId)
+      const memberCount = group?.members?.length ?? 0
+      const consequence =
+        memberCount === 0
+          ? 'It is deleted when you save.'
+          : `Its ${memberCount} ${memberCount === 1 ? 'member loses' : 'members lose'} the access it grants when you save.`
+      setDeleteConfirmOpen(true)
+      openConfirm({
+        title: 'Delete group',
+        children: <Text size="sm">{`Delete "${group?.name ?? groupId}"? ${consequence}`}</Text>,
+        labels: { confirm: 'Delete group', cancel: 'Cancel' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => deleteGroup(groupId),
+        // Deferred: Mantine runs onClose, for every exit, inside its reducer during render.
+        onClose: () => queueMicrotask(() => setDeleteConfirmOpen(false)),
+      })
+    },
+    [groups, deleteGroup],
+  )
 
   const handleEditGroup = useCallback((group: InternalGroup) => {
     setEditingGroup(group)
@@ -114,7 +143,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
       saveLabel="Save Groups"
       onSave={save}
       onDiscard={discard}
-      childModalOpen={isModalOpen}
+      childModalOpen={isModalOpen || deleteConfirmOpen}
       onExited={onExited}
     >
       <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
@@ -161,7 +190,7 @@ const GroupManagerDrawer: React.FC<GroupManagerProps & { onExited: () => void }>
                 canEdit={canEdit}
                 onCreateGroup={handleCreateGroup}
                 onEditGroup={handleEditGroup}
-                onDeleteGroup={deleteGroup}
+                onDeleteGroup={confirmDeleteGroup}
                 onAddMember={handleAddMember}
                 onRemoveMember={removeMember}
                 onGetUserMetadata={onGetUserMetadata}

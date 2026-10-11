@@ -8,7 +8,7 @@ import {
   readContentFile,
   findContentFile,
 } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 /**
  * Multi-Field Content Editing E2E Tests.
@@ -30,7 +30,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     // Open Home Page entry
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Edit title field
@@ -60,40 +60,18 @@ test.describe('Multi-Field Content Editing', () => {
     })
 
     await test.step('create a post entry via UI', async () => {
-      await editorPage.openEntryNavigator()
-
-      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({
-        state: 'visible',
-        timeout: STANDARD_TIMEOUT,
-      })
-      await collectionMenuButton.click()
-
-      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-      await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-      await addEntryItem.click()
-
-      const modal = page.locator('[data-testid="create-entry-modal"]')
-      await expect(modal).toBeVisible()
-      await page.locator('[data-testid="entry-slug-input"]').fill('mdx-body-test')
-      await page.locator('[data-testid="create-entry-submit"]').click()
-      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+      await editorPage.openContentNavigator()
+      await editorPage.createEntry('Posts', 'mdx-body-test')
 
       // Close the navigator drawer so the form pane is interactive
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({
-        timeout: SHORT_TIMEOUT,
-      })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('fill title and body fields', async () => {
       // Title is a regular text input
       await editorPage.fillTextField('title', 'Test Body Post')
 
-      // Body is a rich text (markdown) editor — interact via ARIA role
-      const bodyEditor = page.getByRole('textbox', {
-        name: 'editable markdown',
-      })
+      const bodyEditor = editorPage.richTextField('Body')
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.fill('Hello world body content')
     })
@@ -107,9 +85,7 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.waitForReady()
 
       // The post should still be selected after reload
-      const bodyEditor = page.getByRole('textbox', {
-        name: 'editable markdown',
-      })
+      const bodyEditor = editorPage.richTextField('Body')
       await expect(bodyEditor).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(bodyEditor).toContainText('Hello world body content')
     })
@@ -119,7 +95,7 @@ test.describe('Multi-Field Content Editing', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -203,7 +179,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     // Open Home Page
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Edit multiple fields
@@ -237,7 +213,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Test with special characters and unicode
@@ -255,7 +231,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Clear the tagline field
@@ -272,7 +248,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Create large content (5KB)
@@ -290,7 +266,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     // Make several rapid edits
@@ -312,7 +288,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
 
     const uniqueTitle = `Preview-Test-${Date.now()}`

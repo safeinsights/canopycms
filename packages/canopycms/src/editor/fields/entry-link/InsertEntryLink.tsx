@@ -69,7 +69,6 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
     <>
       <ActionIcon
         variant="subtle"
-        size="sm"
         color="gray"
         title="Insert entry link"
         data-testid="insert-entry-link-button"

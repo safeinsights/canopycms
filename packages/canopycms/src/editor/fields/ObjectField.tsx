@@ -1,11 +1,12 @@
 import React, { useId } from 'react'
 
-import { Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { Button, Paper, Stack } from '@mantine/core'
 
 import type { FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
-import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 
 export type RenderField = (
   field: FieldConfig,
@@ -16,6 +17,7 @@ export type RenderField = (
 
 export interface ObjectFieldProps {
   label?: string
+  required?: boolean
   description?: string
   fields: FieldConfig[]
   value: Record<string, unknown> | undefined
@@ -35,6 +37,7 @@ export interface ObjectFieldProps {
 
 export const ObjectField: React.FC<ObjectFieldProps> = ({
   label,
+  required,
   description,
   fields,
   value,
@@ -50,7 +53,6 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
   return (
     <Paper
       withBorder
-      radius="md"
       p="md"
       bg="gray.0"
       data-canopy-field={dataCanopyField ?? formatCanopyPath(path)}
@@ -58,21 +60,19 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
       {...groupDescriptionProps(descriptionBaseId, description)}
     >
       <Stack gap="sm">
-        {(label || onRemove) && (
-          <Group justify="space-between">
-            {label && (
-              <Text size="xs" fw={700} c="neutral.8">
-                {label}
-              </Text>
-            )}
-            {onRemove && (
-              <Button size="xs" variant="subtle" color="red" onClick={onRemove}>
+        <FieldLabel
+          label={label}
+          required={required}
+          description={description}
+          descriptionBaseId={descriptionBaseId}
+          actions={
+            onRemove && (
+              <Button variant="subtle" color="red" onClick={onRemove}>
                 Clear
               </Button>
-            )}
-          </Group>
-        )}
-        <FieldDescription baseId={descriptionBaseId} description={description} />
+            )
+          }
+        />
         <Stack gap="sm">
           {fields.map((field) => {
             const fieldPath = [...path, field.name]

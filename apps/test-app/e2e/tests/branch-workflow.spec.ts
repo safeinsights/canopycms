@@ -52,7 +52,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.closeBranchManager()
 
     // Step 5: Make some edits
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Home Page')
     const testValue = `Branch-Test-${Date.now()}`
     await editorPage.fillTextField('title', testValue)
@@ -161,7 +161,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     await branchPage.submitBranch(branchName)
 
-    await expect(page.getByText(`Nothing to submit yet: "${branchName}"`)).toBeVisible()
+    await expect(editorPage.notification(`Nothing to submit yet: "${branchName}"`)).toBeVisible()
     await branchPage.verifyBranchStatus(branchName, 'editing')
   })
 

@@ -10,6 +10,8 @@ export interface CodeFieldProps {
   onChange: (value: string) => void
   language?: string
   dataCanopyField?: string
+  /** Shows the value without accepting edits. */
+  readOnly?: boolean
 }
 
 // Placeholder for Monaco integration; host app can provide custom renderer for production.
@@ -21,6 +23,7 @@ export const CodeField: React.FC<CodeFieldProps> = ({
   onChange,
   language,
   dataCanopyField,
+  readOnly = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -30,7 +33,10 @@ export const CodeField: React.FC<CodeFieldProps> = ({
       label={label}
       description={description}
       value={value}
-      onChange={(e) => onChange(e.currentTarget.value)}
+      readOnly={readOnly}
+      onChange={(e) => {
+        if (!readOnly) onChange(e.currentTarget.value)
+      }}
       placeholder={language ? `Code (${language})` : 'Code'}
       autosize
       minRows={6}

@@ -116,7 +116,7 @@ Use existing fixtures:
 **Status:** Done — `field-types.spec.ts` › "textarea/MDX field: multi-line content" (unskipped)
 **Spec file:** `field-types.spec.ts`
 **Scenario:** Create a post entry via the UI, edit the `body` rich text field, save, reload and verify persistence.
-**Notes:** No API creation needed — UI creation (same pattern as entry-crud tests) works fine. The body field is a BlockNote-style rich text editor with ARIA role `textbox` and name `"editable markdown"` — interact via `page.getByRole('textbox', { name: 'editable markdown' })`. Key gotcha: after creating the entry, the navigator drawer is still open and its overlay blocks clicks on the form pane — press `Escape` to close the drawer before interacting with form fields.
+**Notes:** No API creation needed — UI creation (same pattern as entry-crud tests) works fine. The body field is a rich text editor with ARIA role `textbox`, named after its label — interact via `editorPage.richTextField('Body')`. Key gotcha: after creating the entry, the navigator drawer is still open and its overlay blocks clicks on the form pane — press `Escape` to close the drawer before interacting with form fields.
 
 ### 5. ✅ Toggle (boolean) field
 

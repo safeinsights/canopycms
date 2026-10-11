@@ -88,7 +88,7 @@ export const MemberList: React.FC<MemberListProps> = ({
                     variant="transparent"
                     onClick={() => onRemoveMember(groupId, userId)}
                   >
-                    <IconX size={10} style={{ color: 'white' }} />
+                    <IconX size={10} style={{ color: 'var(--mantine-color-white)' }} />
                   </ActionIcon>
                 }
               >
@@ -158,14 +158,13 @@ export const MemberList: React.FC<MemberListProps> = ({
                 No users found
               </Text>
             )}
-            <Button size="xs" variant="subtle" onClick={onHideSearch}>
+            <Button variant="subtle" onClick={onHideSearch}>
               Cancel
             </Button>
           </Stack>
         </Paper>
       ) : (
         <Button
-          size="xs"
           variant="subtle"
           leftSection={<IconSearch size={14} />}
           onClick={onShowSearch}

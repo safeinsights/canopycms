@@ -56,6 +56,7 @@ import {
 } from './content-listing'
 import { createDebugLogger } from './utils/debug'
 import { baseBranchOf } from './utils/base-branch'
+import { CONTEXT_USER_ID } from './system-users'
 
 const log = createDebugLogger({ prefix: 'Context' })
 
@@ -321,7 +322,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
           config: services.config,
           branchName: activeBranch,
           mode: services.config.mode,
-          createdBy: 'canopycms-context',
+          createdBy: CONTEXT_USER_ID,
           remoteUrl: services.config.defaultRemoteUrl,
         })
       }
