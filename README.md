@@ -991,7 +991,7 @@ export const generateStaticParams = () =>
 
 ### Sitemap and SEO Metadata
 
-These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, as [AI content](#ai-ready-content) does, so they cannot disagree about which pages are advertised.
 
 #### The recommended SEO field group
 
@@ -1313,11 +1313,12 @@ import config from '../../canopycms.config'
 
 const customRenderers: CustomFieldRenderers = {
   // Every field declared `type: 'number'` now renders this instead.
-  number: ({ value, onChange, id, field }) => (
+  number: ({ value, onChange, id, field, readOnly }) => (
     <label htmlFor={id}>
       {field.label ?? field.name}
       <input
         id={id}
+        disabled={readOnly}
         type="range"
         value={typeof value === 'number' ? value : 0}
         onChange={(e) => onChange(Number(e.target.value))}
@@ -1336,10 +1337,11 @@ Each renderer receives `CustomFieldRenderProps`:
 - `onChange` — call with the new value to update the draft
 - `path` — canonical path to this field, e.g. `['blocks', 0, 'title']`
 - `id` — the id the default control would have used; attach it to your input
+- `readOnly` — true on a locked branch (protected, or in review); show the value only (`onChange` is ignored, native inputs disabled)
 
-Renderers apply **by field type, everywhere** — top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer if you need one. `customRenderers` is also accepted directly by `<CanopyEditor>` and `<Editor>` if you compose the editor yourself instead of using the page factory.
+Renderers apply **by field type, everywhere**: top-level fields, fields inside `object` and `block` templates, and each item of a `list: true` field. There is no per-field override; scope with `field.name` inside the renderer. `customRenderers` is also accepted by `<CanopyEditor>` and `<Editor>` when you compose the editor yourself.
 
-**The value you pass to `onChange` must still satisfy the field's declared type.** CanopyCMS validates entries at the server write boundary with the same rules regardless of what rendered the input, so a renderer storing a string into a `type: 'number'` field produces a `422` on save rather than a bad file. Custom rendering changes the control, not the schema contract.
+**The value you pass to `onChange` must still satisfy the field's declared type.** The server validates entries on write by the same rules whatever rendered the input, so a renderer storing a string into a `type: 'number'` field gets a `422` on save, not a bad file.
 
 ## Content Tree Builder
 
@@ -1668,9 +1670,9 @@ post: previewView({
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
-All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. An entry marked `noindex` is left out too, read through [the same predicate the sitemap uses](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
-A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
 ### Option 1: Route Handler (Runtime)
 
@@ -1714,6 +1716,10 @@ await generateAIContentFiles({
 ```typescript
 import { defineAIContentConfig } from 'canopycms/ai'
 
+// Where the noindex flag lives, if not flat. Pass this one object to
+// createNextCanopyContext({ seo }) too, so the sitemap and AI content agree.
+const seo = { group: 'seo' }
+
 const aiConfig = defineAIContentConfig({
   // Where these files are served, site-relative (default '/ai'); a reference links its
   // target's markdown copy beneath it
@@ -1724,7 +1730,10 @@ const aiConfig = defineAIContentConfig({
     collections: ['drafts'],
     entryTypes: ['internal-note'],
     where: (entry) => entry.data.hidden === true,
+    noindex: false, // export noindex entries, left out by default
   },
+
+  seo,
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],
@@ -1753,6 +1762,22 @@ const aiConfig = defineAIContentConfig({
   },
 })
 ```
+
+**A link into a hidden section by plain URL.** A field holding a plain URL, such as a site settings entry's navigation list, names no entry, so the export can't tell that it points at a `noindex` section. Filter it with a field transform, which replaces the field's whole output:
+
+```typescript
+fieldTransforms: {
+  settings: {
+    navLinks: (links) =>
+      (links as { label: string; href: string }[])
+        .filter((link) => !link.href.startsWith('/stubs'))
+        .map((link) => `- ${link.label}: ${link.href}`)
+        .join('\n'),
+  },
+},
+```
+
+Return `''` from the transform to drop the field entirely, or use `exclude.where` to drop the whole entry.
 
 **Transform pipeline** for MD/MDX entries, in order: `stripMdxImports` removes import statements automatically; `componentTransforms` match JSX components by PascalCase name and replace them with the transform's output (keeping the JSX as-is when it returns `undefined`); then `bodyTransforms` passes the full body string through the entry-type-specific transform for final cleanup. `componentTransforms` are keyed by component name and apply across all entry types, since MDX components are project-wide; `bodyTransforms` are keyed by entry type, for stripping entry-type-specific syntax that does not belong in AI output.
 
@@ -1825,7 +1850,7 @@ Browse collections in the sidebar and click an entry to open it; create new entr
 
 When your changes are ready, click "Submit for Review" in the header: that commits them and creates a GitHub PR, reviewable with standard GitHub workflows. Once it is merged, CanopyCMS detects it automatically within one worker sync cycle and marks the branch "Merged" in the Branches panel, and your changes deploy with the next site build. Submit refuses a branch whose saved content matches its base ("Nothing to submit yet").
 
-**A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw" in the branch selector or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. Someone with review access clicking "Request changes" does the same thing, and signals that revisions are needed.
+**A submitted branch is locked for content editing.** The editor disables Save and other write actions and shows a banner explaining why — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw" in the branch selector or Branches panel, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, after a confirmation, leaving the PR alone.
 
 The base branch (the PR target, usually `main`) can never be submitted — a branch cannot be reviewed against itself — so the "Submit for Review" button is hidden whenever you are viewing it, in both dev and production. In production it is also read-only in the editor: you can browse it, but changes require creating a branch first (the editor shows a banner with a "Create a branch" button). In dev mode it stays fully editable, since local development typically starts there, but you still need to move your work to a branch before it can be submitted.
 

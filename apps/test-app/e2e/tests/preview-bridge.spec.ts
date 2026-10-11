@@ -22,14 +22,14 @@ test.describe('Preview Bridge', () => {
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
     await test.step('wait for preview iframe to sync home content', async () => {
       // The preview iframe loads /?branch=main (the config's previewBase); after preview bridge sync,
       // the title element (with data-canopy-path="title") should show content.
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       const titleEl = previewFrame.locator('[data-canopy-path="title"]')
       await titleEl.waitFor({ state: 'visible', timeout: 20000 })
       // Verify the preview content was synced (shows the actual title)
@@ -37,7 +37,7 @@ test.describe('Preview Bridge', () => {
     })
 
     await test.step('click title in preview pane', async () => {
-      const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+      const previewFrame = editorPage.previewFrame()
       await previewFrame.locator('[data-canopy-path="title"]').click()
     })
 
@@ -55,14 +55,14 @@ test.describe('Preview Bridge', () => {
     })
   })
 
-  test('preview reflects live edits without saving', async ({ page }) => {
-    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+  test('preview reflects live edits without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
     const previewTitle = previewFrame.locator('[data-canopy-path="title"]')
 
     await test.step('open editor and select Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
     })
 
@@ -85,17 +85,17 @@ test.describe('Preview Bridge', () => {
     })
   })
 
-  test('preview resolves a reference inside an object without saving', async ({ page }) => {
-    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+  test('preview resolves a reference inside an object without saving', async () => {
+    const previewFrame = editorPage.previewFrame()
     const spotlight = previewFrame.locator('[data-testid="spotlight"]')
 
     await test.step('create a post, then open Home Page', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('spotlight-target', 'Spotlight Target Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await expect(previewFrame.locator('[data-canopy-path="title"]')).toContainText('Home Page', {
         timeout: 15000,
       })
@@ -115,7 +115,7 @@ test.describe('Preview Bridge', () => {
   test('an entry with no page shows no preview and frames nothing', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
-    await editorPage.openEntryNavigator()
+    await editorPage.openContentNavigator()
     await editorPage.selectEntry('Test Site')
 
     await expect(editorPage.previewPane).toContainText('No preview for this entry.')

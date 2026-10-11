@@ -1214,9 +1214,14 @@ Both packages are at **zero cycles**, so any violation is one you just introduce
 Both budgets run in CI and in the pre-commit hook. Each script's header comment carries its rules.
 
 - `pnpm lint:comments` — [scripts/check-comment-budget.mjs](scripts/check-comment-budget.mjs) against `scripts/comment-budget.json`: history markers in source comments, comment run length and comment/code ratio. `--report` prints per-file, per-directory and per-package tables; `--markers` lists marker lines.
-- `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
-- `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message.
+- `pnpm lint:docs` — [scripts/check-docs.mjs](scripts/check-docs.mjs) against `scripts/docs-budgets.json`: paths, links and package imports must resolve, plus word ceilings per file and per H2 section, history markers, and list-item and table-cell length in `CODEBASE_GUIDE.md` and module `AGENTS.md`. `docs/adopter-migration.md` is a changelog, so instead each `###` entry under `## Unreleased` is capped at its `maxEntryWords`: that caps verbosity per change, and the file shrinks at release consolidation. `--report`, `--report --sections <file>` and `--list-long-items` print the numbers.
+- `--write-baseline` on either script rewrites its budget file from actuals, `--margin=<pct>` adds headroom, and a rewrite that would raise any number is refused without `--allow-raise`: a raise is a reviewed decision stated in the commit message. To raise one doc, run `node scripts/check-docs.mjs --write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the word counts that doc has outgrown, to the measured count plus 2% (at least 10, at most 40 words).
+- When a doc reaches its ceiling, trim superseded text first. Never compress a sentence below plain clarity to fit, and never trim another entry's guidance to make room: ask for a raise instead.
 - For a comment-only change, `node scripts/diff-comments-only.mjs <git-range>` proves nothing but TypeScript comments changed by comparing parser token streams on both sides; its header lists what else must match.
+
+### Editor UX Checks
+
+`pnpm lint:ux-copy` and `pnpm lint:a11y` ratchet editor copy and accessibility; [docs/ux-guidelines.md](docs/ux-guidelines.md#enforcement) has the rules and the fix workflow.
 
 ### Account-ID Check
 
@@ -1363,3 +1368,4 @@ pnpm --filter canopycms storybook
 - `.claude/agents/test.md` — test runner
 - `.claude/agents/typecheck.md` — type checker
 - `.claude/agents/review.md` — code review
+- `.claude/agents/ux-review.md` — editor UX review

@@ -740,6 +740,45 @@ describe('FormRenderer', () => {
       expect(validateEntryData(objectFields, state)).toEqual([])
     })
 
+    it('marks the label of a required object, object list, or block field with an asterisk', () => {
+      const labelText = (text: string) => screen.getByText(text).textContent
+      const group = (required: boolean): FieldConfig[] => [
+        {
+          name: 'meta',
+          type: 'object',
+          label: 'Meta',
+          required,
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        },
+        {
+          name: 'rows',
+          type: 'object',
+          label: 'Rows',
+          list: true,
+          required,
+          fields: [{ name: 'label', type: 'string', label: 'Label' }],
+        },
+        {
+          name: 'sections',
+          type: 'block',
+          label: 'Sections',
+          required,
+          templates: [{ name: 'hero', label: 'Hero', fields: [] }],
+        },
+      ]
+
+      const { unmount } = render(<StatefulForm fields={group(true)} initialValue={{}} />)
+      expect(labelText('Meta')).toContain('*')
+      expect(labelText('Rows')).toContain('*')
+      expect(labelText('Sections')).toContain('*')
+      unmount()
+
+      render(<StatefulForm fields={group(false)} initialValue={{}} />)
+      expect(labelText('Meta')).not.toContain('*')
+      expect(labelText('Rows')).not.toContain('*')
+      expect(labelText('Sections')).not.toContain('*')
+    })
+
     it('does not show Clear for a required object field, even when it has a value', () => {
       const requiredFields: FieldConfig[] = [
         {

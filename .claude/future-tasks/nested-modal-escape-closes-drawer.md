@@ -19,7 +19,7 @@ Guarded today:
 
 - `editor/components/BranchesDrawer.tsx` (`confirmOpen` prop).
 - `editor/components/StagedChangesDrawer.tsx` (its own confirm, plus `childModalOpen` for the
-  group dialog).
+  group dialog and the Delete group confirm).
 
 Not checked:
 

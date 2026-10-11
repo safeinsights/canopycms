@@ -61,7 +61,7 @@ test.describe('Conflict Management', () => {
 
     // 3. Edit the Home Page entry on the branch
     await test.step('edit Home Page on branch', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
       await editorPage.fillTextField('title', 'Branch Edit Title')
       await editorPage.saveAndVerify()
@@ -97,15 +97,16 @@ test.describe('Conflict Management', () => {
     await test.step('verify conflict badge in navigator', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
 
       // Select the home entry (first treeitem — always present, title may have changed)
-      const homeEntry = editorPage.entryNavigator.locator('[role="treeitem"]').first()
+      const homeEntry = editorPage.navigatorNodes().first()
       await homeEntry.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await homeEntry.click()
 
-      const conflictBadge = page.locator('[data-testid="conflict-badge"]')
-      await expect(conflictBadge.first()).toBeVisible({ timeout: LONG_TIMEOUT })
+      await expect(editorPage.navigatorConflictBadges().first()).toBeVisible({
+        timeout: LONG_TIMEOUT,
+      })
     })
 
     await test.step('verify conflict alert in form', async () => {
@@ -117,7 +118,7 @@ test.describe('Conflict Management', () => {
     // 8. Verify the editor can still edit and save a conflicted entry
     await test.step('verify editing still works on conflicted entry', async () => {
       // Close the entry navigator drawer (its overlay blocks form interaction)
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await editorPage.fillTextField('title', 'Post-Conflict Edit')
       await editorPage.saveAndVerify()
     })

@@ -92,7 +92,7 @@ describe('StagedChangesDrawer', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Save Groups' }))
       expect(props.onSave).toHaveBeenCalledTimes(1)
-      fireEvent.click(screen.getByRole('button', { name: 'Discard Changes' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
       expect(props.onDiscard).toHaveBeenCalledTimes(1)
     })
 

@@ -2,7 +2,20 @@
 
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 
-import { ActionIcon, Alert, Box, Drawer, Group, Menu, Paper, Text, useTree } from '@mantine/core'
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Button,
+  Drawer,
+  Group,
+  Menu,
+  Paper,
+  Skeleton,
+  Stack,
+  Text,
+  useTree,
+} from '@mantine/core'
 import {
   IconChevronDown,
   IconChevronUp,
@@ -31,7 +44,7 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
-import { isAdmin } from '../authorization/helpers'
+import { isAdmin, isPrivileged } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
 import {
@@ -46,6 +59,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { EntrySchemaUnavailableError } from './hooks/useEntryManager'
 import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
@@ -57,6 +71,7 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { ReferencedByList, referencedDeleteMessage } from './components/ReferencedByList'
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
+import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
 import { EditorCrashBoundary } from './components/EditorCrashScreen'
@@ -70,6 +85,9 @@ import {
 } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
+import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
+import { UndoToastMessage } from './components/UndoToastMessage'
+import { getNotificationDuration } from './utils/env'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -242,13 +260,25 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const { userContext } = useUserContext()
 
-  // The System Health panel is admin-only -- gate both the sidebar
-  // menu item and the modal mount on it, same pattern BranchManager.tsx uses
-  // for its own admin-only actions.
-  const showSystemHealth = isAdmin(userContext?.groups)
+  // Admin surfaces (permissions, groups, system health, collection management and entry order,
+  // whose API routes all take the `admin` guard) render only for admins: each menu item, action
+  // and drawer mount is gated here. Until whoami answers, the user counts as no admin.
+  const userIsAdmin = isAdmin(userContext?.groups)
+  // Name lookups take the `privileged` guard (admins and reviewers); anyone else sees ids, and
+  // no lookup is sent that would only be refused.
+  const canResolveUserNames = isPrivileged(userContext?.groups)
 
-  const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } =
-    useEditorLayout()
+  const {
+    layout,
+    setLayout,
+    highlightEnabled,
+    setHighlightEnabled,
+    sideSplitPercent,
+    stackedSplitPercent,
+    setSplitPercent,
+    headerRef,
+    headerHeight,
+  } = useEditorLayout({ storageKey: editorLayoutStorageKey(basePath) })
 
   // Comments state (shared between useCommentSystem and useBranchManager)
   const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
@@ -354,9 +384,11 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
+    drafts,
     setDrafts,
     loadedValues,
     setLoadedValues,
+    loadedValue,
     effectiveValue,
     modifiedCount,
     editedFiles,
@@ -367,6 +399,7 @@ const EditorContent: React.FC<EditorProps> = ({
     isSelectedDirty,
     resolveUnsaved,
     fieldErrors,
+    draftStorageFailed,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -383,6 +416,8 @@ const EditorContent: React.FC<EditorProps> = ({
         console.error('Failed to refresh entries after save', err),
       )
     },
+    // An Undo built on a discarded draft would put back an item the server's copy already has.
+    onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
@@ -453,6 +488,101 @@ const EditorContent: React.FC<EditorProps> = ({
     onSchemaChange: () => refreshEntries(branchNameState),
   })
 
+  // Read-only content shows the saved value, never a draft; a restored draft is kept, unseen,
+  // until it is discarded or the branch unlocks.
+  const contentReadOnly = branchContentLocked || currentEntry?.canEdit === false
+  const displayValue = contentReadOnly ? loadedValue : effectiveValue
+  // Read when an edit lands, which an upload or other async field work can do renders later.
+  const contentReadOnlyRef = useRef(contentReadOnly)
+  contentReadOnlyRef.current = contentReadOnly
+
+  // Undo for a form Remove: a toast whose Undo puts the item back into the entry's draft as it
+  // is then, through a functional update, so edits made since are kept. It acts only on the
+  // branch and entry it was raised for, and its toast closes when either changes.
+  const loadedValuesRef = useRef(loadedValues)
+  loadedValuesRef.current = loadedValues
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  // Open Undo toasts, by id, with the entry each belongs to.
+  const undoToastsRef = useRef(new Map<string, string>())
+  const nextUndoToastRef = useRef(0)
+  const dismissUndoToasts = (contentId?: string) => {
+    undoToastsRef.current.forEach((entry, id) => {
+      if (contentId !== undefined && entry !== contentId) return
+      notifications.hide(id)
+      undoToastsRef.current.delete(id)
+    })
+  }
+  const handleFieldRemoved = (removal: FieldRemoval) => {
+    const contentId = currentEntry?.contentId
+    if (!contentId || contentReadOnlyRef.current) return
+    const branch = branchNameState
+    const fields = schema
+    // Taken from the value this render shows, which the removal has not reached yet.
+    const anchored: FieldRemoval = {
+      ...removal,
+      anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
+    }
+    nextUndoToastRef.current += 1
+    const id = `canopy-undo-${nextUndoToastRef.current}`
+    let used = false
+    const undo = () => {
+      // A closing toast stays clickable while it animates out: act once, and only while open.
+      if (used) return
+      used = true
+      const open = undoToastsRef.current.has(id)
+      notifications.hide(id)
+      undoToastsRef.current.delete(id)
+      if (!open) {
+        notifications.show({
+          message: `Too late to undo removing ${removal.label}.`,
+          color: 'yellow',
+        })
+        return
+      }
+      if (
+        currentBranchRef.current !== branch ||
+        currentContentIdRef.current !== contentId ||
+        contentReadOnlyRef.current
+      ) {
+        return
+      }
+      const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
+      if (!now || !restoreRemoval(fields, now, anchored)) {
+        notifications.show({
+          message: `Couldn't undo removing ${removal.label}: that part of the entry has changed. Add it again if you still need it.`,
+          color: 'yellow',
+        })
+        return
+      }
+      setDrafts((prev) => {
+        const base = prev[contentId] ?? loadedValuesRef.current[contentId]
+        const restored = base ? restoreRemoval(fields, base, anchored) : undefined
+        return restored ? { ...prev, [contentId]: restored } : prev
+      })
+    }
+    undoToastsRef.current.set(id, contentId)
+    const toast = {
+      id,
+      message: (
+        <UndoToastMessage
+          label={removal.label}
+          onUndo={undo}
+          onHold={() => notifications.update({ ...toast, autoClose: false })}
+          onRelease={() => notifications.update(toast)}
+        />
+      ),
+      autoClose: getNotificationDuration(8000),
+      withCloseButton: true,
+      onClose: () => undoToastsRef.current.delete(id),
+    }
+    notifications.show(toast)
+  }
+  useEffect(() => () => dismissUndoToasts(), [currentEntry?.contentId, branchNameState])
+  // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
+  const hiddenDraftNotice =
+    contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()
+
   const collectionLabels = useMemo(
     () => buildCollectionLabels(activeCollections),
     [activeCollections],
@@ -475,6 +605,18 @@ const EditorContent: React.FC<EditorProps> = ({
   // that same id. Qualifying the key lets both loads coexist; the branch check
   // at settle time decides which one is allowed to write.
   const loadingEntryIdsRef = useRef<Set<string>>(new Set())
+  // The entry (keyed like `loadingEntryIdsRef`) whose last read failed, and Retry's bump that
+  // runs the load effect below again.
+  const [loadFailedKey, setLoadFailedKey] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  // Reset during render, not in an effect, so returning to a failed entry never paints its Alert
+  // for the frame before its load starts again.
+  const selectionKey = `${branchNameState}:${currentEntry?.contentId ?? ''}`
+  const [loadFailedSelection, setLoadFailedSelection] = useState(selectionKey)
+  if (loadFailedSelection !== selectionKey) {
+    setLoadFailedSelection(selectionKey)
+    setLoadFailedKey(null)
+  }
   // Entries (keyed like `loadingEntryIdsRef`) whose read the API refused as SCHEMA_UNAVAILABLE.
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
@@ -533,6 +675,7 @@ const EditorContent: React.FC<EditorProps> = ({
       if (loadingEntryIdsRef.current.has(inFlightKey)) return
       loadingEntryIdsRef.current.add(inFlightKey)
       setEntriesLoading(true)
+      setLoadFailedKey((failed) => (failed === inFlightKey ? null : failed))
       try {
         const loaded = await loadEntry(currentEntry)
         // A branch switch during the await makes this response another
@@ -579,10 +722,11 @@ const EditorContent: React.FC<EditorProps> = ({
       // different branch).
       if (currentBranchRef.current === requestBranch && currentContentIdRef.current === contentId) {
         notifications.show({ message: 'Failed to load entry', color: 'red' })
+        setLoadFailedKey(inFlightKey)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
-  }, [currentEntry, loadedValues, selectedPath, branchNameState])
+  }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
@@ -906,12 +1050,18 @@ const EditorContent: React.FC<EditorProps> = ({
         onAdd: canAddEntry
           ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
           : undefined,
-        onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
+        onEdit:
+          userIsAdmin && node.type === 'collection'
+            ? () => handleOpenCollectionEditor(node)
+            : undefined,
         onAddSubCollection:
-          node.type === 'collection'
+          userIsAdmin && node.type === 'collection'
             ? () => handleOpenCollectionEditor(null, node.path)
             : undefined,
-        onDelete: node.type === 'collection' ? () => handleDeleteCollection(node.path) : undefined,
+        onDelete:
+          userIsAdmin && node.type === 'collection'
+            ? () => handleDeleteCollection(node.path)
+            : undefined,
       }
     }
     return activeCollections.map((node) => build(node))
@@ -924,6 +1074,7 @@ const EditorContent: React.FC<EditorProps> = ({
     contentRoot,
     currentBranch,
     schemaUnavailableKeys,
+    userIsAdmin,
   ])
 
   // Tree expansion state - persists across drawer close/open
@@ -959,7 +1110,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // the preview never receives a bare reference id: a reference is its target or `null`.
   const { resolvedValue: previewValue, loadingState: previewLoadingState } = useReferenceResolution(
     {
-      value: effectiveValue ?? EMPTY_VALUE,
+      value: displayValue ?? EMPTY_VALUE,
       fields: schema,
       branch: branchNameState,
       entryKey: currentEntry?.contentId,
@@ -967,8 +1118,8 @@ const EditorContent: React.FC<EditorProps> = ({
   )
 
   const previewFrameData = useMemo(
-    () => (effectiveValue ? resolveEntryLinks(previewValue) : effectiveValue),
-    [previewValue, effectiveValue, resolveEntryLinks],
+    () => (displayValue ? resolveEntryLinks(previewValue) : displayValue),
+    [previewValue, displayValue, resolveEntryLinks],
   )
 
   // Entry link context for the InsertEntryLink toolbar button
@@ -1011,7 +1162,7 @@ const EditorContent: React.FC<EditorProps> = ({
     src: currentEntry?.previewSrc,
     highlightEnabled,
     fields: schema,
-    data: effectiveValue,
+    data: displayValue,
   })
 
   // An unavailable entry previews nothing: the site cannot read it, and a stored draft would
@@ -1101,7 +1252,8 @@ const EditorContent: React.FC<EditorProps> = ({
             unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
             comments={comments}
             // A draft kept for an unavailable entry stays in storage but cannot be saved.
-            hasUnsavedChanges={!currentEntryUnavailable && isSelectedDirty()}
+            hasUnsavedChanges={!currentEntryUnavailable && !contentReadOnly && isSelectedDirty()}
+            draftStorageFailed={draftStorageFailed}
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
@@ -1160,9 +1312,12 @@ const EditorContent: React.FC<EditorProps> = ({
                 <EditorPanes
                   layout={layout}
                   onLayoutChange={(next) => setLayout(next)}
+                  sideSplitPercent={sideSplitPercent}
+                  stackedSplitPercent={stackedSplitPercent}
+                  onSplitPercentChange={setSplitPercent}
                   preview={
                     renderPreview && currentEntry && !currentEntryUnavailable
-                      ? renderPreview(currentEntry, effectiveValue)
+                      ? renderPreview(currentEntry, displayValue)
                       : defaultPreview
                   }
                   form={
@@ -1182,15 +1337,31 @@ const EditorContent: React.FC<EditorProps> = ({
                       />
                     ) : currentEntry.canEdit === false ? (
                       <NoEditPermissionNotice entryPath={currentEntry.path} />
-                    ) : schema.length > 0 && effectiveValue ? (
+                    ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
+                          {hiddenDraftNotice && (
+                            <ReadOnlyDraftNotice
+                              permanentlyReadOnly={
+                                (currentBranch?.isProtected ?? true) ||
+                                currentBranch?.status === 'archived'
+                              }
+                              onDiscard={handleDiscardFileDraft}
+                            />
+                          )}
                           <FormRenderer
                             fields={schema}
-                            value={effectiveValue}
+                            value={displayValue}
+                            readOnly={contentReadOnly}
+                            onRemoved={handleFieldRemoved}
+                            onGetUserMetadata={
+                              canResolveUserNames ? handleGetUserMetadata : undefined
+                            }
+                            // The one writer of drafts. Read-only content gets none, whatever a
+                            // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
                               const contentId = currentEntry?.contentId
-                              if (contentId) {
+                              if (contentId && !contentReadOnlyRef.current) {
                                 setDrafts((prev) => ({ ...prev, [contentId]: next }))
                               }
                             }}
@@ -1215,8 +1386,35 @@ const EditorContent: React.FC<EditorProps> = ({
                           />
                         </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
-                    ) : (
+                    ) : schema.length === 0 ? (
                       <CenteredMessage>No fields to edit.</CenteredMessage>
+                    ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
+                      <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
+                        {[0, 1, 2].map((row) => (
+                          <Stack key={row} gap={6}>
+                            <Skeleton h={12} w={120} />
+                            <Skeleton h={36} />
+                          </Stack>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Alert
+                        color="red"
+                        variant="light"
+                        m="md"
+                        title="This entry couldn't be loaded."
+                        data-testid="entry-load-failed"
+                      >
+                        <Button
+                          variant="default"
+                          onClick={() => {
+                            setLoadFailedKey(null)
+                            setLoadAttempt((attempt) => attempt + 1)
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
                     )
                   }
                 />
@@ -1234,10 +1432,12 @@ const EditorContent: React.FC<EditorProps> = ({
                   setHighlightEnabled(!highlightEnabled)
                   clearPreviewMarks()
                 }}
-                onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
-                onGroupManagerOpen={() => setGroupManagerOpen(true)}
+                onPermissionManagerOpen={
+                  userIsAdmin ? () => setPermissionManagerOpen(true) : undefined
+                }
+                onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
-                onSystemHealthOpen={showSystemHealth ? () => setSystemHealthOpen(true) : undefined}
+                onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1264,12 +1464,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
                       <Menu shadow="md" width={200} withinPortal position="bottom-end">
                         <Menu.Target>
-                          <ActionIcon
-                            variant="subtle"
-                            color="gray"
-                            size="sm"
-                            aria-label="Content actions"
-                          >
+                          <ActionIcon variant="subtle" color="gray" aria-label="Content actions">
                             <IconDots size={16} />
                           </ActionIcon>
                         </Menu.Target>
@@ -1296,7 +1491,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    size="sm"
                     onClick={handleCollapseAll}
                     title="Collapse all folders"
                     aria-label="Collapse all folders"
@@ -1306,7 +1500,6 @@ const EditorContent: React.FC<EditorProps> = ({
                   <ActionIcon
                     variant="subtle"
                     color="gray"
-                    size="sm"
                     onClick={handleExpandAll}
                     title="Expand all folders"
                     aria-label="Expand all folders"
@@ -1339,7 +1532,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     onExpandedStateChange={handleExpandedStateChange}
                     onDeleteEntry={handleDeleteEntry}
                     onRenameEntry={handleRenameEntry}
-                    onReorderEntry={handleReorderEntry}
+                    onReorderEntry={userIsAdmin ? handleReorderEntry : undefined}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
                     readOnly={branchContentLocked}
@@ -1387,7 +1580,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               highlightThreadId={highlightThreadId}
-              onGetUserMetadata={handleGetUserMetadata}
+              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
             />
           </BranchesDrawer>
           {commentsPanelOpen && branchNameState && (
@@ -1399,39 +1592,43 @@ const EditorContent: React.FC<EditorProps> = ({
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}
               onJumpToField={handleJumpToField}
-              onGetUserMetadata={handleGetUserMetadata}
+              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
               onJumpToEntry={handleJumpToEntry}
               onJumpToBranch={handleJumpToBranch}
             />
           )}
 
-          <GroupManager
-            opened={groupManagerOpen}
-            onClose={() => setGroupManagerOpen(false)}
-            internalGroups={groupsData}
-            loading={groupsLoading}
-            canEdit={true}
-            onSave={handleSaveGroups}
-            onSearchUsers={handleSearchUsers}
-            onGetUserMetadata={handleGetUserMetadata}
-            onSearchExternalGroups={handleSearchExternalGroups}
-          />
+          {userIsAdmin && (
+            <GroupManager
+              opened={groupManagerOpen}
+              onClose={() => setGroupManagerOpen(false)}
+              internalGroups={groupsData}
+              loading={groupsLoading}
+              canEdit={userIsAdmin}
+              onSave={handleSaveGroups}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onSearchExternalGroups={handleSearchExternalGroups}
+            />
+          )}
 
-          <PermissionManager
-            opened={permissionManagerOpen}
-            onClose={() => setPermissionManagerOpen(false)}
-            collections={activeCollections}
-            contentRoot={contentRoot}
-            permissions={permissionsData}
-            loading={permissionsLoading}
-            canEdit={true}
-            onSave={handleSavePermissions}
-            onSearchUsers={handleSearchUsers}
-            onGetUserMetadata={handleGetUserMetadata}
-            onListGroups={handleListGroups}
-          />
+          {userIsAdmin && (
+            <PermissionManager
+              opened={permissionManagerOpen}
+              onClose={() => setPermissionManagerOpen(false)}
+              collections={activeCollections}
+              contentRoot={contentRoot}
+              permissions={permissionsData}
+              loading={permissionsLoading}
+              canEdit={userIsAdmin}
+              onSave={handleSavePermissions}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onListGroups={handleListGroups}
+            />
+          )}
 
-          {showSystemHealth && (
+          {userIsAdmin && (
             <SystemHealthPanel
               opened={systemHealthOpen}
               onClose={() => setSystemHealthOpen(false)}
@@ -1444,27 +1641,29 @@ const EditorContent: React.FC<EditorProps> = ({
             mode="manage"
           />
 
-          <CollectionEditor
-            isOpen={collectionEditorOpen}
-            editingCollection={editingCollection}
-            parentPath={collectionEditorParentPath}
-            availableSchemas={availableSchemas}
-            onSave={handleCollectionSave}
-            onAddEntryType={
-              editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
-            }
-            onUpdateEntryType={
-              editingCollection
-                ? (path, name, updates) => updateEntryType(path, name, updates)
-                : undefined
-            }
-            onRemoveEntryType={
-              editingCollection ? (path, name) => removeEntryType(path, name) : undefined
-            }
-            onClose={handleCloseCollectionEditor}
-            isSaving={schemaLoading}
-            error={collectionEditorError}
-          />
+          {userIsAdmin && (
+            <CollectionEditor
+              isOpen={collectionEditorOpen}
+              editingCollection={editingCollection}
+              parentPath={collectionEditorParentPath}
+              availableSchemas={availableSchemas}
+              onSave={handleCollectionSave}
+              onAddEntryType={
+                editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
+              }
+              onUpdateEntryType={
+                editingCollection
+                  ? (path, name, updates) => updateEntryType(path, name, updates)
+                  : undefined
+              }
+              onRemoveEntryType={
+                editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+              }
+              onClose={handleCloseCollectionEditor}
+              isSaving={schemaLoading}
+              error={collectionEditorError}
+            />
+          )}
 
           {renamingEntry && (
             <RenameEntryModal

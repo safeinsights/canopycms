@@ -17,9 +17,7 @@ import {
  * round trip (D1), path-permission assignment round trip (D2), and the
  * discard confirm on closing with staged changes (D6).
  *
- * Selector strategy is documented in `../fixtures/settings-managers-page.ts`
- * — neither module carries `data-testid`s, so every locator here is
- * role/text based and was confirmed against the component source.
+ * Selector strategy is documented in `../fixtures/settings-managers-page.ts`.
  */
 test.describe('Permissions and Groups', () => {
   let editorPage: EditorPage
@@ -32,63 +30,52 @@ test.describe('Permissions and Groups', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
-  test('D3: Settings menu items open their drawers for an admin; the underlying APIs 403 for a non-admin', async ({
+  test('D3: admin surfaces are offered to an admin only; the underlying APIs 403 for a non-admin', async ({
     page,
   }) => {
+    const groupManager = new GroupManagerPage(page)
+    const permissionManager = new PermissionManagerPage(page)
+
     await test.step('open editor as admin', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
     })
 
     await test.step('as admin: both menu items are present and open their drawers', async () => {
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('Permissions')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Groups')).toBeVisible()
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
+      await editorPage.settingsMenuItem('Permissions').click()
+      const permissionsDrawer = permissionManager.drawer
       await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(permissionsDrawer.getByRole('button', { name: 'Expand All' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(permissionsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await permissionManager.close()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await page.getByRole('menuitem', { name: 'Manage Groups' }).click()
-      const groupsDrawer = page.getByRole('dialog', { name: 'Groups' })
-      await expect(groupsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await groupManager.open()
+      const groupsDrawer = groupManager.drawer
       await expect(groupsDrawer.getByRole('tab', { name: 'Internal Groups' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await expect(groupsDrawer).toBeHidden({ timeout: SHORT_TIMEOUT })
+      await groupManager.close()
     })
 
-    // NOTE (checked against source, not assumed): unlike "System health" —
-    // whose menu item Editor.tsx renders only when `isAdmin(userContext?.groups)`
-    // is true (`onSystemHealthOpen={showSystemHealth ? ... : undefined}`) —
-    // EditorSidebar's `onPermissionManagerOpen`/`onGroupManagerOpen` are wired
-    // unconditionally (Editor.tsx), and both managers are instantiated with
-    // `canEdit={true}` hardcoded rather than derived from the viewer's role.
-    // So for a non-admin the menu items stay visible and the drawers open;
-    // what actually protects the data is the server-side `guards: ['admin']`
-    // on the GET/PUT routes, which the client-side load surfaces only as a
-    // generic "Failed to load..." notification, not an access-denied message.
-    await test.step('as editor: menu items are still rendered and drawers still open (no client-side admin gate)', async () => {
+    await test.step('as editor: no admin menu items, and no collection admin actions', async () => {
       await switchUser(page, 'editor')
       await page.reload()
       await editorPage.waitForReady()
 
-      await page.getByRole('button', { name: 'Settings' }).click()
-      await expect(page.getByRole('menuitem', { name: 'Manage Permissions' })).toBeVisible()
-      await expect(page.getByRole('menuitem', { name: 'Manage Groups' })).toBeVisible()
+      await editorPage.openSettingsMenu()
+      await expect(editorPage.settingsMenuItem('Media library')).toBeVisible()
+      await expect(editorPage.settingsMenuItem('Permissions')).toHaveCount(0)
+      await expect(editorPage.settingsMenuItem('Groups')).toHaveCount(0)
+      await expect(editorPage.settingsMenuItem('System health')).toHaveCount(0)
+      await page.keyboard.press('Escape')
 
-      await page.getByRole('menuitem', { name: 'Manage Permissions' }).click()
-      const permissionsDrawer = page.getByRole('dialog', { name: 'Permissions' })
-      await expect(permissionsDrawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      // The drawer opens, but the load silently fails behind the scenes —
-      // this is the "truthful" behavior: no access-denied messaging, just a
-      // generic load failure (usePermissionManager.ts).
-      await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Failed to load permissions' }),
-      ).toBeVisible({ timeout: STANDARD_TIMEOUT })
+      await editorPage.openContentNavigator()
+      const items = await editorPage.collectionMenuItems('Posts')
+      await expect(items.filter({ hasText: 'Add Entry' })).toHaveCount(1)
+      for (const adminOnly of ['Add Sub-Collection', 'Edit Collection', 'Delete Collection']) {
+        await expect(items.filter({ hasText: adminOnly })).toHaveCount(0)
+      }
       await page.keyboard.press('Escape')
     })
 

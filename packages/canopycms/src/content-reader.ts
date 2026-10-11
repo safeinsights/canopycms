@@ -19,6 +19,7 @@ import { isDeployedStatic, isBuildMode, readsFromCheckout } from './build-mode'
 import { isNotFoundError } from './utils/error'
 import { resolveEntryLinksInData } from './entry-link-resolver'
 import { baseBranchOf } from './utils/base-branch'
+import { CONTENT_READER_USER_ID } from './system-users'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -137,7 +138,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const defaultBranch =
     options.defaultBranch ?? services.config.defaultActiveBranch ?? baseBranchOf(services.config)
   const allowCreateBranch = options.allowCreateBranch ?? false
-  const createdBy = options.createdBy ?? 'canopycms-content-reader'
+  const createdBy = options.createdBy ?? CONTENT_READER_USER_ID
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
     // Static deployments and builds read from the checkout: loadOrCreateBranchContext

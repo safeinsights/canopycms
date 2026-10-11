@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { Text } from '@mantine/core'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import { notifications } from '@mantine/notifications'
 import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
@@ -56,7 +56,7 @@ const showSubmitConfirmation = (
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Submit Branch for Review',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
@@ -100,7 +100,7 @@ const showWithdrawConfirmation = (
     'Change the branch status back to "editing"',
     'Remove from review queue',
   ].filter((b): b is string => b !== undefined)
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Withdraw Branch from Review',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
@@ -109,6 +109,24 @@ const showWithdrawConfirmation = (
     ),
     labels: { confirm: 'Withdraw Branch', cancel: 'Cancel' },
     confirmProps: { color: 'orange' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+  })
+}
+
+const showRequestChangesConfirmation = (
+  branchName: string,
+  onConfirm: () => Promise<void>,
+  onDismiss: () => void,
+) => {
+  openConfirm({
+    title: 'Request changes',
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Send "${branchName}" back to its editor?\n\nThis will:\n• Change the branch status back to "editing"\n• Let its editor change it and submit again`}
+      </Text>
+    ),
+    labels: { confirm: 'Request changes', cancel: 'Cancel' },
+    confirmProps: { color: 'red', 'data-testid': 'confirm-request-changes' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
@@ -134,7 +152,7 @@ const showDeleteConfirmation = (
       : undefined,
     'Discard any unsaved or unmerged changes',
   ].filter((b): b is string => b !== undefined)
-  modals.openConfirmModal({
+  openConfirm({
     title: 'Delete Branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
@@ -481,7 +499,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'delete',
+    action: 'submit' | 'withdraw' | 'request-changes' | 'delete',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -584,23 +602,38 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
-  const handleRequestChanges = async (branchNameForChanges: string) => {
-    options.setBusy(true)
-    try {
-      const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to request changes')
-      }
-      notifications.show({ message: 'Changes requested', color: 'orange' })
-      updateCreatedBranch(branchNameForChanges, result.data?.branch)
-      await loadBranches()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to request changes'
-      notifications.show({ message, color: 'red' })
-    } finally {
-      options.setBusy(false)
-    }
-  }
+  const handleRequestChanges = (branchNameForChanges: string) =>
+    singleFlight(
+      'request-changes',
+      branchNameForChanges,
+      () =>
+        new Promise<void>((resolve) => {
+          showRequestChangesConfirmation(
+            branchNameForChanges,
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.requestChanges({
+                  branch: branchNameForChanges,
+                })
+                if (!result.ok) {
+                  throw new Error(result.error || 'Failed to request changes')
+                }
+                notifications.show({ message: 'Changes requested', color: 'blue' })
+                updateCreatedBranch(branchNameForChanges, result.data?.branch)
+                await loadBranches()
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Failed to request changes'
+                notifications.show({ message, color: 'red' })
+              } finally {
+                options.setBusy(false)
+                resolve()
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)

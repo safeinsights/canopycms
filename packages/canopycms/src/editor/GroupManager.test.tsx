@@ -1,11 +1,23 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { GroupManager } from './GroupManager'
 import type { InternalGroup } from '../authorization'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 import { mockConsole } from '../test-utils/console-spy'
+
+// Confirms by default, as the user clicking the dialog's red button, then closes as Mantine does;
+// a test overrides it to cancel.
+vi.mock('@mantine/modals', () => ({
+  modals: {
+    openConfirmModal: vi.fn((options: { onConfirm?: () => void; onClose?: () => void }) => {
+      options.onConfirm?.()
+      options.onClose?.()
+      return 'mock-modal-id'
+    }),
+  },
+}))
 
 const originalMatchMedia = window.matchMedia
 
@@ -400,6 +412,84 @@ describe('GroupManager', () => {
   })
 
   describe('deleting groups', () => {
+    it('deletes a group not saved yet without asking, since nothing stored is lost', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockClear()
+      const unsaved: InternalGroup = {
+        id: 'temp-1' as InternalGroup['id'],
+        name: 'Draft group',
+        members: [],
+      }
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={[unsaved]}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Delete group' }))
+
+      expect(modals.openConfirmModal).not.toHaveBeenCalled()
+      expect(screen.queryByText('Draft group')).toBeNull()
+    })
+
+    it('asks before deleting a group, and a cancel keeps it', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce(() => 'mock-modal-id')
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[0])
+
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Delete group' }),
+      )
+      expect(screen.getByText('Content Editors')).toBeTruthy()
+      expect(screen.queryByText('Save Groups')).toBeNull()
+    })
+
+    it('leaves Escape to the delete confirm while it is open, not the drawer behind it', async () => {
+      const { modals } = await import('@mantine/modals')
+      let closeConfirm: (() => void) | undefined
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        closeConfirm = options.onClose
+        return 'mock-modal-id'
+      })
+      const onClose = vi.fn()
+      render(
+        <GroupManager
+          opened
+          onClose={onClose}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[0])
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onClose).not.toHaveBeenCalled()
+
+      act(() => closeConfirm?.())
+      await waitFor(() => {
+        fireEvent.keyDown(document.body, { key: 'Escape' })
+        expect(onClose).toHaveBeenCalledTimes(1)
+      })
+    })
+
     it('removes group when delete is clicked', async () => {
       render(
         <GroupManager
@@ -756,7 +846,7 @@ describe('GroupManager', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()
-        expect(screen.getByText('Discard Changes')).toBeTruthy()
+        expect(screen.getByText('Discard changes')).toBeTruthy()
       })
     })
 
@@ -791,7 +881,7 @@ describe('GroupManager', () => {
       })
     })
 
-    it('reverts changes when Discard Changes is clicked', async () => {
+    it('reverts changes when Discard changes is clicked', async () => {
       render(
         <GroupManager
           opened
@@ -809,10 +899,10 @@ describe('GroupManager', () => {
       fireEvent.click(actionButtons[1] as Element)
 
       await waitFor(() => {
-        expect(screen.getByText('Discard Changes')).toBeTruthy()
+        expect(screen.getByText('Discard changes')).toBeTruthy()
       })
 
-      const discardButton = screen.getByText('Discard Changes')
+      const discardButton = screen.getByText('Discard changes')
       fireEvent.click(discardButton)
 
       await waitFor(() => {

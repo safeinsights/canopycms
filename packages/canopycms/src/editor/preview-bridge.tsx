@@ -203,8 +203,8 @@ export const usePreviewData = <T,>(
     }
     window.addEventListener('message', handler)
     // Notify parent that this preview page is ready to receive draft updates.
-    // This is needed because onLoad in the parent fires before React effects run,
-    // so the first postMessage from the parent arrives before this listener is set up.
+    // This is needed because onLoad in the parent can fire before React effects run,
+    // so the first postMessage from the parent may arrive before this listener is set up.
     const target = resolveMessageOrigin(editorOrigin)
     if (!isOpaqueOrigin(target)) {
       window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, target)

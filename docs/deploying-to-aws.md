@@ -1106,14 +1106,14 @@ Past the gate, a unit too old for the bundle still stops it at start: `template 
 
 ## The worker instance
 
-The worker holds the GitHub credential, so `CanopyCmsService` hardens its instance:
+The worker instance holds the GitHub credential, in the GitHub gateway, so `CanopyCmsService` hardens it:
 
 - **Public subnet, no inbound traffic.** It reaches GitHub and AWS through the internet
   gateway; a NAT gateway would cost more than the rest of the stack. Its security group admits
   nothing inbound.
 - **IMDSv2 only**, with a hop limit of 1: metadata answers only processes on the host.
 - **The bundle runs only if its sha256 matches** the hash taken at synth; a mismatch fails the
-  boot. The worker can read that one object, not the whole CDK asset bucket.
+  boot. The instance can read that object and its instance files (the units and `canopy-inspect`, checked the same way), not the whole CDK asset bucket.
 - **EFS refuses clients without TLS or IAM** (`efsEnforceIamAndTls`, default `true`). The worker
   mounts with `tls,iam` through the access point its role is granted. The Lambda mounts with
   IAM through the same access point, and

@@ -468,6 +468,7 @@ export class CmsWorker {
   // Normally initialized at the top of start(); see ensureStatusReport() for
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
+  private warnedDivergences = new Map<string, string>()
   // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
   private lockLostMessage?: string
   // Who wrote worker-status.json when this worker took the lock: until its own first write
@@ -588,6 +589,7 @@ export class CmsWorker {
       shutdownSignal: () => this.shutdownController.signal,
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
+      warnedDivergences: () => this.warnedDivergences,
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
       afterRebaseCompletedForTesting: () => this.afterRebaseCompletedForTesting(),
     }

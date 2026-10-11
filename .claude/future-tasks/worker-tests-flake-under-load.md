@@ -38,6 +38,12 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
      worker suite running under CI-like git. It passed four reruns alone. The error was not
      captured: it may be a legitimate `transient` under slow git (`ref-kept-moving`, or two
      fetch-reuse misses in `afterGitHubFetch`), or an ordering bug.
+5. **A drain that hits its deadline in CI.**
+   - Where: `cms-worker-drain.test.ts`, "a stop before the lock is taken leaves no lock behind
+     once it resolves".
+   - Seen 2026-10-11 in CI (PR 515, canopycms shard 3/3): the task queue was "still running 5s
+     after the abort", and the drain's unspied `ERROR`/`INFO` lines failed the run as unhandled
+     console output. All tests passed; it passed locally under `CI=true`.
 
 ## Shape of the fix
 
@@ -49,6 +55,8 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
   private output directory.
 - Case 4: reproduce under load, log the rejection's class and code, and decide whether the test
   should accept a transient outcome for that operation or the gateway is wrong.
+- Case 5: spy the console for the deadline path too, or give the test's drain a deadline with
+  room for a loaded runner.
 
 ## Related
 
