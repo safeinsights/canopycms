@@ -299,6 +299,12 @@ describe('prerelease-version.mjs', () => {
     expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
   })
 
+  it('never goes below main patch-bumped', async () => {
+    // An older line's manifests: its plan would sort below the stable release.
+    const file = await plan([{ name: 'canopycms', type: 'patch', newVersion: '0.0.61' }])
+    expect(await prerelease(['0.0.67', '115', '--plan', file])).toBe('0.0.68-int.115')
+  })
+
   it('refuses a plan version that is not a plain release', async () => {
     const file = await plan([{ name: 'canopycms', type: 'minor', newVersion: '0.1.0-int.3' }])
     await expect(prerelease(['0.0.67', '115', '--plan', file])).rejects.toThrow(/plain version/)

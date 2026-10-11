@@ -385,8 +385,9 @@ jobs:
       # on every branch, so no date is hard-coded here.
       #
       # `changeset status` sees only package directories. The lockfile, the
-      # workspace's security overrides and the shared post-build script change
-      # shipped bytes too (cdk's worker is an esbuild bundle), so they count.
+      # workspace's security overrides, the shared tsconfig and the post-build
+      # script change shipped bytes too (cdk's worker is an esbuild bundle), so
+      # they count.
       - name: Require a changeset
         if: github.event_name == 'pull_request'
         env:
@@ -404,11 +405,14 @@ jobs:
           # Captured, not piped into `grep -q`: under pipefail an early-exiting
           # grep can SIGPIPE git and turn a match into a silent pass.
           changed=$(git diff --name-only "$base" HEAD)
-          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|scripts/add-js-extensions\.mjs' <<<"$changed"; then
+          if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$changed"; then
             added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
-            real=$(printf '%s\n' "$added" | grep -viE '^\.changeset/(readme|agents|claude|gemini)\.md$' | grep -c . || true)
+            # Not changesets, by @changesets/read's rule: README in any case, the
+            # agent files by exact case.
+            real=$(printf '%s\n' "$added" | grep -viE '^\.changeset/readme\.md$' |
+              grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
             if [ "$real" -eq 0 ]; then
-              echo "::error::This PR changes what the packages ship (lockfile, workspace overrides or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
+              echo "::error::This PR changes what the packages ship (lockfile, workspace overrides, tsconfig.base.json or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
               exit 1
             fi
           fi

@@ -291,6 +291,9 @@ jobs:
   tag-prerelease:
     name: Tag prerelease
     needs: prerelease
+    # Also after a later package failed: once canopycms is on npm, the next
+    # build's changelog counts from this version, so it needs its tag.
+    if: always() && needs.prerelease.outputs.published == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -305,7 +308,10 @@ jobs:
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-int\.[0-9]+$ ]] || { echo "::error::not an int version: '$VERSION'"; exit 1; }
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit: '$SHA'"; exit 1; }
           # A re-run finds its own tag; anything else at that name is an error.
-          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" --jq .object.sha 2>/dev/null || true)
+          # matching-refs answers 200 with no match when the tag is absent, so a
+          # failed request fails the step instead of reading as "absent".
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" \
+            --jq "[.[] | select(.ref == \"refs/tags/v$VERSION\") | .object.sha][0] // empty")
           if [ -n "$existing" ]; then
             [ "$existing" = "$SHA" ] && { echo "v$VERSION already tags $SHA"; exit 0; }
             echo "::error::v$VERSION already tags $existing, not $SHA"

@@ -28,6 +28,9 @@ on:
       version:
         description: The version published
         value: ${{ jobs.prerelease.outputs.version }}
+      published:
+        description: "'true' once canopycms is on npm, even if a later package failed"
+        value: ${{ jobs.prerelease.outputs.published }}
       sha:
         description: The commit it was built from
         value: ${{ jobs.prerelease.outputs.sha }}
@@ -39,6 +42,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha: ${{ steps.version.outputs.sha }}
+      published: ${{ steps.canopycms.outputs.published }}
     permissions:
       # Deliberately `contents: read`: this workflow must never write to the
       # branch. publish.yml's bump-and-commit stays the only writer of
@@ -108,11 +112,15 @@ jobs:
           set -euo pipefail
           BASE=$(git show origin/main:packages/canopycms/package.json |
             node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          # Planned from the latest stable tag: a release deletes the changesets it
+          # consumes, so every changeset since that tag is pending, including any
+          # main carries that this branch merged in.
+          SINCE=$(git tag --list 'v*' --sort=-v:refname | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
           PLAN=()
           pending=$(find .changeset -maxdepth 1 -name '*.md' ! -iname 'readme.md' ! -name 'AGENTS.md' \
             ! -name 'CLAUDE.md' ! -name 'GEMINI.md' ! -name '.*' | grep -c . || true)
           if [ "$pending" -gt 0 ]; then
-            pnpm exec changeset status --since=origin/main --output="$RUNNER_TEMP/plan.json"
+            pnpm exec changeset status --since="${SINCE:-origin/main}" --output="$RUNNER_TEMP/plan.json"
             PLAN=(--plan "$RUNNER_TEMP/plan.json")
           fi
           VERSION=$(node scripts/prerelease-version.mjs "$BASE" "$GITHUB_RUN_NUMBER" "${PLAN[@]}")
@@ -187,11 +195,13 @@ jobs:
       # `files` lists CHANGELOG.md, and pack omits a listed file that is missing
       # without a word, so the tarball is checked before it is published.
       - name: Publish canopycms
+        id: canopycms
         run: |
           pnpm pack
           contents=$(tar -tzf canopycms-*.tgz)
           grep -qx 'package/CHANGELOG.md' <<<"$contents" || { echo "::error::the tarball has no CHANGELOG.md"; exit 1; }
           pnpm dlx npm@11.19.0 publish canopycms-*.tgz --access public --provenance --tag int
+          echo "published=true" >> "$GITHUB_OUTPUT"
         working-directory: packages/canopycms
 
       - name: Publish canopycms-next

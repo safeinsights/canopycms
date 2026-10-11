@@ -407,8 +407,9 @@ function measureChangelog(content, cap) {
 
 /** A changeset's YAML frontmatter, matched the way @changesets/parse matches it. */
 const CHANGESET_FRONTMATTER_RE = /^\s*---[^]*?\r?\n\s*---(?=\s*(?:\n|$))/
-/** Files in `.changeset/` that are not changesets, as @changesets/read skips them. */
-const NOT_A_CHANGESET_RE = /^(?:readme\.md|AGENTS\.md|CLAUDE\.md|GEMINI\.md|\..*)$/i
+/** Files in `.changeset/` that are not changesets, as @changesets/read skips them: README in any case, the agent files by exact case. */
+const NOT_A_CHANGESET_RE =
+  /^(?:[Rr][Ee][Aa][Dd][Mm][Ee]\.[Mm][Dd]|AGENTS\.md|CLAUDE\.md|GEMINI\.md|\..*)$/
 
 /**
  * A changeset's body is one changelog entry, so it gets the changelog's entry cap.
@@ -845,7 +846,9 @@ function selfTest() {
   expect(
     'changeset cap: README and dotfiles are not changesets',
     NOT_A_CHANGESET_RE.test('README.md') &&
+      NOT_A_CHANGESET_RE.test('readme.MD') &&
       NOT_A_CHANGESET_RE.test('.keep') &&
+      !NOT_A_CHANGESET_RE.test('agents.md') &&
       !NOT_A_CHANGESET_RE.test('worker-state-dir.md'),
   )
 

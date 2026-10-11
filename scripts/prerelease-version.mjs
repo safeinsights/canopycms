@@ -57,7 +57,13 @@ if (planPath) {
       )
       process.exit(1)
     }
-    next = release.newVersion
+    // Floored at main patch-bumped: the plan starts from this branch's own
+    // manifests, which on an older line, or behind a registry that got ahead of
+    // main, would sort the prerelease below a release already out.
+    const planned = release.newVersion.split('.').map(Number)
+    const floor = next.split('.').map(Number)
+    const i = planned.findIndex((n, k) => n !== floor[k])
+    if (i !== -1 && planned[i] > floor[i]) next = release.newVersion
   }
 }
 
