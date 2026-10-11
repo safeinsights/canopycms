@@ -279,25 +279,42 @@ export class GitHubGatewayUnreachableError extends Error {
   }
 }
 
-/**
- * The gateway refused a request before any operation ran, or answered outside the wire format.
- * `status` is set when the gateway refused the request itself (a 4xx): the same request would be
- * refused again, as an oversize field the in-process gateway refuses as `GatewayRefusalError` is,
- * so the task runner fails it for good on that status. Without one it is transient.
- */
+/** The gateway refused a request before any operation ran, or answered outside the wire format. */
 export class GitHubGatewayProtocolError extends Error {
-  constructor(
-    message: string,
-    readonly status?: number,
-  ) {
+  constructor(message: string) {
     super(message)
     this.name = 'GitHubGatewayProtocolError'
   }
 }
 
-/** A 4xx status, kept on a {@link GitHubGatewayProtocolError}; anything else is dropped. */
-export function refusalStatus(status: number | undefined): number | undefined {
-  return status !== undefined && status >= 400 && status < 500 ? status : undefined
+/**
+ * The gateway, or node in front of it, refused a request for its shape or size: the same request
+ * is refused again, as the in-process gateway's own refusal of an oversize field is, so the task
+ * runner fails it for good. The HTTP status is `refusedWith`, never `status`, which every
+ * classifier reads as GitHub's (a 404 there means a branch already gone).
+ */
+export class GatewayRequestRefusedError extends GitHubGatewayProtocolError {
+  constructor(
+    message: string,
+    readonly refusedWith: number,
+  ) {
+    super(message)
+    this.name = 'GatewayRequestRefusedError'
+  }
+}
+
+/**
+ * The statuses that refuse a request for its shape or size. An unknown route or method (404, 405)
+ * is not one: a worker newer than its gateway meets it until the gateway restarts, so it stays
+ * transient, as does a 503 (busy, stopping).
+ */
+const SHAPE_REFUSALS: ReadonlySet<number> = new Set([400, 411, 413, 415, 431])
+
+/** The error for a request refused with `status` before any operation ran. */
+export function refusedRequestError(message: string, status: number | undefined): Error {
+  return status !== undefined && SHAPE_REFUSALS.has(status)
+    ? new GatewayRequestRefusedError(message, status)
+    : new GitHubGatewayProtocolError(message)
 }
 
 /**
@@ -416,9 +433,9 @@ export function decodeError(value: unknown): Error {
       return err
     }
     case 'refused':
-      return new GitHubGatewayProtocolError(
+      return refusedRequestError(
         `The GitHub gateway refused the request: ${envelope.message}`,
-        refusalStatus(envelope.status),
+        envelope.status,
       )
     case 'unknown-job':
       return new UnknownFetchJobError(envelope.message)

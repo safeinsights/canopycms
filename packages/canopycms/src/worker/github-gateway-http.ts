@@ -39,7 +39,7 @@ import {
   pushAnswer,
   pushRequest,
   readAnswerBody,
-  refusalStatus,
+  refusedRequestError,
   requests,
   type ErrorEnvelope,
   type JsonOperation,
@@ -388,7 +388,9 @@ class GatewayRequestHandler {
       // A request that dies part way never ends its pipe: fail the body, or its reader waits on it
       // for ever, holding the gateway's one-at-a-time intake.
       req.once('close', () => {
-        if (!req.complete) {
+        // Not `complete`: that says the bytes arrived, and a destroyed request drops what it
+        // buffered unread.
+        if (!req.readableEnded) {
           stream.destroy(new Error('the worker closed the request before the bundle arrived whole'))
         }
       })
@@ -416,10 +418,16 @@ class GatewayRequestHandler {
     if (running >= MAX_RUNNING_FETCH_JOBS) {
       throw new RefusedRequest(503, 'too many fetches are under way; retry after one finishes')
     }
-    // Past the cap, the oldest finished job goes: a poll for it then starts a fetch afresh.
-    for (const [held, job] of this.jobs) {
-      if (this.jobs.size < MAX_FETCH_JOBS) break
-      if (job.settledAt !== null) this.jobs.delete(held)
+    // Past the cap, the job that finished longest ago goes: a poll for it then fetches afresh.
+    while (this.jobs.size >= MAX_FETCH_JOBS) {
+      let oldest: [string, number] | null = null
+      for (const [held, job] of this.jobs) {
+        if (job.settledAt !== null && (oldest === null || job.settledAt < oldest[1])) {
+          oldest = [held, job.settledAt]
+        }
+      }
+      if (oldest === null) break
+      this.jobs.delete(oldest[0])
     }
     const id = randomBytes(16).toString('hex')
     const job: FetchJob = {
@@ -505,7 +513,9 @@ class GatewayRequestHandler {
   /** Answer a failure, unless the answer has already begun; then the connection is cut. */
   private fail(req: IncomingMessage, res: ServerResponse, err: unknown): void {
     if (err instanceof RefusedRequest) {
-      gatewayLogWarn(`Refused a request to ${req.method ?? '?'} ${req.url ?? '?'}: ${err.message}`)
+      gatewayLogWarn(
+        `Refused a request to ${req.method ?? '?'} ${(req.url ?? '?').slice(0, 200)}: ${err.message}`,
+      )
     }
     if (res.headersSent) {
       res.destroy()
@@ -522,7 +532,8 @@ class GatewayRequestHandler {
 }
 
 function assertMethod(req: IncomingMessage, method: 'GET' | 'POST'): void {
-  if (req.method !== method) throw new RefusedRequest(405, `${req.url ?? ''} takes ${method}`)
+  if (req.method !== method)
+    throw new RefusedRequest(405, `${(req.url ?? '').slice(0, 200)} takes ${method}`)
 }
 
 /** Read a JSON request body of a declared length, no larger than {@link MAX_JSON_REQUEST_BYTES}. */
@@ -895,9 +906,9 @@ async function readAnswer<S extends z.ZodTypeAny>(
     if (res.headers['content-type'] !== 'application/json') {
       res.destroy()
       // node's own refusals (a 431 for an oversize header) carry no JSON.
-      throw new GitHubGatewayProtocolError(
+      throw refusedRequestError(
         `The GitHub gateway answered ${res.statusCode ?? '?'} with no JSON`,
-        refusalStatus(res.statusCode),
+        res.statusCode,
       )
     }
     const chunks: Buffer[] = []

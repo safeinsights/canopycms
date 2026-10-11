@@ -1131,9 +1131,11 @@ the drain mapping, deadlines, and the self-check helpers.
   client's next write, which can lose the answer.
 - The `worker-http` vitest project runs the gateway and cms-worker suites again through the
   socket. One test is in-process only: the re-read starting after the caller has the failure.
-- A request the gateway refuses for its shape (a 4xx, node's own 431 included) fails the task for
-  good, as the gateway's own refusal of the same field would: `GitHubGatewayProtocolError` keeps
-  the status. A 503 (busy, stopping) stays transient.
+- A request the gateway, or node in front of it, refuses for its shape or size (400, 411, 413,
+  415, 431) fails the task for good, as the gateway's own refusal of the same field would: it is
+  `GatewayRequestRefusedError`, its status in `refusedWith`, never `status`, which classifiers read
+  as GitHub's. An unknown route or method (404, 405: a worker newer than its gateway) and a 503
+  (busy, stopping) stay transient.
 - From 4a's security round, for 4b:
   - the server serves every operation whether or not `prepare` has run, so a hostile worker can
     skip the App preflight and the state-directory check; gate operations on `prepare` (and report

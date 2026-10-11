@@ -22,6 +22,7 @@ import {
   type GitHubGatewayServer,
 } from './github-gateway-http'
 import {
+  GatewayRequestRefusedError,
   GitHubGatewayProtocolError,
   GitHubGatewayUnreachableError,
   GitHubRequestError,
@@ -455,6 +456,19 @@ describe('the wire format at the server', () => {
     expect(gateway.push).not.toHaveBeenCalled()
   })
 
+  it("quotes no more than the start of a refused request's URL", async () => {
+    await serve(fakeGateway())
+
+    const { status, body } = await raw({
+      method: 'GET',
+      path: `/v1/default-branch?${'q'.repeat(10_000)}`,
+    })
+
+    expect(status).toBe(405)
+    expect(body.length).toBeLessThan(1024)
+    expect(consoleSpy.all().warn.join('\n').length).toBeLessThan(1024)
+  })
+
   it('refuses an unknown route and a wrong method', async () => {
     const gateway = fakeGateway()
     await serve(gateway)
@@ -512,6 +526,25 @@ describe('the wire format at the client', () => {
     expect(caught).toBeInstanceOf(GitHubGatewayProtocolError)
   })
 
+  it.each([
+    [
+      'an unknown route, as an older gateway answers it',
+      'application/json',
+      '{"error":{"kind":"refused","status":404,"message":"no such operation"}}',
+    ],
+    ['a 404 from something that is not a gateway', 'text/plain', 'Not Found'],
+  ])('keeps %s transient, and never a branch already gone', async (_, type, body) => {
+    await answering(404, type, body)
+
+    const caught = await connectGitHubGateway(socketPath)
+      .deleteBranch('feature')
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubGatewayProtocolError)
+    expect(isRefAlreadyGoneError(caught)).toBe(false)
+    expect(isPermanentTaskFailure(caught)).toBe(false)
+  })
+
   it('refuses a push answer whose commit is not an object ID', async () => {
     await answering(
       200,
@@ -537,12 +570,14 @@ describe('the wire format at the client', () => {
       .push({ branch: '€'.repeat(4096), sha: SHA, prerequisites: [] })
       .catch((err: unknown) => err)
 
-    expect(oversize).toBeInstanceOf(GitHubGatewayProtocolError)
-    expect(oversize).toMatchObject({ status: 400 })
+    expect(oversize).toBeInstanceOf(GatewayRequestRefusedError)
+    expect(oversize).toMatchObject({ refusedWith: 400 })
     expect(isPermanentTaskFailure(oversize)).toBe(true)
-    expect(unheadable).toBeInstanceOf(GitHubGatewayProtocolError)
-    expect(unheadable).toMatchObject({ status: 431 })
+    expect(unheadable).toBeInstanceOf(GatewayRequestRefusedError)
+    expect(unheadable).toMatchObject({ refusedWith: 431 })
     expect(isPermanentTaskFailure(unheadable)).toBe(true)
+    // Never read as GitHub's own status: a 404 there is a branch already gone.
+    expect((oversize as { status?: unknown }).status).toBeUndefined()
     expect(gateway.deleteBranch).not.toHaveBeenCalled()
     expect(gateway.push).not.toHaveBeenCalled()
   })
@@ -558,7 +593,7 @@ describe('the wire format at the client', () => {
       .catch((err: unknown) => err)
 
     expect(busy).toBeInstanceOf(GitHubGatewayProtocolError)
-    expect((busy as GitHubGatewayProtocolError).status).toBeUndefined()
+    expect(busy).not.toBeInstanceOf(GatewayRequestRefusedError)
     expect(isPermanentTaskFailure(busy)).toBe(false)
   })
 
@@ -833,6 +868,33 @@ describe('fetch jobs', () => {
     expect((await raw({ method: 'GET', path: `/v1/fetch/${ids[1]}?wait=0` })).status).toBe(200)
   })
 
+  it('drops the job that finished longest ago, not the one started first', async () => {
+    const gateway = fakeGateway()
+    let finishFirst: (value: { refs: Map<string, string>; bundleId: null }) => void = () =>
+      undefined
+    gateway.fetch.mockImplementationOnce(() => new Promise((resolve) => (finishFirst = resolve)))
+    await serve(gateway)
+    const start = async () => {
+      const started = await json('/v1/fetch', { have: [] })
+      return (JSON.parse(started.body) as { value: { job: string } }).value.job
+    }
+    const done = (job: string) => raw({ method: 'GET', path: `/v1/fetch/${job}?wait=5000` })
+    const first = await start()
+    const quick: string[] = []
+    for (let i = 0; i < 63; i++) {
+      const job = await start()
+      quick.push(job)
+      await done(job)
+    }
+    finishFirst({ refs: new Map(), bundleId: null })
+    expect((await done(first)).status).toBe(200)
+
+    await start()
+
+    expect((await raw({ method: 'GET', path: `/v1/fetch/${first}?wait=0` })).status).toBe(200)
+    expect((await raw({ method: 'GET', path: `/v1/fetch/${quick[0]}?wait=0` })).status).toBe(404)
+  })
+
   it('refuses a fetch past the running-job cap rather than queue without bound', async () => {
     const gateway = fakeGateway()
     gateway.fetch.mockImplementation(() => new Promise(() => undefined))
@@ -1002,6 +1064,48 @@ describe('bundles across the socket', () => {
     expect(answer).toMatchObject({ kind: 'pushed' })
     expect(reads).toEqual([expect.stringMatching(/before the bundle arrived whole/), 'whole'])
     await server.idle()
+  })
+
+  it('fails a body that arrived whole but was not yet read when its worker went away', async () => {
+    const gateway = fakeGateway()
+    let release: () => void = () => undefined
+    const intakeFree = new Promise<void>((resolve) => (release = resolve))
+    const reads: string[] = []
+    gateway.push.mockImplementation(async (_request: unknown, bundle?: Readable) => {
+      // The intake is busy with another push until after the worker has gone.
+      await intakeFree
+      let bytes = 0
+      try {
+        for await (const chunk of bundle ?? []) bytes += (chunk as Buffer).length
+        reads.push(`whole: ${bytes}`)
+      } catch (err) {
+        reads.push(String(err))
+        throw err
+      }
+      return { kind: 'pushed' as const, moved: false as const, pastStaleLease: false }
+    })
+    const server = await serve(gateway)
+    const header = Buffer.from(
+      JSON.stringify({ branch: 'feature', sha: SHA, prerequisites: [], bundle: true }),
+    ).toString('base64url')
+    const whole = http.request({
+      socketPath,
+      method: 'POST',
+      path: '/v1/push',
+      agent: false,
+      headers: { [PUSH_REQUEST_HEADER]: header, 'content-type': 'application/x-git-bundle' },
+    })
+    whole.on('error', () => undefined)
+    // Larger than the stream buffers between the socket and the reader, all of it sent.
+    whole.end(Buffer.alloc(180 * 1024))
+    await vi.waitFor(() => expect(gateway.push).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    whole.destroy()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    release()
+
+    await server.idle()
+    expect(reads).toEqual([expect.stringMatching(/before the bundle arrived whole/)])
   })
 
   it('streams an outgoing bundle back, and answers a gone one with its error', async () => {
