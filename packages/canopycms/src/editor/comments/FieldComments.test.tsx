@@ -21,6 +21,13 @@ vi.mock('../../api', async () => {
   return { ...actual, createApiClient: vi.fn() }
 })
 
+const showNotification = vi.hoisted(() => vi.fn())
+vi.mock('@mantine/notifications', async () => {
+  const actual =
+    await vi.importActual<typeof import('@mantine/notifications')>('@mantine/notifications')
+  return { ...actual, notifications: { ...actual.notifications, show: showNotification } }
+})
+
 const ENTRY = 'content/pages/home'
 
 const thread = (
@@ -191,6 +198,7 @@ describe('field comment control', () => {
 
   it('keeps the text and says why when a new comment fails', async () => {
     const user = userEvent.setup()
+    showNotification.mockClear()
     renderForm({
       onAddComment: vi.fn(async () => {
         throw new Error("Couldn't add the comment. Try again.")
@@ -202,6 +210,8 @@ describe('field comment control', () => {
     await user.click(screen.getByTestId('create-thread-button'))
     expect(await screen.findByText("Couldn't add the comment. Try again.")).toBeTruthy()
     expect((screen.getByTestId('new-thread-textarea') as HTMLTextAreaElement).value).toBe('Keep me')
+    // Shown where it was written, so not again as a toast.
+    expect(showNotification).not.toHaveBeenCalled()
   })
 
   it('moves focus to "New thread" once a new thread is posted', async () => {
@@ -557,5 +567,112 @@ describe('field comment popover, across entries and slow posts', () => {
     )
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId('field-comment-title-popover')).toBeNull())
+  })
+})
+
+describe('comment writes the popover can no longer show', () => {
+  const props = (entryPath: string, extra: Partial<FormRendererProps> = {}) => ({
+    fields: [{ name: 'title', type: 'string', label: 'Title' }] as FieldConfig[],
+    value: { title: 'Hello' },
+    onChange: () => {},
+    currentEntryPath: entryPath,
+    currentUserId: 'alice',
+    canResolve: true,
+    onAddComment: vi.fn(async () => {}),
+    onResolveThread: vi.fn(async () => {}),
+    ...extra,
+  })
+  const hanging = () => {
+    const control = { fail: () => {} }
+    const fn = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          control.fail = () => reject(new Error("Couldn't add the comment. Try again."))
+        }),
+    )
+    return { fn, control }
+  }
+
+  it('refuses Cancel while a new thread is posting', async () => {
+    const user = userEvent.setup()
+    const { fn } = hanging()
+    render(
+      <CanopyCMSProvider>
+        <FormRenderer {...props(ENTRY, { onAddComment: fn, comments: [thread('t1', 'title')] })} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    await user.click(await screen.findByTestId('new-thread-button'))
+    await user.type(screen.getByTestId('new-thread-textarea'), 'Dup')
+    await user.click(screen.getByTestId('create-thread-button'))
+    expect(screen.getByRole('button', { name: 'Cancel' }).matches(':disabled')).toBe(true)
+  })
+
+  it('reports a failure that lands after another entry opened', async () => {
+    const user = userEvent.setup()
+    showNotification.mockClear()
+    const { fn, control: post } = hanging()
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/a', { onAddComment: fn })} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    await user.type(await screen.findByTestId('new-thread-textarea'), 'Lost?')
+    await user.click(screen.getByTestId('create-thread-button'))
+    rerender(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/b', { onAddComment: fn })} />
+      </CanopyCMSProvider>,
+    )
+    await act(async () => post.fail())
+    expect(showNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ color: 'red', message: "Couldn't add the comment. Try again." }),
+    )
+  })
+
+  it('drops an entry-level draft when the entry changes', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/a')} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(screen.getByTestId('entry-comment-button'))
+    await user.type(await screen.findByTestId('new-thread-textarea'), 'Entry draft')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByTestId('entry-comment-button-popover')).toBeNull())
+    rerender(
+      <CanopyCMSProvider>
+        <FormRenderer {...props('content/b')} />
+      </CanopyCMSProvider>,
+    )
+    await user.click(screen.getByTestId('entry-comment-button'))
+    expect(((await screen.findByTestId('new-thread-textarea')) as HTMLTextAreaElement).value).toBe(
+      '',
+    )
+  })
+
+  it('puts focus back in the reply box when a reply fails', async () => {
+    const user = userEvent.setup()
+    render(
+      <CanopyCMSProvider>
+        <FormRenderer
+          {...props(ENTRY, {
+            comments: [thread('t1', 'title')],
+            onAddComment: vi.fn(async () => {
+              throw new Error("Couldn't add the comment. Try again.")
+            }),
+          })}
+        />
+      </CanopyCMSProvider>,
+    )
+    await user.click(control('title'))
+    const popover = await screen.findByTestId('field-comment-title-popover')
+    const box = within(popover).getByRole('textbox', { name: 'Reply to this thread' })
+    await user.type(box, 'Nope')
+    await user.click(within(popover).getByRole('button', { name: 'Reply' }))
+    expect(await within(popover).findByText("Couldn't add the comment. Try again.")).toBeTruthy()
+    await waitFor(() => expect(document.activeElement).toBe(box))
   })
 })

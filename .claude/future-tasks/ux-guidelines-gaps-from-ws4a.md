@@ -10,6 +10,6 @@ summary: >-
 Proposed wording, for a decision rather than to apply as-is:
 
 - **Disabled says why.** "A submit button that waits only on its own visible input may be disabled without a tooltip; any other disabled control says why." Comment and Reply are disabled until their box has text, with no tooltip.
-- **Choosing a surface.** "A popover anchored to a field never covers that field's input." WS4a opens the field comment popover above the label row for this reason.
+- **Choosing a surface.** "A popover anchored to a field never covers that field's input." WS4a opens the field comment popover above the label row for this reason, but it flips below, over the input, when there is no room above; meeting the rule fully needs an anchor below the input.
 - **Fields.** "The comment control follows the label: hidden until the field is hovered or focused, still in the tab order, and a persistent count while open threads exist."
 - **Colour.** "Counts use the text colour on a tinted background and meet 4.5:1." The guidelines give colour meanings (green, blue, yellow, red) but say nothing of orange count badges.
