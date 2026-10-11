@@ -19,6 +19,7 @@ import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
 import { GitHubPushError, describeMove, type GitHubPushOutcome } from './github-gateway'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
+import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -633,10 +634,10 @@ export async function pushBranchToGitHub(
   branch: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  // The credential's only repository is the worker's private mirror (worker/github-mirror.ts);
-  // remote.git's config is Lambda-writable. The pushes below send exactly `outgoingSha`, the
-  // commit remote.git held when it was read, so what the marker logic at the end compares is
-  // what GitHub received.
+  // The credential's only repository is the GitHub gateway's private mirror
+  // (worker/github-mirror.ts); remote.git's config is Lambda-writable, and the bundle built here
+  // runs under the pins. The push sends exactly `outgoingSha`, the commit remote.git held when it
+  // was read, so what the marker logic at the end compares is what GitHub received.
   await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
   // Before `branch` reaches any git: `readPublishedSha` below would read a `<rev>:<path>` form as a
   // tree lookup in remote.git. A refusal is permanent; a failure to run git is retried.
@@ -655,18 +656,28 @@ export async function pushBranchToGitHub(
   const branchPath = ctx.branchWorkspacePath(branch)
   const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
   const marker = metaFile?.branch.historyRewrittenFrom
-  const outgoingSha = await readPublishedSha(ctx, branch)
-  if (outgoingSha === null) {
-    throw new Error(`Branch "${branch}" is not in remote.git, so there is nothing to push`)
+  const readSha = async () => {
+    const sha = await readPublishedSha(ctx, branch)
+    if (sha === null) {
+      throw new Error(`Branch "${branch}" is not in remote.git, so there is nothing to push`)
+    }
+    return sha
   }
+  // The commit GitHub was sent: the transfer reads it again if the branch moves under it.
+  let outgoingSha: string
   let outcome: GitHubPushOutcome
   try {
-    outcome = await ctx
-      .github()
-      .push(
-        { branch, sha: outgoingSha, lease: marker, protectedBranches: [ctx.baseBranch] },
-        signal,
-      )
+    ;({ sha: outgoingSha, outcome } = await pushToGitHub(
+      ctx,
+      {
+        branch,
+        lease: marker,
+        protectedBranches: [ctx.baseBranch],
+        prerequisiteBranches: [branch, ctx.baseBranch],
+      },
+      readSha,
+      signal,
+    ))
   } catch (err) {
     // A retry can never make the branch not protected.
     if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
@@ -683,7 +694,7 @@ export async function pushBranchToGitHub(
             `GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
         )
       }
-      throw err.cause
+      throw new Error(err.message)
     }
 
     // An ordinary non-fast-forward rejection: GitHub has commits this
@@ -699,7 +710,7 @@ export async function pushBranchToGitHub(
           `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
       )
     }
-    throw err.cause
+    throw new Error(err.message)
   }
 
   if (outcome.pastStaleLease) {

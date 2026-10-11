@@ -186,7 +186,7 @@ describe('the worker refuses to push protected branches', () => {
     const sha = (
       await simpleGit().raw(['--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/main'])
     ).trim()
-    const mirror = new GitHubMirror(path.join(tmp, 'state'), remoteGitPath, 30_000)
+    const mirror = new GitHubMirror(path.join(tmp, 'state'), 30_000)
 
     await expect(
       mirror.exclusive((m) =>

@@ -1492,6 +1492,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await seedBranchInGitHubFixture('feature-once', 'someone else')
     const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-once')
     await seedBranchInRemoteGit('feature-once', 'ours')
+    // Parked on GitHub, so the push needs no bundle and is one gateway operation: the URL is
+    // resolved once per operation, and the bundle path has its own test (github-gateway.test.ts).
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-once:refs/heads/parked',
+    ])
     // A marker GitHub is provably not at, so the lease is refused and the
     // catch block's retry push runs -- the second resolution, if there is one.
     await writeRewriteMarker('feature-once', '0'.repeat(40))

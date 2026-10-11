@@ -114,8 +114,8 @@ const BARE_PINS: readonly string[] = ['core.bare=true']
 /**
  * What the worker's private GitHub mirror runs with (worker/github-mirror.ts). Nothing the Lambda
  * writes reaches that repository's config, so these are depth, not the boundary: the same pins,
- * HTTPS allowed for GitHub, and no credential helper ever handed the token. Objects from `remote.git`
- * are checked where they are fetched (worker/github-mirror.ts).
+ * HTTPS allowed for GitHub, and no credential helper ever handed the token. Pushed objects are
+ * checked where a quarantine takes them in (worker/github-mirror.ts).
  */
 const MIRROR_PINS: readonly string[] = [
   ...SHARED_REPO_PINS.filter((pin) => pin !== 'protocol.https.allow=never'),
@@ -176,19 +176,55 @@ export function sharedRepoGit(
 ): SimpleGit {
   const absolute = path.resolve(repoPath)
   return simpleGit({ ...options, baseDir: absolute, ...sharedRepoGitOptions(kind) }).env(
-    gitChildEnv({
-      GIT_DIR: gitDirOf(absolute, kind),
-      ...(kind === 'worktree' ? { GIT_WORK_TREE: absolute } : {}),
-      // A missing object would otherwise be fetched from a promisor remote the config names, by
-      // that remote's own upload-pack command (git 2.45+; older git ignores it).
-      GIT_NO_LAZY_FETCH: '1',
-    }),
+    sharedRepoEnv(absolute, kind),
   )
 }
 
 /** simple-git options for the worker's private GitHub mirror. */
 export function mirrorGitOptions(): Pick<SimpleGitOptions, 'config' | 'unsafe'> {
   return { config: [...MIRROR_PINS], unsafe: { ...PIN_OPT_INS } }
+}
+
+/** {@link mirrorGitOptions}'s pins, for a git the mirror runs without simple-git (worker/git-process.ts). */
+export function mirrorPins(): string[] {
+  return [...MIRROR_PINS]
+}
+
+/**
+ * The pins of a quarantine repository, where the GitHub gateway takes in a pushed bundle
+ * (worker/github-mirror.ts): the mirror's, without `core.alternateRefsCommand=true`. That pin
+ * guards an alternates file the Lambda can write; a quarantine's names the mirror and is written
+ * by the gateway. With it, the fetch's connectivity check could not stop at the mirror's heads and
+ * would walk the mirror's whole history for every push.
+ */
+export function quarantinePins(): string[] {
+  return MIRROR_PINS.filter((pin) => pin !== 'core.alternateRefsCommand=true')
+}
+
+/**
+ * {@link sharedRepoGit}'s pins, environment and working directory, for a git run through
+ * worker/git-process.ts: one whose stdin or stdout is a stream.
+ */
+export function sharedRepoProcessOptions(
+  repoPath: string,
+  kind: SharedRepoKind,
+): { cwd: string; env: Record<string, string>; config: string[] } {
+  const absolute = path.resolve(repoPath)
+  return {
+    cwd: absolute,
+    env: sharedRepoEnv(absolute, kind),
+    config: pinsFor(kind),
+  }
+}
+
+function sharedRepoEnv(absolute: string, kind: SharedRepoKind): Record<string, string> {
+  return gitChildEnv({
+    GIT_DIR: gitDirOf(absolute, kind),
+    ...(kind === 'worktree' ? { GIT_WORK_TREE: absolute } : {}),
+    // A missing object would otherwise be fetched from a promisor remote the config names, by
+    // that remote's own upload-pack command (git 2.45+; older git ignores it).
+    GIT_NO_LAZY_FETCH: '1',
+  })
 }
 
 /**

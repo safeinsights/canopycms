@@ -35,7 +35,8 @@ import {
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { RefusedPushError, isOwnLockFailure } from './github-mirror'
+import { GitHubTransientError, RefusedPushError, isOwnLockFailure } from './github-mirror'
+import { pushToGitHub } from './github-transfer'
 
 const execFileAsync = promisify(execFile)
 const git = async (...args: string[]) => (await execFileAsync('git', args)).stdout.trim()
@@ -80,11 +81,28 @@ function gateway(
     githubApp: false,
     stateDirectory,
     workspacePath: path.join(root, 'workspace'),
-    remoteGitPath,
     timeoutMs: 30_000,
     remoteUrl: githubPath,
     ...overrides,
   })
+}
+
+/**
+ * Push `sha` as the worker does: asked for without objects first, then with a bundle from
+ * remote.git when the gateway needs one.
+ */
+async function pushVia(
+  github: GitHubGateway,
+  request: { branch: string; sha: string; protectedBranches: string[] },
+  signal?: AbortSignal,
+) {
+  const { sha, ...rest } = request
+  return pushToGitHub(
+    { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
+    { ...rest, prerequisiteBranches: [request.branch] },
+    async () => sha,
+    signal,
+  )
 }
 
 /** A commit on `branch` in remote.git that GitHub does not have yet. */
@@ -185,11 +203,15 @@ describe('the credential file', () => {
     const github = gateway()
 
     await github.fetch({ have: [] })
-    await github.push({ branch: 'feature', sha: ahead, protectedBranches: ['main'] })
+    await pushVia(github, { branch: 'feature', sha: ahead, protectedBranches: ['main'] })
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     const credentialed = observed.filter((spawn) => spawn.env.GIT_CONFIG_GLOBAL !== undefined)
+    // The fetch; then the push: asked without objects (its GitHub fetch), and again with the
+    // bundle (its GitHub fetch, the default-branch ls-remote, the push).
     expect(credentialed.map((spawn) => subcommand(spawn.args))).toEqual([
+      'fetch',
+      'fetch',
       'fetch',
       'ls-remote',
       'push',
@@ -267,7 +289,8 @@ describe('the credential file', () => {
     }) as typeof childProcess.spawn)
 
     await expect(
-      gateway().push(
+      pushVia(
+        gateway(),
         { branch: 'feature', sha: ahead, protectedBranches: ['main'] },
         controller.signal,
       ),
@@ -304,20 +327,20 @@ it('is swept before the next session when an earlier delete left it, with the mi
   await fs.mkdir(leftover, { mode: 0o700 })
   await fs.writeFile(path.join(leftover, 'config'), 'left by a failed delete', { mode: 0o600 })
 
-  await github.onGitHub([])
+  await github.fetch({ have: [] })
 
   await expect(fs.stat(leftover)).rejects.toThrow(/ENOENT/)
 })
 
 it('lets the mirror recover when its state directory disappears under a running worker', async () => {
-  await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+  const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
   const github = gateway()
   await github.fetch({ have: [] })
   await fs.rm(stateDirectory, { recursive: true, force: true })
 
   // The first session after it may fail; the next must re-create the mirror and succeed.
   await github.fetch({ have: [] }).catch(() => undefined)
-  await expect(github.fetch({ have: [] })).resolves.toEqual({ bundleId: null })
+  expect((await github.fetch({ have: [] })).refs).toEqual(new Map([['main', main]]))
   expect((await fs.stat(path.join(stateDirectory, 'github.git'))).isDirectory()).toBe(true)
 })
 
@@ -349,7 +372,7 @@ describe('against a server that checks the credential', () => {
     const github = gateway({ remoteUrl: server.url('repo.git') })
 
     await github.fetch({ have: [] })
-    await github.push({ branch: 'feature', sha: ahead, protectedBranches: ['main'] })
+    await pushVia(github, { branch: 'feature', sha: ahead, protectedBranches: ['main'] })
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     expect(server.authorizations.length).toBeGreaterThan(0)
@@ -397,23 +420,54 @@ describe('re-reading the credential', () => {
     expect(provider).toHaveBeenCalledTimes(1)
   })
 
-  it("is armed by a failing ls-remote, a push's first GitHub-bound command", async () => {
+  it("is armed by a failing GitHub fetch, a push's first GitHub-bound command, which answers transient", async () => {
     const ahead = await aheadOnRemoteGit('feature')
     const provider = vi.fn(async () => undefined)
     const observed = spySpawns()
 
+    const caught = await gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
+      .push({ branch: 'feature', sha: ahead, prerequisites: [], protectedBranches: ['main'] })
+      .catch((err: unknown) => err)
+    await settle()
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect((caught as GitHubTransientError).code).toBe('github-fetch-failed')
+    expect(observed.filter((s) => s.configFile).map((s) => subcommand(s.args))).toEqual(['fetch'])
+    expect(provider).toHaveBeenCalledTimes(1)
+  })
+
+  it("is armed by a failing ls-remote, the push's default-branch read", async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const main = await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/main')
+    await git('--git-dir', githubPath, 'push', '-q', githubPath, 'main:refs/heads/feature')
+    const provider = vi.fn(async () => undefined)
+    const observed: string[] = []
+    // Only the ls-remote is sent somewhere that does not exist.
+    wrapSpawn(((
+      command: string,
+      args: readonly string[],
+      options: { env?: Record<string, string> },
+    ) => {
+      observed.push(subcommand(args))
+      const sent =
+        subcommand(args) === 'ls-remote'
+          ? args.map((arg) => (arg === githubPath ? path.join(root, 'missing.git') : arg))
+          : args
+      return originalSpawn(command, sent, options)
+    }) as typeof childProcess.spawn)
+
     await expect(
-      gateway({ remoteUrl: path.join(root, 'missing.git') }, provider).push({
+      gateway({}, provider).push({
         branch: 'feature',
-        sha: ahead,
+        sha: main,
+        prerequisites: [],
         protectedBranches: ['main'],
       }),
     ).rejects.toThrow()
     await settle()
 
-    expect(observed.filter((s) => s.configFile).map((s) => subcommand(s.args))).toEqual([
-      'ls-remote',
-    ])
+    expect(observed).toContain('ls-remote')
+    expect(observed).not.toContain('push')
     expect(provider).toHaveBeenCalledTimes(1)
   })
 
@@ -485,9 +539,11 @@ describe('re-reading the credential', () => {
     await fs.writeFile(path.join(githubPath, 'refs', 'heads', 'feature.lock'), '')
     const provider = vi.fn(async () => undefined)
 
-    const caught = await gateway({}, provider)
-      .push({ branch: 'feature', sha: ahead, protectedBranches: ['main'] })
-      .catch((err: unknown) => err)
+    const caught = await pushVia(gateway({}, provider), {
+      branch: 'feature',
+      sha: ahead,
+      protectedBranches: ['main'],
+    }).catch((err: unknown) => err)
     await settle()
 
     expect(String(caught)).toMatch(/remote: error: cannot lock ref/)
@@ -500,12 +556,22 @@ describe('re-reading the credential', () => {
     const provider = vi.fn(async () => undefined)
     const github = gateway({}, provider)
 
+    const blob = await git('--git-dir', githubPath, 'rev-parse', 'main:main.txt')
+
     await expect(
-      github.push({ branch: 'main', sha: main, protectedBranches: ['main'] }),
+      github.push({ branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }),
     ).rejects.toBeInstanceOf(RefusedPushError)
     await expect(
-      github.push({ branch: 'feature', sha: 'not-an-id', protectedBranches: ['main'] }),
+      github.push({
+        branch: 'feature',
+        sha: 'not-an-id',
+        prerequisites: [],
+        protectedBranches: ['main'],
+      }),
     ).rejects.toThrow(/Not a commit ID/)
+    await expect(
+      github.push({ branch: 'feature', sha: blob, prerequisites: [], protectedBranches: ['main'] }),
+    ).rejects.toThrow(/is not a commit/)
     await settle()
 
     expect(provider).not.toHaveBeenCalled()

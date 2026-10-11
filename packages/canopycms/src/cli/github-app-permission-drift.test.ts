@@ -182,7 +182,6 @@ function gatewayWith(octokit: Octokit): GitHubGateway {
     githubApp: false,
     stateDirectory: '/nonexistent/state',
     workspacePath: '/nonexistent/workspace',
-    remoteGitPath: '/nonexistent/workspace/remote.git',
     timeoutMs: 1000,
     octokit,
   })

@@ -7,10 +7,10 @@ import lockfile from 'proper-lockfile'
 import { recoverOrphanedTasks, cmsTaskQueueLogger } from '../task-queue/cms-task-queue'
 import type { Task } from '../task-queue/cms-task-queue'
 import { resolveWorkerGitHubAuth, type GitHubAuthConfig } from './github-auth'
+import { seedFromGitHub, unreachableFrom, type TransferContext } from './github-transfer'
 import {
   createLocalGitHubGateway,
   type GitHubGateway,
-  type GitHubReachability,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
 import type { BranchMetadataFile } from '../branch-metadata'
@@ -1134,9 +1134,10 @@ export class CmsWorker {
   /**
    * Ensure the remote.git bare repo exists, seeding it from GitHub on first run.
    *
-   * Seeded through the private mirror: the mirror fetches from GitHub, and a fresh bare repo
-   * receives its branches by local push, so no git command run against remote.git ever carries
-   * the credential, and no token-bearing URL is ever written to EFS.
+   * Seeded through the GitHub gateway: it fetches from GitHub, and a fresh bare repo takes its
+   * branches from the bundle it answers with (worker/github-transfer.ts), so no git command run
+   * against remote.git ever carries the credential, and no token-bearing URL is ever written to
+   * EFS.
    *
    * Empty-remote guard: a fetch of an EMPTY GitHub repo (no commits, or a base branch never
    * pushed) succeeds and leaves a refs-less repo that `fs.stat` cannot tell from a healthy one, so
@@ -1184,9 +1185,11 @@ export class CmsWorker {
    * a branch name GitHub lacks, such as a merged branch deleted there, goes. Otherwise refuse,
    * naming the refs at stake: unpushed work such as a settings branch.
    *
-   * The refs are compared in the same mirror session that fetches GitHub and seeds the
-   * replacement, and listed again just before the swap, since the Lambda can push into remote.git
-   * while the seed runs. The swap is two renames, so the name remote.git resolves to the old repo,
+   * The refs are checked against the replacement itself, once it is seeded: a ref's commit counts
+   * as on GitHub only when the seed holds it, reachable from a branch GitHub had, so the decision
+   * follows exactly what would replace remote.git, whatever the gateway fetches meanwhile. They are
+   * listed again just before the swap, since the Lambda can push into remote.git while the seed
+   * runs. The swap is two renames, so the name remote.git resolves to the old repo,
    * the new one, or for an instant nothing, never a half-built or half-deleted one.
    */
   private async replacePoisonedRemoteGit(): Promise<void> {
@@ -1219,11 +1222,16 @@ export class CmsWorker {
     workerLog(
       `remote.git has no branch '${this.baseBranch}': replacing it if GitHub has every ref in it`,
     )
-    const stagingPath = await this.seedRemoteGitStaging(async (github) => {
-      const onGitHub = await github.onGitHub([...refs.values()])
+    const stagingPath = await this.seedRemoteGitStaging(async (staging, githubBranches) => {
+      const missing = await unreachableFrom(
+        this.transferContext(),
+        staging,
+        [...refs.values()],
+        [...githubBranches.values()],
+      )
       const unpushed: string[] = []
       for (const [ref, id] of refs) {
-        if (!onGitHub.has(id)) unpushed.push(ref)
+        if (missing.has(id)) unpushed.push(ref)
       }
       if (unpushed.length === 0) return
       const shown = unpushed.slice(0, MAX_REFS_LISTED)
@@ -1295,11 +1303,12 @@ export class CmsWorker {
 
   /**
    * Seed a new bare repo from GitHub at `<remote.git>.cloning`, verified and configured, and
-   * return its path for the caller to rename into place. `check` runs in the mirror session right
-   * after the GitHub fetch, and its throw stops the seed. Throws with the staging directory gone.
+   * return its path for the caller to rename into place. `check` runs on the seeded repo, given
+   * GitHub's branches as the seed holds them, and its throw stops the seed. Throws with the
+   * staging directory gone.
    */
   private async seedRemoteGitStaging(
-    check?: (github: GitHubReachability) => Promise<void>,
+    check?: (staging: string, githubBranches: ReadonlyMap<string, string>) => Promise<void>,
   ): Promise<string> {
     // Seeded under a TEMP name and renamed into place only once verified, so a crash mid-seed
     // leaves only this staging directory, which the next boot deletes, rather than a poisoned
@@ -1308,17 +1317,15 @@ export class CmsWorker {
     await fs.rm(stagingPath, { recursive: true, force: true })
 
     try {
-      await this.github().seedBareRepository(stagingPath, {
-        baseBranch: this.baseBranch,
-        beforeSeed: check,
-        createRepository: async () => {
-          await fs.mkdir(stagingPath)
-          await sharedRepoGit(stagingPath, 'bare').raw(['init', '--quiet', '--bare'])
-        },
-      })
+      const githubBranches = await seedFromGitHub(
+        this.transferContext(),
+        stagingPath,
+        this.baseBranch,
+      )
 
       // The staging path is predictable, and so writable by the Lambda while seeding runs.
       await assertSharedRepoConfig(stagingPath, 'bare')
+      await check?.(stagingPath, githubBranches)
       await this.verifyBaseBranchExists(stagingPath)
       await this.recordBaseBranchInRemoteHead(stagingPath)
       await this.applyRemoteGitConfig(stagingPath)
@@ -1392,6 +1399,15 @@ export class CmsWorker {
     return this.gateway
   }
 
+  /** What worker/github-transfer.ts needs, for the seeds that run before the loops' context. */
+  private transferContext(): TransferContext {
+    return {
+      github: () => this.github(),
+      remoteGitPath: this.remoteGitPath,
+      taskTimeoutMs: this.taskTimeoutMs,
+    }
+  }
+
   /** What the in-process gateway is built from; test-utils/worker-gateway.ts builds from it too. */
   private localGitHubGatewayOptions(): LocalGitHubGatewayOptions {
     return {
@@ -1401,7 +1417,6 @@ export class CmsWorker {
       githubApp: Boolean(this.config.githubAppAuth),
       stateDirectory: this.stateDirectory,
       workspacePath: this.config.workspacePath,
-      remoteGitPath: this.remoteGitPath,
       timeoutMs: this.taskTimeoutMs,
     }
   }
