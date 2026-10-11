@@ -270,13 +270,27 @@ function assertGatewayBranchName(propName: string, value: string): string {
 }
 
 /**
- * Refuse a `protectedBranches` entry the worker would refuse at boot, which would crash-loop it
- * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): a branch name in
- * which `*` is a wildcard, held to git's rules and the gateway's (`assertGatewayBranchName`), and
- * no glob under the reserved settings prefix, which would match nothing. A comma separates
- * entries in the worker's `.env`, so none may hold one.
+ * The most `protectedBranches` entries the gateway takes
+ * (`MAX_PROTECTED_BRANCHES`, packages/canopycms/src/worker/branch-policy.ts). A local constant:
+ * this module imports nothing from core.
+ */
+const MAX_PROTECTED_BRANCHES = 1024
+
+/**
+ * Refuse `protectedBranches` the worker would refuse at boot, which would crash-loop it
+ * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): more than
+ * {@link MAX_PROTECTED_BRANCHES} entries, and any entry that is not a branch name in which `*` is
+ * a wildcard, held to git's rules and the gateway's (`assertGatewayBranchName`). No entry may
+ * start with the reserved settings prefix: a glob there matches nothing, and a name there would
+ * stop the deployment's settings reaching GitHub, since a settings branch is pushed plainly every
+ * sync. A comma separates entries in the worker's `.env`, so none may hold one.
  */
 function assertValidProtectedBranches(entries: readonly string[]): string[] {
+  if (entries.length > MAX_PROTECTED_BRANCHES) {
+    throw new Error(
+      `CanopyCmsService: protectedBranches has ${entries.length} entries; the most it takes is ${MAX_PROTECTED_BRANCHES}.`,
+    )
+  }
   return entries.map((entry) => {
     const reject = (why: string): never => {
       throw new Error(
@@ -285,9 +299,11 @@ function assertValidProtectedBranches(entries: readonly string[]): string[] {
     }
     if (entry.includes(',')) reject('it contains a comma, which separates entries')
     assertGatewayBranchName('protectedBranches entry', entry)
-    if (entry.includes('*') && entry.startsWith('canopycms-settings-')) {
+    if (entry.startsWith('canopycms-settings-')) {
       reject(
-        'the worker never lets a glob match a settings branch, so this one would match nothing',
+        entry.includes('*')
+          ? 'the worker never lets a glob match a settings branch, so this one would match nothing'
+          : "a settings branch is pushed plainly every sync, so protecting it would stop this deployment's settings reaching GitHub",
       )
     }
     const asName = entry.replace(/\*/g, 'x')
@@ -940,8 +956,9 @@ export interface CanopyCmsServiceProps {
    * Branches the worker never pushes, deletes or opens a pull request from, beside `baseBranch`
    * and GitHub's default branch, which it always protects (default: none). Each entry is a branch
    * name or a glob in which `*` matches any run of characters, `/` included (`release/*`),
-   * matched case-sensitively, as GitHub names refs. A glob never matches a settings branch, so
-   * one under `canopycms-settings-` is refused. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
+   * matched case-sensitively, as GitHub names refs. No entry may start with `canopycms-settings-`:
+   * a glob never matches a settings branch, and protecting one by name would stop the deployment's
+   * settings reaching GitHub. At most 1024 entries. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
    * comma-separated, and validated at synth.
    */
   protectedBranches?: string[]
