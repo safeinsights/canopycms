@@ -6,7 +6,8 @@
 // changelog a per-entry cap (see docs-budgets.json, HISTORY_MARKER_RE and
 // isChangelogBudget below). SCOPE is narrower than
 // "every markdown file" -- only where a path functions as an INSTRUCTION;
-// see EXCLUDED below. Dependency-free apart from git itself.
+// see EXCLUDED below. Needs git, and mdast-util-from-markdown for the
+// changelog entry cap.
 //
 // Usage: node scripts/check-docs.mjs [file...]
 //        node scripts/check-docs.mjs --write-baseline [--margin=N] [--allow-raise]
@@ -18,6 +19,7 @@ import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { fromMarkdown } from 'mdast-util-from-markdown'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const rel = (p) => relative(repoRoot, p)
@@ -333,97 +335,61 @@ function budgetShapeError(budget) {
   return 'takes exactly historyMarkers, maxSectionWords and words, each a whole number'
 }
 
-/**
- * One line's text outside HTML comments, code spans removed, given whether a
- * comment is open at its start. An unclosed `<!--` carries over to later lines
- * only where CommonMark opens an HTML block, at the start of a line (up to three
- * spaces); anywhere else, or quoted in a code span, it is literal text. `<!-->`
- * and `<!--->` are complete empty comments.
- */
-function stripHtmlComments(line, inComment) {
-  let rest = line
-  if (inComment) {
-    const close = rest.indexOf('-->')
-    if (close === -1) return { kept: '', inComment: true }
-    rest = rest.slice(close + 3)
-  }
-  rest = rest.replace(CODE_SPAN_RE, '')
+/** Raw HTML with its comments removed; `<!-->` and `<!--->` are complete empty comments. */
+function withoutHtmlComments(html) {
   let kept = ''
+  let rest = html
   for (;;) {
     const open = rest.indexOf('<!--')
-    if (open === -1) return { kept: kept + rest, inComment: false }
-    const after = rest.slice(open + 4)
-    let close
-    if (after.startsWith('>')) close = 1
-    else if (after.startsWith('->')) close = 2
-    else {
-      const end = after.indexOf('-->')
-      close = end === -1 ? -1 : end + 3
-    }
-    if (close === -1) {
-      const opensBlock = !inComment && kept === '' && /^ {0,3}$/.test(rest.slice(0, open))
-      return opensBlock ? { kept: '', inComment: true } : { kept: kept + rest, inComment: false }
-    }
+    if (open === -1) return kept + rest
     kept += rest.slice(0, open) + ' '
-    rest = after.slice(close)
+    const close = rest.indexOf('-->', open + 2)
+    if (close === -1) return kept
+    rest = rest.slice(close + 3)
   }
 }
 
-/**
- * The text of an ATX heading of exactly `level` -- up to three leading spaces,
- * optional closing hashes -- or null. Parsed in steps rather than one pattern,
- * whose optional closing-hash group is the backtracking shape `lint:scripts`
- * rejects.
- */
-function atxHeading(line, level) {
-  const open = /^ {0,3}(#+)[ \t]/.exec(line)
-  if (!open || open[1].length !== level) return null
-  const text = line.slice(open[0].length).trim()
-  const closing = /(?:^|[ \t])#+$/.exec(text)
-  return closing ? text.slice(0, closing.index).trim() : text
+/** The prose of an mdast subtree: code is not prose, and neither is an HTML comment. */
+function proseText(node) {
+  if (node.type === 'code' || node.type === 'inlineCode') return ''
+  if (node.type === 'html') return withoutHtmlComments(node.value)
+  if (typeof node.value === 'string') return node.value
+  return (node.children ?? []).map(proseText).join(' ')
 }
 
 /**
  * Measures each `###` entry under a changelog's `## Unreleased` section and
- * returns those whose words, heading line included, exceed `cap`, plus whether
- * the section exists at all: without it nothing would be capped, so the caller
- * reports its absence. An entry runs to the next `###` or `##` heading; fenced
- * code and HTML comments (the entry template) are not read. Entries under
- * `## Released` are exempt: release consolidation is where the file shrinks.
+ * returns those whose words, heading included, exceed `cap`, plus whether the
+ * section exists at all: without it nothing would be capped, so the caller
+ * reports its absence. The file is parsed as CommonMark, so only a real
+ * top-level heading opens an entry or a section, and code and HTML comments
+ * (the entry template) are not counted. An entry runs to the next `###` or
+ * higher heading. Entries under `## Released` are exempt: release
+ * consolidation is where the file shrinks.
  */
 function measureChangelog(content, cap) {
   const entries = []
   let hasUnreleased = false
   let inUnreleased = false
-  let inFence = false
-  let inComment = false
   let current = null
-  const lines = content.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]
-    // Inside a comment a fence delimiter is comment text, as in an HTML block.
-    if (!inComment && FENCE_RE.test(raw)) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
-    const startedInComment = inComment
-    const stripped = stripHtmlComments(raw, inComment)
-    inComment = stripped.inComment
-    const h2 = startedInComment ? null : atxHeading(raw, 2)
-    if (h2 !== null) {
-      inUnreleased = h2 === 'Unreleased'
+  for (const node of fromMarkdown(content).children) {
+    if (node.type === 'heading' && node.depth <= 2) {
+      inUnreleased = node.depth === 2 && proseText(node).trim() === 'Unreleased'
       hasUnreleased ||= inUnreleased
       current = null
       continue
     }
     if (!inUnreleased) continue
-    const h3 = startedInComment ? null : atxHeading(raw, 3)
-    if (h3 !== null) {
-      current = { heading: h3, lineNo: i + 1, words: 0 }
+    if (node.type === 'heading' && node.depth === 3) {
+      const first = node.children[0]
+      const last = node.children.at(-1)
+      const heading = first
+        ? content.slice(first.position.start.offset, last.position.end.offset)
+        : ''
+      current = { heading, lineNo: node.position.start.line, words: 0 }
       entries.push(current)
     }
-    if (current) current.words += countWords(stripped.kept)
+    if (current) current.words += countWords(proseText(node))
   }
   return { hasUnreleased, over: entries.filter((e) => e.words > cap) }
 }
@@ -739,6 +705,41 @@ function selfTest() {
   expect(
     'entry cap: a quoted <!-- does not pair with a later -->',
     overOf(['## Unreleased', '### A', `\`<!--\` ${words(20)} <!-- c -->`]).length === 1,
+  )
+  for (const shape of [
+    ['`x` <!-- note'],
+    ['<!-- use `-->` to close'],
+    ['````md', '```', '````'],
+    ['```', '~~~', '```'],
+    ['<!-- a --> <!-- b -->'],
+    ['<details>', '## Released', '</details>'],
+  ]) {
+    expect(
+      `entry cap: ${JSON.stringify(shape)} hides no later entry`,
+      overOf(['## Unreleased', '### A', ...shape, '', '### B', words(20)]).some(
+        (e) => e.heading === 'B',
+      ),
+    )
+  }
+  for (const empty of ['<!-->', '<!--->']) {
+    expect(
+      `entry cap: prose after an empty ${empty} comment is counted`,
+      overOf(['## Unreleased', '### A', `${empty} ${words(20)}`]).length === 1,
+    )
+  }
+  expect(
+    'entry cap: an H1 ends the Unreleased section',
+    overOf(['## Unreleased', '### A', words(5), '# Other', words(20)]).length === 0,
+  )
+  expect(
+    'entry cap: a ### inside a comment opens no entry',
+    overOf(['## Unreleased', '### A', words(10), '<!--', '### T', '-->', words(10)])
+      .map((e) => e.heading)
+      .join() === 'A',
+  )
+  expect(
+    'entry cap: a comment after the Unreleased heading still names the section',
+    measureChangelog('## Unreleased <!-- keep entries short -->\n### A', 15).hasUnreleased,
   )
   expect(
     'entry cap: a fence line inside a comment does not hide its close',

@@ -60,6 +60,9 @@ importers:
       lint-staged:
         specifier: ^16.4.0
         version: 16.4.0
+      mdast-util-from-markdown:
+        specifier: ^2.0.3
+        version: 2.0.3
       prettier:
         specifier: ^3.8.1
         version: 3.8.1
