@@ -512,6 +512,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // deadline; a killed ref update leaves each ref as it was or fully moved.
     const { needsOperator } = await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
     workerLog('Fetched from GitHub')
+    if (needsOperator !== null) workerLogError(needsOperator)
 
     const {
       summary: trackedSummary,
@@ -551,9 +552,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
-    // Reported once the cycle has done everything it can, so System health shows it.
+    // Recorded once the cycle has done everything it can, so System health shows it.
     if (needsOperator !== null) {
-      workerLogError(needsOperator)
       report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }
     }
     report.lastGitSync = {

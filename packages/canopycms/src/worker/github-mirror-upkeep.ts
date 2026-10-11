@@ -2,7 +2,8 @@ import type { Dirent } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { getErrorMessage } from '../utils/error'
+import { getErrorMessage, isNodeError } from '../utils/error'
+import { GitProcessError } from './git-process'
 
 /**
  * Upkeep of the GitHub gateway's private mirror (worker/github-mirror.ts): what a killed process
@@ -131,8 +132,11 @@ export type MirrorCorruption = string | null
  * missing (which `rev-parse --is-bare-repository` cannot see), a `*.promisor` pack,
  * `extensions.partialClone`, a `remote.*.promisor` / `remote.*.partialclonefilter` key in the
  * mirror's own config (read with `--get-regexp`, never `config --list`, which would print a
- * credential's value), or any git here failing (a truncated `packed-refs` fails every one). Each
- * is repaired by a rebuild. `git(args, stdin?)` runs git in the mirror under its pins.
+ * credential's value), or git dying on the repository (exit 128: a truncated `packed-refs` fails
+ * every git there). Each is repaired by a rebuild. Any other failure of git, such as one that
+ * could not start, is thrown: the next session checks again. A loose ref that disappears while
+ * it is read was packed by maintenance's `pack-refs`. `git(args, stdin?)` runs git in the mirror
+ * under its pins.
  */
 export async function findCorruption(
   gitDir: string,
@@ -144,7 +148,13 @@ export async function findCorruption(
   const broken: string[] = []
   await walk(path.join(gitDir, 'refs', 'heads'), async (file) => {
     if (file.endsWith('.lock')) return
-    const content = (await fs.readFile(file, 'utf8').catch(() => '')).trim()
+    let content: string
+    try {
+      content = (await fs.readFile(file, 'utf8')).trim()
+    } catch (err) {
+      if (isNodeError(err) && err.code === 'ENOENT') return
+      throw err
+    }
     if (!/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(content) && !content.startsWith('ref: refs/')) {
       broken.push(path.relative(gitDir, file))
     }
@@ -153,6 +163,7 @@ export async function findCorruption(
   try {
     return await checkWithGit(git)
   } catch (err) {
+    if (!(err instanceof GitProcessError) || err.exitCode !== 128) throw err
     return `git cannot read it (${getErrorMessage(err).trim().split('\n')[0].slice(0, 200)})`
   }
 }
@@ -168,7 +179,7 @@ async function checkWithGit(
     '^(extensions\\.partialclone|remote\\..*\\.(promisor|partialclonefilter))$',
   ]).catch((err: unknown) => {
     // Exit 1: no key matched.
-    if (/exited with code 1$/.test(getErrorMessage(err).trim())) return ''
+    if (err instanceof GitProcessError && err.exitCode === 1) return ''
     throw err
   })
   const key = promisorKeys.split('\n').find(Boolean)
@@ -245,8 +256,12 @@ async function exists(file: string): Promise<boolean> {
   )
 }
 
+/** `dir`'s entries; none when it does not exist. Any other failure throws, so no sweep passes for done. */
 async function list(dir: string): Promise<Dirent[]> {
-  return fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+  return fs.readdir(dir, { withFileTypes: true }).catch((err: unknown) => {
+    if (isNodeError(err) && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return []
+    throw err
+  })
 }
 
 async function walk(dir: string, visit: (file: string) => Promise<void>): Promise<void> {

@@ -633,7 +633,9 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<GitHubPushAnswer> {
     const { branch, sha } = request
-    await this.mirror.heal(mirror, credential, signal)
+    // Not under the task's signal: a whole-repository fetch can outlast one task, and an aborted
+    // rebuild would hold every operation transient for the backoff.
+    await this.mirror.heal(mirror, credential)
     const heads = await mirror.heads()
 
     let repo: string | undefined
@@ -759,10 +761,15 @@ class LocalGitHubGateway implements GitHubGateway {
 
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
+      // Before and after: a fetch whose session starts during the call may see the branch.
       this.invalidateGitHubFetch()
-      await this.api(reach, () =>
-        this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
-      )
+      try {
+        await this.api(reach, () =>
+          this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
+        )
+      } finally {
+        this.invalidateGitHubFetch()
+      }
     })
   }
 

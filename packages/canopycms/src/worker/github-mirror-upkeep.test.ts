@@ -18,7 +18,12 @@ import { fixtureCredential, initTestRepo, mockConsole, type MockConsole } from '
 import { resolveWorkerGitHubAuth } from './github-auth'
 import { createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
 import { GitHubMirror, GitHubTransientError } from './github-mirror'
-import type { MaintenanceMutex } from './github-mirror-upkeep'
+import { GitProcessError } from './git-process'
+import {
+  findCorruption,
+  sweepLocksAndTemporaries,
+  type MaintenanceMutex,
+} from './github-mirror-upkeep'
 
 const execFileAsync = promisify(execFile)
 const git = async (...args: string[]) => (await execFileAsync('git', args)).stdout.trim()
@@ -497,5 +502,73 @@ describe('a fetch that meets what a killed git left', () => {
     expect(fetched.refs.get('main')).toBe(next)
     expect(fetched.refs.has('gone')).toBe(false)
     expect(consoleSpy).toHaveWarned(/Removed stale locks from the GitHub mirror: packed-refs\.new/)
+  })
+})
+
+describe('checking a mirror while maintenance runs beside it', () => {
+  /** git answering as a whole mirror with one head does. */
+  const healthyGit = async (args: string[]) => {
+    if (args[0] === 'config') throw new GitProcessError('', 1, '')
+    if (args[0] === 'for-each-ref') return `${GHOST} refs/heads/main\n`
+    return `${GHOST} commit\n`
+  }
+
+  it('skips a loose head that pack-refs removes while it is read', async () => {
+    await gateway().fetch({ have: [] })
+    const head = path.join(mirrorDir, 'refs', 'heads', 'main')
+    await fs.writeFile(head, `${GHOST}\n`)
+    const readFile = fs.readFile.bind(fs)
+    vi.spyOn(fs, 'readFile').mockImplementation(async (file, options) => {
+      if (String(file) === head) {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${head}'`), {
+          code: 'ENOENT',
+        })
+      }
+      return readFile(file, options)
+    })
+
+    expect(await findCorruption(mirrorDir, healthyGit)).toBeNull()
+  })
+
+  it('throws, rather than call it corrupt, when git could not run', async () => {
+    await gateway().fetch({ have: [] })
+    const couldNotRun = new GitProcessError('git config could not run: spawn ENOMEM', null, '')
+
+    await expect(
+      findCorruption(mirrorDir, async () => {
+        throw couldNotRun
+      }),
+    ).rejects.toBe(couldNotRun)
+  })
+
+  it('fails a sweep that could not read a directory, so no sweep passes for done', async () => {
+    await gateway().fetch({ have: [] })
+    const readdir = fs.readdir.bind(fs)
+    vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string, options: unknown) => {
+      if (dir === path.join(mirrorDir, 'objects', 'pack')) {
+        throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
+      }
+      return readdir(dir, options as { withFileTypes: true })
+    }) as typeof fs.readdir)
+
+    await expect(sweepLocksAndTemporaries(mirrorDir)).rejects.toThrow(/EIO/)
+  })
+
+  it('has a caller whose session finds it corrupt join a fetch that rebuilds it', async () => {
+    const github = gateway()
+    await github.fetch({ have: [] })
+    await plantGhostHead()
+    const next = await commitAndPush('next.txt')
+    // A failed session makes the next one check the mirror again, and the fetch above is still
+    // within its window.
+    const internals = github as unknown as { mirror: GitHubMirror }
+    await internals.mirror
+      .exclusive(() => Promise.reject(new Error('planted')))
+      .catch(() => undefined)
+
+    const fetched = await github.fetch({ have: [] })
+
+    expect(fetched.refs.get('main')).toBe(next)
+    expect(consoleSpy).toHaveWarned(/Rebuilt the GitHub mirror from GitHub/)
   })
 })

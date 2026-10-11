@@ -385,8 +385,10 @@ describe('against a server that checks the credential', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const github = gateway({ remoteUrl: server.url('repo.git') })
     // A helper in the mirror's own config, which the per-command file and the mirror's `-c` pins
-    // must both leave unasked. Created first, so the helper can be planted in its config.
+    // must both leave unasked. Created first, so the helper can be planted in its config, and its
+    // pre-fetch ended, so the fetch below starts git after the plant: a failed fetch is never joined.
     await github.prepare()
+    await github.fetch({ have: [] }).catch(() => undefined)
     const asked = path.join(root, 'helper-was-asked')
     const helper = path.join(root, 'helper.sh')
     await fs.writeFile(helper, `#!/bin/sh\necho "$@" >> '${asked}'\n`, { mode: 0o700 })
@@ -724,6 +726,11 @@ describe('isOwnLockFailure', () => {
       "remote: error: cannot lock ref 'refs/heads/f': Unable to create '/gh/refs/heads/f.lock': File exists.",
       false,
     ],
+    [
+      'error: could not delete reference refs/heads/b: unable to create file /var/lib/canopy state/github.git/packed-refs.new: File exists',
+      true,
+    ],
+    ['remote: error: unable to create file /gh/packed-refs.new: File exists', false],
     ["fatal: could not read Username for 'https://github.com': terminal prompts disabled", false],
   ])('%s → %s', (message, expected) => {
     expect(isOwnLockFailure(message)).toBe(expected)

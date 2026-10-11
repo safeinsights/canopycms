@@ -911,9 +911,7 @@ describe('the tracking namespace', () => {
     await fs.utimes(lock, then, then)
     const stale = await fetchGitHubIntoRemoteGit(transfer(github))
 
-    expect(stale.needsOperator).toMatch(
-      new RegExp(`^${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} has been there since `),
-    )
+    expect(stale.needsOperator?.startsWith(`${lock} has been there since `)).toBe(true)
     expect(stale.needsOperator).toMatch(/Check that no git is running in remote\.git/)
     await expect(fs.stat(lock)).resolves.toBeTruthy()
     expect(await tip(remoteGitPath, 'refs/remotes/github/one')).not.toBeNull()
@@ -1093,6 +1091,28 @@ describe('GitHub fetches, coalesced at the production window', () => {
     await github.deleteBranch('gone')
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
+  })
+
+  it('fetches afresh after deleting a branch, even after a fetch that ran during the deletion', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', main)
+    const holder: { github?: GitHubGateway } = {}
+    let during: ReadonlyMap<string, string> | undefined
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      // A fetch whose session starts while GitHub still has the branch.
+      during = (await holder.github!.fetch({ have: [] })).refs
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    holder.github = github
+
+    await github.deleteBranch('gone')
+
+    expect(during?.has('gone')).toBe(true)
     expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
   })
 })

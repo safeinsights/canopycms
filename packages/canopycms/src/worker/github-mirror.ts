@@ -79,8 +79,8 @@ export class GitHubMirror {
   private corruption: MirrorCorruption = null
   /**
    * Changes whenever the mirror stops holding what the last GitHub fetch put there: it was
-   * created anew, or a rebuild replaced it. A GitHub fetch is reused only within the generation
-   * it completed in.
+   * created anew, found corrupt, or a rebuild replaced it. A GitHub fetch is reused only within
+   * the generation it completed in.
    */
   generation = 0
   private rebuildFailedAt = 0
@@ -173,6 +173,8 @@ export class GitHubMirror {
     this.corruption = await findCorruption(this.gitDir, (args, stdin) =>
       runInRepo(this.gitDir, this.timeoutMs, args, { stdin }),
     )
+    // No fetch's snapshot vouches for a corrupt mirror, so callers join one that rebuilds it.
+    if (this.corruption !== null) this.generation++
   }
 
   /**
@@ -198,11 +200,7 @@ export class GitHubMirror {
    * After a failed rebuild, sessions answer transient for {@link REBUILD_BACKOFF_MS} rather than
    * fetch the whole repository again each.
    */
-  async heal(
-    session: MirrorSession,
-    credential: GitHubCredential,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  async heal(session: MirrorSession, credential: GitHubCredential): Promise<void> {
     const reason = this.corruption
     if (reason === null) return
     if (Date.now() - this.rebuildFailedAt < REBUILD_BACKOFF_MS) this.assertUsable()
@@ -211,7 +209,7 @@ export class GitHubMirror {
     try {
       await fs.rm(rebuild, { recursive: true, force: true })
       await initMirror(rebuild)
-      await session.fetchFromGitHub(credential, signal, rebuild)
+      await session.fetchFromGitHub(credential, undefined, rebuild)
       await fs.rm(old, { recursive: true, force: true })
       await fs.rename(this.gitDir, old)
       await fs.rename(rebuild, this.gitDir)
@@ -592,7 +590,7 @@ export function isOwnLockFailure(message: string): boolean {
       (line) =>
         !/^\s*remote:/.test(line) &&
         (/Unable to create '.*\.lock': File exists/.test(line) ||
-          /unable to create file \S*packed-refs\.new: File exists/.test(line)),
+          /unable to create file .*packed-refs\.new: File exists/.test(line)),
     )
 }
 
