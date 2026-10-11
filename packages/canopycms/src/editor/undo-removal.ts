@@ -124,6 +124,10 @@ const setAt = (root: unknown, path: readonly CanopyPathSegment[], next: unknown)
   return { ...record, [head]: setAt(record[head], rest, next) }
 }
 
+/** Equal once stored: JSON drops `undefined` keys, as the server's copy of a draft does. */
+const sameContent = (a: unknown, b: unknown): boolean =>
+  equal(JSON.parse(JSON.stringify(a ?? null)), JSON.parse(JSON.stringify(b ?? null)))
+
 const removalPath = (removal: FieldRemoval): CanopyPathSegment[] =>
   removal.kind === 'list-item' ? removal.listPath : removal.path
 
@@ -136,8 +140,8 @@ const anchorsHold = (
     then.every(
       (anchor, i) =>
         anchor.index === now[i].index &&
-        // By content, so a saved copy of the same items still holds.
-        equal(anchor.siblings, now[i].siblings),
+        // By content as stored, so the server's copy of the same items still holds.
+        sameContent(anchor.siblings, now[i].siblings),
     ))
 
 /** The enclosing lists of a removal in `value`, taken before the removal applies; see `anchors`. */
@@ -168,7 +172,9 @@ export function restoreRemoval(
   if (removal.kind === 'list-item') {
     if (current !== undefined && current !== null && !Array.isArray(current)) return undefined
     // Already back (a Discard or Reload restored it, or an earlier Undo did).
-    if (Array.isArray(current) && current.includes(removal.item)) return undefined
+    if (Array.isArray(current) && current.some((item) => sameContent(item, removal.item))) {
+      return undefined
+    }
     const list = Array.isArray(current) ? [...current] : []
     list.splice(Math.min(removal.index, list.length), 0, removal.item)
     next = list

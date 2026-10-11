@@ -184,6 +184,15 @@ describe('restoreRemoval', () => {
       ])
     })
 
+    it('holds against a saved copy that dropped a sibling key set to undefined', () => {
+      const [g1, g2] = [gallery('x'), { ...gallery('y'), cleared: undefined }]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const saved = JSON.parse(
+        JSON.stringify({ blocks: [{ ...g1, value: { items: [] } }, g2] }),
+      ) as Record<string, unknown>
+      expect(restoreRemoval(fields, saved, removal)).toBeDefined()
+    })
+
     it('puts nothing back once a sibling block has changed', () => {
       const [g1, g2] = [gallery('x'), gallery('y')]
       const removal = removeFirstCaption({ blocks: [g1, g2] })
@@ -203,6 +212,16 @@ describe('restoreRemoval', () => {
         g2,
       ])
     })
+  })
+
+  it('puts nothing back when a copy of the item is already there', () => {
+    expect(
+      restoreRemoval(
+        fields,
+        { links: [{ href: '/a' }, { href: '/b' }] },
+        { kind: 'list-item', listPath: ['links'], index: 1, item: { href: '/b' }, label: '/b' },
+      ),
+    ).toBeUndefined()
   })
 
   it('puts nothing back when the item is already there', () => {

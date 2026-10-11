@@ -528,11 +528,19 @@ const EditorContent: React.FC<EditorProps> = ({
     const id = `canopy-undo-${nextUndoToastRef.current}`
     let used = false
     const undo = () => {
-      // A closing toast stays clickable while it animates out: act only while it is open, once.
-      if (used || !undoToastsRef.current.has(id)) return
+      // A closing toast stays clickable while it animates out: act once, and only while open.
+      if (used) return
       used = true
+      const open = undoToastsRef.current.has(id)
       notifications.hide(id)
       undoToastsRef.current.delete(id)
+      if (!open) {
+        notifications.show({
+          message: `Too late to undo removing "${removal.label}".`,
+          color: 'yellow',
+        })
+        return
+      }
       if (
         currentBranchRef.current !== branch ||
         currentContentIdRef.current !== contentId ||

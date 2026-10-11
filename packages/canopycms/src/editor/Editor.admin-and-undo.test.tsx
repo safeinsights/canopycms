@@ -340,11 +340,14 @@ describe('Undo is one-shot and ends with the draft', () => {
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
     await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
 
-    // Reload brings a fresh copy of the items, so only the closed toast stops a duplicate.
+    // The click lands on the closing toast; it adds nothing and says why.
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
     act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Too late to undo removing "Links #2".' }),
+    )
   })
 
   it('closes the Undo toast when the draft is discarded, and an Undo clicked anyway adds nothing', async () => {
