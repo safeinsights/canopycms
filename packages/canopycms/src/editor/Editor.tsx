@@ -528,8 +528,8 @@ const EditorContent: React.FC<EditorProps> = ({
     const id = `canopy-undo-${nextUndoToastRef.current}`
     let used = false
     const undo = () => {
-      // A closing toast stays clickable while it animates out, so a double-click arrives twice.
-      if (used) return
+      // A closing toast stays clickable while it animates out: act only while it is open, once.
+      if (used || !undoToastsRef.current.has(id)) return
       used = true
       notifications.hide(id)
       undoToastsRef.current.delete(id)

@@ -4,22 +4,24 @@ import type {
   InlineGroupFieldConfig,
   ObjectFieldConfig,
 } from '../config'
+import equal from 'fast-deep-equal'
+
 import { isPlainRecord } from '../validation/field-traversal'
 import type { CanopyPathSegment } from './canopy-path'
 
 /**
- * What a form's Remove took out, for Undo. Paths are canopy paths (`blocks[2].items`), which skip
- * a block's `value` wrapper; `restoreRemoval` resolves them against the value it restores into.
- */
-/**
  * One list a removal sits inside (a block list, or an object list holding the removed item's
- * list): the index of the item enclosing the removal, and every other item, by identity.
+ * list): the index of the item enclosing the removal, and every other item.
  */
 export interface RemovalAnchor {
   index: number
   siblings: unknown[]
 }
 
+/**
+ * What a form's Remove took out, for Undo. Paths are canopy paths (`blocks[2].items`), which skip
+ * a block's `value` wrapper; `restoreRemoval` resolves them against the value it restores into.
+ */
 export type FieldRemoval = (
   | {
       kind: 'list-item'
@@ -134,8 +136,8 @@ const anchorsHold = (
     then.every(
       (anchor, i) =>
         anchor.index === now[i].index &&
-        anchor.siblings.length === now[i].siblings.length &&
-        anchor.siblings.every((sibling, j) => sibling === now[i].siblings[j]),
+        // By content, so a saved copy of the same items still holds.
+        equal(anchor.siblings, now[i].siblings),
     ))
 
 /** The enclosing lists of a removal in `value`, taken before the removal applies; see `anchors`. */
@@ -149,8 +151,9 @@ export function removalAnchors(
 
 /**
  * `value` with a removal put back, or undefined when it can't be: the list or field is gone, an
- * enclosing list has changed, the item is already there, or the image field has been filled. Edits made after the removal are kept, because it
- * changes only the one list or field, in the value as it is now.
+ * enclosing list has changed, the item is already there, or the image field has been filled.
+ * Edits made after the removal are kept, because it changes only the one list or field, in the
+ * value as it is now.
  */
 export function restoreRemoval(
   fields: readonly FieldConfig[],

@@ -310,12 +310,40 @@ describe('Undo is one-shot and ends with the draft', () => {
 
     const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
     const undo = message.getByRole('button', { name: 'Undo' })
-    act(() => {
-      fireEvent.click(undo)
-      fireEvent.click(undo)
-    })
-
+    act(() => fireEvent.click(undo))
     await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+    // The second click of a double-click, landing after the first has rendered.
+    act(() => fireEvent.click(undo))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+
+    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+    expect(
+      vi.mocked(notifications.show).mock.calls.some(([options]) => options.color === 'yellow'),
+    ).toBe(false)
+  })
+
+  it('does nothing for an Undo clicked as its toast closes after Reload', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementation((options) => {
+      options.onConfirm?.()
+      return 'mock-modal-id'
+    })
+    stubApi([])
+    renderEditor()
+    await loaded()
+    removeSecondLink()
+    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    const toast = undoToastOf()
+
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByText('Reload File'))
+    await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+
+    // Reload brings a fresh copy of the items, so only the closed toast stops a duplicate.
+    const message = render(<MantineProvider>{toast.message}</MantineProvider>)
+    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
   })
 

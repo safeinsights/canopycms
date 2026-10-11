@@ -172,6 +172,27 @@ describe('restoreRemoval', () => {
       expect(restoreRemoval(fields, { blocks: [g2] }, removal)).toBeUndefined()
     })
 
+    it('restores into a saved copy of the same blocks, which are new objects', () => {
+      const [g1, g2] = [gallery('x'), gallery('y')]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const saved = JSON.parse(
+        JSON.stringify({ blocks: [{ ...g1, value: { items: [] } }, g2] }),
+      ) as Record<string, unknown>
+      expect(restoreRemoval(fields, saved, removal)?.blocks).toEqual([
+        { template: 'gallery', value: { items: [{ caption: 'x' }] } },
+        g2,
+      ])
+    })
+
+    it('puts nothing back once a sibling block has changed', () => {
+      const [g1, g2] = [gallery('x'), gallery('y')]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const g2Edited = gallery('y edited')
+      expect(
+        restoreRemoval(fields, { blocks: [{ ...g1, value: { items: [] } }, g2Edited] }, removal),
+      ).toBeUndefined()
+    })
+
     it('restores while the enclosing block is still in place, even edited', () => {
       const [g1, g2] = [gallery('x'), gallery('y')]
       const removal = removeFirstCaption({ blocks: [g1, g2] })
