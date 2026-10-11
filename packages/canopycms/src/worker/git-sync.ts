@@ -317,7 +317,8 @@ async function reconcileTrackedBranches(
   const created: string[] = []
   const fastForwarded: string[] = []
   const ahead: string[] = []
-  const diverged: { name: string; local: string; github: string; state: EditorState }[] = []
+  const diverged: DivergedHead[] = []
+  const uncheckedOrphans: { name: string; error: string }[] = []
   const repointed: string[] = []
   const pruned: string[] = []
   const rewritten: string[] = []
@@ -366,11 +367,7 @@ async function reconcileTrackedBranches(
         githubTips.get(ctx.baseBranch) ?? '',
       )
     } catch (err) {
-      ctx.log.debug('Tracked-branch reconcile: could not check a head', {
-        branch: escapeForLog(name),
-        error: escapeForLog(getErrorMessage(err)),
-      })
-      return { kind: 'kept', state: 'unchecked' }
+      return { kind: 'kept', state: 'unchecked', error: getErrorMessage(err) }
     }
   }
   const reportMovedMeanwhile = (name: string, error: string) =>
@@ -478,9 +475,13 @@ async function reconcileTrackedBranches(
         if (name === ctx.baseBranch) baseHold = { hold: undefined }
         const outcome = await settle(name, localSha, trackedSha)
         if (outcome.kind === 'settled') repointed.push(name)
-        else if (outcome.kind === 'moved-meanwhile') reportMovedMeanwhile(name, outcome.error)
         else if (outcome.kind === 'kept') {
-          diverged.push({ name, local: localSha, github: trackedSha, state: outcome.state })
+          diverged.push({ name, local: localSha, github: trackedSha, ...outcome })
+        } else {
+          reportMovedMeanwhile(
+            name,
+            outcome.kind === 'moved-meanwhile' ? outcome.error : 'packed-refs.lock is held',
+          )
         }
       }
     } catch (err) {
@@ -499,10 +500,21 @@ async function reconcileTrackedBranches(
       else if (outcome.kind === 'moved-meanwhile') reportMovedMeanwhile(name, outcome.error)
       // Every later deletion would wait for the same lock and fail the same way.
       else if (outcome.kind === 'packed-refs-locked') break
+      else if (outcome.error !== undefined) uncheckedOrphans.push({ name, error: outcome.error })
     }
   }
 
-  warnDivergedOnce(ctx.warnedDivergences(), diverged)
+  warnOnce(ctx.warnedDivergences(), [
+    ...diverged.map(divergedWarning),
+    ...uncheckedOrphans.map(({ name, error }) => ({
+      // ':' cannot appear in a ref name, so this key never collides with a branch's.
+      key: `orphan:${name}`,
+      said: error,
+      line:
+        `  Tracked-branch reconcile: ${escapeForLog(name)}, which GitHub no longer has, was ` +
+        `kept because it could not be checked: ${escapeForLog(error)}`,
+    })),
+  ])
   if (repointed.length > 0) {
     workerLog(
       `  Tracked-branch reconcile: moved ${repointed.length} stale branch copy(ies) to GitHub's rewritten tip: ${repointed.map(escapeForLog).join(', ')}`,
@@ -547,28 +559,43 @@ const EDITOR_STATE_WORDS: Record<EditorState, string> = {
   unchecked: 'it could not be checked',
 }
 
-/**
- * Warn about each diverged head once per pair of tips: the warning repeats only when the local
- * head, GitHub's tip or the reason it is kept changes. `warned` is this worker's memory of what it
- * has said, by branch, and forgets a branch once it is no longer diverged.
- */
-function warnDivergedOnce(
-  warned: Map<string, string>,
-  diverged: readonly { name: string; local: string; github: string; state: EditorState }[],
-): void {
-  const current = new Set(diverged.map((entry) => entry.name))
-  for (const name of warned.keys()) if (!current.has(name)) warned.delete(name)
-  for (const { name, local, github, state } of diverged) {
-    // The reason is part of the key, so a head first kept as `busy` is reported again with the
-    // reason that keeps it.
-    const said = `${local} ${github} ${state}`
-    if (warned.get(name) === said) continue
-    warned.set(name, said)
-    workerLogWarn(
+interface DivergedHead {
+  name: string
+  local: string
+  github: string
+  state: EditorState
+  error?: string
+}
+
+function divergedWarning({ name, local, github, state, error }: DivergedHead) {
+  return {
+    key: name,
+    // The reason is part of what was said, so a head first kept as `busy` is reported again with
+    // the reason that keeps it.
+    said: `${local} ${github} ${state}`,
+    line:
       `  Tracked-branch reconcile: ${escapeForLog(name)} diverged from GitHub and was left untouched, ` +
-        `because ${EDITOR_STATE_WORDS[state]} (here ${local}, GitHub ${github}). Publishing it ` +
-        `fails until the two are reconciled; System health lists it.`,
-    )
+      `because ${EDITOR_STATE_WORDS[state]}${error === undefined ? '' : ` (${escapeForLog(error)})`} ` +
+      `(here ${local}, GitHub ${github}). Publishing it fails until the two are reconciled; ` +
+      `System health lists it.`,
+  }
+}
+
+/**
+ * Warn each line once while what it says stays the same: a diverged head's tips and reason, an
+ * unchecked orphan's error. `warned` is this worker's memory of what it has said, by key, and
+ * forgets a key once its line is no longer due.
+ */
+function warnOnce(
+  warned: Map<string, string>,
+  lines: readonly { key: string; said: string; line: string }[],
+): void {
+  const current = new Set(lines.map((entry) => entry.key))
+  for (const key of warned.keys()) if (!current.has(key)) warned.delete(key)
+  for (const { key, said, line } of lines) {
+    if (warned.get(key) === said) continue
+    warned.set(key, said)
+    workerLogWarn(line)
   }
 }
 

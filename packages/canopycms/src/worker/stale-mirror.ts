@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import type { SimpleGit } from 'simple-git'
 
@@ -11,7 +12,7 @@ import type { WorkerContext } from './worker-context'
 
 export type StaleMirrorContext = Pick<
   WorkerContext,
-  'baseBranch' | 'contentBranchesPath' | 'taskDir'
+  'baseBranch' | 'contentBranchesPath' | 'taskDir' | 'remoteGitPath'
 >
 
 /**
@@ -74,7 +75,8 @@ export async function readEditorWork(
 export type MirrorSettlement =
   /** The head now matches GitHub: moved to GitHub's tip, or deleted when GitHub has no such branch. */
   | { kind: 'settled' }
-  | { kind: 'kept'; state: EditorState }
+  /** `error` says why an `unchecked` head could not be checked. */
+  | { kind: 'kept'; state: EditorState; error?: string }
   /** The head moved after it was read; the lease refused the update, and the next cycle retries. */
   | { kind: 'moved-meanwhile'; error: string }
   /**
@@ -149,7 +151,7 @@ export async function settleStaleMirror(
       // sharedRepoGit pins the C locale, so the text is git's own. Anything else is the caller's
       // to report.
       const message = getErrorMessage(err)
-      if (/Unable to create '[^']*packed-refs\.lock': File exists/.test(message)) {
+      if (lockHeld(message) === path.join(ctx.remoteGitPath, 'packed-refs.lock')) {
         return { kind: 'packed-refs-locked' }
       }
       // The lease's refusal, or the ref's own lock held by a concurrent writer.
@@ -162,6 +164,15 @@ export async function settleStaleMirror(
   } finally {
     await releaseProvisionedWorkspace(release, dirName)
   }
+}
+
+/**
+ * The lock file git found held, normalised, or null. A branch's own lock lives under `refs/`,
+ * and its name can end in `packed-refs.lock` too, so only the repository's own path counts.
+ */
+function lockHeld(message: string): string | null {
+  const match = /Unable to create '([^']*)': File exists/.exec(message)
+  return match ? path.normalize(match[1]) : null
 }
 
 /** Whether `head` and `baseTip` share a commit; an error counts as no, which keeps the head. */

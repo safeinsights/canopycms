@@ -39,16 +39,21 @@ import { CmsWorker } from './cms-worker'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 
 /**
- * Runs inside stale-mirror.ts's check, after the head is read and before its leased update: the
- * window a concurrent Lambda push lands in.
+ * `hook` runs while stale-mirror.ts's `readEditorWork` lists the queue, after the heads are read
+ * and before any leased update: the window a concurrent Lambda push lands in. `queueReads` counts
+ * every queue listing, which only a settle makes during a sync.
  */
-const duringStaleMirrorCheck = vi.hoisted(() => ({ hook: null as null | (() => Promise<void>) }))
+const duringStaleMirrorCheck = vi.hoisted(() => ({
+  hook: null as null | (() => Promise<void>),
+  queueReads: 0,
+}))
 
 vi.mock('../task-queue/cms-task-queue', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../task-queue/cms-task-queue')>()
   return {
     ...actual,
     listTasks: async (...args: Parameters<typeof actual.listTasks>) => {
+      duringStaleMirrorCheck.queueReads++
       if (args[1] === 'processing' && duringStaleMirrorCheck.hook) {
         const hook = duringStaleMirrorCheck.hook
         duringStaleMirrorCheck.hook = null
@@ -254,9 +259,8 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
   it('does not delete a branch that exists only in remote.git (unpushed editor work)', async () => {
     // Never reaches GitHub -- simulates GitManager.push() landing editor
     // work in remote.git before the corresponding push-branch task runs.
-    const sha = await commitOnto(tmpDir, remoteGitPath, 'feature-unpushed', {
-      'a.txt': 'editor draft',
-    })
+    // Branched from main, so only the workspace keeps it (an unrelated history is kept anyway).
+    const sha = await forcePushRewrite(tmpDir, remoteGitPath, 'feature-unpushed')
     await giveWorkspace('feature-unpushed')
 
     const worker = makeWorker()
@@ -623,12 +627,97 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
     await openBareRepo(githubPath).raw(['symbolic-ref', 'HEAD', 'refs/heads/feature-other'])
     await commitOnto(tmpDir, githubPath, 'feature-other', { 'b.txt': 'other' })
     await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/main'])
+    duringStaleMirrorCheck.queueReads = 0
     await makeWorker()
       .syncGit()
       .catch(() => {})
 
     await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-kept')).resolves.toBe(true)
-    await expect(bareRefExists(remoteGitPath, 'refs/heads/main')).resolves.toBe(true)
+    // No head was even checked: an unrelated history would be kept anyway.
+    expect(duringStaleMirrorCheck.queueReads).toBe(0)
+  })
+
+  it('stops deleting for the cycle while packed-refs.lock is held, and only then', async () => {
+    for (const branch of ['feature-a-packed-refs', 'feature-b', 'feature-c']) {
+      await forcePushRewrite(tmpDir, githubPath, branch)
+    }
+    await makeWorker().syncGit()
+    for (const branch of ['feature-a-packed-refs', 'feature-b']) {
+      await openBareRepo(githubPath).raw(['update-ref', '-d', `refs/heads/${branch}`])
+    }
+
+    // A branch's own lock, whose name also ends in packed-refs.lock, costs only that branch.
+    const ownLock = path.join(remoteGitPath, 'refs', 'heads', 'feature-a-packed-refs.lock')
+    await fs.writeFile(ownLock, '')
+    const consoleSpy = mockConsole()
+    await makeWorker().syncGit()
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-a-packed-refs')).resolves.toBe(
+      true,
+    )
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-b')).resolves.toBe(false)
+    expect(consoleSpy).toHaveWarned(/feature-a-packed-refs moved while it was checked/)
+    await fs.rm(ownLock)
+
+    // The repository's packed-refs.lock stops every deletion, so the loop stops at the first.
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-c'])
+    await fs.writeFile(path.join(remoteGitPath, 'packed-refs.lock'), '')
+    const lockedSpy = mockConsole()
+    await makeWorker().syncGit()
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-a-packed-refs')).resolves.toBe(
+      true,
+    )
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-c')).resolves.toBe(true)
+    expect(lockedSpy.all().warn.filter((line) => /moved while it was checked/.test(line))).toEqual(
+      [],
+    )
+  })
+
+  it('warns once about a head GitHub no longer has that could not be checked', async () => {
+    await forcePushRewrite(tmpDir, githubPath, 'feature-unreadable')
+    await makeWorker().syncGit()
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-unreadable'])
+    // The provisioning lock cannot be taken where the branches root is a file.
+    await fs.rm(path.join(workspacePath, 'content-branches'), { recursive: true, force: true })
+    await fs.writeFile(path.join(workspacePath, 'content-branches'), '')
+    const worker = makeWorker()
+
+    const consoleSpy = mockConsole()
+    await worker.syncGit().catch(() => {})
+    await worker.syncGit().catch(() => {})
+
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-unreadable')).resolves.toBe(true)
+    const lines = consoleSpy
+      .all()
+      .warn.filter((line) => /feature-unreadable, which GitHub no longer has/.test(line))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/could not be checked: \S/)
+  })
+
+  it("keeps every head when this deployment's settings branch cannot be named", async () => {
+    const { oldTip } = await forcePushedAfterMirroring('feature-unnamed-settings')
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: 'main',
+      settingsBranch: 'not a valid ref',
+    })
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath, fetchCoalesceMs: 0 })
+    ;(worker as unknown as { running: boolean }).running = true
+    ;(worker as unknown as { ensureSettingsBranch: () => string }).ensureSettingsBranch = () => {
+      throw new Error('invalid deployment name')
+    }
+
+    const consoleSpy = mockConsole()
+    await worker.syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-unnamed-settings')).resolves.toBe(
+      oldTip,
+    )
+    expect(warningsNaming(consoleSpy, 'feature-unnamed-settings')[0]).toMatch(
+      /settings branch cannot be named/,
+    )
   })
 
   it('leaves a head that moved during the check alone, and settles it next cycle', async () => {
