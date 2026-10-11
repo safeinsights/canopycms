@@ -333,40 +333,73 @@ function budgetShapeError(budget) {
   return 'takes exactly historyMarkers, maxSectionWords and words, each a whole number'
 }
 
+/** The text of a line outside HTML comments, and whether a comment is still open after it. */
+function stripHtmlComments(line, inComment) {
+  let kept = ''
+  let rest = line
+  for (;;) {
+    if (inComment) {
+      const close = rest.indexOf('-->')
+      if (close === -1) return { kept, inComment: true }
+      rest = rest.slice(close + 3)
+      inComment = false
+    }
+    const open = rest.indexOf('<!--')
+    if (open === -1) return { kept: kept + rest, inComment: false }
+    kept += rest.slice(0, open) + ' '
+    rest = rest.slice(open + 4)
+    inComment = true
+  }
+}
+
 /**
- * Every `###` entry under a changelog's `## Unreleased` section whose words,
- * heading line included, exceed `cap`. An entry runs to the next `###` or `##`
- * heading; fenced code and HTML comments (the entry template) are not read.
- * Entries under `## Released` are exempt: release consolidation is where the
- * file shrinks.
+ * The text of an ATX heading of exactly `level` -- up to three leading spaces,
+ * optional closing hashes -- or null. Parsed in steps rather than one pattern,
+ * whose optional closing-hash group is the backtracking shape `lint:scripts`
+ * rejects.
  */
-function findEntriesOverCap(content, cap) {
+function atxHeading(line, level) {
+  const open = /^ {0,3}(#+)[ \t]/.exec(line)
+  if (!open || open[1].length !== level) return null
+  const text = line.slice(open[0].length).trim()
+  const closing = /(?:^|[ \t])#+$/.exec(text)
+  return closing ? text.slice(0, closing.index).trim() : text
+}
+
+/**
+ * Measures each `###` entry under a changelog's `## Unreleased` section and
+ * returns those whose words, heading line included, exceed `cap`, plus whether
+ * the section exists at all: without it nothing would be capped, so the caller
+ * reports its absence. An entry runs to the next `###` or `##` heading; fenced
+ * code and HTML comments (the entry template) are not read. Entries under
+ * `## Released` are exempt: release consolidation is where the file shrinks.
+ */
+function measureChangelog(content, cap) {
   const entries = []
+  let hasUnreleased = false
   let inUnreleased = false
   let inComment = false
   let current = null
   for (const r of extractText(content)) {
-    if (inComment) {
-      if (r.raw.includes('-->')) inComment = false
-      continue
-    }
-    if (r.raw.trimStart().startsWith('<!--')) {
-      inComment = !r.raw.includes('-->')
-      continue
-    }
-    if (r.raw.startsWith('## ')) {
-      inUnreleased = r.raw.slice(3).trim() === 'Unreleased'
+    const stripped = stripHtmlComments(r.raw, inComment)
+    inComment = stripped.inComment
+    const line = stripped.kept
+    const h2 = atxHeading(line, 2)
+    if (h2 !== null) {
+      inUnreleased = h2 === 'Unreleased'
+      hasUnreleased ||= inUnreleased
       current = null
       continue
     }
     if (!inUnreleased) continue
-    if (r.raw.startsWith('### ')) {
-      current = { heading: r.raw.slice(4).trim(), lineNo: r.lineNo, words: 0 }
+    const h3 = atxHeading(line, 3)
+    if (h3 !== null) {
+      current = { heading: h3, lineNo: r.lineNo, words: 0 }
       entries.push(current)
     }
-    if (current) current.words += r.words
+    if (current) current.words += countWords(line.replace(CODE_SPAN_RE, ''))
   }
-  return entries.filter((e) => e.words > cap)
+  return { hasUnreleased, over: entries.filter((e) => e.words > cap) }
 }
 
 /**
@@ -638,7 +671,8 @@ function selfTest() {
     '#### Old long entry',
     words(100),
   ].join('\n')
-  const over = findEntriesOverCap(changelog, 15)
+  const { hasUnreleased, over } = measureChangelog(changelog, 15)
+  expect('entry cap: the Unreleased section is found', hasUnreleased)
   expect(
     `entry cap: only "Long entry" (22 words, heading included) is over, got ${JSON.stringify(over)}`,
     over.length === 1 &&
@@ -648,7 +682,26 @@ function selfTest() {
   )
   expect(
     'entry cap: an entry exactly at the cap passes',
-    findEntriesOverCap(changelog, 22).length === 0,
+    measureChangelog(changelog, 22).over.length === 0,
+  )
+  const overOf = (lines) => measureChangelog(lines.join('\n'), 15).over
+  expect(
+    'entry cap: prose after a one-line HTML comment is counted',
+    overOf(['## Unreleased', '### A', `<!-- note --> ${words(20)}`]).length === 1,
+  )
+  expect(
+    'entry cap: prose after a comment closes is counted',
+    overOf(['## Unreleased', '### A', '<!--', `x --> ${words(20)}`]).length === 1,
+  )
+  expect(
+    'entry cap: an indented heading with closing hashes opens an entry',
+    overOf(['  ## Unreleased ##', '### A', words(20), '   ### B ###', words(5)])
+      .map((e) => e.heading)
+      .join() === 'A',
+  )
+  expect(
+    'entry cap: a file without ## Unreleased reports it',
+    !measureChangelog(['## [Unreleased]', '### A', words(20)].join('\n'), 15).hasUnreleased,
   )
 
   expect(
@@ -660,6 +713,20 @@ function selfTest() {
     budgetShapeError({ historyMarkers: null, maxEntryWords: 5, words: 9 }) !== null,
   )
   expect('shape: a null entry is refused', budgetShapeError(null) !== null)
+  expect(
+    'shape: a negative or fractional number is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: -1, words: 9 }) !== null &&
+      budgetShapeError({ historyMarkers: null, maxEntryWords: 2.5 }) !== null,
+  )
+  expect(
+    'shape: an extra key is refused',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9, words: 9, maxEntryWords: 5 }) !==
+      null,
+  )
+  expect(
+    'shape: a ratchet entry is valid',
+    budgetShapeError({ historyMarkers: 0, maxSectionWords: 9, words: 9 }) === null,
+  )
   expect(
     'shape: a ratchet entry missing words is refused',
     budgetShapeError({ historyMarkers: 0, maxSectionWords: 9 }) !== null,
@@ -745,6 +812,26 @@ function selfTest() {
   )
   expect('full write: a shrunk file is lowered to its actuals', full.files['b.md'].words === 20)
 
+  const parsed = parseArgs(['--write-baseline', '--only=a.md', '--only', 'b.md', '--allow-raise'])
+  expect(
+    `args: both --only spellings are read, got ${JSON.stringify(parsed.onlyFiles)}`,
+    parsed.onlyFiles?.join() === 'a.md,b.md',
+  )
+  expect('args: an unknown flag is refused', parseArgs(['--write-baseline', '--onl=a.md']).error)
+  expect(
+    'args: --write-baseline refuses a positional file',
+    parseArgs(['--write-baseline', '--only', 'a.md', 'b.md']).error,
+  )
+  expect('args: --only needs --write-baseline', parseArgs(['--only', 'a.md']).error)
+  expect(
+    'args: --only refuses --margin',
+    parseArgs(['--write-baseline', '--only', 'a.md', '--margin=3']).error,
+  )
+  expect(
+    'args: --report still takes files',
+    parseArgs(['--report', 'a.md']).namedFiles?.[0] === 'a.md',
+  )
+
   if (failures.length > 0) {
     console.error('check-docs self-test FAILED:')
     console.error(failures.join('\n'))
@@ -755,48 +842,79 @@ function selfTest() {
 
 // CLI flags: --self-test, --write-baseline, --report and --sections short-circuit the checks.
 
-const argv = process.argv.slice(2)
-const onlyFiles = []
-const namedFiles = []
-for (let i = 0; i < argv.length; i++) {
-  if (argv[i] === '--only') {
-    const value = argv[i + 1]
-    if (value === undefined || value.startsWith('--')) {
-      console.error('❌ --only takes a file path, e.g. --only docs/concurrency.md')
-      process.exit(1)
+const KNOWN_FLAGS = new Set([
+  '--self-test',
+  '--write-baseline',
+  '--report',
+  '--sections',
+  '--list-long-items',
+  '--allow-raise',
+])
+
+/**
+ * Parses the command line, or returns `{ error }`. Every flag is checked, so a
+ * mistyped one can never fall through to a full `--write-baseline`.
+ */
+function parseArgs(argv) {
+  const flags = new Set()
+  const onlyFiles = []
+  const namedFiles = []
+  let marginArg = null
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--only' || a.startsWith('--only=')) {
+      const value = a === '--only' ? argv[++i] : a.slice('--only='.length)
+      if (!value || value.startsWith('--')) {
+        return { error: '--only takes a file path, e.g. --only docs/concurrency.md' }
+      }
+      onlyFiles.push(value)
+    } else if (a.startsWith('--margin=')) {
+      marginArg = a.slice('--margin='.length)
+    } else if (KNOWN_FLAGS.has(a)) {
+      flags.add(a)
+    } else if (a.startsWith('--')) {
+      return { error: `unknown flag ${a}` }
+    } else {
+      namedFiles.push(a)
     }
-    onlyFiles.push(value)
-    i++
-  } else if (!argv[i].startsWith('--')) {
-    namedFiles.push(argv[i])
   }
+  const margin = marginArg === null ? 0 : Number(marginArg)
+  if (flags.has('--write-baseline') && (flags.has('--report') || flags.has('--sections'))) {
+    return { error: '--write-baseline cannot be combined with --report or --sections' }
+  }
+  if (flags.has('--write-baseline') && namedFiles.length > 0) {
+    return {
+      error: `--write-baseline names files with --only, not as arguments: ${namedFiles.join(' ')}`,
+    }
+  }
+  if (onlyFiles.length > 0 && (!flags.has('--write-baseline') || marginArg !== null)) {
+    return {
+      error: '--only goes with --write-baseline, and sets its own margin instead of --margin',
+    }
+  }
+  if (marginArg === '' || !Number.isFinite(margin) || margin < 0) {
+    return { error: '--margin must be a non-negative percentage, e.g. --margin=3' }
+  }
+  return { flags, onlyFiles, namedFiles, margin }
 }
-const flagSelfTest = argv.includes('--self-test')
-const flagWriteBaseline = argv.includes('--write-baseline')
-const flagReport = argv.includes('--report')
-const flagSections = argv.includes('--sections')
-const flagListLongItems = argv.includes('--list-long-items')
-const flagAllowRaise = argv.includes('--allow-raise')
-const marginArg = argv.find((a) => a.startsWith('--margin='))
-const margin = marginArg ? Number(marginArg.slice('--margin='.length)) : 0
+
+const args = parseArgs(process.argv.slice(2))
+if (args.error) {
+  console.error(`❌ ${args.error}`)
+  process.exit(1)
+}
+const { onlyFiles, namedFiles, margin } = args
+const flagSelfTest = args.flags.has('--self-test')
+const flagWriteBaseline = args.flags.has('--write-baseline')
+const flagReport = args.flags.has('--report')
+const flagSections = args.flags.has('--sections')
+const flagListLongItems = args.flags.has('--list-long-items')
+const flagAllowRaise = args.flags.has('--allow-raise')
 
 if (flagSelfTest) {
   selfTest()
   process.exit(0)
 }
-if (flagWriteBaseline && (flagReport || flagSections)) {
-  console.error('❌ --write-baseline cannot be combined with --report or --sections')
-  process.exit(1)
-}
-if (onlyFiles.length > 0 && (!flagWriteBaseline || marginArg)) {
-  console.error('❌ --only goes with --write-baseline, and sets its own margin instead of --margin')
-  process.exit(1)
-}
-if (!Number.isFinite(margin) || margin < 0) {
-  console.error('❌ --margin must be a non-negative percentage, e.g. --margin=3')
-  process.exit(1)
-}
-
 if (flagWriteBaseline) {
   writeBaseline(margin, flagAllowRaise, onlyFiles.length > 0 ? onlyFiles : null)
   process.exit(0)
@@ -915,7 +1033,17 @@ for (const f of inScopeFiles) {
 
   if (isChangelogBudget(budget)) {
     const content = readFileSync(join(repoRoot, f), 'utf8')
-    for (const entry of findEntriesOverCap(content, budget.maxEntryWords)) {
+    const changelog = measureChangelog(content, budget.maxEntryWords)
+    if (!changelog.hasUnreleased) {
+      problems.push({
+        kind: 'changelog has no ## Unreleased section',
+        file: f,
+        line: null,
+        message:
+          'maxEntryWords caps the ### entries under `## Unreleased`; without that heading nothing is checked',
+      })
+    }
+    for (const entry of changelog.over) {
       problems.push({
         kind: 'changelog entry over word cap',
         file: f,
