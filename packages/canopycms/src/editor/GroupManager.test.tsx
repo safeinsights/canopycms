@@ -7,11 +7,13 @@ import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 import { mockConsole } from '../test-utils/console-spy'
 
-// Confirms by default, as the user clicking the dialog's red button; a test overrides it to cancel.
+// Confirms by default, as the user clicking the dialog's red button, then closes as Mantine does;
+// a test overrides it to cancel.
 vi.mock('@mantine/modals', () => ({
   modals: {
-    openConfirmModal: vi.fn((options: { onConfirm?: () => void }) => {
+    openConfirmModal: vi.fn((options: { onConfirm?: () => void; onClose?: () => void }) => {
       options.onConfirm?.()
+      options.onClose?.()
       return 'mock-modal-id'
     }),
   },
