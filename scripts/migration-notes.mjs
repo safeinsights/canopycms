@@ -345,12 +345,10 @@ function parseRecord(file, slug, contents, problems) {
       // Spliced into one document, a definition would resolve every entry's `[label]`.
       fail(lineOf(n), `reference definition "[${n.label}]:" would be global; write the link inline`)
     }
-    if (
-      n.type === 'html' &&
-      !n.value.trimStart().startsWith('<!--') &&
-      /\b(?:href|src)\s*=/i.test(n.value)
-    ) {
-      fail(lineOf(n), 'raw HTML with href= or src= escapes link rebasing; use markdown links')
+    // Any URL attribute in raw HTML escapes link rebasing, and there are many
+    // (srcset, poster, …), so a body holds no raw HTML beyond comments.
+    if (n.type === 'html' && n.value.replace(/<!--[\s\S]*?(?:-->|$)/g, '').trim() !== '') {
+      fail(lineOf(n), 'raw HTML in a changeset body escapes link rebasing; use markdown')
     }
   })
   const headings = headingsOf(tree)
@@ -1056,17 +1054,19 @@ function analyze(root, { fallbackLabel, ship = null }) {
   for (const e of entries) e.parts.sort((a, b) => labelKey(a) - labelKey(b) || cmp(a.slug, b.slug))
   const shippable = items.flatMap((r) => [r, ...(r.parts ?? [])])
 
+  const mTree = git.usable && git.M ? git.tree(git.M) : new Map()
   if (!git.shallow && !git.notRepo) {
     const deleted = deletedChangesets(root)
     for (const r of records) {
-      if (deleted.has(`${r.slug}.md`)) {
+      // A name M carries is judged against M below: a deletion in its history
+      // is a revert that came back, and refusing it would leave no way out.
+      if (deleted.has(`${r.slug}.md`) && !mTree.has(`${r.slug}.md`)) {
         fail(r, `the name "${r.slug}" was used before (history deletes ${r.file}); pick a new one`)
       }
     }
   }
   if (git.usable) {
     const heads = headBlobs(root, records)
-    const mTree = git.M ? git.tree(git.M) : new Map()
     for (const r of records) {
       const name = `${r.slug}.md`
       if (mTree.has(name)) {
@@ -1435,7 +1435,7 @@ function selfTest() {
   const tmp = mkdtempSync(join(tmpdir(), 'migration-notes-selftest-'))
   try {
     // A repo with no tags for the per-file rules; each case replaces .changeset/.
-    const vrepo = join(tmp, 'v')
+    const vrepo = join(tmp, 'revert')
     mkdirSync(vrepo)
     g(vrepo, 'init', '-q')
     write(vrepo, 'README.md', '# Readme\n')
@@ -1736,12 +1736,22 @@ function selfTest() {
     refused(
       'links: raw HTML with href=',
       { 'an-entry.md': entry({ body: [WHAT, ADOPT, 'See <a href="../README.md">it</a>.'] }) },
-      /raw HTML with href= or src=/,
+      /raw HTML in a changeset body/,
     )
     refused(
       'links: raw HTML with src=',
       { 'an-entry.md': entry({ body: [WHAT, ADOPT, '<img src="../logo.png">'] }) },
-      /raw HTML with href= or src=/,
+      /raw HTML in a changeset body/,
+    )
+    refused(
+      'links: raw HTML with srcset=',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, '<img srcset="../a.png 2x">'] }) },
+      /raw HTML in a changeset body/,
+    )
+    refused(
+      'links: raw HTML after a comment in one node',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, '<!-- note --> <a href="../b.md">b</a>'] }) },
+      /raw HTML in a changeset body/,
     )
     clean('links: an HTML comment mentioning href= is not a link', {
       'an-entry.md': entry({ body: [WHAT, ADOPT, '<!-- no href= here -->'] }),
@@ -2220,6 +2230,23 @@ function selfTest() {
       expect(
         'git: a renamed file keeps its new name',
         !r.problems.some((p) => p.file === '.changeset/moved.md'),
+      )
+    }
+    {
+      const vrepo = join(tmp, 'v')
+      mkdirSync(vrepo)
+      g(vrepo, 'init', '-q')
+      write(vrepo, CHANGELOG, BASE)
+      write(vrepo, '.changeset/back.md', entry({ title: 'Back' }))
+      g(vrepo, 'add', '-A')
+      g(vrepo, 'commit', '-qm', 'shipped')
+      g(vrepo, 'tag', 'v0.0.1-int.1')
+      g(vrepo, 'revert', '--no-edit', 'HEAD')
+      g(vrepo, 'revert', '--no-edit', 'HEAD')
+      const r = check(vrepo)
+      expect(
+        'git: a shipped changeset reverted and restored passes',
+        !r.problems.some((p) => p.file === '.changeset/back.md' && p.severity !== 'warn'),
       )
     }
     {

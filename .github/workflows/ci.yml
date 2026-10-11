@@ -408,8 +408,9 @@ jobs:
           if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$changed"; then
             added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
             # Not changesets, by @changesets/read's rule: README in any case, the
-            # agent files by exact case.
-            real=$(printf '%s\n' "$added" | grep -viE '^\.changeset/readme\.md$' |
+            # agent files by exact case, dotfiles, and anything below the top level.
+            real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
+              grep -viE '^\.changeset/readme\.md$' |
               grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)
             if [ "$real" -eq 0 ]; then
               echo "::error::This PR changes what the packages ship (lockfile, workspace overrides, tsconfig.base.json or add-js-extensions) but adds no changeset. Add one, or 'pnpm exec changeset add --empty' if adopters see no difference."
