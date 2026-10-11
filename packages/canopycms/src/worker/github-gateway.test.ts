@@ -105,7 +105,8 @@ beforeEach(async () => {
   await fs.mkdir(seedPath)
   seed = await initTestRepo(seedPath)
   await seed.raw(['checkout', '-q', '-b', 'main'])
-  await git('init', '-q', '--bare', githubPath)
+  // GitHub's default branch is `main`, whatever git's own default is.
+  await git('init', '-q', '--bare', '--initial-branch', 'main', githubPath)
   await git('init', '-q', '--bare', remoteGitPath)
 })
 
