@@ -303,7 +303,8 @@ describe('assertSharedRepoConfig: refuses what can run a command or redirect a t
         `which can make the worker run a command or send its GitHub credential elsewhere ` +
         `(url.https://attacker.example/x.insteadof in ${file}; http.extraheader in ${file}). ` +
         `Find out how they got there, then remove them, as the worker's user and never as root: ` +
-        `on the AWS worker instance, run each command through /opt/canopy-worker/canopy-inspect: ` +
+        `on the AWS worker instance, run each command below on its own as ` +
+        `/opt/canopy-worker/canopy-inspect <command>; '; then ' separates them: ` +
         `git config --file '${file}' --unset-all 'url.https://attacker.example/x.insteadof'; then ` +
         `git config --file '${file}' --unset-all 'http.extraheader'`,
     )
@@ -364,7 +365,8 @@ describe('assertSharedRepoConfig: a repository that is really somewhere else', (
       `Refusing to run git in ${clone}: it has a submodule with a repository in it at "sub", ` +
         `and git runs inside one under its own config. CanopyCMS never populates a submodule. ` +
         `Find out how it got there, then, as the worker's user and never as root: on the AWS ` +
-        `worker instance, run each command through /opt/canopy-worker/canopy-inspect: ` +
+        `worker instance, run each command below on its own as ` +
+        `/opt/canopy-worker/canopy-inspect <command>; '; then ' separates them: ` +
         `rm -rf '${clone}/sub/.git'`,
     )
     expect(await sentinelLines()).toEqual([])

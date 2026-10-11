@@ -1,5 +1,6 @@
 /**
- * The worker instance's units under the process split, as user-data writes them: which layout a
+ * The worker instance's units under the process split, as user data installs them from the
+ * instance files: which layout a
  * bundle gets, what each process's environment holds, the units and their checked-in copies,
  * the host settings the split rests on, and the `canopy-inspect` sandbox.
  */
@@ -338,7 +339,7 @@ describe('the instance files', () => {
     ])
   })
 
-  it('leave user data well inside the 16 KiB EC2 allows, with every prop at its longest', () => {
+  it('leave user data with typical long names well inside the 16 KiB EC2 allows', () => {
     const arn = (name: string) =>
       `arn:aws:secretsmanager:us-east-1:123456789012:secret:${name.padEnd(80, 'x')}`
     const t = synth({
@@ -354,9 +355,9 @@ describe('the instance files', () => {
       clerkSecretKeySecretJsonField: 'f'.repeat(60),
       protectedBranches: Array.from({ length: 20 }, (_, i) => `release-${i}/*`),
       workerCapacity: { type: 'spot' },
-      workerLogGroupName: `/canopycms/${'g'.repeat(200)}`,
     })
-    // Each Ref as a long resolved value: bucket names (63), ids, the log group.
+    // Each Ref (the log group included) as 100 bytes; the synth-time bound is addUserData's,
+    // tested below.
     const bytes = Buffer.byteLength(
       userDataLines(t)
         .join('\n')

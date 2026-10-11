@@ -95,7 +95,7 @@ const ENV_HEREDOC_DELIMITER = 'ENVEOF'
 type EnvReader = 'worker' | 'gateway' | 'both'
 
 /**
- * Guard every value interpolated into the worker's `.env` file.
+ * Guard every value interpolated into an env file (`.env` or `gateway.env`).
  *
  * This is robustness, not a security boundary: the heredoc delimiter is
  * quoted, so the shell performs no expansion on the body, and these values
@@ -114,7 +114,7 @@ function assertEnvSafe(name: string, value: string): string {
   if (/[\r\n]/.test(value)) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain a newline (got ${JSON.stringify(value)}). ` +
-        `It is written into the worker's .env file, where a newline injects an arbitrary ` +
+        `It is written into an env file (.env or gateway.env), where a newline injects an arbitrary ` +
         `extra environment line.`,
     )
   }
@@ -127,16 +127,16 @@ function assertEnvSafe(name: string, value: string): string {
   if (value.startsWith('"') || value.startsWith("'")) {
     throw new Error(
       `CanopyCmsService: ${name} must not start with a quote character ` +
-        `(got ${JSON.stringify(value)}). It is written into the worker's .env file, which ` +
+        `(got ${JSON.stringify(value)}). It is written into an env file (.env or gateway.env), which ` +
         `systemd reads as EnvironmentFile -- a leading quote opens a quoted value that ` +
         `consumes every following line until a matching quote, silently emptying the rest ` +
-        `of the worker's environment.`,
+        `of the environment.`,
     )
   }
   if (value.includes(ENV_HEREDOC_DELIMITER)) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain ${JSON.stringify(ENV_HEREDOC_DELIMITER)} ` +
-        `(got ${JSON.stringify(value)}). It is written into the worker's .env file with a ` +
+        `(got ${JSON.stringify(value)}). It is written into an env file (.env or gateway.env) with a ` +
         `<< '${ENV_HEREDOC_DELIMITER}' heredoc, which that value would terminate early.`,
     )
   }
@@ -149,7 +149,7 @@ function assertEnvSafe(name: string, value: string): string {
   if (value.includes('\\')) {
     throw new Error(
       `CanopyCmsService: ${name} must not contain a backslash (got ${JSON.stringify(value)}). ` +
-        `It is written into the worker's .env file, which systemd reads as EnvironmentFile -- ` +
+        `It is written into an env file (.env or gateway.env), which systemd reads as EnvironmentFile -- ` +
         `there a backslash escapes the next character, and a trailing one continues the value ` +
         `onto the following line, consuming the next variable entirely.`,
     )
@@ -161,7 +161,7 @@ function assertEnvSafe(name: string, value: string): string {
   if (value !== value.trim()) {
     throw new Error(
       `CanopyCmsService: ${name} must not start or end with whitespace ` +
-        `(got ${JSON.stringify(value)}). systemd strips it when reading the worker's .env, so ` +
+        `(got ${JSON.stringify(value)}). systemd strips it when reading the env file, so ` +
         `the value the worker sees would differ from the one configured here.`,
     )
   }
@@ -217,10 +217,11 @@ interface TokenBound {
 }
 
 /**
- * Add `lines` to `userData`, refusing at synth any configuration whose user data could exceed
- * what EC2 accepts: EC2 would refuse the launch template, or every launch, and the group would
- * never get a worker. Each token counts as its `bounds` entry's bytes, or
- * {@link USER_DATA_TOKEN_MAX_BYTES}.
+ * Add `lines` to `userData`, refusing at synth a configuration whose user data could exceed what
+ * EC2 accepts (EC2 would refuse the launch template, or every launch, and the group would never
+ * get a worker). Each token counts as its `bounds` entry's bytes, or
+ * {@link USER_DATA_TOKEN_MAX_BYTES}; an env value from a token longer than
+ * {@link ENV_TOKEN_MAX_BYTES} is not caught.
  */
 function addUserData(userData: ec2.UserData, bounds: TokenBound[], ...lines: string[]): void {
   userData.addCommands(...lines)
@@ -338,13 +339,13 @@ function assertGatewayBranchName(propName: string, value: string): string {
 const MAX_PROTECTED_BRANCHES = 1024
 
 /**
- * Refuse `protectedBranches` the worker would refuse at boot, which would crash-loop it
+ * Refuse `protectedBranches` the GitHub gateway would refuse at boot, which would crash-loop it
  * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): more than
  * {@link MAX_PROTECTED_BRANCHES} entries, and any entry that is not a branch name in which `*` is
  * a wildcard, held to git's rules and the gateway's (`assertGatewayBranchName`). No entry may
  * start with the reserved settings prefix: a glob there matches nothing, and a name there would
  * stop the deployment's settings reaching GitHub, since a settings branch is pushed plainly every
- * sync. A comma separates entries in the worker's `.env`, so none may hold one.
+ * sync. A comma separates entries in the env file, so none may hold one.
  */
 function assertValidProtectedBranches(entries: readonly string[]): string[] {
   if (entries.length > MAX_PROTECTED_BRANCHES) {
@@ -569,7 +570,7 @@ function assertNotInlinePrivateKey(propName: string, value: string | undefined):
       propName === 'githubAppPrivateKeySecretArn' ? 'a secret ARN' : 'an identifier'
     }. ` +
       `The GitHub App private key can ONLY be supplied as a Secrets Manager ARN -- it is ` +
-      `multi-line, and every value this construct configures goes into the worker's .env file, ` +
+      `multi-line, and every value this construct configures goes into an env file (.env or gateway.env), ` +
       `which systemd reads as EnvironmentFile where a newline starts a new variable. Store the ` +
       `PEM in Secrets Manager and pass that secret's full ARN as githubAppPrivateKeySecretArn ` +
       `(optionally with githubAppPrivateKeySecretJsonField if it lives inside a JSON document).`,
@@ -1019,8 +1020,10 @@ export interface CanopyCmsServiceProps {
    * name or a glob in which `*` matches any run of characters, `/` included (`release/*`),
    * matched case-sensitively, as GitHub names refs. No entry may start with `canopycms-settings-`:
    * a glob never matches a settings branch, and protecting one by name would stop the deployment's
-   * settings reaching GitHub. At most 1024 entries. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
-   * comma-separated, and validated at synth.
+   * settings reaching GitHub. At most 1024 entries, and fewer when long: synth refuses any set
+   * that could take the worker's user data past EC2's 16 KiB. Stamped, comma-separated, into the
+   * GitHub gateway's `CANOPYCMS_PROTECTED_BRANCHES` (the worker's, for a bundle older than the
+   * split), and validated at synth.
    */
   protectedBranches?: string[]
 
@@ -1843,7 +1846,7 @@ export class CanopyCmsService extends Construct {
     // gets only what it needs to find the repository and the workspace; every
     // secret, every name of one (ARNs, JSON fields, the App's ids), what
     // reaches AWS, and what only the gateway enforces go to gateway.env, which
-    // the worker cannot read. The single-process unit's .env gets all of them.
+    // the worker cannot read. The single-process unit reads both files.
     const envEntries: Array<[string, string, EnvReader]> = [
       ['CANOPYCMS_WORKSPACE_ROOT', EFS_MOUNT_PATH, 'worker'],
       ['CANOPYCMS_GITHUB_OWNER', props.githubOwner, 'both'],
@@ -2067,8 +2070,8 @@ export class CanopyCmsService extends Construct {
         "# 22 (EOL 2027-04-30) matches .nvmrc, CI, and the transform Lambda's",
         '# NODEJS_22_X, so one runtime is tested everywhere.',
         '#',
-        '# ExecStart uses the NAMESPACED /usr/bin/node-22 (see the systemd unit',
-        '# below), not the bare `node`: AL2023 installs versioned binaries and',
+        '# ExecStart uses the NAMESPACED /usr/bin/node-22 (see workerUnit in',
+        '# worker-units.ts), not the bare `node`: AL2023 installs versioned binaries and',
         '# points `/usr/bin/node` at one of them through `alternatives`, whose',
         '# selection AWS documents as able to change at any time.',
         "retry 'dnf install nodejs22' dnf install -y nodejs22",
@@ -2091,7 +2094,7 @@ export class CanopyCmsService extends Construct {
         '# above.',
         `retry 'worker bundle download' aws s3 cp s3://${workerBundle.bucketName}/${workerBundle.objectKey} ${WORKER_BUNDLE_DOWNLOAD_PATH}`,
         `echo '${workerBundle.sha256}  ${WORKER_BUNDLE_DOWNLOAD_PATH}' | sha256sum -c -`,
-        '# Root-owned, and read-only to the service (ProtectSystem=strict below).',
+        '# Root-owned, and read-only to the services (ProtectSystem=strict in worker-units.ts).',
         `install -D -m 0644 ${WORKER_BUNDLE_DOWNLOAD_PATH} /opt/canopy-worker/index.js`,
         '# The worker bundle is ESM (esbuild --format=esm). Without this marker a',
         '# .js file is CommonJS by default and the import statement fails.',
@@ -2139,8 +2142,8 @@ export class CanopyCmsService extends Construct {
         '  # by now, so the file is applied here as well as at every boot.',
         '  # fb_tunnels_only_for_init_net keeps fallback tunnel devices out of',
         "  # the worker's network namespace, which must hold only lo. -e skips a",
-        "  # key this kernel lacks: the gateway's and the worker's boot checks",
-        '  # refuse to start if a setting they rest on did not apply.',
+        '  # key this kernel lacks: the gateway refuses to start under a piped',
+        '  # core_pattern, and the worker with any interface but lo.',
         '  mkdir -p /etc/sysctl.d',
         "  cat > /etc/sysctl.d/99-canopy.conf << 'SYSCTLEOF'",
         'kernel.core_pattern = core',
@@ -2148,7 +2151,8 @@ export class CanopyCmsService extends Construct {
         'net.core.fb_tunnels_only_for_init_net = 1',
         'SYSCTLEOF',
         '  sysctl -q -e -p /etc/sysctl.d/99-canopy.conf',
-        '  # PID 1 otherwise gives every service an unlimited core limit, so',
+        '  # PID 1 otherwise gives every service an unlimited core limit',
+        '  # (DefaultLimitCORE=, systemd-system.conf(5)), so',
         '  # core_pattern=core would leave core files from any crashing daemon.',
         '  mkdir -p /etc/systemd/system.conf.d',
         "  printf '[Manager]\\nDefaultLimitCORE=0\\n' > /etc/systemd/system.conf.d/canopy.conf",
@@ -2164,15 +2168,13 @@ export class CanopyCmsService extends Construct {
           (unit) => `  install -m 0644 ${INSTANCE_FILES_DIR}/${unit} /etc/systemd/system/${unit}`,
         ),
         '',
-        '  # The gateway log, root-owned for the reason the worker log is (see the',
-        '  # units), and readable by root alone.',
+        '  # The gateway log, root-owned (LOG_RULE, worker-units.ts), and readable',
+        '  # by root alone.',
         `  install -d -o root -g root -m 0755 ${GATEWAY_LOG_DIR}`,
         `  install -o root -g root -m 0640 /dev/null ${GATEWAY_LOG}`,
         '',
-        '  # canopy-inspect: the one safe way for an operator to look at EFS (run',
-        '  # it as root). It runs each command as the worker does, inside the',
-        "  # worker unit's sandbox; a root or unsandboxed shell on EFS can be made",
-        '  # to run what the CMS Lambda wrote there.',
+        '  # canopy-inspect, for an operator on EFS: see canopyInspectScript',
+        '  # (worker-units.ts).',
         `  install -m 0755 ${INSTANCE_FILES_DIR}/canopy-inspect ${CANOPY_INSPECT}`,
         `  install -m 0755 ${INSTANCE_FILES_DIR}/inspect-checks ${INSPECT_CHECKS}`,
         `  install -m 0644 ${INSTANCE_FILES_DIR}/inspect.rc ${INSPECT_RC}`,
@@ -2181,9 +2183,8 @@ export class CanopyCmsService extends Construct {
         `  install -m 0644 ${INSTANCE_FILES_DIR}/canopy-worker-single-process.service /etc/systemd/system/canopy-worker.service`,
         'fi',
         '',
-        '# The worker log, root-owned (see the unit), and created BEFORE the first',
-        '# systemctl start: without the directory the append: open fails with',
-        '# 209/STDOUT and Restart=always crash-loops forever. 0644, so it stays',
+        '# The worker log, root-owned and created before the first start (LOG_RULE,',
+        '# worker-units.ts). 0644, so it stays',
         '# readable without sudo.',
         `install -d -o root -g root -m 0755 ${WORKER_LOG_DIR}`,
         `install -o root -g root -m 0644 /dev/null ${WORKER_LOG}`,

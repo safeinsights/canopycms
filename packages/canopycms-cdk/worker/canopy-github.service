@@ -3,12 +3,12 @@ Description=CanopyCMS GitHub gateway
 After=network.target canopy-github.socket
 Requires=canopy-github.socket
 # Mounted before this unit sets up its namespace, so the mount is what
-# InaccessiblePaths= hides, and a later mount cannot propagate over it.
+# InaccessiblePaths= hides.
 RequiresMountsFor=/mnt/efs
 # A boot or prepare() that fails holds its cause for the worker for 60s,
 # then exits 1. Restarting it is how a transient cause recovers, so
 # systemd never gives up on it. systemd 252 has no growing RestartSec
-# (RestartSteps= came in 254); the hold paces it to about once a minute.
+# (no RestartSteps=); the hold paces it to one attempt every 72s or so.
 StartLimitIntervalSec=0
 
 [Service]

@@ -2751,13 +2751,11 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
   })
 
   it('keeps the worker log root-owned: no LogsDirectory=, no chown of it to the worker user', () => {
-    // systemd opens append: targets as root, following symlinks, before it
-    // drops to User=; a worker owning the directory could swap worker.log for
-    // a symlink and have its output appended to any file on the host.
+    // See LOG_RULE in worker-units.ts.
     const all = workerUserDataBlobs(synth())
-    // As a directive at the start of a unit line (the blob is JSON, so `\n` is
-    // literal); the unit's comment names it.
-    expect(all).not.toMatch(/\\nLogsDirectory=/)
+    for (const unit of shippedInstanceFiles().values()) {
+      expect(unit.filter((line) => line.startsWith('LogsDirectory'))).toEqual([])
+    }
     // User-data has no legitimate chown or chmod of the log path at all.
     expect(all).not.toMatch(/\\n\s*ch(own|mod)[^\\]*\/var\/log\/canopy-worker/)
     expect(all).toContain('install -d -o root -g root -m 0755 /var/log/canopy-worker')
@@ -2776,11 +2774,8 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     ]
     expect(blobs.length).toBeGreaterThan(0)
     for (const blob of blobs) {
-      // systemd opens StandardOutput=append: targets before the unit runs:
-      // if the directory is created after the first `systemctl start
-      // canopy-worker`, every fresh instance fails exec with 209/STDOUT and
-      // Restart=always crash-loops forever -- the worker silently down while
-      // the ASG sees a healthy box.
+      // See LOG_RULE in worker-units.ts: without the directory every start
+      // fails with 209/STDOUT.
       const dirIdx = blob.indexOf('install -d -o root -g root -m 0755 /var/log/canopy-worker')
       const fileIdx = blob.indexOf('/dev/null /var/log/canopy-worker/worker.log')
       const startIdx = blob.indexOf('systemctl start canopy-worker')

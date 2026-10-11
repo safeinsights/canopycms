@@ -9,7 +9,8 @@
  * the cause, so the worker records it as its `lastFatalError` where an operator reads it. Without
  * it the worker would see only an unreachable socket. The stand-in also serves the instance
  * operations, which need only the instance role, so a terminating instance whose gateway cannot
- * boot still completes its drain rather than waiting out the lifecycle heartbeat.
+ * boot still completes its lifecycle action after the worker drains, rather than waiting out the
+ * lifecycle heartbeat.
  */
 
 import {

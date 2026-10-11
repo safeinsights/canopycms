@@ -578,8 +578,7 @@ describe('the worker systemd unit is sandboxed', () => {
     }
   })
 
-  // systemd opens the append: log as root, following symlinks, before the
-  // sandbox applies; LogsDirectory= would chown its directory to the worker.
+  // See LOG_RULE in worker-units.ts.
   it('gives the worker no ownership of its log directory', () => {
     for (const unit of [lines(template), ...shippedWorkerUnits().map(([, u]) => u), checkedIn]) {
       expect(unit.filter((l) => l.startsWith('LogsDirectory'))).toEqual([])

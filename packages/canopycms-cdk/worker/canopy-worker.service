@@ -58,7 +58,9 @@ Environment=CANOPYCMS_GITHUB_GATEWAY_SOCKET=/run/canopy-github/gateway.sock
 # manager of an operator logged in as its user.
 # Then the cut: no network but lo, no route to the instance metadata
 # service, only unix sockets, the journal and /dev/shm hidden, and no
-# core dumps. The worker checks at boot that each layer took effect.
+# core dumps. The worker checks at boot that the network cut took
+# effect (only lo, no route to the metadata service), and ProtectProc
+# and ProtectHome.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=tmpfs

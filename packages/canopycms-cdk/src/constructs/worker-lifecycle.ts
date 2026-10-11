@@ -46,7 +46,7 @@ export const GITHUB_GATEWAY_SOCKET_PATH = '/run/canopy-github/gateway.sock'
 
 /**
  * The bundle's first lines carry `<prefix><n>`, `n` being {@link WORKER_CONTRACT_VERSION}
- * (worker/build.ts writes it). User-data reads it to choose the units it writes: a bundle without
+ * (worker/build.ts writes it). User data reads it to choose the units it installs: a bundle without
  * it needs at most contract 1.
  */
 export const WORKER_CONTRACT_BANNER_PREFIX = '// canopy-worker-contract: '

@@ -1,7 +1,9 @@
 /**
- * The worker instance's systemd units and the `canopy-inspect` sandbox, as the lines user-data
- * writes (cms-service.ts). The split's units are also checked in under worker/, byte for byte,
- * for a hand install; worker-units.test.ts holds the two together.
+ * The worker instance's systemd units and the `canopy-inspect` sandbox. `build:worker` packs them
+ * into `worker/dist/instance-files.sh` (`instanceFilesScript`), which user data (cms-service.ts)
+ * downloads, checks against its sha256 and installs from, by layout. The split's three units are
+ * also checked in under worker/, byte for byte, for a hand install; worker-units.test.ts holds the
+ * copies together.
  *
  * Two layouts, chosen at boot by the bundle's contract banner (WORKER_CONTRACT_BANNER_PREFIX):
  * - split, for a bundle at GATEWAY_SPLIT_CONTRACT or later: `canopy-worker.service` with no
@@ -212,7 +214,9 @@ export function workerUnit(layout: 'split' | 'single-process'): string[] {
       ? [
           '# Then the cut: no network but lo, no route to the instance metadata',
           '# service, only unix sockets, the journal and /dev/shm hidden, and no',
-          '# core dumps. The worker checks at boot that each layer took effect.',
+          '# core dumps. The worker checks at boot that the network cut took',
+          '# effect (only lo, no route to the metadata service), and ProtectProc',
+          '# and ProtectHome.',
           ...WORKER_SPLIT_SANDBOX,
         ]
       : [...WORKER_SANDBOX_DIRECTIVES, `ReadWritePaths=${EFS_MOUNT_PATH}`]),
@@ -230,12 +234,12 @@ export function gatewayUnit(): string[] {
     'After=network.target canopy-github.socket',
     'Requires=canopy-github.socket',
     '# Mounted before this unit sets up its namespace, so the mount is what',
-    '# InaccessiblePaths= hides, and a later mount cannot propagate over it.',
+    '# InaccessiblePaths= hides.',
     `RequiresMountsFor=${EFS_MOUNT_PATH}`,
     '# A boot or prepare() that fails holds its cause for the worker for 60s,',
     '# then exits 1. Restarting it is how a transient cause recovers, so',
     '# systemd never gives up on it. systemd 252 has no growing RestartSec',
-    '# (RestartSteps= came in 254); the hold paces it to about once a minute.',
+    '# (no RestartSteps=); the hold paces it to one attempt every 72s or so.',
     'StartLimitIntervalSec=0',
     '',
     '[Service]',
@@ -308,8 +312,9 @@ function shellWord(value: string): string {
 
 /**
  * `canopy-inspect`: run one command (or, with `--interactive`, a shell) as the worker's user,
- * inside exactly the worker's sandbox, so a hostile repository on EFS can do no more to an
- * operator than it can to the worker. Run as root. Nothing after `--` is composed by a shell
+ * inside exactly the worker's sandbox, so a hostile repository on EFS reaches only what the
+ * worker reaches. `--interactive` relays the sandbox's terminal raw, and the worker can reach its
+ * pty (.claude/future-tasks/canopy-inspect-interactive-shared-pty.md). Run as root. Nothing after `--` is composed by a shell
  * outside the sandbox: inspect-checks runs its assertions, then execs the command.
  */
 export function canopyInspectScript(): string[] {

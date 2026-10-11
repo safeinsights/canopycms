@@ -10,8 +10,9 @@
  *   supplying a different `refreshAuthCache`.
  * - `gateway`: the GitHub gateway process, which holds the credential and the Clerk key and
  *   serves the worker over a unix socket.
- * - `self-check`: the worker's boot self-checks alone, printed, exiting 1 if any fails. The
- *   `canopy-inspect` sandbox (cms-service.ts user-data) runs them before an operator's command.
+ * - `self-check`: the worker's boot self-checks alone, printed, exiting 1 if any fails.
+ *   `canopy-inspect`'s `inspect-checks` (src/constructs/worker-units.ts) runs them before an
+ *   operator's command.
  *
  * Only the real side effects live here; the boot sequences are in run.ts and gateway-run.ts so
  * tests can drive them.

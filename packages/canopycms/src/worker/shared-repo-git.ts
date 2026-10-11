@@ -319,8 +319,8 @@ export interface UnexpectedConfigKey {
  * /opt/canopy-worker/canopy-inspect) runs each one as the worker does, inside its sandbox.
  */
 const RUN_FIX_AS_THE_WORKER =
-  "as the worker's user and never as root: on the AWS worker instance, run each command " +
-  'through /opt/canopy-worker/canopy-inspect'
+  "as the worker's user and never as root: on the AWS worker instance, run each command below " +
+  "on its own as /opt/canopy-worker/canopy-inspect <command>; '; then ' separates them"
 
 /** Every refusal to run git in a shared repository, so a caller can tell one from git's own errors. */
 export class SharedRepoRefusalError extends Error {
