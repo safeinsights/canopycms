@@ -3,11 +3,12 @@ import { Readable } from 'node:stream'
 
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import { getErrorMessage } from '../utils/error'
-import { hasOnlyHead, scanBundleHeader } from './bundle-header'
+import { hasOnlyHead, scanBundleHeader, type BundleHeader } from './bundle-header'
 import { runGit, spawnGit, type GitProcess } from './git-process'
 import {
   MAX_FETCH_HAVE,
   type GitHubGateway,
+  type GitHubPushAnswer,
   type GitHubPushOutcome,
   type GitHubPushRequest,
 } from './github-gateway'
@@ -231,7 +232,16 @@ async function startBundle(
       const next = await chunks.next()
       if (next.done) break
       start = Buffer.concat([start, next.value as Buffer])
-      const header = scanBundleHeader(start)
+      let header: BundleHeader | null
+      try {
+        header = scanBundleHeader(start)
+      } catch (err) {
+        // git writes a header with no head before it refuses an empty bundle, so let its exit
+        // say which this is.
+        proc.stdout.resume()
+        if (await refusedAsEmpty(proc)) return 'empty'
+        throw err
+      }
       if (header === null) continue
       if (!hasOnlyHead(header, sha, branch)) {
         proc.kill('the branch moved')
@@ -253,17 +263,22 @@ async function startBundle(
       }
     }
   } catch (err) {
-    proc.kill('its header could not be read')
-    throw err
+    throw await causeOf(proc, err, 'its header could not be read')
   }
   // stdout ended before a whole header: git failed, or found nothing to bundle.
+  if (await refusedAsEmpty(proc)) return 'empty'
+  throw new Error(`git bundle create printed no header for ${branch}`)
+}
+
+/** Whether `bundle create` exited refusing an empty bundle; any other failure is thrown. */
+async function refusedAsEmpty(proc: GitProcess): Promise<boolean> {
   try {
     await proc.exited
+    return false
   } catch (err) {
-    if (/Refusing to create empty bundle/.test(getErrorMessage(err))) return 'empty'
+    if (/Refusing to create empty bundle/.test(getErrorMessage(err))) return true
     throw err
   }
-  throw new Error(`git bundle create printed no header for ${branch}`)
 }
 
 /**
@@ -276,19 +291,29 @@ async function sendBundle(
   bundle: StartedBundle,
   signal?: AbortSignal,
 ) {
+  let answer: GitHubPushAnswer
   try {
-    const answer = await ctx.github().push(request, bundle.stream, signal)
-    await bundle.process.exited
-    return answer
+    answer = await ctx.github().push(request, bundle.stream, signal)
   } catch (err) {
-    bundle.process.kill('the push failed')
-    const own = await bundle.process.exited.then(
-      () => null,
-      (gitErr: unknown) => gitErr,
-    )
-    if (own !== null && !/the push failed/.test(getErrorMessage(own))) throw own
-    throw err
+    throw await causeOf(bundle.process, err, 'the push failed')
   }
+  // The gateway answered after reading the whole bundle; how git exits after that changes nothing.
+  await bundle.process.exited.catch(() => undefined)
+  return answer
+}
+
+/**
+ * What to report for a failure while `proc` was writing a bundle: git's own failure when it had
+ * one first (an abort, an inactivity kill, an error of its own), of which a stream error is only
+ * the symptom, else `err`. Stops git either way, with `reason`.
+ */
+async function causeOf(proc: GitProcess, err: unknown, reason: string): Promise<unknown> {
+  proc.kill(reason)
+  const own = await proc.exited.then(
+    () => null,
+    (gitErr: unknown) => gitErr,
+  )
+  return own !== null && getErrorMessage(own) !== reason ? own : err
 }
 
 /**
