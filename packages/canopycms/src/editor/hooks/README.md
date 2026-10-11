@@ -7,12 +7,11 @@ automatic on-mount/on-branch-change fetch:
 
 - `useBranchesData` (`useBranchesData.ts`) -- GET /branches, key `canopy:branches`
 - `useEntriesData.ts` -- GET /:branch/schema + GET /:branch/entries (paginated),
-  key `canopy:entries:${branch}`. Fetch/key pieces only, no wrapper hook:
-  `useEntryManager` owns the sole `useSWR` call for these keys, because its
-  cache slots hold TAGGED values (`{ fetched, seq, branch }`) for its
-  out-of-order commit guard -- see the note at the bottom of that file
+  key `canopy:entries:${branch}`. No wrapper hook: `useEntryManager` owns the
+  sole `useSWR` call for these keys, because its cache slots hold TAGGED values
+  (`{ fetched, seq, branch }`) for its out-of-order commit guard (see that file)
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
-  `canopy:comments:${branch}`
+  `canopy:comments:${branch}`; seeds the user keys below from its `users`
 - `useUserMetadata` (`useUserMetadata.ts`) -- key `canopy:user:${userId}`, one per
   badge; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
 

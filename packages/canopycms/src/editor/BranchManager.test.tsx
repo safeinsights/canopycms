@@ -1062,4 +1062,65 @@ describe('BranchManager', () => {
     expect(await screen.findByText(/open PR.*"approved"/i)).toBeTruthy()
     expect(screen.queryByText(/Only Admin or branch creator can delete/)).toBeNull()
   })
+
+  describe('naming people', () => {
+    const branchThread = {
+      id: 'thread-1',
+      type: 'branch' as const,
+      comments: [
+        {
+          id: 'c1',
+          threadId: 'thread-1',
+          userId: 'commenter',
+          timestamp: '2024-01-01T00:00:00.000Z',
+          text: 'Looks good',
+        },
+      ],
+      resolved: false,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      authorId: 'commenter',
+    }
+    const commentProps = {
+      comments: [branchThread],
+      currentUserId: 'user1',
+      onAddComment: vi.fn(async () => {}),
+      onResolveThread: vi.fn(async () => {}),
+    }
+
+    it('names branch commenters through the comment resolver, without the owner lookup', async () => {
+      const onGetCommentUserMetadata = vi.fn(async (id: string) =>
+        id === 'commenter' ? { id, name: 'Casey Commenter', email: '' } : null,
+      )
+      renderBranchManager({
+        branches: baseBranches,
+        mode: 'prod',
+        user: creatorUser,
+        ...commentProps,
+        onGetCommentUserMetadata,
+      })
+
+      expect(await screen.findByText('Casey Commenter')).toBeDefined()
+      expect(onGetCommentUserMetadata).not.toHaveBeenCalledWith('user1')
+      // Owners stay ids for a user with no owner lookup.
+      expect(screen.getAllByText('user1').length).toBeGreaterThan(0)
+    })
+
+    it('names owners through the owner lookup only', async () => {
+      const onGetUserMetadata = vi.fn(async (id: string) =>
+        id === 'user1' ? { id, name: 'Olive Owner', email: 'olive@example.test' } : null,
+      )
+      const onGetCommentUserMetadata = vi.fn(async () => null)
+      renderBranchManager({
+        branches: baseBranches,
+        mode: 'prod',
+        user: adminUser,
+        ...commentProps,
+        onGetUserMetadata,
+        onGetCommentUserMetadata,
+      })
+
+      expect((await screen.findAllByText('Olive Owner')).length).toBeGreaterThan(0)
+      expect(onGetUserMetadata).not.toHaveBeenCalledWith('commenter')
+    })
+  })
 })

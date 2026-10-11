@@ -85,6 +85,16 @@ const stubApi = (groups: string[]) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
+    if (url.endsWith('/main/comments')) {
+      return Promise.resolve(
+        okJson({ threads: [], users: [{ id: 'author-1', name: 'Ada Lovelace' }] }),
+      )
+    }
+    if (url.endsWith('/users/batch')) {
+      return Promise.resolve(
+        okJson({ users: [{ id: 'author-1', name: 'Ada Lovelace', email: 'ada@example.test' }] }),
+      )
+    }
     if (url.endsWith('/api/canopycms/branches')) {
       return Promise.resolve(
         okJson({
@@ -402,15 +412,42 @@ describe('Undo is one-shot and ends with the draft', () => {
 })
 
 describe('comment author names', () => {
-  it.each([
-    ['an editor', [] as string[], false],
-    ['a reviewer', [RESERVED_GROUPS.REVIEWERS], true],
-  ])('are looked up for %s only where the lookup is allowed', async (_who, groups, resolves) => {
-    stubApi(groups)
+  type Resolver = (userId: string) => Promise<unknown>
+  const lastResolver = (): Resolver => {
+    const resolver = formProps.onGetUserMetadata.at(-1)
+    if (typeof resolver !== 'function') throw new Error('no resolver passed to the form')
+    return resolver as Resolver
+  }
+  const lookupRequests = (fetchMock: ReturnType<typeof stubApi>) =>
+    fetchMock.mock.calls.filter(([input]) => String(input).includes('/users/'))
+
+  it('names authors for an editor from the comments response, sending no lookup', async () => {
+    const fetchMock = stubApi([])
     renderEditor()
     await loaded()
-    await waitFor(() =>
-      expect(typeof formProps.onGetUserMetadata.at(-1) === 'function').toBe(resolves),
+
+    await waitFor(async () =>
+      expect(await lastResolver()('author-1')).toEqual({
+        id: 'author-1',
+        name: 'Ada Lovelace',
+        email: '',
+      }),
     )
+    expect(lookupRequests(fetchMock)).toHaveLength(0)
+  })
+
+  it('looks authors up for a reviewer, which brings the email', async () => {
+    const fetchMock = stubApi([RESERVED_GROUPS.REVIEWERS])
+    renderEditor()
+    await loaded()
+
+    await waitFor(async () =>
+      expect(await lastResolver()('author-1')).toEqual({
+        id: 'author-1',
+        name: 'Ada Lovelace',
+        email: 'ada@example.test',
+      }),
+    )
+    expect(lookupRequests(fetchMock).length).toBeGreaterThan(0)
   })
 })

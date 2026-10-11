@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
-import { SWRConfig } from 'swr'
-import { useUserMetadata } from './useUserMetadata'
+import { SWRConfig, useSWRConfig } from 'swr'
+import { seedUserProfiles, useUserMetadata } from './useUserMetadata'
 import type { UserSearchResult } from '../../auth/types'
 
 // A fresh SWR cache per hook, so one test's user never answers another's.
@@ -210,5 +210,42 @@ describe('useUserMetadata', () => {
     expect(result.current.userMetadata).toEqual(mockUser)
     expect(result.current.isLoading).toBe(false)
     expect(getUserMetadata).not.toHaveBeenCalled()
+  })
+
+  describe('seedUserProfiles', () => {
+    // Never settles, so whatever the badge shows came from the seed, not from the lookup.
+    const pendingLookup = () => new Promise<UserSearchResult | null>(() => {})
+
+    it('names a user from a seeded profile while the lookup is still pending', async () => {
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', pendingLookup) }),
+        { wrapper },
+      )
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr.mutate, [{ id: 'user-1', name: 'Alice Johnson' }])
+      })
+
+      expect(result.current.badge.userMetadata).toEqual({
+        id: 'user-1',
+        name: 'Alice Johnson',
+        email: '',
+      })
+      expect(result.current.badge.isLoading).toBe(false)
+    })
+
+    it('keeps the email of a user already looked up', async () => {
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', async () => mockUser) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(result.current.badge.userMetadata).toEqual(mockUser))
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr.mutate, [{ id: 'user-1', name: 'Alice J.' }])
+      })
+
+      expect(result.current.badge.userMetadata).toEqual({ ...mockUser, name: 'Alice J.' })
+    })
   })
 })

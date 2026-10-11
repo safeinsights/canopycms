@@ -1,5 +1,5 @@
-import useSWR from 'swr'
-import type { UserSearchResult } from '../../auth/types'
+import useSWR, { type ScopedMutator } from 'swr'
+import type { UserProfile, UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { isSystemUserId } from '../../system-users'
 import { SYSTEM_USER_LABEL } from '../user-display'
@@ -19,6 +19,27 @@ const systemUser = (userId: string): UserSearchResult => ({
   email: '',
 })
 
+const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
+
+/**
+ * Writes profiles a response already carried into each user's cache entry, so a badge shows the
+ * name before, or without, a lookup. A cached record keeps its email, which a profile never has.
+ */
+export async function seedUserProfiles(
+  mutate: ScopedMutator,
+  users: readonly UserProfile[],
+): Promise<void> {
+  await Promise.all(
+    users.map((user) =>
+      mutate<UserSearchResult | null>(
+        userMetadataKey(user.id),
+        (current) => ({ email: '', ...current, ...user }),
+        { revalidate: false },
+      ),
+    ),
+  )
+}
+
 /** One user's metadata under a per-user SWR key, so every badge for that user shares a fetch. */
 export function useUserMetadata(
   userId: CanopyUserId,
@@ -27,7 +48,7 @@ export function useUserMetadata(
 ): UseUserMetadataResult {
   const skip = cachedUser !== undefined || userId === 'anonymous' || isSystemUserId(userId)
   const { data, error, isLoading } = useSWR<UserSearchResult | null, unknown>(
-    skip ? null : `canopy:user:${userId}`,
+    skip ? null : userMetadataKey(userId),
     () => getUserMetadata(userId),
   )
 
@@ -38,7 +59,8 @@ export function useUserMetadata(
   }
   return {
     userMetadata: data ?? null,
-    isLoading,
+    // A seed can land while the lookup is in flight; SWR still reports that lookup as loading.
+    isLoading: isLoading && data === undefined,
     error:
       error === undefined
         ? null

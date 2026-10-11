@@ -264,8 +264,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // whose API routes all take the `admin` guard) render only for admins: each menu item, action
   // and drawer mount is gated here. Until whoami answers, the user counts as no admin.
   const userIsAdmin = isAdmin(userContext?.groups)
-  // Name lookups take the `privileged` guard (admins and reviewers); anyone else sees ids, and
-  // no lookup is sent that would only be refused.
+  // Name lookups take the `privileged` guard (admins and reviewers); no lookup is sent that would
+  // only be refused. Comment surfaces name their people for everyone (getCommentUserMetadata).
   const canResolveUserNames = isPrivileged(userContext?.groups)
 
   const {
@@ -438,6 +438,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // 5. Comment system (depends on branchNameState)
   const {
     comments,
+    getCommentUser,
     focusedFieldPath,
     highlightThreadId,
     commentsPanelOpen,
@@ -466,6 +467,8 @@ const EditorContent: React.FC<EditorProps> = ({
     handleGetUserMetadata,
     handleSearchExternalGroups,
   } = useGroupManager({ isOpen: groupManagerOpen })
+  // The comments response names its people, without email; a privileged lookup adds the email.
+  const getCommentUserMetadata = canResolveUserNames ? handleGetUserMetadata : getCommentUser
 
   const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } =
     usePermissionManager({
@@ -1354,9 +1357,7 @@ const EditorContent: React.FC<EditorProps> = ({
                             value={displayValue}
                             readOnly={contentReadOnly}
                             onRemoved={handleFieldRemoved}
-                            onGetUserMetadata={
-                              canResolveUserNames ? handleGetUserMetadata : undefined
-                            }
+                            onGetUserMetadata={getCommentUserMetadata}
                             // The one writer of drafts. Read-only content gets none, whatever a
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
@@ -1581,6 +1582,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onResolveThread={handleResolveThread}
               highlightThreadId={highlightThreadId}
               onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+              onGetCommentUserMetadata={getCommentUserMetadata}
             />
           </BranchesDrawer>
           {commentsPanelOpen && branchNameState && (
@@ -1592,7 +1594,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}
               onJumpToField={handleJumpToField}
-              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
+              onGetUserMetadata={getCommentUserMetadata}
               onJumpToEntry={handleJumpToEntry}
               onJumpToBranch={handleJumpToBranch}
             />
