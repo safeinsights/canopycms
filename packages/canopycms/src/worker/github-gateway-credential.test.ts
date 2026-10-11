@@ -565,7 +565,8 @@ describe('re-reading the credential', () => {
 
   it("is joined only until the operation's own signal aborts", async () => {
     const provider = vi.fn(() => new Promise<string>(() => undefined))
-    const github = gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
+    // A short bound, so the abandoned re-read gives up and logs inside this test.
+    const github = gateway({ remoteUrl: path.join(root, 'missing.git'), timeoutMs: 200 }, provider)
     await expect(github.fetch({ have: [] })).rejects.toThrow()
     await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1))
     const observed = spySpawns()
@@ -576,6 +577,7 @@ describe('re-reading the credential', () => {
 
     await expect(joined).rejects.toThrow('task deadline')
     expect(observed).toEqual([])
+    await vi.waitFor(() => expect(consoleSpy).toHaveErrored('did not settle within 200ms'))
   })
 
   it('reaches the provider once for two failures inside the default floor', async () => {

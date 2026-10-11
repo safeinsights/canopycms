@@ -196,13 +196,15 @@ describe('CmsWorker credential refresh', () => {
       })
       const internals = worker as unknown as {
         running: boolean
+        activeTimeouts: Set<NodeJS.Timeout>
         setBaseBranch(name: string): void
         scheduleLoop(label: string, fn: () => Promise<void>, interval: number): void
       }
       internals.running = true
       internals.setBaseBranch('main')
+      let cycle: Promise<void> = Promise.resolve()
       try {
-        internals.scheduleLoop('git sync', () => worker.syncGit(), 10)
+        internals.scheduleLoop('git sync', () => (cycle = worker.syncGit()), 10)
 
         await vi.waitFor(() =>
           expect(consoleSpy).toHaveErrored(
@@ -210,7 +212,13 @@ describe('CmsWorker credential refresh', () => {
           ),
         )
       } finally {
+        // Stop the loop before the console spy and the workspace go: no further cycle is
+        // scheduled, and the one in flight logs while the spy still holds.
         internals.running = false
+        for (const timeout of internals.activeTimeouts) clearTimeout(timeout)
+        internals.activeTimeouts.clear()
+        await cycle.catch(() => undefined)
+        await new Promise((resolve) => setImmediate(resolve))
       }
     })
   })
