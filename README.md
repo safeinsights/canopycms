@@ -991,7 +991,7 @@ export const generateStaticParams = () =>
 
 ### Sitemap and SEO Metadata
 
-These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, so they cannot disagree about which pages are advertised.
+These ship together because of the `noindex` flag: it has to suppress a page in **both** surfaces — `robots: { index: false }` on the page and absence from the sitemap. Both read it through the same core predicate, as [AI content](#ai-ready-content) does, so they cannot disagree about which pages are advertised.
 
 #### The recommended SEO field group
 
@@ -1668,9 +1668,9 @@ post: previewView({
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
-All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. So is an entry marked `noindex`, through [the sitemap's predicate](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
-A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one that `exclude` leaves out as `(unavailable entry <id>)`, with no title. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
+A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. A body `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
 ### Option 1: Route Handler (Runtime)
 
@@ -1724,7 +1724,11 @@ const aiConfig = defineAIContentConfig({
     collections: ['drafts'],
     entryTypes: ['internal-note'],
     where: (entry) => entry.data.hidden === true,
+    noindex: false, // export noindex entries, left out by default
   },
+
+  // Where the noindex flag lives, if not flat: your sitemap's `seo`
+  seo: { group: 'seo' },
 
   // Custom bundles: filtered subsets as single files
   bundles: [{ name: 'research-guides', filter: { collections: ['docs'], entryTypes: ['guide'] } }],
@@ -1753,6 +1757,22 @@ const aiConfig = defineAIContentConfig({
   },
 })
 ```
+
+**A plain-URL link into a hidden section**, such as a settings entry's nav list, names no entry, so the export can't recognise it. Filter it with a field transform:
+
+```typescript
+fieldTransforms: {
+  settings: {
+    navLinks: (links) =>
+      (links as { label: string; href: string }[])
+        .filter((link) => !link.href.startsWith('/stubs'))
+        .map((link) => `- ${link.label}: ${link.href}`)
+        .join('\n'),
+  },
+},
+```
+
+Return `''` to drop the field; `exclude.where` drops the entry.
 
 **Transform pipeline** for MD/MDX entries, in order: `stripMdxImports` removes import statements automatically; `componentTransforms` match JSX components by PascalCase name and replace them with the transform's output (keeping the JSX as-is when it returns `undefined`); then `bodyTransforms` passes the full body string through the entry-type-specific transform for final cleanup. `componentTransforms` are keyed by component name and apply across all entry types, since MDX components are project-wide; `bodyTransforms` are keyed by entry type, for stripping entry-type-specific syntax that does not belong in AI output.
 

@@ -88,6 +88,7 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| next | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -219,6 +220,17 @@ where: (entry) => (entry.data.author as AIReferenceValue | undefined)?.id === AL
 matching: search your AI config for each reference field's name.
 
 **Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
+
+### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
+
+**What changed.** (next) AI content, built or served, leaves out entries marked `noindex`, through
+the sitemap's predicate. A body `entry:` link to any left-out entry renders as plain text.
+
+**To adopt.** To keep them, set `exclude: { noindex: false }`. For nested or renamed SEO fields, set
+the AI config's `seo` to your sitemap's. A plain-URL link into a hidden section needs a
+[field transform](../README.md#ai-content-configuration).
+
+**Now deletable.** An `exclude.where` that re-read `noindex`.
 
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
