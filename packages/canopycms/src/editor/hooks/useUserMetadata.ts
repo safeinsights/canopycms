@@ -1,4 +1,5 @@
-import useSWR, { type ScopedMutator } from 'swr'
+import { useCallback } from 'react'
+import useSWR, { useSWRConfig, type ScopedMutator } from 'swr'
 import type { UserProfile, UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { isSystemUserId } from '../../system-users'
@@ -22,8 +23,8 @@ const systemUser = (userId: string): UserSearchResult => ({
 const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
 
 /**
- * Writes profiles a response already carried into each user's cache entry, so a badge shows the
- * name before, or without, a lookup. A cached record keeps its email, which a profile never has.
+ * Caches profiles a response carried, keeping a cached record's email. Mounted badges refetch:
+ * SWR discards a lookup the seed overtook, and with it that lookup's email.
  */
 export async function seedUserProfiles(
   mutate: ScopedMutator,
@@ -34,9 +35,29 @@ export async function seedUserProfiles(
       mutate<UserSearchResult | null>(
         userMetadataKey(user.id),
         (current) => ({ email: '', ...current, ...user }),
-        { revalidate: false },
+        { revalidate: true },
       ),
     ),
+  )
+}
+
+const isUserRecord = (value: unknown): value is UserSearchResult =>
+  typeof value === 'object' &&
+  value !== null &&
+  'id' in value &&
+  typeof value.id === 'string' &&
+  'name' in value &&
+  typeof value.name === 'string'
+
+/** Answers from what {@link seedUserProfiles} wrote, with no request; unseeded is `null`. */
+export function useSeededUserResolver(): (userId: string) => Promise<UserSearchResult | null> {
+  const { cache } = useSWRConfig()
+  return useCallback(
+    (userId: string) => {
+      const data: unknown = cache.get(userMetadataKey(userId))?.data
+      return Promise.resolve(isUserRecord(data) ? data : null)
+    },
+    [cache],
   )
 }
 

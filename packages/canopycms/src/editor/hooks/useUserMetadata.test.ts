@@ -235,8 +235,13 @@ describe('useUserMetadata', () => {
     })
 
     it('keeps the email of a user already looked up', async () => {
+      // Later lookups never settle, so what follows the seed is the seed's own merge.
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockResolvedValueOnce(mockUser)
+        .mockImplementation(pendingLookup)
       const { result } = renderHook(
-        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', async () => mockUser) }),
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
         { wrapper },
       )
       await waitFor(() => expect(result.current.badge.userMetadata).toEqual(mockUser))
@@ -246,6 +251,26 @@ describe('useUserMetadata', () => {
       })
 
       expect(result.current.badge.userMetadata).toEqual({ ...mockUser, name: 'Alice J.' })
+    })
+
+    it('keeps the email of a lookup that was in flight when the seed landed', async () => {
+      let settleFirst: (user: UserSearchResult) => void = () => {}
+      const lookup = vi
+        .fn<(userId: string) => Promise<UserSearchResult | null>>()
+        .mockImplementationOnce(() => new Promise((resolve) => (settleFirst = resolve)))
+        .mockImplementation(async () => mockUser)
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), badge: useUserMetadata('user-1', lookup) }),
+        { wrapper },
+      )
+      await waitFor(() => expect(lookup).toHaveBeenCalledTimes(1))
+
+      await act(async () => {
+        await seedUserProfiles(result.current.swr.mutate, [{ id: 'user-1', name: 'Alice Johnson' }])
+      })
+      await act(async () => settleFirst(mockUser))
+
+      await waitFor(() => expect(result.current.badge.userMetadata?.email).toBe(mockUser.email))
     })
   })
 })

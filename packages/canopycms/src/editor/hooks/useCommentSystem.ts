@@ -8,6 +8,7 @@ import { useApiClient } from '../context'
 import { resolveMessageOrigin } from '../preview-bridge'
 import { isSamePreviewPath } from '../preview-path'
 import { commentsKey, fetchCommentsSeedingUsers, useCommentsData } from './useCommentsData'
+import { useSeededUserResolver } from './useUserMetadata'
 
 export interface UseCommentSystemOptions {
   branchName: string
@@ -29,7 +30,7 @@ export interface UseCommentSystemOptions {
 
 export interface UseCommentSystemReturn {
   comments: CommentThread[]
-  /** Resolves a user named in `comments` from the comments response itself, with no request. */
+  /** Resolves a user the comments responses named, sending no request. */
   getCommentUser: (userId: string) => Promise<UserSearchResult | null>
   focusedFieldPath: string | undefined
   setFocusedFieldPath: (path: string | undefined) => void
@@ -88,14 +89,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // needed.
   const { data: commentsData } = useCommentsData(apiClient, options.branchName)
   const comments = commentsData?.threads ?? []
-  const commentUsers = commentsData?.users
-  const getCommentUser = useMemo(() => {
-    const byId = new Map((commentUsers ?? []).map((user) => [user.id, user]))
-    return (userId: string): Promise<UserSearchResult | null> => {
-      const user = byId.get(userId)
-      return Promise.resolve(user ? { email: '', ...user } : null)
-    }
-  }, [commentUsers])
+  const getCommentUser = useSeededUserResolver()
 
   // Deliberately omits `options.onCommentsChange` from the deps: it's a
   // stable setState passthrough, and this file is plain .ts (not .tsx), so

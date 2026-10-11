@@ -122,22 +122,25 @@ const lookupThreadUsers = async (
 ): Promise<UserProfile[]> => {
   const authPlugin = ctx.authPlugin
   if (!authPlugin) return []
-  const ids = new Set<string>()
-  for (const thread of threads) {
-    ids.add(thread.authorId)
-    if (thread.resolvedBy !== undefined) ids.add(thread.resolvedBy)
-    for (const comment of thread.comments) ids.add(comment.userId)
-  }
-  const wanted = [...ids].filter(
-    (id) =>
-      typeof id === 'string' &&
-      id.length > 0 &&
-      id.length <= MAX_USER_ID_LENGTH &&
-      id !== ANONYMOUS_USER.userId &&
-      !isSystemUserId(id),
-  )
-  if (wanted.length === 0) return []
   try {
+    const ids = new Set<unknown>()
+    for (const thread of threads) {
+      ids.add(thread.authorId)
+      ids.add(thread.resolvedBy)
+      // comments.json is parsed without validation, so a thread may lack its comment list.
+      if (Array.isArray(thread.comments)) {
+        for (const comment of thread.comments) ids.add(comment?.userId)
+      }
+    }
+    const wanted = [...ids].filter(
+      (id): id is string =>
+        typeof id === 'string' &&
+        id.length > 0 &&
+        id.length <= MAX_USER_ID_LENGTH &&
+        id !== ANONYMOUS_USER.userId &&
+        !isSystemUserId(id),
+    )
+    if (wanted.length === 0) return []
     const found = await lookupUsersMetadata(authPlugin, wanted)
     const users: UserProfile[] = []
     // Built field by field: a provider's user record carries an email, which this list never does.

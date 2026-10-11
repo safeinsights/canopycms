@@ -199,4 +199,37 @@ describe('comment list names the people in its threads', () => {
     expect(res.data?.threads).toHaveLength(3)
     expect(res.data?.users).toEqual([])
   })
+
+  it('looks up only well-formed ids, and survives a malformed thread', async () => {
+    const file = path.join(root, '.canopy-meta', 'comments.json')
+    const data = JSON.parse(await fs.readFile(file, 'utf8')) as {
+      threads: Record<string, Record<string, unknown>>
+    }
+    const base = { resolved: false, createdAt: '2024-01-01T00:00:00.000Z', type: 'branch' }
+    const comment = (userId: unknown) => ({
+      id: 'c',
+      threadId: 't',
+      timestamp: '',
+      text: '',
+      userId,
+    })
+    data.threads.odd = {
+      ...base,
+      id: 'odd',
+      authorId: 'x'.repeat(300),
+      comments: [comment(42), comment('anonymous'), null, comment(''), comment('well-formed')],
+    }
+    data.threads.bare = { ...base, id: 'bare', authorId: 'bare-author' }
+    await fs.writeFile(file, JSON.stringify(data))
+
+    const res = await list(admin)
+
+    expect(res.ok).toBe(true)
+    const asked = getUsersMetadata.mock.calls.flatMap(([ids]) => ids)
+    expect(asked).toContain('well-formed')
+    expect(asked).toContain('bare-author')
+    expect(asked).not.toContain('anonymous')
+    expect(asked).not.toContain('')
+    expect(asked.every((id) => typeof id === 'string' && id.length <= 256)).toBe(true)
+  })
 })

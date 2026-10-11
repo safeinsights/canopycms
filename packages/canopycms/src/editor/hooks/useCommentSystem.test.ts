@@ -862,7 +862,24 @@ describe('useCommentSystem', () => {
       )
 
       await waitFor(() => expect(result.current.badge.userMetadata?.name).toBe('Ada Lovelace'))
-      expect(JSON.stringify(result.current.badge.userMetadata)).not.toContain('@')
+    })
+
+    it('keeps a user named by an earlier response when a reload names no one', async () => {
+      const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+      await waitFor(async () =>
+        expect((await result.current.getCommentUser('user1'))?.name).toBe('Ada Lovelace'),
+      )
+
+      mockClient.comments.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { threads: mockComments, users: [] },
+      })
+      await act(async () => {
+        await result.current.loadComments('main')
+      })
+
+      expect((await result.current.getCommentUser('user1'))?.name).toBe('Ada Lovelace')
     })
   })
 })
