@@ -2247,11 +2247,13 @@ function selfTest() {
       write(trepo, CHANGELOG, BASE)
       g(trepo, 'add', '-A')
       g(trepo, 'commit', '-qm', 'base')
-      g(trepo, 'tag', 'v0.0.1-int.8')
-      g(trepo, 'tag', 'v0.0.1-int.7')
+      // for-each-ref lists by refname (int.10, int.11, int.9), so neither end is the largest.
+      g(trepo, 'tag', 'v0.0.1-int.9')
+      g(trepo, 'tag', 'v0.0.1-int.11')
+      g(trepo, 'tag', 'v0.0.1-int.10')
       expect(
-        'git: one commit with two int tags gives the larger N as M',
-        readGitState(trepo).M?.n === 8,
+        'git: one commit with several int tags gives the largest N as M',
+        readGitState(trepo).M?.n === 11,
       )
     }
     {

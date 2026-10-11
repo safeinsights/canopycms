@@ -87,8 +87,10 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
-      # A stable release files the pending entries under its own version, so a
-      # branch without that release would ship them again as unreleased.
+      # A stable release is to file the pending entries under its own version, so
+      # a branch without that release would ship them again as unreleased. Until
+      # that release path exists, the stable job refuses to run while any are
+      # pending.
       # `allow_stale_base` is for an older line, such as a release branch cut
       # before it.
       - name: Require the latest stable release in this branch
