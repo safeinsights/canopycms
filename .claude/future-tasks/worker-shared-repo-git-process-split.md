@@ -243,7 +243,7 @@ request, so no framing is invented.
 | `fetch` | `have`: object IDs, the worker's `refs/heads/*` plus its tracking tips. Capped at 10 000. | `202` with a job id (§3.1). |
 | `fetch/:id` (GET) | — | The job's progress; when done, GitHub's full ref map plus a `bundleId` (null when there is nothing new). |
 | `bundle/:id` (GET) | — | The bundle stream, deleted after download or after 10 min. |
-| `push` | `branch`, `sha`, optional `lease`, `prerequisites` (≤ 3 object IDs the worker would exclude). Body optional: a bundle with one head at `sha`. | `pushed`, `up-to-date` or `pushed-past-stale-lease`, with the SHA. Or `need-objects { usable }`: the subset of `prerequisites` that are commits reachable from a mirror `refs/heads/*` tip. Or an error (below). |
+| `push` | `branch`, `sha`, optional `lease`, `prerequisites` (≤ 3 object IDs the worker would exclude). Body optional: a bundle with one head at `sha`. | `pushed { moved: false }`, or `pushed { moved: true, from, to }` (`from` git's abbreviation of GitHub's old tip, null for a new branch; `to` the full SHA pushed), each with `pastStaleLease` (true when it landed by the plain retry after GitHub refused a stale lease). Or `need-objects { usable }`: the subset of `prerequisites` that are commits reachable from a mirror `refs/heads/*` tip. Or an error (below). |
 | `pr.createOrUpdate` | What `createOrUpdatePullRequest` takes today, including `markReadyIfDraft` and `mergeSectionIntoBody`. Lengths capped. | What it returns today. |
 | `pr.create`, `pr.update`, `pr.get`, `pr.convertToDraft`, `pr.close` (`pr.create` serves the legacy `push-and-create-pr` action, `task-runner.ts` L364) | The fields `task-runner.ts` passes today. | The fields `task-runner.ts` and `pollMergeState` read. |
 | `deleteBranch` | `branch` | `deleted` or `alreadyGone` |
@@ -261,16 +261,18 @@ request, so no framing is invented.
   - `isPermanentTaskFailure` and `isRateLimitSignal403` (`task-runner.ts` L119–161);
   - `isNoCommitsBetweenError` (L437, which unlocks the branch through `NothingToSubmitTaskError`);
   - `isRefAlreadyGoneError` (L528).
-- **Git push failures** come back as one of four codes:
-  - `non-fast-forward`;
-  - `stale-lease`, when the plain retry is rejected too;
-  - `workflow-refused`, carrying the file name for `throwIfWorkflowRefusal` (L667);
-  - `transient`.
+- **Git push failures** come back as `GitHubPushError`, `rejected` or, when the plain retry after
+  a stale lease is rejected too, `rejected-after-stale-lease`, carrying git's output as its message.
+  The worker classifies that message as it does today: non-fast-forward (`isNonFastForwardRejection`)
+  and a workflow refusal (`throwIfWorkflowRefusal`, carrying the file name) are permanent; anything
+  else is retried. PR 4 may move these codes onto the wire (§8, "Carried from 2a").
 - **The gateway's own refusals:**
-  - `refused-by-policy` becomes `PermanentTaskError`;
-  - `bundle-rejected` (a malformed header, a failed fsck, oversize) is `transient`, bounded by
-    the task's retry budget (`DEFAULT_MAX_RETRIES = 3`), as is a prerequisite that is not
-    reachable (§3.3 intake step 2).
+  - `RefusedPushError` (`invalid`, `protected` or `not-a-commit`) becomes `PermanentTaskError`;
+  - `GitHubTransientError` is retried within the task's budget (`DEFAULT_MAX_RETRIES = 3`):
+    `github-fetch-failed` (the push's GitHub fetch), `bundle-rejected` (a malformed header, a
+    failed fsck, oversize, a wrong head), `prerequisite-gone` (§3.3 intake step 2), `bundle-gone`
+    (a bundle a later fetch replaced), and the worker's own `objects-still-needed` (a second
+    `need-objects`) and `ref-kept-moving` (more than 3 restarts).
 
 **The push-identity invariant.** Three clauses, stated because node's and git's bundle-header
 parsers disagree (git reads everything after the first space as the refname, and accepts a
@@ -734,7 +736,8 @@ hostile objects (§3.3 intake). It:
 
 **Credentialed (core):**
 - `github-mirror.ts`: loses `fetchFromRemoteGit`, `publishTrackingRefs`, `seedBareRepository`
-  and `pushToRemoteGit`. Gains `bundleFor(have)`, `withQuarantine(file, branch, sha, fn)`, the
+  and `pushToRemoteGit`. Gains `bundleFor(have)`, `withQuarantine(file, branch, sha, fn)` (shipped in
+  2a as `MirrorSession.createBundle`, `GitHubMirror.ingest` and `MirrorSession.quarantine`), the
   fetch job, self-scheduled maintenance, and the corruption check. `MIRROR_PINS` moves here.
 - `github-auth.ts`: unchanged, apart from feeding the env-based credential.
 - New `github-gateway.ts`: the `GitHubGateway` interface, `createLocalGitHubGateway`, the policy,
@@ -987,9 +990,37 @@ PR 2, their first user.
   caller today. The set must also guard `deleteBranch` and PR heads.
 - PRs 2 and 4: these cannot cross a socket: `seedBareRepository`'s callbacks, the
   `remoteUrl` function, the live `GitHubPushError.cause`, and the `signal` inside a
-  `createOrUpdatePullRequest` request.
+  `createOrUpdatePullRequest` request. 2a settled the callbacks and `.cause`; the `remoteUrl`
+  function (a test seam) and the `signal` remain PR 4's.
 - PR 4: `onGitHub` keeps its object-ID validation (`MirrorSession.isOnGitHub`) gateway-side,
-  whatever the client checks.
+  whatever the client checks. Moot: 2a deletes `onGitHub` (see "Carried from 2a").
+
+**Carried from 2a** (PR 2a: the transfer; 2b: mirror robustness):
+- 2b: the push's GitHub fetch runs inside its own session in 2a (stronger, one extra round trip
+  per push). 2b replaces it with the coalesced fetch, joined before the session, and reinstates
+  "no mirror heads → `transient`", which 2a drops because its fetch is the push's own: a stale or
+  unfetched mirror becomes possible again with a joined one.
+- 2b: `maintain()` stays worker-called in 2a, repacking beside sessions and quarantines; 2b moves it
+  gateway-side under the maintenance mutex, adds `commit-graph`, and drops it from the interface.
+- 2b: 2a clears `incoming/` and `outgoing/` once per gateway; the lock and temporary sweeps,
+  corruption detection and the rebuild are 2b's.
+- PR 4: the push-failure codes may move gateway-side; the message crossing the socket goes through
+  PR 3's redaction.
+- PR 4: a pushed body is received before the session is taken, one at a time (`GitHubMirror.ingest`),
+  as the transport's upload will be. `openBundle` is `GET bundle/:id`; `fetch` stays one awaited
+  call in-process.
+- Settled in 2a: `seedBareRepository`'s callbacks, `onGitHub` and its ID validation, and
+  `GitHubReachability` are gone. The seed is `fetch({ have: [] })`, and the self-heal checks the
+  old refs against the seeded replacement itself (`unreachableFrom`), so its decision follows the
+  bundle whatever the mirror does after. `GitHubPushError` carries git's output as a string, not a
+  live `.cause`. The fetch's ref map is a `Map`, not a record.
+- PR 7: "The worker instance" (docs/deploying-to-aws.md) says that the mirror never reads
+  `remote.git`, that objects cross as bundles staged in the state directory, and that each new
+  instance fetches the whole repository from GitHub once, with room for a copy when seeding.
+- Deviations: the bounded connectivity walk is tested behaviourally (an old blob missing from the
+  mirror, which a whole-history walk would reach) rather than by a rev-list spy, since git spawns
+  that walk itself. The upload-pack pin allowing wants by object ID is dropped: only the mirror's
+  fetch of a read commit used it.
 
 **Carried from 1b's reviews:**
 - PRs 4 and 5: a credentialed operation joins an in-flight re-read within its own deadline, so a
