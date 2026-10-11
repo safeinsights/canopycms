@@ -634,9 +634,9 @@ export async function pushBranchToGitHub(
   branch: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  // The credential's only repository is the GitHub gateway's private mirror
-  // (worker/github-mirror.ts); remote.git's config is Lambda-writable, and the bundle built here
-  // runs under the pins. The push sends exactly `outgoingSha`, the commit remote.git held when it
+  // The credential reaches git only in the GitHub gateway's state directory, its mirror or a
+  // quarantine there (worker/github-mirror.ts); remote.git's config is Lambda-writable, and the
+  // bundle built here runs under the pins. The push sends exactly `outgoingSha`, the commit remote.git held when it
   // was read, so what the marker logic at the end compares is what GitHub received.
   await assertSharedRepoConfig(ctx.remoteGitPath, 'bare')
   // Before `branch` reaches any git: `readPublishedSha` below would read a `<rev>:<path>` form as a

@@ -64,6 +64,10 @@ describe('scanBundleHeader', () => {
       bytes('# v3 git bundle\n@object-format=sha256\n', `${A} refs/heads/x\n\n`),
     ],
     ['a capability in a v2 header', bytes('# v2 git bundle\n@object-format=sha1\n')],
+    [
+      'a repeated capability',
+      bytes('# v3 git bundle\n@object-format=sha1\n@object-format=sha1\n', `${A} refs/heads/x\n\n`),
+    ],
     ['no head', bytes('# v2 git bundle\n', `-${B}\n`, '\n')],
     ['a short prerequisite', bytes('# v2 git bundle\n', `-${B.slice(1)}\n`)],
     ['a prerequisite with a tab before its comment', bytes('# v2 git bundle\n', `-${B}\tx\n`)],

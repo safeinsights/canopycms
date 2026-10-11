@@ -39,7 +39,7 @@ const MAX_PUSH_RESTARTS = 3
 export interface TransferContext {
   github(): GitHubGateway
   readonly remoteGitPath: string
-  /** The inactivity bound on each git here, as simple-git's is elsewhere. */
+  /** The inactivity bound on each streamed git here, as simple-git's is on the others. */
   readonly taskTimeoutMs: number
 }
 
@@ -138,7 +138,8 @@ export async function unreachableFrom(
 export interface TransferPushRequest extends Omit<GitHubPushRequest, 'sha' | 'prerequisites'> {
   /**
    * Branches whose GitHub tips, as `remote.git`'s tracking namespace holds them, a bundle of
-   * `branch` is built on: the branch itself and the base. Missing ones are skipped.
+   * `branch` is built on: the branch itself, and the base for a content branch. Missing ones are
+   * skipped.
    */
   prerequisiteBranches: readonly string[]
 }
@@ -256,10 +257,6 @@ async function startBundle(
           }
         })(),
       )
-      // A reader that stops early, or before its first read, releases git's stdout with it.
-      stream.once('close', () => {
-        if (!proc.stdout.readableEnded) proc.stdout.destroy()
-      })
       return { process: proc, stream }
     }
   } catch (err) {
@@ -304,7 +301,7 @@ async function sendBundle(
   } catch (err) {
     throw await causeOf(bundle.process, err, 'the push failed')
   }
-  // The gateway answered after reading the whole bundle; how git exits after that changes nothing.
+  // An answer is the push's outcome; how git exits after it changes nothing.
   await bundle.process.exited.catch(() => undefined)
   return answer
 }
@@ -358,9 +355,9 @@ interface RefMove {
  * deletions in one `update-ref` transaction, then every create and update in another. One
  * transaction cannot do both: deleting `a` and creating `a/b` together fails on the
  * directory/file conflict, and a transaction is all-or-nothing, so a GitHub-side rename of
- * `release` to `release/1.0` would freeze the namespace for ever. When a transaction fails (a
- * move lost a race on its expected value), each of its moves is tried on its own, and the losers
- * are logged; the next fetch retries them. The Lambda only reads this namespace, so per-ref
+ * `release` to `release/1.0` would freeze the namespace for ever. When a transaction fails on a
+ * ref (see {@link lostRace}), each of its moves is tried on its own, and the losers are logged;
+ * the next fetch retries them. The Lambda only reads this namespace, so per-ref
  * atomicity is all it needs.
  */
 async function moveTrackingRefs(
@@ -418,8 +415,9 @@ async function moveTrackingRefs(
 /**
  * Whether `update-ref` failed because a ref was not at the value a move stated, a lock was held
  * (a ref's own, or `packed-refs.lock`, which every deletion takes), or a directory/file conflict
- * stood in the way: a race a per-ref retry can win or lose on its own. Anything else (an abort, a
- * missing object) is not.
+ * stood in the way: a failure confined to the namespace's refs, logged and retried by the next
+ * fetch, which never holds back the other transaction. Anything else (an abort, a missing object)
+ * is thrown.
  */
 function lostRace(err: unknown): boolean {
   return /cannot lock ref|Unable to create '[^']*\.lock': File exists|exists; cannot create/.test(

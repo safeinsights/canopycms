@@ -28,11 +28,12 @@ import {
 
 /**
  * The worker's private bare mirror of the GitHub repository, in a state directory the CMS Lambda
- * cannot reach: the only repository in which git ever runs with the GitHub credential, and the
- * only place the GitHub gateway runs git at all. Every gateway git names a repository inside the
- * state directory, by `GIT_DIR` and working directory alike, so no config, hook or object the
- * Lambda writes is ever read by it. The credential reaches git only as a per-command config file
- * ({@link withCredentialConfig}).
+ * cannot reach. It and the quarantines beside it are the only repositories in which git ever runs
+ * with the GitHub credential, and the state directory the only place the GitHub gateway runs git
+ * at all. Every gateway git names a repository inside it, by `GIT_DIR` and working directory
+ * alike, so no config or hook the Lambda writes is ever read by it; Lambda-written objects reach
+ * it only inside a pushed bundle, checked in a quarantine. The credential reaches git only as a
+ * per-command config file ({@link withCredentialConfig}).
  *
  * Objects cross the boundary as git bundles, never by a fetch or push against `remote.git`:
  * - **out:** a fetch bundles what the caller's `have` lacks into `outgoing/`, one pending bundle
@@ -143,8 +144,8 @@ export class GitHubMirror {
   }
 
   /**
-   * git for a command that reads no repository (`check-ref-format`), run in the state directory
-   * like every other gateway git.
+   * git for `check-ref-format`, run in the state directory like every other gateway git. It reads
+   * the repository only to expand `@{-N}`, which `assertPlainBranchName` refuses.
    */
   async checkGit(): Promise<SimpleGit> {
     await this.ensureTransferDirs()
@@ -158,8 +159,8 @@ export class GitHubMirror {
   }
 
   /**
-   * Make `file` the one pending outgoing bundle, or none, deleting the one it replaces, read or
-   * not, so a loop of fetches never fills the state directory. Returns the id that opens it: a
+   * Make `file` the one pending outgoing bundle, or none, deleting the one it replaces (never an
+   * opened one), so a loop of fetches never fills the state directory. Returns the id that opens it: a
    * key into this object, never a path.
    */
   async setPendingBundle(file: string | null): Promise<string | null> {
@@ -170,9 +171,8 @@ export class GitHubMirror {
   }
 
   /**
-   * The pending bundle `id` names, readable once: it is no longer pending once opened, and its
-   * file is deleted when the stream closes. A stream already open keeps reading after a later
-   * fetch replaces the bundle, since an unlinked file stays readable through an open descriptor.
+   * The pending bundle `id` names, readable once: it is no longer pending once opened, so a later
+   * fetch never deletes it, and its file is deleted when the stream closes.
    * Throws {@link GitHubTransientError} for an id that is not the pending bundle's.
    */
   async openBundle(id: string): Promise<Readable> {
@@ -201,7 +201,8 @@ export class GitHubMirror {
   /**
    * Receive a pushed bundle into a directory of its own under `incoming/`, refusing it as it
    * arrives (header, size), run `fn` with it, then delete the directory. One at a time, so pushed
-   * bundles hold at most one cap's worth of disk.
+   * bundles hold at most one cap's worth of disk, plus about as much again for the quarantine's
+   * copy of the pack.
    */
   ingest<T>(
     body: Readable,
@@ -267,7 +268,8 @@ const STAGING_PREFIX = 'refs/canopy/outgoing/'
 /**
  * A push or fetch the gateway could not complete for a reason a later attempt can clear: GitHub
  * unreachable, a bundle that did not arrive whole or valid, a prerequisite GitHub no longer has,
- * a bundle already gone. Never a judgement on the credential, and the task retries it.
+ * a bundle already gone. The task retries it. Only `github-fetch-failed` can be the credential's
+ * doing, and that failure has already armed a re-read.
  */
 export class GitHubTransientError extends Error {
   constructor(
@@ -791,8 +793,8 @@ export class MirrorSession {
    * what the push did to GitHub's ref.
    *
    * Validation and the protected-branch refusal are here, at the one place every GitHub push
-   * (plain or under a lease) goes through, so no caller can skip them, and before any git runs
-   * with `branch` in a refspec.
+   * (plain or under a lease) goes through, so no caller can skip them. A bundle's quarantine fetch
+   * names `branch` first, so the gateway validates it before the ingest too (`pushOnce`).
    */
   async pushToGitHub(
     credential: GitHubCredential,
@@ -831,7 +833,7 @@ export class MirrorSession {
 /**
  * Write a pushed bundle to `file` as it arrives, refusing it as soon as it cannot be accepted:
  * past `maxBytes`, or with a header that is not exactly one head, `<sha> refs/heads/<branch>`
- * (worker/bundle-header.ts). Never holds more than the header's bound of it in memory.
+ * (worker/bundle-header.ts). Holds at most the header's bound, plus one chunk, in memory.
  */
 async function receiveBundle(
   body: Readable,
@@ -931,7 +933,6 @@ export function isObjectId(value: string): boolean {
 async function isBareRepository(gitDir: string): Promise<boolean> {
   try {
     await fs.access(gitDir)
-    // Without the mirror's pins, whose `core.bare=true` would answer this question for git.
     // rev-parse echoes `--end-of-options`, so only the first line is the answer.
     const out = await simpleGit({ baseDir: gitDir })
       .env(mirrorEnv(gitDir))

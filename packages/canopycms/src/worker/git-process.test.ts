@@ -170,12 +170,13 @@ describe('spawnGit', () => {
   it('lets a slow reader take what git wrote before it exited 0, past the inactivity bound', async () => {
     const proc = spawnGit(['small'], alias('small', 'yes y | head -c 100000', 300))
     const chunks = proc.stdout[Symbol.asyncIterator]()
-    let bytes = ((await chunks.next()).value as Buffer).length
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    let bytes = 0
+    // A pause past the bound before each read, the first after git has exited.
     for (;;) {
       const next = await chunks.next()
       if (next.done) break
       bytes += (next.value as Buffer).length
+      await new Promise((resolve) => setTimeout(resolve, 600))
     }
     await proc.exited
     expect(bytes).toBe(100_000)
@@ -214,6 +215,16 @@ describe('spawnGit', () => {
     const err = await failure(proc.exited)
     expect(err.exitCode).toBe(3)
     expect(Date.now() - started).toBeLessThan(3_000)
+  })
+
+  it('kills what git spawned when it ignores the request to stop', async () => {
+    // An ignored SIGTERM is inherited, so the backgrounded sleep ignores it too.
+    const proc = spawnGit(['quit'], alias('quit', "trap '' TERM; sleep 8 & exit 3"))
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const started = Date.now()
+    proc.kill('no longer wanted')
+    await failure(proc.exited)
+    expect(Date.now() - started).toBeLessThan(5_000)
   })
 
   it('rejects `exited` after the caller kills it', async () => {

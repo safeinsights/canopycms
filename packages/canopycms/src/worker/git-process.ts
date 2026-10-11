@@ -11,10 +11,12 @@ import { getErrorMessage } from '../utils/error'
  * pins of the repository it runs in apply here exactly as they do through simple-git
  * (worker/shared-repo-git.ts, worker/github-mirror.ts).
  *
- * Bounded three ways: killed after {@link GitProcessOptions.inactivityTimeoutMs} with no output
- * and no input consumed, killed when `signal` aborts, and holding at most
+ * Bounded three ways: while git runs, killed after {@link GitProcessOptions.inactivityTimeoutMs}
+ * with no output and no input consumed (once it has exited 0, output still unread is the
+ * reader's to take, however slowly); killed when `signal` aborts; and holding at most
  * {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
- * hostile bytes cannot make this one buffer without limit.
+ * hostile bytes cannot make this one buffer without limit. A stop reaches everything git spawned:
+ * git runs in its own process group.
  */
 
 export interface GitProcessOptions {
@@ -26,7 +28,10 @@ export interface GitProcessOptions {
   config?: readonly string[]
   /** What git reads on stdin; without it stdin is closed at once. */
   stdin?: Readable | string
-  /** Killed when nothing is written to stdout or stderr, and nothing consumed from stdin, for this long. */
+  /**
+   * While git runs, killed when nothing is written to stdout or stderr, and nothing consumed from
+   * stdin, for this long. Not after it exits 0: what it wrote is then the reader's.
+   */
   inactivityTimeoutMs: number
   signal?: AbortSignal
 }
@@ -58,7 +63,10 @@ const KILL_GRACE_MS = 2_000
 /** A git process with its stdout as a stream; see {@link spawnGit}. */
 export interface GitProcess {
   readonly stdout: Readable
-  /** Settles when git has exited: rejects unless it exited 0 on its own. */
+  /**
+   * Settles once git has exited and its output is read or released; resolves only when git exited
+   * 0 on its own, its input arrived whole, and no stop came first.
+   */
   readonly exited: Promise<void>
   /** Stop git now; `exited` then rejects. */
   kill(reason: string): void
@@ -102,14 +110,11 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   const stop = (reason: string) => {
     if (closed || killedFor !== null) return
     // git's own failure, when it came first, stays the reason.
-    if (child.exitCode === null && child.signalCode === null) {
+    if (child.exitCode === 0 || (child.exitCode === null && child.signalCode === null)) {
       killedFor = reason
-      terminate(child)
-    } else {
-      if (child.exitCode === 0) killedFor = reason
-      // What git spawned can outlive it, holding stderr open.
-      signalGroup(child, 'SIGTERM')
     }
+    // After git exits too: what it spawned can outlive it, holding stderr open.
+    terminate(child)
     stdout.destroy()
   }
   child.on('exit', (code) => {
@@ -209,14 +214,13 @@ export async function runGit(
 }
 
 /**
- * Ask git and everything it spawned to stop, then kill them if git has not exited within
- * {@link KILL_GRACE_MS}.
+ * Ask git and everything it spawned to stop, then kill them if git's pipes have not closed within
+ * {@link KILL_GRACE_MS}. While they are open some member of the group holds them, so its id cannot
+ * have been reused.
  */
 function terminate(child: ChildProcess): void {
   signalGroup(child, 'SIGTERM')
-  const timer = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) signalGroup(child, 'SIGKILL')
-  }, KILL_GRACE_MS)
+  const timer = setTimeout(() => signalGroup(child, 'SIGKILL'), KILL_GRACE_MS)
   timer.unref()
   child.once('close', () => clearTimeout(timer))
 }

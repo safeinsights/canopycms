@@ -122,7 +122,7 @@ afterEach(async () => {
 })
 
 describe('GitHubMirror', () => {
-  it('publishes exactly the commit it was asked for, whatever else the bundle carries', async () => {
+  it("publishes exactly the commit it was asked for, though remote.git's branch has moved past it", async () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
     const github = gateway()
@@ -336,7 +336,7 @@ describe('GitHubMirror', () => {
     expect(await tip(mirror.gitDir, 'refs/heads/imported-history')).toBe(sha)
   })
 
-  it('sweeps what a killed push left in incoming/, so a branch under that name can be pushed', async () => {
+  it('sweeps what a killed push left in incoming/ when a new gateway starts', async () => {
     await mirror.ensure()
     // A killed push's quarantine, holding a staging ref at `a`.
     const leftover = path.join(stateDirectory, 'incoming', 'push-AbC123')

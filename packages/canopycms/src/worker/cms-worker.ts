@@ -1139,11 +1139,12 @@ export class CmsWorker {
    * against remote.git ever carries the credential, and no token-bearing URL is ever written to
    * EFS.
    *
-   * Empty-remote guard: a fetch of an EMPTY GitHub repo (no commits, or a base branch never
-   * pushed) succeeds and leaves a refs-less repo that `fs.stat` cannot tell from a healthy one, so
-   * left unchecked it silently poisons remote.git and the stat short-circuit means it never heals.
-   * The base branch is therefore verified right after seeding AND on the already-exists fast
-   * path, where a poisoned remote.git is replaced (`replacePoisonedRemoteGit`).
+   * Empty-remote guard: a remote.git with no base branch (one cloned from an EMPTY GitHub repo,
+   * or with a base branch never pushed) is one `fs.stat` cannot tell from a healthy one, so left
+   * unchecked it silently poisons remote.git and the stat short-circuit means it never heals. The
+   * seed refuses a GitHub without the base branch, and the base branch is verified right after
+   * seeding AND on the already-exists fast path, where a poisoned remote.git is replaced
+   * (`replacePoisonedRemoteGit`).
    */
   private async ensureRemoteGit(): Promise<void> {
     let exists: boolean

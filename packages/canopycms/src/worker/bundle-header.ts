@@ -6,7 +6,7 @@
  * exactly or is refused.
  *
  * ```
- * "# v2 git bundle" LF  |  "# v3 git bundle" LF ("@object-format=sha1" LF)?
+ * "# v2 git bundle" LF  |  "# v3 git bundle" LF ("@object-format=sha1" LF)?    at most once
  * ("-" <40 hex> (" " <any bytes but LF>)? LF)*      prerequisites; the comment is a commit subject
  * (<40 hex> " " <refname> LF)+                      heads
  * LF
@@ -46,9 +46,10 @@ const HEAD = /^[0-9a-f]{40} [^\n]+$/
 
 /**
  * Read the header at the start of `bytes`: null while it may still be completed by more bytes,
- * the header once its blank line has arrived. Throws {@link BundleHeaderError} as soon as no
- * continuation could make it valid, including when {@link BUNDLE_HEADER_MAX_BYTES} pass without
- * the blank line, so a caller never has to hold more than that.
+ * the header once its blank line has arrived. Throws {@link BundleHeaderError} once a complete
+ * line breaks the grammar (the signature even before its LF), or when
+ * {@link BUNDLE_HEADER_MAX_BYTES} pass without the blank line, so a caller never has to hold more
+ * than that.
  */
 export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
   const window = bytes.subarray(0, BUNDLE_HEADER_MAX_BYTES)
@@ -56,6 +57,7 @@ export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
   const heads: Buffer[] = []
   let section: 'signature' | 'capabilities' | 'prerequisites' | 'heads' = 'signature'
   let version = ''
+  let sawCapability = false
   let offset = 0
   for (;;) {
     const lf = window.indexOf(0x0a, offset)
@@ -87,6 +89,8 @@ export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
       if (text !== ALLOWED_CAPABILITY) {
         throw new BundleHeaderError(`it declares a capability other than ${ALLOWED_CAPABILITY}`)
       }
+      if (sawCapability) throw new BundleHeaderError('it declares a capability twice')
+      sawCapability = true
       continue
     }
     if (section !== 'heads' && text.startsWith('-')) {
