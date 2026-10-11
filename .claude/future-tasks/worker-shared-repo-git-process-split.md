@@ -1247,6 +1247,10 @@ the drain mapping, deadlines, and the self-check helpers.
   - nothing checks that the gateway runs as a user other than the worker's: a hand unit missing
     `User=canopy-github` passes every self-check while the worker can read its environment. A
     gateway self-check refusing to run as the socket node's owner (`fstat` of fd 3) closes it.
+- Open: the failed-boot stand-in refuses `termination` and `completeLifecycle` too, so a gateway
+  whose boot keeps failing (a narrowed IAM policy) leaves a scale-in waiting out the lifecycle
+  heartbeat. A failed snapshot fetch has no backoff: single-flight holds a looping worker to one
+  fetch at a time.
 - Open: an auth snapshot past the 64 MiB answer bound (roughly 100k users) is refused; split mode
   then never refreshes that auth cache.
 - Open: dev still leaves a running fetch job behind on Ctrl-C

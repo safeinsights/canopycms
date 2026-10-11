@@ -637,6 +637,8 @@ class LocalGitHubGateway implements GitHubGateway {
     if (provider === undefined) {
       throw new Error('The GitHub gateway has no auth provider key configured')
     }
+    // Before a fetch starts: one no caller waits on would leave its failure unhandled.
+    signal?.throwIfAborted()
     const reuseMs = this.options.authSnapshotReuseMs ?? AUTH_SNAPSHOT_REUSE_MS
     const last = this.lastSnapshot
     if (last !== null && performance.now() - last.at < reuseMs) return last.snapshot

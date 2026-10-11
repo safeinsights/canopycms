@@ -185,7 +185,7 @@ export interface ClerkSnapshotFetcherOptions {
  */
 export function createClerkSnapshotFetcher(
   options: ClerkSnapshotFetcherOptions,
-): ((signal?: AbortSignal) => Promise<AuthCacheSnapshot>) | undefined {
+): (() => Promise<AuthCacheSnapshot>) | undefined {
   const { secret } = options
   const log = options.log ?? WORKER_LOG
   if (!secret.current()) return undefined

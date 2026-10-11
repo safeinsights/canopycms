@@ -435,3 +435,16 @@ describe('termination polls, in-process', () => {
     expect(waiters.size).toBe(0)
   })
 })
+
+describe('authSnapshot, in-process', () => {
+  it('starts no fetch for a caller whose signal has already aborted', async () => {
+    const provider = vi.fn(async (): Promise<AuthCacheSnapshot> => {
+      throw new Error('Clerk 401')
+    })
+    const github = await gatewayReachedBy('in-process', { authSnapshot: provider })
+
+    await expect(github.authSnapshot(AbortSignal.abort(new Error('gone')))).rejects.toThrow('gone')
+
+    expect(provider).not.toHaveBeenCalled()
+  })
+})
