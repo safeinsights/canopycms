@@ -54,6 +54,9 @@ parser"), recognisable in any adopter's tree.
 - **Bump.** The frontmatter names any of the five packages; they release together. `minor` when
   `action` is anything but `None` or `Optional`, since adopters must act. Otherwise `patch`.
   Never `major`.
+- **Shape.** The `###` title comes first, then the `<!-- migration` block, whose keys are `area`,
+  `action`, `row` and, for a part, `extends`. A `legacy#` or `released#` anchor is the one GitHub
+  shows for that heading in CHANGELOG.md.
 - **Metadata.** `area` is one of AI, Assets, Auth, Branches, CDK, Editing, MDX, Ops, Preview,
   Reading, Refs, Schema or Worker. `action` is at most 5 words: who must act, or `None`. `row` is at most
   10 words.
