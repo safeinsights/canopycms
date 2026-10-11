@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { Readable } from 'node:stream'
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
 import type { BareRemoteRepackResult } from '../git-manager'
@@ -13,37 +14,48 @@ import { isStaleLeaseRejection, workflowPushRefusalFile } from '../utils/git'
 import { isTransientAuthFailure, type ResolvedGitHubAuth } from './github-auth'
 import {
   GitHubMirror,
+  GitHubTransientError,
   RefusedPushError,
+  assertPlainBranchName,
+  isObjectId,
   type GitHubCredential,
   type GitHubRefUpdate,
   type MirrorSession,
+  type ReceivedBundle,
 } from './github-mirror'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
 interface GitHubFetchResult {
-  /** The objects the caller lacks, as a bundle to download; always null in-process. */
+  /** Every GitHub branch, mapped to its tip, as this fetch left the mirror. */
+  refs: ReadonlyMap<string, string>
+  /**
+   * Opens ({@link GitHubGateway.openBundle}) a bundle of every branch, less the commits in the
+   * request's `have` and their history; null when that leaves nothing to send.
+   */
   bundleId: string | null
 }
 
-const inMirrorSession = Symbol('inMirrorSession')
+/** The most `have` IDs one fetch takes. */
+export const MAX_FETCH_HAVE = 10_000
 
-/**
- * Which GitHub branches reached each of a list of commits, at the last fetch, asked inside a
- * mirror session that is already held. Branded so the gateway itself, whose own `onGitHub` takes
- * that session, cannot be passed in its place: the session is not re-entrant.
- */
-export interface GitHubReachability {
-  readonly [inMirrorSession]: true
-  onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>>
-}
+/** The most prerequisites one push names. */
+const MAX_PUSH_PREREQUISITES = 3
 
-interface GitHubPushRequest {
+/** The default cap on a pushed bundle, in bytes. */
+const DEFAULT_MAX_BUNDLE_BYTES = 1024 * 1024 * 1024
+
+export interface GitHubPushRequest {
   branch: string
   /** The commit to put at `refs/heads/<branch>` on GitHub, already in remote.git. */
   sha: string
   /** The commit GitHub must still be at for the push to replace it (`--force-with-lease`). */
   lease?: string
+  /**
+   * At most {@link MAX_PUSH_PREREQUISITES} commits the caller would build a bundle of the branch
+   * on, so an answer of `need-objects` can say which of them the gateway can use.
+   */
+  prerequisites: readonly string[]
   /** Branches no push may name; GitHub's default branch is always added. */
   protectedBranches: readonly string[]
 }
@@ -55,17 +67,26 @@ interface GitHubPushRequest {
 export type GitHubPushOutcome = GitHubRefUpdate & { pastStaleLease: boolean }
 
 /**
+ * A push's answer: `pushed`, or `need-objects` when no GitHub branch contains `sha` and the caller
+ * must send it as a bundle built on `usable`, the request's prerequisites a GitHub branch
+ * contains (none, when empty).
+ */
+export type GitHubPushAnswer =
+  | ({ kind: 'pushed' } & GitHubPushOutcome)
+  | { kind: 'need-objects'; usable: readonly string[] }
+
+/**
  * A push to GitHub failed: `rejected` on the first attempt, `rejected-after-stale-lease` on the
- * plain retry after GitHub refused a stale lease. The message is the failure's own (git's output,
- * for a refusal); `cause` is the error itself. A {@link RefusedPushError} from the first attempt is
- * thrown as itself.
+ * plain retry after GitHub refused a stale lease. The message is the failure's own: git's output,
+ * for a refusal, which the task runner classifies. A {@link RefusedPushError} from the first
+ * attempt is thrown as itself.
  */
 export class GitHubPushError extends Error {
   constructor(
     readonly kind: 'rejected' | 'rejected-after-stale-lease',
-    readonly cause: unknown,
+    message: string,
   ) {
-    super(getErrorMessage(cause))
+    super(message)
     this.name = 'GitHubPushError'
   }
 }
@@ -102,34 +123,32 @@ export interface GitHubGateway {
   /** GitHub's default branch. */
   defaultBranch(signal?: AbortSignal): Promise<string>
   /**
-   * Fetch every GitHub branch, and copy them into remote.git's tracking namespace in the same
-   * mirror session, pruning the ones GitHub no longer has. `have` is ignored.
+   * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
+   * lacks. `have` is the caller's own tips, at most {@link MAX_FETCH_HAVE} object IDs; any the
+   * gateway does not hold as a commit is ignored. A new fetch replaces a bundle not yet opened.
    */
   fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult>
-  /** Of `ids`, the ones a GitHub branch contained at the last fetch. */
-  onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>>
   /**
-   * Seed the bare repository at `gitDir` with every GitHub branch, in one mirror session: fetch
-   * GitHub, run `beforeSeed` (whose throw stops the seed), require `baseBranch` on GitHub, run
-   * `createRepository` to make the empty repository at `gitDir`, then push into it. `beforeSeed`
-   * runs inside that session, so it asks GitHub only through the object it is given, never
-   * through the gateway.
+   * The bundle a fetch answered with, readable once. Throws {@link GitHubTransientError}
+   * (`bundle-gone`) when a later fetch replaced it or it was already opened.
    */
-  seedBareRepository(
-    gitDir: string,
-    options: {
-      baseBranch: string
-      beforeSeed?: (github: GitHubReachability) => Promise<void>
-      createRepository: () => Promise<void>
-    },
-  ): Promise<void>
+  openBundle(bundleId: string): Promise<Readable>
   /**
-   * Push `sha` to GitHub's `refs/heads/<branch>`, resolving with whether GitHub's ref moved. A
-   * refused lease is retried once without one, which succeeds only as a fast-forward. Throws
-   * {@link RefusedPushError} for a push the worker never makes, {@link GitHubPushError} when the
-   * push fails, and anything else as is.
+   * Push `sha` to GitHub's `refs/heads/<branch>`, after fetching GitHub. Without `bundle`, it
+   * pushes when a GitHub branch already contains `sha`, and otherwise answers `need-objects`.
+   * With one (exactly one head, `<sha> refs/heads/<branch>`, built on commits a GitHub branch
+   * contains), it takes the bundle into a quarantine, checking every object, and pushes from
+   * there; pushed objects never enter the mirror. A refused lease is retried once without one,
+   * which succeeds only as a fast-forward. Throws {@link RefusedPushError} for a push the worker
+   * never makes (an object that is not a commit included), {@link GitHubPushError} when GitHub
+   * refuses it, {@link GitHubTransientError} for what a later attempt can clear, and anything
+   * else as is.
    */
-  push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome>
+  push(
+    request: GitHubPushRequest,
+    bundle?: Readable,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushAnswer>
   createPullRequest(
     request: { head: string; base: string; title: string; body: string },
     signal?: AbortSignal,
@@ -158,7 +177,6 @@ export interface LocalGitHubGatewayOptions {
   /** Holds the mirror; see `CmsWorkerConfig.stateDirectory`. */
   stateDirectory: string
   workspacePath: string
-  remoteGitPath: string
   /** simple-git's inactivity timeout, and the bound on a credential re-read. */
   timeoutMs: number
   /**
@@ -168,6 +186,8 @@ export interface LocalGitHubGatewayOptions {
   remoteUrl?: string | (() => string | Promise<string>)
   /** Test seam: the Octokit client. Default: built from `auth`. */
   octokit?: Octokit
+  /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
+  maxBundleBytes?: number
 }
 
 /** The in-process {@link GitHubGateway}. */
@@ -189,7 +209,7 @@ class LocalGitHubGateway implements GitHubGateway {
   private refreshing: Promise<void> | null = null
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
-    this.mirror = new GitHubMirror(options.stateDirectory, options.remoteGitPath, options.timeoutMs)
+    this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
     this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth)
   }
 
@@ -367,94 +387,153 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
-  fetch(_request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
+  fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
+    const have = [...new Set(request.have)]
+    if (have.length > MAX_FETCH_HAVE) {
+      throw new Error(`A fetch takes at most ${MAX_FETCH_HAVE} have IDs, not ${have.length}`)
+    }
+    for (const id of have) assertObjectId(id)
     return this.credentialed(signal, async (reach) => {
       const credential = await this.credential(reach)
-      await this.mirror.exclusive(async (mirror) => {
+      return this.mirror.exclusive(async (mirror) => {
         await mirror.fetchFromGitHub(credential, signal)
-        await mirror.publishTrackingRefs(signal)
-      })
-      return { bundleId: null }
-    })
-  }
-
-  onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>> {
-    return this.mirror.exclusive((mirror) => idsOnGitHub(mirror, ids))
-  }
-
-  seedBareRepository(
-    gitDir: string,
-    options: {
-      baseBranch: string
-      beforeSeed?: (github: GitHubReachability) => Promise<void>
-      createRepository: () => Promise<void>
-    },
-  ): Promise<void> {
-    return this.credentialed(undefined, async (reach) => {
-      const credential = await this.credential(reach)
-      await this.mirror.exclusive(async (mirror) => {
-        await mirror.fetchFromGitHub(credential)
-        await options.beforeSeed?.({
-          [inMirrorSession]: true,
-          onGitHub: (ids) => idsOnGitHub(mirror, ids),
-        })
-        if ((await mirror.branchTip(options.baseBranch)) === null) {
-          throw new Error(`GitHub has no branch '${options.baseBranch}'`)
-        }
-        await options.createRepository()
-        await mirror.seedBareRepository(gitDir)
+        const refs = await mirror.heads()
+        const file = await this.mirror.outgoingBundlePath()
+        const created = await mirror.createBundle(have, file, signal)
+        const bundleId = await this.mirror.setPendingBundle(created ? file : null)
+        return { refs, bundleId }
       })
     })
   }
 
-  push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome> {
-    return this.credentialed(signal, (reach) => this.pushOnce(request, reach, signal))
+  openBundle(bundleId: string): Promise<Readable> {
+    return this.mirror.openBundle(bundleId)
+  }
+
+  push(
+    request: GitHubPushRequest,
+    bundle?: Readable,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushAnswer> {
+    return this.credentialed(signal, (reach) =>
+      this.pushOnce(request, bundle, reach, signal),
+    ).finally(
+      // A refusal can come before the body is read: never leave its writer blocked.
+      () => bundle?.destroy(),
+    )
   }
 
   private async pushOnce(
     request: GitHubPushRequest,
+    bundle: Readable | undefined,
     reach: GitHubReach,
     signal?: AbortSignal,
-  ): Promise<GitHubPushOutcome> {
-    // Both attempts carry this one credential (see credential()).
+  ): Promise<GitHubPushAnswer> {
+    assertObjectId(request.sha, 'a commit ID')
+    if (request.lease !== undefined) assertObjectId(request.lease, 'a commit ID')
+    if (request.prerequisites.length > MAX_PUSH_PREREQUISITES) {
+      throw new Error(`A push names at most ${MAX_PUSH_PREREQUISITES} prerequisites`)
+    }
+    for (const id of request.prerequisites) assertObjectId(id, 'a commit ID')
+    // Before `branch` reaches anything else: the bundle's expected head, a refspec.
+    await assertPlainBranchName(request.branch, await this.mirror.checkGit())
+    // Every attempt carries this one credential (see credential()).
     const credential = await this.credential(reach)
-    // One mirror session for the whole exchange; the mirror kills its git when `signal` aborts.
-    // GitHub moves the ref only after receiving the whole pack, so a killed push changes nothing
-    // or is found already done by the re-run.
-    return this.mirror.exclusive(async (mirror) => {
-      const attempt = (lease?: string) =>
-        mirror.pushToGitHub(credential, request.branch, request.sha, {
-          lease,
-          signal,
-          protectedBranches: request.protectedBranches,
-        })
-      try {
-        return { ...(await attempt(request.lease)), pastStaleLease: false }
-      } catch (err) {
-        if (err instanceof RefusedPushError) throw err
-        const message = getErrorMessage(err)
-        // A refused lease means GitHub is not at the commit the lease names, which is routine: a
-        // task re-runs after a crash, and the marker it came from survives any failure to clear
-        // it. So retry PLAIN and let git adjudicate: a non-forced push succeeds only as a
-        // fast-forward, so it can destroy nothing. git evaluates a lease only when it has an
-        // update to apply, so an up-to-date ref never gets here. A workflow refusal is final
-        // whatever the lease, so it is not retried.
-        if (
-          request.lease &&
-          isStaleLeaseRejection(message) &&
-          workflowPushRefusalFile(message) === null
-        ) {
-          let update: GitHubRefUpdate
-          try {
-            update = await attempt()
-          } catch (retryErr) {
-            throw new GitHubPushError('rejected-after-stale-lease', retryErr)
-          }
-          return { ...update, pastStaleLease: true }
+    if (bundle === undefined) {
+      return this.mirror.exclusive((mirror) =>
+        this.pushInSession(mirror, credential, request, null, signal),
+      )
+    }
+    return this.mirror.ingest(bundle, request, this.maxBundleBytes, (received) =>
+      this.mirror.exclusive((mirror) =>
+        this.pushInSession(mirror, credential, request, received, signal),
+      ),
+    )
+  }
+
+  private get maxBundleBytes(): number {
+    return this.options.maxBundleBytes ?? DEFAULT_MAX_BUNDLE_BYTES
+  }
+
+  /**
+   * The push, in one mirror session, every call in it a plain call (the session is not
+   * re-entrant): fetch GitHub, so the mirror's heads are GitHub's for the reachability test and
+   * the prerequisite check; find `sha`, in the mirror or in the quarantine `received` goes into;
+   * push from there, which refuses a protected branch first. The mirror kills its git
+   * when `signal` aborts, and GitHub moves the ref only after receiving the whole pack, so a
+   * killed push changes nothing or is found already done by the re-run.
+   */
+  private async pushInSession(
+    mirror: MirrorSession,
+    credential: GitHubCredential,
+    request: GitHubPushRequest,
+    received: ReceivedBundle | null,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushAnswer> {
+    const { branch, sha } = request
+    try {
+      await mirror.fetchFromGitHub(credential, signal)
+    } catch (err) {
+      // [REDACT] The message reaches the task's lastError.
+      throw new GitHubTransientError(
+        'github-fetch-failed',
+        `Could not fetch from GitHub before pushing ${branch}: ` +
+          redactCredentials(getErrorMessage(err)).trim(),
+      )
+    }
+    // Fetched in this session, so no heads means GitHub has none: a first push.
+    const heads = await mirror.heads()
+
+    let repo: string | undefined
+    if (received === null) {
+      const type = (await mirror.objectTypes([sha])).get(sha)
+      if (type === 'missing') return this.needObjects(mirror, request)
+      if (type !== 'commit') throw new RefusedPushError(branch, 'not-a-commit', sha)
+      if (!(await mirror.reachableFromHeads(sha))) return this.needObjects(mirror, request)
+    } else {
+      repo = await mirror.quarantine(received, request, heads, signal)
+    }
+
+    const attempt = (lease?: string) =>
+      mirror.pushToGitHub(credential, branch, sha, {
+        lease,
+        signal,
+        repo,
+        protectedBranches: request.protectedBranches,
+      })
+    try {
+      return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
+    } catch (err) {
+      if (err instanceof RefusedPushError) throw err
+      const message = getErrorMessage(err)
+      // A refused lease means GitHub is not at the commit the lease names, which is routine: a
+      // task re-runs after a crash, and the marker it came from survives any failure to clear
+      // it. So retry PLAIN and let git adjudicate: a non-forced push succeeds only as a
+      // fast-forward, so it can destroy nothing. git evaluates a lease only when it has an
+      // update to apply, so an up-to-date ref never gets here. A workflow refusal is final
+      // whatever the lease, so it is not retried.
+      if (
+        request.lease &&
+        isStaleLeaseRejection(message) &&
+        workflowPushRefusalFile(message) === null
+      ) {
+        let update: GitHubRefUpdate
+        try {
+          update = await attempt()
+        } catch (retryErr) {
+          throw new GitHubPushError('rejected-after-stale-lease', getErrorMessage(retryErr))
         }
-        throw new GitHubPushError('rejected', err)
+        return { kind: 'pushed', ...update, pastStaleLease: true }
       }
-    })
+      throw new GitHubPushError('rejected', message)
+    }
+  }
+
+  private async needObjects(
+    mirror: MirrorSession,
+    request: GitHubPushRequest,
+  ): Promise<GitHubPushAnswer> {
+    return { kind: 'need-objects', usable: await mirror.usablePrerequisites(request.prerequisites) }
   }
 
   createPullRequest(
@@ -569,16 +648,9 @@ function logFailedCredentialRefresh(err: unknown): void {
   )
 }
 
-/** Of `ids`, the ones a GitHub branch contained at the last fetch, asked one at a time. */
-async function idsOnGitHub(
-  mirror: MirrorSession,
-  ids: readonly string[],
-): Promise<ReadonlySet<string>> {
-  const found = new Set<string>()
-  for (const id of ids) {
-    if (await mirror.isOnGitHub(id)) found.add(id)
-  }
-  return found
+/** Refuse anything but a full object ID, before it can reach git. */
+function assertObjectId(value: string, what = 'an object ID'): void {
+  if (!isObjectId(value)) throw new Error(`Not ${what}: ${JSON.stringify(value.slice(0, 80))}`)
 }
 
 /** `target` with symlinks resolved as far as it exists, so a link cannot hide where it lands. */

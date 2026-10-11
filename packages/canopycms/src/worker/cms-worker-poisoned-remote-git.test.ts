@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { readHeadBranch } from '../utils/git'
 import { CmsWorker, type CmsWorkerConfig } from './cms-worker'
+import type { GitHubGateway } from './github-gateway'
 
 type Internals = {
   ensureRemoteGit(): Promise<void>
@@ -345,6 +346,66 @@ describe('a poisoned remote.git that is kept', () => {
     await expect(internals(makeWorker()).ensureRemoteGit()).rejects.toThrow(
       /planted\.key.*This needs an operator: .*config was tampered with/s,
     )
+    expect(await workspaceEntries()).toEqual(['remote.git'])
+  })
+})
+
+describe('the replacement decision follows what the seed holds', () => {
+  /**
+   * A worker whose gateway's mirror is moved by `move` the moment each fetch has answered: what
+   * another fetch, or a prune, would do to the mirror before a check that asked it.
+   */
+  function movedAfterFetch(move: (mirror: string) => Promise<void>): CmsWorker {
+    const stateDirectory = path.join(tmpDir, 'state')
+    const worker = makeWorker({ stateDirectory })
+    const github = (worker as unknown as { github(): GitHubGateway }).github()
+    const fetch = github.fetch.bind(github)
+    vi.spyOn(github, 'fetch').mockImplementation(async (request, signal) => {
+      const answered = await fetch(request, signal)
+      await move(path.join(stateDirectory, 'github.git'))
+      return answered
+    })
+    return worker
+  }
+
+  it('replaces remote.git when its ref was on GitHub as fetched, though the mirror then loses it', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '-b', 'feature'])
+    const onGitHub = await commit('feature.md')
+    await push(githubFixture, 'HEAD:refs/heads/feature')
+    await push(remoteGitPath, 'HEAD:refs/heads/feature')
+    const worker = movedAfterFetch((mirror) =>
+      simpleGit().raw(['--git-dir', mirror, 'update-ref', '-d', 'refs/heads/feature']).then(),
+    )
+
+    await internals(worker).ensureRemoteGit()
+
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/feature', 'refs/heads/main'])
+    expect(
+      (
+        await simpleGit().raw(['--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature'])
+      ).trim(),
+    ).toBe(onGitHub)
+    expect(await workspaceEntries()).toEqual(['remote.git'])
+  })
+
+  it('keeps remote.git when its ref was not on GitHub as fetched, though the mirror then gains it', async () => {
+    await commit('one.md')
+    await push(githubFixture, 'main')
+    await seed.raw(['checkout', '-b', 'local'])
+    const onlyHere = await commit('local.md')
+    await push(remoteGitPath, 'HEAD:refs/heads/local')
+    const worker = movedAfterFetch((mirror) =>
+      simpleGit()
+        .raw(['--git-dir', mirror, 'fetch', '-q', remoteGitPath, `${onlyHere}:refs/heads/sneaked`])
+        .then(),
+    )
+
+    await expect(internals(worker).ensureRemoteGit()).rejects.toThrow(
+      /will not replace it: refs\/heads\/local\./,
+    )
+    expect(await refsIn(remoteGitPath)).toEqual(['refs/heads/local'])
     expect(await workspaceEntries()).toEqual(['remote.git'])
   })
 })

@@ -1,57 +1,80 @@
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { Readable } from 'node:stream'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import {
-  GITHUB_TRACKING_REF_PREFIX,
   gitNetworkChildEnv,
   repackBareRemoteIfNeeded,
   type BareRemoteRepackResult,
 } from '../git-manager'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
+import {
+  BundleHeaderError,
+  hasOnlyHead,
+  scanBundleHeader,
+  type BundleHeader,
+} from './bundle-header'
+import { runGit } from './git-process'
 import { workerLogWarn } from './log'
 import {
   githubBoundGitOptions,
   mirrorGitOptions,
-  pinnedReceivePack,
-  pinnedUploadPack,
+  mirrorPins,
+  quarantinePins,
 } from './shared-repo-git'
 
 /**
- * The worker's private bare mirror of the GitHub repository, on storage the CMS Lambda cannot
- * reach: the only repository in which git ever runs with the GitHub credential. Every
- * credentialed fetch and push reads config and hooks from here, never from `remote.git` or a
- * branch clone, whose config the Lambda can write (see worker/shared-repo-git.ts for why `-c`
- * cannot neutralize that). Objects cross to and from `remote.git` only by local fetch and push,
- * through the pinned `upload-pack`/`receive-pack` commands. The credential reaches git only as a
+ * The worker's private bare mirror of the GitHub repository, in a state directory the CMS Lambda
+ * cannot reach. It and the quarantines beside it are the only repositories in which git ever runs
+ * with the GitHub credential, and the state directory the only place the GitHub gateway runs git
+ * at all. Every gateway git names a repository inside it, by `GIT_DIR` and working directory
+ * alike, so no config or hook the Lambda writes is ever read by it; Lambda-written objects reach
+ * it only inside a pushed bundle, checked in a quarantine. The credential reaches git only as a
  * per-command config file ({@link withCredentialConfig}).
  *
- * `refs/heads/*` mirrors GitHub as of the last fetch. `refs/canopy/outgoing/<branch>` holds a
- * commit being pushed for the length of that push. A cache: deleting it costs a fetch, from
- * `remote.git` where it can and GitHub for the rest.
+ * Objects cross the boundary as git bundles, never by a fetch or push against `remote.git`:
+ * - **out:** a fetch bundles what the caller's `have` lacks into `outgoing/`, one pending bundle
+ *   at a time ({@link GitHubMirror.openBundle});
+ * - **in:** a pushed bundle is written to `incoming/`, its header read in node
+ *   (worker/bundle-header.ts), and fetched, object-checked, into a fresh quarantine repository
+ *   that borrows the mirror's objects through `objects/info/alternates`. The push to GitHub goes
+ *   out from there. Pushed objects therefore never enter the mirror, whose objects come only
+ *   from GitHub; the quarantine is deleted whole.
+ *
+ * `refs/heads/*` mirrors GitHub as of the last fetch. A cache: deleting it costs one fetch of the
+ * whole repository from GitHub.
  *
  * One process owns it, and {@link GitHubMirror.exclusive} runs one session at a time, so a fetch's
- * `--prune` never meets a push half way. A repack runs beside them, which is safe because it
- * expires no cruft, so no object a session is using disappears (git-manager.ts
- * `repackBareRemoteIfNeeded`); expiring it would mean repacking inside a session.
+ * `--prune` never meets a push half way, and the mirror's heads cannot move between a push's
+ * reachability test and the push. A repack runs beside sessions, quarantines included, which is
+ * safe because it expires no cruft, so no object a session is using disappears, and a reader
+ * holding a pack the repack unlinked keeps reading it (git-manager.ts `repackBareRemoteIfNeeded`).
  *
- * Every transfer runs with `--progress`: simple-git's timeout is inactivity, and a quiet fetch of a
- * whole repository would otherwise be killed for its size. The connectivity walk after a fetch
- * still prints nothing (.claude/future-tasks/worker-github-mirror-limits.md).
+ * Every transfer runs with `--progress`: the timeout is inactivity, and a quiet fetch of a whole
+ * repository would otherwise be killed for its size. The connectivity walk after a fetch still
+ * prints nothing (.claude/future-tasks/worker-github-mirror-limits.md).
  */
 export class GitHubMirror {
   readonly gitDir: string
+  private readonly incomingDir: string
+  private readonly outgoingDir: string
   private tail: Promise<unknown> = Promise.resolve()
+  private ingestTail: Promise<unknown> = Promise.resolve()
   private warnedSize = false
   private ready = false
+  private transferDirs: Promise<void> | null = null
+  private pendingBundle: { id: string; file: string } | null = null
 
   constructor(
-    stateDirectory: string,
-    private readonly remoteGitPath: string,
+    private readonly stateDirectory: string,
     private readonly timeoutMs: number,
   ) {
     this.gitDir = path.join(stateDirectory, 'github.git')
+    this.incomingDir = path.join(stateDirectory, 'incoming')
+    this.outgoingDir = path.join(stateDirectory, 'outgoing')
   }
 
   /**
@@ -66,8 +89,9 @@ export class GitHubMirror {
         this.ready = true
       }
       try {
-        await sweepCredentialConfigs(path.dirname(this.gitDir))
-        return await fn(new MirrorSession(this.gitDir, this.remoteGitPath, this.timeoutMs))
+        await sweepCredentialConfigs(this.stateDirectory)
+        await this.ensureTransferDirs()
+        return await fn(new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs))
       } catch (err) {
         this.ready = false
         throw err
@@ -83,29 +107,124 @@ export class GitHubMirror {
     return this.exclusive(async () => undefined)
   }
 
-  /**
-   * Create the mirror, or recreate one that is not a readable bare repository, and drop staging
-   * refs a killed push left: one at `<branch>` blocks a later `<branch>/<x>`.
-   */
+  /** Create the mirror, or recreate one that is not a readable bare repository. */
   private async create(): Promise<void> {
-    const stateDirectory = path.dirname(this.gitDir)
-    await fs.mkdir(stateDirectory, { recursive: true, mode: 0o700 })
-    await assertOwnDirectory(stateDirectory)
+    await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
+    await assertOwnDirectory(this.stateDirectory)
     if (!(await isBareRepository(this.gitDir))) {
       await fs.rm(this.gitDir, { recursive: true, force: true })
       await fs.mkdir(this.gitDir, { mode: 0o700 })
       await simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() })
         .env(mirrorEnv(this.gitDir))
-        .raw(['init', '--quiet', '--bare'])
+        .raw(['init', '--quiet', '--bare', '--end-of-options'])
     }
     await assertOwnDirectory(this.gitDir)
-    const git = simpleGit({ baseDir: this.gitDir, ...mirrorGitOptions() }).env(
-      mirrorEnv(this.gitDir),
-    )
-    const staged = (await git.raw(['for-each-ref', '--format=%(refname)', STAGING_PREFIX]))
-      .split('\n')
-      .filter(Boolean)
-    for (const ref of staged) await git.raw(['update-ref', '-d', '--end-of-options', ref])
+  }
+
+  /**
+   * Empty `incoming/` and `outgoing/` of what an earlier gateway left, once per gateway: after
+   * that, everything in them belongs to a transfer of this one's, which removes its own, so a
+   * later call only re-creates one that has gone (the state directory removed under it).
+   */
+  private async ensureTransferDirs(): Promise<void> {
+    this.transferDirs ??= (async () => {
+      await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
+      await assertOwnDirectory(this.stateDirectory)
+      for (const dir of [this.incomingDir, this.outgoingDir]) {
+        await fs.rm(dir, { recursive: true, force: true })
+      }
+    })().catch((err: unknown) => {
+      this.transferDirs = null
+      throw err
+    })
+    await this.transferDirs
+    for (const dir of [this.incomingDir, this.outgoingDir]) {
+      await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+    }
+  }
+
+  /**
+   * git for `check-ref-format`, run in the state directory like every other gateway git. It reads
+   * the repository's config, as any git does, and its refs only to expand `@{-N}`, which
+   * `assertPlainBranchName` refuses.
+   */
+  async checkGit(): Promise<SimpleGit> {
+    await this.ensureTransferDirs()
+    return simpleGit({ baseDir: this.stateDirectory }).env(mirrorEnv(this.gitDir))
+  }
+
+  /** Where a session writes a new outgoing bundle: a fresh name, never a caller's. */
+  async outgoingBundlePath(): Promise<string> {
+    await this.ensureTransferDirs()
+    return path.join(this.outgoingDir, `${randomBytes(16).toString('hex')}.bundle`)
+  }
+
+  /**
+   * Make `file` the one pending outgoing bundle, or none, deleting the one it replaces (never an
+   * opened one), so a loop of fetches never fills the state directory. Returns the id that opens it: a
+   * key into this object, never a path.
+   */
+  async setPendingBundle(file: string | null): Promise<string | null> {
+    const replaced = this.pendingBundle
+    this.pendingBundle = file === null ? null : { id: randomBytes(16).toString('hex'), file }
+    if (replaced !== null) await fs.rm(replaced.file, { force: true })
+    return this.pendingBundle?.id ?? null
+  }
+
+  /**
+   * The pending bundle `id` names, readable once: it is no longer pending once opened, so a later
+   * fetch never deletes it, and its file is deleted when the stream closes.
+   * Throws {@link GitHubTransientError} for an id that is not the pending bundle's.
+   */
+  async openBundle(id: string): Promise<Readable> {
+    const pending = this.pendingBundle
+    const gone = () =>
+      new GitHubTransientError(
+        'bundle-gone',
+        `The bundle ${JSON.stringify(id.slice(0, 64))} is not available: a later fetch replaced ` +
+          `it, or it was already read. Fetch again.`,
+      )
+    if (pending === null || pending.id !== id) throw gone()
+    this.pendingBundle = null
+    let handle: fs.FileHandle
+    try {
+      handle = await fs.open(pending.file, 'r')
+    } catch {
+      throw gone()
+    }
+    const stream = handle.createReadStream()
+    stream.once('close', () => {
+      void fs.rm(pending.file, { force: true }).catch(() => undefined)
+    })
+    return stream
+  }
+
+  /**
+   * Receive a pushed bundle into a directory of its own under `incoming/`, refusing it as it
+   * arrives (header, size), run `fn` with it, then delete the directory. One at a time, so pushed
+   * bundles hold at most one cap's worth of disk, plus about as much again for the quarantine's
+   * copy of the pack.
+   */
+  ingest<T>(
+    body: Readable,
+    expected: { sha: string; branch: string },
+    maxBytes: number,
+    fn: (bundle: ReceivedBundle) => Promise<T>,
+  ): Promise<T> {
+    const start = async () => {
+      await this.ensureTransferDirs()
+      const dir = await fs.mkdtemp(path.join(this.incomingDir, 'push-'))
+      try {
+        const file = path.join(dir, 'bundle')
+        const header = await receiveBundle(body, file, expected, maxBytes)
+        return await fn({ dir, file, header })
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true })
+      }
+    }
+    const run = this.ingestTail.then(start, start)
+    this.ingestTail = run.catch(() => undefined)
+    return run
   }
 
   /** Repack when it needs it, and say once if it has grown past {@link MIRROR_SIZE_WARN_KIB}. */
@@ -130,13 +249,44 @@ export class GitHubMirror {
   }
 }
 
+/** A pushed bundle, received and its header read: {@link GitHubMirror.ingest}. */
+export interface ReceivedBundle {
+  /** The directory it and its quarantine live in, deleted after the push. */
+  readonly dir: string
+  readonly file: string
+  readonly header: BundleHeader
+}
+
 /**
  * Past this the mirror is using a large share of the worker's default 8 GiB root volume, which
  * also holds the OS, Node and the log.
  */
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
 
+/** Where a quarantine holds the pushed commit while it is checked and pushed. */
 const STAGING_PREFIX = 'refs/canopy/outgoing/'
+
+/**
+ * A push or fetch the gateway could not complete for a reason a later attempt can clear: GitHub
+ * unreachable, a bundle that did not arrive whole or valid, a prerequisite GitHub no longer has,
+ * a bundle already gone. The task retries it. Only `github-fetch-failed` can be the credential's
+ * doing, and unless the mirror's own lock caused it, that failure has already armed a re-read.
+ */
+export class GitHubTransientError extends Error {
+  constructor(
+    readonly code:
+      | 'github-fetch-failed'
+      | 'bundle-rejected'
+      | 'prerequisite-gone'
+      | 'bundle-gone'
+      | 'objects-still-needed'
+      | 'ref-kept-moving',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'GitHubTransientError'
+  }
+}
 
 /**
  * What a GitHub-bound git command authenticates with: the GitHub fetch, the `ls-remote` that reads
@@ -254,21 +404,26 @@ async function assertOwnDirectory(dir: string): Promise<void> {
 }
 
 /**
- * A push the worker never makes: to a name that is not a plain branch name, to the base branch, or
- * to GitHub's default branch. No CanopyCMS flow asks for any of these, so a task that does was not
- * written by CanopyCMS.
+ * A push the worker never makes: to a name that is not a plain branch name, to the base branch or
+ * GitHub's default branch, or of an object that is not a commit. No CanopyCMS flow asks for any of
+ * these, so a task that does was not written by CanopyCMS, and no retry can change the answer.
  */
 export class RefusedPushError extends Error {
   constructor(
     readonly branch: string,
-    reason: 'invalid' | 'protected',
+    reason: 'invalid' | 'protected' | 'not-a-commit',
+    sha?: string,
   ) {
     super(
       reason === 'invalid'
         ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
-        : `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default ` +
+        : reason === 'protected'
+          ? `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default ` +
             `branch, which the CanopyCMS worker never pushes. Nothing in CanopyCMS queues such a ` +
-            `push; find out what wrote this task.`,
+            `push; find out what wrote this task.`
+          : `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
+            `commit, and a branch can only point at one. Find out what put it at ` +
+            `refs/heads/${branch} in remote.git.`,
     )
     this.name = 'RefusedPushError'
   }
@@ -278,12 +433,17 @@ export class RefusedPushError extends Error {
  * Throw {@link RefusedPushError} unless `branch` is a plain branch name: one
  * `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
  * follows it in a refspec as another destination), `..`, `^`, `~`, `@{`, spaces and a leading
- * `-`, so `refs/heads/<branch>` is exactly the ref a push names.
+ * `-`, so `refs/heads/<branch>` is exactly the ref a push names. `check-ref-format --branch` takes
+ * exactly one argument and refuses `--end-of-options`, which is why it alone goes without one.
+ * `git` is the caller's instance: the gateway's runs in its state directory.
  */
-export async function assertPlainBranchName(branch: string): Promise<void> {
+export async function assertPlainBranchName(
+  branch: string,
+  git: SimpleGit = simpleGit(),
+): Promise<void> {
   let normalized: string
   try {
-    normalized = (await simpleGit().raw(['check-ref-format', '--branch', branch])).trim()
+    normalized = (await git.raw(['check-ref-format', '--branch', branch])).trim()
   } catch (err) {
     // Only git's own verdict is a refusal; a failure to run git at all is transient.
     if (/is not a valid branch name/.test(getErrorMessage(err))) {
@@ -299,22 +459,39 @@ export async function assertPlainBranchName(branch: string): Promise<void> {
 export class MirrorSession {
   constructor(
     private readonly gitDir: string,
-    private readonly remoteGitPath: string,
+    private readonly stateDirectory: string,
     private readonly timeoutMs: number,
   ) {}
 
-  private git(signal?: AbortSignal): SimpleGit {
+  /** simple-git in `repo`: the mirror, or a quarantine of this session's. */
+  private git(signal?: AbortSignal, repo = this.gitDir): SimpleGit {
     return simpleGit({
-      baseDir: this.gitDir,
+      baseDir: repo,
       ...mirrorGitOptions(),
       timeout: { block: this.timeoutMs },
       abort: signal,
-    }).env(mirrorEnv(this.gitDir))
+    }).env(mirrorEnv(repo))
+  }
+
+  /** git with `stdin` fed to it, in `repo` under `config` (the mirror's pins by default). */
+  private run(
+    args: readonly string[],
+    options: { stdin?: string; repo?: string; config?: string[]; signal?: AbortSignal } = {},
+  ): Promise<string> {
+    const repo = options.repo ?? this.gitDir
+    return runGit(args, {
+      cwd: repo,
+      env: mirrorEnv(repo),
+      config: options.config ?? mirrorPins(),
+      stdin: options.stdin,
+      inactivityTimeoutMs: this.timeoutMs,
+      signal: options.signal,
+    })
   }
 
   /**
-   * Run one GitHub-bound command, `args` naming `credential.url` where git expects the remote. The
-   * credential reaches it only through {@link withCredentialConfig}'s file, named by
+   * Run one GitHub-bound command in `repo`, `args` naming `credential.url` where git expects the
+   * remote. The credential reaches it only through {@link withCredentialConfig}'s file, named by
    * `GIT_CONFIG_GLOBAL`, so it is in no argv and in no process's environment. No trace variable
    * reaches this git: trace2 can print config values. Its failure is reported to the credential
    * unless {@link isOwnLockFailure}.
@@ -323,16 +500,17 @@ export class MirrorSession {
     credential: GitHubCredential,
     args: string[],
     signal?: AbortSignal,
+    repo = this.gitDir,
   ): Promise<string> {
-    return withCredentialConfig(path.dirname(this.gitDir), credential, async (configPath) => {
+    return withCredentialConfig(this.stateDirectory, credential, async (configPath) => {
       try {
         return await simpleGit({
-          baseDir: this.gitDir,
+          baseDir: repo,
           ...githubBoundGitOptions(),
           timeout: { block: this.timeoutMs },
           abort: signal,
         })
-          .env({ ...githubBoundEnv(this.gitDir), GIT_CONFIG_GLOBAL: configPath })
+          .env({ ...githubBoundEnv(repo), GIT_CONFIG_GLOBAL: configPath })
           .raw(args)
       } catch (err) {
         if (!isOwnLockFailure(getErrorMessage(err))) credential.onFailure()
@@ -341,15 +519,8 @@ export class MirrorSession {
     })
   }
 
-  /**
-   * Bring `refs/heads/*` to exactly what GitHub holds. An empty mirror (every new instance) first
-   * takes what `remote.git` already has, so GitHub sends only the difference; the GitHub fetch then
-   * overwrites and prunes every ref that seeding set.
-   */
+  /** Bring `refs/heads/*` to exactly what GitHub holds. */
   async fetchFromGitHub(credential: GitHubCredential, signal?: AbortSignal): Promise<void> {
-    if ((await this.git(signal).raw(['for-each-ref', '--count=1', 'refs/heads/'])).trim() === '') {
-      await this.seedFromRemoteGit(signal)
-    }
     await this.githubBound(
       credential,
       [
@@ -365,38 +536,139 @@ export class MirrorSession {
     )
   }
 
+  /** Every branch GitHub had at the last fetch, mapped to its tip. */
+  async heads(): Promise<Map<string, string>> {
+    const out = await this.git().raw([
+      'for-each-ref',
+      '--format=%(objectname) %(refname)',
+      '--end-of-options',
+      'refs/heads/',
+    ])
+    const heads = new Map<string, string>()
+    for (const line of out.split('\n')) {
+      const space = line.indexOf(' ')
+      if (space === -1) continue
+      heads.set(line.slice(space + 1 + 'refs/heads/'.length), line.slice(0, space))
+    }
+    return heads
+  }
+
   /**
-   * Best-effort: a `remote.git` that does not exist yet (the first boot) or that fails the object
-   * check costs only a full fetch from GitHub.
+   * Bundle every branch into `file`, less what `have` already holds: each ID the mirror has as a
+   * commit is excluded with its history, and any other ID is ignored. False, with no file, when
+   * that leaves nothing to send. Each ID is validated before it reaches here, since rev-list's
+   * `--stdin` honours a pseudo-option such as `--all`.
    */
-  private async seedFromRemoteGit(signal?: AbortSignal): Promise<void> {
-    if (!(await fs.stat(this.remoteGitPath).catch(() => null))) return
+  async createBundle(
+    have: readonly string[],
+    file: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    const types = await this.objectTypes(have)
+    const exclusions = have.filter((id) => types.get(id) === 'commit')
     try {
-      await this.fetchFromRemoteGit([`+${GITHUB_TRACKING_REF_PREFIX}*:refs/heads/*`], signal)
-    } catch (err) {
-      workerLogWarn(
-        `Could not seed the GitHub mirror from remote.git, fetching all of it from GitHub: ` +
-          redactCredentials(getErrorMessage(err)),
+      await this.run(
+        ['bundle', 'create', '--progress', '--end-of-options', file, '--branches', '--stdin'],
+        { stdin: exclusions.map((id) => `^${id}\n`).join(''), signal },
       )
+      return true
+    } catch (err) {
+      await fs.rm(file, { force: true })
+      await fs.rm(`${file}.lock`, { force: true })
+      if (/Refusing to create empty bundle/.test(getErrorMessage(err))) return false
+      throw err
     }
   }
 
   /**
-   * Fetch from `remote.git` through {@link pinnedUploadPack}, checking every object: these are the
-   * objects the Lambda can write.
+   * Each of `ids` mapped to its object type in `repo`, or to `missing`, from one
+   * `cat-file --batch-check`, which prints `<id> missing` for an absent object where `cat-file -t`
+   * shares exit 128 with every other failure. Every ID must already be validated.
    */
-  private async fetchFromRemoteGit(refspecs: string[], signal?: AbortSignal): Promise<void> {
-    await this.git(signal).raw([
-      '-c',
-      'fetch.fsckObjects=true',
-      'fetch',
-      '--progress',
-      '--no-write-fetch-head',
-      `--upload-pack=${pinnedUploadPack()}`,
+  async objectTypes(ids: readonly string[], repo = this.gitDir): Promise<Map<string, string>> {
+    const types = new Map<string, string>()
+    if (ids.length === 0) return types
+    const lines = (
+      await this.run(
+        ['cat-file', '--batch-check=%(objectname) %(objecttype)', '--end-of-options'],
+        {
+          stdin: ids.map((id) => `${id}\n`).join(''),
+          repo,
+        },
+      )
+    ).split('\n')
+    ids.forEach((id, i) => {
+      const line = lines[i] ?? ''
+      if (line === `${id} missing`) types.set(id, 'missing')
+      else if (line.startsWith(`${id} `)) types.set(id, line.slice(id.length + 1))
+      else throw new Error(`git cat-file printed no line for ${id}`)
+    })
+    return types
+  }
+
+  /**
+   * Whether a GitHub branch contained the commit `sha` at the last fetch. Only for a commit:
+   * `--contains` exits 129 on a missing or non-commit object.
+   */
+  async reachableFromHeads(sha: string): Promise<boolean> {
+    const found = await this.git().raw([
+      'for-each-ref',
+      '--count=1',
+      '--format=%(refname)',
+      `--contains=${sha}`,
       '--end-of-options',
-      this.remoteGitPath,
-      ...refspecs,
+      'refs/heads/',
     ])
+    return found.trim() !== ''
+  }
+
+  /** Of `prerequisites`, the commits a GitHub branch contained at the last fetch. */
+  async usablePrerequisites(prerequisites: readonly string[]): Promise<string[]> {
+    const unique = [...new Set(prerequisites)]
+    const types = await this.objectTypes(unique)
+    const usable: string[] = []
+    for (const id of unique) {
+      if (types.get(id) === 'commit' && (await this.reachableFromHeads(id))) usable.push(id)
+    }
+    return usable
+  }
+
+  /**
+   * Whether every one of `commits` is reachable from one of `tips`, in ONE walk: rev-list fed the
+   * commits and a `^<tip>` per tip lists what the tips do not reach, so empty output means all
+   * are reached (several `--contains` would mean "any", not "all"). Only for commits: rev-list
+   * passes a tree or blob ID silently.
+   */
+  private async allReachable(
+    commits: readonly string[],
+    tips: readonly string[],
+  ): Promise<boolean> {
+    if (commits.length === 0) return true
+    const out = await this.run(['rev-list', '--stdin', '--max-count=1', '--end-of-options'], {
+      stdin: [...commits, ...tips.map((tip) => `^${tip}`)].map((line) => `${line}\n`).join(''),
+    })
+    return out.trim() === ''
+  }
+
+  /**
+   * Refuse a push to the base branch or GitHub's default branch, which is read from GitHub
+   * itself, per push: the task queue, remote.git and the lease marker are all Lambda-writable, and
+   * the worker's base branch comes from Lambda-writable state when it is not configured
+   * (`CmsWorker.resolveBaseBranch`).
+   */
+  private async assertPushAllowed(
+    credential: GitHubCredential,
+    branch: string,
+    protectedBranches: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const protectedNames = [...protectedBranches]
+    const githubDefault = await this.githubDefaultBranch(credential, signal)
+    if (githubDefault !== null) protectedNames.push(githubDefault)
+    const target = sanitizeBranchName(branch)
+    if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
+      throw new RefusedPushError(branch, 'protected')
+    }
   }
 
   /**
@@ -416,128 +688,193 @@ export class MirrorSession {
     return match ? match[1] : null
   }
 
-  /** The mirror's tip for `branch`, or null when GitHub had no such branch at the last fetch. */
-  async branchTip(branch: string): Promise<string | null> {
-    try {
-      const sha = (
-        await this.git().raw(['rev-parse', '--verify', '--end-of-options', `refs/heads/${branch}`])
-      ).trim()
-      return sha.length > 0 ? sha : null
-    } catch {
-      return null
-    }
-  }
-
   /**
-   * Whether a branch GitHub had at the last fetch contains the commit `id`, or the commit an
-   * annotated tag `id` points at. False for an object the mirror does not have, or one git cannot
-   * read as a commit.
+   * Take a received bundle into a fresh quarantine repository beside it, returning the
+   * quarantine's path, with `sha` there as a commit. In order:
+   * 1. each prerequisite must be a commit the mirror holds, reachable from one of `heads` (the
+   *    branches GitHub had at this session's fetch): one `cat-file --batch-check`, then one walk;
+   * 2. the quarantine borrows the mirror's objects through `objects/info/alternates`, with the
+   *    mirror's pins except `core.alternateRefsCommand` ({@link quarantinePins});
+   * 3. `fetch` of the bundle's one head into a staging ref, checking every object, by a refspec
+   *    built from the validated branch, never from the bundle;
+   * 4. the staging ref must be `sha`, and `sha` a commit.
+   * A refusal is {@link GitHubTransientError} (`bundle-rejected`, or `prerequisite-gone` for a
+   * prerequisite GitHub no longer has), except a non-commit `sha`, which is
+   * {@link RefusedPushError}. Nothing here writes the mirror.
    */
-  async isOnGitHub(id: string): Promise<boolean> {
-    if (!isObjectId(id)) return false
-    try {
-      const found = await this.git().raw([
-        'for-each-ref',
-        '--count=1',
-        '--format=%(refname)',
-        `--contains=${id}`,
-        'refs/heads/',
-      ])
-      return found.trim() !== ''
-    } catch {
-      return false
+  async quarantine(
+    bundle: ReceivedBundle,
+    expected: { sha: string; branch: string },
+    heads: ReadonlyMap<string, string>,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const { prerequisites } = bundle.header
+    const types = await this.objectTypes(prerequisites)
+    if (prerequisites.some((id) => types.get(id) === 'missing')) {
+      throw new GitHubTransientError(
+        'prerequisite-gone',
+        `The bundle for ${expected.branch} builds on a commit GitHub no longer has. Retrying ` +
+          `sends a new one.`,
+      )
     }
-  }
+    if (prerequisites.some((id) => types.get(id) !== 'commit')) {
+      throw new GitHubTransientError(
+        'bundle-rejected',
+        'Refusing the bundle: a prerequisite is not a commit',
+      )
+    }
+    if (!(await this.allReachable(prerequisites, [...heads.values()]))) {
+      throw new GitHubTransientError(
+        'prerequisite-gone',
+        `The bundle for ${expected.branch} builds on a commit no GitHub branch contains any more. ` +
+          `Retrying sends a new one.`,
+      )
+    }
 
-  /**
-   * Copy GitHub's branches into `remote.git`'s tracking namespace, pruning the ones GitHub no
-   * longer has. `reconcileTrackedBranches` (worker/git-sync.ts) moves `refs/heads/*` from there.
-   */
-  async publishTrackingRefs(signal?: AbortSignal): Promise<void> {
-    await this.pushToRemoteGit(
-      this.remoteGitPath,
-      [`+refs/heads/*:${GITHUB_TRACKING_REF_PREFIX}*`],
-      signal,
-      true,
+    const repo = path.join(bundle.dir, 'repo.git')
+    await fs.mkdir(repo, { mode: 0o700 })
+    await this.run(['init', '--quiet', '--bare', '--end-of-options'], {
+      repo,
+      config: quarantinePins(),
+    })
+    await fs.writeFile(
+      path.join(repo, 'objects', 'info', 'alternates'),
+      `${path.join(this.gitDir, 'objects')}\n`,
+      { mode: 0o600 },
     )
-  }
-
-  /** Seed a new, empty bare repository at `gitDir` with every GitHub branch. */
-  async seedBareRepository(gitDir: string, signal?: AbortSignal): Promise<void> {
-    await this.pushToRemoteGit(gitDir, ['+refs/heads/*:refs/heads/*'], signal, false)
-  }
-
-  private async pushToRemoteGit(
-    target: string,
-    refspecs: string[],
-    signal: AbortSignal | undefined,
-    prune: boolean,
-  ): Promise<void> {
-    await this.git(signal).raw([
-      'push',
-      '--progress',
-      ...(prune ? ['--prune'] : []),
-      `--receive-pack=${pinnedReceivePack()}`,
-      '--end-of-options',
-      target,
-      ...refspecs,
-    ])
+    const staging = `${STAGING_PREFIX}${expected.branch}`
+    try {
+      await this.run(
+        [
+          'fetch',
+          '--progress',
+          '--no-write-fetch-head',
+          '--end-of-options',
+          bundle.file,
+          `refs/heads/${expected.branch}:${staging}`,
+        ],
+        {
+          repo,
+          // The severity pins are depth: index-pack already errors on these by default.
+          config: [
+            ...quarantinePins(),
+            'fetch.fsckObjects=true',
+            'fetch.fsck.hasDot=error',
+            'fetch.fsck.hasDotdot=error',
+            'fetch.fsck.hasDotgit=error',
+          ],
+          signal,
+        },
+      )
+    } catch (err) {
+      throw new GitHubTransientError(
+        'bundle-rejected',
+        `Refusing the bundle for ${expected.branch}: ${redactCredentials(getErrorMessage(err)).trim()}`,
+      )
+    }
+    const staged = (
+      await this.git(signal, repo).raw(['rev-parse', '--verify', '--end-of-options', staging])
+    ).split('\n')[0]
+    if (staged !== expected.sha) {
+      throw new GitHubTransientError(
+        'bundle-rejected',
+        `Refusing the bundle for ${expected.branch}: its head is not ${expected.sha}`,
+      )
+    }
+    if ((await this.objectTypes([expected.sha], repo)).get(expected.sha) !== 'commit') {
+      throw new RefusedPushError(expected.branch, 'not-a-commit', expected.sha)
+    }
+    return repo
   }
 
   /**
-   * Push exactly `sha`, which `remote.git` held for `branch` when the caller read it, to GitHub's
+   * Push exactly `sha` from `repo` (the mirror, or a quarantine holding it) to GitHub's
    * `refs/heads/<branch>`. `lease` is the commit GitHub must still be at for the push to replace
-   * it (`--force-with-lease`); without one the push is an ordinary fast-forward. Fetching the
-   * commit from `remote.git` first is the step that brings the Lambda's objects across, through
-   * the pinned `upload-pack`. Resolves with what the push did to GitHub's ref.
+   * it (`--force-with-lease`); without one the push is an ordinary fast-forward. Resolves with
+   * what the push did to GitHub's ref.
+   *
+   * Validation and the protected-branch refusal are here, at the one place every GitHub push
+   * (plain or under a lease) goes through, so no caller can skip them. A bundle's quarantine fetch
+   * names `branch` first, so the gateway validates it before the ingest too (`pushOnce`).
    */
   async pushToGitHub(
     credential: GitHubCredential,
     branch: string,
     sha: string,
-    options: { lease?: string; signal?: AbortSignal; protectedBranches: readonly string[] },
+    options: {
+      lease?: string
+      signal?: AbortSignal
+      repo?: string
+      protectedBranches: readonly string[]
+    },
   ): Promise<GitHubRefUpdate> {
     for (const id of [sha, ...(options.lease === undefined ? [] : [options.lease])]) {
       if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
     }
-    // Here, at the one place every GitHub push (plain or under a lease) goes through, so no caller
-    // can skip it, and before any git runs with `branch` in a refspec. The task queue, remote.git
-    // and the lease marker are all Lambda-writable, and the worker's base branch comes from
-    // Lambda-writable state when it is not configured (`CmsWorker.resolveBaseBranch`); GitHub's default branch is read from GitHub
-    // itself, per push.
-    await assertPlainBranchName(branch)
-    const protectedNames = [...options.protectedBranches]
-    const githubDefault = await this.githubDefaultBranch(credential, options.signal)
-    if (githubDefault !== null) protectedNames.push(githubDefault)
-    const target = sanitizeBranchName(branch)
-    if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
-      throw new RefusedPushError(branch, 'protected')
-    }
-    const staging = `${STAGING_PREFIX}${branch}`
-    try {
-      await this.fetchFromRemoteGit([`+${sha}:${staging}`], options.signal)
-      const status = await this.githubBound(
-        credential,
-        [
-          'push',
-          '--porcelain',
-          '--progress',
-          ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
-          '--end-of-options',
-          credential.url,
-          `${sha}:refs/heads/${branch}`,
-        ],
-        options.signal,
-      )
-      return parsePushStatus(status, branch, sha)
-    } finally {
-      // A deleted branch's leftover ref would block a later `<branch>/<x>` (a directory/file
-      // conflict in the ref namespace).
-      await this.git()
-        .raw(['update-ref', '-d', '--end-of-options', staging])
-        .catch(() => undefined)
-    }
+    await assertPlainBranchName(branch, this.git())
+    await this.assertPushAllowed(credential, branch, options.protectedBranches, options.signal)
+    const status = await this.githubBound(
+      credential,
+      [
+        'push',
+        '--porcelain',
+        '--progress',
+        ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
+        '--end-of-options',
+        credential.url,
+        `${sha}:refs/heads/${branch}`,
+      ],
+      options.signal,
+      options.repo,
+    )
+    return parsePushStatus(status, branch, sha)
   }
+}
+
+/**
+ * Write a pushed bundle to `file` as it arrives, refusing it as soon as it cannot be accepted:
+ * past `maxBytes`, or with a header that is not exactly one head, `<sha> refs/heads/<branch>`
+ * (worker/bundle-header.ts). Holds at most the header's bound, plus one chunk, in memory.
+ */
+async function receiveBundle(
+  body: Readable,
+  file: string,
+  expected: { sha: string; branch: string },
+  maxBytes: number,
+): Promise<BundleHeader> {
+  const rejected = (reason: string) =>
+    new GitHubTransientError(
+      'bundle-rejected',
+      `Refusing the bundle for ${expected.branch}: ${reason}`,
+    )
+  const out = await fs.open(file, 'wx', 0o600)
+  let header: BundleHeader | null = null
+  let start = Buffer.alloc(0)
+  let total = 0
+  try {
+    for await (const chunk of body) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+      total += bytes.length
+      if (total > maxBytes) throw rejected(`it is larger than ${maxBytes} bytes`)
+      if (header === null) {
+        start = Buffer.concat([start, bytes])
+        header = scanBundleHeader(start)
+        if (header !== null && !hasOnlyHead(header, expected.sha, expected.branch)) {
+          throw rejected(`its one head must be ${expected.sha} refs/heads/${expected.branch}`)
+        }
+      }
+      await out.write(bytes)
+    }
+  } catch (err) {
+    if (err instanceof GitHubTransientError) throw err
+    if (err instanceof BundleHeaderError)
+      throw rejected(err.message.replace(/^Refusing the bundle: /, ''))
+    throw rejected(`it did not arrive whole (${getErrorMessage(err)})`)
+  } finally {
+    await out.close()
+  }
+  if (header === null) throw rejected('it ends before its header does')
+  return header
 }
 
 /**
@@ -567,11 +904,17 @@ export function parsePushStatus(stdout: string, branch: string, sha: string): Gi
 
 /**
  * The network env (proxies, CA bundles, the C locale the push-rejection classifier needs), with
- * the repository named outright: a bare repository found from the working directory is refused
- * where `safe.bareRepository=explicit` is set.
+ * the repository named outright, since a bare repository found from the working directory is
+ * refused where `safe.bareRepository=explicit` is set. No object is ever fetched lazily from a
+ * promisor remote, and no `refs/replace/*` changes what any command sees.
  */
 function mirrorEnv(gitDir: string): Record<string, string> {
-  return { ...gitNetworkChildEnv(), GIT_DIR: gitDir }
+  return {
+    ...gitNetworkChildEnv(),
+    GIT_DIR: gitDir,
+    GIT_NO_LAZY_FETCH: '1',
+    GIT_NO_REPLACE_OBJECTS: '1',
+  }
 }
 
 /**
@@ -583,34 +926,28 @@ function githubBoundEnv(gitDir: string): Record<string, string> {
   return { ...Object.fromEntries(env), GIT_TERMINAL_PROMPT: '0' }
 }
 
-/** A full SHA-1 or SHA-256 object ID, so nothing else can reach a refspec. */
-function isObjectId(value: string): boolean {
+/** A full SHA-1 or SHA-256 object ID, so nothing else can reach a refspec or rev-list's stdin. */
+export function isObjectId(value: string): boolean {
   return (value.length === 40 || value.length === 64) && /^[0-9a-f]+$/.test(value)
 }
 
 async function isBareRepository(gitDir: string): Promise<boolean> {
   try {
     await fs.access(gitDir)
-    // Without the mirror's pins, whose `core.bare=true` would answer this question for git.
-    const out = await simpleGit({ baseDir: gitDir }).raw([
-      '--git-dir',
-      gitDir,
-      'rev-parse',
-      '--is-bare-repository',
-    ])
-    return out.trim() === 'true'
+    // rev-parse echoes `--end-of-options`, so only the first line is the answer.
+    const out = await simpleGit({ baseDir: gitDir })
+      .env(mirrorEnv(gitDir))
+      .raw(['rev-parse', '--is-bare-repository', '--end-of-options'])
+    return out.split('\n')[0] === 'true'
   } catch {
     return false
   }
 }
 
 async function objectStoreKiB(gitDir: string): Promise<number> {
-  const output = await simpleGit({ baseDir: gitDir, ...mirrorGitOptions() }).raw([
-    '--git-dir',
-    gitDir,
-    'count-objects',
-    '-v',
-  ])
+  const output = await simpleGit({ baseDir: gitDir, ...mirrorGitOptions() })
+    .env(mirrorEnv(gitDir))
+    .raw(['count-objects', '-v', '--end-of-options'])
   let total = 0
   for (const line of output.split('\n')) {
     const [name, value] = line.split(': ')

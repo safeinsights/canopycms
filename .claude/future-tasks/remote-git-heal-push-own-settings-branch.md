@@ -7,7 +7,8 @@ summary: >-
 # Push this deployment's own settings branch before refusing a poisoned remote.git
 
 `CmsWorker.replacePoisonedRemoteGit()` (`packages/canopycms/src/worker/cms-worker.ts`) replaces a
-`remote.git` that has no base branch only when the GitHub mirror contains every ref in it. The
+`remote.git` that has no base branch only when its replacement, seeded from GitHub, contains every
+ref in it. The
 likeliest ref GitHub lacks is this deployment's own `canopycms-settings-<deployment>` branch: the
 Lambda commits permissions and groups there, and the worker pushes it in `pushSettingsBranches`
 (`worker/git-sync.ts`). That push runs in `syncGit`, which runs only after a boot that succeeds, so

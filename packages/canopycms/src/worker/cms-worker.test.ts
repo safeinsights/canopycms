@@ -10,6 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
+import type { GitHubGateway } from './github-gateway'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
@@ -1041,6 +1042,36 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(await readPushedAt('feature-x')).toBeUndefined()
   })
 
+  it("throws PermanentTaskError when remote.git holds an ancestor of GitHub's tip, sending no bundle", async () => {
+    // GitHub already holds the commit, so the push is asked for once, without objects, and git
+    // refuses it as a non-fast-forward.
+    await seedBranchInRemoteGit('feature-behind', 'ours')
+    const ours = await shaOf(remoteGitPath, 'refs/heads/feature-behind')
+    await simpleGit().raw(['--git-dir', remoteGitPath, 'push', githubFixture, 'feature-behind'])
+    const aheadPath = path.join(tmpDir, 'ahead-work')
+    await simpleGit().clone(githubFixture, aheadPath, ['--branch', 'feature-behind'])
+    const aheadGit = await initTestRepo(aheadPath)
+    await fs.writeFile(path.join(aheadPath, 'more.txt'), 'more')
+    await aheadGit.add(['more.txt'])
+    await aheadGit.commit('more on GitHub')
+    await aheadGit.raw(['push', 'origin', 'HEAD:feature-behind'])
+    const githubTip = await shaOf(githubFixture, 'refs/heads/feature-behind')
+    const worker = makePushWorker()
+    const gateway = (worker as unknown as { github(): GitHubGateway }).github()
+    const push = vi.spyOn(gateway, 'push')
+
+    const caught = await (worker as unknown as PushBranchInternals)
+      .pushBranchToGitHub('feature-behind')
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(PermanentTaskError)
+    expect((caught as Error).message).toContain('has diverged and needs reconciling')
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push.mock.calls[0][1]).toBeUndefined()
+    expect(await shaOf(githubFixture, 'refs/heads/feature-behind')).toBe(githubTip)
+    expect(githubTip).not.toBe(ours)
+  })
+
   it('throws PermanentTaskError naming the branch on a real non-fast-forward rejection', async () => {
     // The two-deployments-one-repo collision: 'feature-x' exists in BOTH this
     // deployment's remote.git AND (with different content) directly in
@@ -1492,6 +1523,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await seedBranchInGitHubFixture('feature-once', 'someone else')
     const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-once')
     await seedBranchInRemoteGit('feature-once', 'ours')
+    // Parked on GitHub, so the push needs no bundle and is one gateway operation: the URL is
+    // resolved once per operation, and the bundle path has its own test (github-gateway.test.ts).
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'feature-once:refs/heads/parked',
+    ])
     // A marker GitHub is provably not at, so the lease is refused and the
     // catch block's retry push runs -- the second resolution, if there is one.
     await writeRewriteMarker('feature-once', '0'.repeat(40))

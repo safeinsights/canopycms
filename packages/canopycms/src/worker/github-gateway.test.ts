@@ -21,10 +21,15 @@ import {
   GitHubPushError,
   createLocalGitHubGateway,
   type GitHubGateway,
-  type GitHubReachability,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
 import { RefusedPushError, parsePushStatus } from './github-mirror'
+import {
+  fetchGitHubIntoRemoteGit,
+  pushToGitHub,
+  seedFromGitHub,
+  type TransferContext,
+} from './github-transfer'
 
 const execFileAsync = promisify(execFile)
 
@@ -56,11 +61,32 @@ function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGate
     githubApp: false,
     stateDirectory: path.join(root, 'state'),
     workspacePath: path.join(root, 'workspace'),
-    remoteGitPath,
     timeoutMs: 30_000,
     remoteUrl: githubPath,
     ...overrides,
   })
+}
+
+/** The worker's side of a transfer, over `github`, with remote.git as this test's. */
+function transfer(github: GitHubGateway): TransferContext {
+  return { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 }
+}
+
+/**
+ * Push `sha` as the worker does: asked for without objects first, then with a bundle from
+ * remote.git when the gateway needs one.
+ */
+async function pushVia(
+  github: GitHubGateway,
+  request: { branch: string; sha: string; lease?: string; protectedBranches: string[] },
+) {
+  const { sha, ...rest } = request
+  const pushed = await pushToGitHub(
+    transfer(github),
+    { ...rest, prerequisiteBranches: [request.branch] },
+    async () => sha,
+  )
+  return pushed.outcome
 }
 
 beforeEach(async () => {
@@ -86,9 +112,14 @@ describe('fetch', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const feature = await commitAndPush(githubPath, 'refs/heads/feature/x', 'feature.txt')
 
-    const result = await gateway().fetch({ have: [] })
+    const refs = await fetchGitHubIntoRemoteGit(transfer(gateway()))
 
-    expect(result).toEqual({ bundleId: null })
+    expect(refs).toEqual(
+      new Map([
+        ['feature/x', feature],
+        ['main', main],
+      ]),
+    )
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}main`)).toBe(main)
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}feature/x`)).toBe(feature)
   })
@@ -97,10 +128,10 @@ describe('fetch', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     await commitAndPush(githubPath, 'refs/heads/gone', 'gone.txt')
     const github = gateway()
-    await github.fetch({ have: [] })
+    await fetchGitHubIntoRemoteGit(transfer(github))
     await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/gone')
 
-    await github.fetch({ have: [] })
+    await fetchGitHubIntoRemoteGit(transfer(github))
 
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}gone`)).toBeNull()
     expect(await tip(remoteGitPath, `${GITHUB_TRACKING_REF_PREFIX}main`)).not.toBeNull()
@@ -118,77 +149,33 @@ describe('fetch', () => {
   })
 })
 
-describe('onGitHub', () => {
-  it('names the ids a GitHub branch contains, and only those', async () => {
-    const onMain = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const local = await commitAndPush(remoteGitPath, 'refs/heads/local', 'local.txt')
-    const github = gateway()
-    await github.fetch({ have: [] })
-
-    const found = await github.onGitHub([onMain, local, 'not-an-object-id'])
-
-    expect([...found]).toEqual([onMain])
-  })
-})
-
-describe('seedBareRepository', () => {
+describe('seedFromGitHub', () => {
   const target = () => path.join(root, 'workspace', 'remote.git.cloning')
-  const createRepository = async () => {
-    await git('init', '-q', '--bare', target())
-  }
 
-  it("seeds an empty bare repository with every GitHub branch, checking in the fetch's session", async () => {
+  it('seeds a new bare repository with every GitHub branch', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const order: string[] = []
+    const feature = await commitAndPush(githubPath, 'refs/heads/feature/x', 'feature.txt')
 
-    await gateway().seedBareRepository(target(), {
-      baseBranch: 'main',
-      beforeSeed: async (github) => {
-        // Runs after the GitHub fetch, so the mirror already knows what GitHub holds.
-        order.push(`beforeSeed:${[...(await github.onGitHub([main]))].join(',')}`)
-      },
-      createRepository: async () => {
-        order.push('createRepository')
-        await createRepository()
-      },
-    })
+    const refs = await seedFromGitHub(transfer(gateway()), target(), 'main')
 
-    expect(order).toEqual([`beforeSeed:${main}`, 'createRepository'])
+    expect(refs).toEqual(
+      new Map([
+        ['feature/x', feature],
+        ['main', main],
+      ]),
+    )
     expect(await tip(target(), 'refs/heads/main')).toBe(main)
-  })
-
-  it('hands the check an in-session object, which the gateway itself cannot stand in for', () => {
-    const check = (github: GitHubReachability) => github
-    // @ts-expect-error The gateway's own onGitHub waits on the session the check runs inside.
-    check(gateway())
-    // @ts-expect-error The brand is all this literal lacks.
-    check({ onGitHub: async () => new Set<string>() })
-  })
-
-  it('stops before creating anything when the check throws', async () => {
-    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const create = vi.fn(createRepository)
-
-    await expect(
-      gateway().seedBareRepository(target(), {
-        baseBranch: 'main',
-        beforeSeed: async () => {
-          throw new Error('kept')
-        },
-        createRepository: create,
-      }),
-    ).rejects.toThrow('kept')
-    expect(create).not.toHaveBeenCalled()
+    expect(await tip(target(), 'refs/heads/feature/x')).toBe(feature)
+    expect(await tip(target(), `${GITHUB_TRACKING_REF_PREFIX}main`)).toBeNull()
   })
 
   it('refuses when GitHub has no base branch, before creating anything', async () => {
     await commitAndPush(githubPath, 'refs/heads/other', 'other.txt')
-    const create = vi.fn(createRepository)
 
-    await expect(
-      gateway().seedBareRepository(target(), { baseBranch: 'main', createRepository: create }),
-    ).rejects.toThrow("GitHub has no branch 'main'")
-    expect(create).not.toHaveBeenCalled()
+    await expect(seedFromGitHub(transfer(gateway()), target(), 'main')).rejects.toThrow(
+      "GitHub has no branch 'main'",
+    )
+    await expect(fs.stat(target())).rejects.toThrow()
   })
 })
 
@@ -205,7 +192,7 @@ describe('push', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const { base, ahead } = await aheadOnRemoteGit('feature')
 
-    const outcome = await gateway().push({
+    const outcome = await pushVia(gateway(), {
       branch: 'feature',
       sha: ahead,
       protectedBranches: ['main'],
@@ -225,10 +212,10 @@ describe('push', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const { ahead } = await aheadOnRemoteGit('feature')
     const request = { branch: 'feature', sha: ahead, protectedBranches: ['main'] }
-    await gateway().push(request)
+    await pushVia(gateway(), request)
 
-    expect(await gateway().push(request)).toEqual({ moved: false, pastStaleLease: false })
-    expect(await gateway().push({ ...request, lease: '0'.repeat(40) })).toEqual({
+    expect(await pushVia(gateway(), request)).toEqual({ moved: false, pastStaleLease: false })
+    expect(await pushVia(gateway(), { ...request, lease: '0'.repeat(40) })).toEqual({
       moved: false,
       pastStaleLease: false,
     })
@@ -238,12 +225,14 @@ describe('push', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const sha = await commitAndPush(remoteGitPath, 'refs/heads/fresh', 'fresh.txt')
 
-    expect(await gateway().push({ branch: 'fresh', sha, protectedBranches: ['main'] })).toEqual({
-      moved: true,
-      from: null,
-      to: sha,
-      pastStaleLease: false,
-    })
+    expect(await pushVia(gateway(), { branch: 'fresh', sha, protectedBranches: ['main'] })).toEqual(
+      {
+        moved: true,
+        from: null,
+        to: sha,
+        pastStaleLease: false,
+      },
+    )
   })
 
   it('reports a forced update under a held lease as moved from the leased commit', async () => {
@@ -252,7 +241,7 @@ describe('push', () => {
     await seed.raw(['checkout', '-q', '--orphan', 'rewritten'])
     const rewritten = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'rewritten.txt')
 
-    const outcome = await gateway().push({
+    const outcome = await pushVia(gateway(), {
       branch: 'feature',
       sha: rewritten,
       lease: base,
@@ -268,7 +257,7 @@ describe('push', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const { ahead } = await aheadOnRemoteGit('feature')
 
-    const outcome = await gateway().push({
+    const outcome = await pushVia(gateway(), {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
@@ -286,16 +275,17 @@ describe('push', () => {
     await seed.raw(['checkout', '-q', '--orphan', 'elsewhere'])
     const foreign = await commitAndPush(githubPath, 'refs/heads/feature', 'foreign.txt')
 
-    const caught = await gateway()
-      .push({ branch: 'feature', sha: ahead, lease: '0'.repeat(40), protectedBranches: ['main'] })
-      .catch((err: unknown) => err)
+    const caught = await pushVia(gateway(), {
+      branch: 'feature',
+      sha: ahead,
+      lease: '0'.repeat(40),
+      protectedBranches: ['main'],
+    }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubPushError)
     expect((caught as GitHubPushError).kind).toBe('rejected-after-stale-lease')
     expect(isNonFastForwardRejection((caught as GitHubPushError).message)).toBe(true)
-    expect((caught as GitHubPushError).message).toBe(
-      ((caught as GitHubPushError).cause as Error).message,
-    )
+    expect((caught as GitHubPushError).message).toContain('[rejected]')
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(foreign)
   })
 
@@ -305,9 +295,11 @@ describe('push', () => {
     await seed.raw(['checkout', '-q', '--orphan', 'elsewhere'])
     const foreign = await commitAndPush(githubPath, 'refs/heads/feature', 'foreign.txt')
 
-    const caught = await gateway()
-      .push({ branch: 'feature', sha: ahead, protectedBranches: ['main'] })
-      .catch((err: unknown) => err)
+    const caught = await pushVia(gateway(), {
+      branch: 'feature',
+      sha: ahead,
+      protectedBranches: ['main'],
+    }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubPushError)
     expect((caught as GitHubPushError).kind).toBe('rejected')
@@ -319,9 +311,11 @@ describe('push', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const ahead = await commitAndPush(remoteGitPath, 'refs/heads/main', 'ahead.txt')
 
-    const caught = await gateway()
-      .push({ branch: 'main', sha: ahead, protectedBranches: ['main'] })
-      .catch((err: unknown) => err)
+    const caught = await pushVia(gateway(), {
+      branch: 'main',
+      sha: ahead,
+      protectedBranches: ['main'],
+    }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(RefusedPushError)
     expect(await tip(githubPath, 'refs/heads/main')).toBe(main)
@@ -330,9 +324,12 @@ describe('push', () => {
   it('resolves the URL once for both attempts', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const { ahead } = await aheadOnRemoteGit('feature')
+    // Parked on GitHub, so this push is one gateway operation: the URL is resolved once per
+    // operation, and a push that needs a bundle (two operations) is the next test's.
+    await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${ahead}:refs/heads/parked`)
     const remoteUrl = vi.fn(() => githubPath)
 
-    await gateway({ remoteUrl }).push({
+    await pushVia(gateway({ remoteUrl }), {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
@@ -340,6 +337,29 @@ describe('push', () => {
     })
 
     expect(remoteUrl).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves the URL once per operation when the push needs a bundle, both attempts included', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const { ahead } = await aheadOnRemoteGit('feature')
+    // One resolution for the push asked without objects, one for the push with the bundle; a
+    // third would be a second attempt resolving again.
+    let resolutions = 0
+    const remoteUrl = vi.fn(() => {
+      resolutions++
+      if (resolutions > 2) throw new Error('resolved again')
+      return githubPath
+    })
+
+    const outcome = await pushVia(gateway({ remoteUrl }), {
+      branch: 'feature',
+      sha: ahead,
+      lease: '0'.repeat(40),
+      protectedBranches: ['main'],
+    })
+
+    expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
+    expect(remoteUrl).toHaveBeenCalledTimes(2)
   })
 })
 

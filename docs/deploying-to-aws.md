@@ -1142,7 +1142,7 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   symlinks, before the sandbox applies: a worker owning them could redirect its output into any
   file on the host.
 - **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
-  only in a private mirror in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
+  only in private repositories in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
   Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
   off, and a repository whose config holds a key CanopyCMS never writes, or with a repository in
   a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB the worker warns.

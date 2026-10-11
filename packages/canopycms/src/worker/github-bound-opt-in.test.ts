@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import { createLocalGitHubGateway } from './github-gateway'
+import { pushToGitHub } from './github-transfer'
 import { githubBoundGitOptions, mirrorGitOptions, sharedRepoGitOptions } from './shared-repo-git'
 
 const recorded = vi.hoisted(() => [] as { optedIn: boolean; args: string[] }[])
@@ -79,7 +80,6 @@ describe('allowUnsafeConfigPaths', () => {
       githubApp: false,
       stateDirectory: path.join(root, 'state'),
       workspacePath: path.join(root, 'workspace'),
-      remoteGitPath,
       timeoutMs: 30_000,
       remoteUrl: githubPath,
     })
@@ -87,11 +87,17 @@ describe('allowUnsafeConfigPaths', () => {
 
     await github.prepare()
     await github.fetch({ have: [] })
-    await github.push({ branch: 'feature', sha, protectedBranches: ['main'] })
+    await pushToGitHub(
+      { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
+      { branch: 'feature', protectedBranches: ['main'], prerequisiteBranches: ['feature'] },
+      async () => sha,
+    )
     await github.maintain()
 
     const optedIn = recorded.filter((call) => call.optedIn).map((call) => call.args[0])
-    expect(optedIn).toEqual(['fetch', 'ls-remote', 'push'])
+    // The fetch; then the push: asked without objects (its GitHub fetch), and again with the
+    // bundle (its GitHub fetch, the default-branch ls-remote, the push).
+    expect(optedIn).toEqual(['fetch', 'fetch', 'fetch', 'ls-remote', 'push'])
     // Not vacuous: the gateway ran plenty of other git, all without the opt-in.
     expect(recorded.filter((call) => !call.optedIn).length).toBeGreaterThan(5)
   })

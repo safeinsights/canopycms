@@ -31,6 +31,7 @@ import {
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
 import { describeMove } from './github-gateway'
+import { fetchGitHubIntoRemoteGit, pushToGitHub } from './github-transfer'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -206,16 +207,24 @@ export async function pushSettingsBranches(
     try {
       // `git` is remote.git, read for the commit to send; the push itself goes through the
       // GitHub gateway, which alone ever sees the credential.
-      const sha = (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
+      const readSha = async () =>
+        (await git.revparse(['--verify', `refs/heads/${settingsBranch}`])).trim()
+      const sha = await readSha()
       const outcome =
         trackedTips.get(settingsBranch) === sha
           ? null
-          : await ctx
-              .github()
-              .push(
-                { branch: settingsBranch, sha, protectedBranches: [ctx.baseBranch] },
+          : (
+              await pushToGitHub(
+                ctx,
+                {
+                  branch: settingsBranch,
+                  protectedBranches: [ctx.baseBranch],
+                  prerequisiteBranches: [settingsBranch],
+                },
+                readSha,
                 ctx.shutdownSignal(),
               )
+            ).outcome
       if (outcome?.moved) {
         workerLog(`Pushed settings branch ${settingsBranch} to GitHub (${describeMove(outcome)})`)
       } else {
@@ -460,7 +469,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
   // remote.git's config is Lambda-writable: every git here runs pinned (worker/shared-repo-git.ts),
-  // and everything that carries the credential runs in the worker's private mirror instead.
+  // and everything that carries the credential runs in the GitHub gateway's state directory instead.
   const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
     // DEP-H1: a hung git would stall the sync loop forever (scheduleLoop only
     // reschedules after completion). Inactivity-based, so a slow-but-flowing
@@ -504,11 +513,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     if (stoppedForDrain(ctx, 'the GitHub fetch')) return
 
-    // Into the mirror, then into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than
-    // refs/heads/* -- see that constant's doc comment for the destructive-fetch bug this avoids.
-    // Both are killed at the drain deadline; a killed ref update leaves the ref as it was or
-    // fully moved.
-    await ctx.github().fetch({ have: [] }, ctx.shutdownSignal())
+    // Into remote.git's GITHUB_TRACKING_REF_PREFIX namespace rather than refs/heads/* -- see that
+    // constant's doc comment for the destructive-fetch bug this avoids. Killed at the drain
+    // deadline; a killed ref update leaves each ref as it was or fully moved.
+    await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal())
     workerLog('Fetched from GitHub')
 
     const {

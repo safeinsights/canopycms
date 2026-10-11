@@ -170,7 +170,7 @@ interface BareRemoteObjectCounts {
 }
 
 async function countObjects(git: SimpleGit, gitDir: string): Promise<BareRemoteObjectCounts> {
-  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v'])
+  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v', '--end-of-options'])
   const fields = new Map(
     output.split('\n').map((line): [string, string] => {
       const [name, value = ''] = line.split(': ')
@@ -217,8 +217,8 @@ export async function repackBareRemoteIfNeeded(
     return { repacked: false, before }
   }
   const startedAt = Date.now()
-  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q'])
-  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all'])
+  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q', '--end-of-options'])
+  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all', '--end-of-options'])
   const after = await countObjects(git, gitDir)
   return { repacked: true, before, after, ms: Date.now() - startedAt }
 }

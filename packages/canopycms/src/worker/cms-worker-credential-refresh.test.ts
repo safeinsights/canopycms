@@ -164,7 +164,9 @@ describe('CmsWorker credential refresh', () => {
         const refreshGitHubToken = vi.fn(async () => undefined)
         const { gateway } = makeWorker(refreshGitHubToken)
 
-        await expect(gateway.fetch({ have: [] })).resolves.toEqual({ bundleId: null })
+        const fetched = await gateway.fetch({ have: [] })
+        expect([...fetched.refs.keys()]).toEqual(['main'])
+        expect(fetched.bundleId).toEqual(expect.any(String))
         await new Promise((r) => setTimeout(r, 50))
         expect(refreshGitHubToken).not.toHaveBeenCalled()
       })

@@ -26,12 +26,15 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `log.ts`                    | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                    |
 | `github-gateway.ts`         | `GitHubGateway`, the only user of the credential and Octokit, and its in-process implementation                                                                                                                                 |
 | `github-auth.ts`            | Credential selection (token or App), installation-token minting, the PAT swap behind its 60s floor, PEM normalization                                                                                                           |
-| `github-mirror.ts`          | The gateway's private GitHub mirror, the only repository where git carries the credential                                                                                                                                       |
+| `github-mirror.ts`          | The gateway's private GitHub mirror and the quarantines pushed bundles are checked in: the only repositories where git carries the credential                                                                                   |
+| `github-transfer.ts`        | The worker's side of the bundle transfer: fetching into remote.git, the seed, the push                                                                                                                                          |
+| `bundle-header.ts`          | A git bundle header's grammar, read in node before git sees the bundle                                                                                                                                                          |
+| `git-process.ts`            | git with a streamed stdin or stdout, bounded by inactivity, abort and output caps                                                                                                                                               |
 | `shared-repo-git.ts`        | How the worker runs git in `remote.git` and the clones: the pins, the pinned pack commands, the config allowlist check                                                                                                          |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
 `history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-gateway` sits outside that chain: `cms-worker` creates the instance, clusters reach it
-via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit below it. `pnpm lint:cycles` enforces that the graph stays
+via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit below it. `github-transfer` sits between the clusters and the gateway. `pnpm lint:cycles` enforces that the graph stays
 ACYCLIC, which is not the same thing: a new `rebase.ts` → `task-runner.ts` edge would pass
 lint and still break the layering above. Keep the direction by review.
 
