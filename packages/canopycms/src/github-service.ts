@@ -95,8 +95,10 @@ export function createCanopyOctokit(
   // contract is "our Octokit, authenticated the way you say", not "configured
   // however you like". The one `request` we set is `observe`'s fetch: an auth
   // strategy's hook is the innermost `request` wrap, so a hook added after
-  // construction runs before it sets the header, and `@octokit/auth-app` mints
-  // through this same `request`, so its JWT passes the fetch too.
+  // construction runs before it sets the header. `@octokit/auth-app`'s hook
+  // mints through the `request` it wraps (`request.defaults`), so the JWT of a
+  // mint an Octokit request triggers passes the fetch too; a mint outside one
+  // (`mintInstallationToken`) uses auth-app's own `request`, and does not.
   const auth =
     'authStrategy' in options
       ? { authStrategy: options.authStrategy, auth: options.auth }

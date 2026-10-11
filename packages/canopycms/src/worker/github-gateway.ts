@@ -81,8 +81,8 @@ const TERMINATION_POLL_WAIT_MS = 25_000
 const LIFECYCLE_NOTICE_WAIT_MS = 10_000
 
 /**
- * How long a fetched auth snapshot is answered again. Well under any auth-cache refresh interval,
- * and it holds a worker asking in a loop to one fetch a minute.
+ * How long a fetched auth snapshot is answered again. Well under the default 15-minute auth-cache
+ * refresh interval, and a worker asking in a loop starts no fetch within it of a success.
  */
 const AUTH_SNAPSHOT_REUSE_MS = 60_000
 
@@ -1223,7 +1223,7 @@ class LocalGitHubGateway implements GitHubGateway {
     try {
       await Promise.race([this.options.auth.refreshCredential(), timedOut])
       // The token path's rotated token is scrubbed before any operation uses it. On the App path
-      // a read would mint a token.
+      // the re-read is a no-op, so there is nothing new to scrub.
       if (!this.options.githubApp) registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       logFailedCredentialRefresh(err)

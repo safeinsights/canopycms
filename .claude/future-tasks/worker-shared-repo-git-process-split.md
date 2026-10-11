@@ -1208,19 +1208,21 @@ the drain mapping, deadlines, and the self-check helpers.
     (`gateway-run.ts`) with `gateway`. The worker runs split when `CANOPYCMS_GITHUB_GATEWAY_SOCKET`
     is set, and refuses its absence from `GATEWAY_SPLIT_CONTRACT` (2) on; below it, absent is
     today's single process.
-  - Self-checks are fatal in both roles, and run before anything else; the gateway's run before any
-    secret is read.
-  - The gateway listens on fd 3 when `LISTEN_PID` names it and `LISTEN_FDS` is 1, else on the
-    socket variable's path (development).
+  - Self-checks are fatal in both roles, and run after the unit's contract check and before the
+    repository settings; the gateway's run before any secret is read.
+  - The gateway listens on fd 3 when `LISTEN_FDS` is set, which must be 1 with `LISTEN_PID` naming
+    it, or it exits 1 at once; without it, on the socket variable's path (development).
   - `prepare`'s fatal set: an App preflight failure that does not look transient, a state directory
-    inside the workspace, and one the gateway cannot create or does not own outright. Creating the
-    mirror only warns, since every session retries it.
-  - A boot that fails before the real gateway is served (self-checks, configuration, a secret read)
-    serves a stand-in that answers `health` with the scrubbed cause and fails every other operation
-    as a status-less (transient) error. It and a failed `prepare()` take one path: answer the cause
-    for 60 s, drain, exit 1. A worker that finds the gateway away meanwhile (unreachable, or no
-    `health` answer within 300 s) exits 1, leaving in place the gateway's own fatal error if it
-    recorded one in the last 5 minutes, and recording the unreachable gateway otherwise.
+    inside the workspace (checked only in-process: the gateway process has no workspace), and one
+    the gateway cannot create or does not own outright. Creating the mirror only warns, since every
+    session retries it.
+  - A boot that fails before the real gateway is served (self-checks, configuration, a secret read,
+    building the gateway: an unusable App key, a refused protected set) serves a stand-in that
+    answers `health` with the scrubbed cause and fails every other operation as a status-less
+    (transient) error. It and a failed `prepare()` take one path: answer the cause for 60 s, drain,
+    exit 1. A worker that finds the gateway away meanwhile (unreachable, or no `health` answer
+    within 300 s) exits 1, leaving in place the gateway's own fatal error if it recorded one in
+    the last 5 minutes, and recording the unreachable gateway otherwise.
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
@@ -1229,7 +1231,7 @@ the drain mapping, deadlines, and the self-check helpers.
     gate, take no identifier, and never arm the GitHub re-read; `completeLifecycle` is refused
     unless the gateway's own watch sees an Auto Scaling notice (a restarted gateway watches first,
     for up to 10 s), and runs once. `authSnapshot` is one fetch for concurrent callers, answered
-    again for 60 s, so a worker asking in a loop cannot hold Clerk's API at its rate limit.
+    again for 60 s after a success, so a worker asking in a loop runs one fetch at a time.
   - A token minted or rotated is registered for the exact scrub as Octokit sends it (its
     `request.fetch`) and after a token-path re-read. The App key is scrubbed line by line, as read
     and normalized, and the Clerk key as each value is handed out.

@@ -652,7 +652,8 @@ describe('runWorker: a fatal error while a termination drain is under way', () =
 })
 
 describe('the split’s names', () => {
-  // The unit templates and the gateway's env file spell these; a rename here strands them.
+  // The split's units (the plan's §8, "Carried from 5") name the variable and stamp the
+  // contract; a change here strands them.
   it('pins the socket variable and the contract at which a worker runs only split', () => {
     expect(GITHUB_GATEWAY_SOCKET_ENV).toBe('CANOPYCMS_GITHUB_GATEWAY_SOCKET')
     expect(GATEWAY_SPLIT_CONTRACT).toBe(2)
@@ -728,7 +729,7 @@ const splitEnv = (): NodeJS.ProcessEnv => {
 }
 
 describe('runWorker: split mode', () => {
-  it('runs the self-checks first, reads no secret, and hands the worker the gateway alone', async () => {
+  it('runs the self-checks before connecting, reads no secret, and hands the worker the gateway alone', async () => {
     const order: string[] = []
     const h = harness({
       env: {

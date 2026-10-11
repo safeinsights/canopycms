@@ -2,7 +2,8 @@
  * The GitHub gateway process's boot sequence and lifecycle (`index.ts gateway`), with every side
  * effect injected so tests can drive it. It holds the GitHub credential and the Clerk key, serves
  * `GitHubGateway` on a socket for the worker (run.ts, split mode), and runs under its own user
- * with no view of the shared workspace.
+ * (the unit's `User=`, which nothing here checks) with no view of the shared workspace (its
+ * `efs-unreadable` self-check).
  *
  * A boot that cannot produce the real gateway still serves a stand-in that answers `health` with
  * the cause, so the worker records it as its `lastFatalError` where an operator reads it. Without
@@ -40,20 +41,19 @@ import { parseProtectedBranches, readRepoEnv, readWorkerCredentials } from './ru
 import type { TerminationNotice, TerminationWatchOptions } from './termination-watch'
 
 /**
- * How long a draining gateway lets requests under way finish. The worker unit stops first (it is
- * ordered after the gateway), so what is still in flight is a request a worker started, and no
- * worker request outlasts its 60 s task deadline; this also ends well inside the unit's
- * `TimeoutStopSec=150`. `drain()` answers new requests `stopping`, lets push and Octokit requests
- * under way finish, then closes every connection. A running fetch job is not waited for: the
- * process exits, and the unit's `KillMode=mixed` SIGKILLs the cgroup, which takes the job's git
- * with it.
+ * How long a draining gateway lets requests under way finish. `drain()` answers new requests
+ * `stopping`, lets push and Octokit requests under way finish, then closes every connection. A
+ * running fetch job is not waited for: the process exits, and the unit's `KillMode=mixed` SIGKILLs
+ * the cgroup, which takes the job's git with it. The plan's §3.1 "Stop ordering"
+ * (.claude/future-tasks/worker-shared-repo-git-process-split.md) stops the worker unit first and
+ * gives this one `TimeoutStopSec=150`, well above this grace.
  */
 export const GATEWAY_DRAIN_GRACE_MS = 60_000
 
 /**
- * How long a gateway that failed to boot or to prepare answers the cause before exiting, so the worker has
- * time to read the cause. systemd then starts it again: a transient cause (a Secrets Manager
- * timeout) recovers, and a permanent one fails again, loudly, each time.
+ * How long a gateway that failed to boot or to prepare answers the cause before exiting, so the
+ * worker has time to read the cause. systemd then starts it again: a transient cause (a Secrets
+ * Manager timeout) recovers, and a permanent one fails again, loudly, each time.
  */
 export const FAILED_BOOT_HOLD_MS = 60_000
 
@@ -151,7 +151,7 @@ async function buildGateway(deps: RunGatewayDeps): Promise<GitHubGateway> {
         try {
           registerPrivateKey(normalizeGitHubAppPrivateKey(privateKey))
         } catch {
-          // An unusable key fails the gateway's prepare with its own message.
+          // An unusable key fails building the gateway, with its own message.
         }
       },
       wrapClerkSecret: scrubbed,
@@ -335,7 +335,7 @@ async function holdThenExit(
   stop: StopControl,
 ): Promise<void> {
   await sleep(FAILED_BOOT_HOLD_MS)
-  // A signal during the hold has drained and exited 0 already.
+  // A signal during the hold owns the stop: its drain exits 0.
   if (stop.stopping()) return
   stop.begin()
   try {

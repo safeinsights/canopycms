@@ -186,8 +186,9 @@ export function readRepoEnv(env: NodeJS.ProcessEnv, missingStateDirectory: strin
   const githubRepo = env.CANOPYCMS_GITHUB_REPO
   if (!githubRepo) throw new Error('CANOPYCMS_GITHUB_REPO is required')
 
-  // systemd's StateDirectory= (/var/lib/canopy-worker): the root volume, which the CMS Lambda
-  // cannot reach. The GitHub credential is only ever used in a git repository there.
+  // systemd's StateDirectory= (/var/lib/canopy-worker, or canopy-github): the root volume, which
+  // the CMS Lambda cannot reach. The role holding the GitHub credential uses it only in a git
+  // repository there.
   const stateDirectory = env.STATE_DIRECTORY?.split(':')[0]
   if (!stateDirectory) throw new Error(missingStateDirectory)
   return { githubOwner, githubRepo, stateDirectory }
@@ -250,8 +251,8 @@ export async function readWorkerCredentials(
     ...githubTokenSecretOptions,
   })
 
-  // Nothing here touches the token path above. Both are passed to CmsWorker when
-  // both are configured, and core's resolveWorkerGitHubAuth refuses that pair by
+  // Nothing here touches the token path above. Both are returned when both are
+  // configured, and core's resolveWorkerGitHubAuth refuses that pair by
   // name rather than picking a winner here - a silent precedence would leave it
   // undefined which identity the worker's pushes and pull requests act as.
   const githubApp = readGitHubAppEnv(env)
@@ -448,8 +449,9 @@ async function buildSplitWorker(
   // The worker's task timeout is core's default, which createWorker leaves unset.
   const gateway = deps.connectGateway(socketPath, { fetchInactivityMs: DEFAULT_TASK_TIMEOUT })
 
-  // Waits up to 300 s for the gateway's prepare, which includes its secret reads. Its fatal
-  // error becomes this worker's, so `lastFatalError` names the cause.
+  // Waits up to 300 s for the gateway's secret reads, which come before it serves (systemd holds
+  // the connection meanwhile), and its prepare. Its fatal error becomes this worker's, so
+  // `lastFatalError` names the cause.
   let health: Awaited<ReturnType<GitHubGateway['health']>>
   try {
     health = await gateway.health()
@@ -496,7 +498,7 @@ async function buildSplitWorker(
       } catch (err) {
         workerLogError(
           `Could not complete the lifecycle action through the GitHub gateway (${getErrorMessage(err)}); ` +
-            'termination continues when its heartbeat times out',
+            'termination continues once the gateway completes it or the heartbeat times out',
         )
       }
     },

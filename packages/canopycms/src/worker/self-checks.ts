@@ -64,10 +64,11 @@ const NO_ROUTE_CODES = new Set(['ENETUNREACH', 'EAFNOSUPPORT'])
 const SECRET_ENV_PATTERN = /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY)/
 
 /**
- * Credentials any tool the worker runs would pick up from its environment: git's and gh's GitHub
- * tokens (`GITHUB_BOT_TOKEN` is canopycms's default `githubTokenEnvVar`) and the AWS SDK's static
- * credentials. Exact names, so a look-alike such as `GITHUB_TOKEN_PATH` passes. `CLERK_JWT_KEY` is
- * not here: it is a public verification key.
+ * The conventional credential variables: GitHub tokens (`GITHUB_BOT_TOKEN` is canopycms's default
+ * `githubTokenEnvVar`) and the AWS SDK's static credentials. The worker's git reads none (its
+ * environment is git-manager.ts's allowlist), but code that becomes the worker reads its
+ * environment. Exact names, so a look-alike such as `GITHUB_TOKEN_PATH` passes.
+ * `CLERK_JWT_KEY` is not here: it is a public verification key.
  */
 const AMBIENT_CREDENTIAL_ENV_NAMES = new Set([
   'GH_TOKEN',
@@ -239,8 +240,8 @@ export async function homeIsEmpty(
 
 /**
  * No GitHub or Clerk secret, nor the ARN or JSON field naming one, is in the worker's environment:
- * they belong to the gateway's env file. Nor is a credential its tools would pick up on their
- * own (git's and gh's tokens, the AWS SDK's static credentials). Names only are reported.
+ * they belong to the gateway's env file. Nor is a conventional credential variable (a GitHub token,
+ * the AWS SDK's static credentials). Names only are reported.
  * @internal Exported for tests.
  */
 export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfCheckResult {

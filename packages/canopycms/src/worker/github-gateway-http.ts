@@ -286,8 +286,8 @@ interface FetchJob {
 
 /**
  * The operations that run before, or without, a successful `prepare()`: they use the instance role,
- * never the GitHub credential or the mirror, and a draining worker must still be able to complete
- * its termination when the gateway's `prepare()` failed.
+ * never the GitHub credential or the mirror. A draining worker can then complete its termination
+ * while `prepare()` runs, or during the hold before a gateway whose `prepare()` failed exits.
  */
 const UNPREPARED_OPERATIONS: ReadonlySet<JsonOperation> = new Set([
   'health',
@@ -306,11 +306,11 @@ type JsonRunners = {
 class GatewayRequestHandler {
   /**
    * The gateway's `prepare()`, started by {@link start} once the server holds its socket. Every
-   * operation but {@link UNPREPARED_OPERATIONS} waits for it, and answers its failure: a worker that never asks for it,
-   * or asks for an operation first, still cannot reach one before the App check and the
-   * state-directory check have passed. Not before the socket is held: `prepare()` sweeps the
-   * state directory, which a gateway already serving it, whose socket this one fails to take, is
-   * using.
+   * operation but {@link UNPREPARED_OPERATIONS} waits for it, and answers its failure: a worker
+   * that never asks for it, or asks for an operation first, still cannot reach one of those before
+   * the App check and the state-directory check have passed. Not before the socket is held:
+   * `prepare()` sweeps the state directory, which a gateway already serving it, whose socket this
+   * one fails to take, is using.
    */
   private readonly prepared: Promise<void>
   private startPreparing: () => void = () => undefined
@@ -858,7 +858,10 @@ class GitHubGatewayClient implements GitHubGateway {
     await this.call('prepare', {})
   }
 
-  /** Waits up to {@link HEALTH_WAIT_MS} for a `prepare()` under way: secret reads can be slow. */
+  /**
+   * Waits up to {@link HEALTH_WAIT_MS} for the gateway to serve and prepare: its secret reads, which
+   * come before it serves, can be slow.
+   */
   health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
     return this.call('health', {}, boundedBy(HEALTH_WAIT_MS, signal))
   }

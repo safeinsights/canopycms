@@ -10,7 +10,9 @@
  * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
  * form beside another (at the `%` of a URL-encoded one) and leave its tail unmatchable. Each log
  * line also has its non-printable characters escaped, since request fields (branch names, pull
- * request text) and git's output (commit subjects) are attacker-chosen.
+ * request text) and git's output (commit subjects) are attacker-chosen. The gateway process's own
+ * modules (secret reads, the termination watch) and `@octokit/auth-app` log through `workerLog`
+ * or the console, unscrubbed: none of their lines carries a secret's value.
  */
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -45,8 +47,9 @@ export function registerLiveSecret(token: string): void {
 
 /**
  * Scrub `value` from everything that leaves the gateway from now on, raw and URL-encoded: a secret
- * that is not a GitHub token (the auth provider's key). It shares {@link registerLiveSecret}'s store
- * and cap, so a rotated key replaces the old one as tokens do.
+ * that is not a GitHub token (the auth provider's key). It shares {@link registerLiveSecret}'s
+ * store and cap, so a rotated key's predecessor stays scrubbed until the cap drops it, as a
+ * token's does.
  */
 export function registerSecretText(value: string): void {
   if (value.length < MIN_SECRET_LENGTH) return
