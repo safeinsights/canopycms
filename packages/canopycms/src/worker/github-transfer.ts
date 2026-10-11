@@ -39,7 +39,10 @@ const MAX_PUSH_RESTARTS = 3
 export interface TransferContext {
   github(): GitHubGateway
   readonly remoteGitPath: string
-  /** The inactivity bound on each streamed git here, as simple-git's is on the others. */
+  /**
+   * The inactivity bound on each git here run through worker/git-process.ts; its simple-git calls
+   * (init, for-each-ref, rev-parse) carry none.
+   */
   readonly taskTimeoutMs: number
 }
 

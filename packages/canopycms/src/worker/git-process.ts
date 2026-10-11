@@ -65,7 +65,7 @@ export interface GitProcess {
   readonly stdout: Readable
   /**
    * Settles once git has exited and its output is read or released; resolves only when git exited
-   * 0 on its own, its input arrived whole, and no stop came first.
+   * 0 on its own, its input source did not fail, and no stop came first.
    */
   readonly exited: Promise<void>
   /** Stop git now; `exited` then rejects. */

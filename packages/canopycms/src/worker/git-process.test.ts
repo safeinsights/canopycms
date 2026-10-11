@@ -171,7 +171,7 @@ describe('spawnGit', () => {
     const proc = spawnGit(['small'], alias('small', 'yes y | head -c 100000', 300))
     const chunks = proc.stdout[Symbol.asyncIterator]()
     let bytes = 0
-    // A pause past the bound before each read, the first after git has exited.
+    // A pause past the bound after each read; git exits before the first pause ends.
     for (;;) {
       const next = await chunks.next()
       if (next.done) break

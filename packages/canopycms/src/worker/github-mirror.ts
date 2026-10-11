@@ -145,7 +145,8 @@ export class GitHubMirror {
 
   /**
    * git for `check-ref-format`, run in the state directory like every other gateway git. It reads
-   * the repository only to expand `@{-N}`, which `assertPlainBranchName` refuses.
+   * the repository's config, as any git does, and its refs only to expand `@{-N}`, which
+   * `assertPlainBranchName` refuses.
    */
   async checkGit(): Promise<SimpleGit> {
     await this.ensureTransferDirs()
@@ -269,7 +270,7 @@ const STAGING_PREFIX = 'refs/canopy/outgoing/'
  * A push or fetch the gateway could not complete for a reason a later attempt can clear: GitHub
  * unreachable, a bundle that did not arrive whole or valid, a prerequisite GitHub no longer has,
  * a bundle already gone. The task retries it. Only `github-fetch-failed` can be the credential's
- * doing, and that failure has already armed a re-read.
+ * doing, and unless the mirror's own lock caused it, that failure has already armed a re-read.
  */
 export class GitHubTransientError extends Error {
   constructor(

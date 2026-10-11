@@ -441,14 +441,14 @@ describe('re-reading the credential', () => {
     const main = await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/main')
     await git('--git-dir', githubPath, 'push', '-q', githubPath, 'main:refs/heads/feature')
     const provider = vi.fn(async () => undefined)
-    const observed: string[] = []
+    const credentialed: string[] = []
     // Only the ls-remote is sent somewhere that does not exist.
     wrapSpawn(((
       command: string,
       args: readonly string[],
       options: { env?: Record<string, string> },
     ) => {
-      observed.push(subcommand(args))
+      if (options.env?.GIT_CONFIG_GLOBAL !== undefined) credentialed.push(subcommand(args))
       const sent =
         subcommand(args) === 'ls-remote'
           ? args.map((arg) => (arg === githubPath ? path.join(root, 'missing.git') : arg))
@@ -466,8 +466,7 @@ describe('re-reading the credential', () => {
     ).rejects.toThrow()
     await settle()
 
-    expect(observed).toContain('ls-remote')
-    expect(observed).not.toContain('push')
+    expect(credentialed).toEqual(['fetch', 'ls-remote'])
     expect(provider).toHaveBeenCalledTimes(1)
   })
 

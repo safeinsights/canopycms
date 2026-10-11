@@ -17,7 +17,7 @@ never pushes the base or default branch) and #491 (root-owned worker log). PRs 1
 
 The worker and the CMS Lambda both write `remote.git` and every branch clone on EFS. The worker's
 own git there runs pinned, after a config allowlist check (`worker/shared-repo-git.ts`), and the
-credential is used only in a private mirror (`worker/github-mirror.ts`). What is left needs a
+credential is used only in a private mirror and its quarantines (`worker/github-mirror.ts`). What is left needs a
 race the check cannot win, because it reads before git does:
 
 - a `filter.<driver>.*` or `merge.<driver>.driver` key written between the check and git's read,

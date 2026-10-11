@@ -469,7 +469,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
   workerLog('Syncing git...')
   const cycleStartedAt = Date.now()
   // remote.git's config is Lambda-writable: every git here runs pinned (worker/shared-repo-git.ts),
-  // and everything that carries the credential runs in the worker's private mirror instead.
+  // and everything that carries the credential runs in the GitHub gateway's state directory instead.
   const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
     // DEP-H1: a hung git would stall the sync loop forever (scheduleLoop only
     // reschedules after completion). Inactivity-based, so a slow-but-flowing
