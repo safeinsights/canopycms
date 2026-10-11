@@ -1,18 +1,17 @@
 ---
-priority: P3
+priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3. The yellow lock banners' buttons ("Create a branch", "Manage Branches") and the read-only draft notice's "Discard changes" use Mantine `variant="light" color="yellow"`, whose pale yellow text on a yellow-tinted alert looks below the 4.5:1 contrast docs/ux-guidelines.md asks for; measure and switch to a darker colour or variant
+  New 2026-10-10, from the editor UI epic's WS3. The yellow lock banners' buttons ("Create a branch", "Manage Branches") use Mantine `variant="light" color="yellow"`: rgb(250,176,5) text on a yellow-tinted alert, about 1.7:1 against the 4.5:1 docs/ux-guidelines.md asks for. Switch to `variant="default"`, as ReadOnlyDraftNotice does
 ---
-# Yellow banner buttons may miss text contrast
+# Yellow banner buttons miss text contrast
 
-`components/EditorHeader.tsx` (protected-branch and status-locked banners) and
-`components/ReadOnlyDraftNotice.tsx` render their action as
-`<Button variant="light" color="yellow">` inside a `color="yellow" variant="light"` Alert.
-In Storybook the button text reads as pale yellow on pale yellow.
+`components/EditorHeader.tsx` (protected-branch and status-locked banners) renders each banner's
+action as `<Button variant="light" color="yellow">` inside a `color="yellow" variant="light"`
+Alert. The editor UX review measured the same style at about 1.7:1 on the read-only draft
+notice, which now uses `variant="default"`.
 
 ## Fix
 
-Measure the computed text and background colours (axe via Playwright, or devtools). If below
-4.5:1, use one darker treatment for all three, such as `color="yellow.9"` text or
-`variant="default"`, and check `pnpm lint:a11y` and the `ux-review` agent agree.
+Use `variant="default"` for both banner buttons, matching `ReadOnlyDraftNotice`, and confirm
+the computed contrast reaches 4.5:1.

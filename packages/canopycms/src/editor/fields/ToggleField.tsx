@@ -1,6 +1,6 @@
 import React, { useId } from 'react'
 
-import { Stack, Switch } from '@mantine/core'
+import { Group, Stack, Switch, Text } from '@mantine/core'
 
 import { FieldDescription, fieldDescriptionId } from './FieldDescription'
 
@@ -32,19 +32,27 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
   // rendering it as a sibling keeps the name to the label alone.
   return (
     <Stack gap={4}>
-      <Switch
-        id={inputId}
-        label={label}
-        aria-describedby={description ? fieldDescriptionId(inputId) : undefined}
-        checked={value}
-        disabled={readOnly}
-        onChange={(e) => {
-          if (!readOnly) onChange(e.currentTarget.checked)
-        }}
-        size="md"
-        data-canopy-field={dataCanopyField}
-        wrapperProps={testId ? { 'data-testid': testId } : undefined}
-      />
+      <Group gap="sm" wrap="nowrap">
+        <Switch
+          id={inputId}
+          label={label}
+          aria-describedby={description ? fieldDescriptionId(inputId) : undefined}
+          checked={value}
+          disabled={readOnly}
+          onChange={(e) => {
+            if (!readOnly) onChange(e.currentTarget.checked)
+          }}
+          size="md"
+          data-canopy-field={dataCanopyField}
+          wrapperProps={testId ? { 'data-testid': testId } : undefined}
+        />
+        {/* A disabled switch's position is too faint to read, so read-only states it in words. */}
+        {readOnly && (
+          <Text size="sm" c="gray.7" data-testid={testId ? `${testId}-value` : undefined}>
+            {value ? 'On' : 'Off'}
+          </Text>
+        )}
+      </Group>
       <FieldDescription baseId={inputId} description={description} />
     </Stack>
   )

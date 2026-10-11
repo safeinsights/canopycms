@@ -186,6 +186,8 @@ export const MDXEditorLazy = React.lazy(async () => {
     imagePreviewHandler: (src: string) => Promise<string>
     htmlTags?: ReadonlySet<string>
     readOnly?: boolean
+    /** Names the content area for assistive tech; MDXEditor's default is "editable markdown". */
+    contentLabel?: string
   }> = ({
     markdown,
     onChange,
@@ -196,13 +198,26 @@ export const MDXEditorLazy = React.lazy(async () => {
     imagePreviewHandler,
     htmlTags,
     readOnly,
+    contentLabel,
   }) => {
     const underline = htmlTags?.has('u') ?? true
+    const translation = (
+      key: string,
+      defaultValue: string,
+      interpolations: Record<string, unknown> = {},
+    ): string =>
+      key === 'contentArea.editableMarkdown' && contentLabel
+        ? contentLabel
+        : Object.entries(interpolations).reduce(
+            (text, [name, v]) => text.replaceAll(`{{${name}}}`, String(v)),
+            defaultValue,
+          )
     return (
       <MDXEditor
         ref={editorRef}
         markdown={markdown}
         readOnly={readOnly}
+        translation={translation}
         onChange={onChange}
         onError={onError}
         toMarkdownOptions={MARKDOWN_EXPORT_OPTIONS}
@@ -404,6 +419,19 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [rejectedInsert, setRejectedInsert] = useState<string | null>(null)
   const [editorGeneration, setEditorGeneration] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // A read-only content area stays reachable by keyboard, like the read-only inputs beside it.
+  // Lexical drops it from the tab order once it is not editable, and mounts it after this runs.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!readOnly || !root) return
+    const focusable = () => root.querySelector('.canopy-mdx-content')?.setAttribute('tabindex', '0')
+    focusable()
+    const observer = new MutationObserver(focusable)
+    observer.observe(root, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [readOnly])
 
   // Drives both MDXEditor's drag/drop/paste upload and the custom image
   // dialog's Upload tab via the same presign/finalize-or-proxied pipeline
@@ -525,6 +553,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 
   return (
     <div
+      ref={rootRef}
       id={inputId}
       data-canopy-field={dataCanopyField}
       className="canopy-markdown-field"
@@ -595,6 +624,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
                 imagePreviewHandler={imagePreviewHandler}
                 htmlTags={htmlTags}
                 readOnly={readOnly}
+                contentLabel={label}
               />
             </Suspense>
           </EditorErrorBoundary>

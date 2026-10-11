@@ -4,7 +4,7 @@
  */
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 import { modals } from '@mantine/modals'
@@ -98,7 +98,10 @@ const protectedMain = {
  * `branches` undefined leaves the branch list unanswered, the fail-closed loading window; a
  * function answers each fetch afresh.
  */
-const stubApi = (branches: unknown[] | undefined | (() => unknown[])) => {
+const stubApi = (
+  branches: unknown[] | undefined | (() => unknown[]),
+  entryReads: { fail: boolean } = { fail: false },
+) => {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -154,6 +157,9 @@ const stubApi = (branches: unknown[] | undefined | (() => unknown[])) => {
         )
       }
       if (url === entryApiPath && (!init?.method || init.method === 'GET')) {
+        if (entryReads.fail) {
+          return Promise.resolve(new Response('{}', { status: 500 }))
+        }
         // A list MDXEditor re-serialises on mount ("*" becomes "-").
         return Promise.resolve(
           okJson({ title: 'Loaded title', body: '* one\n* two\n', version: 100 }),
@@ -272,6 +278,7 @@ describe('Editor on a read-only branch', () => {
 
     await titleInput()
     await waitFor(() => expect(screen.getByTestId('read-only-draft-notice')).toBeTruthy())
+    expect(screen.getByText(/base branch can't be saved to/)).toBeTruthy()
     expect(persistedDrafts()).toHaveProperty(CONTENT_ID)
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
@@ -292,5 +299,24 @@ describe('Editor on a read-only branch', () => {
     expect(input.readOnly).toBe(true)
     expect(screen.queryByTestId('read-only-draft-notice')).toBeNull()
     expect(persistedDrafts()).toHaveProperty(CONTENT_ID)
+  })
+
+  it('offers Retry when the entry fails to load, and shows it once a retry succeeds', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const entryReads = { fail: true }
+    stubApi([protectedMain], entryReads)
+    renderEditor()
+
+    await screen.findByTestId('entry-load-failed')
+    // Let any re-read the entries list triggers fail too, so only Retry can load the entry.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    entryReads.fail = false
+    fireEvent.click(
+      within(screen.getByTestId('entry-load-failed')).getByRole('button', { name: 'Retry' }),
+    )
+
+    await titleInput()
+    expect(screen.queryByTestId('entry-load-failed')).toBeNull()
+    expect(String(consoleError.mock.calls[0]?.[0])).toContain('Load failed: 500')
   })
 })

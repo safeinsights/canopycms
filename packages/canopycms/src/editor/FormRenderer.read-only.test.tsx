@@ -109,6 +109,7 @@ describe('FormRenderer readOnly', () => {
     })
     const input = screen.getByRole('switch', { name: 'Draft' }) as HTMLInputElement
     expect(input.disabled).toBe(true)
+    expect(screen.getByText('Off')).toBeTruthy()
     fireEvent.click(input)
     expect(onChange).not.toHaveBeenCalled()
   })
@@ -157,6 +158,8 @@ describe('FormRenderer readOnly', () => {
     })
     const content = container.querySelector('.canopy-mdx-content')!
     expect(content.getAttribute('contenteditable')).toBe('false')
+    expect(content.getAttribute('aria-label')).toBe('Body')
+    await waitFor(() => expect(content.getAttribute('tabindex')).toBe('0'))
     expect(container.querySelector('[role="toolbar"]')).toBeNull()
     expect(screen.queryByTestId('markdown-mode-toggle')).toBeNull()
     // Let any mount-time normalisation settle before asserting nothing was emitted.

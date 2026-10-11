@@ -6,10 +6,13 @@ import {
   ActionIcon,
   Alert,
   Box,
+  Button,
   Drawer,
   Group,
   Menu,
   Paper,
+  Skeleton,
+  Stack,
   Text,
   Title,
   useTree,
@@ -510,6 +513,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // that same id. Qualifying the key lets both loads coexist; the branch check
   // at settle time decides which one is allowed to write.
   const loadingEntryIdsRef = useRef<Set<string>>(new Set())
+  // The entry (keyed like `loadingEntryIdsRef`) whose last read failed, and Retry's bump that
+  // runs the load effect below again.
+  const [loadFailedKey, setLoadFailedKey] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   // Entries (keyed like `loadingEntryIdsRef`) whose read the API refused as SCHEMA_UNAVAILABLE.
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
@@ -568,6 +575,7 @@ const EditorContent: React.FC<EditorProps> = ({
       if (loadingEntryIdsRef.current.has(inFlightKey)) return
       loadingEntryIdsRef.current.add(inFlightKey)
       setEntriesLoading(true)
+      setLoadFailedKey((failed) => (failed === inFlightKey ? null : failed))
       try {
         const loaded = await loadEntry(currentEntry)
         // A branch switch during the await makes this response another
@@ -614,10 +622,11 @@ const EditorContent: React.FC<EditorProps> = ({
       // different branch).
       if (currentBranchRef.current === requestBranch && currentContentIdRef.current === contentId) {
         notifications.show({ message: 'Failed to load entry', color: 'red' })
+        setLoadFailedKey(inFlightKey)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path/branch/loadedValues change
-  }, [currentEntry, loadedValues, selectedPath, branchNameState])
+  }, [currentEntry, loadedValues, selectedPath, branchNameState, loadAttempt])
 
   const handleOpenCollectionEditor = async (
     collection: EditorCollection | null,
@@ -1225,7 +1234,10 @@ const EditorContent: React.FC<EditorProps> = ({
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
                           {hiddenDraftNotice && (
-                            <ReadOnlyDraftNotice onDiscard={handleDiscardFileDraft} />
+                            <ReadOnlyDraftNotice
+                              baseBranch={currentBranch?.isProtected ?? true}
+                              onDiscard={handleDiscardFileDraft}
+                            />
                           )}
                           <FormRenderer
                             fields={schema}
@@ -1260,14 +1272,35 @@ const EditorContent: React.FC<EditorProps> = ({
                           />
                         </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
+                    ) : schema.length === 0 ? (
+                      <CenteredMessage>No fields to edit.</CenteredMessage>
+                    ) : loadFailedKey !== `${branchNameState}:${currentEntry.contentId}` ? (
+                      <Stack gap="lg" p="md" data-testid="entry-loading-skeleton">
+                        {[0, 1, 2].map((row) => (
+                          <Stack key={row} gap={6}>
+                            <Skeleton h={12} w={120} />
+                            <Skeleton h={36} />
+                          </Stack>
+                        ))}
+                      </Stack>
                     ) : (
-                      <CenteredMessage>
-                        {entriesLoading
-                          ? 'Loading content…'
-                          : schema.length > 0
-                            ? "This entry couldn't be loaded. Reload it from the File menu."
-                            : 'No fields to edit.'}
-                      </CenteredMessage>
+                      <Alert
+                        color="red"
+                        variant="light"
+                        m="md"
+                        title="This entry couldn't be loaded."
+                        data-testid="entry-load-failed"
+                      >
+                        <Button
+                          variant="default"
+                          onClick={() => {
+                            setLoadFailedKey(null)
+                            setLoadAttempt((attempt) => attempt + 1)
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
                     )
                   }
                 />

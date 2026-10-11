@@ -433,17 +433,28 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap">
-            {hasUnsavedChanges && (
-              <Text
-                size="xs"
-                c={draftStorageFailed ? 'orange.9' : 'gray.7'}
-                data-testid="unsaved-indicator"
-              >
-                {draftStorageFailed
-                  ? 'Unsaved · not kept on this device'
-                  : 'Unsaved · kept on this device'}
-              </Text>
-            )}
+            {/* Always mounted at a fixed width, so the first keystroke shifts nothing. */}
+            <Box role="status" w={112} ta="right">
+              {hasUnsavedChanges && (
+                <Tooltip
+                  label="Your browser couldn't store these changes. Save before you leave or reload, or they'll be lost."
+                  disabled={!draftStorageFailed}
+                  multiline
+                  w={260}
+                >
+                  <Text
+                    size="xs"
+                    lh={1.2}
+                    c={draftStorageFailed ? 'red.9' : 'gray.7'}
+                    data-testid="unsaved-indicator"
+                  >
+                    {draftStorageFailed
+                      ? 'Unsaved · not kept on this device'
+                      : 'Unsaved · kept on this device'}
+                  </Text>
+                </Tooltip>
+              )}
+            </Box>
             <Tooltip
               label={
                 branchReadOnly

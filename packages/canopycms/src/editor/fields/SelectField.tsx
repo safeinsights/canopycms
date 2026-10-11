@@ -53,6 +53,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
           data={options}
           value={normalizedValue as string[]}
           readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
           onChange={(next) => {
             if (!readOnly) onChange(next)
           }}
@@ -68,6 +69,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
           data={options}
           value={normalizedValue as string}
           readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
           onChange={(next) => {
             if (!readOnly) onChange(next ?? '')
           }}

@@ -227,6 +227,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           data={data}
           value={normalizedValue as string[]}
           readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
           onChange={(next) => {
             if (!readOnly) onChange(next)
           }}
@@ -242,6 +243,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           data={data}
           value={normalizedValue as string}
           readOnly={readOnly}
+          rightSection={readOnly ? <span /> : undefined}
           onChange={(next) => {
             if (!readOnly) onChange(next ?? '')
           }}
