@@ -1132,20 +1132,21 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   `aws ec2 get-console-output` names the step, or the line for a step that is not retried.
 - **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
-  which boots while the old one drains. Saves keep working; publishing, pull requests and sync
-  wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
+  which boots while the old one drains (see [Redeploying](#redeploying-updates-the-worker-too)).
+  The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
   12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
-- **A sandboxed service**, rated 3.3 by `systemd-analyze security`: only `/mnt/efs`, its state
+- **A worker without network or secret**, rated 0.6 by `systemd-analyze security`, beside the
+  GitHub gateway (1.6): only `/mnt/efs`, its state
   directory and a private `/tmp` are writable, not its own code or its log;
   `ProtectHome=tmpfs`, no capabilities, and the kernel, device and namespace protections. The
-  log directory and file are root-owned, because systemd opens the log as root, following
+  log directories and files are root-owned, because systemd opens the log as root, following
   symlinks, before the sandbox applies: a worker owning them could redirect its output into any
   file on the host.
 - **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
-  only in private repositories in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
-  Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
+  only in the gateway's private repositories in `/var/lib/canopy-github`, out of the Lambda's
+  reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
   off, and a repository whose config holds a key CanopyCMS never writes, or with a repository in
-  a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB the worker warns.
+  a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB it warns.
 - **Daily EFS backups** (`efsBackup`, default `true`), kept 35 days. Branches nobody has submitted
   exist only on EFS. Backup storage is billed per GB-month. Recovery points outlive the stack:
   their vault refuses deletes until you change its access policy.
