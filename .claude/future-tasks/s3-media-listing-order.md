@@ -8,6 +8,11 @@ summary: >-
 Status: **captured from the assets epic final review (finding #4), 2026-07-22.** Low
 priority — a UX inconsistency, not a correctness bug.
 
+**Update, 2026-10-11 (WS7a-1):** the MediaLibrary now loads every page in the background and
+sorts newest-first (or by name) client-side, so editors no longer see the hash order. What
+remains is scale: the client walks the whole prefix on each open. A server-side index for
+order and search is WS7a-2 in `ui-epic-202610.md`.
+
 ## Problem
 
 `S3AssetStore.listMeta` (`packages/canopycms/src/assets/store-s3.ts`) returns assets in
