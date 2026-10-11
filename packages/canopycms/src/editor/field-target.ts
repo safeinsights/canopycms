@@ -37,7 +37,7 @@ const canTakeFocus = (el: HTMLElement): boolean =>
  * Scrolls a field's element into view and focuses what a person would type into: the element
  * itself when it is an input, else its first focusable input, else its first other focusable
  * control that is not a comment control, else the element when it takes programmatic focus.
- * A visually hidden input, such as a dropzone's file input, is never chosen.
+ * An input out of the tab order or not rendered, such as a dropzone's file input, is never chosen.
  */
 export const focusFieldTarget = (element: HTMLElement): void => {
   element.scrollIntoView({ behavior: 'smooth', block: 'center' })

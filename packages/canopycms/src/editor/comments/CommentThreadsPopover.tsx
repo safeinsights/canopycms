@@ -23,10 +23,10 @@ import { InlineCommentThread, useRefocusAfterSubmit } from './InlineCommentThrea
 export interface CommentThreadsPopoverProps {
   /** The threads on this field or entry. */
   threads: CommentThread[]
-  /** What the comments are about, as a reader names it: a field's label, or "this entry". */
+  /** What the comments are about, as a reader names it: a field's breadcrumb, or "this entry". */
   subject: string
   /**
-   * `field`: an icon that shows while `revealed`, and a count badge whenever a thread is open.
+   * `field`: an icon that shows while `revealed` or any thread exists, as a count while one is open.
    * `entry`: a labelled "Comment on this entry" button that is always shown.
    */
   variant: 'field' | 'entry'

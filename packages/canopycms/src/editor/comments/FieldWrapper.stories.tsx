@@ -117,7 +117,7 @@ export const WithOpenThreads: Story = {
   args: { threads: sampleThreads },
 }
 
-/** Only resolved threads: no badge; the icon shows on hover and the popover lists them. */
+/** Only resolved threads: no badge, but a plain icon stays in view and the popover lists them. */
 export const WithResolvedThreads: Story = {
   args: { threads: resolvedThreads },
 }

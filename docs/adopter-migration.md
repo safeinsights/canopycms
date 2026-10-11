@@ -291,7 +291,7 @@ group dialog's buttons read "Add" and "Apply", since neither saves.
 **What changed.**
 
 - (int.93) An `object` field with `list: true` takes `itemTitleField`, naming a direct `string` or
-  `number` child whose value titles each card, else its first text field, then "Item N".
+  `number` child whose value titles each card, else its first `string` field, then "Item N".
 - (int.96) A field's `description` renders under its label for every type; a list field shows it
   once, never per item. A block template's `description` still does not render.
 - (int.103) An `image` field whose `src` is outside `/assets/`, such as `/logos/x.svg`, previews at

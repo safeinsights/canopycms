@@ -342,8 +342,8 @@ export class EditorPage {
   }
 
   /**
-   * A form field's comment control: an icon shown while the field is hovered or focused, or a
-   * count badge once the field has open threads.
+   * A form field's comment control: an icon shown while the field is hovered or focused, a count
+   * badge while it has open threads, or a plain icon once all its threads are resolved.
    * @param field - The field's data-canopy-field path
    */
   fieldCommentControl(field: string): Locator {

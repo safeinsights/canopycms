@@ -79,22 +79,16 @@ export const FieldLabel: React.FC<FieldLabelProps> = ({
  */
 export const LabelledInput: React.FC<{
   label?: string
-  required?: boolean
   /** The input's id, which the label's `for` names. */
   inputId: string
   /** The field's canopy path, which picks its comment control. */
   canopyPath?: string
   children: React.ReactNode
-}> = ({ label, required, inputId, canopyPath, children }) => {
+}> = ({ label, inputId, canopyPath, children }) => {
   const commentControl = useFieldCommentControl(canopyPath)
   return (
     <Stack gap={4}>
-      <FieldLabel
-        label={label}
-        required={required}
-        htmlFor={inputId}
-        commentControl={commentControl}
-      />
+      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
       {children}
     </Stack>
   )

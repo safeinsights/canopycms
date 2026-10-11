@@ -251,6 +251,8 @@ describe('field comment control', () => {
     })
     await user.click(control('title'))
     const popover = await screen.findByTestId('field-comment-title-popover')
+    // With threads to read, focus lands on the heading, not on a reply box.
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Comments on Title'))
     const threads = within(popover).getAllByTestId('inline-comment-thread')
     expect(threads.map((t) => t.textContent)).toEqual([
       expect.stringContaining('Comment in open'),

@@ -41,7 +41,7 @@ export const useRefocusAfterSubmit = (
 }
 
 /**
- * Individual comment thread display within the carousel.
+ * One comment thread, as the comment popover and ThreadCarousel list them.
  * Always shows full thread view with per-thread scrolling.
  */
 export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({

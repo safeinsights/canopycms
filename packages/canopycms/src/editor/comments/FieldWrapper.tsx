@@ -32,7 +32,7 @@ export interface FieldWrapperProps {
   ) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
-  /** The field's label, which names it in the control's aria-label: "Comment on <label>". */
+  /** The field's breadcrumb ("Links › /a › Href"), which names the control: "Comment on <breadcrumb>". */
   fieldLabel: string
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
@@ -53,7 +53,7 @@ const FIELD_SCOPE_ATTR = 'data-field-comments'
 /**
  * Gives a form field its comment control. The control shows while the pointer or focus is on
  * this field and not on a field nested inside it, so a group never shows a second icon for its
- * children; a field with open threads always shows its count.
+ * children; a field with threads always shows it.
  */
 export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   children,
