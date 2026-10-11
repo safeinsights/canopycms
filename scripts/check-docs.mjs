@@ -333,22 +333,39 @@ function budgetShapeError(budget) {
   return 'takes exactly historyMarkers, maxSectionWords and words, each a whole number'
 }
 
-/** The text of a line outside HTML comments, and whether a comment is still open after it. */
+/**
+ * One line's text outside HTML comments, code spans removed, given whether a
+ * comment is open at its start. An unclosed `<!--` carries over to later lines
+ * only where CommonMark opens an HTML block, at the start of a line (up to three
+ * spaces); anywhere else, or quoted in a code span, it is literal text. `<!-->`
+ * and `<!--->` are complete empty comments.
+ */
 function stripHtmlComments(line, inComment) {
-  let kept = ''
   let rest = line
+  if (inComment) {
+    const close = rest.indexOf('-->')
+    if (close === -1) return { kept: '', inComment: true }
+    rest = rest.slice(close + 3)
+  }
+  rest = rest.replace(CODE_SPAN_RE, '')
+  let kept = ''
   for (;;) {
-    if (inComment) {
-      const close = rest.indexOf('-->')
-      if (close === -1) return { kept, inComment: true }
-      rest = rest.slice(close + 3)
-      inComment = false
-    }
     const open = rest.indexOf('<!--')
     if (open === -1) return { kept: kept + rest, inComment: false }
+    const after = rest.slice(open + 4)
+    let close
+    if (after.startsWith('>')) close = 1
+    else if (after.startsWith('->')) close = 2
+    else {
+      const end = after.indexOf('-->')
+      close = end === -1 ? -1 : end + 3
+    }
+    if (close === -1) {
+      const opensBlock = !inComment && kept === '' && /^ {0,3}$/.test(rest.slice(0, open))
+      return opensBlock ? { kept: '', inComment: true } : { kept: kept + rest, inComment: false }
+    }
     kept += rest.slice(0, open) + ' '
-    rest = rest.slice(open + 4)
-    inComment = true
+    rest = after.slice(close)
   }
 }
 
@@ -378,13 +395,22 @@ function measureChangelog(content, cap) {
   const entries = []
   let hasUnreleased = false
   let inUnreleased = false
+  let inFence = false
   let inComment = false
   let current = null
-  for (const r of extractText(content)) {
-    const stripped = stripHtmlComments(r.raw, inComment)
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]
+    // Inside a comment a fence delimiter is comment text, as in an HTML block.
+    if (!inComment && FENCE_RE.test(raw)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const startedInComment = inComment
+    const stripped = stripHtmlComments(raw, inComment)
     inComment = stripped.inComment
-    const line = stripped.kept
-    const h2 = atxHeading(line, 2)
+    const h2 = startedInComment ? null : atxHeading(raw, 2)
     if (h2 !== null) {
       inUnreleased = h2 === 'Unreleased'
       hasUnreleased ||= inUnreleased
@@ -392,12 +418,12 @@ function measureChangelog(content, cap) {
       continue
     }
     if (!inUnreleased) continue
-    const h3 = atxHeading(line, 3)
+    const h3 = startedInComment ? null : atxHeading(raw, 3)
     if (h3 !== null) {
-      current = { heading: h3, lineNo: r.lineNo, words: 0 }
+      current = { heading: h3, lineNo: i + 1, words: 0 }
       entries.push(current)
     }
-    if (current) current.words += countWords(line.replace(CODE_SPAN_RE, ''))
+    if (current) current.words += countWords(stripped.kept)
   }
   return { hasUnreleased, over: entries.filter((e) => e.words > cap) }
 }
@@ -699,6 +725,29 @@ function selfTest() {
       .map((e) => e.heading)
       .join() === 'A',
   )
+  for (const quoted of [
+    'Wrap it in `<!--` and close it.',
+    'An arrow <!-- in prose.',
+    '<!--> An empty comment.',
+    '<!---> An empty comment.',
+  ]) {
+    expect(
+      `entry cap: "${quoted}" hides no later entry`,
+      overOf(['## Unreleased', '### A', quoted, '### B', words(20)]).length === 1,
+    )
+  }
+  expect(
+    'entry cap: a quoted <!-- does not pair with a later -->',
+    overOf(['## Unreleased', '### A', `\`<!--\` ${words(20)} <!-- c -->`]).length === 1,
+  )
+  expect(
+    'entry cap: a fence line inside a comment does not hide its close',
+    overOf(['## Unreleased', '<!--', '```', '-->', '### B', words(20)]).length === 1,
+  )
+  expect(
+    'entry cap: a heading quoting code keeps its text',
+    overOf(['## Unreleased', '### The `x` flag', words(20)])[0]?.heading === 'The `x` flag',
+  )
   expect(
     'entry cap: a file without ## Unreleased reports it',
     !measureChangelog(['## [Unreleased]', '### A', words(20)].join('\n'), 15).hasUnreleased,
@@ -822,6 +871,7 @@ function selfTest() {
     'args: --write-baseline refuses a positional file',
     parseArgs(['--write-baseline', '--only', 'a.md', 'b.md']).error,
   )
+  expect('args: a bare -- is ignored', parseArgs(['--', '--report']).flags?.has('--report'))
   expect('args: --only needs --write-baseline', parseArgs(['--only', 'a.md']).error)
   expect(
     'args: --only refuses --margin',
@@ -862,6 +912,7 @@ function parseArgs(argv) {
   let marginArg = null
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
+    if (a === '--') continue // pnpm passes `pnpm lint:docs -- --report` through verbatim
     if (a === '--only' || a.startsWith('--only=')) {
       const value = a === '--only' ? argv[++i] : a.slice('--only='.length)
       if (!value || value.startsWith('--')) {
