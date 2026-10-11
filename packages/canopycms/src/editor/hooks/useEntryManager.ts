@@ -8,6 +8,7 @@ import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { buildWritePayload, normalizeContentPayload } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
+import { withTitleAtPath } from '../../utils/title-field'
 import { getErrorMessage } from '../../utils/error'
 import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient } from '../context'
@@ -111,7 +112,8 @@ export interface UseEntryManagerReturn {
    * server's authoritative 409 guard.
    */
   createModalExistingSlugs: Set<string>
-  handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
+  /** `title` is written to the entry type's `titleField`, so the new entry opens already titled. */
+  handleCreateModalSubmit: (slug: string, entryTypeName: string, title?: string) => Promise<void>
   closeCreateModal: () => void
 }
 
@@ -452,7 +454,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setCreateModalOpen(true)
   }
 
-  const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
+  const handleCreateModalSubmit = async (slug: string, entryTypeName: string, title?: string) => {
     if (!createModalCollection) return
 
     setCreateModalCreating(true)
@@ -468,9 +470,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       // already exist yet". The client always sends create intent here,
       // never a blind update, so a same-slug create cannot silently
       // overwrite existing content.
+      const data =
+        title && selectedType?.titleField ? withTitleAtPath(selectedType.titleField, title) : {}
       const payload = isDataOnlyFormat(format)
-        ? { format: format as 'json' | 'yaml', data: {}, expectedVersion: null }
-        : { format, data: {}, body: '', expectedVersion: null }
+        ? { format: format as 'json' | 'yaml', data, expectedVersion: null }
+        : { format, data, body: '', expectedVersion: null }
 
       // Use collection path (e.g., "content/posts") not name (e.g., "posts")
       const path = `${createModalCollection.path}/${slug}`

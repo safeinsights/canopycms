@@ -203,6 +203,13 @@ function stubFetch(options: { flagged: boolean; widgetRead: () => Response }) {
               },
               {
                 type: 'collection',
+                logicalPath: 'folders',
+                name: 'folders',
+                label: 'Folders',
+                entries: [],
+              },
+              {
+                type: 'collection',
                 logicalPath: 'posts',
                 name: 'posts',
                 label: 'Posts',
@@ -492,7 +499,7 @@ describe('Editor: an entry of an unavailable type', () => {
     })
   })
 
-  it('shows the message once under the affected collection, which offers no Add Entry', async () => {
+  it('shows the message once under the affected collection, which offers no Add entry', async () => {
     stubFetch({
       flagged: true,
       widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
@@ -506,11 +513,11 @@ describe('Editor: an entry of an unavailable type', () => {
     expect(messages[0].textContent).toContain('widgetSchema')
 
     fireEvent.click(screen.getByTestId('collection-menu-widgets'))
-    await screen.findByText('Edit Collection')
+    await screen.findByText('Edit collection…')
     expect(screen.queryByTestId('add-entry-menu-item')).toBeNull()
   })
 
-  it('leaves a healthy collection exactly as before: no message, Add Entry offered', async () => {
+  it('leaves a healthy collection exactly as before: no message, Add entry offered', async () => {
     stubFetch({
       flagged: true,
       widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
@@ -525,6 +532,20 @@ describe('Editor: an entry of an unavailable type', () => {
         .getByTestId('entry-nav-item-posts')
         .querySelector('[data-testid="unavailable-type-message"]'),
     ).toBeNull()
+  })
+
+  it('offers no Add entry in a collection that holds only collections', async () => {
+    stubFetch({
+      flagged: true,
+      widgetRead: () => okJson({ ok: true, status: 200, data: {} }),
+    })
+    renderEditor('posts/hello')
+    await openNavigator()
+
+    fireEvent.click(screen.getByTestId('collection-menu-folders'))
+    // The admin items prove the menu is open and complete before the absence is asserted.
+    await screen.findByText('Edit collection…')
+    expect(screen.queryByTestId('add-entry-menu-item')).toBeNull()
   })
 
   it('offers only the available types when a collection mixes both, and never defaults to an unavailable one', async () => {

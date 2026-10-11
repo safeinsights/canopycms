@@ -298,3 +298,35 @@ describe('EditorHeader - unsaved indicator', () => {
     expect(screen.queryByTestId('unsaved-indicator')).toBeNull()
   })
 })
+
+describe('EditorHeader - modified-file menus only select', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  const editedFiles = [{ path: unsafeAsLogicalPath('posts/draft'), label: 'Draft post' }]
+
+  it('opens the entry from "Recently modified" without opening the navigator', async () => {
+    const onEntrySelect = vi.fn()
+    const onNavigatorOpen = vi.fn()
+    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect, onNavigatorOpen })
+
+    await userEvent.click(screen.getByTestId('file-dropdown-button'))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Draft post' }))
+
+    expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
+    expect(onNavigatorOpen).not.toHaveBeenCalled()
+  })
+
+  it('opens the entry from the branch menu without opening the navigator', async () => {
+    const onEntrySelect = vi.fn()
+    const onNavigatorOpen = vi.fn()
+    renderHeader({ editedFiles, modifiedCount: 1, onEntrySelect, onNavigatorOpen })
+
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Draft post' }))
+
+    expect(onEntrySelect).toHaveBeenCalledWith('posts/draft')
+    expect(onNavigatorOpen).not.toHaveBeenCalled()
+  })
+})

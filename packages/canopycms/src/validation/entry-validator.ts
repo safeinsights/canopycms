@@ -192,6 +192,11 @@ function isEmptyForRequired(field: FieldConfig, value: unknown): boolean {
   return false
 }
 
+export interface ValidateEntryOptions {
+  /** False skips the required-field checks and keeps every type and format check. Default true. */
+  required?: boolean
+}
+
 /**
  * Validate entry data against an entry schema. Pure — safe to run in the
  * browser. Returns one error per offending field path; an empty array means
@@ -201,20 +206,23 @@ export function validateEntryData(
   fields: EntrySchema,
   data: Record<string, unknown>,
   pathPrefix = '',
+  options: ValidateEntryOptions = {},
 ): EntryFieldError[] {
   const errors: EntryFieldError[] = []
 
   for (const field of fields) {
     // Inline groups are transparent (walkFields, ./field-traversal) — children live at this level.
     if (field.type === 'group') {
-      errors.push(...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix))
+      errors.push(
+        ...validateEntryData((field as InlineGroupFieldConfig).fields, data, pathPrefix, options),
+      )
       continue
     }
 
     const path = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
     const value = data[field.name]
 
-    const isRequired = 'required' in field && field.required === true
+    const isRequired = options.required !== false && 'required' in field && field.required === true
     if (isRequired && isEmptyForRequired(field, value)) {
       const message = Array.isArray(value)
         ? 'At least one item is required'
@@ -246,7 +254,7 @@ export function validateEntryData(
           })
           return
         }
-        errors.push(...validateEntryData(resolved.fields, resolved.data, itemPath))
+        errors.push(...validateEntryData(resolved.fields, resolved.data, itemPath, options))
       })
       continue
     }
@@ -265,13 +273,13 @@ export function validateEntryData(
             return
           }
           if (objectField.fields) {
-            errors.push(...validateEntryData(objectField.fields, item, itemPath))
+            errors.push(...validateEntryData(objectField.fields, item, itemPath, options))
           }
         })
       } else if (!isPlainRecord(value)) {
         errors.push({ fieldPath: path, message: 'Expected an object' })
       } else if (objectField.fields) {
-        errors.push(...validateEntryData(objectField.fields, value, path))
+        errors.push(...validateEntryData(objectField.fields, value, path, options))
       }
       continue
     }

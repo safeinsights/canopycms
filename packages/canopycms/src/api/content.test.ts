@@ -1683,17 +1683,46 @@ describe('content api', () => {
       expect(writeSpy).toHaveBeenCalled()
     })
 
-    it('validates a create that carries data (no scaffold bypass)', async () => {
+    it('type-checks a create that carries data (no scaffold bypass)', async () => {
       const ctx = allowedCtx()
       const { writeSpy } = await mockStoreOnce({ exists: false })
       const res = await writeContent(
         ctx,
         writeReq,
         { ...writeParams, entryType: 'post' },
-        { format: 'json', data: { title: '' } },
+        { format: 'json', data: { title: 42 } },
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(422)
+      expect(res.fieldErrors?.map((e) => e.fieldPath)).toEqual(['title'])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows a create carrying only a title although other fields are required', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: false })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: 'Hello' } },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('still requires every required field when saving an existing entry', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: true })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: 'Hello' }, expectedVersion: EXISTING_VERSION },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors?.map((e) => e.fieldPath)).toContain('author')
       expect(writeSpy).not.toHaveBeenCalled()
     })
 
