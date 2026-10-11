@@ -162,7 +162,7 @@ function assertEnvSafe(name: string, value: string): string {
     throw new Error(
       `CanopyCmsService: ${name} must not start or end with whitespace ` +
         `(got ${JSON.stringify(value)}). systemd strips it when reading the env file, so ` +
-        `the value the worker sees would differ from the one configured here.`,
+        `the value the service sees would differ from the one configured here.`,
     )
   }
   return value
@@ -539,7 +539,7 @@ const GITHUB_TOKEN_PROP_NAMES = ['githubTokenSecretArn', 'githubTokenSecretJsonF
  * Rejects a PEM private key passed where a prop expects an identifier or an ARN.
  *
  * There is no plaintext private-key prop, and there cannot be one: the value
- * would be written into the worker's `.env`, which systemd reads as
+ * would be written into `gateway.env`, which systemd reads as
  * `EnvironmentFile=` where a newline begins a new variable. So the realistic
  * mistake is to paste the key into `githubAppPrivateKeySecretArn` -- the prop
  * whose name contains "PrivateKey" -- instead of the ARN of a secret holding it.

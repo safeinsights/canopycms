@@ -53,10 +53,10 @@ export const WORKER_CONTRACT_BANNER_PREFIX = '// canopy-worker-contract: '
 
 /**
  * What each worker contract version requires of the unit and template, in
- * order: entry `i` is version `i + 1`. The construct stamps the latest version
- * into the split units it writes, and the version before
- * {@link GATEWAY_SPLIT_CONTRACT} into the single-process unit it writes for an
- * older bundle (see {@link WORKER_CONTRACT_BANNER_PREFIX}). A bundle refuses to
+ * order: entry `i` is version `i + 1`. worker-units.ts stamps the latest version
+ * into the split units, and the version before {@link GATEWAY_SPLIT_CONTRACT}
+ * into the single-process unit for an older bundle (see
+ * {@link WORKER_CONTRACT_BANNER_PREFIX}). A bundle refuses to
  * start under a unit whose version is lower.
  *
  * A unit with no stamp predates the stamp, so its version is read from what
