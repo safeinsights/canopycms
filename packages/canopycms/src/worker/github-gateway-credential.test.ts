@@ -309,6 +309,18 @@ it('is swept before the next session when an earlier delete left it, with the mi
   await expect(fs.stat(leftover)).rejects.toThrow(/ENOENT/)
 })
 
+it('lets the mirror recover when its state directory disappears under a running worker', async () => {
+  await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+  const github = gateway()
+  await github.fetch({ have: [] })
+  await fs.rm(stateDirectory, { recursive: true, force: true })
+
+  // The first session after it may fail; the next must re-create the mirror and succeed.
+  await github.fetch({ have: [] }).catch(() => undefined)
+  await expect(github.fetch({ have: [] })).resolves.toEqual({ bundleId: null })
+  expect((await fs.stat(path.join(stateDirectory, 'github.git'))).isDirectory()).toBe(true)
+})
+
 describe('against a server that checks the credential', () => {
   let server: HttpsGitServer
   let serverRoot: string

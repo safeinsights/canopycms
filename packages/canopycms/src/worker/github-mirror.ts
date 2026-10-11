@@ -65,8 +65,8 @@ export class GitHubMirror {
         await this.create()
         this.ready = true
       }
-      await sweepCredentialConfigs(path.dirname(this.gitDir))
       try {
+        await sweepCredentialConfigs(path.dirname(this.gitDir))
         return await fn(new MirrorSession(this.gitDir, this.remoteGitPath, this.timeoutMs))
       } catch (err) {
         this.ready = false
