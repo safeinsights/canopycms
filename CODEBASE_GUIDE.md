@@ -493,6 +493,7 @@ Top-level components and helpers:
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval` — undo for a form Remove
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
@@ -549,13 +550,14 @@ Field components, in `editor/fields/`:
 - `markdown-fidelity-visitors.ts` — round-trip fixes
 - `CodeField.tsx` — code and Mermaid field
 - `ObjectField.tsx` — nested object; Clear when optional and filled
+- `ObjectListField.tsx` / `list-item-title.ts` — `list: true` objects; item titles
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
 - `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
 - `MdxImageDialog.tsx` — image dialog
-- `FieldLabel.tsx` — label row with comment/action slots
+- `FieldLabel.tsx` — label row with comment/action slots; `LabelledInput`
 - `FieldDescription.tsx` — `description` without Mantine's native prop
 - `entry-link/EntryLinkContext.tsx` — supplies `EntryLinkOption[]` to toolbar components
 - `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
@@ -569,14 +571,18 @@ Components, in `editor/components/`:
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
 - `UndoToastMessage.tsx` — a form Remove's undo toast
+- `ValidationSummary.tsx` — pre-save issues alert with breadcrumb buttons
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
 
 Comments UI, in `editor/comments/`:
 
-- `BranchComments.tsx` / `EntryComments.tsx` — branch-level and entry-level threads
-- `InlineCommentThread.tsx` / `ThreadCarousel.tsx` — thread rendering and navigation
-- `FieldWrapper.tsx` — wraps a field to carry comments
+- `BranchComments.tsx` / `ThreadCarousel.tsx` — branch discussion
+- `EntryComments.tsx` — the "Comment on this entry" action
+- `CommentThreadsPopover.tsx` — field or entry comment control and threads popover
+- `field-comment-context.ts` — `useFieldCommentControl`: a `FieldLabel`'s own control
+- `FieldWrapper.tsx` — provides that context, tracks hover and focus
+- `InlineCommentThread.tsx` — thread rendering
 
 Media UI, in `editor/media/`:
 
@@ -587,8 +593,8 @@ Media UI, in `editor/media/`:
 - `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
 - `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
 - `useAssetUpload.ts` — React hook over that state machine
-- `xhr-upload.ts` — raw XHR POST for presigned uploads, the only browser API exposing upload progress
-- `upload-constants.ts` — client-side upload UX caps, deliberately duplicated from the server-only pipeline
+- `xhr-upload.ts` — raw XHR POST for presigned uploads, with progress
+- `upload-constants.ts` — client-side upload UX caps; why duplicated in its header
 
 Schema editor, in `editor/schema-editor/`: `CollectionEditor.tsx`, `EntryTypeEditor.tsx`,
 `index.ts`.
@@ -613,8 +619,8 @@ Admin UI, in `editor/admin/` — `Editor.tsx` renders it only for an admin; the 
 - `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
 - `useSystemHealth.tsx` — loads status, tasks and branch health on open, polls every 30 s, exposes the actions
 
-Conflict indicators per entry (`FormRenderer`'s `conflictNotice` prop) and per collection
-(`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` from `currentBranch.conflictFiles`.
+Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are
+computed in `Editor.tsx` from `currentBranch.conflictFiles`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
