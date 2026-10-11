@@ -5,11 +5,11 @@ import type { Readable } from 'node:stream'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { gitNetworkChildEnv } from '../git-manager'
-import { getErrorMessage, redactCredentials } from '../utils/error'
+import { getErrorMessage } from '../utils/error'
 import {
   BundleHeaderError,
+  BundleHeaderReader,
   hasOnlyHead,
-  scanBundleHeader,
   type BundleHeader,
 } from './bundle-header'
 import { runGit } from './git-process'
@@ -24,7 +24,7 @@ import {
   type MirrorCorruption,
 } from './github-mirror-upkeep'
 import { BranchPolicy, GatewayRefusalError, branchNameProblem } from './branch-policy'
-import { gatewayLog, gatewayLogError, gatewayLogWarn } from './gateway-egress'
+import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
 import {
   githubBoundGitOptions,
   mirrorGitOptions,
@@ -224,7 +224,7 @@ export class GitHubMirror {
       throw new GitHubTransientError(
         'mirror-corrupt',
         `The GitHub mirror needs rebuilding (${reason}), and the rebuild failed: ` +
-          redactCredentials(getErrorMessage(err)).trim(),
+          redactEgress(getErrorMessage(err)).trim(),
       )
     } finally {
       release()
@@ -978,7 +978,7 @@ export class MirrorSession {
     } catch (err) {
       throw new GitHubTransientError(
         'bundle-rejected',
-        `Refusing the bundle for ${expected.branch}: ${redactCredentials(getErrorMessage(err)).trim()}`,
+        `Refusing the bundle for ${expected.branch}: ${redactEgress(getErrorMessage(err)).trim()}`,
       )
     }
     const staged = (
@@ -1052,7 +1052,7 @@ export class MirrorSession {
 /**
  * Write a pushed bundle to `file` as it arrives, refusing it as soon as it cannot be accepted:
  * past `maxBytes`, or with a header that is not exactly one head, `<sha> refs/heads/<branch>`
- * (worker/bundle-header.ts). Holds at most the header's bound, plus one chunk, in memory.
+ * (worker/bundle-header.ts). Holds at most the header's bounds, plus one chunk, in memory.
  */
 async function receiveBundle(
   body: Readable,
@@ -1066,8 +1066,8 @@ async function receiveBundle(
       `Refusing the bundle for ${expected.branch}: ${reason}`,
     )
   const out = await fs.open(file, 'wx', 0o600)
+  const reader = new BundleHeaderReader('refuse')
   let header: BundleHeader | null = null
-  let start = Buffer.alloc(0)
   let total = 0
   try {
     for await (const chunk of body) {
@@ -1075,8 +1075,7 @@ async function receiveBundle(
       total += bytes.length
       if (total > maxBytes) throw rejected(`it is larger than ${maxBytes} bytes`)
       if (header === null) {
-        start = Buffer.concat([start, bytes])
-        header = scanBundleHeader(start)
+        header = reader.push(bytes)?.header ?? null
         if (header !== null && !hasOnlyHead(header, expected.sha, expected.branch)) {
           throw rejected(`its one head must be ${expected.sha} refs/heads/${expected.branch}`)
         }

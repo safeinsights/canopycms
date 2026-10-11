@@ -136,7 +136,7 @@ export class BranchPolicy {
   private githubDefault: { name: string | null; readAt: number } | null = null
 
   constructor(options: BranchPolicyOptions = {}) {
-    this.now = options.now ?? Date.now
+    this.now = options.now ?? (() => Date.now())
     const entries = [...(options.protectedBranches ?? [])]
     for (const entry of entries) {
       const problem = protectedPatternProblem(entry)

@@ -8,7 +8,7 @@ import {
   createOrUpdatePullRequest,
   type CreateOrUpdatePullRequestParams,
 } from '../github-service'
-import { getErrorMessage, redactCredentials } from '../utils/error'
+import { getErrorMessage } from '../utils/error'
 import { isStaleLeaseRejection, workflowPushRefusalFile } from '../utils/git'
 import { isTransientAuthFailure, type ResolvedGitHubAuth } from './github-auth'
 import {
@@ -27,6 +27,7 @@ import {
   gatewayLog,
   gatewayLogError,
   gatewayLogWarn,
+  redactEgress,
   redactError,
   redactValue,
   registerLiveSecret,
@@ -501,7 +502,7 @@ class LocalGitHubGateway implements GitHubGateway {
       registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       // [REDACT] Both messages below reach worker-status.json and the browser.
-      const detail = redactCredentials(getErrorMessage(err))
+      const detail = redactEgress(getErrorMessage(err))
       if (isTransientAuthFailure(err)) {
         gatewayLogWarn(
           `Could not verify GitHub App authentication at startup: ${detail}. ` +
@@ -672,7 +673,7 @@ class LocalGitHubGateway implements GitHubGateway {
       throw new GitHubTransientError(
         'github-fetch-failed',
         `Could not fetch from GitHub before pushing ${branch}: ` +
-          redactCredentials(getErrorMessage(err)).trim(),
+          redactEgress(getErrorMessage(err)).trim(),
       )
     }
   }
@@ -873,7 +874,7 @@ function logFailedCredentialRefresh(err: unknown): void {
   // [REDACT] The message can name the secret and, on a malformed-secret path, quote what was read.
   gatewayLogError(
     'Failed to re-read the GitHub credential after a failure:',
-    redactCredentials(getErrorMessage(err)),
+    redactEgress(getErrorMessage(err)),
   )
 }
 

@@ -13,14 +13,24 @@
  * ```
  *
  * A prerequisite's comment is the subject of a commit anyone can write, so it is opaque bytes (a
- * tab, a `\r`, non-UTF-8), never parsed and never logged. Every other line ends in LF alone.
+ * tab, a `\r`, non-UTF-8), never parsed and never logged. Every other line ends in LF alone. git
+ * reads the comment only to display it, so its length is bounded on its own
+ * ({@link PREREQUISITE_COMMENT_MAX_BYTES}) and the worker shortens it rather than send a bundle
+ * the gateway would refuse: a boundary commit's subject can be any length.
  */
 
 /**
- * The header must end, with its blank line, within this many bytes.
+ * The header must end, with its blank line, within this many bytes, prerequisites' comments not
+ * counted.
  * @internal Exported for tests.
  */
 export const BUNDLE_HEADER_MAX_BYTES = 64 * 1024
+
+/**
+ * The longest prerequisite comment, in bytes, the space before it not counted.
+ * @internal Exported for tests.
+ */
+export const PREREQUISITE_COMMENT_MAX_BYTES = 1024
 
 export interface BundleHeader {
   /** Bytes from the start of the bundle to the end of the header's blank line. */
@@ -43,79 +53,195 @@ const SIGNATURES = new Set(['# v2 git bundle', '# v3 git bundle'])
 const ALLOWED_CAPABILITY = '@object-format=sha1'
 const HEX_40 = /^[0-9a-f]{40}$/
 const HEAD = /^[0-9a-f]{40} [^\n]+$/
+const LF = 0x0a
+const SPACE = 0x20
+const DASH = 0x2d
+/** `-`, 40 hex digits and the space a comment follows. */
+const PREREQUISITE_PREFIX_BYTES = 42
+
+type Section = 'signature' | 'capabilities' | 'prerequisites' | 'heads'
+
+/** A complete header, as {@link BundleHeaderReader.push} returns it. */
+export interface ReadBundleHeader {
+  header: BundleHeader
+  /** The header's bytes as they are to be sent: each comment shortened, when the reader shortens. */
+  bytes: Buffer
+  /** What followed the header in the chunk that completed it. */
+  rest: Buffer
+}
 
 /**
- * Read the header at the start of `bytes`: null while it may still be completed by more bytes,
- * the header once its blank line has arrived. Throws {@link BundleHeaderError} once a complete
- * line breaks the grammar (the signature even before its LF), or when
- * {@link BUNDLE_HEADER_MAX_BYTES} pass without the blank line, so a caller never has to hold more
- * than that.
+ * Reads a header from a bundle's bytes as they arrive, holding at most
+ * {@link BUNDLE_HEADER_MAX_BYTES} plus one comment's bound, however long a comment is. A comment
+ * over {@link PREREQUISITE_COMMENT_MAX_BYTES} is refused (`'refuse'`, the gateway) or cut to it
+ * (`'shorten'`, the worker, which sends {@link ReadBundleHeader.bytes} in its place).
  */
-export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
-  const window = bytes.subarray(0, BUNDLE_HEADER_MAX_BYTES)
-  const prerequisites: string[] = []
-  const heads: Buffer[] = []
-  let section: 'signature' | 'capabilities' | 'prerequisites' | 'heads' = 'signature'
-  let version = ''
-  let sawCapability = false
-  let offset = 0
-  for (;;) {
-    const lf = window.indexOf(0x0a, offset)
-    if (lf === -1) {
-      if (bytes.length >= BUNDLE_HEADER_MAX_BYTES) {
-        throw new BundleHeaderError(
-          `its header does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`,
-        )
+export class BundleHeaderReader {
+  private section: Section = 'signature'
+  private sawCapability = false
+  private readonly prerequisites: string[] = []
+  private readonly heads: Buffer[] = []
+  private readonly out: Buffer[] = []
+  /** The current line, up to where its comment starts. */
+  private line: Buffer[] = []
+  private lineBytes = 0
+  /** Header bytes outside comments. */
+  private counted = 0
+  /** Bytes taken from the bundle. */
+  private consumed = 0
+  /** In a comment: its bytes so far, and those kept to send. */
+  private comment: { bytes: number; kept: Buffer[] } | null = null
+  private done = false
+
+  constructor(private readonly comments: 'refuse' | 'shorten') {}
+
+  /**
+   * Take the next bytes: null while the header may still be completed by more, the header once its
+   * blank line has arrived. Throws {@link BundleHeaderError} once what has arrived breaks the
+   * grammar or a bound.
+   */
+  push(chunk: Buffer): ReadBundleHeader | null {
+    if (this.done) throw new Error('The bundle header was already read')
+    let offset = 0
+    while (offset < chunk.length) {
+      const lf = chunk.indexOf(LF, offset)
+      const end = lf === -1 ? chunk.length : lf
+      if (this.comment !== null) {
+        this.takeComment(chunk.subarray(offset, end))
+      } else {
+        // A prerequisite's comment starts after its first 42 bytes; nothing past them is counted
+        // until the line says whether it is one.
+        const take =
+          this.mayBePrerequisite() && this.lineBytes < PREREQUISITE_PREFIX_BYTES
+            ? Math.min(end - offset, PREREQUISITE_PREFIX_BYTES - this.lineBytes)
+            : end - offset
+        this.takeLine(chunk.subarray(offset, offset + take))
+        offset += take
+        if (this.lineBytes === PREREQUISITE_PREFIX_BYTES && this.startsComment()) {
+          this.comment = { bytes: 0, kept: [] }
+        }
+        if (offset < end) continue
       }
-      // A partial line can still be checked against what it must start as.
-      checkPartialLine(window.subarray(offset), section)
-      return null
+      offset = end
+      if (lf === -1) break
+      offset += 1
+      this.consumed += 1
+      this.counted += 1
+      const header = this.endLine()
+      if (header !== null) {
+        this.done = true
+        return { header, bytes: Buffer.concat(this.out), rest: chunk.subarray(offset) }
+      }
     }
-    const line = window.subarray(offset, lf)
-    offset = lf + 1
+    this.checkBound()
+    if (this.section === 'signature' && this.comment === null) this.checkPartialSignature()
+    return null
+  }
+
+  private mayBePrerequisite(): boolean {
+    return (
+      this.section !== 'signature' &&
+      this.section !== 'heads' &&
+      (this.lineBytes === 0 || this.line[0][0] === DASH)
+    )
+  }
+
+  private startsComment(): boolean {
+    const line = Buffer.concat(this.line)
+    this.line = [line]
+    return (
+      line.length === PREREQUISITE_PREFIX_BYTES &&
+      line[0] === DASH &&
+      line[PREREQUISITE_PREFIX_BYTES - 1] === SPACE
+    )
+  }
+
+  private takeLine(bytes: Buffer): void {
+    this.line.push(bytes)
+    this.lineBytes += bytes.length
+    this.counted += bytes.length
+    this.consumed += bytes.length
+    this.checkBound()
+  }
+
+  private takeComment(bytes: Buffer): void {
+    const comment = this.comment
+    if (comment === null) return
+    const room = PREREQUISITE_COMMENT_MAX_BYTES - comment.bytes
+    if (bytes.length > room && this.comments === 'refuse') {
+      throw new BundleHeaderError(
+        `a prerequisite's comment is longer than ${PREREQUISITE_COMMENT_MAX_BYTES} bytes`,
+      )
+    }
+    if (room > 0) comment.kept.push(bytes.subarray(0, room))
+    comment.bytes += bytes.length
+    this.consumed += bytes.length
+  }
+
+  private checkBound(): void {
+    if (this.counted >= BUNDLE_HEADER_MAX_BYTES) {
+      throw new BundleHeaderError(`its header does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`)
+    }
+  }
+
+  /** Refuse a signature line that has not ended yet but already cannot become one. */
+  private checkPartialSignature(): void {
+    const text = Buffer.concat(this.line).toString('latin1')
+    if (![...SIGNATURES].some((signature) => signature.startsWith(text))) {
+      throw new BundleHeaderError('it is not a v2 or v3 git bundle')
+    }
+  }
+
+  /** Check the line just ended: the header once it was the blank line, else null. */
+  private endLine(): BundleHeader | null {
+    const line = Buffer.concat(this.line)
+    const comment = this.comment
+    this.line = []
+    this.lineBytes = 0
+    this.comment = null
+    this.out.push(line, ...(comment?.kept ?? []), Buffer.from([LF]))
     // latin1 maps each byte to one character, so a pattern sees exactly the bytes.
     const text = line.toString('latin1')
-    if (section === 'signature') {
+    if (this.section === 'signature') {
       if (!SIGNATURES.has(text)) throw new BundleHeaderError('it is not a v2 or v3 git bundle')
-      version = text
-      section = version === '# v3 git bundle' ? 'capabilities' : 'prerequisites'
-      continue
+      this.section = text === '# v3 git bundle' ? 'capabilities' : 'prerequisites'
+      return null
     }
     if (text === '') {
-      if (heads.length === 0) throw new BundleHeaderError('it names no head')
-      return { length: offset, prerequisites, heads }
+      if (this.heads.length === 0) throw new BundleHeaderError('it names no head')
+      return { length: this.consumed, prerequisites: this.prerequisites, heads: this.heads }
     }
-    if (section === 'capabilities' && text.startsWith('@')) {
+    if (this.section === 'capabilities' && text.startsWith('@')) {
       if (text !== ALLOWED_CAPABILITY) {
         throw new BundleHeaderError(`it declares a capability other than ${ALLOWED_CAPABILITY}`)
       }
-      if (sawCapability) throw new BundleHeaderError('it declares a capability twice')
-      sawCapability = true
-      continue
+      if (this.sawCapability) throw new BundleHeaderError('it declares a capability twice')
+      this.sawCapability = true
+      return null
     }
-    if (section !== 'heads' && text.startsWith('-')) {
-      // `-<40 hex>`, then nothing or a space and the opaque comment.
+    if (this.section !== 'heads' && text.startsWith('-')) {
+      // `-<40 hex>`, then nothing, or a space and the comment (taken apart above).
       const id = text.slice(1, 41)
-      if (!HEX_40.test(id) || (text.length > 41 && text[41] !== ' ')) {
+      if (!HEX_40.test(id) || (text.length > 41 && (text.length !== 42 || comment === null))) {
         throw new BundleHeaderError('a prerequisite line is malformed')
       }
-      prerequisites.push(id)
-      section = 'prerequisites'
-      continue
+      this.prerequisites.push(id)
+      this.section = 'prerequisites'
+      return null
     }
     if (!HEAD.test(text)) throw new BundleHeaderError('a line is neither a prerequisite nor a head')
-    heads.push(Buffer.from(line))
-    section = 'heads'
+    this.heads.push(line)
+    this.section = 'heads'
+    return null
   }
 }
 
-/** Refuse a line that has not ended yet but already cannot become a valid one. */
-function checkPartialLine(partial: Buffer, section: string): void {
-  if (section !== 'signature') return
-  const text = partial.toString('latin1')
-  if (![...SIGNATURES].some((signature) => signature.startsWith(text))) {
-    throw new BundleHeaderError('it is not a v2 or v3 git bundle')
-  }
+/**
+ * Read the header at the start of `bytes` ({@link BundleHeaderReader}, refusing a long comment):
+ * null while it may still be completed by more bytes, the header once its blank line has arrived.
+ */
+export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
+  return new BundleHeaderReader('refuse').push(bytes)?.header ?? null
 }
 
 /**

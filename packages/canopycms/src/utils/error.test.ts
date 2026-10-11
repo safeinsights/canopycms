@@ -229,6 +229,15 @@ describe('error utilities', () => {
         }
       })
 
+      it('redacts the base64 pair URL-encoded, an encoded `+` and padding included', () => {
+        const pair = Buffer.from('x-access-token:CANARY~~~?>~token').toString('base64')
+        const encoded = encodeURIComponent(pair)
+        expect(encoded).toMatch(/%2B/)
+        expect(encoded).toMatch(/%3D$/)
+
+        expect(redactCredentials(`near ${encoded} here`)).toBe('near *** here')
+      })
+
       it('redacts a basic header whatever credential it carries', () => {
         expect(redactCredentials('AUTHORIZATION: basic dXNlcjpzZWNyZXQ=')).toBe(
           'AUTHORIZATION: basic ***',

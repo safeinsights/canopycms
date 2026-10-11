@@ -131,6 +131,38 @@ describe('CmsWorker base branch', () => {
     }
   })
 
+  describe('the warning for a base branch the gateway does not protect', () => {
+    const warnings = () =>
+      consoleSpy.all().warn.filter((line) => line.includes('nothing stops a task pushing'))
+
+    it("warns when the detected base is neither configured nor GitHub's default", async () => {
+      await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])
+      await simpleGit().raw(['--git-dir', remoteGitPath, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+      expect(await boot(makeWorker())).toBe('main')
+
+      expect(warnings()).toHaveLength(1)
+      expect(warnings()[0]).toContain("The base branch 'main'")
+    })
+
+    it("does not warn for a listed base, nor for one that is GitHub's default", async () => {
+      await simpleGit().raw(['clone', '-q', '--bare', githubFixture, remoteGitPath])
+      await simpleGit().raw(['--git-dir', remoteGitPath, 'symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+      expect(await boot(makeWorker({ protectedBranches: ['ma*'] }))).toBe('main')
+      await simpleGit().raw([
+        '--git-dir',
+        remoteGitPath,
+        'symbolic-ref',
+        'HEAD',
+        'refs/heads/production',
+      ])
+      expect(await boot(makeWorker())).toBe('production')
+
+      expect(warnings()).toEqual([])
+    })
+  })
+
   it('refuses to report a base branch before start() has resolved one', () => {
     const worker = makeWorker()
     expect(() => (worker as unknown as WorkerInternals).baseBranch).toThrow(/start\(\)/)

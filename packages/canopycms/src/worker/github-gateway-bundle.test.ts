@@ -580,7 +580,7 @@ describe('refusing a hostile bundle', () => {
     let pulled = 0
     const body = Readable.from(
       (function* () {
-        yield Buffer.from(`# v2 git bundle\n-${'b'.repeat(40)} `)
+        yield Buffer.from(`# v2 git bundle\n${'b'.repeat(40)} refs/heads/`)
         for (let i = 0; i < 128; i++) {
           pulled += 16 * 1024
           yield Buffer.alloc(16 * 1024, 0x61)
@@ -594,6 +594,28 @@ describe('refusing a hostile bundle', () => {
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toMatch(/does not end within 65536 bytes/)
+    expect(pulled).toBeLessThan(256 * 1024)
+  })
+
+  it('refuses a 2 MiB prerequisite comment without reading it all', async () => {
+    const { feature } = await featureAhead()
+    let pulled = 0
+    const body = Readable.from(
+      (function* () {
+        yield Buffer.from(`# v2 git bundle\n-${'b'.repeat(40)} `)
+        for (let i = 0; i < 128; i++) {
+          pulled += 16 * 1024
+          yield Buffer.alloc(16 * 1024, 0x61)
+        }
+      })(),
+    )
+
+    const caught = await gateway()
+      .push(request('feature', feature), body)
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(String(caught)).toMatch(/comment is longer than 1024 bytes/)
     expect(pulled).toBeLessThan(256 * 1024)
   })
 
@@ -757,7 +779,7 @@ describe('the worker side of a push', () => {
     expect(Date.now() - started).toBeLessThan(10_000)
   })
 
-  it('fails at once on a prerequisite whose subject outgrows the header bound', async () => {
+  it('pushes a branch built on a commit whose subject outgrows the header bound', async () => {
     const base = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const tree = await git('--git-dir', githubPath, 'rev-parse', `${base}^{tree}`)
     const raw = path.join(root, 'long-subject')
@@ -773,13 +795,19 @@ describe('the worker side of a push', () => {
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/main', long)
     await seed.raw(['fetch', '-q', githubPath, 'main'])
     await seed.raw(['checkout', '-q', '-B', 'feature', 'FETCH_HEAD'])
-    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
-    const started = Date.now()
+    const feature = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
+    // git writes the 70 KiB subject as the bundle's prerequisite comment.
+    const sent = await fs.readFile(await bundleOf(remoteGitPath, 'refs/heads/feature', `^${long}`))
+    expect(sent.toString('latin1')).toContain(`-${long} ${'s'.repeat(70 * 1024)}\n`)
 
-    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+    const push = vi.spyOn(github, 'push')
 
-    expect(String(caught)).toContain('does not end within 65536 bytes')
-    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(await pushVia(github, 'feature')).toMatchObject({
+      outcome: { moved: true, to: feature },
+    })
+    expect(await tip(githubPath, 'refs/heads/feature')).toBe(feature)
+    // It went as a bundle built on that commit, so its header named it.
+    expect(push.mock.calls.map(([, body]) => body !== undefined)).toEqual([false, true])
   })
 
   it('fails transient on a second need-objects for the same push', async () => {

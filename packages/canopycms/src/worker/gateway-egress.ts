@@ -1,9 +1,11 @@
 /**
  * What leaves the GitHub gateway: every error it throws, every answer it returns and every line it
- * logs goes through here. Each is scrubbed of every live secret in every form it takes, on top of
- * `redactCredentials`'s patterns, and each log line has its non-printable characters escaped,
- * since request fields (branch names, pull request text) and git's output (commit subjects) are
- * attacker-chosen.
+ * logs goes through here. Each is scrubbed of every live token the gateway has resolved, in every
+ * form git's extraheader gives it, as exact strings, then by `redactCredentials`'s patterns. The
+ * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
+ * form beside another (at the `%` of a URL-encoded one) and leave its tail unmatchable. Each log
+ * line also has its non-printable characters escaped, since request fields (branch names, pull
+ * request text) and git's output (commit subjects) are attacker-chosen.
  */
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { workerLog, workerLogError, workerLogWarn } from './log'
@@ -14,38 +16,33 @@ const MAX_LIVE_SECRETS = 32
 /** Shorter values are never scrubbed as exact strings: they would hit ordinary text. */
 const MIN_SECRET_LENGTH = 8
 
-const REDACTED = '***'
-
-/** Each live token's forms, longest first, most recently registered last. */
+/** Each live token's forms, longest first; the most recently registered token last. */
 const liveSecrets = new Map<string, string[]>()
 
 /**
- * Scrub `token` from everything that leaves the gateway from now on, in each form it takes: raw,
- * and as the git extraheader carries it, `base64("x-access-token:" + token)`, raw and
- * URL-encoded. Shared by every gateway in the process, so a token one resolved is scrubbed from
- * all of them.
+ * Scrub `token` from everything that leaves the gateway from now on: raw, and as the extraheader
+ * carries it, `base64("x-access-token:" + token)`, raw and URL-encoded. Shared by every gateway in
+ * the process, so a token one resolved is scrubbed from all of them.
  */
 export function registerLiveSecret(token: string): void {
   if (token.length < MIN_SECRET_LENGTH) return
-  liveSecrets.delete(token)
   const basic = Buffer.from(`x-access-token:${token}`).toString('base64')
-  const forms = [token, basic, encodeURIComponent(basic)]
+  liveSecrets.delete(token)
   liveSecrets.set(
     token,
-    [...new Set(forms)].sort((a, b) => b.length - a.length),
+    [...new Set([token, basic, encodeURIComponent(basic)])].sort((a, b) => b.length - a.length),
   )
-  while (liveSecrets.size > MAX_LIVE_SECRETS) {
-    const oldest = liveSecrets.keys().next().value
-    if (oldest === undefined) break
+  for (const oldest of liveSecrets.keys()) {
+    if (liveSecrets.size <= MAX_LIVE_SECRETS) break
     liveSecrets.delete(oldest)
   }
 }
 
-/** `text` without any live secret, in any registered form, or anything `redactCredentials` finds. */
+/** `text` without any live token in any registered form, or anything `redactCredentials` finds. */
 export function redactEgress(text: string): string {
   let result = text
   for (const forms of liveSecrets.values()) {
-    for (const form of forms) result = result.split(form).join(REDACTED)
+    for (const form of forms) result = result.split(form).join('***')
   }
   return redactCredentials(result)
 }

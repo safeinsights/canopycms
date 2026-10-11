@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   BUNDLE_HEADER_MAX_BYTES,
   BundleHeaderError,
+  BundleHeaderReader,
+  PREREQUISITE_COMMENT_MAX_BYTES,
   expectedHead,
   hasOnlyHead,
   scanBundleHeader,
@@ -81,13 +83,78 @@ describe('scanBundleHeader', () => {
 
   it('refuses a header that has not ended within its bound, holding no more than it', () => {
     const line = Buffer.alloc(2 * 1024 * 1024, 0x61)
-    expect(() => scanBundleHeader(bytes('# v2 git bundle\n', `-${B} `, line))).toThrow(
+    expect(() => scanBundleHeader(bytes('# v2 git bundle\n', `${A} refs/heads/`, line))).toThrow(
       `does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`,
     )
     // At the bound itself, not only past it.
-    const atBound = bytes('# v2 git bundle\n', `-${B} `, line).subarray(0, BUNDLE_HEADER_MAX_BYTES)
+    const atBound = bytes('# v2 git bundle\n', `${A} refs/heads/`, line).subarray(
+      0,
+      BUNDLE_HEADER_MAX_BYTES,
+    )
     expect(() => scanBundleHeader(atBound)).toThrow(BundleHeaderError)
     expect(scanBundleHeader(atBound.subarray(0, BUNDLE_HEADER_MAX_BYTES - 1))).toBeNull()
+  })
+})
+
+describe('prerequisite comments', () => {
+  const comment = (n: number) => Buffer.alloc(n, 0x73)
+  const header = (...comments: Buffer[]) =>
+    bytes(
+      '# v2 git bundle\n',
+      ...comments.flatMap((c, i) => [`-${i.toString(16).padStart(40, '0')} `, c, '\n']),
+      `${A} refs/heads/x\n\n`,
+    )
+
+  it('takes a comment at its bound, and refuses one a byte over it without holding it', () => {
+    expect(
+      scanBundleHeader(header(comment(PREREQUISITE_COMMENT_MAX_BYTES)))?.prerequisites,
+    ).toHaveLength(1)
+    expect(() => scanBundleHeader(header(comment(PREREQUISITE_COMMENT_MAX_BYTES + 1)))).toThrow(
+      `comment is longer than ${PREREQUISITE_COMMENT_MAX_BYTES} bytes`,
+    )
+    const reader = new BundleHeaderReader('refuse')
+    reader.push(bytes('# v2 git bundle\n', `-${B} `))
+    expect(() => reader.push(comment(2 * 1024 * 1024))).toThrow(BundleHeaderError)
+  })
+
+  it('counts no comment against the header bound', () => {
+    // 80 comments at their bound are well past 64 KiB; the rest of the header is not.
+    const many = Array.from({ length: 80 }, () => comment(PREREQUISITE_COMMENT_MAX_BYTES))
+    expect(header(...many).length).toBeGreaterThan(BUNDLE_HEADER_MAX_BYTES)
+    expect(scanBundleHeader(header(...many))?.prerequisites).toHaveLength(80)
+  })
+
+  it('shortens a long comment to its bound when sending, however the bytes are split', () => {
+    const long = header(comment(3 * PREREQUISITE_COMMENT_MAX_BYTES), comment(5))
+    const shortened = header(comment(PREREQUISITE_COMMENT_MAX_BYTES), comment(5))
+    const pack = Buffer.from('PACK...')
+    const input = bytes(long, pack)
+    for (const size of [1, 7, 41, 42, 43, 1000, input.length]) {
+      const reader = new BundleHeaderReader('shorten')
+      let read: ReturnType<BundleHeaderReader['push']> = null
+      let rest: Buffer = Buffer.alloc(0)
+      for (let at = 0; at < input.length; at += size) {
+        const chunk = input.subarray(at, at + size)
+        if (read === null) {
+          read = reader.push(chunk)
+          if (read !== null) rest = read.rest
+        } else {
+          rest = Buffer.concat([rest, chunk])
+        }
+      }
+      expect(read?.bytes.equals(shortened)).toBe(true)
+      expect(read?.header.length).toBe(long.length)
+      expect(read?.header.prerequisites).toHaveLength(2)
+      expect(rest.equals(pack)).toBe(true)
+      // What is sent is a header the gateway takes, with the same prerequisites and heads.
+      expect(scanBundleHeader(read!.bytes)).toEqual({ ...read!.header, length: shortened.length })
+    }
+  })
+
+  it('still refuses a malformed prerequisite when shortening', () => {
+    expect(() =>
+      new BundleHeaderReader('shorten').push(bytes('# v2 git bundle\n', `-${B}\tx\n`)),
+    ).toThrow('a prerequisite line is malformed')
   })
 })
 
