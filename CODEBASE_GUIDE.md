@@ -483,7 +483,7 @@ Top-level components and helpers:
 - `FormRenderer.tsx` — schema-driven form dispatch, including `group` and string-list cases; a boundary per field
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
 - `CommentsPanel.tsx` — comment panel
-- `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
+- `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
@@ -558,10 +558,10 @@ Components, in `editor/components/`:
 - `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` — Branches drawer
+- `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
 - `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
-- `index.ts` — component exports
 
 Comments UI, in `editor/comments/`:
 

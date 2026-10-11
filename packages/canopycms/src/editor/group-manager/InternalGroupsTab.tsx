@@ -8,6 +8,7 @@ import { GroupCard } from './GroupCard'
 
 export interface InternalGroupsTabProps {
   groups: InternalGroup[]
+  unsavedGroupIds: ReadonlySet<CanopyGroupId>
   canEdit: boolean
   onCreateGroup: () => void
   onEditGroup: (group: InternalGroup) => void
@@ -29,6 +30,7 @@ export interface InternalGroupsTabProps {
 
 export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
   groups,
+  unsavedGroupIds,
   canEdit,
   onCreateGroup,
   onEditGroup,
@@ -118,6 +120,7 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
             <GroupCard
               key={group.id}
               group={group}
+              isUnsaved={unsavedGroupIds.has(group.id)}
               onEdit={onEditGroup}
               onDelete={onDeleteGroup}
               onAddMember={onAddMember}

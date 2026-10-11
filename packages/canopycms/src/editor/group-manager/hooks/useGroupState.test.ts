@@ -128,4 +128,53 @@ describe('useGroupState', () => {
     expect(findByName(saved, 'Admins').id).toBe('Admins')
     expect(findByName(saved, 'Group A').id).toBe('')
   })
+
+  it('marks new and edited groups as unsaved, and clears a group whose edits are undone', () => {
+    const loaded: InternalGroup[] = [
+      { id: 'Admins' as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      {
+        id: 'editors' as CanopyGroupId,
+        name: 'Editors',
+        members: ['u1', 'u2'] as CanopyUserId[],
+      },
+    ]
+    const { result } = renderHook(() => useGroupState({ initialGroups: loaded }))
+    expect(result.current.unsavedGroupIds.size).toBe(0)
+
+    act(() => {
+      result.current.createGroup('Group A', '')
+      // Re-saving an unchanged group from the edit form is not a change.
+      result.current.updateGroup('Admins' as CanopyGroupId, 'Admins', '')
+    })
+    const idA = findByName(result.current.groups, 'Group A').id
+    expect([...result.current.unsavedGroupIds]).toEqual([idA])
+
+    act(() => {
+      result.current.removeMember('editors' as CanopyGroupId, 'u1' as CanopyUserId)
+    })
+    expect(result.current.unsavedGroupIds.has('editors' as CanopyGroupId)).toBe(true)
+
+    // Re-adding appends, so member order differs from the loaded state; the set is the same.
+    act(() => {
+      result.current.addMember('editors' as CanopyGroupId, 'u1' as CanopyUserId)
+    })
+    expect(result.current.unsavedGroupIds.has('editors' as CanopyGroupId)).toBe(false)
+  })
+
+  it('marks nothing unsaved once a save succeeds, even if the reload after it failed', async () => {
+    const loaded: InternalGroup[] = [
+      { id: 'Admins' as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+    ]
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useGroupState({ initialGroups: loaded, onSave }))
+    act(() => {
+      result.current.createGroup('Group A', '')
+    })
+    expect(result.current.unsavedGroupIds.size).toBe(1)
+
+    // initialGroups never changes here, as when the post-save reload fails.
+    await act(() => result.current.save())
+    expect(result.current.isDirty).toBe(false)
+    expect(result.current.unsavedGroupIds.size).toBe(0)
+  })
 })

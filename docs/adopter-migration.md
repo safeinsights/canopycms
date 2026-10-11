@@ -85,6 +85,7 @@ replaces each `next` with its number.
 | 112  | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub       |
 | 112  | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
 | next | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
+| next | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -274,6 +275,14 @@ Two-paragraph list items, multi-block quotes and code fences in any language edi
 
 **To adopt.** Nothing, unless your app depends on `@mdxeditor/editor` or `lexical` directly: align
 those versions so one copy loads.
+
+### Unsaved group and permission changes show, and closing asks first
+
+**What changed.** (next) Manage Groups and Manage Permissions still save as one batch, but now
+mark unsaved changes, keep the save bar in view, and ask before closing or leaving drops them. The
+group dialog's buttons read "Add" and "Apply", since neither saves.
+
+**To adopt.** Nothing.
 
 ### Field editing: descriptions, list-card titles, and `public/` images
 
