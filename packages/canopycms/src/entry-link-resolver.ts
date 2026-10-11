@@ -110,8 +110,8 @@ function findEntry(idIndex: ContentIdIndex, id: string): EntryLocation | undefin
 
 /**
  * `](entry:ID#anchor "title")`: the target half of an inline markdown link. A match starts only at
- * a literal `](entry:` and its anchor stops at `]`, so a failed match never scans past the next
- * one, keeping the scan linear.
+ * a literal `](entry:`, its anchor stops at `]` and its title at the next `"`, so failed matches
+ * scan stretches that don't overlap, keeping the scan linear.
  */
 const INLINE_LINK_TARGET = new RegExp(
   `\\]\\(entry:(${BASE58_CHAR}{12})(?:#[^\\s)>"'\\]]*)?(?:[ \\t]+"[^"\\n]*")?\\)`,
