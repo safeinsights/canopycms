@@ -100,6 +100,8 @@ describe('CmsWorker credential refresh', () => {
       })
       const gateway = useLocalGitHubGateway(worker, {
         remoteUrl: async () => (reachable ? githubFixture : path.join(tmpDir, 'gone.git')),
+        // Syncs run every 20ms here, inside the window a GitHub fetch would otherwise be reused.
+        fetchCoalesceMs: 0,
       })
       return { worker, gateway }
     }

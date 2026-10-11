@@ -3,7 +3,6 @@ import path from 'node:path'
 import type { Readable } from 'node:stream'
 import type { Octokit, RestEndpointMethodTypes } from '@octokit/rest'
 
-import type { BareRemoteRepackResult } from '../git-manager'
 import {
   createCanopyOctokit,
   createOrUpdatePullRequest,
@@ -38,6 +37,29 @@ interface GitHubFetchResult {
 
 /** The most `have` IDs one fetch takes. */
 export const MAX_FETCH_HAVE = 10_000
+
+/** How long a completed GitHub fetch is reused: one sync cycle's fetch, reconcile and settings push. */
+const FETCH_COALESCE_MS = 30_000
+
+/**
+ * What a GitHub fetch's session saw, so a later session can tell whether the mirror still holds
+ * GitHub as that fetch left it: the mirror's {@link GitHubMirror.generation} once it fetched, and
+ * how many pushes the gateway had started when it began.
+ */
+interface FetchSnapshot {
+  generation: number
+  pushes: number
+}
+
+/** A GitHub fetch operations join ({@link LocalGitHubGateway.joinGitHubFetch}). */
+interface GitHubFetchJob {
+  readonly done: Promise<FetchSnapshot>
+  failed: boolean
+  /** When it succeeded; null while it runs. */
+  completedAt: number | null
+  /** Set when it succeeded. */
+  snapshot: FetchSnapshot | null
+}
 
 /** The most prerequisites one push names. */
 const MAX_PUSH_PREREQUISITES = 3
@@ -164,8 +186,6 @@ export interface GitHubGateway {
   ): Promise<{ number: number; url: string; created: boolean }>
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void>
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
-  /** Mirror upkeep. */
-  maintain(): Promise<BareRemoteRepackResult>
 }
 
 export interface LocalGitHubGatewayOptions {
@@ -188,6 +208,11 @@ export interface LocalGitHubGatewayOptions {
   octokit?: Octokit
   /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
   maxBundleBytes?: number
+  /**
+   * Test seam: how long a completed GitHub fetch is reused (default {@link FETCH_COALESCE_MS}), so
+   * a test can change "GitHub" between two operations and have the second see it.
+   */
+  fetchCoalesceMs?: number
 }
 
 /** The in-process {@link GitHubGateway}. */
@@ -207,6 +232,10 @@ class LocalGitHubGateway implements GitHubGateway {
   private readonly octokit: Octokit
   /** The credential re-read in flight, which every credentialed operation joins. */
   private refreshing: Promise<void> | null = null
+  /** The GitHub fetch that operations join: in flight, or completed and still reusable. */
+  private githubFetch: GitHubFetchJob | null = null
+  /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
+  private pushes = 0
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
@@ -296,18 +325,111 @@ class LocalGitHubGateway implements GitHubGateway {
   private async joinRefresh(signal?: AbortSignal): Promise<void> {
     const inFlight = this.refreshing
     if (inFlight === null) return
-    if (signal === undefined) return inFlight
-    signal.throwIfAborted()
-    let onAbort = (): void => undefined
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(signal.reason)
-      signal.addEventListener('abort', onAbort, { once: true })
-    })
-    try {
-      await Promise.race([inFlight, aborted])
-    } finally {
-      signal.removeEventListener('abort', onAbort)
+    await untilAborted(inFlight, signal)
+  }
+
+  /**
+   * Bring the mirror up to GitHub, coalesced: join the GitHub fetch in flight, or reuse one that
+   * completed less than {@link FETCH_COALESCE_MS} ago and is still current ({@link isCurrent}), or
+   * else start one with the credential `resolve` gives, resolved only then, so a joining operation
+   * mints no token. A failed fetch is never joined or reused. The fetch is
+   * detached from every caller's `signal`, which ends only that caller's wait: a fetch of a whole
+   * repository can outlast any one caller, and killing it on an abort would start it over each
+   * time. Its own bound is the mirror's inactivity timeout. It runs in a mirror session of its
+   * own, which repairs a corrupt mirror first ({@link GitHubMirror.heal}), and its failure re-reads
+   * the credential when it reached GitHub, whoever started it.
+   */
+  private async joinGitHubFetch(
+    resolve: () => Promise<GitHubCredential>,
+    signal?: AbortSignal,
+  ): Promise<FetchSnapshot> {
+    const current = this.githubFetch
+    const window = this.options.fetchCoalesceMs ?? FETCH_COALESCE_MS
+    const reusable =
+      current !== null &&
+      !current.failed &&
+      (current.completedAt === null ||
+        (Date.now() - current.completedAt < window && this.isCurrent(current.snapshot)))
+    const job = reusable ? current : this.startGitHubFetch(resolve)
+    return untilAborted(job.done, signal)
+  }
+
+  /** Whether the mirror still holds GitHub as the fetch that saw `snapshot` left it. */
+  private isCurrent(snapshot: FetchSnapshot | null): boolean {
+    return (
+      snapshot !== null &&
+      snapshot.generation === this.mirror.generation &&
+      snapshot.pushes === this.pushes
+    )
+  }
+
+  /**
+   * Run `fn` in a mirror session over what a GitHub fetch put in the mirror: `join` one, and
+   * check inside the session that nothing has changed the mirror or GitHub since
+   * ({@link isCurrent}). A session between the two may have re-created the mirror, leaving no
+   * heads, which would read as GitHub having none, or pushed. When something has, `join` again,
+   * which then fetches afresh; a second miss is transient.
+   */
+  private async afterGitHubFetch<T>(
+    join: () => Promise<FetchSnapshot>,
+    fn: (session: MirrorSession) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      const snapshot = await join()
+      const result = await this.mirror.exclusive(async (session) =>
+        this.isCurrent(snapshot) ? { value: await fn(session) } : null,
+      )
+      if (result !== null) return result.value
+      if (attempt === 2) {
+        throw new GitHubTransientError(
+          'github-fetch-failed',
+          'The GitHub mirror or GitHub changed after each of two GitHub fetches',
+        )
+      }
     }
+  }
+
+  /** Start a GitHub fetch, taking its place at once, before the credential resolves. */
+  private startGitHubFetch(resolve: () => Promise<GitHubCredential>): GitHubFetchJob {
+    let reachedGitHub = false
+    const run = async () => {
+      const credential = await resolve()
+      const own: GitHubCredential = {
+        url: credential.url,
+        token: credential.token,
+        onFailure: () => {
+          reachedGitHub = true
+          credential.onFailure()
+        },
+      }
+      const snapshot = await this.mirror.exclusive(async (mirror) => {
+        const pushes = this.pushes
+        await this.mirror.heal(mirror, own)
+        await this.mirror.fetchFromGitHub(mirror, own)
+        return { generation: this.mirror.generation, pushes }
+      })
+      await this.mirror.afterFetch()
+      return snapshot
+    }
+    const job: GitHubFetchJob = { failed: false, completedAt: null, snapshot: null, done: run() }
+    job.done.then(
+      (snapshot) => {
+        job.completedAt = Date.now()
+        job.snapshot = snapshot
+      },
+      () => {
+        job.failed = true
+        if (reachedGitHub) this.armRefresh()
+      },
+    )
+    this.githubFetch = job
+    return job
+  }
+
+  /** A push or branch deletion at GitHub: every later read must come from a fetch after it. */
+  private invalidateGitHubFetch(): void {
+    this.pushes++
+    this.githubFetch = null
   }
 
   /** Start a re-read on the next turn of the event loop, unless one is already in flight. */
@@ -326,6 +448,11 @@ class LocalGitHubGateway implements GitHubGateway {
     await this.preflightGitHubAppAuth()
     await this.ensureStateDirectoryIsPrivate()
     await this.mirror.ensure()
+    // The first GitHub fetch starts now, detached, so the first operation that needs one joins
+    // it under way. Its failure surfaces to whoever joins it.
+    void this.credentialed(undefined, (reach) =>
+      this.joinGitHubFetch(() => this.credential(reach)),
+    ).catch(() => undefined)
   }
 
   /**
@@ -393,17 +520,19 @@ class LocalGitHubGateway implements GitHubGateway {
       throw new Error(`A fetch takes at most ${MAX_FETCH_HAVE} have IDs, not ${have.length}`)
     }
     for (const id of have) assertObjectId(id)
-    return this.credentialed(signal, async (reach) => {
-      const credential = await this.credential(reach)
-      return this.mirror.exclusive(async (mirror) => {
-        await mirror.fetchFromGitHub(credential, signal)
-        const refs = await mirror.heads()
-        const file = await this.mirror.outgoingBundlePath()
-        const created = await mirror.createBundle(have, file, signal)
-        const bundleId = await this.mirror.setPendingBundle(created ? file : null)
-        return { refs, bundleId }
-      })
-    })
+    return this.credentialed(signal, (reach) =>
+      this.afterGitHubFetch(
+        () => this.joinGitHubFetch(() => this.credential(reach), signal),
+        async (mirror) => {
+          this.mirror.assertUsable()
+          const refs = await mirror.heads()
+          const file = await this.mirror.outgoingBundlePath()
+          const created = await mirror.createBundle(have, file, signal)
+          const bundleId = await this.mirror.setPendingBundle(created ? file : null)
+          return { refs, bundleId }
+        },
+      ),
+    )
   }
 
   openBundle(bundleId: string): Promise<Readable> {
@@ -437,18 +566,51 @@ class LocalGitHubGateway implements GitHubGateway {
     for (const id of request.prerequisites) assertObjectId(id, 'a commit ID')
     // Before `branch` reaches anything else: the bundle's expected head, a refspec.
     await assertPlainBranchName(request.branch, await this.mirror.checkGit())
-    // Every attempt carries this one credential (see credential()).
-    const credential = await this.credential(reach)
-    if (bundle === undefined) {
-      return this.mirror.exclusive((mirror) =>
-        this.pushInSession(mirror, credential, request, null, signal),
+    // Every attempt, and a GitHub fetch this push starts, carries this one credential (see
+    // credential()), resolved once and only when first needed.
+    let resolved: Promise<GitHubCredential> | null = null
+    const credential = () => (resolved ??= this.credential(reach))
+    // The join comes before the session, never inside it: the fetch takes a session of its own,
+    // and sessions are not re-entrant. So does resolving the credential, so the session never
+    // waits on GitHub's API. A body is read first, so its writer is not left waiting.
+    const session = (received: ReceivedBundle | null) =>
+      this.afterGitHubFetch(
+        async () => {
+          const snapshot = await this.joinGitHubFetchForPush(credential, request.branch, signal)
+          await credential()
+          return snapshot
+        },
+        async (mirror) => this.pushInSession(mirror, await credential(), request, received, signal),
+      )
+    return bundle === undefined
+      ? session(null)
+      : this.mirror.ingest(bundle, request, this.maxBundleBytes, session)
+  }
+
+  /**
+   * The plan's step 2 (§3.2): the push goes ahead only once a GitHub fetch has SUCCEEDED, fresh or
+   * reused, so the mirror's heads are GitHub's for the reachability test and the prerequisite
+   * check; otherwise it is transient. A token mint GitHub refuses is the exception: it carries its HTTP
+   * status through, so the task runner classifies it. That is the whole clause: a mirror with no heads after a
+   * successful fetch means GitHub has none, a first push.
+   */
+  private async joinGitHubFetchForPush(
+    credential: () => Promise<GitHubCredential>,
+    branch: string,
+    signal?: AbortSignal,
+  ): Promise<FetchSnapshot> {
+    try {
+      return await this.joinGitHubFetch(credential, signal)
+    } catch (err) {
+      // An HTTP failure is the credential's own (a mint refused), classified by its status.
+      if (err instanceof GitHubTransientError || hasHttpStatus(err)) throw err
+      // [REDACT] The message reaches the task's lastError.
+      throw new GitHubTransientError(
+        'github-fetch-failed',
+        `Could not fetch from GitHub before pushing ${branch}: ` +
+          redactCredentials(getErrorMessage(err)).trim(),
       )
     }
-    return this.mirror.ingest(bundle, request, this.maxBundleBytes, (received) =>
-      this.mirror.exclusive((mirror) =>
-        this.pushInSession(mirror, credential, request, received, signal),
-      ),
-    )
   }
 
   private get maxBundleBytes(): number {
@@ -457,11 +619,13 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * The push, in one mirror session, every call in it a plain call (the session is not
-   * re-entrant): fetch GitHub, so the mirror's heads are GitHub's for the reachability test and
-   * the prerequisite check; find `sha`, in the mirror or in the quarantine `received` goes into;
-   * push from there, which refuses a protected branch first. The mirror kills its git
-   * when `signal` aborts, and GitHub moves the ref only after receiving the whole pack, so a
-   * killed push changes nothing or is found already done by the re-run.
+   * re-entrant), over the mirror a GitHub fetch just filled ({@link afterGitHubFetch}), so its
+   * heads are GitHub's for the reachability test and the prerequisite check: find `sha`, in the
+   * mirror or in the quarantine `received` goes into; push from there, which refuses a protected
+   * branch first. The mirror kills its git when `signal` aborts, and GitHub moves the ref only
+   * after receiving the whole pack, so a killed push changes nothing or is found already done by
+   * the re-run, unless git's transport child outlives it
+   * (.claude/future-tasks/worker-mirror-detached-work-drain.md).
    */
   private async pushInSession(
     mirror: MirrorSession,
@@ -471,17 +635,9 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<GitHubPushAnswer> {
     const { branch, sha } = request
-    try {
-      await mirror.fetchFromGitHub(credential, signal)
-    } catch (err) {
-      // [REDACT] The message reaches the task's lastError.
-      throw new GitHubTransientError(
-        'github-fetch-failed',
-        `Could not fetch from GitHub before pushing ${branch}: ` +
-          redactCredentials(getErrorMessage(err)).trim(),
-      )
-    }
-    // Fetched in this session, so no heads means GitHub has none: a first push.
+    // Never fires: finding corruption changes the generation, so afterGitHubFetch never runs this
+    // over a mirror found corrupt after its fetch. It refuses rather than push from a corrupt one.
+    this.mirror.assertUsable()
     const heads = await mirror.heads()
 
     let repo: string | undefined
@@ -500,6 +656,8 @@ class LocalGitHubGateway implements GitHubGateway {
         signal,
         repo,
         protectedBranches: request.protectedBranches,
+        // Whatever the push does to GitHub, a fetch reused from before it may not show it.
+        onPushing: () => this.invalidateGitHubFetch(),
       })
     try {
       return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
@@ -605,14 +763,16 @@ class LocalGitHubGateway implements GitHubGateway {
 
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
-      await this.api(reach, () =>
-        this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
-      )
+      // Once the call has settled, when GitHub may have acted: any fetch before then, a fetch whose
+      // session ran during the call included, may still show the branch.
+      try {
+        await this.api(reach, () =>
+          this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
+        )
+      } finally {
+        this.invalidateGitHubFetch()
+      }
     })
-  }
-
-  maintain(): Promise<BareRemoteRepackResult> {
-    return this.mirror.maintain()
   }
 
   /**
@@ -648,6 +808,22 @@ function logFailedCredentialRefresh(err: unknown): void {
   )
 }
 
+/** `promise`, unless `signal` aborts first, which ends only this wait. */
+async function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return promise
+  signal.throwIfAborted()
+  let onAbort = (): void => undefined
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([promise, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 /** Refuse anything but a full object ID, before it can reach git. */
 function assertObjectId(value: string, what = 'an object ID'): void {
   if (!isObjectId(value)) throw new Error(`Not ${what}: ${JSON.stringify(value.slice(0, 80))}`)
@@ -667,4 +843,11 @@ async function realpathOfNearest(target: string): Promise<string> {
       current = parent
     }
   }
+}
+
+/** Whether `err` carries an HTTP status, as an Octokit or a token mint's failure does. */
+function hasHttpStatus(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number'
+  )
 }

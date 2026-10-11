@@ -207,11 +207,9 @@ describe('the credential file', () => {
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     const credentialed = observed.filter((spawn) => spawn.env.GIT_CONFIG_GLOBAL !== undefined)
-    // The fetch; then the push: asked without objects (its GitHub fetch), and again with the
-    // bundle (its GitHub fetch, the default-branch ls-remote, the push).
+    // The one GitHub fetch, which both push calls join; then the push's default-branch ls-remote
+    // and the push itself.
     expect(credentialed.map((spawn) => subcommand(spawn.args))).toEqual([
-      'fetch',
-      'fetch',
       'fetch',
       'ls-remote',
       'push',
@@ -309,12 +307,15 @@ describe('the credential file', () => {
     const decoys = ['.canopy-github-credential-a1B2c3-kept', '.canopy-github-credential-', 'other']
     for (const decoy of decoys) await fs.mkdir(path.join(stateDirectory, decoy))
 
-    await gateway().prepare()
+    const github = gateway()
+    await github.prepare()
 
     await expect(fs.stat(leftover)).rejects.toThrow(/ENOENT/)
     for (const decoy of decoys) {
       expect((await fs.stat(path.join(stateDirectory, decoy))).isDirectory()).toBe(true)
     }
+    // Joins the pre-fetch prepare() started, so it ends before the fixtures are removed.
+    await github.fetch({ have: [] })
   })
 })
 
@@ -384,8 +385,10 @@ describe('against a server that checks the credential', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const github = gateway({ remoteUrl: server.url('repo.git') })
     // A helper in the mirror's own config, which the per-command file and the mirror's `-c` pins
-    // must both leave unasked. Created first, so the helper can be planted in its config.
+    // must both leave unasked. Created first, so the helper can be planted in its config, and its
+    // pre-fetch ended, so the fetch below starts git after the plant: a failed fetch is never joined.
     await github.prepare()
+    await github.fetch({ have: [] }).catch(() => undefined)
     const asked = path.join(root, 'helper-was-asked')
     const helper = path.join(root, 'helper.sh')
     await fs.writeFile(helper, `#!/bin/sh\necho "$@" >> '${asked}'\n`, { mode: 0o700 })
@@ -434,6 +437,24 @@ describe('re-reading the credential', () => {
     expect((caught as GitHubTransientError).code).toBe('github-fetch-failed')
     expect(observed.filter((s) => s.configFile).map((s) => subcommand(s.args))).toEqual(['fetch'])
     expect(provider).toHaveBeenCalledTimes(1)
+  })
+
+  it("passes a push's refused mint through with its HTTP status, so the task fails for good", async () => {
+    const ahead = await aheadOnRemoteGit('feature')
+    const refusal = Object.assign(new Error('Not Found'), { status: 404 })
+    const auth = {
+      ...resolveWorkerGitHubAuth({ githubToken: CANARY }),
+      resolveGitToken: async () => {
+        throw refusal
+      },
+    }
+
+    const caught = await gateway({ auth })
+      .push({ branch: 'feature', sha: ahead, prerequisites: [], protectedBranches: ['main'] })
+      .catch((err: unknown) => err)
+
+    expect(caught).not.toBeInstanceOf(GitHubTransientError)
+    expect((caught as { status?: unknown }).status).toBe(404)
   })
 
   it("is armed by a failing ls-remote, the push's default-branch read", async () => {
@@ -518,19 +539,52 @@ describe('re-reading the credential', () => {
     expect(provider).toHaveBeenCalledTimes(1)
   })
 
-  it("is not armed by a lock the mirror's own git found", async () => {
+  it("is not armed by a lock the mirror's own git found, which it sweeps and fetches again past", async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const provider = vi.fn(async () => undefined)
-    const github = gateway({}, provider)
+    const github = gateway({ fetchCoalesceMs: 0 }, provider)
     await github.fetch({ have: [] })
-    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const next = await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
     await fs.writeFile(path.join(stateDirectory, 'github.git', 'refs', 'heads', 'main.lock'), '')
 
-    const caught = await github.fetch({ have: [] }).catch((err: unknown) => err)
+    const fetched = await github.fetch({ have: [] })
     await settle()
 
-    expect(String(caught)).toMatch(/Unable to create '.*main\.lock': File exists/)
+    expect(fetched.refs.get('main')).toBe(next)
+    expect(consoleSpy).toHaveWarned(
+      /Removed stale locks from the GitHub mirror: refs\/heads\/main\.lock/,
+    )
     expect(provider).not.toHaveBeenCalled()
+  })
+
+  it('is not armed by a lock the mirror holds while maintenance runs, which it leaves in place', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const provider = vi.fn(async () => undefined)
+    const github = gateway({ fetchCoalesceMs: 0 }, provider)
+    await github.fetch({ have: [] })
+    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const lock = path.join(stateDirectory, 'github.git', 'refs', 'heads', 'main.lock')
+    await fs.writeFile(lock, '')
+    // Maintenance running, as far as the fetch can tell: it holds the mutex for the whole test, so
+    // a fetch that waited for it would never finish.
+    const internals = github as unknown as {
+      mirror: { maintenance: { tryAcquire(): (() => void) | null } }
+    }
+    const release = internals.mirror.maintenance.tryAcquire()
+    expect(release).not.toBeNull()
+
+    try {
+      const caught = await github.fetch({ have: [] }).catch((err: unknown) => err)
+      await settle()
+
+      expect(caught).toBeInstanceOf(GitHubTransientError)
+      expect(String(caught)).toMatch(/met a lock maintenance holds/)
+      await expect(fs.stat(lock)).resolves.toBeTruthy()
+      expect(consoleSpy).not.toHaveWarned(/Removed stale locks/)
+      expect(provider).not.toHaveBeenCalled()
+    } finally {
+      release?.()
+    }
   })
 
   it('is armed by a lock that GitHub reports on a remote: line', async () => {
@@ -672,6 +726,11 @@ describe('isOwnLockFailure', () => {
       "remote: error: cannot lock ref 'refs/heads/f': Unable to create '/gh/refs/heads/f.lock': File exists.",
       false,
     ],
+    [
+      'error: could not delete reference refs/heads/b: unable to create file /var/lib/canopy state/github.git/packed-refs.new: File exists',
+      true,
+    ],
+    ['remote: error: unable to create file /gh/packed-refs.new: File exists', false],
     ["fatal: could not read Username for 'https://github.com': terminal prompts disabled", false],
   ])('%s → %s', (message, expected) => {
     expect(isOwnLockFailure(message)).toBe(expected)

@@ -307,9 +307,10 @@ describe('CmsWorker GitHub App authentication', () => {
 
       try {
         await worker.start()
-        // The preflight's one mint, then the boot sync's GitHub fetch resolving the credential
-        // for its own command, which fails the same way and is swallowed with that sync.
-        expect(mints).toEqual([false, true])
+        // The preflight's one mint; then the boot pre-fetch's (GitHubGateway.prepare()), which
+        // fails the same way; then the boot sync's, which starts a fetch of its own because a
+        // failed one is never joined, and whose failure is swallowed with that sync.
+        expect(mints).toEqual([false, true, true])
         expect(consoleSpy).toHaveWarned('Could not verify GitHub App authentication at startup')
         expect(consoleSpy).toHaveWarned('Service unavailable')
         expect(consoleSpy).toHaveLogged('CMS Worker started')

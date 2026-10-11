@@ -33,6 +33,11 @@ export interface GitProcessOptions {
    * stdin, for this long. Not after it exits 0: what it wrote is then the reader's.
    */
   inactivityTimeoutMs: number
+  /**
+   * Killed when git has run this long, output or not: the bound for a command that writes nothing
+   * while it works (`repack`, `commit-graph write`), which an inactivity bound would kill.
+   */
+  deadlineMs?: number
   signal?: AbortSignal
 }
 
@@ -121,6 +126,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     if (code !== 0) return
     exitedCleanly = true
     clearTimeout(inactivity)
+    clearTimeout(deadline)
   })
 
   child.stderr?.on('data', (chunk: Buffer) => {
@@ -132,6 +138,13 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   })
   stdout.on('data', touch)
 
+  const deadline =
+    options.deadlineMs === undefined
+      ? undefined
+      : setTimeout(
+          () => stop(`git ${command} ran longer than ${options.deadlineMs}ms`),
+          options.deadlineMs,
+        )
   const onAbort = () => stop(`git ${command} was aborted`)
   if (options.signal?.aborted) onAbort()
   options.signal?.addEventListener('abort', onAbort, { once: true })
@@ -148,6 +161,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
       // Never started (git missing, a bad cwd): no 'close' is coming.
       if (child.pid === undefined) {
         clearTimeout(inactivity)
+        clearTimeout(deadline)
         options.signal?.removeEventListener('abort', onAbort)
         reject(new GitProcessError(`git ${command} could not run: ${err.message}`, null, ''))
       }
@@ -155,6 +169,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     child.on('close', (code, signal) => {
       closed = true
       clearTimeout(inactivity)
+      clearTimeout(deadline)
       options.signal?.removeEventListener('abort', onAbort)
       const written = stderrBytes > STDERR_CAP_BYTES ? `${stderr}\n[stderr truncated]` : stderr
       if (killedFor === null && code === 0) {

@@ -88,8 +88,8 @@
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1342,
-      "words": 5730
+      "maxSectionWords": 1357,
+      "words": 5745
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
@@ -168,8 +168,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 281,
-      "words": 691
+      "maxSectionWords": 295,
+      "words": 705
     }
   }
 }

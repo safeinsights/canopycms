@@ -21,13 +21,18 @@ interface WorkerGatewayInternals {
  */
 export function useLocalGitHubGateway(
   worker: CmsWorker,
-  seams: { remoteUrl?: LocalGitHubGatewayOptions['remoteUrl']; octokit?: object } = {},
+  seams: {
+    remoteUrl?: LocalGitHubGatewayOptions['remoteUrl']
+    octokit?: object
+    fetchCoalesceMs?: number
+  } = {},
 ): GitHubGateway {
   const internals = worker as unknown as WorkerGatewayInternals
   const gateway = createLocalGitHubGateway({
     ...internals.localGitHubGatewayOptions(),
     ...(seams.remoteUrl !== undefined ? { remoteUrl: seams.remoteUrl } : {}),
     ...(seams.octokit !== undefined ? { octokit: seams.octokit as Octokit } : {}),
+    ...(seams.fetchCoalesceMs !== undefined ? { fetchCoalesceMs: seams.fetchCoalesceMs } : {}),
   })
   internals.gateway = gateway
   return gateway

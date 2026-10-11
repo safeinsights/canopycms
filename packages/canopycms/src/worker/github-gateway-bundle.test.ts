@@ -14,6 +14,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 
+import type { Octokit } from '@octokit/rest'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,7 +27,7 @@ import {
   type GitHubPushRequest,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { GitHubTransientError, RefusedPushError } from './github-mirror'
+import { GitHubMirror, GitHubTransientError, RefusedPushError } from './github-mirror'
 import { fetchGitHubIntoRemoteGit, pushToGitHub, type TransferContext } from './github-transfer'
 
 const execFileAsync = promisify(execFile)
@@ -64,6 +65,8 @@ function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGate
     workspacePath: path.join(root, 'workspace'),
     timeoutMs: 30_000,
     remoteUrl: githubPath,
+    // Each operation fetches GitHub afresh, so a test sees what it changed there.
+    fetchCoalesceMs: 0,
     ...overrides,
   })
 }
@@ -231,7 +234,6 @@ describe('where the gateway runs git', () => {
       kind: 'pushed',
       moved: false,
     })
-    await github.maintain()
 
     const ran = new Set(observed.map((s) => subcommand(s.args)))
     for (const expected of [
@@ -245,7 +247,6 @@ describe('where the gateway runs git', () => {
       'ls-remote',
       'push',
       'check-ref-format',
-      'count-objects',
     ]) {
       expect(ran).toContain(expected)
     }
@@ -667,10 +668,9 @@ describe('pushing without a bundle', () => {
       github.push(request('feature', feature), await streamOf(bundle)),
       github.fetch({ have: [main] }),
       github.push(request('feature', feature)),
-      github.maintain(),
     ])
 
-    expect(settled.map((s) => s.status)).toEqual(Array(6).fill('fulfilled'))
+    expect(settled.map((s) => s.status)).toEqual(Array(5).fill('fulfilled'))
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(feature)
   })
 })
@@ -886,6 +886,37 @@ describe('the tracking namespace', () => {
     )
   })
 
+  it('tries each deletion no more when a packed-refs lock holds them back, and reports one left for ten minutes', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await commitAndPush(githubPath, 'refs/heads/one', 'one.txt')
+    await commitAndPush(githubPath, 'refs/heads/two', 'two.txt')
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/one')
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/two')
+    const lock = path.join(remoteGitPath, 'packed-refs.lock')
+    await fs.writeFile(lock, '')
+    const observed = spySpawns()
+
+    const fresh = await fetchGitHubIntoRemoteGit(transfer(github))
+
+    expect(fresh.needsOperator).toBeNull()
+    // The deletions' one transaction, and no move on its own after it.
+    expect(observed.filter((s) => subcommand(s.args) === 'update-ref')).toHaveLength(1)
+    expect(consoleSpy).toHaveWarned(
+      /Could not move 2 GitHub tracking ref.*refs\/remotes\/github\/one.*refs\/remotes\/github\/two/,
+    )
+
+    const then = new Date(Date.now() - 11 * 60 * 1000)
+    await fs.utimes(lock, then, then)
+    const stale = await fetchGitHubIntoRemoteGit(transfer(github))
+
+    expect(stale.needsOperator?.startsWith(`${lock} has been there since `)).toBe(true)
+    expect(stale.needsOperator).toMatch(/Check that no git is running in remote\.git/)
+    await expect(fs.stat(lock)).resolves.toBeTruthy()
+    expect(await tip(remoteGitPath, 'refs/remotes/github/one')).not.toBeNull()
+  })
+
   it('moves the refs that can move when one lost a race, and names the one that did not', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const other = await commitAndPush(githubPath, 'refs/heads/other', 'other.txt')
@@ -920,5 +951,206 @@ describe('the tracking namespace', () => {
 
     await fetchGitHubIntoRemoteGit(transfer(github))
     expect(await tip(remoteGitPath, 'refs/remotes/github/other')).toBe(nextOther)
+  })
+})
+
+describe('GitHub fetches, coalesced at the production window', () => {
+  /** A gateway that reuses a GitHub fetch as production does. */
+  const coalescing = () => gateway({ fetchCoalesceMs: undefined })
+  /** The GitHub fetches among `observed`: the fetches that carry the credential. */
+  const githubFetches = (observed: Spawned[]) =>
+    observed.filter((s) => subcommand(s.args) === 'fetch' && s.env.GIT_CONFIG_GLOBAL !== undefined)
+      .length
+
+  it('starts one at prepare(), which the first fetch joins, and reuses it within the window', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    const observed = spySpawns()
+
+    await github.prepare()
+    await vi.waitFor(() => expect(githubFetches(observed)).toBe(1))
+    const first = await github.fetch({ have: [] })
+    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const second = await github.fetch({ have: [] })
+
+    expect(githubFetches(observed)).toBe(1)
+    expect(first.refs.get('main')).toBe(main)
+    expect(second.refs.get('main')).toBe(main)
+  })
+
+  it('has concurrent operations join the one in flight', async () => {
+    const { main, feature } = await featureAhead()
+    const github = coalescing()
+    const observed = spySpawns()
+
+    const settled = await Promise.all([
+      github.fetch({ have: [] }),
+      github.fetch({ have: [main] }),
+      github.push(request('feature', feature)),
+    ])
+
+    expect(settled[2]).toMatchObject({ kind: 'need-objects' })
+    expect(githubFetches(observed)).toBe(1)
+  })
+
+  it('fetches afresh for a push after a push, and for a fetch after that', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
+    const one = await commitAndPush(remoteGitPath, 'refs/heads/one', 'one.txt')
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/two', main)
+    await seed.raw(['reset', '-q', '--hard', main])
+    const two = await commitAndPush(remoteGitPath, 'refs/heads/two', 'two.txt')
+    const github = coalescing()
+    const observed = spySpawns()
+
+    expect((await pushVia(github, 'one')).outcome).toMatchObject({ moved: true })
+    const afterOne = githubFetches(observed)
+    expect((await pushVia(github, 'two')).outcome).toMatchObject({ moved: true })
+    const afterTwo = githubFetches(observed)
+    const fetched = await github.fetch({ have: [] })
+
+    // The first push's two calls (without objects, then with its bundle) share one.
+    expect(afterOne).toBe(1)
+    expect(afterTwo).toBe(2)
+    expect(githubFetches(observed)).toBe(3)
+    expect(fetched.refs.get('one')).toBe(one)
+    expect(fetched.refs.get('two')).toBe(two)
+  })
+
+  it('fetches again rather than answer from a mirror re-created after its fetch', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    await fs.rm(mirrorDir(), { recursive: true, force: true })
+
+    // Both reuse the fetch above. The first one's session fails on the missing mirror; the
+    // second one's session then re-creates it, empty.
+    const [first, second] = await Promise.allSettled([
+      github.fetch({ have: [] }),
+      github.fetch({ have: [] }),
+    ])
+
+    expect(first.status).toBe('rejected')
+    expect(second.status === 'fulfilled' && second.value.refs.get('main')).toBe(main)
+  })
+
+  it('answers a push after refused ones from the fetch they shared', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    const refused = { branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }
+    // The valid push joins the fetch while the first refused push's session runs, so both refusals
+    // fail between its join and its session.
+    let valid: Promise<GitHubPushAnswer> | undefined
+    const observed = spySpawns((spawned) => {
+      if (valid === undefined && subcommand(spawned.args) === 'ls-remote') {
+        valid = github.push(request('copy', main))
+      }
+    })
+
+    const refusals = await Promise.allSettled([github.push(refused), github.push(refused)])
+
+    for (const refusal of refusals) {
+      expect(refusal.status === 'rejected' && refusal.reason).toBeInstanceOf(RefusedPushError)
+    }
+    expect(valid).toBeDefined()
+    expect(await valid).toMatchObject({ kind: 'pushed', moved: true })
+    expect(githubFetches(observed)).toBe(0)
+  })
+
+  it('answers a fetch that joined before a push with a fetch after it', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    // The fetch joins the completed one while the push's session runs, before it pushes.
+    let fetching: Promise<{ refs: ReadonlyMap<string, string> }> | undefined
+    spySpawns((spawned) => {
+      if (fetching === undefined && subcommand(spawned.args) === 'for-each-ref') {
+        fetching = github.fetch({ have: [] })
+      }
+    })
+
+    expect(await github.push(request('copy', main))).toMatchObject({ kind: 'pushed', moved: true })
+
+    expect(fetching).toBeDefined()
+    expect((await fetching!).refs.get('copy')).toBe(main)
+  })
+
+  it('fetches afresh after deleting a branch', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', main)
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(true)
+
+    await github.deleteBranch('gone')
+
+    expect(deleteRef).toHaveBeenCalledTimes(1)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
+  })
+
+  it('fetches afresh after deleting a branch, even after a fetch that ran during the deletion', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', main)
+    const holder: { github?: GitHubGateway } = {}
+    let during: ReadonlyMap<string, string> | undefined
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      // A fetch whose session starts while GitHub still has the branch.
+      during = (await holder.github!.fetch({ have: [] })).refs
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    holder.github = github
+
+    await github.deleteBranch('gone')
+
+    expect(during?.has('gone')).toBe(true)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
+  })
+
+  it('fails no fetch whose two sessions span a branch deletion', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/gone', 'refs/heads/main')
+    let answer!: () => void
+    const answered = new Promise<void>((resolve) => (answer = resolve))
+    const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
+      await answered
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
+    })
+    const github = gateway({
+      fetchCoalesceMs: undefined,
+      octokit: { git: { deleteRef } } as unknown as Octokit,
+    })
+    // The deletion starts during the fetch's own session, and GitHub answers during the session
+    // of the fetch the caller then joins.
+    const mirror = (github as unknown as { mirror: GitHubMirror }).mirror
+    const exclusive = mirror.exclusive.bind(mirror)
+    let sessions = 0
+    let deletion: Promise<void> | undefined
+    vi.spyOn(mirror, 'exclusive').mockImplementation((fn) =>
+      exclusive((session) => {
+        sessions++
+        if (sessions === 1) deletion = github.deleteBranch('gone')
+        if (sessions === 3) setImmediate(answer)
+        return fn(session)
+      }),
+    )
+
+    const fetched = await github.fetch({ have: [] })
+    answer()
+    await deletion
+
+    // The fetch's own session and the caller's: no miss, so no second fetch.
+    expect(sessions).toBe(2)
+    expect(fetched.refs.has('main')).toBe(true)
+    expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(false)
   })
 })

@@ -289,8 +289,9 @@ A test: a bundle that advertises extra, renamed or space-embedded refs either pu
 **The push op, in full.** The gateway:
 1. validates `sha`, `lease` and `prerequisites` as full object IDs;
 2. **joins a coalesced GitHub fetch** before anything else, so the mirror's `refs/heads/*` are
-   GitHub's heads. If the fetch fails, or the mirror still has no heads, the answer is
-   `transient`, before any reachability test, `need-objects` or policy. That rules out:
+   GitHub's heads. Unless the joined fetch, fresh or reused, succeeded, the answer is
+   `transient` (a refused token mint keeps its HTTP status), before any reachability test,
+   `need-objects` or policy. That rules out:
    - a false `refused-by-policy` against stale heads during an outage;
    - a `need-objects` loop against an unfetched mirror;
 3. **with no body:** a three-way branch on `cat-file --batch-check`'s output for `<sha>`,
@@ -960,9 +961,8 @@ The adopter-migration entry is **Template first**.
 
 **What reaches production when.** PRs 2 and 3 change single-process behaviour, which every
 adopter runs until PR 6: bundles replace the local fetch and push, and policy refuses
-protected-branch pushes. Each carries its own adopter-migration line. The Fable
-full-diff review runs before the first int that carries PR 2, then again over PRs 4–6 before
-the int that carries PR 6.
+protected-branch pushes. Each carries its own adopter-migration line. Each PR's own
+/review-rounds and /claim-check are the gate.
 
 | PR | Contents | Tests | Tier |
 | -- | -------- | ----- | ---- |
@@ -997,9 +997,8 @@ PR 2, their first user.
 
 **Carried from 2a** (PR 2a: the transfer; 2b: mirror robustness):
 - 2b: the push's GitHub fetch runs inside its own session in 2a (stronger, one extra round trip
-  per push). 2b replaces it with the coalesced fetch, joined before the session, and reinstates
-  "no mirror heads → `transient`", which 2a drops because its fetch is the push's own: a stale or
-  unfetched mirror becomes possible again with a joined one.
+  per push). 2b replaces it with the coalesced fetch, joined before the session, and answers
+  `transient` unless that fetch succeeded, a refused token mint aside (see "Carried from 2b").
 - 2b: `maintain()` stays worker-called in 2a, repacking beside sessions and quarantines; 2b moves it
   gateway-side under the maintenance mutex, adds `commit-graph`, and drops it from the interface.
 - 2b: 2a clears `incoming/` and `outgoing/` once per gateway; the lock and temporary sweeps,
@@ -1014,16 +1013,12 @@ PR 2, their first user.
   old refs against the seeded replacement itself (`unreachableFrom`), so its decision follows the
   bundle whatever the mirror does after. `GitHubPushError` carries git's output as a string, not a
   live `.cause`. The fetch's ref map is a `Map`, not a record.
-- PR 4 or 2b: a pushed body waits unread while its push queues (behind a credential re-read, the
+- PR 4: a pushed body waits unread while its push queues (behind a credential re-read, the
   token's resolution, or another push's ingest, which holds the queue through that push's session).
   A `bundle create` whose bundle outgrows the pipe blocks before exiting, and is then killed for
   inactivity at the same bound: a spurious transient failure that a retry recovers. Take the body
   into `incoming/` before queueing, or stop the worker's clock while it waits for a reader.
-- 2b: a stale `packed-refs.lock` in `remote.git` (a writer killed mid-delete) holds back every
-  tracking-ref deletion: each is retried on its own, waits git's `core.packedRefsTimeout`, and is
-  only logged, and nothing removes the lock. Fan out once, not per ref, and escalate a lock older
-  than a bound to System health.
-- 2b or PR 3: a boundary commit whose subject outgrows the 64 KiB header bound makes every bundle
+- PR 3: a boundary commit whose subject outgrows the 64 KiB header bound makes every bundle
   built on it refused, on both sides, for good. Bound a prerequisite comment's bytes separately.
 - PR 7: "The worker instance" (docs/deploying-to-aws.md) says that the mirror never reads
   `remote.git`, that objects cross as bundles staged in the state directory, and that each new
@@ -1032,6 +1027,25 @@ PR 2, their first user.
   mirror, which a whole-history walk would reach) rather than by a rev-list spy, since git spawns
   that walk itself. The upload-pack pin allowing wants by object ID is dropped: only the mirror's
   fetch of a read commit used it.
+
+**Carried from 2b** (mirror robustness):
+- Settled in 2b: step 2's clause is "the joined fetch succeeded". The mirror's `generation`
+  (changed by re-creation, finding corruption, or a rebuild) and the gateway's push count (a push
+  about to run, a settled branch deletion) must both match inside the caller's session, or it
+  fetches once more, then `transient`. A stale `packed-refs.lock` in `remote.git` stops
+  the deletions' fan-out and, past 10 minutes, becomes `lastGitSyncError`; the worker never
+  removes it, since the Lambda shares that repository. The first maintenance waits one interval.
+  `fetchCoalesceMs` is a constructor-only test seam.
+- Deviations from §3.1–§3.3 in 2b:
+  - Only a GitHub fetch's session rebuilds: finding corruption changes the generation, so no
+    caller uses the mirror until one has.
+  - Every caller's bundle is made in its own session, a job's starter included.
+  - The on-failure sweep runs after any failed GitHub fetch, not only lock text, whenever it can
+    try-acquire the mutex; otherwise it is owed to the next session start.
+  - A killed or failed maintenance run owes that sweep rather than removing its temporaries by
+    name, which cannot tell them from a concurrent fetch's.
+- PR 7: "The worker instance" names that `lastGitSyncError` and its fix (check no git is
+  running in `remote.git`, then remove the lock).
 
 **Carried from 1b's reviews:**
 - PRs 4 and 5: a credentialed operation joins an in-flight re-read within its own deadline, so a

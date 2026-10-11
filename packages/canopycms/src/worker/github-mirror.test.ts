@@ -79,6 +79,8 @@ function gateway(): GitHubGateway {
     workspacePath: path.join(root, 'workspace'),
     timeoutMs: 30_000,
     remoteUrl: githubPath,
+    // Each operation fetches GitHub afresh, so a test sees what it changed there.
+    fetchCoalesceMs: 0,
   })
 }
 
