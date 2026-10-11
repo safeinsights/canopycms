@@ -30,6 +30,18 @@ export const EXIT_WORKER_SELF_STOPPED = 69
 export const WORKER_CAPACITY_ENV = 'CANOPYCMS_WORKER_CAPACITY'
 
 /**
+ * On the worker unit: the path of the GitHub gateway's socket. Its presence selects split mode,
+ * where the worker holds no credential and reaches GitHub only through the gateway.
+ */
+export const GITHUB_GATEWAY_SOCKET_ENV = 'CANOPYCMS_GITHUB_GATEWAY_SOCKET'
+
+/**
+ * The worker contract at which a bundle runs only split: from it on, a worker unit without
+ * {@link GITHUB_GATEWAY_SOCKET_ENV} is refused rather than run holding the credential.
+ */
+export const GATEWAY_SPLIT_CONTRACT = 2
+
+/**
  * What each worker contract version requires of the unit and template, in
  * order: entry `i` is version `i + 1`. The construct stamps the latest version
  * into every unit it writes, and a bundle refuses to start under a unit whose

@@ -1,20 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * EC2 Worker entrypoint for AWS deployment: reads secrets from Secrets Manager,
- * wires the Clerk-specific auth-cache refresher, and starts the auth-agnostic
- * `CmsWorker` from canopycms core. An adopter on a different auth provider
- * writes their own entrypoint supplying a different `refreshAuthCache`.
+ * EC2 entrypoint for AWS deployment, in the role `argv[2]` names:
  *
- * Only the real side effects live here; the boot sequence is in run.ts so tests
- * can drive it.
+ * - none: the worker. Wires the Clerk-specific auth-cache refresher and starts the auth-agnostic
+ *   `CmsWorker` from canopycms core. Under the split (`CANOPYCMS_GITHUB_GATEWAY_SOCKET` set) it
+ *   holds no secret and reaches GitHub through the gateway; otherwise it reads the secrets from
+ *   Secrets Manager itself. An adopter on a different auth provider writes their own entrypoint
+ *   supplying a different `refreshAuthCache`.
+ * - `gateway`: the GitHub gateway process, which holds the credential and the Clerk key and
+ *   serves the worker over a unix socket.
+ *
+ * Only the real side effects live here; the boot sequences are in run.ts and gateway-run.ts so
+ * tests can drive them.
  */
 
 import {
   CmsWorker,
+  connectGitHubGateway,
   installWorkerLogger,
   recordWorkerStartupFailure,
+  workerSelfChecks,
 } from 'canopycms/worker/cms-worker'
+import { writeAuthSnapshot } from 'canopycms/auth/cache'
 
 import { getSecret } from './secrets'
 import { completeTerminationLifecycleAction, watchForTermination } from './termination-watch'
@@ -39,4 +47,7 @@ void runWorker({
   watchForTermination,
   completeTerminationLifecycleAction: () => completeTerminationLifecycleAction(),
   recordWorkerStartupFailure,
+  connectGateway: connectGitHubGateway,
+  workerSelfChecks: () => workerSelfChecks(),
+  writeAuthSnapshot,
 })
