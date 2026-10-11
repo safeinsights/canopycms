@@ -29,6 +29,24 @@ using a capture-phase `message` listener in the editor window:
   An entry switch, where the frame remounts (`Editor.tsx:1031` gates it on `previewFrameData`),
   cleared too.
 
+## Ruled out: a `src` string change re-arming the bar without a new page
+
+int.111's `PreviewFrame` re-armed the bar on any change to the `src` string. That would strand it
+only if the string changed without the iframe loading a new document. In Chrome (an iframe on a
+local origin, each change set as `iframe.src`, checked by `contentWindow.performance.timeOrigin`
+and `load` events), every change below produced a new document and one `load`:
+
+- re-setting the same string;
+- adding a trailing slash;
+- adding a query parameter;
+- reordering query parameters;
+- an absolute URL equal to the relative one.
+
+Only a hash-only change kept the document and fired no `load`. `buildPreviewSrc` adds no hash, and
+this adopter's routes have none. The stuck load's document also started before ready arrived, so
+no full navigation followed it. `PreviewFrame` now remounts the iframe on every `src` change, so
+even a hash-only change brings a fresh page and a fresh ready.
+
 ## What is left to rule out
 
 - Whether `PreviewFrame`'s message effect had attached when ready arrived. Wrapping
