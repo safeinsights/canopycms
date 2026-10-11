@@ -8,7 +8,9 @@ import { pipeline } from 'node:stream/promises'
 import type { z } from 'zod'
 
 import { getErrorMessage, isNodeError } from '../utils/error'
+import type { AuthCacheSnapshot } from '../auth/cache'
 import type {
+  GatewayTerminationNotice,
   GitHubCreateOrUpdatePullRequest,
   GitHubFetchResult,
   GitHubGateway,
@@ -127,8 +129,9 @@ export interface GitHubGatewayServer {
  * no one else can enter, so no other user can reach, plant or swap the node, which is then made
  * `0600`.
  *
- * `gateway.prepare()` starts once the server holds its socket, and every operation but `health`
- * waits for it; a failure is the gateway's fatal error, answered to each of them.
+ * `gateway.prepare()` starts once the server holds its socket, and every operation but
+ * {@link UNPREPARED_OPERATIONS} waits for it; a failure is the gateway's fatal error, answered to
+ * each of them.
  */
 export async function serveGitHubGateway(
   gateway: GitHubGateway,
@@ -281,6 +284,17 @@ interface FetchJob {
   settledAt: number | null
 }
 
+/**
+ * The operations that run before, or without, a successful `prepare()`: they use the instance role,
+ * never the GitHub credential or the mirror, and a draining worker must still be able to complete
+ * its termination when the gateway's `prepare()` failed.
+ */
+const UNPREPARED_OPERATIONS: ReadonlySet<JsonOperation> = new Set([
+  'health',
+  'termination',
+  'completeLifecycle',
+])
+
 /** What each JSON operation runs, given its validated request; its answer is validated after. */
 type JsonRunners = {
   [K in JsonOperation]: (
@@ -292,7 +306,7 @@ type JsonRunners = {
 class GatewayRequestHandler {
   /**
    * The gateway's `prepare()`, started by {@link start} once the server holds its socket. Every
-   * operation but `health` waits for it, and answers its failure: a worker that never asks for it,
+   * operation but {@link UNPREPARED_OPERATIONS} waits for it, and answers its failure: a worker that never asks for it,
    * or asks for an operation first, still cannot reach one before the App check and the
    * state-directory check have passed. Not before the socket is held: `prepare()` sweeps the
    * state directory, which a gateway already serving it, whose socket this one fails to take, is
@@ -302,6 +316,8 @@ class GatewayRequestHandler {
   private startPreparing: () => void = () => undefined
   private readonly jobs = new Map<string, FetchJob>()
   private closed = false
+  /** Aborted by {@link close}, which releases the termination polls a drain would otherwise wait out. */
+  private readonly stopping = new AbortController()
   private loggedStopping = false
   private inFlight = 0
   private idleWaiters: (() => void)[] = []
@@ -353,6 +369,22 @@ class GatewayRequestHandler {
         await gateway.deleteBranch(branch, signal)
         return {}
       },
+      authSnapshot: async (_, signal) => gateway.authSnapshot(signal),
+      termination: async (_, signal) => {
+        try {
+          return {
+            notice: await gateway.termination(AbortSignal.any([signal, this.stopping.signal])),
+          }
+        } catch (err) {
+          // A drain releases the poll: the worker polls again, and is told the gateway is stopping.
+          if (this.stopping.signal.aborted && !signal.aborted) return { notice: null }
+          throw err
+        }
+      },
+      completeLifecycle: async (_, signal) => {
+        await gateway.completeLifecycle(signal)
+        return {}
+      },
     }
   }
 
@@ -363,6 +395,7 @@ class GatewayRequestHandler {
 
   close(): void {
     this.closed = true
+    this.stopping.abort(new Error('The GitHub gateway is stopping'))
   }
 
   /** Resolves once no request is being handled; fetch jobs aside. */
@@ -448,7 +481,7 @@ class GatewayRequestHandler {
     res: ServerResponse,
     signal: AbortSignal,
   ): Promise<void> {
-    if (op !== 'health') await this.prepared
+    if (!UNPREPARED_OPERATIONS.has(op)) await this.prepared
     const input = parseRequest(requests[op], await readJsonBody(req), op)
     const run = this.runners[op] as (input: unknown, signal: AbortSignal) => Promise<unknown>
     const value = await run(input, signal)
@@ -746,6 +779,18 @@ const POLL_WAIT_MS = MAX_POLL_WAIT_MS
 /** How long `health` waits for the gateway: `getSecret` alone has taken 87 s. */
 const HEALTH_WAIT_MS = 300_000
 
+/** How long `authSnapshot` waits: one membership fetch per user, so a large organisation's takes minutes. */
+const AUTH_SNAPSHOT_WAIT_MS = 10 * 60_000
+
+/** How long `termination` and `completeLifecycle` wait: a poll's wait is well inside it. */
+const INSTANCE_ROLE_WAIT_MS = 60_000
+
+/** `signal` bounded by `ms`. */
+function boundedBy(ms: number, signal?: AbortSignal): AbortSignal {
+  const bound = AbortSignal.timeout(ms)
+  return signal === undefined ? bound : AbortSignal.any([signal, bound])
+}
+
 /** How many polls in a row the connection may break off before the fetch fails. */
 const POLL_RETRIES = 3
 
@@ -812,8 +857,7 @@ class GitHubGatewayClient implements GitHubGateway {
 
   /** Waits up to {@link HEALTH_WAIT_MS} for a `prepare()` under way: secret reads can be slow. */
   health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
-    const bound = AbortSignal.timeout(HEALTH_WAIT_MS)
-    return this.call('health', {}, signal === undefined ? bound : AbortSignal.any([signal, bound]))
+    return this.call('health', {}, boundedBy(HEALTH_WAIT_MS, signal))
   }
 
   async defaultBranch(signal?: AbortSignal): Promise<string> {
@@ -971,6 +1015,18 @@ class GitHubGatewayClient implements GitHubGateway {
 
   async deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     await this.call('deleteBranch', { branch }, signal)
+  }
+
+  authSnapshot(signal?: AbortSignal): Promise<AuthCacheSnapshot> {
+    return this.call('authSnapshot', {}, boundedBy(AUTH_SNAPSHOT_WAIT_MS, signal))
+  }
+
+  async termination(signal?: AbortSignal): Promise<GatewayTerminationNotice | null> {
+    return (await this.call('termination', {}, boundedBy(INSTANCE_ROLE_WAIT_MS, signal))).notice
+  }
+
+  async completeLifecycle(signal?: AbortSignal): Promise<void> {
+    await this.call('completeLifecycle', {}, boundedBy(INSTANCE_ROLE_WAIT_MS, signal))
   }
 
   private async call<K extends JsonOperation>(

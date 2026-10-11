@@ -6,6 +6,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
+import type { AuthCacheSnapshot } from '../auth/cache'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   mockConsole,
@@ -13,10 +14,15 @@ import {
   octokitErrorFor,
   type MockConsole,
 } from '../test-utils'
-import { GatewayRefusalError } from './branch-policy'
+import { GatewayRefusalError, MAX_PROTECTED_BRANCHES } from './branch-policy'
 import { registerLiveSecret } from './gateway-egress'
 import { resolveWorkerGitHubAuth } from './github-auth'
-import { GitHubPushError, createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
+import {
+  GitHubPushError,
+  createLocalGitHubGateway,
+  type GatewayTerminationNotice,
+  type GitHubGateway,
+} from './github-gateway'
 import {
   connectGitHubGateway,
   serveGitHubGateway,
@@ -80,6 +86,9 @@ function fakeGateway(): FakeGateway {
     })),
     convertPullRequestToDraft: vi.fn(async () => undefined),
     deleteBranch: vi.fn(async () => undefined),
+    authSnapshot: vi.fn(async () => ({ users: [], groups: [], memberships: {} })),
+    termination: vi.fn(async () => null),
+    completeLifecycle: vi.fn(async () => undefined),
   }
 }
 
@@ -565,6 +574,18 @@ describe('the wire format at the client', () => {
     expect(caught).toBeInstanceOf(GitHubGatewayProtocolError)
     expect(isRefAlreadyGoneError(caught)).toBe(false)
     expect(isPermanentTaskFailure(caught)).toBe(false)
+  })
+
+  it('refuses an auth snapshot with a field it does not have', async () => {
+    await answering(
+      200,
+      'application/json',
+      JSON.stringify({ value: { users: [], groups: [], memberships: {}, secret: 'x' } }),
+    )
+
+    await expect(connectGitHubGateway(socketPath).authSnapshot()).rejects.toBeInstanceOf(
+      GitHubGatewayProtocolError,
+    )
   })
 
   it('refuses a push answer whose commit is not an object ID', async () => {
@@ -1371,6 +1392,167 @@ describe('bundles across the socket', () => {
 
     await expect(client.openBundle('d'.repeat(32))).rejects.toBeInstanceOf(GitHubTransientError)
     await expect(client.openBundle('../x')).rejects.toBeInstanceOf(GitHubGatewayProtocolError)
+  })
+})
+
+describe('the instance operations over the socket', () => {
+  const NOTICE: GatewayTerminationNotice = { kind: 'auto-scaling', reason: 'scale-in' }
+
+  /** A real gateway whose `prepare()` fails: its state directory is inside its workspace. */
+  function unpreparedGateway(
+    overrides: Partial<Parameters<typeof createLocalGitHubGateway>[0]>,
+  ): GitHubGateway {
+    return createLocalGitHubGateway({
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
+      githubApp: false,
+      stateDirectory: path.join(dir, 'workspace', 'state'),
+      workspacePath: path.join(dir, 'workspace'),
+      timeoutMs: 30_000,
+      prefetch: false,
+      ...overrides,
+    })
+  }
+
+  it("carries the provider's snapshot, and refuses one with a field the wire does not have", async () => {
+    const gateway = fakeGateway()
+    const snapshot = {
+      users: [{ id: 'u1', name: 'Ada', email: 'ada@example.test' }],
+      groups: [{ id: 'g1', name: 'Core', memberCount: 1 }],
+      memberships: { u1: ['g1'] },
+    }
+    gateway.authSnapshot.mockResolvedValue(snapshot)
+    await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+
+    expect(await client.authSnapshot()).toEqual(snapshot)
+
+    gateway.authSnapshot.mockResolvedValue({
+      ...snapshot,
+      users: [{ id: 'u1', name: 'Ada', email: 'ada@example.test', role: 'admin' }],
+    } as unknown as AuthCacheSnapshot)
+    await expect(client.authSnapshot()).rejects.toThrow(/authSnapshot answer does not fit/)
+  })
+
+  it('makes authSnapshot wait for prepare, and answers its failure', async () => {
+    const gateway = fakeGateway()
+    gateway.prepare.mockRejectedValue(new Error('the state directory is shared'))
+    await serve(gateway)
+
+    await expect(connectGitHubGateway(socketPath).authSnapshot()).rejects.toThrow(
+      'the state directory is shared',
+    )
+
+    expect(gateway.authSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('answers termination and completeLifecycle while prepare has failed, with the notice observed first', async () => {
+    const complete = vi.fn(async () => undefined)
+    const gateway = unpreparedGateway({
+      watchTermination: async () => NOTICE,
+      completeLifecycle: complete,
+    })
+    await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+    await expect(client.prepare()).rejects.toThrow(/inside its shared workspace/)
+
+    // The worker draining: it asks for the notice, then for the action to be completed.
+    expect(await client.termination()).toEqual(NOTICE)
+    await expect(client.completeLifecycle()).resolves.toBeUndefined()
+
+    expect((await client.health()).fatalError).toMatch(/inside its shared workspace/)
+    expect(complete).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a completeLifecycle that comes before any notice, taking no identifier', async () => {
+    const complete = vi.fn(async () => undefined)
+    await serve(
+      unpreparedGateway({ watchTermination: async () => NOTICE, completeLifecycle: complete }),
+    )
+
+    const asked = await json('/v1/complete-lifecycle', {})
+    const withIdentifier = await json('/v1/complete-lifecycle', { instanceId: 'i-0123456789' })
+
+    expect(asked.status).toBe(500)
+    expect(asked.body).toMatch(/seen no Auto Scaling termination/)
+    expect(withIdentifier.status).toBe(400)
+    expect(complete).not.toHaveBeenCalled()
+  })
+
+  it('refuses a termination poll that names a lifecycle action', async () => {
+    const gateway = fakeGateway()
+    await serve(gateway)
+
+    expect((await json('/v1/termination', { hook: 'x' })).status).toBe(400)
+    expect(gateway.termination).not.toHaveBeenCalled()
+  })
+
+  it('answers a waiting termination poll null when the gateway drains, long before its wait ends', async () => {
+    const gateway = unpreparedGateway({
+      stateDirectory: path.join(dir, 'state'),
+      watchTermination: () => new Promise<GatewayTerminationNotice>(() => undefined),
+      terminationPollWaitMs: 20_000,
+    })
+    const server = await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+    await client.prepare()
+    const polling = client.termination().catch((err: unknown) => err)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    const started = Date.now()
+    await server.drain(10_000)
+
+    expect(await polling).toBeNull()
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  it("passes a poll's own abort on to the gateway", async () => {
+    const gateway = fakeGateway()
+    gateway.termination.mockImplementation(
+      (signal) =>
+        new Promise((_, reject) =>
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+        ),
+    )
+    await serve(gateway)
+    const controller = new AbortController()
+
+    const polling = connectGitHubGateway(socketPath)
+      .termination(controller.signal)
+      .catch((err: unknown) => err)
+    await vi.waitFor(() => expect(gateway.termination).toHaveBeenCalled())
+    controller.abort(new Error('worker stopped waiting'))
+
+    expect(await polling).toMatchObject({ message: 'worker stopped waiting' })
+    await vi.waitFor(() => expect(gateway.termination.mock.calls[0][0]?.aborted).toBe(true))
+  })
+
+  it('takes a protected set of the most entries the policy allows, plus the base', async () => {
+    const gateway = fakeGateway()
+    const entries = Array.from({ length: MAX_PROTECTED_BRANCHES + 1 }, (_, i) => `release/${i}`)
+    gateway.health.mockResolvedValue({
+      ready: true,
+      fatalError: null,
+      preflight: 'not-an-app' as const,
+      clerkConfigured: false,
+      protectedBranches: { configured: entries, githubDefault: 'main' },
+    })
+    await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+
+    expect((await client.health()).protectedBranches.configured).toHaveLength(
+      MAX_PROTECTED_BRANCHES + 1,
+    )
+
+    gateway.health.mockResolvedValue({
+      ready: true,
+      fatalError: null,
+      preflight: 'not-an-app' as const,
+      clerkConfigured: false,
+      protectedBranches: { configured: [...entries, 'one-more'], githubDefault: 'main' },
+    })
+    await expect(client.health()).rejects.toThrow(/health answer does not fit/)
   })
 })
 

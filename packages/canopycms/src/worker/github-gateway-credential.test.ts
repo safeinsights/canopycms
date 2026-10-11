@@ -8,6 +8,7 @@
  */
 
 import childProcess, { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { readFileSync, statSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
@@ -41,6 +42,7 @@ import {
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
 import { GitHubTransientError, RefusedPushError, isOwnLockFailure } from './github-mirror'
+import { redactEgress } from './gateway-egress'
 import { pushToGitHub } from './github-transfer'
 
 const execFileAsync = promisify(execFile)
@@ -769,6 +771,62 @@ describe('re-reading the credential', () => {
     await settle()
 
     expect(provider).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('a token the gateway reads without ever resolving it for git', () => {
+  /**
+   * Unprefixed, so only the exact scrub can catch it: `redactCredentials`'s patterns know the
+   * `ghp_` shape and would hide a missing registration.
+   */
+  const freshToken = (label: string) => `CANARY-${label}-${randomBytes(16).toString('hex')}`
+
+  it('is scrubbed from what an Octokit failure echoes back, and from the log', async () => {
+    const token = freshToken('octokit')
+    const sent: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+        sent.push(init?.headers?.authorization)
+        return new Response(
+          JSON.stringify({ message: 'Server Error', echoed: init?.headers?.authorization }),
+          { status: 500, headers: { 'content-type': 'application/json' } },
+        )
+      }),
+    )
+    // Never passed through `credential()`: no git runs, and the App path's prepare() is not called.
+    const github = gateway({ prefetch: false }, undefined, 0, token)
+
+    const caught = await github.getPullRequest(1).catch((err: unknown) => err)
+
+    // Non-vacuous: the token reached the wire, and the failure carries what was echoed.
+    expect(sent).toEqual([`token ${token}`])
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as { response?: { data?: unknown } }).response?.data).toBeDefined()
+    const everything = JSON.stringify([
+      (caught as Error).message,
+      (caught as Error).stack,
+      (caught as { response?: unknown }).response,
+      (caught as { request?: unknown }).request,
+      consoleSpy.all(),
+    ])
+    for (const form of canaryForms(token).slice(0, 3)) expect(everything).not.toContain(form)
+    expect(everything).toContain('***')
+  })
+
+  it('is scrubbed from the moment a re-read rotates it, before any operation uses it', async () => {
+    const rotated = freshToken('rotated')
+    const provider = vi.fn(async () => rotated)
+    const github = gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
+
+    expect(redactEgress(`before ${rotated}`)).toContain(rotated)
+    await expect(github.fetch({ have: [] })).rejects.toThrow()
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    for (const form of canaryForms(rotated).slice(0, 3)) {
+      expect(redactEgress(`after ${form} done`)).not.toContain(form)
+    }
   })
 })
 
