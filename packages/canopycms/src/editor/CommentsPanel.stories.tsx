@@ -102,6 +102,19 @@ export const Default: Story = {
   },
 }
 
+// As the comments response names them, without email; `charlie` is one it could not name.
+const namedUsers: Record<string, { id: string; name: string; email: string }> = {
+  alice: { id: 'alice', name: 'Alice Johnson', email: '' },
+  bob: { id: 'bob', name: 'Bob Lee', email: '' },
+}
+
+export const WithNames: Story = {
+  args: {
+    ...Default.args,
+    onGetUserMetadata: async (userId: string) => namedUsers[userId] ?? null,
+  },
+}
+
 export const Empty: Story = {
   args: {
     branchName: 'feature/empty-branch',

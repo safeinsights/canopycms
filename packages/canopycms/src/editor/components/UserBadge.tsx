@@ -80,22 +80,69 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
+  const inBadge = !!onRemove || showBadge
+  // A light or outline badge tints its label with the badge colour, too faint for a name.
+  const nameColor = inBadge && badgeVariant !== 'filled' ? 'var(--mantine-color-text)' : undefined
+
+  const wrap = (content: React.ReactNode, tooltip: string) => {
+    const wrapped = inBadge ? (
+      <Badge
+        variant={badgeVariant}
+        color={color}
+        pr={onRemove ? 3 : 8}
+        pl={4}
+        rightSection={
+          onRemove ? (
+            <ActionIcon
+              size="xs"
+              radius="xl"
+              variant="transparent"
+              onClick={() => onRemove(userId)}
+              aria-label="Remove user"
+              style={{ color: 'var(--mantine-color-white)' }}
+            >
+              <IconX size={12} stroke={2.5} />
+            </ActionIcon>
+          ) : undefined
+        }
+        styles={{
+          label: {
+            textTransform: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+          },
+        }}
+      >
+        {content}
+      </Badge>
+    ) : (
+      content
+    )
+    return showEmailTooltip ? (
+      <Tooltip label={tooltip} disabled={!tooltip}>
+        {wrapped}
+      </Tooltip>
+    ) : (
+      wrapped
+    )
+  }
+
   if (error || !userMetadata) {
-    const content = (
+    return wrap(
       <Group gap={4}>
-        <Avatar size={avatarSize} color="gray" />
+        <Avatar
+          size={avatarSize}
+          color="gray"
+          aria-hidden={variant !== 'avatar-only' || undefined}
+        />
         {variant !== 'avatar-only' && (
-          <Text size={textSize} c="dimmed">
+          <Text size={textSize} c={nameColor}>
             {userId}
           </Text>
         )}
-      </Group>
-    )
-
-    return showEmailTooltip ? (
-      <Tooltip label={error ? 'Error loading user' : 'User not found'}>{content}</Tooltip>
-    ) : (
-      content
+      </Group>,
+      error ? "Couldn't load this name" : 'Name unavailable',
     )
   }
 
@@ -121,12 +168,10 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
       )
     }
 
-    // When inside Badge wrapper with filled/light variant, use white background for visibility
-    // For outline badges or no badge, use the passed color
     let avatarColor = color || 'blue'
     let avatarStyles: React.CSSProperties = {}
 
-    if (onRemove || showBadge) {
+    if (inBadge) {
       if (badgeVariant === 'filled') {
         // Filled badges: white background with dark text for maximum contrast
         avatarStyles = {
@@ -143,6 +188,9 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     return (
       <Avatar
         src={userMetadata.avatarUrl}
+        // Beside the name it repeats it, so it is hidden from screen readers.
+        alt={variant === 'avatar-only' ? userMetadata.name : ''}
+        aria-hidden={variant !== 'avatar-only' || undefined}
         size={avatarSize}
         color={avatarColor}
         style={avatarStyles}
@@ -179,7 +227,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         return (
           <Group gap={4}>
             {avatar}
-            <Text size={textSize} fw={500}>
+            <Text size={textSize} fw={500} c={nameColor}>
               {userId === 'anonymous' ? 'Anonymous (Public)' : userMetadata.name}
             </Text>
           </Group>
@@ -187,56 +235,5 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     }
   }
 
-  const content = renderContent()
-
-  if (onRemove || showBadge) {
-    const badgeContent = (
-      <Badge
-        variant={badgeVariant}
-        color={color}
-        pr={onRemove ? 3 : 8}
-        pl={4}
-        rightSection={
-          onRemove ? (
-            <ActionIcon
-              size="xs"
-              radius="xl"
-              variant="transparent"
-              onClick={() => onRemove(userId)}
-              aria-label="Remove user"
-              style={{ color: 'var(--mantine-color-white)' }}
-            >
-              <IconX size={12} stroke={2.5} />
-            </ActionIcon>
-          ) : undefined
-        }
-        styles={{
-          label: {
-            textTransform: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px',
-          },
-        }}
-      >
-        {content}
-      </Badge>
-    )
-
-    return showEmailTooltip && variant !== 'full' ? (
-      <Tooltip label={userMetadata.email} disabled={!userMetadata.email}>
-        {badgeContent}
-      </Tooltip>
-    ) : (
-      badgeContent
-    )
-  }
-
-  return showEmailTooltip && variant !== 'full' ? (
-    <Tooltip label={userMetadata.email} disabled={!userMetadata.email}>
-      {content}
-    </Tooltip>
-  ) : (
-    content
-  )
+  return wrap(renderContent(), variant === 'full' ? '' : userMetadata.email)
 }
