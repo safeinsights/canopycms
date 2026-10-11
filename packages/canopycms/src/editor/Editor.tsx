@@ -86,7 +86,7 @@ import {
 } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
-import { restoreRemoval, type FieldRemoval } from './undo-removal'
+import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 
@@ -385,6 +385,7 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
+    drafts,
     setDrafts,
     loadedValues,
     setLoadedValues,
@@ -416,6 +417,8 @@ const EditorContent: React.FC<EditorProps> = ({
         console.error('Failed to refresh entries after save', err),
       )
     },
+    // An Undo built on a discarded draft would put back an item the server's copy already has.
+    onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
@@ -499,18 +502,37 @@ const EditorContent: React.FC<EditorProps> = ({
   // branch and entry it was raised for, and its toast closes when either changes.
   const loadedValuesRef = useRef(loadedValues)
   loadedValuesRef.current = loadedValues
-  const undoToastIdsRef = useRef(new Set<string>())
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  // Open Undo toasts, by id, with the entry each belongs to.
+  const undoToastsRef = useRef(new Map<string, string>())
   const nextUndoToastRef = useRef(0)
+  const dismissUndoToasts = (contentId?: string) => {
+    undoToastsRef.current.forEach((entry, id) => {
+      if (contentId !== undefined && entry !== contentId) return
+      notifications.hide(id)
+      undoToastsRef.current.delete(id)
+    })
+  }
   const handleFieldRemoved = (removal: FieldRemoval) => {
     const contentId = currentEntry?.contentId
     if (!contentId || contentReadOnlyRef.current) return
     const branch = branchNameState
     const fields = schema
+    // Taken from the value this render shows, which the removal has not reached yet.
+    const anchored: FieldRemoval = {
+      ...removal,
+      anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
+    }
     nextUndoToastRef.current += 1
     const id = `canopy-undo-${nextUndoToastRef.current}`
+    let used = false
     const undo = () => {
+      // A closing toast stays clickable while it animates out, so a double-click arrives twice.
+      if (used) return
+      used = true
       notifications.hide(id)
-      undoToastIdsRef.current.delete(id)
+      undoToastsRef.current.delete(id)
       if (
         currentBranchRef.current !== branch ||
         currentContentIdRef.current !== contentId ||
@@ -518,28 +540,30 @@ const EditorContent: React.FC<EditorProps> = ({
       ) {
         return
       }
+      const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
+      if (!now || !restoreRemoval(fields, now, anchored)) {
+        notifications.show({
+          message: `Couldn't undo: "${removal.label}" no longer fits where it was.`,
+          color: 'yellow',
+        })
+        return
+      }
       setDrafts((prev) => {
         const base = prev[contentId] ?? loadedValuesRef.current[contentId]
-        const restored = base ? restoreRemoval(fields, base, removal) : undefined
+        const restored = base ? restoreRemoval(fields, base, anchored) : undefined
         return restored ? { ...prev, [contentId]: restored } : prev
       })
     }
-    undoToastIdsRef.current.add(id)
+    undoToastsRef.current.set(id, contentId)
     notifications.show({
       id,
       message: <UndoToastMessage label={removal.label} onUndo={undo} />,
       autoClose: getNotificationDuration(8000),
       withCloseButton: true,
-      onClose: () => undoToastIdsRef.current.delete(id),
+      onClose: () => undoToastsRef.current.delete(id),
     })
   }
-  useEffect(() => {
-    const ids = undoToastIdsRef.current
-    return () => {
-      ids.forEach((id) => notifications.hide(id))
-      ids.clear()
-    }
-  }, [currentEntry?.contentId, branchNameState])
+  useEffect(() => () => dismissUndoToasts(), [currentEntry?.contentId, branchNameState])
   // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
   const hiddenDraftNotice =
     contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()

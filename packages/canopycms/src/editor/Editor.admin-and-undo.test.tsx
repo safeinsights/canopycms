@@ -45,6 +45,8 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.unstubAllGlobals()
   window.localStorage.clear()
+  // The editor keeps the open entry in the URL, which jsdom carries into the next test.
+  window.history.replaceState({}, '', '/')
 })
 
 const schema: EntrySchema = [
@@ -282,6 +284,63 @@ describe('Undo after Remove', () => {
     fireEvent.click(await screen.findByTestId('entry-nav-item-other'))
 
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
+  })
+})
+
+describe('Undo is one-shot and ends with the draft', () => {
+  const undoToastOf = () => {
+    const call = vi
+      .mocked(notifications.show)
+      .mock.calls.find(([options]) => String(options.id ?? '').startsWith('canopy-undo-'))
+    return call![0]
+  }
+  const removeSecondLink = () =>
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
+        name: 'Remove',
+      }),
+    )
+
+  it('puts an item back once, however many times Undo is clicked', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    removeSecondLink()
+    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+
+    const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
+    const undo = message.getByRole('button', { name: 'Undo' })
+    act(() => {
+      fireEvent.click(undo)
+      fireEvent.click(undo)
+    })
+
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+  })
+
+  it('closes the Undo toast when the draft is discarded, and an Undo clicked anyway adds nothing', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementation((options) => {
+      options.onConfirm?.()
+      return 'mock-modal-id'
+    })
+    stubApi([])
+    renderEditor()
+    await loaded()
+    removeSecondLink()
+    await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
+    const toast = undoToastOf()
+
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('discard-file-draft-menu-item'))
+    await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+
+    const message = render(<MantineProvider>{toast.message}</MantineProvider>)
+    act(() => fireEvent.click(message.getByRole('button', { name: 'Undo' })))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
   })
 })
 

@@ -100,7 +100,7 @@ export const getBranchPermissions = (
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
   // The system-branch grant is disabled on the protected base branch -- its
-  // auto-provision marker (createdBy: 'canopycms-system') would otherwise let
+  // auto-provision marker (createdBy: SYSTEM_USER_ID) would otherwise let
   // anyone with general access submit/withdraw/delete it.
   const isSystemBranch = branch.createdBy === SYSTEM_USER_ID && !branch.isProtected
 

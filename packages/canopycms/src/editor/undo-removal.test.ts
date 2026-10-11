@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { FieldConfig } from '../config'
-import { restoreRemoval } from './undo-removal'
+import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
 
 const fields: FieldConfig[] = [
   { name: 'title', type: 'string' },
@@ -139,6 +139,58 @@ describe('restoreRemoval', () => {
           item: { caption: 'x' },
           label: 'x',
         },
+      ),
+    ).toBeUndefined()
+  })
+
+  describe('enclosing lists', () => {
+    const gallery = (caption: string) => ({
+      template: 'gallery',
+      value: { items: [{ caption }] },
+    })
+    const removeFirstCaption = (value: Record<string, unknown>): FieldRemoval => {
+      const removal: FieldRemoval = {
+        kind: 'list-item',
+        listPath: ['blocks', 0, 'items'],
+        index: 0,
+        item: { caption: 'x' },
+        label: 'x',
+      }
+      return { ...removal, anchors: removalAnchors(fields, value, removal) }
+    }
+
+    it("puts nothing into a block that moved into the removed item's place", () => {
+      const [g1, g2] = [gallery('x'), gallery('y')]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const g1After = { ...g1, value: { items: [] } }
+      expect(restoreRemoval(fields, { blocks: [g2, g1After] }, removal)).toBeUndefined()
+    })
+
+    it('puts nothing back once the enclosing block itself is gone', () => {
+      const [g1, g2] = [gallery('x'), gallery('y')]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      expect(restoreRemoval(fields, { blocks: [g2] }, removal)).toBeUndefined()
+    })
+
+    it('restores while the enclosing block is still in place, even edited', () => {
+      const [g1, g2] = [gallery('x'), gallery('y')]
+      const removal = removeFirstCaption({ blocks: [g1, g2] })
+      const g1Edited = { ...g1, value: { items: [{ caption: 'z' }] } }
+      const restored = restoreRemoval(fields, { blocks: [g1Edited, g2] }, removal)
+      expect(restored?.blocks).toEqual([
+        { template: 'gallery', value: { items: [{ caption: 'x' }, { caption: 'z' }] } },
+        g2,
+      ])
+    })
+  })
+
+  it('puts nothing back when the item is already there', () => {
+    const item = { href: '/b' }
+    expect(
+      restoreRemoval(
+        fields,
+        { links: [{ href: '/a' }, item] },
+        { kind: 'list-item', listPath: ['links'], index: 1, item, label: '/b' },
       ),
     ).toBeUndefined()
   })

@@ -116,7 +116,7 @@ export function createCheckBranchAccess(
 export interface WorkflowActionOptions {
   /**
    * When true, disables the system-branch grant below. The protected base
-   * branch is auto-provisioned with `createdBy: 'canopycms-system'`, which
+   * branch is auto-provisioned with `createdBy: SYSTEM_USER_ID`, which
    * would otherwise let anyone with general branch access submit/withdraw it
    * -- pass `getBranchProtection(...).isProtected` here so only
    * admins/reviewers/explicit-ACL users retain workflow rights on it.

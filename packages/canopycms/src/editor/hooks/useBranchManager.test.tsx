@@ -1116,6 +1116,31 @@ describe('useBranchManager', () => {
     expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' })
   })
 
+  it('opens one Request changes confirm for a double-click', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementation(() => 'mock-modal-id')
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches },
+    })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => {
+      expect(result.current.branches).toHaveLength(2)
+    })
+
+    act(() => {
+      void result.current.handleRequestChanges('feature')
+      void result.current.handleRequestChanges('feature')
+    })
+
+    expect(
+      vi
+        .mocked(modals.openConfirmModal)
+        .mock.calls.filter(([options]) => options.title === 'Request changes'),
+    ).toHaveLength(1)
+  })
+
   it('asks before requesting changes, and a cancel sends nothing', async () => {
     const { modals } = await import('@mantine/modals')
     vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {

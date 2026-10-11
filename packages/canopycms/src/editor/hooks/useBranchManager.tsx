@@ -499,7 +499,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'delete',
+    action: 'submit' | 'withdraw' | 'request-changes' | 'delete',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -603,30 +603,37 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const handleRequestChanges = (branchNameForChanges: string) =>
-    new Promise<void>((resolve) => {
-      showRequestChangesConfirmation(
-        branchNameForChanges,
-        async () => {
-          options.setBusy(true)
-          try {
-            const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges })
-            if (!result.ok) {
-              throw new Error(result.error || 'Failed to request changes')
-            }
-            notifications.show({ message: 'Changes requested', color: 'orange' })
-            updateCreatedBranch(branchNameForChanges, result.data?.branch)
-            await loadBranches()
-          } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to request changes'
-            notifications.show({ message, color: 'red' })
-          } finally {
-            options.setBusy(false)
-            resolve()
-          }
-        },
-        () => resolve(),
-      )
-    })
+    singleFlight(
+      'request-changes',
+      branchNameForChanges,
+      () =>
+        new Promise<void>((resolve) => {
+          showRequestChangesConfirmation(
+            branchNameForChanges,
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.requestChanges({
+                  branch: branchNameForChanges,
+                })
+                if (!result.ok) {
+                  throw new Error(result.error || 'Failed to request changes')
+                }
+                notifications.show({ message: 'Changes requested', color: 'orange' })
+                updateCreatedBranch(branchNameForChanges, result.data?.branch)
+                await loadBranches()
+              } catch (err) {
+                const message = err instanceof Error ? err.message : 'Failed to request changes'
+                notifications.show({ message, color: 'red' })
+              } finally {
+                options.setBusy(false)
+                resolve()
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)
