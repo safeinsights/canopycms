@@ -108,6 +108,12 @@ describe('GIT_CONFIG_GLOBAL', () => {
     // The one GitHub fetch, which the fetch and both push calls join; then the push's
     // default-branch ls-remote and the push itself.
     expect(given.map((call) => subcommand(call.args))).toEqual(['fetch', 'ls-remote', 'push'])
+    // Each also carries curl's low-speed limit, for as long as the gateway's inactivity bound.
+    for (const call of given) {
+      expect(call.args).toEqual(
+        expect.arrayContaining(['-c', 'http.lowSpeedLimit=1024', '-c', 'http.lowSpeedTime=30']),
+      )
+    }
     // Not vacuous: the gateway ran plenty of other git, none given the variable.
     expect(recorded.filter((call) => call.configGlobal === undefined).length).toBeGreaterThan(5)
   })
