@@ -686,8 +686,8 @@ export class CmsWorker {
    *    call) for what is already in flight, startup included.
    * 3. At the deadline, abort it through `shutdownSignal()`: a task's git push
    *    and GitHub calls are killed and the task is released to pending with no
-   *    retry spent; a sync's unbundle, ref update and settings push are
-   *    killed. The gateway's GitHub fetches and mirror maintenance run on
+   *    retry spent; a sync's bundle, unbundle, ref update and settings push
+   *    are killed. The gateway's GitHub fetches and mirror maintenance run on
    *    (.claude/future-tasks/worker-mirror-detached-work-drain.md). A branch rebase
    *    is never aborted, because a rebase killed mid-branch is recovered
    *    lossily; anything still unsettled after a short grace is abandoned to

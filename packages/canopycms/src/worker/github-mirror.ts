@@ -160,7 +160,7 @@ export class GitHubMirror {
   /**
    * Create the mirror, or recreate one that is not a readable bare repository, and record whether
    * an existing one is corrupt ({@link findCorruption}), which the next GitHub fetch's session
-   * repairs ({@link heal}): the generation change sends every caller to one.
+   * repairs ({@link heal}); until then the generation change keeps every caller off it.
    */
   private async create(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
@@ -174,7 +174,7 @@ export class GitHubMirror {
     this.corruption = await findCorruption(this.gitDir, (args, stdin) =>
       runInRepo(this.gitDir, this.timeoutMs, args, { stdin }),
     )
-    // No fetch's snapshot vouches for a corrupt mirror, so callers join one that rebuilds it.
+    // No fetch's snapshot vouches for a corrupt mirror, so no caller uses it until a fetch rebuilds it.
     if (this.corruption !== null) this.generation++
   }
 

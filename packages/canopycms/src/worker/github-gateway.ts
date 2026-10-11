@@ -635,8 +635,8 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<GitHubPushAnswer> {
     const { branch, sha } = request
-    // Never fires: finding corruption changes the generation, so afterGitHubFetch sends the push to
-    // a fetch that rebuilds first. It refuses rather than push from a corrupt mirror.
+    // Never fires: finding corruption changes the generation, so afterGitHubFetch never runs this
+    // over a mirror found corrupt after its fetch. It refuses rather than push from a corrupt one.
     this.mirror.assertUsable()
     const heads = await mirror.heads()
 

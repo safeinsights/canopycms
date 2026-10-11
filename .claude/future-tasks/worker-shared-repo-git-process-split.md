@@ -1037,8 +1037,8 @@ PR 2, their first user.
   removes it, since the Lambda shares that repository. The first maintenance waits one interval.
   `fetchCoalesceMs` is a constructor-only test seam.
 - Deviations from §3.1–§3.3 in 2b:
-  - Only a GitHub fetch's session rebuilds: finding corruption changes the generation, which
-    sends the detecting caller to one.
+  - Only a GitHub fetch's session rebuilds: finding corruption changes the generation, so no
+    caller uses the mirror until one has.
   - Every caller's bundle is made in its own session, a job's starter included.
   - The on-failure sweep runs after any failed GitHub fetch, not only lock text, whenever it can
     try-acquire the mutex; otherwise it is owed to the next session start.
