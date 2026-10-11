@@ -30,7 +30,7 @@ test.describe('Comments', () => {
 
     const commentText = `Field comment ${Date.now()}`
 
-    await test.step('click "New comment" on the title field', async () => {
+    await test.step("open the title field's comments from its hover icon", async () => {
       await editorPage.startFieldComment('title')
     })
 
@@ -38,11 +38,12 @@ test.describe('Comments', () => {
       await editorPage.submitFieldComment(commentText)
     })
 
-    await test.step('verify inline thread appears as unresolved', async () => {
+    await test.step('verify the thread appears as unresolved, and the field shows its count', async () => {
       const thread = editorPage.fieldCommentThread()
       await thread.waitFor({ state: 'visible', timeout: 5000 })
       await expect(thread).toContainText(commentText)
       await expect(thread).toContainText('Unresolved')
+      await expect(editorPage.fieldCommentControl('title')).toHaveText('1')
     })
 
     await test.step('resolve the thread', async () => {

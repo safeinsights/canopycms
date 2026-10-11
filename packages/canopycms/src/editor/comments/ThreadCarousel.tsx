@@ -192,15 +192,8 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
     }
   }
 
-  const handleAddReply = async (threadId: string, text: string) => {
-    try {
-      setError(null)
-      await onAddComment(text, threadId)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add reply')
-      throw err // Re-throw so InlineCommentThread can handle it
-    }
-  }
+  // InlineCommentThread shows a failed reply's error itself.
+  const handleAddReply = (threadId: string, text: string) => onAddComment(text, threadId)
 
   const handleCreateNewThread = async () => {
     if (!newThreadText.trim()) return

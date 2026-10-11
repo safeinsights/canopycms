@@ -46,7 +46,7 @@ replaces each `next` with its number.
 | 93   | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked                   |
 | 93   | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                     |
 | 93   | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages                  |
-| 93   | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                         |
+| 93   | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103, next)                                                    | None                         |
 | 93   | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                      |
 | 94   | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers               |
 | 94   | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                     |
@@ -291,8 +291,7 @@ group dialog's buttons read "Add" and "Apply", since neither saves.
 **What changed.**
 
 - (int.93) An `object` field with `list: true` takes `itemTitleField`, naming a direct `string` or
-  `number` child whose value titles each card (else `<label> #N`). Cards no longer repeat the label
-  as an inner legend.
+  `number` child whose value titles each card, else its first `string` field, then "Item N".
 - (int.96) A field's `description` renders under its label for every type; a list field shows it
   once, never per item. A block template's `description` still does not render.
 - (int.103) An `image` field whose `src` is outside `/assets/`, such as `/logos/x.svg`, previews at

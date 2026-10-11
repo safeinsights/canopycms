@@ -247,7 +247,7 @@ describe('Undo after Remove', () => {
     renderEditor()
     await loaded()
 
-    const second = screen.getByRole('group', { name: 'Links #2' })
+    const second = screen.getByRole('group', { name: '/b' })
     fireEvent.click(within(second).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(persistedDraft(hello.contentId)?.links).toEqual([{ href: '/a' }]))
     fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
@@ -274,7 +274,7 @@ describe('Undo after Remove', () => {
 
     const list = screen.getByRole('group', { name: 'Links' })
     fireEvent.click(
-      within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
+      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
         name: 'Remove',
       }),
     )
@@ -299,7 +299,7 @@ describe('Undo after Remove', () => {
     await loaded()
 
     fireEvent.click(
-      within(screen.getByRole('group', { name: 'Links #1' })).getByRole('button', {
+      within(screen.getByRole('group', { name: '/a' })).getByRole('button', {
         name: 'Remove',
       }),
     )
@@ -322,7 +322,7 @@ describe('Undo is one-shot and ends with the draft', () => {
   }
   const removeSecondLink = () =>
     fireEvent.click(
-      within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
+      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
         name: 'Remove',
       }),
     )
@@ -337,12 +337,12 @@ describe('Undo is one-shot and ends with the draft', () => {
     const message = render(<MantineProvider>{undoToastOf().message}</MantineProvider>)
     const undo = message.getByRole('button', { name: /^Undo removing / })
     act(() => fireEvent.click(undo))
-    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('group', { name: '/b' })).toBeTruthy())
     // The second click of a double-click, landing after the first has rendered.
     act(() => fireEvent.click(undo))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
 
-    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+    expect(screen.getAllByRole('group', { name: '/b' })).toHaveLength(1)
     expect(
       vi.mocked(notifications.show).mock.calls.some(([options]) => options.color === 'yellow'),
     ).toBe(false)
@@ -364,13 +364,13 @@ describe('Undo is one-shot and ends with the draft', () => {
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
     fireEvent.click(await screen.findByText('Reload File'))
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
-    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('group', { name: '/b' })).toBeTruthy())
 
     // The click lands on the closing toast; it adds nothing and says why.
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
     act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
-    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+    expect(screen.getAllByRole('group', { name: '/b' })).toHaveLength(1)
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Too late to undo removing "/b" from Links.' }),
     )
@@ -392,12 +392,12 @@ describe('Undo is one-shot and ends with the draft', () => {
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
     fireEvent.click(await screen.findByTestId('discard-file-draft-menu-item'))
     await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith(toast.id))
-    await waitFor(() => expect(screen.getByRole('group', { name: 'Links #2' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('group', { name: '/b' })).toBeTruthy())
 
     const message = render(<MantineProvider>{toast.message}</MantineProvider>)
     act(() => fireEvent.click(message.getByRole('button', { name: /^Undo removing / })))
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
-    expect(screen.queryByRole('group', { name: 'Links #3' })).toBeNull()
+    expect(screen.getAllByRole('group', { name: '/b' })).toHaveLength(1)
   })
 })
 

@@ -5,6 +5,7 @@ import { Button, Paper, Stack } from '@mantine/core'
 import type { FieldConfig } from '../../config'
 import { isPlainRecord } from '../../validation/field-traversal'
 import { formatCanopyPath } from '../canopy-path'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
 
@@ -49,6 +50,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
 }) => {
   const current = isPlainRecord(value) ? value : {}
   const descriptionBaseId = useId()
+  const commentControl = useFieldCommentControl(dataCanopyField ?? formatCanopyPath(path))
 
   return (
     <Paper
@@ -65,6 +67,7 @@ export const ObjectField: React.FC<ObjectFieldProps> = ({
           required={required}
           description={description}
           descriptionBaseId={descriptionBaseId}
+          commentControl={commentControl}
           actions={
             onRemove && (
               <Button variant="subtle" color="red" onClick={onRemove}>

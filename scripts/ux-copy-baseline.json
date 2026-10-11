@@ -11,12 +11,6 @@
     "packages/canopycms/src/editor/comments/BranchComments.tsx": {
       "title-case": 1
     },
-    "packages/canopycms/src/editor/comments/EntryComments.tsx": {
-      "title-case": 1
-    },
-    "packages/canopycms/src/editor/comments/InlineCommentThread.tsx": {
-      "ellipsis": 1
-    },
     "packages/canopycms/src/editor/comments/ThreadCarousel.tsx": {
       "ellipsis": 1,
       "title-case": 1

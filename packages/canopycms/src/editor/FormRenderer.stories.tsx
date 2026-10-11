@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useMemo, useState } from 'react'
 
+import type { CommentThread } from '../comment-store'
 import type { FieldConfig } from '../config'
 import { FormRenderer } from './FormRenderer'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
@@ -229,5 +230,110 @@ export const ReadOnlyWithKeptDraft: Story = {
       <ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />
       <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
     </div>
+  ),
+}
+
+const storyThread = (
+  id: string,
+  type: CommentThread['type'],
+  canopyPath: string | undefined,
+  text: string,
+  resolved = false,
+): CommentThread => ({
+  id,
+  type,
+  entryPath: 'posts/hello',
+  canopyPath,
+  authorId: 'alice',
+  createdAt: new Date(Date.now() - 3600000).toISOString(),
+  resolved,
+  comments: [
+    {
+      id: `${id}-1`,
+      threadId: id,
+      userId: 'alice',
+      timestamp: new Date(Date.now() - 3600000).toISOString(),
+      text,
+    },
+  ],
+})
+
+const CommentingForm: React.FC<{ readOnly?: boolean; fieldErrors?: Record<string, string> }> = ({
+  readOnly,
+  fieldErrors,
+}) => {
+  const [value, setValue] = useState<PostValue>(initialPost)
+  const [threads, setThreads] = useState<CommentThread[]>([
+    storyThread('t1', 'field', 'title', 'Can we make this punchier?'),
+    storyThread('t2', 'field', 'title', 'Check capitalisation.'),
+    storyThread('t3', 'field', 'blocks[0].headline', 'Shorter, please.'),
+    storyThread('t4', 'entry', undefined, 'Ready for review once the hero is final.'),
+  ])
+  return (
+    <FormRenderer
+      fields={postSchema}
+      value={value}
+      onChange={(next) => setValue(next as unknown as PostValue)}
+      readOnly={readOnly}
+      fieldErrors={fieldErrors}
+      comments={threads}
+      currentEntryPath="posts/hello"
+      currentUserId="alice"
+      canResolve
+      onAddComment={async (text, type, entryPath, canopyPath, threadId) => {
+        setThreads((prev) =>
+          threadId
+            ? prev.map((t) =>
+                t.id === threadId
+                  ? {
+                      ...t,
+                      comments: [
+                        ...t.comments,
+                        {
+                          id: `${threadId}-${t.comments.length + 1}`,
+                          threadId,
+                          userId: 'alice',
+                          timestamp: new Date().toISOString(),
+                          text,
+                        },
+                      ],
+                    }
+                  : t,
+              )
+            : [...prev, storyThread(`t${prev.length + 1}`, type, canopyPath ?? undefined, text)],
+        )
+      }}
+      onResolveThread={async (threadId) => {
+        setThreads((prev) =>
+          prev.map((t) => (t.id === threadId ? { ...t, resolved: true, resolvedBy: 'alice' } : t)),
+        )
+      }}
+    />
+  )
+}
+
+/**
+ * Comments on: "Comment on this entry" at the top, a count badge on fields with open threads,
+ * and an icon after the label of any other field while it is hovered or focused.
+ */
+export const WithComments: Story = {
+  render: () => <CommentingForm />,
+}
+
+/** Comments stay open on a read-only branch, where reviewers comment on a submitted entry. */
+export const ReadOnlyWithComments: Story = {
+  render: () => <CommentingForm readOnly />,
+}
+
+/** The validation summary names fields by their labels; each breadcrumb focuses its field. */
+export const WithValidationErrors: Story = {
+  render: () => (
+    <CommentingForm
+      fieldErrors={{
+        title: 'This field is required',
+        'features[1].description': 'Expected text',
+        'blocks[0].headline': 'This field is required',
+      }}
+    />
   ),
 }

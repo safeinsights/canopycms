@@ -2,6 +2,8 @@ import React, { useId } from 'react'
 
 import { TagsInput } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface StringListFieldProps {
   id?: string
   label?: string
@@ -32,23 +34,24 @@ export const StringListField: React.FC<StringListFieldProps> = ({
   const inputId = id ?? generatedId
 
   return (
-    <TagsInput
-      id={inputId}
-      label={label}
-      description={description}
-      value={value}
-      size="sm"
-      readOnly={readOnly}
-      onChange={(next) => {
-        if (!readOnly) onChange(next)
-      }}
-      // Faithful generic-list semantics, not tag ergonomics: no comma-splitting
-      // ("New York, NY" stays one item) and duplicates are legitimate list
-      // data — TagsInput's defaults would break both, so existing file data
-      // couldn't round-trip.
-      splitChars={[]}
-      allowDuplicates
-      data-canopy-field={dataCanopyField}
-    />
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <TagsInput
+        id={inputId}
+        description={description}
+        value={value}
+        size="sm"
+        readOnly={readOnly}
+        onChange={(next) => {
+          if (!readOnly) onChange(next)
+        }}
+        // Faithful generic-list semantics, not tag ergonomics: no comma-splitting
+        // ("New York, NY" stays one item) and duplicates are legitimate list
+        // data — TagsInput's defaults would break both, so existing file data
+        // couldn't round-trip.
+        splitChars={[]}
+        allowDuplicates
+        data-canopy-field={dataCanopyField}
+      />
+    </LabelledInput>
   )
 }

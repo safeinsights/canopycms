@@ -51,7 +51,7 @@ describe('FormRenderer removals', () => {
       { links: [{ href: '/a' }, second] },
     )
     fireEvent.click(
-      within(screen.getByRole('group', { name: 'Links #2' })).getByRole('button', {
+      within(screen.getByRole('group', { name: '/b' })).getByRole('button', {
         name: 'Remove',
       }),
     )
@@ -118,7 +118,7 @@ describe('FormRenderer removals', () => {
       { sizes: [{ width: 1 }, { width: 2 }] },
     )
     fireEvent.click(
-      within(screen.getByRole('group', { name: 'Sizes #1' })).getByRole('button', {
+      within(screen.getByRole('group', { name: 'Item 1' })).getByRole('button', {
         name: 'Remove',
       }),
     )
