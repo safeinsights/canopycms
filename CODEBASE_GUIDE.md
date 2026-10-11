@@ -223,16 +223,16 @@ direction, and every invariant.
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
-- `remote-git-maintenance.ts` — `maintainRemoteGit`: the worker's logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
+- `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: moves sparse clones to the recorded cone after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
-- `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts` its policy, scrubbing
+- `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer
-- `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
+- `history-rewrite.ts` — force-push leasing on a pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — credential selection and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
 
