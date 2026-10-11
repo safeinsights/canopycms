@@ -4,11 +4,6 @@
       "count": 2
     }
   },
-  "packages/canopycms/src/editor/PreviewFrame.tsx": {
-    "jsx-a11y/iframe-has-title": {
-      "count": 1
-    }
-  },
   "packages/canopycms/src/editor/comments/BranchComments.tsx": {
     "jsx-a11y/no-autofocus": {
       "count": 1
