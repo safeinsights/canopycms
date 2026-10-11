@@ -1052,6 +1052,37 @@ PR 2, their first user.
   healthy task joining a slow one (the provider can take 87 s) can lose one retry. R5 lists the
   same join as a push-stall lever (§12 9a-L). Design the transport's deadlines with it.
 
+**Carried from 3** (gateway policy):
+- Settled in 3: `BranchPolicy` (`worker/branch-policy.ts`) owns the protected set: the configured
+  base (`baseBranch`, never a detected one), GitHub's default branch, and `protectedBranches`
+  (names and `*` globs). Matching ignores case, and an exact entry also matches a name with the
+  same sanitized form. `push` no longer takes `protectedBranches`. Refusals are
+  `GatewayRefusalError` (`RefusedPushError` is its push form); `isPermanentTaskFailure` takes
+  them, and none arms the re-read or ends fetch reuse. Egress is `worker/gateway-egress.ts`.
+- Deviations:
+  - GitHub's default branch is one 10-minute cache filled two ways. A push reads it with
+    `ls-remote` in its own session, as before, so the spawn spy is unchanged on a cold cache.
+    Delete and PR operations use Octokit `repos.get`, so they never queue behind a fetch. The
+    worker's boot warning uses `isProtectedBranch`, which reads with git in a session.
+  - The settings rule is prefix-only, as the task runner's `isSettingsBranch` is. A configured
+    settings name without the prefix stays a content branch, which an existing test pins.
+  - The PR caps are 1,024 characters for a title and 65,536 for a body. Names are capped at 255
+    characters, printable ASCII. A content branch's ref is its sanitized name, so no editor
+    branch is refused.
+  - The bundle header bound (64 KiB) excludes prerequisite comments. Each comment is capped at
+    1 KiB: the gateway refuses a longer one, and the worker truncates its own as it streams. A
+    test with real git covers a 70 KiB subject.
+  - Exact token forms (raw, base64 pair, URL-encoded pair) are scrubbed before
+    `redactCredentials`'s patterns. A pattern stopping at a `%` left a tail that the canary
+    caught. `redactCredentials` now matches the URL-encoded pair too.
+- PR 4: rebuild `GatewayRefusalError` (operation, branch, reason) on the client, so it stays
+  permanent and never arms. `isProtectedBranch` becomes `health`'s protected set. `openBundle`'s
+  stream is repository content and is not scrubbed.
+- PR 5: the in-process gateway holds neither the App private key (the entrypoint builds the
+  strategy) nor the Clerk key, so their exact-form scrub (PEM per line, the key) arrives when
+  the gateway reads its own secrets. `redactCredentials`'s PEM-block and JWT patterns apply now.
+- PR 7: the Security Model and "The worker instance" name `protectedBranches`.
+
 ## 9. Residual risks, and the Security Model afterwards
 
 - **R1 — Gateway authority.** Through the queue and the worker, a compromised Lambda can still:
