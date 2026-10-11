@@ -16,7 +16,10 @@
  * tab, a `\r`, non-UTF-8), never parsed and never logged. Every other line ends in LF alone.
  */
 
-/** The header must end, with its blank line, within this many bytes. */
+/**
+ * The header must end, with its blank line, within this many bytes.
+ * @internal Exported for tests.
+ */
 export const BUNDLE_HEADER_MAX_BYTES = 64 * 1024
 
 export interface BundleHeader {
@@ -111,7 +114,10 @@ function checkPartialLine(partial: Buffer, section: string): void {
   }
 }
 
-/** The one head line a bundle of `refs/heads/<branch>` at `sha` has, byte for byte. */
+/**
+ * The one head line a bundle of `refs/heads/<branch>` at `sha` has, byte for byte.
+ * @internal Exported for tests.
+ */
 export function expectedHead(sha: string, branch: string): Buffer {
   return Buffer.from(`${sha} refs/heads/${branch}`, 'utf8')
 }

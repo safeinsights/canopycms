@@ -31,7 +31,10 @@ export interface GitProcessOptions {
   signal?: AbortSignal
 }
 
-/** git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any. */
+/**
+ * git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any.
+ * @internal Exported for tests.
+ */
 export class GitProcessError extends Error {
   constructor(
     message: string,
@@ -43,7 +46,10 @@ export class GitProcessError extends Error {
   }
 }
 
-/** The most stderr kept, from the start: git's diagnosis comes first. */
+/**
+ * The most stderr kept, from the start: git's diagnosis comes first.
+ * @internal Exported for tests.
+ */
 export const STDERR_CAP_BYTES = 64 * 1024
 
 /** How long a process asked to stop has before it is killed outright. */
@@ -65,7 +71,8 @@ export interface GitProcess {
 export function spawnGit(args: readonly string[], options: GitProcessOptions): GitProcess {
   const child = spawn('git', [...(options.config ?? []).flatMap((c) => ['-c', c]), ...args], {
     cwd: options.cwd,
-    env: options.env,
+    // An app's own ProcessEnv augmentation (Next.js requires NODE_ENV) says nothing about git's.
+    env: options.env as NodeJS.ProcessEnv,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   const { stdout } = child

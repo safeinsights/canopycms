@@ -508,7 +508,7 @@ describe('refusing a hostile bundle', () => {
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
-    expect(String(caught)).toMatch(new RegExp(`its one head must be ${main}`))
+    expect(String(caught)).toContain(`its one head must be ${main}`)
     expect(await tip(githubPath, 'refs/heads/feature')).toBeNull()
     expect(feature).not.toBe(main)
   })
@@ -569,7 +569,7 @@ describe('refusing a hostile bundle', () => {
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
-    expect(String(caught)).toMatch(new RegExp(`larger than ${size - 1} bytes`))
+    expect(String(caught)).toContain(`larger than ${size - 1} bytes`)
     expect(await tip(githubPath, 'refs/heads/feature')).toBeNull()
     expect(
       await gateway({ maxBundleBytes: size }).push(
@@ -644,7 +644,7 @@ describe('pushing without a bundle', () => {
   })
 
   it('pushes an up-to-date branch in one request, with no bundle', async () => {
-    const { feature } = await featureAhead()
+    await featureAhead()
     await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, 'feature:feature')
     const github = gateway()
     const push = vi.spyOn(github, 'push')

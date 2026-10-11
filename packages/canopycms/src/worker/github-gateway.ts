@@ -26,7 +26,7 @@ import {
 import { workerLog, workerLogError, workerLogWarn } from './log'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
-export interface GitHubFetchResult {
+interface GitHubFetchResult {
   /** Every GitHub branch, mapped to its tip, as this fetch left the mirror. */
   refs: ReadonlyMap<string, string>
   /**
@@ -40,7 +40,7 @@ export interface GitHubFetchResult {
 export const MAX_FETCH_HAVE = 10_000
 
 /** The most prerequisites one push names. */
-export const MAX_PUSH_PREREQUISITES = 3
+const MAX_PUSH_PREREQUISITES = 3
 
 /** The default cap on a pushed bundle, in bytes. */
 const DEFAULT_MAX_BUNDLE_BYTES = 1024 * 1024 * 1024

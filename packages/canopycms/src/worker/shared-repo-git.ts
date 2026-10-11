@@ -250,18 +250,18 @@ function packCommand(
 }
 
 /**
- * `--upload-pack` for a fetch FROM `remote.git`. Wants by object ID are allowed so a caller can
- * fetch exactly the commit it read, rather than whatever the ref points at by then.
+ * `--upload-pack` for a fetch FROM `remote.git` into a clone.
+ * @internal Exported for tests.
  */
 export function pinnedUploadPack(): string {
   // --strict: never `<path>/.git` in place of the repository named.
-  return packCommand('upload-pack', ['uploadpack.allowAnySHA1InWant=true'], ['--strict'])
+  return packCommand('upload-pack', [], ['--strict'])
 }
 
 /**
  * `--receive-pack` for a push INTO `remote.git`. Without it the push runs remote.git's own hooks
  * as the worker. The `receive.deny*` pins keep a planted setting from blocking the forced update
- * of the GitHub tracking refs.
+ * that publishes a rewritten history (worker/history-rewrite.ts).
  */
 export function pinnedReceivePack(): string {
   return packCommand('receive-pack', [
