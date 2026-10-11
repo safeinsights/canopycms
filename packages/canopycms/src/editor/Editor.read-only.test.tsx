@@ -278,7 +278,7 @@ describe('Editor on a read-only branch', () => {
 
     await titleInput()
     await waitFor(() => expect(screen.getByTestId('read-only-draft-notice')).toBeTruthy())
-    expect(screen.getByText(/base branch can't be saved to/)).toBeTruthy()
+    expect(screen.getByText(/won't become editable/)).toBeTruthy()
     expect(persistedDrafts()).toHaveProperty(CONTENT_ID)
 
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
@@ -318,5 +318,16 @@ describe('Editor on a read-only branch', () => {
     await titleInput()
     expect(screen.queryByTestId('entry-load-failed')).toBeNull()
     expect(String(consoleError.mock.calls[0]?.[0])).toContain('Load failed: 500')
+  })
+
+  it.each([
+    ['submitted', "They're kept on this device and come back when the branch is editable again."],
+    ['archived', "This branch won't become editable, so they can only be discarded."],
+  ])('tells a %s branch what happens to a kept draft', async (status, sentence) => {
+    seedDraft()
+    stubApi([{ ...protectedMain, isProtected: false, readOnly: false, status }])
+    renderEditor()
+    await waitFor(() => expect(screen.getByTestId('read-only-draft-notice')).toBeTruthy())
+    expect(screen.getByText(sentence)).toBeTruthy()
   })
 })

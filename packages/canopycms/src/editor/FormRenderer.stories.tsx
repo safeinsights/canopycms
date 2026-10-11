@@ -226,7 +226,7 @@ export const ReadOnly: Story = {
 export const ReadOnlyWithKeptDraft: Story = {
   render: () => (
     <div>
-      <ReadOnlyDraftNotice baseBranch={false} onDiscard={() => {}} />
+      <ReadOnlyDraftNotice permanentlyReadOnly={false} onDiscard={() => {}} />
       <FormRenderer fields={postSchema} value={initialPost} onChange={() => {}} readOnly />
     </div>
   ),

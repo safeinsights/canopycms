@@ -436,6 +436,14 @@ export class EditorPage {
   }
 
   /**
+   * A rich-text (markdown/MDX) field's editable area, named after the field's label.
+   * @param label - The field's label, e.g. 'Body'
+   */
+  richTextField(label: string): Locator {
+    return this.formPane.getByRole('textbox', { name: label, exact: true })
+  }
+
+  /**
    * Fill a text field with a value.
    * @param fieldName - The field name (matches data-canopy-field value)
    * @param value - The value to enter

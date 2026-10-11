@@ -12,6 +12,7 @@ import {
   Text,
   Title,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core'
 import { IconFolderOpen, IconChevronDown, IconGitBranch, IconLock } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
@@ -451,6 +452,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     {draftStorageFailed
                       ? 'Unsaved · not kept on this device'
                       : 'Unsaved · kept on this device'}
+                    {draftStorageFailed && (
+                      <VisuallyHidden component="span">
+                        . Save before you leave or reload, or they&apos;ll be lost.
+                      </VisuallyHidden>
+                    )}
                   </Text>
                 </Tooltip>
               )}

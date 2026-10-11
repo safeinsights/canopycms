@@ -287,9 +287,10 @@ describe('EditorHeader - unsaved indicator', () => {
 
   it('says they are not kept when storing drafts failed', () => {
     renderHeader({ hasUnsavedChanges: true, draftStorageFailed: true })
-    expect(screen.getByTestId('unsaved-indicator').textContent).toBe(
-      'Unsaved · not kept on this device',
-    )
+    const indicator = screen.getByTestId('unsaved-indicator')
+    expect(indicator.textContent).toContain('Unsaved · not kept on this device')
+    // The tooltip's consequence is mouse-only, so the status text carries it too.
+    expect(indicator.textContent).toContain("Save before you leave or reload, or they'll be lost.")
   })
 
   it('is absent with nothing unsaved', () => {

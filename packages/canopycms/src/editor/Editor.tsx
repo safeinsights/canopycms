@@ -517,6 +517,14 @@ const EditorContent: React.FC<EditorProps> = ({
   // runs the load effect below again.
   const [loadFailedKey, setLoadFailedKey] = useState<string | null>(null)
   const [loadAttempt, setLoadAttempt] = useState(0)
+  // Reset during render, not in an effect, so returning to a failed entry never paints its Alert
+  // for the frame before its load starts again.
+  const selectionKey = `${branchNameState}:${currentEntry?.contentId ?? ''}`
+  const [loadFailedSelection, setLoadFailedSelection] = useState(selectionKey)
+  if (loadFailedSelection !== selectionKey) {
+    setLoadFailedSelection(selectionKey)
+    setLoadFailedKey(null)
+  }
   // Entries (keyed like `loadingEntryIdsRef`) whose read the API refused as SCHEMA_UNAVAILABLE.
   // The ref stops the load effect retrying them; the state re-renders the notice.
   const schemaUnavailableRef = useRef<Set<string>>(new Set())
@@ -1235,7 +1243,10 @@ const EditorContent: React.FC<EditorProps> = ({
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
                           {hiddenDraftNotice && (
                             <ReadOnlyDraftNotice
-                              baseBranch={currentBranch?.isProtected ?? true}
+                              permanentlyReadOnly={
+                                (currentBranch?.isProtected ?? true) ||
+                                currentBranch?.status === 'archived'
+                              }
                               onDiscard={handleDiscardFileDraft}
                             />
                           )}
