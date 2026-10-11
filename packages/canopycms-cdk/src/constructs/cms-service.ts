@@ -223,7 +223,12 @@ interface TokenBound {
  * {@link USER_DATA_TOKEN_MAX_BYTES}; an env value from a token longer than
  * {@link ENV_TOKEN_MAX_BYTES} is not caught.
  */
-function addUserData(userData: ec2.UserData, bounds: TokenBound[], ...lines: string[]): void {
+function addUserData(
+  userData: ec2.UserData,
+  bounds: TokenBound[],
+  protectedBranchCount: number,
+  ...lines: string[]
+): void {
   userData.addCommands(...lines)
   const bytesOf = new Map(
     bounds.flatMap(({ token, bytes }) =>
@@ -239,9 +244,9 @@ function addUserData(userData: ec2.UserData, bounds: TokenBound[], ...lines: str
   if (bytes > USER_DATA_MAX_BYTES) {
     throw new Error(
       `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
-        `${USER_DATA_MAX_BYTES} EC2 accepts. Its size grows with protectedBranches and the ` +
-        `lengths of the names passed in (secret ARNs and fields, branches, the repository, the ` +
-        `worker log group): shorten them, or protect branches with fewer, wider * patterns.`,
+        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${protectedBranchCount} ` +
+        `entries. Protect branches with fewer, wider * patterns, or shorten the other names ` +
+        `passed in (secret ARNs and fields, branches, the repository, the worker log group).`,
     )
   }
 }
@@ -1958,6 +1963,7 @@ export class CanopyCmsService extends Construct {
           .filter(([, value]) => Token.isUnresolved(value))
           .map(([, value]) => ({ token: value, bytes: ENV_TOKEN_MAX_BYTES })),
       ],
+      protectedBranches.length,
       ...withoutShellComments(
         '#!/bin/bash',
         'set -euo pipefail',
