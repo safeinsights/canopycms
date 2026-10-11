@@ -105,8 +105,10 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
     if (child.exitCode === null && child.signalCode === null) {
       killedFor = reason
       terminate(child)
-    } else if (child.exitCode === 0) {
-      killedFor = reason
+    } else {
+      if (child.exitCode === 0) killedFor = reason
+      // What git spawned can outlive it, holding stderr open.
+      signalGroup(child, 'SIGTERM')
     }
     stdout.destroy()
   }

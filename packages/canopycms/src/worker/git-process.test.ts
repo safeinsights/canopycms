@@ -206,6 +206,16 @@ describe('spawnGit', () => {
     expect(Date.now() - started).toBeLessThan(3_000)
   })
 
+  it('stops what git spawned even after git itself has exited', async () => {
+    const proc = spawnGit(['quit'], alias('quit', 'sleep 6 & exit 3'))
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const started = Date.now()
+    proc.kill('no longer wanted')
+    const err = await failure(proc.exited)
+    expect(err.exitCode).toBe(3)
+    expect(Date.now() - started).toBeLessThan(3_000)
+  })
+
   it('rejects `exited` after the caller kills it', async () => {
     const proc = spawnGit(['nap'], alias('nap', 'sleep 5'))
     proc.kill('not needed')
