@@ -609,17 +609,52 @@ describe('the exact scrubs of what the gateway reads', () => {
 })
 
 describe('runGateway: a failed prepare', () => {
-  it('leaves the gateway serving, to answer its fatal error to the worker', async () => {
+  it('keeps answering its fatal error for the hold, then drains and exits 1, as a failed boot does', async () => {
     const h = harness()
-    h.gateway.prepare.mockRejectedValue(new Error('the state directory is world-writable'))
+    h.gateway.prepare.mockRejectedValue(new Error('GitHub App authentication failed: 401'))
+
+    await runGateway(h.deps)
+    await flush()
+
+    // The real gateway stays served through the hold: its `health` answers prepare's failure.
+    expect(h.served).toHaveLength(1)
+    expect(h.served[0].gateway).toBe(h.gateway)
+    expect(h.sleep).toHaveBeenCalledWith(FAILED_BOOT_HOLD_MS)
+    expect(h.drain).not.toHaveBeenCalled()
+    expect(h.exit).not.toHaveBeenCalled()
+
+    h.hold.resolve()
+    await flush()
+
+    expect(h.drain).toHaveBeenCalledWith(0)
+    expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('drains and exits 0 on a SIGTERM during the hold, and not 1 after it', async () => {
+    const h = harness()
+    h.gateway.prepare.mockRejectedValue(new Error('GitHub App authentication failed: 401'))
+
+    await runGateway(h.deps)
+    await flush()
+    h.signals.get('SIGTERM')?.()
+    await flush()
+    h.hold.resolve()
+    await flush()
+
+    expect(h.drain).toHaveBeenCalledTimes(1)
+    expect(h.drain).toHaveBeenCalledWith(GATEWAY_DRAIN_GRACE_MS)
+    expect(h.exitCodes()).toEqual([0])
+  })
+
+  it('neither holds nor exits once prepare has succeeded', async () => {
+    const h = harness()
 
     await runGateway(h.deps)
     await flush()
 
     expect(h.gateway.prepare).toHaveBeenCalledTimes(1)
-    expect(h.exit).not.toHaveBeenCalled()
-    expect(h.drain).not.toHaveBeenCalled()
     expect(h.sleep).not.toHaveBeenCalled()
+    expect(h.exit).not.toHaveBeenCalled()
   })
 })
 

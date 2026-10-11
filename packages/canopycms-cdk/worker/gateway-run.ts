@@ -51,7 +51,7 @@ import type { TerminationNotice, TerminationWatchOptions } from './termination-w
 export const GATEWAY_DRAIN_GRACE_MS = 60_000
 
 /**
- * How long a gateway that failed to boot serves its stand-in before exiting, so the worker has
+ * How long a gateway that failed to boot or to prepare answers the cause before exiting, so the worker has
  * time to read the cause. systemd then starts it again: a transient cause (a Secrets Manager
  * timeout) recovers, and a permanent one fails again, loudly, each time.
  */
@@ -280,28 +280,30 @@ export async function runGateway(deps: RunGatewayDeps): Promise<void> {
   const stop = stopControl(deps)
 
   let gateway: GitHubGateway
+  let server: Pick<GitHubGatewayServer, 'drain'>
   try {
     gateway = await buildGateway(deps)
-    stop.watch(await deps.serve(gateway, listen))
+    server = await deps.serve(gateway, listen)
   } catch (err) {
     gatewayLogError('Fatal error:', getErrorMessage(err))
     await serveFailedBoot(deps, listen, err, sleep, stop)
     return
   }
+  stop.watch(server)
 
-  // The server started `prepare()` as it took its socket. A failure stays the gateway's fatal
-  // error and does not end the process: it serves `health` with it until systemd restarts it.
+  // The server started `prepare()` as it took its socket. A failure is the gateway's fatal error,
+  // which `health` answers; then it ends the process as a failed boot does, so a cause fixed
+  // since (a rotated key) is read afresh.
   void gateway.prepare().then(
     () => gatewayLog('GitHub gateway ready'),
-    (err) =>
-      gatewayLogError(
-        'The GitHub gateway could not prepare, and answers this to the worker until it restarts:',
-        getErrorMessage(err),
-      ),
+    async (err) => {
+      gatewayLogError('The GitHub gateway could not prepare:', getErrorMessage(err))
+      await holdThenExit(deps, server, sleep, stop)
+    },
   )
 }
 
-/** Serve the stand-in for a failed boot, hold it, then exit 1 so systemd starts the gateway again. */
+/** Serve the stand-in for a failed boot, then {@link holdThenExit}. */
 async function serveFailedBoot(
   deps: RunGatewayDeps,
   listen: GitHubGatewayListen,
@@ -318,7 +320,20 @@ async function serveFailedBoot(
     return
   }
   stop.watch(server)
+  await holdThenExit(deps, server, sleep, stop)
+}
 
+/**
+ * A gateway that cannot work (its boot or its `prepare()` failed): keep answering `health` with
+ * the cause for {@link FAILED_BOOT_HOLD_MS}, so the worker records it, then exit 1 so systemd
+ * starts the gateway again.
+ */
+async function holdThenExit(
+  deps: RunGatewayDeps,
+  server: Pick<GitHubGatewayServer, 'drain'>,
+  sleep: (ms: number) => Promise<void>,
+  stop: StopControl,
+): Promise<void> {
   await sleep(FAILED_BOOT_HOLD_MS)
   // A signal during the hold has drained and exited 0 already.
   if (stop.stopping()) return
@@ -326,7 +341,7 @@ async function serveFailedBoot(
   try {
     await server.drain(0)
   } catch (err) {
-    gatewayLogError('Draining the failed boot failed:', getErrorMessage(err))
+    gatewayLogError('Draining the failed gateway failed:', getErrorMessage(err))
   }
   deps.exit(1)
 }

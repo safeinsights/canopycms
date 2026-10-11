@@ -18,6 +18,7 @@
 // packages/canopycms/src/worker/log.ts.
 import {
   DEFAULT_TASK_TIMEOUT,
+  GitHubGatewayUnreachableError,
   assertSelfChecks,
   workerLog,
   workerLogError,
@@ -60,7 +61,11 @@ export interface RunWorkerDeps {
   watchForTermination: (options: TerminationWatchOptions) => Promise<TerminationNotice>
   completeTerminationLifecycleAction: () => Promise<void>
   /** `recordWorkerStartupFailure` from core; never throws. */
-  recordWorkerStartupFailure: (options: { workspacePath: string; error: unknown }) => Promise<void>
+  recordWorkerStartupFailure: (options: {
+    workspacePath: string
+    error: unknown
+    keepRecordedFatal?: boolean
+  }) => Promise<void>
   /** Split mode: the client of the gateway serving `socketPath`. */
   connectGateway: (socketPath: string, options: GitHubGatewayClientOptions) => GitHubGateway
   /** Split mode: core's `workerSelfChecks`. */
@@ -414,7 +419,18 @@ async function buildSplitWorker(
 
   // Waits up to 300 s for the gateway's prepare, which includes its secret reads. Its fatal
   // error becomes this worker's, so `lastFatalError` names the cause.
-  const health = await gateway.health()
+  let health: Awaited<ReturnType<GitHubGateway['health']>>
+  try {
+    health = await gateway.health()
+  } catch (err) {
+    // Not answering within the wait is the gateway being away, as a refused connection is.
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new GitHubGatewayUnreachableError(
+        `The GitHub gateway did not answer health in time: ${getErrorMessage(err)}`,
+      )
+    }
+    throw err
+  }
   if (health.fatalError !== null) {
     throw new Error(`The GitHub gateway could not start: ${health.fatalError}`)
   }
@@ -544,7 +560,13 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
   } catch (err) {
     workerLogError('Fatal error:', getErrorMessage(err))
     if (!startCalled && workspacePath) {
-      await deps.recordWorkerStartupFailure({ workspacePath, error: err })
+      // A gateway that is away (restarting after its own fatal error, which it serves for a while
+      // and then exits on) says nothing new: it must not replace the cause recorded before it.
+      await deps.recordWorkerStartupFailure({
+        workspacePath,
+        error: err,
+        ...(err instanceof GitHubGatewayUnreachableError ? { keepRecordedFatal: true } : {}),
+      })
     }
     if (terminating) {
       await terminating

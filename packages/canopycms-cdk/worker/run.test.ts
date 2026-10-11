@@ -12,6 +12,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_TASK_TIMEOUT,
+  GitHubGatewayUnreachableError,
+  recordWorkerStartupFailure,
   workerSelfChecks,
   type CmsWorkerConfig,
   type GitHubGateway,
@@ -905,6 +907,72 @@ describe('runWorker: split mode', () => {
       expect(h.record).toHaveBeenCalledWith({ workspacePath: WORKSPACE, error: unreachable })
       expect(h.exitCodes()).toEqual([1])
       expect(h.createWorker).not.toHaveBeenCalled()
+    })
+
+    it('keeps the cause already recorded when the gateway is away, as it is while it restarts', async () => {
+      const away = new GitHubGatewayUnreachableError('Could not reach the GitHub gateway')
+      const h = harness({ env: splitEnv() })
+      h.gateway.health.mockRejectedValue(away)
+
+      await runWorker(h.deps)
+
+      expect(h.record).toHaveBeenCalledWith({
+        workspacePath: WORKSPACE,
+        error: away,
+        keepRecordedFatal: true,
+      })
+      expect(h.exitCodes()).toEqual([1])
+    })
+
+    it('counts a health wait that timed out as the gateway being away', async () => {
+      const h = harness({ env: splitEnv() })
+      h.gateway.health.mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      )
+
+      await runWorker(h.deps)
+
+      expect(h.record).toHaveBeenCalledWith({
+        workspacePath: WORKSPACE,
+        error: expect.any(GitHubGatewayUnreachableError),
+        keepRecordedFatal: true,
+      })
+    })
+
+    it("leaves the gateway's fatal error from one cycle showing through the next cycle's gap", async () => {
+      const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-run-gap-'))
+      try {
+        const env = { ...splitEnv(), CANOPYCMS_WORKSPACE_ROOT: workspace }
+        const statusFile = path.join(workspace, '.tasks', 'worker-status.json')
+        const recorded = async () =>
+          (
+            JSON.parse(await fs.readFile(statusFile, 'utf-8')) as {
+              lastFatalError?: { message: string }
+            }
+          ).lastFatalError?.message
+
+        // Cycle 1: the gateway serves its fatal error.
+        const first = harness({ env, recordWorkerStartupFailure })
+        first.gateway.health.mockResolvedValue({
+          ...HEALTHY,
+          ready: false,
+          fatalError: 'GitHub App authentication failed: 401',
+        })
+        await runWorker(first.deps)
+        expect(await recorded()).toContain('GitHub App authentication failed: 401')
+
+        // Cycle 2: the gateway has exited to restart, and is away.
+        const second = harness({ env, recordWorkerStartupFailure })
+        second.gateway.health.mockRejectedValue(
+          new GitHubGatewayUnreachableError('Could not reach the GitHub gateway'),
+        )
+        await runWorker(second.deps)
+
+        expect(await recorded()).toContain('GitHub App authentication failed: 401')
+        expect(second.exitCodes()).toEqual([1])
+      } finally {
+        await fs.rm(workspace, { recursive: true, force: true })
+      }
     })
 
     it('refuses a gateway that answers without being ready or failed', async () => {

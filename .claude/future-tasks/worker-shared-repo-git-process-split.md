@@ -1196,8 +1196,9 @@ the drain mapping, deadlines, and the self-check helpers.
   - the fb tunnels go to PR 6 (above);
   - the worker's secret check also refuses `GH_TOKEN`, `GITHUB_TOKEN`, `GITHUB_BOT_TOKEN` and the
     AWS SDK's static credentials;
-  - a failed `prepare()` stays up and serves its fatal error through `health`, which the worker
-    records as `lastFatalError`, so `prepare` fails only on lasting causes;
+  - a failed `prepare()` serves its fatal error through `health` for 60 s, which the worker records
+    as `lastFatalError`, then exits 1, as a failed boot does, so systemd's restart reads the secrets
+    afresh; `prepare` fails only on lasting causes (this replaces an earlier "stays up");
   - SIGTERM drains with a finite grace, then exits;
   - synth and the gateway's boot refuse more than 1024 `protectedBranches` entries.
 
@@ -1216,7 +1217,9 @@ the drain mapping, deadlines, and the self-check helpers.
     mirror only warns, since every session retries it.
   - A boot that fails before the real gateway is served (self-checks, configuration, a secret read)
     serves a stand-in that answers `health` with the scrubbed cause and fails every other operation
-    as a status-less (transient) error, for 60 s, then exits 1.
+    as a status-less (transient) error. It and a failed `prepare()` take one path: answer the cause
+    for 60 s, drain, exit 1. A worker that finds the gateway away meanwhile (unreachable, or no
+    `health` answer within 300 s) exits 1 without replacing a `lastFatalError` already recorded.
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
@@ -1238,8 +1241,8 @@ the drain mapping, deadlines, and the self-check helpers.
   in `canopycms/auth/cache` rather than a Clerk `writeClerkSnapshot`.
 - PR 6:
   - the gateway unit's `StartLimitIntervalSec`/`StartLimitBurst` and `RestartSec` must let the
-    failed boot's 60 s hold, exit 1 and restart repeat without systemd giving up for good on a
-    transient secret read;
+    60 s hold, exit 1 and restart (of a failed boot or a failed `prepare()`) repeat indefinitely,
+    perhaps with a growing `RestartSec`, without systemd giving up for good on a transient cause;
   - `TimeoutStopSec` stays above the 60 s drain plus exit, and `KillMode` stays `mixed`;
   - `ExecStart=… index.js gateway`; `gateway.env` carries the owner, repo, base branch,
     `CANOPYCMS_PROTECTED_BRANCHES`, `CANOPYCMS_WORKER_CAPACITY`, the contract stamp and the secrets;
