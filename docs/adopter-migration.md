@@ -88,6 +88,7 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| next | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -570,6 +571,13 @@ stops applying and no keychain credential is tried.
 and operations may reuse GitHub fetches under 30 seconds old.
 
 **To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
+
+### The worker follows a rebased or deleted GitHub branch
+
+**What changed.** (next) A branch rebased or deleted on GitHub no longer draws a worker warning
+every sync: the worker's copy follows GitHub unless it holds editor work, which System health lists.
+
+**To adopt.** Nothing.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

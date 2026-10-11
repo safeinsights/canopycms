@@ -226,6 +226,7 @@ direction, and every invariant.
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
+- `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`

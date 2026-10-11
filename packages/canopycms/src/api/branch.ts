@@ -410,10 +410,10 @@ export const createBranchHandler = async (
         // cannot cover every ordering: when the branch still existed on
         // GitHub at editor-delete time, the sync loop's reconcile re-creates
         // the local head from the tracking ref within a cycle, and once the
-        // GitHub side is later deleted (pruning the tracking ref) that
-        // re-created head is orphaned with no registry entry left for the
-        // delete path to ever run against. Healing at REUSE time covers
-        // every ordering, however the head got orphaned: the registry check
+        // GitHub side is later deleted that re-created head stays until the
+        // sync loop's next prune, with no registry entry left for the delete
+        // path to run against. Healing at REUSE time covers every ordering,
+        // however the head got orphaned: the registry check
         // above already proved no live branch owns this name, and the
         // tracking check just proved GitHub doesn't either, so a remaining
         // local head is stale by definition. Best-effort (old-value-guarded
@@ -729,10 +729,10 @@ export const deleteBranchHandler = async (
   if (deletingPath) await removeLeftoverDir(deletingPath)
 
   // Also delete the branch's local head from the remote.git mirror (the
-  // deployment's local origin). The sync loop deliberately never deletes a
-  // local head (see reconcileTrackedBranches), so THIS is the one explicit
-  // path that removes it -- without this, the head outlives the branch
-  // forever, and reusing the name after the GitHub side is gone (e.g. a
+  // deployment's local origin). The sync loop's reconcileTrackedBranches
+  // removes a head only once GitHub no longer has its branch, so while GitHub
+  // does, THIS is the path that removes it -- without this, the head outlives
+  // the branch, and reusing the name after the GitHub side is gone (e.g. a
   // squash-merged PR with auto-delete) has the reused branch's first publish
   // rejected non-fast-forward against the stale old tip: a permanent,
   // misleading 409 -- and a retried submit would then ship the STALE head to

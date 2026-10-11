@@ -837,12 +837,12 @@ export class GitManager {
       .filter(Boolean)
     if (options.namespaces === 'tracking') {
       // GitHub's view only. Local heads in `remote.git` are NOT evidence of a
-      // collision for branch CREATION: nothing ever removes them (deleting a
-      // branch in the editor unlinks its metadata and rm -rf's the clone, and
-      // reconcileTrackedBranches deliberately never deletes a local head), so
-      // an ordinary create -> publish -> merge -> delete -> reuse-the-name
-      // cycle would otherwise report a permanent, untrue collision on a name
-      // the user just deleted. This deployment's own live branches are already
+      // collision for branch CREATION: one can outlive its branch (the sync
+      // loop's reconcileTrackedBranches deletes it only a cycle after GitHub
+      // has, and an editor delete's own removal is best-effort), so an
+      // ordinary create -> publish -> merge -> delete -> reuse-the-name cycle
+      // would otherwise report an untrue collision on a name the user just
+      // deleted. This deployment's own live branches are already
       // covered by the branch registry check that runs before this one.
       return refs.includes(`${GITHUB_TRACKING_REF_PREFIX}${branch}`)
     }
@@ -856,10 +856,10 @@ export class GitManager {
    * Delete `refs/heads/<branch>` from a bare local mirror, if present. A
    * no-op (not an error) when the ref doesn't exist.
    *
-   * The explicit path for removing a deleted branch's local head, which the
-   * sync loop deliberately is not (reconcileTrackedBranches never deletes a
-   * head — see GITHUB_TRACKING_REF_PREFIX). Called by api/branch.ts's
-   * deleteBranchHandler: a head left in `remote.git` forever makes the
+   * The path that removes a deleted branch's local head at once; the sync
+   * loop's reconcileTrackedBranches removes one only after GitHub no longer
+   * has the branch. Called by api/branch.ts's deleteBranchHandler: a head
+   * left in `remote.git` makes the
    * create -> publish -> squash-merge -> delete -> reuse-the-name cycle reject
    * the reused branch's first publish non-fast-forward against the stale head
    * (`GitManager.push()` pushes the branch to the same name, and a squash-merged old tip is

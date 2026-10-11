@@ -43,6 +43,7 @@ import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
+import { escapeForLog } from '../../utils/escape-text'
 
 // ============================================================================
 // Small pure helpers
@@ -160,6 +161,43 @@ function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
         Held since {hold.since} · {hold.files.join(', ')}
         {hold.fileCount > hold.files.length && ` and ${hold.fileCount - hold.files.length} more`}
       </Text>
+    </Alert>
+  )
+}
+
+/**
+ * Branches the worker left diverged from GitHub because this deployment's copy holds editor work
+ * (worker/git-sync.ts's `reconcileTrackedBranches`). A copy holding none is moved to GitHub's tip
+ * and never listed. Names come from GitHub and are attacker-chosen, so each is shown escaped.
+ */
+function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
+  return (
+    <Alert
+      color="orange"
+      icon={<IconAlertTriangle size={16} />}
+      title={`${plural(names.length, 'branch')} diverged from GitHub`}
+      data-testid="diverged-branches-alert"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          This deployment&apos;s copy of each branch below holds editor work that conflicts with the
+          branch on GitHub, usually because the GitHub branch was rebased or force-pushed, or
+          because another CanopyCMS deployment sharing this repository uses the same branch name.
+          Neither copy has been changed, and publishing the branch fails until they agree.
+        </Text>
+        <Text size="sm">
+          To keep GitHub&apos;s version, purge the branch&apos;s directory in the Branches tab: its
+          editor work stays in the trash for 30 days, and the worker takes GitHub&apos;s version on
+          its next sync. Don&apos;t delete the branch in the editor, which can delete it on GitHub
+          too. To keep the editor work as well, have the editor copy it into a new branch first. For
+          the base branch or a settings branch, ask a developer to check what changed on GitHub.
+        </Text>
+        <Group gap={4}>
+          {names.map((name) => (
+            <Code key={name}>{escapeForLog(name)}</Code>
+          ))}
+        </Group>
+      </Stack>
     </Alert>
   )
 }
@@ -436,6 +474,10 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="orange">
           Warning: could not read worker status ({status.statusReadError})
         </Text>
+      )}
+
+      {lastGitSync?.tracked && lastGitSync.tracked.diverged.length > 0 && (
+        <DivergedBranchesAlert names={lastGitSync.tracked.diverged} />
       )}
 
       {status.workerStatus?.lastGitSyncError && (

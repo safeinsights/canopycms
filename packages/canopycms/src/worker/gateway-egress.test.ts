@@ -3,8 +3,8 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { mockConsole, octokitErrorFor, type MockConsole } from '../test-utils'
+import { escapeForLog } from '../utils/escape-text'
 import {
-  escapeForLog,
   gatewayLog,
   gatewayLogWarn,
   redactEgress,

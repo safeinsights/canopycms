@@ -27,14 +27,37 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { enqueueTask } from '../task-queue/cms-task-queue'
 import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
+import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+
+/**
+ * Runs inside stale-mirror.ts's check, after the head is read and before its leased update: the
+ * window a concurrent Lambda push lands in.
+ */
+const duringStaleMirrorCheck = vi.hoisted(() => ({ hook: null as null | (() => Promise<void>) }))
+
+vi.mock('../task-queue/cms-task-queue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../task-queue/cms-task-queue')>()
+  return {
+    ...actual,
+    listTasks: async (...args: Parameters<typeof actual.listTasks>) => {
+      if (args[1] === 'processing' && duringStaleMirrorCheck.hook) {
+        const hook = duringStaleMirrorCheck.hook
+        duringStaleMirrorCheck.hook = null
+        await hook()
+      }
+      return actual.listTasks(...args)
+    },
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Bare-repo helpers
@@ -129,6 +152,29 @@ async function commitOnto(
   return sha
 }
 
+/**
+ * Rebase-and-force-push on GitHub: `branch` is replaced by a new commit on `onto`, so the old tip is
+ * no longer an ancestor of the new one, and the new one no ancestor of the old. Returns the new tip.
+ */
+async function forcePushRewrite(
+  scratchRoot: string,
+  bareRepoPath: string,
+  branch: string,
+  onto = 'main',
+): Promise<string> {
+  const scratchDir = path.join(scratchRoot, `scratch-${scratchCounter++}`)
+  await simpleGit().clone(bareRepoPath, scratchDir, ['--branch', onto, '--single-branch'])
+  const scratchGit = simpleGit({ baseDir: scratchDir, unsafe: { allowUnsafeEditor: true } })
+  await scratchGit.addConfig('user.name', 'Test Bot')
+  await scratchGit.addConfig('user.email', 'test@canopycms.test')
+  await scratchGit.checkout(['-B', branch])
+  await fs.writeFile(path.join(scratchDir, `rewrite-${scratchCounter}.txt`), 'rebased\n')
+  await scratchGit.add(['.'])
+  await scratchGit.commit(`rewrite ${branch}`)
+  await scratchGit.raw(['push', '--force', bareRepoPath, `${branch}:${branch}`])
+  return (await scratchGit.revparse(['HEAD'])).trim()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -181,6 +227,15 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
+  /** A branch workspace at `dirName`, as the Lambda publishes one: a clone with branch.json. */
+  const giveWorkspace = async (dirName: string) => {
+    const branchPath = path.join(workspacePath, 'content-branches', dirName)
+    await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
+    await getBranchMetadataFileManager(branchPath, path.dirname(branchPath)).save({
+      branch: { name: dirName },
+    })
+  }
+
   const makeWorker = () => {
     const worker = new CmsWorker({
       workspacePath,
@@ -202,6 +257,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     const sha = await commitOnto(tmpDir, remoteGitPath, 'feature-unpushed', {
       'a.txt': 'editor draft',
     })
+    await giveWorkspace('feature-unpushed')
 
     const worker = makeWorker()
     await worker.syncGit()
@@ -281,6 +337,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     await commitOnto(tmpDir, githubPath, 'feature-diverged', {
       'github.txt': 'github-only work',
     })
+    await giveWorkspace('feature-diverged')
 
     const consoleSpy = mockConsole()
     const worker = makeWorker()
@@ -334,6 +391,8 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     // the fetch itself, before the reconcile is ever reached.
     await commitOnto(tmpDir, remoteGitPath, 'feature-broken', { 'local.txt': 'local' })
     await commitOnto(tmpDir, githubPath, 'feature-broken', { 'github.txt': 'github' })
+    // Editor work, so the diverged head is kept rather than moved to GitHub's tip.
+    await giveWorkspace('feature-broken')
     await makeWorker().syncGit()
 
     // Only the healthy branch has anything new this cycle.
@@ -391,25 +450,243 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     })
   })
 
-  it('does not delete a local head when the branch is removed from GitHub', async () => {
+  it('keeps the head of a branch GitHub deleted while its workspace remains', async () => {
     await commitOnto(tmpDir, githubPath, 'feature-deleted-upstream', {
       'a.txt': 'will be deleted upstream',
     })
     const sha = await seedBranch(remoteGitPath, githubPath, 'feature-deleted-upstream')
-
-    // Warm-up cycle: remote.git also gets a GITHUB_TRACKING_REF_PREFIX
-    // tracking ref for it, modeling the steady state before the branch
-    // disappears from GitHub (not load-bearing for the assertion below,
-    // which only checks refs/heads/*, but keeps the fixture realistic).
+    await giveWorkspace('feature-deleted-upstream')
     await makeWorker().syncGit()
 
     await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-deleted-upstream'])
-
-    const worker = makeWorker()
-    await worker.syncGit() // fetch runs with --prune
+    await makeWorker().syncGit()
 
     await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-deleted-upstream')).resolves.toBe(
       sha,
     )
+    expect(trackedOf(await readStatus()).pruned).toEqual([])
+  })
+})
+
+describe('CmsWorker.syncGit() stale branch copies', () => {
+  let tmpDir: string
+  let workspacePath: string
+  let githubPath: string
+  let remoteGitPath: string
+
+  const readStatus = async (): Promise<WorkerStatusReport> =>
+    JSON.parse(await fs.readFile(path.join(workspacePath, '.tasks', WORKER_STATUS_FILE), 'utf-8'))
+  const taskDir = () => path.join(workspacePath, '.tasks')
+
+  beforeEach(async () => {
+    mockConsole()
+    duringStaleMirrorCheck.hook = null
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-stale-mirror-test-'))
+    workspacePath = path.join(tmpDir, 'workspace')
+    githubPath = path.join(tmpDir, 'fixture-github.git')
+    remoteGitPath = path.join(workspacePath, 'remote.git')
+    await fs.mkdir(workspacePath, { recursive: true })
+    await simpleGit().raw(['init', '--bare', '--initial-branch', 'main', githubPath])
+    await simpleGit().raw(['init', '--bare', '--initial-branch', 'main', remoteGitPath])
+    await commitOnto(tmpDir, githubPath, 'main', { 'README.md': '# hello\n' }, 'initial commit')
+    await seedBranch(remoteGitPath, githubPath, 'main')
+  })
+
+  afterEach(async () => {
+    duringStaleMirrorCheck.hook = null
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: 'main',
+    })
+    // One worker runs several cycles in a test, each of which must see GitHub's latest change.
+    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath, fetchCoalesceMs: 0 })
+    ;(worker as unknown as { running: boolean }).running = true
+    return worker
+  }
+
+  const giveWorkspace = async (dirName: string) => {
+    const branchPath = path.join(workspacePath, 'content-branches', dirName)
+    await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
+    await getBranchMetadataFileManager(branchPath, path.dirname(branchPath)).save({
+      branch: { name: dirName },
+    })
+  }
+
+  /** A branch mirrored into remote.git by one cycle, then rebased and force-pushed on GitHub. */
+  const forcePushedAfterMirroring = async (
+    branch: string,
+  ): Promise<{ oldTip: string; newTip: string }> => {
+    const oldTip = await commitOnto(tmpDir, githubPath, branch, { 'a.txt': 'before rebase' })
+    await makeWorker().syncGit()
+    await expect(bareRevParse(remoteGitPath, `refs/heads/${branch}`)).resolves.toBe(oldTip)
+    const newTip = await forcePushRewrite(tmpDir, githubPath, branch)
+    return { oldTip, newTip }
+  }
+
+  const warningsNaming = (consoleSpy: ReturnType<typeof mockConsole>, text: string) =>
+    consoleSpy.all().warn.filter((line) => line.includes(text) && /diverged/.test(line))
+
+  it("moves a stale copy of a force-pushed branch to GitHub's tip, without a warning", async () => {
+    const { newTip } = await forcePushedAfterMirroring('feature-rebased')
+
+    const consoleSpy = mockConsole()
+    await makeWorker().syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-rebased')).resolves.toBe(newTip)
+    const tracked = trackedOf(await readStatus())
+    expect(tracked.repointed).toEqual(['feature-rebased'])
+    expect(tracked.diverged).toEqual([])
+    expect(consoleSpy.all().warn.filter((line) => /diverged/.test(line))).toEqual([])
+  })
+
+  it('keeps a diverged head that has a workspace, a queued push, or is a settings branch', async () => {
+    const workspace = await forcePushedAfterMirroring('feature-with-workspace')
+    await giveWorkspace('feature-with-workspace')
+    const queued = await forcePushedAfterMirroring('feature-queued')
+    await enqueueTask(taskDir(), { action: 'push-branch', payload: { branch: 'feature-queued' } })
+    const settings = await forcePushedAfterMirroring('canopycms-settings-elsewhere')
+
+    const consoleSpy = mockConsole()
+    await makeWorker().syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-with-workspace')).resolves.toBe(
+      workspace.oldTip,
+    )
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-queued')).resolves.toBe(
+      queued.oldTip,
+    )
+    await expect(
+      bareRevParse(remoteGitPath, 'refs/heads/canopycms-settings-elsewhere'),
+    ).resolves.toBe(settings.oldTip)
+    const tracked = trackedOf(await readStatus())
+    expect([...tracked.diverged].sort()).toEqual([
+      'canopycms-settings-elsewhere',
+      'feature-queued',
+      'feature-with-workspace',
+    ])
+    expect(tracked.repointed).toEqual([])
+    expect(warningsNaming(consoleSpy, 'feature-with-workspace')[0]).toMatch(
+      /has a branch workspace/,
+    )
+    expect(warningsNaming(consoleSpy, 'feature-queued')[0]).toMatch(/a push of it is queued/)
+    expect(warningsNaming(consoleSpy, 'canopycms-settings-elsewhere')[0]).toMatch(
+      /is a settings branch/,
+    )
+  })
+
+  it('warns once per pair of tips, and again when either tip moves', async () => {
+    await forcePushedAfterMirroring('feature-collision')
+    await giveWorkspace('feature-collision')
+    const worker = makeWorker()
+
+    const consoleSpy = mockConsole()
+    await worker.syncGit()
+    await worker.syncGit()
+    expect(warningsNaming(consoleSpy, 'feature-collision')).toHaveLength(1)
+
+    const githubTip = await commitOnto(tmpDir, githubPath, 'feature-collision', { 'g.txt': '1' })
+    await worker.syncGit()
+    await worker.syncGit()
+    expect(warningsNaming(consoleSpy, 'feature-collision')).toHaveLength(2)
+    expect(warningsNaming(consoleSpy, 'feature-collision')[1]).toContain(githubTip)
+
+    const localTip = await commitOnto(tmpDir, remoteGitPath, 'feature-collision', { 'l.txt': '1' })
+    await worker.syncGit()
+    expect(warningsNaming(consoleSpy, 'feature-collision')).toHaveLength(3)
+    expect(warningsNaming(consoleSpy, 'feature-collision')[2]).toContain(localTip)
+    expect(trackedOf(await readStatus()).diverged).toEqual(['feature-collision'])
+  })
+
+  it('deletes the head of a branch GitHub deleted once no editor work is left in it', async () => {
+    await commitOnto(tmpDir, githubPath, 'feature-merged', { 'a.txt': 'merged and deleted' })
+    await makeWorker().syncGit()
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-merged')).resolves.toBe(true)
+
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-merged'])
+    await makeWorker().syncGit()
+
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-merged')).resolves.toBe(false)
+    expect(trackedOf(await readStatus()).pruned).toEqual(['feature-merged'])
+  })
+
+  it('deletes nothing when GitHub answers without the base branch', async () => {
+    await commitOnto(tmpDir, githubPath, 'feature-kept', { 'a.txt': 'kept' })
+    await makeWorker().syncGit()
+
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-kept'])
+    await openBareRepo(githubPath).raw(['symbolic-ref', 'HEAD', 'refs/heads/feature-other'])
+    await commitOnto(tmpDir, githubPath, 'feature-other', { 'b.txt': 'other' })
+    await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/main'])
+    await makeWorker()
+      .syncGit()
+      .catch(() => {})
+
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-kept')).resolves.toBe(true)
+    await expect(bareRefExists(remoteGitPath, 'refs/heads/main')).resolves.toBe(true)
+  })
+
+  it('leaves a head that moved during the check alone, and settles it next cycle', async () => {
+    const { newTip } = await forcePushedAfterMirroring('feature-raced')
+    let movedTip = ''
+    duringStaleMirrorCheck.hook = async () => {
+      movedTip = await commitOnto(tmpDir, remoteGitPath, 'feature-raced', { 'race.txt': 'push' })
+    }
+
+    const consoleSpy = mockConsole()
+    await expect(makeWorker().syncGit()).resolves.toBeUndefined()
+
+    expect(movedTip).not.toBe('')
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-raced')).resolves.toBe(movedTip)
+    expect(consoleSpy).toHaveWarned(/feature-raced moved while it was checked/)
+    const tracked = trackedOf(await readStatus())
+    expect(tracked.repointed).toEqual([])
+    expect(tracked.diverged).toEqual([])
+
+    await makeWorker().syncGit()
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-raced')).resolves.toBe(newTip)
+    expect(trackedOf(await readStatus()).repointed).toEqual(['feature-raced'])
+  })
+
+  it('keeps a diverged head while its provisioning lock is held elsewhere', async () => {
+    const { oldTip } = await forcePushedAfterMirroring('feature-provisioning')
+    const release = await tryAcquireProvisioningLock(
+      path.join(workspacePath, 'content-branches'),
+      branchProvisioningLockName('feature-provisioning'),
+    )
+    try {
+      const consoleSpy = mockConsole()
+      await makeWorker().syncGit()
+
+      await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-provisioning')).resolves.toBe(
+        oldTip,
+      )
+      expect(trackedOf(await readStatus()).diverged).toEqual(['feature-provisioning'])
+      expect(warningsNaming(consoleSpy, 'feature-provisioning')[0]).toMatch(
+        /workspace is being created, repaired or purged/,
+      )
+    } finally {
+      await release()
+    }
+  })
+
+  it('escapes a hostile branch name in the warning', async () => {
+    const hostile = 'feature-\u202eevil'
+    await forcePushedAfterMirroring(hostile)
+    await enqueueTask(taskDir(), { action: 'push-branch', payload: { branch: hostile } })
+
+    const consoleSpy = mockConsole()
+    await makeWorker().syncGit()
+
+    const [line] = warningsNaming(consoleSpy, 'feature-\\u{202e}evil')
+    expect(line).toBeDefined()
+    expect(line).not.toContain('\u202e')
+    expect(trackedOf(await readStatus()).diverged).toEqual([hostile])
   })
 })
