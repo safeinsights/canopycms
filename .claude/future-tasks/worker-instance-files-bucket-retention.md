@@ -8,7 +8,7 @@ summary: >-
 # [P3] Keep the worker's instance files as downloadable as its bundle
 
 **Found:** 2026-10-11, round 2 of the review of PR 6 of
-[worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md).
+[worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md).
 
 `packages/canopycms-cdk/src/constructs/worker-bundle.ts` makes the instance files a CDK asset in
 the bootstrap bucket. In asset mode the bundle has the same exposure. In parameter mode the

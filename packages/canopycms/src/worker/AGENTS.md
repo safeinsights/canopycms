@@ -36,6 +36,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `gateway-egress.ts`                                | Scrubbing and escaping all the gateway emits                                                                                                                          |
 | `git-process.ts`                                   | Streamed git, bounded by inactivity, a deadline, abort and output caps                                                                                                |
 | `self-checks.ts`                                   | The split's boot self-checks                                                                                                                                          |
+| `gateway-instance.ts`                              | The gateway's operations on the instance itself: the termination watch and completing the lifecycle action                                                            |
 | `shared-repo-git.ts`                               | The worker's git in `remote.git` and the clones: the pins, pinned pack commands, the config allowlist check                                                           |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
@@ -81,6 +82,11 @@ via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit
   here inherits.
 - The `log.ts` re-export from `cms-worker.ts` must survive any reshuffle, since
   `canopycms-cdk/worker/run.ts` has no other entrypoint: `cms-worker.ts`, at that re-export.
+- Two locks order every writer of the gateway's mirror, `exclusive` then the maintenance mutex:
+  `github-mirror-upkeep.ts`'s module doc.
+- The units, the sandbox each runs in, and `canopy-inspect`: `canopycms-cdk`'s
+  `src/constructs/worker-units.ts`; the two processes' boots: its `worker/run.ts` (the worker)
+  and `worker/gateway-run.ts` (the gateway).
 - github-auth's invariants (mint timeouts, no token caching, no re-wrapped mint rejection):
   `github-auth.ts`, at each rule; the fail-closed boot check: `github-gateway.ts`.
 

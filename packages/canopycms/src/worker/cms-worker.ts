@@ -1154,8 +1154,8 @@ export class CmsWorker {
    * `git clone https://x-access-token:<token>@github.com/...` records that URL
    * verbatim as `remote.origin.url`, and for `remote.git` that config lives on
    * shared EFS. The security model in docs/deploying-to-aws.md -- a compromised
-   * Lambda can read/write EFS content but cannot push to GitHub, secrets stay
-   * on the worker -- is false while that string is there: the Lambda could read
+   * Lambda can read/write EFS content but cannot reach the GitHub credential,
+   * which stays off EFS -- is false while that string is there: the Lambda could read
    * the token off EFS and, with no egress of its own, exfiltrate it by writing
    * it into branch content the worker then pushes to GitHub.
    *

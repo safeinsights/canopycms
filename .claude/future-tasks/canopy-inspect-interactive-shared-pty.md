@@ -8,7 +8,7 @@ summary: >-
 # [P3] canopy-inspect's interactive pty is reachable from the worker unit
 
 **Found:** 2026-10-11, the Fable security round on PR 6 of
-[worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) (its R9).
+[worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md) (its R9).
 
 `systemd-run --pty --uid=ec2-user` makes systemd chown the pty slave to uid 1000 (0620, group tty)
 before exec. `PrivateDevices=yes` gives the worker unit a private `/dev`, but bind-mounts the

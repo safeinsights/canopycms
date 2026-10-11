@@ -2,8 +2,8 @@
  * The GitHub gateway process's boot sequence and lifecycle (`index.ts gateway`), with every side
  * effect injected so tests can drive it. It holds the GitHub credential and the Clerk key, serves
  * `GitHubGateway` on a socket for the worker (run.ts, split mode), and runs under its own user
- * (the unit's `User=`, which nothing here checks) with no view of the shared workspace (its
- * `efs-unreadable` self-check).
+ * (the unit's `User=`; under socket activation its `socket-access` self-check refuses the socket
+ * owner's uid) with no view of the shared workspace (its `efs-unreadable` self-check).
  *
  * A boot that cannot produce the real gateway still serves a stand-in that answers `health` with
  * the cause, so the worker records it as its `lastFatalError` where an operator reads it. Without

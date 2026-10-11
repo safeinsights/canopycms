@@ -2,20 +2,26 @@
 priority: P3
 adopters: BOTH
 summary: >-
-  New 2026-10-10 (R6 of the worker process-split plan). Once the split ships, the race-to-credential gap stays open wherever the worker runs as one process: dev mode, `canopycms worker`, and any adopter entrypoint that constructs `CmsWorker` itself. Document it in the security model and the worker entrypoint docs, and decide whether `canopycms worker` in prod mode should warn
+  New 2026-10-10 (R6 of the worker process-split plan). Since the split shipped (worker contract 2), the race-to-credential gap stays open wherever a `CmsWorker` runs with its own credential: an adopter entrypoint that constructs one (an adopter on another auth provider writes its own), and a bundle older than the split on the single-process unit. The Security Model says so. Left: document running the gateway beside a custom entrypoint, and decide whether `CmsWorker` given a credential in prod mode should warn
 ---
 
 # [P3] State that a single-process worker keeps the race gap
 
 **Found:** 2026-10-10, planning
-[worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md) (its R6).
+[worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md) (its R6).
 
 The split moves the credential into a gateway unit only in the CDK deployment (worker contract
-2). Everywhere else the worker runs as one process: dev mode, `canopycms worker`, `apps/test-app`,
-and any custom entrypoint (an adopter on another auth provider writes its own). That process
-still holds the credential beside its git in the shared repositories.
+2), whose entrypoint refuses to run without the gateway's socket (canopycms-cdk `worker/run.ts`).
+A `CmsWorker` constructed with a credential elsewhere runs as one process and holds it beside its
+git in the shared repositories: an adopter's own entrypoint. (`apps/test-app`'s e2e route builds
+one with a fake token, against `.canopy-dev`, only in dev or under `CANOPY_E2E=1`.)
+`canopycms worker run-once` is not one: it builds no `CmsWorker`, runs no git in the clones and
+holds no GitHub credential (`workerRunOnce`, `cli/init.ts`).
 
-Do in the split's docs PR, or straight after it:
-- The Security Model in `docs/deploying-to-aws.md` says so in one sentence.
-- The custom-entrypoint section of the worker docs says how to run the gateway beside it.
-- Decide whether `canopycms worker` in prod mode logs a one-time warning.
+Done in the split's docs PR: `docs/deploying-to-aws.md`'s "What the separation leaves open" says
+so. Left:
+- Say how to run the gateway beside a custom entrypoint (`serveGitHubGateway` and
+  `connectGitHubGateway` from `canopycms/worker/cms-worker`, as canopycms-cdk's `worker/index.ts`
+  does). No doc covers that today.
+- Decide whether a `CmsWorker` given a credential (not `githubGateway`) in prod mode logs a
+  one-time warning.

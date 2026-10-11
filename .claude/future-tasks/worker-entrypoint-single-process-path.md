@@ -8,7 +8,7 @@ summary: >-
 # [P3] Delete the CDK entrypoint's unreachable single-process path
 
 **Found:** 2026-10-11, building PR 6 of
-[worker-shared-repo-git-process-split.md](worker-shared-repo-git-process-split.md).
+[worker-shared-repo-git-process-split.md](resolved/worker-shared-repo-git-process-split.md).
 
 `packages/canopycms-cdk/worker/run.ts` chooses the split when `CANOPYCMS_GITHUB_GATEWAY_SOCKET` is
 set, and refuses its absence once the bundle's contract (`WORKER_CONTRACT_VERSION`) reaches

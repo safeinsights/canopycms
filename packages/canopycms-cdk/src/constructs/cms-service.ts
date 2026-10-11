@@ -808,11 +808,11 @@ export interface CanopyCmsServiceProps {
   workerCode?: WorkerCode
 
   /**
-   * ADDITIONAL Secrets Manager ARNs the worker may read.
+   * ADDITIONAL Secrets Manager ARNs the worker instance's role may read.
    *
    * You do NOT need to repeat `githubTokenSecretArn` or
-   * `clerkSecretKeySecretArn` here — those are unioned into the worker's IAM
-   * policy automatically. Use this only for secrets the construct does not
+   * `clerkSecretKeySecretArn` here — those are unioned into the instance
+   * role's policy automatically. Use this only for secrets the construct does not
    * know about.
    */
   secretsArns?: string[]
