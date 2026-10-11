@@ -2,9 +2,15 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3b. Comment authors show as raw user ids to editors, because the name lookups (`/users/:id`, `/users/batch`) take the `privileged` guard; the editor now sends them only for admins and reviewers. Proposed: the comments API returns each author's display name and avatar for threads the requester can already read (no directory, no email). Needs JP's ruling
+  New 2026-10-10, from the editor UI epic's WS3b; approved by JP 2026-10-10 as a post-launch follow-up. The comments API returns each author's (and resolver's) display name and avatar, with no email, for threads the requester can already read, so editors see names instead of raw user ids
 ---
 # Comment author names for editors
+
+**Decision (JP, 2026-10-10):** the comments API returns each author's display name and avatar,
+with no email, for threads the requester can read. It is a follow-up chip after the launch
+prerelease, not part of WS3b.
+
+## Why
 
 The editor resolves user ids to names through `apiClient.permissions.getUserMetadata` and
 `batchGetUserMetadata` (`hooks/user-metadata-batcher.ts`). Both routes are guarded `privileged`
@@ -13,13 +19,12 @@ The editor resolves user ids to names through `apiClient.permissions.getUserMeta
 users, and an editor sees every comment author, branch owner and resolver as a raw id. Bot ids
 already show as "CanopyCMS bot" (`editor/user-display.ts`) without a lookup.
 
-## Options
+## Plan
 
-1. **Recommended:** the comments API resolves the author, and the resolver, of each thread it
-   returns to `{ name, avatarUrl }`. It returns only threads the requester can already read, so
-   no directory is exposed, and it carries no email.
-2. Let any authenticated user call `/users/batch` for ids that appear on a branch they can read.
-   This is broader, and needs a per-id access check.
-
-Either way, the user-metadata cache keyed `canopy:user:<id>` in `hooks/useUserMetadata.ts` can
-be seeded from the comments payload, so UserBadge needs no change.
+1. The comments API resolves the author of each returned thread and comment, and the
+   `resolvedBy` user, to `{ name, avatarUrl }`. It returns only threads the requester can
+   already read, so no directory is exposed, and it carries no email.
+2. Seed the user-metadata SWR cache (`canopy:user:<id>`, `hooks/useUserMetadata.ts`) from that
+   payload, so `UserBadge` shows the names without a lookup and needs no change.
+3. Branch owners in the branch list still need a lookup. Return the owner's name the same way
+   from the branches API, or leave owners as ids for editors.
