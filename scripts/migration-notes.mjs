@@ -80,7 +80,10 @@ const wordCount = (s) => s.split(/\s+/).filter(Boolean).length
 /** `//host` is absolute; a single leading `/` is repo-root-relative, as GitHub renders it. */
 const isAbsoluteUrl = (url) => ABSOLUTE_URL_RE.test(url) || url.startsWith('//')
 const errorMessage = (err) => (err instanceof Error ? err.message : String(err))
-/** Plain text made safe inside link text: no markup, so no nested link or emphasis. */
+/**
+ * Plain text made safe inside link text: brackets, emphasis, code and HTML
+ * markers are escaped, so no nested link or emphasis.
+ */
 const escapeInline = (s) => s.replace(/[\\[\]*_`<>]/g, '\\$&')
 
 /**
@@ -96,7 +99,10 @@ function isChangesetName(name) {
   )
 }
 
-/** Why a `row` would break its table link, or null: link text cannot hold a bare bracket. */
+/**
+ * Why a `row` could break its table link, or null: an unescaped bracket can
+ * unbalance the link text or open a nested reference link.
+ */
 function rowMarkupProblem(row) {
   for (let i = 0; i < row.length; i++) {
     if (row[i] === '\\') {
@@ -281,8 +287,8 @@ function parseMeta(node, lineOf, fail) {
 /**
  * Parses one changeset and applies the per-file rules. Its kind is `empty`
  * (no releases, no body), `legacy` (the owner of the frozen legacy section),
- * `entry`, or `part` (`extends` another entry). A record with an error is
- * `broken` and is left out of the assembled document.
+ * `entry`, or `part` (`extends` another entry). A record that fails a
+ * per-file rule is `broken` and is left out of the assembled document.
  */
 function parseRecord(file, slug, contents, problems) {
   const rec = { file, slug, kind: null, broken: false, releases: [], summary: '', meta: {} }
@@ -638,10 +644,21 @@ function lsTree(root, tag) {
   return files
 }
 
-/** `.changeset/` names a commit anywhere in HEAD's history deleted (a rename counts). */
+/**
+ * `.changeset/` names that any commit in HEAD's history deleted (a rename
+ * counts). `--full-history` keeps a merged side branch that added and deleted
+ * a name, which history simplification drops because the merge leaves the
+ * path unchanged.
+ */
 function deletedChangesets(root) {
+  try {
+    runGit(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])
+  } catch {
+    return new Set()
+  }
   const out = runGit(root, [
     'log',
+    '--full-history',
     '--no-renames',
     '--diff-filter=D',
     '--name-only',
@@ -1098,8 +1115,9 @@ function analyze(root, { fallbackLabel, ship = null }) {
         )
       }
     }
-    // A stable release consumes changesets and promote marks each in CHANGELOG.md;
-    // any other way out of the tree loses an entry adopters were already told about.
+    // A shipped name may leave the tree only once CHANGELOG.md carries its
+    // `<!-- changeset: <slug> -->` marker; any other way out loses an entry
+    // adopters were already told about.
     for (const name of mTree.keys()) {
       const slug = name.slice(0, -3)
       if (!bySlug.has(slug) && !base.text.includes(`<!-- changeset: ${slug} -->`)) {
@@ -1572,8 +1590,8 @@ function selfTest() {
     )
     refused(
       'kinds: legacy# only names a ### in Unreleased',
-      { 'a-part.md': part('legacy#released-thing', { meta: { area: 'Ops' } }) },
-      /legacy#released-thing, but no ###/,
+      { 'a-part.md': part('legacy#0067', { meta: { area: 'Ops' } }) },
+      /extends legacy#0067, but no ### in ## Unreleased has that anchor/,
     )
     clean('kinds: a part of a released heading', {
       'a-part.md': part('released#released-thing', { meta: { area: 'Ops' } }),
@@ -1817,6 +1835,15 @@ function selfTest() {
       { 'agents.md': 'junk\n' },
       /\.changeset\/agents\.md cannot be parsed/,
     )
+    expect(
+      'listing: the predicate skips README.md in any case and AGENTS.md in exact case',
+      !isChangesetName('ReadMe.md') &&
+        !isChangesetName('README.md') &&
+        !isChangesetName('AGENTS.md') &&
+        isChangesetName('agents.md') &&
+        !isChangesetName('.hidden.md') &&
+        !isChangesetName('config.json'),
+    )
     clean('listing: README.md is skipped in any case', {
       'ReadMe.md': 'junk\n',
       'AGENTS.md': 'junk\n',
@@ -1851,7 +1878,7 @@ function selfTest() {
       BASE.replace('#### Released thing', '#### Revised since int.2'),
     )
     refused(
-      'reserved: --check validates CHANGELOG.md links',
+      'links: --check validates CHANGELOG.md links',
       {},
       /CHANGELOG\.md:7 link "\.\.\/outside\.md" leaves the repository/,
       BASE.replace('README.md#top', '../outside.md'),
@@ -2162,7 +2189,7 @@ function selfTest() {
     }
 
     {
-      // The reviewer's case: b (int.110) merges c (int.115), adds bee-two, ships int.120.
+      // b (int.110) merges c (int.115), adds bee-two and ships int.120.
       const brepo = join(tmp, 'b')
       mkdirSync(brepo)
       g(brepo, 'init', '-q')
@@ -2173,7 +2200,14 @@ function selfTest() {
       g(brepo, 'checkout', '-qb', 'c')
       write(brepo, '.changeset/cee-one.md', titled('Cee one'))
       g(brepo, 'add', '-A')
-      g(brepo, 'commit', '-qm', 'cee-one')
+      // The newer date puts cee-one first in a date-ordered walk, so only a
+      // first-parent walk finds int.110.
+      process.env.GIT_COMMITTER_DATE = '2026-01-02T00:00:00Z'
+      try {
+        g(brepo, 'commit', '-qm', 'cee-one')
+      } finally {
+        process.env.GIT_COMMITTER_DATE = '2026-01-01T00:00:00Z'
+      }
       g(brepo, 'tag', 'v0.0.68-int.115')
       g(brepo, 'checkout', '-q', 'main')
       write(brepo, '.changeset/bee-one.md', titled('Bee one'))
@@ -2207,6 +2241,60 @@ function selfTest() {
       )
     }
     {
+      const trepo = join(tmp, 't')
+      mkdirSync(trepo)
+      g(trepo, 'init', '-q')
+      write(trepo, CHANGELOG, BASE)
+      g(trepo, 'add', '-A')
+      g(trepo, 'commit', '-qm', 'base')
+      g(trepo, 'tag', 'v0.0.1-int.8')
+      g(trepo, 'tag', 'v0.0.1-int.7')
+      expect(
+        'git: one commit with two int tags gives the larger N as M',
+        readGitState(trepo).M?.n === 8,
+      )
+    }
+    {
+      // A side branch adds and deletes a name, then merges; the merge leaves
+      // .changeset/ as it was, so only a full-history walk sees the deletion.
+      const frepo = join(tmp, 'f')
+      mkdirSync(frepo)
+      g(frepo, 'init', '-q')
+      write(frepo, CHANGELOG, BASE)
+      g(frepo, 'add', '-A')
+      g(frepo, 'commit', '-qm', 'base')
+      g(frepo, 'checkout', '-qb', 'side')
+      write(frepo, '.changeset/side-only.md', entry({ title: 'Side only' }))
+      g(frepo, 'add', '-A')
+      g(frepo, 'commit', '-qm', 'add side-only')
+      g(frepo, 'rm', '-q', '.changeset/side-only.md')
+      g(frepo, 'commit', '-qm', 'drop side-only')
+      g(frepo, 'checkout', '-q', 'main')
+      write(frepo, 'README.md', '# Readme\n')
+      g(frepo, 'add', '-A')
+      g(frepo, 'commit', '-qm', 'main moves')
+      g(frepo, 'merge', '-q', '--no-ff', '-m', 'merge side', 'side')
+      write(frepo, '.changeset/side-only.md', entry({ title: 'Side only' }))
+      expect(
+        'git: a name a merged side branch deleted is refused',
+        check(frepo).problems.some(
+          (p) => p.file === '.changeset/side-only.md' && /was used before/.test(p.message),
+        ),
+      )
+    }
+    {
+      const erepo = join(tmp, 'e')
+      mkdirSync(erepo)
+      g(erepo, 'init', '-q')
+      write(erepo, CHANGELOG, BASE)
+      write(erepo, '.changeset/an-entry.md', entry())
+      const r = check(erepo)
+      expect(
+        `git: a repo with no commits checks cleanly, got ${JSON.stringify(r.problems)}`,
+        r.problems.length === 0,
+      )
+    }
+    {
       const drepo = join(tmp, 'd')
       mkdirSync(drepo)
       g(drepo, 'init', '-q')
@@ -2219,12 +2307,20 @@ function selfTest() {
       g(drepo, 'mv', '.changeset/kept.md', '.changeset/moved.md')
       g(drepo, 'commit', '-qm', 'consume one, rename one')
       write(drepo, '.changeset/gone.md', entry({ title: 'Gone' }))
+      write(drepo, '.changeset/kept.md', entry({ title: 'Kept again' }))
       const r = check(drepo)
       expect(
         'git: a name deleted in history is refused without any tag',
         r.problems.some(
           (p) =>
             p.file === '.changeset/gone.md' && /^the name "gone" was used before/.test(p.message),
+        ),
+      )
+      expect(
+        'git: the name a rename left is refused',
+        r.problems.some(
+          (p) =>
+            p.file === '.changeset/kept.md' && /^the name "kept" was used before/.test(p.message),
         ),
       )
       expect(

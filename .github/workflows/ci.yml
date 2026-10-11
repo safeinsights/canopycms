@@ -22,7 +22,7 @@ permissions:
   pull-requests: read
 
 jobs:
-  # The lint, typecheck, build and unit-test jobs below run in parallel, and
+  # The lint, typecheck, build, unit-test and changesets jobs below run in parallel, and
   # `validate` at the end of this group passes only when every one of them
   # did. Each job installs through .github/actions/setup.
   lint:
@@ -364,7 +364,8 @@ jobs:
   # A PR that changes what the five packages ship carries a changeset, and
   # every changeset is a well-formed changelog entry (.changeset/README.md).
   # The job runs on every event and gates per step: `validate` fails on a
-  # skipped need, and publish.yml publishes only after `validate` succeeds.
+  # skipped need, and publish.yml's stable release waits for this workflow to
+  # succeed.
   changesets:
     name: Changesets
     runs-on: ubuntu-latest
@@ -408,7 +409,8 @@ jobs:
           if grep -qxE 'pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|scripts/add-js-extensions\.mjs' <<<"$changed"; then
             added=$(git diff --name-only --diff-filter=d "$base" HEAD -- '.changeset/*.md')
             # Not changesets, by @changesets/read's rule: README in any case, the
-            # agent files by exact case, dotfiles, and anything below the top level.
+            # agent files by exact case, and dotfiles. .changeset/pre/, the one
+            # subdirectory it reads, is left out too: the lint refuses it.
             real=$(printf '%s\n' "$added" | grep -E '^\.changeset/[^/.][^/]*\.md$' |
               grep -viE '^\.changeset/readme\.md$' |
               grep -vE '^\.changeset/(AGENTS|CLAUDE|GEMINI)\.md$' | grep -c . || true)

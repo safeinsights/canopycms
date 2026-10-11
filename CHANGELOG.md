@@ -12,7 +12,7 @@ Each entry has up to three parts:
 - **Now deletable**: the kind of local code the change supersedes. **This part is the point.**
   Adding the new API without removing what it replaces leaves two implementations to drift apart.
 
-**Read the copy your build ships.** Every published version carries this file as
+**Read the copy your build ships.** From the first `0.1.0` prerelease on, every published version carries this file as
 `node_modules/canopycms/CHANGELOG.md`, assembled for that build: its **This build** section lists
 what is new since the previous int on the same branch, and its links point at the commit the build
 came from. The copy in the repository holds released history and the entries from before changesets;

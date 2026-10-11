@@ -13,7 +13,7 @@
  *
  * Usage: node scripts/backfill-int-tags.mjs           # dry run: print the plan
  *        node scripts/backfill-int-tags.mjs --push    # create the missing tags
- * Needs `gh` signed in with permission to create refs, and network access.
+ * Needs `gh` (signed in, and allowed to create refs for --push), `npm`, and network access.
  */
 
 import { execFileSync } from 'node:child_process'

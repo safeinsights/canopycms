@@ -16,6 +16,31 @@ summary: >-
 
 The design below was reviewed adversarially before any code; JP and the manager settled its six decisions (D-1 to D-6) on 2026-10-11.
 
+## As built in PR A (overrides the memo below where they differ)
+
+- **Previous int (M)**: the nearest int tag on HEAD's first-parent chain, not the newest ancestor
+  tag. After an int line merges another, the other line's tags are ancestors too.
+- **Names**:
+  - A changeset name deleted anywhere in HEAD's history is refused, unless M still carries it
+    (a revert that came back).
+  - A changeset M carries may not leave the tree unless CHANGELOG.md holds its
+    `<!-- changeset: <slug> -->` marker. **PR B's promote must write that marker** for every
+    changeset it consumes.
+- **Bodies**: no reference definitions, no raw HTML beyond comments, and no links in titles.
+  Images link to `raw/<sha>`, and a leading `/` is repo-root-relative.
+- **Version plan**: `changeset status --since=<latest stable tag>`, floored at main's version
+  patch-bumped.
+- **Gate**: the root-file rule also covers `tsconfig.base.json`.
+- **Word cap**: check-docs applies CHANGELOG.md's `maxEntryWords` (275) to each changeset file,
+  per the manager's ruling. There is no separate ~300-word rule.
+- **`--promote`** is not in PR A. It belongs to PR B, with `changeset version` and the stable
+  ship.
+  **PR B must also run `--ship` and the tarball check in the stable job**: today only the
+  prerelease path writes and checks `packages/canopycms/CHANGELOG.md`.
+- **`legacy-unreleased.md`** (minor) owns the frozen Unreleased entries.
+- **Tags**: tag-prerelease looks tags up through `git/matching-refs` and runs once canopycms is
+  published. `scripts/backfill-int-tags.mjs` tags the ints published before it.
+
 ## Rev 3 changes (JP, 2026-10-11). Where this block and the sections below disagree, this block wins.
 
 1. **A committed root `CHANGELOG.md` replaces `docs/adopter-migration.md`.**

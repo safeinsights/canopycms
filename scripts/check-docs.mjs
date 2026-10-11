@@ -15,7 +15,7 @@
 //        node scripts/check-docs.mjs --self-test
 //        node scripts/check-docs.mjs --report | --sections | --list-long-items
 
-import { readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, existsSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
@@ -405,7 +405,7 @@ function measureChangelog(content, cap) {
   return { hasUnreleased, strayHeadings, over: entries.filter((e) => e.words > cap) }
 }
 
-/** A changeset's YAML frontmatter, matched the way @changesets/parse matches it. */
+/** A changeset's YAML frontmatter, with @changesets/parse's delimiters, anchored at the start of the file. */
 const CHANGESET_FRONTMATTER_RE = /^\s*---[^]*?\r?\n\s*---(?=\s*(?:\n|$))/
 /** Files in `.changeset/` that are not changesets, as @changesets/read skips them: README in any case, the agent files by exact case. */
 const NOT_A_CHANGESET_RE =
@@ -413,7 +413,7 @@ const NOT_A_CHANGESET_RE =
 
 /**
  * A changeset's body is one changelog entry, so it gets the changelog's entry cap.
- * A part (`extends:`) carries no `###` of its own and is measured as one.
+ * A body without a `###` title (a part of an unreleased entry) is measured as one entry.
  */
 function changesetOverCap(content, cap) {
   const body = content.replace(/^\uFEFF/, '').replace(CHANGESET_FRONTMATTER_RE, '')
@@ -837,7 +837,7 @@ function selfTest() {
   expect(
     'changeset cap: an entry over the cap is reported and one at it is not',
     changesetOverCap(changeset(`### A\n\n${words(20)}`), 15)[0]?.heading === 'A' &&
-      changesetOverCap(changeset(`### A\n\n${words(13)}`), 15).length === 0,
+      changesetOverCap(changeset(`### A\n\n${words(14)}`), 15).length === 0,
   )
   expect(
     'changeset cap: a part without a title is measured as one entry, after the frontmatter',
@@ -1212,6 +1212,7 @@ for (const f of inScopeFiles) {
     if (f === 'CHANGELOG.md' && existsSync(join(repoRoot, '.changeset'))) {
       for (const name of readdirSync(join(repoRoot, '.changeset'))) {
         if (!name.endsWith('.md') || NOT_A_CHANGESET_RE.test(name)) continue
+        if (!statSync(join(repoRoot, '.changeset', name)).isFile()) continue // migration-notes --check refuses it
         const file = `.changeset/${name}`
         for (const entry of changesetOverCap(
           readFileSync(join(repoRoot, file), 'utf8'),
@@ -1295,7 +1296,7 @@ for (const item of longItems) {
 // the "Now deletable" lists the document calls its own point.
 //
 // Tag reachability is the signal: if `vX.Y.Z` is an ancestor of HEAD, this branch
-// contains that release and the guide on this branch should account for it.
+// contains that release and the changelog on this branch should account for it.
 //
 // This check is INERT ON A SHALLOW CLONE, which is what CI checks out — no history, no
 // tags, nothing to compare. That is deliberate rather than overlooked: lint-staged runs

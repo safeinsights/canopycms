@@ -87,8 +87,8 @@ jobs:
         run: pnpm run generate:client
         working-directory: packages/canopycms
 
-      # A stable release consumes .changeset/ on main, so a branch without that
-      # release would ship the consumed entries again as unreleased.
+      # A stable release files the pending entries under its own version, so a
+      # branch without that release would ship them again as unreleased.
       # `allow_stale_base` is for an older line, such as a release branch cut
       # before it.
       - name: Require the latest stable release in this branch
@@ -112,8 +112,8 @@ jobs:
           set -euo pipefail
           BASE=$(git show origin/main:packages/canopycms/package.json |
             node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
-          # Planned from the latest stable tag: a release deletes the changesets it
-          # consumes, so every changeset since that tag is pending, including any
+          # Planned from the latest stable tag: a release never leaves a changeset
+          # pending, so every changeset since that tag is pending, including any
           # main carries that this branch merged in.
           SINCE=$(git tag --list 'v*' --sort=-v:refname | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sed -n 1p || true)
           PLAN=()

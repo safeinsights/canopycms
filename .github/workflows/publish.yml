@@ -285,7 +285,8 @@ jobs:
   # Tags each int at the commit it was built from (`v0.0.68-int.114`), which is
   # how the shipped changelog labels entries and how adopters browse a build's
   # docs. The only writer on the prerelease path, so it checks out nothing and
-  # runs no repository code: one API call with validated inputs. The
+  # runs no repository code: a lookup and a create through the API, with
+  # validated inputs. The
   # `release-tags-immutable` ruleset stops this token moving or deleting any
   # `v*` tag, and `stable-tags-release-bot-only` stops it creating a stable one.
   tag-prerelease:

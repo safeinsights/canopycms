@@ -4,11 +4,12 @@ Every PR that changes a published package adds one file here: its entry in
 [CHANGELOG.md](../CHANGELOG.md), plus the version bump it needs. Nobody edits CHANGELOG.md's
 `## Unreleased` by hand. Each int build ships the files assembled into
 `node_modules/canopycms/CHANGELOG.md`, with each entry labelled by the first int that carried it,
-and a stable release moves them under `## Released` and deletes them.
+and a stable release is to move them under `## Released` and delete them. Until that release path
+exists, the stable publish job refuses to run while any are pending.
 
-CI fails a PR that changes a package, the lockfile, `pnpm-workspace.yaml` or
-`scripts/add-js-extensions.mjs` without adding or editing a file here. Tests, fixtures and
-`AGENTS.md` alone do not count.
+CI fails a PR, opened after its base branch adopted changesets, that changes a package, the
+lockfile, `pnpm-workspace.yaml`, `tsconfig.base.json` or `scripts/add-js-extensions.mjs` without
+adding or editing a file here. Tests, fixtures and `AGENTS.md` alone do not count.
 
 ## Which file to write
 
@@ -49,10 +50,11 @@ parser"), recognisable in any adopter's tree.
 
 ## Rules
 
-`pnpm lint:changesets` checks all of these except the last one.
+`pnpm lint:changesets` checks all of these except **Length**, which `pnpm lint:docs` checks, and the
+last one.
 
 - **Bump.** The frontmatter names any of the five packages; they release together. `minor` when
-  `action` is anything but `None` or `Optional`, since adopters must act. Otherwise `patch`.
+  `action` is anything but `None` or `Optional`, since adopters must act. Otherwise `patch` is enough.
   Never `major`.
 - **Shape.** The `###` title comes first, then the `<!-- migration` block, whose keys are `area`,
   `action`, `row` and, for a part, `extends`. A `legacy#` or `released#` anchor is the one GitHub
@@ -64,9 +66,10 @@ parser"), recognisable in any adopter's tree.
   deletable** when nothing becomes deletable.
 - **No int labels.** Never write `(int.N)` or `next`: a build computes them.
 - **Links** are relative to this directory: `../README.md#live-preview`. Link another unreleased
-  entry as `./<file>.md`, and a CHANGELOG.md entry as `../CHANGELOG.md#<anchor>`. A title must not
-  share its anchor with any heading in CHANGELOG.md.
-- **Length.** An entry, parts included, stays within CHANGELOG.md's per-entry word cap in
+  entry as `./<file>.md`, and a CHANGELOG.md entry as `../CHANGELOG.md#<anchor>`. Write links inline:
+  no reference definitions and no raw HTML. A title carries no links and must not share its anchor
+  with any heading in CHANGELOG.md.
+- **Length.** Each file stays within CHANGELOG.md's per-entry word cap in
   `scripts/docs-budgets.json`.
 - **Public package, private adopters.** Never name files, paths, branches, hosts or identifiers
   from an adopter's repo.

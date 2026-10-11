@@ -4,11 +4,10 @@
  * Computes the version for an integration (prerelease) publish:
  *   <next version>-int.<counter>
  *
- * The next version is what the branch's pending changesets would release, read
- * from a `changeset status --output` plan, so an int carrying a minor change is
- * versioned as that minor. Without a plan, or when the plan releases nothing,
- * it is main's version patch-bumped. Either way a prerelease sorts above the
- * last stable release. The counter is monotonic (github.run_number), which
+ * The next version is main's version patch-bumped, raised to what the branch's
+ * pending changesets would release when that is higher (a `changeset status
+ * --output` plan), so an int carrying a minor change is versioned as that minor
+ * and every prerelease sorts above main's version. The counter is monotonic (github.run_number), which
  * keeps successive prereleases ordered.
  *
  * Usage: node scripts/prerelease-version.mjs <baseVersion> <counter> [--plan <plan.json>]
@@ -58,8 +57,8 @@ if (planPath) {
       process.exit(1)
     }
     // Floored at main patch-bumped: the plan starts from this branch's own
-    // manifests, which on an older line, or behind a registry that got ahead of
-    // main, would sort the prerelease below a release already out.
+    // manifests, which on an older line would sort the prerelease below a
+    // release already out.
     const planned = release.newVersion.split('.').map(Number)
     const floor = next.split('.').map(Number)
     const i = planned.findIndex((n, k) => n !== floor[k])

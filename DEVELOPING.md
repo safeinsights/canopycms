@@ -1149,8 +1149,8 @@ Both channels publish all five packages at one version, and both enter through `
 - **Stable** (`latest`): a push to `main` that CI passes. The release bot commits the version and
   tags `vX.Y.Z`.
 - **int**: dispatch _Publish to npm_ on any other branch. The version is `<next>-int.<run number>`,
-  where `<next>` is what the branch's pending changesets would release (`changeset status`), or
-  main's version patch-bumped when none are. Nothing is committed; the `tag-prerelease` job tags the
+  where `<next>` is what the branch's pending changesets would release (`changeset status`), and
+  never less than main's version patch-bumped. Nothing is committed; the `tag-prerelease` job tags the
   commit `v<version>`. The branch must contain the latest stable tag; `allow_stale_base` overrides
   that for an older line. Adopters pin an int build exactly, since `^0.1.0-int.5` also matches
   stable `0.1.0`.
