@@ -234,7 +234,7 @@ class LocalGitHubGateway implements GitHubGateway {
   private refreshing: Promise<void> | null = null
   /** The GitHub fetch that operations join: in flight, or completed and still reusable. */
   private githubFetch: GitHubFetchJob | null = null
-  /** Pushes and branch deletions started at GitHub: each ends reuse of an earlier fetch. */
+  /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
   private pushes = 0
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
@@ -330,7 +330,7 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * Bring the mirror up to GitHub, coalesced: join the GitHub fetch in flight, or reuse one that
-   * completed less than {@link FETCH_COALESCE_MS} ago with no push or rebuild since, or
+   * completed less than {@link FETCH_COALESCE_MS} ago and is still current ({@link isCurrent}), or
    * else start one with the credential `resolve` gives, resolved only then, so a joining operation
    * mints no token. A failed fetch is never joined or reused. The fetch is
    * detached from every caller's `signal`, which ends only that caller's wait: a fetch of a whole
@@ -590,7 +590,8 @@ class LocalGitHubGateway implements GitHubGateway {
   /**
    * The plan's step 2 (§3.2): the push goes ahead only once a GitHub fetch has SUCCEEDED, fresh or
    * reused, so the mirror's heads are GitHub's for the reachability test and the prerequisite
-   * check; otherwise it is transient. That is the whole clause: a mirror with no heads after a
+   * check; otherwise it is transient. A token mint GitHub refuses is the exception: it carries its HTTP
+   * status through, so the task runner classifies it. That is the whole clause: a mirror with no heads after a
    * successful fetch means GitHub has none, a first push.
    */
   private async joinGitHubFetchForPush(
@@ -619,11 +620,12 @@ class LocalGitHubGateway implements GitHubGateway {
   /**
    * The push, in one mirror session, every call in it a plain call (the session is not
    * re-entrant), over the mirror a GitHub fetch just filled ({@link afterGitHubFetch}), so its
-   * heads are GitHub's for the reachability test and the prerequisite check: rebuild a corrupt
-   * mirror; find `sha`, in the mirror or in the quarantine `received` goes into;
-   * push from there, which refuses a protected branch first. The mirror kills its git
-   * when `signal` aborts, and GitHub moves the ref only after receiving the whole pack, so a
-   * killed push changes nothing or is found already done by the re-run.
+   * heads are GitHub's for the reachability test and the prerequisite check: find `sha`, in the
+   * mirror or in the quarantine `received` goes into; push from there, which refuses a protected
+   * branch first. The mirror kills its git when `signal` aborts, and GitHub moves the ref only
+   * after receiving the whole pack, so a killed push changes nothing or is found already done by
+   * the re-run, unless git's transport child outlives it
+   * (.claude/future-tasks/worker-mirror-detached-work-drain.md).
    */
   private async pushInSession(
     mirror: MirrorSession,
@@ -633,9 +635,9 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<GitHubPushAnswer> {
     const { branch, sha } = request
-    // Not under the task's signal: a whole-repository fetch can outlast one task, and an aborted
-    // rebuild would hold every operation transient for the backoff.
-    await this.mirror.heal(mirror, credential)
+    // Never fires: finding corruption changes the generation, so afterGitHubFetch sends the push to
+    // a fetch that rebuilds first. It refuses rather than push from a corrupt mirror.
+    this.mirror.assertUsable()
     const heads = await mirror.heads()
 
     let repo: string | undefined

@@ -69,10 +69,11 @@ export async function recoverRebuild(gitDir: string): Promise<void> {
 /**
  * Delete every lock and temporary a killed git leaves in the mirror: ref locks
  * (`refs/**`, `packed-refs.lock`, `HEAD.lock`, `config.lock`, `shallow.lock`), `packed-refs.new`,
- * pack temporaries (`tmp_*`, repack's `.tmp-*`), fetch's `pack-*.keep`, loose `tmp_obj_*`, and
- * commit-graph locks and temporaries. Only for a mirror nothing else is writing: at start, or
- * holding the maintenance mutex inside a session. A leftover `refs/heads/<x>.lock` or
- * `packed-refs.new` fails every later fetch that touches that ref.
+ * pack temporaries (`tmp_*`, repack's `.tmp-*`), `*.keep` (a fetch's), loose `tmp_obj_*`, and
+ * commit-graph locks and temporaries. Only for a mirror no git of this process is writing: at a
+ * gateway's first session, or holding the maintenance mutex inside a session. A leftover
+ * `refs/heads/<x>.lock` fails every fetch that moves `<x>`; a leftover `packed-refs.new` fails
+ * every fetch that prunes a packed ref.
  */
 export async function sweepLocksAndTemporaries(gitDir: string): Promise<string[]> {
   const removed: string[] = []
@@ -133,7 +134,8 @@ export type MirrorCorruption = string | null
  * `extensions.partialClone`, a `remote.*.promisor` / `remote.*.partialclonefilter` key in the
  * mirror's own config (read with `--get-regexp`, never `config --list`, which would print a
  * credential's value), or git dying on the repository (exit 128: a truncated `packed-refs` fails
- * every git there), unless git says the machine ran out of memory or processes. Each is repaired
+ * every git that reads refs, though `rev-parse --is-bare-repository` passes), unless git says the
+ * machine ran out of memory or processes. Each is repaired
  * by a rebuild. Any other failure of git, such as one that could not start, is thrown: the next
  * session checks again. A loose ref that disappears while
  * it is read was packed by maintenance's `pack-refs`. `git(args, stdin?)` runs git in the mirror

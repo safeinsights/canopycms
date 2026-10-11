@@ -3,7 +3,7 @@ priority: P3
 adopters: BOTH
 summary: >-
   New 2026-10-11, from PR 2b's review of the GitHub mirror's upkeep (worker/github-mirror.ts). Five things are left open, each bounded today:
-  - The gateway's detached work (every GitHub fetch job, and the maintenance run) is not tracked by the worker's drain. In dev, its gits sit in their own process group, so Ctrl-C leaves them running, and the next start's sweep can delete their live locks and temporaries.
+  - The gateway's detached work (every GitHub fetch job, and the maintenance run) is not tracked by the worker's drain. In dev, maintenance's gits sit in their own process group, so Ctrl-C leaves them running, and the next start's sweep can delete their live locks and temporaries.
   - `create()` deletes and re-inits a mirror that `isBareRepository` failed on, without the maintenance mutex, and that check turns any error into "not a repository".
   - A rebuild waits for running maintenance while holding the session, so every operation stalls for up to the maintenance step deadlines.
   - A rebuild needs room for two mirrors, and on ENOSPC it retries the whole fetch every backoff.
@@ -16,7 +16,7 @@ Found while reviewing PR 2b of the worker process split (`worker-shared-repo-git
 
 1. **Detached work outlives the drain.**
    - What runs detached: `GitHubMirror.afterFetch` starts maintenance with `void`, and every GitHub fetch job runs apart from its callers' signals, the boot pre-fetch from `GitHubGateway.prepare()` included.
-   - Why it survives: neither is tracked by `CmsWorker.stop()`'s drain. `runGit` spawns `detached: true`, so SIGINT to the worker does not reach them.
+   - Why it survives: neither is tracked by `CmsWorker.stop()`'s drain. Maintenance's gits go through `runGit`, which spawns `detached: true`, so the terminal's SIGINT does not reach them. A fetch job's git goes through simple-git, which does not detach it, so it gets the SIGINT, but nothing awaits it.
    - Prod is covered: the unit's cgroup kill ends them. Dev is not: a worker restarted at once can sweep a running repack's `tmp_*`, which kills that repack and leaks its other temporaries.
    - **Fix:** give the gateway a `close()` that aborts both and awaits them, and call it from the drain.
 2. **`create()` re-creates the mirror on any error.**

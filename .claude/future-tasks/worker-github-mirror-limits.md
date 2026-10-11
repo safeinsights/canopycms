@@ -13,11 +13,12 @@ summary: >-
 The mirror lives on the worker's 8 GiB root volume (`StateDirectory=`), and the worker warns once
 when it passes 2 GiB. None of these matters for a docs-site repository; each matters for a big one.
 
-- **Cruft never expires.** `repackBareRemoteIfNeeded` runs `repack -a -d --cruft` with no
-  `--cruft-expiration`, so every rebased-away commit and every staged-then-refused push object
-  stays in the mirror. That is also what makes `GitHubMirror.maintain()` safe outside the session
-  lock: an expiring repack could delete an object between a staging fetch's quick check and the
-  push. Expiring cruft means moving `maintain()` back under `exclusive()`.
+- **Cruft never expires.** `maintainMirror` (worker/github-mirror-upkeep.ts) runs
+  `repack -a -d --cruft` with no `--cruft-expiration`, so every rebased-away commit and every
+  staged-then-refused push object stays in the mirror. That is also what lets maintenance run
+  beside sessions under its mutex alone: an expiring repack could delete an object a session or a
+  quarantine is using. Expiring cruft needs another way to keep those alive; maintenance must
+  never take a session, because a rebuild holds one while it waits on the mutex.
 - **fsck on an old history.** A publish fetches its commit from `remote.git` with
   `fetch.fsckObjects=true`. upload-pack sends everything not reachable from the mirror's own refs,
   so a branch forked from a commit GitHub no longer references (a deleted branch) re-sends that

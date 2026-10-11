@@ -290,7 +290,8 @@ A test: a bundle that advertises extra, renamed or space-embedded refs either pu
 1. validates `sha`, `lease` and `prerequisites` as full object IDs;
 2. **joins a coalesced GitHub fetch** before anything else, so the mirror's `refs/heads/*` are
    GitHub's heads. Unless the joined fetch, fresh or reused, succeeded, the answer is
-   `transient`, before any reachability test, `need-objects` or policy. That rules out:
+   `transient` (a refused token mint keeps its HTTP status), before any reachability test,
+   `need-objects` or policy. That rules out:
    - a false `refused-by-policy` against stale heads during an outage;
    - a `need-objects` loop against an unfetched mirror;
 3. **with no body:** a three-way branch on `cat-file --batch-check`'s output for `<sha>`,
@@ -997,7 +998,7 @@ PR 2, their first user.
 **Carried from 2a** (PR 2a: the transfer; 2b: mirror robustness):
 - 2b: the push's GitHub fetch runs inside its own session in 2a (stronger, one extra round trip
   per push). 2b replaces it with the coalesced fetch, joined before the session, and answers
-  `transient` unless that fetch succeeded (see "Carried from 2b").
+  `transient` unless that fetch succeeded, a refused token mint aside (see "Carried from 2b").
 - 2b: `maintain()` stays worker-called in 2a, repacking beside sessions and quarantines; 2b moves it
   gateway-side under the maintenance mutex, adds `commit-graph`, and drops it from the interface.
 - 2b: 2a clears `incoming/` and `outgoing/` once per gateway; the lock and temporary sweeps,
@@ -1028,12 +1029,21 @@ PR 2, their first user.
   fetch of a read commit used it.
 
 **Carried from 2b** (mirror robustness):
-- Settled in 2b: step 2's clause is "the joined fetch succeeded", and the mirror's `generation`
-  (bumped by a failed session, a re-creation, a rebuild) must match inside the caller's session,
-  or it fetches once more, then `transient`. A stale `packed-refs.lock` in `remote.git` stops
+- Settled in 2b: step 2's clause is "the joined fetch succeeded". The mirror's `generation`
+  (changed by re-creation, finding corruption, or a rebuild) and the gateway's push count (a push
+  about to run, a settled branch deletion) must both match inside the caller's session, or it
+  fetches once more, then `transient`. A stale `packed-refs.lock` in `remote.git` stops
   the deletions' fan-out and, past 10 minutes, becomes `lastGitSyncError`; the worker never
   removes it, since the Lambda shares that repository. The first maintenance waits one interval.
   `fetchCoalesceMs` is a constructor-only test seam.
+- Deviations from §3.1–§3.3 in 2b:
+  - Only a GitHub fetch's session rebuilds: finding corruption changes the generation, which
+    sends the detecting caller to one.
+  - Every caller's bundle is made in its own session, a job's starter included.
+  - The on-failure sweep runs after any failed GitHub fetch, not only lock text, whenever it can
+    try-acquire the mutex; otherwise it is owed to the next session start.
+  - A killed or failed maintenance run owes that sweep rather than removing its temporaries by
+    name, which cannot tell them from a concurrent fetch's.
 - PR 7: "The worker instance" names that `lastGitSyncError` and its fix (check no git is
   running in `remote.git`, then remove the lock).
 

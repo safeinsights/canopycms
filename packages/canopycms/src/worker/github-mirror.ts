@@ -141,8 +141,9 @@ export class GitHubMirror {
 
   /**
    * Clear what a killed gateway left, before any git runs: finish or undo an interrupted rebuild,
-   * then every lock and temporary in the mirror. Nothing else writes it yet: maintenance starts
-   * only after a session.
+   * then every lock and temporary in the mirror. Nothing in this process writes it yet:
+   * maintenance starts only after a session. A git a stopped dev worker left running is not
+   * covered (.claude/future-tasks/worker-mirror-detached-work-drain.md).
    */
   private async sweepAtStart(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
@@ -158,8 +159,8 @@ export class GitHubMirror {
 
   /**
    * Create the mirror, or recreate one that is not a readable bare repository, and record whether
-   * an existing one is corrupt ({@link findCorruption}), which the next credentialed session
-   * repairs ({@link heal}).
+   * an existing one is corrupt ({@link findCorruption}), which the next GitHub fetch's session
+   * repairs ({@link heal}): the generation change sends every caller to one.
    */
   private async create(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true, mode: 0o700 })
@@ -191,8 +192,8 @@ export class GitHubMirror {
   }
 
   /**
-   * Inside a session, rebuild a mirror {@link create} found corrupt, as a plain call (the session
-   * is not re-entrant), waiting for maintenance to finish: the lock order is session, then the
+   * Inside a GitHub fetch's session, rebuild a mirror {@link create} found corrupt, as a plain
+   * call (the session is not re-entrant), waiting for maintenance to finish: the lock order is session, then the
    * maintenance mutex. The replacement is fetched whole from GitHub into `github.git.rebuild`, and
    * swapped in only once complete: the mirror is renamed to `.old`, `.rebuild` into its place, and
    * `.old` deleted ({@link recoverRebuild} finishes or undoes a swap a crash interrupted). No
@@ -474,8 +475,9 @@ const STAGING_PREFIX = 'refs/canopy/outgoing/'
 /**
  * A push or fetch the gateway could not complete for a reason a later attempt can clear: GitHub
  * unreachable, a bundle that did not arrive whole or valid, a prerequisite GitHub no longer has,
- * a bundle already gone. The task retries it. Only `github-fetch-failed` can be the credential's
- * doing, and unless the mirror's own lock caused it, that failure has already armed a re-read.
+ * a bundle already gone. The task retries it. The code says where it failed, not whose doing it
+ * was: a `github-fetch-failed` or a `mirror-corrupt` can each follow a GitHub-bound git that
+ * failed, and only that arms a credential re-read (`LocalGitHubGateway.credentialed`).
  */
 export class GitHubTransientError extends Error {
   constructor(
