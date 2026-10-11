@@ -70,7 +70,6 @@ export async function recoverRebuild(gitDir: string): Promise<void> {
  * (`tmp_*`, repack's `.tmp-*`), fetch's `pack-*.keep`, and commit-graph locks and temporaries.
  * Only for a mirror nothing else is writing: at start, or holding the maintenance mutex inside a
  * session. A leftover `refs/heads/<x>.lock` fails every later fetch with "cannot lock ref".
- * @internal Exported for tests.
  */
 export async function sweepLocksAndTemporaries(gitDir: string): Promise<string[]> {
   const removed: string[] = []
@@ -187,7 +186,7 @@ const MAX_LOOSE_OBJECTS = 50
 const MAX_PACKS = 6
 
 /** The wall-clock bound on each maintenance step, none of which writes anything while it works. */
-export const MAINTENANCE_STEP_DEADLINE_MS = 30 * 60 * 1000
+const MAINTENANCE_STEP_DEADLINE_MS = 30 * 60 * 1000
 
 /**
  * One maintenance run, holding the maintenance mutex: `repack -a -d --cruft` when the mirror

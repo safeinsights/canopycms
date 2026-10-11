@@ -885,6 +885,39 @@ describe('the tracking namespace', () => {
     )
   })
 
+  it('tries each deletion no more when a packed-refs lock holds them back, and reports one left for ten minutes', async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await commitAndPush(githubPath, 'refs/heads/one', 'one.txt')
+    await commitAndPush(githubPath, 'refs/heads/two', 'two.txt')
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/one')
+    await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/two')
+    const lock = path.join(remoteGitPath, 'packed-refs.lock')
+    await fs.writeFile(lock, '')
+    const observed = spySpawns()
+
+    const fresh = await fetchGitHubIntoRemoteGit(transfer(github))
+
+    expect(fresh.needsOperator).toBeNull()
+    // The deletions' one transaction, and no move on its own after it.
+    expect(observed.filter((s) => subcommand(s.args) === 'update-ref')).toHaveLength(1)
+    expect(consoleSpy).toHaveWarned(
+      /Could not move 2 GitHub tracking ref.*refs\/remotes\/github\/one.*refs\/remotes\/github\/two/,
+    )
+
+    const then = new Date(Date.now() - 11 * 60 * 1000)
+    await fs.utimes(lock, then, then)
+    const stale = await fetchGitHubIntoRemoteGit(transfer(github))
+
+    expect(stale.needsOperator).toMatch(
+      new RegExp(`^${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} has been there since `),
+    )
+    expect(stale.needsOperator).toMatch(/Check that no git is running in remote\.git/)
+    await expect(fs.stat(lock)).resolves.toBeTruthy()
+    expect(await tip(remoteGitPath, 'refs/remotes/github/one')).not.toBeNull()
+  })
+
   it('moves the refs that can move when one lost a race, and names the one that did not', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const other = await commitAndPush(githubPath, 'refs/heads/other', 'other.txt')
@@ -919,5 +952,86 @@ describe('the tracking namespace', () => {
 
     await fetchGitHubIntoRemoteGit(transfer(github))
     expect(await tip(remoteGitPath, 'refs/remotes/github/other')).toBe(nextOther)
+  })
+})
+
+describe('GitHub fetches, coalesced at the production window', () => {
+  /** A gateway that reuses a GitHub fetch as production does. */
+  const coalescing = () => gateway({ fetchCoalesceMs: undefined })
+  /** The GitHub fetches among `observed`: the fetches that carry the credential. */
+  const githubFetches = (observed: Spawned[]) =>
+    observed.filter((s) => subcommand(s.args) === 'fetch' && s.env.GIT_CONFIG_GLOBAL !== undefined)
+      .length
+
+  it('starts one at prepare(), which the first fetch joins, and reuses it within the window', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    const observed = spySpawns()
+
+    await github.prepare()
+    await vi.waitFor(() => expect(githubFetches(observed)).toBe(1))
+    const first = await github.fetch({ have: [] })
+    await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const second = await github.fetch({ have: [] })
+
+    expect(githubFetches(observed)).toBe(1)
+    expect(first.refs.get('main')).toBe(main)
+    expect(second.refs.get('main')).toBe(main)
+  })
+
+  it('has concurrent operations join the one in flight', async () => {
+    const { main, feature } = await featureAhead()
+    const github = coalescing()
+    const observed = spySpawns()
+
+    const settled = await Promise.all([
+      github.fetch({ have: [] }),
+      github.fetch({ have: [main] }),
+      github.push(request('feature', feature)),
+    ])
+
+    expect(settled[2]).toMatchObject({ kind: 'need-objects' })
+    expect(githubFetches(observed)).toBe(1)
+  })
+
+  it('fetches afresh for a push after a push, and for a fetch after that', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
+    const one = await commitAndPush(remoteGitPath, 'refs/heads/one', 'one.txt')
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/two', main)
+    await seed.raw(['reset', '-q', '--hard', main])
+    const two = await commitAndPush(remoteGitPath, 'refs/heads/two', 'two.txt')
+    const github = coalescing()
+    const observed = spySpawns()
+
+    expect((await pushVia(github, 'one')).outcome).toMatchObject({ moved: true })
+    const afterOne = githubFetches(observed)
+    expect((await pushVia(github, 'two')).outcome).toMatchObject({ moved: true })
+    const afterTwo = githubFetches(observed)
+    const fetched = await github.fetch({ have: [] })
+
+    // The first push's two calls (without objects, then with its bundle) share one.
+    expect(afterOne).toBe(1)
+    expect(afterTwo).toBe(2)
+    expect(githubFetches(observed)).toBe(3)
+    expect(fetched.refs.get('one')).toBe(one)
+    expect(fetched.refs.get('two')).toBe(two)
+  })
+
+  it('fetches again rather than answer from a mirror re-created after its fetch', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    await github.fetch({ have: [] })
+    await fs.rm(mirrorDir(), { recursive: true, force: true })
+
+    // Both reuse the fetch above. The first one's session fails on the missing mirror; the
+    // second one's session then re-creates it, empty.
+    const [first, second] = await Promise.allSettled([
+      github.fetch({ have: [] }),
+      github.fetch({ have: [] }),
+    ])
+
+    expect(first.status).toBe('rejected')
+    expect(second.status === 'fulfilled' && second.value.refs.get('main')).toBe(main)
   })
 })

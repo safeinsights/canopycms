@@ -2033,6 +2033,29 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSyncAt).toBeUndefined()
   })
 
+  it('reports a packed-refs lock left in remote.git as lastGitSyncError at the end of the cycle, and leaves it there', async () => {
+    const seedGit = simpleGit({ baseDir: path.join(tmpDir, 'fixture-seed') })
+    await seedGit.push('origin', 'main:refs/heads/gone')
+    await makeSyncWorker().syncGit()
+    await simpleGit().raw(['--git-dir', fixtureRemote, 'update-ref', '-d', 'refs/heads/gone'])
+    await advanceGitHubMain()
+    // As a git killed while it deleted a branch leaves it, eleven minutes ago.
+    const lock = path.join(workspacePath, 'remote.git', 'packed-refs.lock')
+    await fs.writeFile(lock, '')
+    const then = new Date(Date.now() - 11 * 60 * 1000)
+    await fs.utimes(lock, then, then)
+
+    await makeSyncWorker().syncGit()
+
+    const status = await readStatus()
+    expect(status.lastGitSyncAt).toBeTruthy()
+    expect(status.lastGitSyncError?.message).toMatch(
+      /packed-refs\.lock has been there since .*every branch deletion in remote\.git fails/,
+    )
+    expect(status.lastGitSyncError?.at).toBe(status.lastGitSyncAt)
+    await expect(fs.stat(lock)).resolves.toBeTruthy()
+  })
+
   it('stamps the status file with the canopycms version the worker runs', async () => {
     const worker = makeSyncWorker()
     await worker.syncGit()

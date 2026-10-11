@@ -60,6 +60,18 @@ describe('runGit', () => {
     expect(Date.now() - started).toBeLessThan(4_000)
   })
 
+  it('kills git that runs past its deadline, though it keeps writing', async () => {
+    const started = Date.now()
+    const err = await failure(
+      runGit(['chatty'], {
+        ...alias('chatty', 'while :; do echo x >&2; sleep 0.05; done', 10_000),
+        deadlineMs: 300,
+      }),
+    )
+    expect(err.message).toBe('git chatty ran longer than 300ms')
+    expect(Date.now() - started).toBeLessThan(4_000)
+  })
+
   it('kills git when the signal aborts', async () => {
     const controller = new AbortController()
     const started = Date.now()

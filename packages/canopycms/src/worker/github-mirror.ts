@@ -56,9 +56,9 @@ import {
  *
  * One process owns it, and {@link GitHubMirror.exclusive} runs one session at a time, so a fetch's
  * `--prune` never meets a push half way, and the mirror's heads cannot move between a push's
- * reachability test and the push. A repack runs beside sessions, quarantines included, which is
- * safe because it expires no cruft, so no object a session is using disappears, and a reader
- * holding a pack the repack unlinked keeps reading it (git-manager.ts `repackBareRemoteIfNeeded`).
+ * reachability test and the push. It sweeps what a killed git left, rebuilds itself from GitHub
+ * when it would lie, and runs maintenance beside sessions under a mutex of its own
+ * (worker/github-mirror-upkeep.ts, whose module doc holds the lock order).
  *
  * Every transfer runs with `--progress`: the timeout is inactivity, and a quiet fetch of a whole
  * repository would otherwise be killed for its size. The connectivity walk after a fetch still
