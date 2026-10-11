@@ -1132,8 +1132,8 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   `aws ec2 get-console-output` names the step, or the line for a step that is not retried.
 - **Replaced weekly** (`workerMaxInstanceLifetime`, default 7 days, `null` to turn off). Auto
   Scaling [terminates the instance and launches a new one meanwhile](https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-max-instance-lifetime.html),
-  which boots while the old one drains (see [Redeploying](#redeploying-updates-the-worker-too)).
-  The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
+  which boots while the old one drains. Saves keep working; publishing, pull requests and sync
+  wait. The worker logs `Syncing git...` at startup and every 5 minutes, so a replacement taking
   12–15 minutes leaves a gap of about 20, inside the [worker-down alarm](#worker-down-alarm)'s 30.
 - **A worker without network or secret**, rated 0.6 by `systemd-analyze security`, beside the
   GitHub gateway (1.6): only `/mnt/efs`, its state

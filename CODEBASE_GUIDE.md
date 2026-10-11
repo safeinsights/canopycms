@@ -232,6 +232,7 @@ direction, and every invariant.
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
+- `gateway-instance.ts` — `GatewayInstance`: the gateway's termination and lifecycle operations
 - `history-rewrite.ts` — force-push leasing on a pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
 - `github-auth.ts` — credential selection and installation-token minting
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
@@ -293,7 +294,9 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `lambda/asset-transform/handler.ts` — the transform Lambda behind `/assets/t/*` S3 misses, via `storeTransform`
 - `lambda/asset-transform/build.mjs` — builds that Lambda's code asset without Docker; see [DEVELOPING.md](DEVELOPING.md#building-the-transform-lambda-no-docker)
 - `src/constructs/worker-lifecycle.ts` — names the construct and bundle share, incl. `WORKER_CONTRACT_VERSION`
-- `worker/index.ts` — EC2 entrypoint: the worker (`worker/run.ts`'s `runWorker`), or `gateway`
+- `src/constructs/worker-units.ts` — the worker instance's systemd units and `canopy-inspect`, as user-data writes them; `worker/` holds identical copies
+- `worker/build.ts` — `build:worker`, which writes the contract banner user-data reads
+- `worker/index.ts` — EC2 entrypoint: the worker (`worker/run.ts`'s `runWorker`), `gateway`, or `self-check`
 - `worker/gateway-run.ts` — `runGateway`, the GitHub gateway process
 - `worker/termination-watch.ts` — instance-termination watch
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction

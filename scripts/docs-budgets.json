@@ -69,7 +69,7 @@
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 744,
-      "words": 4212
+      "words": 4238
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -83,8 +83,8 @@
     },
     "docs/adopter-migration.md": {
       "historyMarkers": null,
-      "maxSectionWords": 5267,
-      "words": 10144
+      "maxSectionWords": 5387,
+      "words": 10264
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -94,7 +94,7 @@
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1766,
-      "words": 10140
+      "words": 10146
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,

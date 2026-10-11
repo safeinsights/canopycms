@@ -88,6 +88,7 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| next | Worker   | [Worker holds no secret (contract 2)](#canopycms-cdk-the-worker-holds-no-secret--security-fix-template-first-contract-2)                                                                    | Template first               |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -565,7 +566,7 @@ stops applying and no keychain credential is tried.
 
 ### The worker moves objects between GitHub and `remote.git` as bundles
 
-**What changed.** (next) The worker, run as one process, moves objects between GitHub and
+**What changed.** (next) The worker moves objects between GitHub and
 `remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
 and operations may reuse GitHub fetches under 30 seconds old.
 
@@ -587,6 +588,18 @@ bundle-only roll is safe.
 copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-worker.service`.
 
 **Now deletable.** Deciding from the template diff whether a bundle-only roll is safe.
+
+### `canopycms-cdk`: the worker holds no secret — **security fix; template first (contract 2)**
+
+**What changed.** (next) The worker runs with no network and no secret. `canopy-github`, a gateway
+service under its own user with no view of EFS, holds the GitHub credential and the Clerk key, and
+is the only process that can reach the instance's AWS role. Core dumps are off. User data picks the
+units from the bundle's contract: 2 gets the split, an older bundle the single unit.
+
+**To adopt.** Default `workerCode`: one `cdk deploy` does both. Parameter mode: `cdk deploy` the
+template, then roll the bundle; on an older template it stops with `template too old for this
+bundle`. Inspect EFS only through `/opt/canopy-worker/canopy-inspect`, never as root. A hand install
+takes `worker/`'s three units and `gateway.env.example`.
 
 ### `canopycms-cdk`: `CanopyCmsService.attachTo`, and editor response headers — **behaviour change if you frame the CMS**
 
