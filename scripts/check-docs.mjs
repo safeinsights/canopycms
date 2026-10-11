@@ -6,8 +6,8 @@
 // changelog a per-entry cap (see docs-budgets.json, HISTORY_MARKER_RE and
 // isChangelogBudget below). SCOPE is narrower than
 // "every markdown file" -- only where a path functions as an INSTRUCTION;
-// see EXCLUDED below. Needs git, and mdast-util-from-markdown for the
-// changelog entry cap.
+// see EXCLUDED below. Needs git, and mdast-util-from-markdown (a root
+// devDependency) to parse the changelog for its entry cap.
 //
 // Usage: node scripts/check-docs.mjs [file...]
 //        node scripts/check-docs.mjs --write-baseline [--margin=N] [--allow-raise]
@@ -359,17 +359,17 @@ function proseText(node) {
 
 /**
  * Measures each `###` entry under a changelog's `## Unreleased` section and
- * returns those whose words, heading included, exceed `cap`, plus whether the
- * section exists at all: without it nothing would be capped, so the caller
- * reports its absence, and any other H1 or H2 before `## Released`, which
- * would otherwise end the section early. The file is parsed as CommonMark, so only a real
- * top-level heading opens an entry or a section, and code and HTML comments
- * (the entry template) are not counted. An entry runs to the next `###` or
- * higher heading. Entries under `## Released` are exempt: release
- * consolidation is where the file shrinks.
+ * returns those whose words, heading included, exceed `cap`. It also returns
+ * whether the section exists, since without it nothing is capped, and every
+ * other H1 or H2 before `## Released`, since one would end the section early.
+ * The file is parsed as CommonMark, so only a real top-level heading opens an
+ * entry or a section, and code and HTML comments (the entry template) are not
+ * counted. An entry runs to the next heading of level 3 or higher. Entries
+ * under `## Released` are exempt: release consolidation is where the file
+ * shrinks.
  */
 function measureChangelog(content, cap) {
-  // micromark drops a byte-order mark, which would shift every offset by one.
+  // micromark skips a byte-order mark, so its offsets index the text without one.
   const text = content.replace(/^\uFEFF/, '')
   const entries = []
   const strayHeadings = []
@@ -493,7 +493,7 @@ function planBaseline({ existing, files, measure, margin, only, allowRaise }) {
 }
 
 const BASELINE_COMMENT =
-  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. Raise one file with `--write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the numbers that file has outgrown, to the count plus 2% (at least 10 and at most 40 words). historyMarkers: null with maxEntryWords marks a dated changelog: its markers, total and sections are not checked, each ### entry under ## Unreleased is capped at maxEntryWords, and the entry is kept as written across rewrites.'
+  'Word-count ratchet read by scripts/check-docs.mjs (pnpm lint:docs). Regenerate with `node scripts/check-docs.mjs --write-baseline [--margin=<pct>] [--allow-raise]`: words and maxSectionWords are written as actual plus the margin, historyMarkers as the actual count, and a write that would raise any existing number is refused without --allow-raise. Raise one file with `--write-baseline --only <file> --allow-raise`: it leaves every other entry alone and raises only the numbers that file has outgrown: word counts to the count plus 2% (at least 10 and at most 40 words), historyMarkers to the count. historyMarkers: null with maxEntryWords marks a dated changelog: its markers, total and sections are not checked, each ### entry under ## Unreleased is capped at maxEntryWords, and the entry is kept as written across rewrites.'
 
 /**
  * Writes scripts/docs-budgets.json from `planBaseline`. Refuses to raise a
@@ -1162,7 +1162,7 @@ for (const f of inScopeFiles) {
         kind: 'changelog heading inside ## Unreleased',
         file: f,
         line: stray.lineNo,
-        message: `"${stray.heading}" -- only \`## Released\` may follow \`## Unreleased\`; a paragraph directly above \`---\` becomes a heading, so add a blank line`,
+        message: `"${stray.heading}" -- only \`## Released\` may end \`## Unreleased\`; if this is a paragraph directly above \`---\`, add a blank line between them`,
       })
     }
     for (const entry of changelog.over) {
