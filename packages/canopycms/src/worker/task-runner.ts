@@ -19,7 +19,11 @@ import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
 import { GitHubPushError, describeMove, type GitHubPushOutcome } from './github-gateway'
 import { GatewayRefusalError } from './branch-policy'
-import { GatewayRequestRefusedError } from './github-gateway-wire'
+import {
+  GatewayRequestRefusedError,
+  GitHubGatewayStoppingError,
+  GitHubGatewayUnreachableError,
+} from './github-gateway-wire'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
@@ -241,12 +245,20 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       await completeTask(ctx.taskDir, task.id, result, ctx.log)
       await updateBranchMetadata(ctx, task, result)
     } catch (err) {
-      if (err instanceof TaskAbortedForShutdownError) {
-        // The next worker runs it again from the start, exactly as a retry
-        // after a timed-out attempt does.
+      // A stop, not the task, is why these failed, so the task goes back to pending with no retry
+      // spent, as after a drain's abort: the gateway draining, or out of reach while this worker
+      // drains (its host going away).
+      const gatewayStopping = err instanceof GitHubGatewayStoppingError
+      const gatewayGone = ctx.isDraining() && err instanceof GitHubGatewayUnreachableError
+      if (err instanceof TaskAbortedForShutdownError || gatewayStopping || gatewayGone) {
+        // It runs again from the start, exactly as a retry after a timed-out attempt does.
         await releaseTask(ctx.taskDir, task.id, ctx.log)
         workerLogWarn(
-          `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,
+          gatewayStopping
+            ? `The GitHub gateway is stopping; released task ${task.id} (${task.action}) to pending`
+            : gatewayGone
+              ? `The GitHub gateway is out of reach while the worker drains; released task ${task.id} (${task.action}) to pending for the next worker`
+              : `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,
         )
         break
       }

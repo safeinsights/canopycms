@@ -169,6 +169,14 @@ export class BranchPolicy {
     this.globs = entries.filter((entry) => entry.includes('*'))
   }
 
+  /** The protected set as it stands: configured names and globs, and GitHub's default as last read. */
+  describe(): { configured: string[]; githubDefault: string | null } {
+    return {
+      configured: [...this.exact, ...this.globs],
+      githubDefault: this.githubDefault?.name ?? null,
+    }
+  }
+
   /** Whether `branch` is protected; GitHub's default is read only when nothing else matches. */
   async isProtected(branch: string, readDefault: DefaultBranchReader): Promise<boolean> {
     if (this.matchesConfigured(branch)) return true

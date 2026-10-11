@@ -29,6 +29,7 @@ import {
   localGatewayOf,
   GATEWAY_TRANSPORT,
   gatewaysSettled,
+  closeServedGateways,
 } from '../test-utils'
 import {
   DEFAULT_GITHUB_TOKEN_REFRESH_MIN_INTERVAL_MS,
@@ -194,6 +195,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   vi.unstubAllEnvs()
@@ -728,6 +730,29 @@ describe('re-reading the credential', () => {
     await vi.waitFor(() => expect(consoleSpy).toHaveErrored('did not settle within 200ms'))
     // Over the socket the fetch job outlives the aborted wait, and fails on its own.
     await gatewaysSettled()
+  })
+
+  it('is joined for no longer than its cap, after which the operation goes on with the token it has', async () => {
+    const provider = vi.fn(() => new Promise<string>(() => undefined))
+    // The re-read's own bound is long; the join's cap is what ends the wait.
+    const github = gateway(
+      { remoteUrl: path.join(root, 'missing.git'), timeoutMs: 5_000, refreshJoinCapMs: 150 },
+      provider,
+    )
+    await expect(github.fetch({ have: [] })).rejects.toThrow()
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(1))
+    const observed = spySpawns()
+    const started = Date.now()
+
+    await expect(github.fetch({ have: [] })).rejects.toThrow()
+
+    // It reached git with the token it had, well before the re-read's bound.
+    expect(observed.some((spawn) => subcommand(spawn.args) === 'fetch')).toBe(true)
+    expect(Date.now() - started).toBeLessThan(4_000)
+    await vi.waitFor(() => expect(consoleSpy).toHaveErrored('did not settle within 5000ms'), {
+      timeout: 8_000,
+    })
+    await closeServedGateways()
   })
 
   it('reaches the provider once for two failures inside the default floor', async () => {

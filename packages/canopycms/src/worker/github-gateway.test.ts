@@ -24,6 +24,7 @@ import {
   passedSignal,
   serverRequestOption,
   expectRebuiltOctokitError,
+  closeServedGateways,
 } from '../test-utils'
 import { isNonFastForwardRejection } from '../utils/git'
 import { resolveWorkerGitHubAuth } from './github-auth'
@@ -123,6 +124,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   consoleSpy.restore()
   await fs.rm(root, { recursive: true, force: true })
 })
@@ -166,6 +168,17 @@ describe('fetch', () => {
     await github.fetch({ have: [] })
 
     expect(remoteUrl).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('fetch progress', () => {
+  it("tells the caller of the gateway's git working while it waits", async () => {
+    await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const onProgress = vi.fn()
+
+    await gateway().fetch({ have: [] }, undefined, onProgress)
+
+    expect(onProgress).toHaveBeenCalled()
   })
 })
 
@@ -341,7 +354,7 @@ describe('push', () => {
     await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${ahead}:refs/heads/parked`)
     const remoteUrl = vi.fn(() => githubPath)
 
-    await pushVia(gateway({ remoteUrl }), {
+    await pushVia(gateway({ remoteUrl, prefetch: false }), {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
@@ -362,7 +375,7 @@ describe('push', () => {
       return githubPath
     })
 
-    const outcome = await pushVia(gateway({ remoteUrl }), {
+    const outcome = await pushVia(gateway({ remoteUrl, prefetch: false }), {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
@@ -370,6 +383,39 @@ describe('push', () => {
 
     expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
     expect(remoteUrl).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('health', () => {
+  it('reports a prepared gateway ready, with its preflight, Clerk and protected set', async () => {
+    const github = gateway({
+      baseBranch: 'production',
+      protectedBranches: ['release/*'],
+      clerkConfigured: true,
+      prefetch: false,
+    })
+    await github.prepare()
+
+    expect(await github.health()).toEqual({
+      ready: true,
+      fatalError: null,
+      preflight: 'not-an-app',
+      clerkConfigured: true,
+      protectedBranches: { configured: ['production', 'release/*'], githubDefault: null },
+    })
+  })
+
+  it("reports prepare()'s failure as the fatal error, scrubbed", async () => {
+    const github = gateway({
+      stateDirectory: path.join(root, 'workspace', 'state'),
+      prefetch: false,
+    })
+
+    await expect(github.prepare()).rejects.toThrow(/inside its shared workspace/)
+    const health = await github.health()
+
+    expect(health.ready).toBe(false)
+    expect(health.fatalError).toMatch(/inside its shared workspace/)
   })
 })
 

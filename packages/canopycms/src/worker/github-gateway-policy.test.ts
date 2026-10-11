@@ -23,6 +23,7 @@ import {
   gatewayUnderTest,
   GATEWAY_TRANSPORT,
   expectRebuiltOctokitError,
+  closeServedGateways,
 } from '../test-utils'
 import { DEFAULT_BRANCH_TTL_MS, GatewayRefusalError } from './branch-policy'
 import { resolveWorkerGitHubAuth } from './github-auth'
@@ -146,6 +147,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  await closeServedGateways()
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   consoleSpy.restore()
@@ -616,6 +618,42 @@ describe('an unread default branch', () => {
     await github.deleteBranch('feature')
     expect(octokit.repos.get).toHaveBeenCalledTimes(2)
     expect(octokit.git.deleteRef).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("the pull request helper's warnings", () => {
+  it("go through the gateway's log: scrubbed, and on one escaped line", async () => {
+    const octokit = octokitStub()
+    octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 5,
+          draft: true,
+          node_id: 'PR_5',
+          html_url: 'https://x.test/5',
+          updated_at: '2026-01-01T00:00:00Z',
+          body: '',
+        },
+      ],
+    })
+    // GitHub's GraphQL error text is not the gateway's: it can carry anything.
+    const leaked = 'ghp_0123456789abcdefghijABCDEFGHIJ012345'
+    const graphql = vi.fn().mockRejectedValue(new Error(`refused ${leaked}\nFORGED log line`))
+    const github = gateway({ octokit: { ...octokit, graphql } as unknown as Octokit })
+
+    await github.createOrUpdatePullRequest({
+      head: 'feature',
+      base: 'main',
+      title: 'T',
+      body: 'B',
+      markReadyIfDraft: true,
+    })
+
+    const warned = consoleSpy.all().warn.filter((line) => line.includes('ready for review'))
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).not.toContain(leaked)
+    expect(warned[0]).toContain('\\nFORGED log line')
+    expect(warned[0]).not.toContain('\n')
   })
 })
 

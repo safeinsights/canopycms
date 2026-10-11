@@ -82,15 +82,28 @@ export {
 export {
   createLocalGitHubGateway,
   type GitHubGateway,
+  type GitHubGatewayHealth,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
 export {
   serveGitHubGateway,
   connectGitHubGateway,
+  type GitHubGatewayClientOptions,
   type GitHubGatewayListen,
   type GitHubGatewayServer,
+  type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
+// worker-shared-repo-git-process-split.md §5).
+export {
+  assertSelfChecks,
+  gatewaySelfChecks,
+  workerSelfChecks,
+  type SelfCheckEnvironment,
+  type SelfCheckName,
+  type SelfCheckResult,
+} from './self-checks'
 
 /**
  * Auth cache refresh function type; adopters supply their auth-plugin-specific

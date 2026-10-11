@@ -5,6 +5,7 @@ export { initTestRepo, openBareRepo } from './git-helpers'
 export { octokitErrorFor, noCommitsBetweenError } from './github-errors'
 export {
   GATEWAY_TRANSPORT,
+  closeServedGateways,
   fixtureCredential,
   expectRebuiltOctokitError,
   gatewayUnderTest,

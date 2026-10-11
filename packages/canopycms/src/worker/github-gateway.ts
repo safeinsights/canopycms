@@ -70,6 +70,14 @@ interface GitHubFetchJob {
   snapshot: FetchSnapshot | null
 }
 
+/**
+ * The longest an operation waits for a credential re-read in flight before it goes on with the
+ * credential it has. A provider can take 87 s for one `getSecret`, and an operation that waited it
+ * out would die at the task deadline for nothing; the task's retry still sees a rotated token, and
+ * a re-read a hostile worker armed cannot hold every push for its length.
+ */
+const REFRESH_JOIN_CAP_MS = 15_000
+
 /** The most prerequisites one push names. */
 const MAX_PUSH_PREREQUISITES = 3
 
@@ -149,9 +157,15 @@ export type GitHubCreateOrUpdatePullRequest = Omit<
 export interface GitHubGateway {
   /**
    * At startup, before anything uses the credential: prove a GitHub App credential works, refuse
-   * a state directory the Lambda could write, and create the mirror.
+   * a state directory the Lambda could write, and create the mirror. Runs once; every later call
+   * answers the first one's outcome, a failure being the gateway's fatal error.
    */
   prepare(): Promise<void>
+  /**
+   * Whether the gateway is ready, waiting for a `prepare()` under way (until `signal` aborts), and
+   * what the worker reports of it.
+   */
+  health(signal?: AbortSignal): Promise<GitHubGatewayHealth>
   /** GitHub's default branch. */
   defaultBranch(signal?: AbortSignal): Promise<string>
   /** Whether `branch` is in the gateway's protected set (worker/branch-policy.ts). */
@@ -160,8 +174,13 @@ export interface GitHubGateway {
    * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
    * lacks. `have` is the caller's own tips, at most {@link MAX_FETCH_HAVE} object IDs; any the
    * gateway does not hold as a commit is ignored. A new fetch replaces a bundle not yet opened.
+   * `onProgress` is told of each sign of life from the gateway's git while the caller waits.
    */
-  fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult>
+  fetch(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+    onProgress?: () => void,
+  ): Promise<GitHubFetchResult>
   /**
    * The bundle a fetch answered with, readable once. Throws {@link GitHubTransientError}
    * (`bundle-gone`) when a later fetch replaced it or it was already opened.
@@ -201,6 +220,24 @@ export interface GitHubGateway {
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
 }
 
+/** What {@link GitHubGateway.health} reports. */
+export interface GitHubGatewayHealth {
+  /** `prepare()` has succeeded. */
+  ready: boolean
+  /** `prepare()`'s failure, scrubbed: the gateway's fatal error. Null before it or after a success. */
+  fatalError: string | null
+  /**
+   * The GitHub App check at `prepare()`: `not-an-app` on the token path, `verified`, `unverified`
+   * when it failed in a way that looked transient (the credential is minted again on first use),
+   * or `pending` before it has run.
+   */
+  preflight: 'not-an-app' | 'verified' | 'unverified' | 'pending'
+  /** Whether the gateway holds a Clerk secret key. */
+  clerkConfigured: boolean
+  /** The protected set (worker/branch-policy.ts): configured names and globs, and GitHub's default as last read. */
+  protectedBranches: { configured: string[]; githubDefault: string | null }
+}
+
 export interface LocalGitHubGatewayOptions {
   githubOwner: string
   githubRepo: string
@@ -223,6 +260,8 @@ export interface LocalGitHubGatewayOptions {
   baseBranch?: string
   /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
   protectedBranches?: readonly string[]
+  /** Whether a Clerk secret key is configured, for `health()`. Default false. */
+  clerkConfigured?: boolean
   /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
   maxBundleBytes?: number
   /**
@@ -230,6 +269,14 @@ export interface LocalGitHubGatewayOptions {
    * a test can change "GitHub" between two operations and have the second see it.
    */
   fetchCoalesceMs?: number
+  /** Test seam: how long an operation waits for a re-read in flight (default {@link REFRESH_JOIN_CAP_MS}). */
+  refreshJoinCapMs?: number
+  /**
+   * Test seam: whether `prepare()` starts the first GitHub fetch (default true), for a test that
+   * counts the gateway's own fetches or sessions from its first operation. A served gateway is
+   * prepared as its server starts.
+   */
+  prefetch?: boolean
 }
 
 /** The in-process {@link GitHubGateway}. */
@@ -254,10 +301,17 @@ class LocalGitHubGateway implements GitHubGateway {
   private githubFetch: GitHubFetchJob | null = null
   /** Pushes about to run and branch deletions settled at GitHub: each ends reuse of an earlier fetch. */
   private pushes = 0
+  private preparing: Promise<void> | null = null
+  private preflight: GitHubGatewayHealth['preflight'] = 'pending'
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
-    this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth)
+    this.octokit =
+      options.octokit ??
+      createCanopyOctokit(options.auth.octokitAuth, {
+        warn: gatewayLogWarn,
+        error: gatewayLogError,
+      })
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
@@ -271,9 +325,10 @@ class LocalGitHubGateway implements GitHubGateway {
   /**
    * Run one operation that uses the credential.
    *
-   * It first JOINS a re-read in flight, bounded by its own `signal`, so the 5s/10s/20s task
-   * retries see a rotated token. Then, if the operation fails after any of its GitHub-bound git
-   * commands or Octokit calls failed, it ARMS a re-read. Not gated on the failure looking
+   * It first JOINS a re-read in flight, bounded by its own `signal` and by
+   * {@link REFRESH_JOIN_CAP_MS}, so the 5s/10s/20s task retries see a rotated token. Then, if the
+   * operation fails after any of its GitHub-bound git commands or Octokit calls failed, it ARMS a
+   * re-read. Not gated on the failure looking
    * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
    * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
    * (`GatewayRefusalError`, whatever came before it; an invalid object ID), anything else local, a lock file the mirror's own
@@ -350,11 +405,22 @@ class LocalGitHubGateway implements GitHubGateway {
     }
   }
 
-  /** Wait for a re-read in flight, unless `signal` aborts first. */
+  /**
+   * Wait for a re-read in flight, for at most {@link REFRESH_JOIN_CAP_MS}, unless `signal` aborts
+   * first; past the cap the operation goes on with the credential as it stands.
+   */
   private async joinRefresh(signal?: AbortSignal): Promise<void> {
     const inFlight = this.refreshing
     if (inFlight === null) return
-    await untilAborted(inFlight, signal)
+    let timer: NodeJS.Timeout | undefined
+    const capped = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.options.refreshJoinCapMs ?? REFRESH_JOIN_CAP_MS)
+    })
+    try {
+      await untilAborted(Promise.race([inFlight, capped]), signal)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**
@@ -472,7 +538,32 @@ class LocalGitHubGateway implements GitHubGateway {
     this.refreshing = refreshing
   }
 
-  async prepare(): Promise<void> {
+  prepare(): Promise<void> {
+    return (this.preparing ??= this.prepareOnce())
+  }
+
+  async health(signal?: AbortSignal): Promise<GitHubGatewayHealth> {
+    let ready = false
+    let fatalError: string | null = null
+    if (this.preparing !== null) {
+      try {
+        await untilAborted(this.preparing, signal)
+        ready = true
+      } catch (err) {
+        if (signal?.aborted) throw err
+        fatalError = redactEgress(getErrorMessage(err))
+      }
+    }
+    return {
+      ready,
+      fatalError,
+      preflight: this.preflight,
+      clerkConfigured: this.options.clerkConfigured ?? false,
+      protectedBranches: this.policy.describe(),
+    }
+  }
+
+  private async prepareOnce(): Promise<void> {
     try {
       // Before the mirror's first fetch, whose failure would otherwise blame the repository.
       await this.preflightGitHubAppAuth()
@@ -483,6 +574,7 @@ class LocalGitHubGateway implements GitHubGateway {
     }
     // The first GitHub fetch starts now, detached, so the first operation that needs one joins
     // it under way. Its failure surfaces to whoever joins it.
+    if (this.options.prefetch === false) return
     void this.credentialed(undefined, (reach) =>
       this.joinGitHubFetch(() => this.credential(reach)),
     ).catch(() => undefined)
@@ -499,13 +591,17 @@ class LocalGitHubGateway implements GitHubGateway {
    * `lastFatalError`. No-op on the token path, where the first real request checks as much.
    */
   private async preflightGitHubAppAuth(): Promise<void> {
-    if (!this.options.githubApp) return
+    if (!this.options.githubApp) {
+      this.preflight = 'not-an-app'
+      return
+    }
     try {
       registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       // [REDACT] Both messages below reach worker-status.json and the browser.
       const detail = redactEgress(getErrorMessage(err))
       if (isTransientAuthFailure(err)) {
+        this.preflight = 'unverified'
         gatewayLogWarn(
           `Could not verify GitHub App authentication at startup: ${detail}. ` +
             'Continuing — this looks transient, and the credential is minted again on first use.',
@@ -518,6 +614,7 @@ class LocalGitHubGateway implements GitHubGateway {
           'Check the app id, the installation id, and that the private key belongs to that app.',
       )
     }
+    this.preflight = 'verified'
     gatewayLog('GitHub App authentication verified')
   }
 
@@ -588,7 +685,23 @@ class LocalGitHubGateway implements GitHubGateway {
     await this.policy.assertPullRequestAllowed(request, () => this.readDefaultBranch(reach, signal))
   }
 
-  fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
+  async fetch(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+    onProgress?: () => void,
+  ): Promise<GitHubFetchResult> {
+    const stopWatching = onProgress === undefined ? null : this.mirror.watchActivity(onProgress)
+    try {
+      return await this.fetchOnce(request, signal)
+    } finally {
+      stopWatching?.()
+    }
+  }
+
+  private fetchOnce(
+    request: { have: readonly string[] },
+    signal?: AbortSignal,
+  ): Promise<GitHubFetchResult> {
     const have = [...new Set(request.have)]
     if (have.length > MAX_FETCH_HAVE) {
       throw new Error(`A fetch takes at most ${MAX_FETCH_HAVE} have IDs, not ${have.length}`)
@@ -821,7 +934,13 @@ class LocalGitHubGateway implements GitHubGateway {
     return this.credentialed(signal, async (reach) => {
       await this.assertPullRequestAllowed(reach, request, signal)
       return this.api(reach, () =>
-        createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request, signal }),
+        createOrUpdatePullRequest({
+          octokit: this.octokit,
+          ...this.repo,
+          ...request,
+          signal,
+          warn: gatewayLogWarn,
+        }),
       )
     })
   }

@@ -15,15 +15,18 @@ import {
 } from '../test-utils'
 import { GatewayRefusalError } from './branch-policy'
 import { registerLiveSecret } from './gateway-egress'
-import { GitHubPushError, type GitHubGateway } from './github-gateway'
+import { resolveWorkerGitHubAuth } from './github-auth'
+import { GitHubPushError, createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
 import {
   connectGitHubGateway,
   serveGitHubGateway,
   type GitHubGatewayServer,
+  type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 import {
   GatewayRequestRefusedError,
   GitHubGatewayProtocolError,
+  GitHubGatewayStoppingError,
   GitHubGatewayUnreachableError,
   GitHubRequestError,
   PUSH_REQUEST_HEADER,
@@ -46,6 +49,13 @@ type FakeGateway = { [K in keyof GitHubGateway]: Mock<GitHubGateway[K]> }
 function fakeGateway(): FakeGateway {
   return {
     prepare: vi.fn(async () => undefined),
+    health: vi.fn(async () => ({
+      ready: true,
+      fatalError: null,
+      preflight: 'not-an-app' as const,
+      clerkConfigured: false,
+      protectedBranches: { configured: ['main'], githubDefault: 'main' },
+    })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
     fetch: vi.fn(async () => ({ refs: new Map([['main', SHA]]), bundleId: null })),
@@ -73,8 +83,12 @@ function fakeGateway(): FakeGateway {
   }
 }
 
-async function serve(gateway: GitHubGateway, at = socketPath): Promise<GitHubGatewayServer> {
-  const server = await serveGitHubGateway(gateway, { path: at })
+async function serve(
+  gateway: GitHubGateway,
+  at = socketPath,
+  options: GitHubGatewayServerOptions = {},
+): Promise<GitHubGatewayServer> {
+  const server = await serveGitHubGateway(gateway, { path: at }, options)
   servers.push(server)
   return server
 }
@@ -359,7 +373,11 @@ describe('the wire format at the server', () => {
 
     expect(status).toBe(400)
     expect(JSON.parse(answer)).toMatchObject({ error: { kind: 'refused' } })
-    for (const op of Object.values(gateway)) expect(op).not.toHaveBeenCalled()
+    // prepare() ran as the server started; no operation ran since.
+    expect(gateway.prepare).toHaveBeenCalledTimes(1)
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op).not.toHaveBeenCalled()
+    }
     expect(consoleSpy).toHaveWarned(/Refused a request/)
   })
 
@@ -497,10 +515,8 @@ describe('the wire format at the client', () => {
       res.end(body)
     })
     await new Promise<void>((resolve) => server.listen(socketPath, resolve))
-    servers.push({
-      idle: async () => undefined,
-      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-    })
+    const close = () => new Promise<void>((resolve) => server.close(() => resolve()))
+    servers.push({ idle: async () => undefined, drain: close, close })
   }
 
   it.each([
@@ -515,6 +531,12 @@ describe('the wire format at the client', () => {
       200,
       'application/json',
       '{"error":{"kind":"error","name":"E","message":"m"}}',
+    ],
+    [
+      'a stopping answer with a field it does not have',
+      503,
+      'application/json',
+      '{"error":{"kind":"stopping","message":"m","extra":1}}',
     ],
   ])('refuses an answer that is %s, loudly', async (_, status, type, body) => {
     await answering(status, type, body)
@@ -604,6 +626,108 @@ describe('the wire format at the client', () => {
 
     expect(caught).toBeInstanceOf(GitHubGatewayUnreachableError)
     expect(isPermanentTaskFailure(caught)).toBe(false)
+  })
+})
+
+describe('a worker that skips prepare', () => {
+  const pushHeader = Buffer.from(
+    JSON.stringify({ branch: 'feature', sha: SHA, prerequisites: [], bundle: false }),
+  ).toString('base64url')
+
+  /** Every operation a worker can ask for, raw, as a hostile one would, never calling prepare. */
+  const everyOperation = () => [
+    json('/v1/default-branch', {}),
+    json('/v1/is-protected-branch', { branch: 'main' }),
+    json('/v1/pull-request/create', { head: 'f', base: 'main', title: 'T', body: 'B' }),
+    json('/v1/pull-request/update', { number: 1, state: 'closed' }),
+    json('/v1/pull-request/get', { number: 1 }),
+    json('/v1/pull-request/create-or-update', { head: 'f', base: 'main', title: 'T', body: 'B' }),
+    json('/v1/pull-request/convert-to-draft', { number: 1 }),
+    json('/v1/branch/delete', { branch: 'f' }),
+    json('/v1/fetch', { have: [] }),
+    raw({
+      path: '/v1/push',
+      headers: { [PUSH_REQUEST_HEADER]: pushHeader, 'content-length': '0' },
+    }),
+    raw({ method: 'GET', path: `/v1/fetch/${'e'.repeat(32)}?wait=0` }),
+    raw({ method: 'GET', path: `/v1/bundle/${'e'.repeat(32)}` }),
+  ]
+
+  it('reaches no operation before the gateway has prepared', async () => {
+    const gateway = fakeGateway()
+    gateway.openBundle.mockRejectedValue(new GitHubTransientError('bundle-gone', 'gone'))
+    let finish: () => void = () => undefined
+    gateway.prepare.mockImplementation(
+      () => new Promise<undefined>((resolve) => (finish = () => resolve(undefined))),
+    )
+    await serve(gateway)
+
+    const answers = Promise.all(everyOperation())
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op, name).not.toHaveBeenCalled()
+    }
+    finish()
+    await answers
+
+    expect(gateway.defaultBranch).toHaveBeenCalledTimes(1)
+    expect(gateway.push).toHaveBeenCalledTimes(1)
+    expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("answers every operation with a failed prepare's error, running none", async () => {
+    const gateway = fakeGateway()
+    gateway.prepare.mockRejectedValue(new Error('the state directory is shared'))
+    await serve(gateway)
+
+    for (const answer of await Promise.all(everyOperation())) {
+      expect(answer.status).toBe(500)
+      expect(JSON.parse(answer.body)).toMatchObject({
+        error: { message: 'the state directory is shared' },
+      })
+    }
+    for (const [name, op] of Object.entries(gateway)) {
+      if (name !== 'prepare') expect(op, name).not.toHaveBeenCalled()
+    }
+  })
+
+  it('answers health without waiting on prepare: it reports the wait itself', async () => {
+    const gateway = fakeGateway()
+    gateway.prepare.mockImplementation(() => new Promise<undefined>(() => undefined))
+    await serve(gateway)
+
+    const health = await connectGitHubGateway(socketPath).health()
+
+    expect(health).toMatchObject({ ready: true, preflight: 'not-an-app' })
+    expect(gateway.health).toHaveBeenCalledWith(expect.any(AbortSignal))
+  })
+
+  it('never runs the real gateway on a shared state directory, and reports why', async () => {
+    const workspace = path.join(dir, 'workspace')
+    const local = createLocalGitHubGateway({
+      githubOwner: 'o',
+      githubRepo: 'r',
+      auth: resolveWorkerGitHubAuth({ githubToken: 'ghp_hostile_0123456789' }),
+      githubApp: false,
+      workspacePath: workspace,
+      // Where the CMS Lambda can write: prepare() refuses it.
+      stateDirectory: path.join(workspace, 'state'),
+      timeoutMs: 10_000,
+      remoteUrl: path.join(dir, 'nowhere.git'),
+    })
+    await serve(local)
+    const client = connectGitHubGateway(socketPath)
+
+    await expect(client.fetch({ have: [] })).rejects.toThrow(/inside its shared workspace/)
+    await expect(client.push({ branch: 'feature', sha: SHA, prerequisites: [] })).rejects.toThrow(
+      /inside its shared workspace/,
+    )
+    const health = await client.health()
+
+    expect(health.ready).toBe(false)
+    expect(health.fatalError).toMatch(/inside its shared workspace/)
+    // Nothing ran there: no mirror was created.
+    await expect(fs.access(path.join(workspace, 'state', 'github.git'))).rejects.toThrow()
   })
 })
 
@@ -727,7 +851,11 @@ describe('fetch jobs', () => {
     )
     expect(result.bundleId).toBe('c'.repeat(32))
     // Deduplicated before it is sent, as the gateway would itself.
-    expect(gateway.fetch).toHaveBeenCalledWith({ have: [SHA, OTHER] })
+    expect(gateway.fetch).toHaveBeenCalledWith(
+      { have: [SHA, OTHER] },
+      undefined,
+      expect.any(Function),
+    )
   })
 
   it('keeps a job running when the worker abandons its wait, and answers its next poll', async () => {
@@ -742,11 +870,52 @@ describe('fetch jobs', () => {
     controller.abort(new Error('the sync loop is stopping'))
     await expect(abandoned).rejects.toThrow('the sync loop is stopping')
 
-    // The gateway's fetch took no signal, so nothing could abort it.
-    expect(gateway.fetch).toHaveBeenCalledWith({ have: [] })
+    // The gateway's fetch took no signal, so nothing could abort it: only a progress listener.
+    expect(gateway.fetch).toHaveBeenCalledWith({ have: [] }, undefined, expect.any(Function))
     finish({ refs: new Map([['main', SHA]]), bundleId: null })
     await server.idle()
     expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops waiting, transient, for a job that shows no progress, and leaves it running', async () => {
+    const gateway = fakeGateway()
+    gateway.fetch.mockImplementation(() => new Promise(() => undefined))
+    await serve(gateway)
+    const started = Date.now()
+
+    const caught = await connectGitHubGateway(socketPath, { fetchInactivityMs: 300 })
+      .fetch({ have: [] })
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(caught).toMatchObject({ code: 'github-fetch-failed' })
+    expect(String(caught)).toMatch(/no progress for 300ms/)
+    expect(Date.now() - started).toBeLessThan(3_000)
+    expect(gateway.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits out a job past the inactivity bound while its progress moves, and passes it on', async () => {
+    const gateway = fakeGateway()
+    gateway.fetch.mockImplementation(
+      async (_request: unknown, _signal?: AbortSignal, onProgress?: () => void) => {
+        for (let i = 0; i < 10; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          onProgress?.()
+        }
+        return { refs: new Map([['main', SHA]]), bundleId: null }
+      },
+    )
+    await serve(gateway)
+    const onProgress = vi.fn()
+
+    const result = await connectGitHubGateway(socketPath, { fetchInactivityMs: 300 }).fetch(
+      { have: [] },
+      undefined,
+      onProgress,
+    )
+
+    expect(result.refs.get('main')).toBe(SHA)
+    expect(onProgress).toHaveBeenCalled()
   })
 
   it('polls a job past the server’s wait until it finishes', async () => {
@@ -1121,6 +1290,72 @@ describe('bundles across the socket', () => {
     expect(reads).toEqual([expect.stringMatching(/before the bundle arrived whole/)])
   })
 
+  it('cuts off a download whose client stops reading, releasing the bundle', async () => {
+    const gateway = fakeGateway()
+    let opened: Readable | undefined
+    gateway.openBundle.mockImplementation(async () => {
+      // Far more than the socket's buffers hold, so a client that stops reading stalls it.
+      opened = Readable.from(
+        (function* () {
+          for (let i = 0; i < 1024; i++) yield Buffer.alloc(64 * 1024, 3)
+        })(),
+      )
+      return opened
+    })
+    await serve(gateway, socketPath, { downloadStallMs: 200 })
+
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        { socketPath, method: 'GET', path: `/v1/bundle/${'c'.repeat(32)}`, agent: false },
+        resolve,
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    res.on('error', () => undefined)
+    // Read one chunk, then nothing more.
+    await new Promise((resolve) => res.once('data', resolve))
+    res.pause()
+
+    await vi.waitFor(() => expect(opened?.destroyed).toBe(true), { timeout: 3_000 })
+  })
+
+  it('cuts off a download read too slowly on average, though it never stalls', async () => {
+    const gateway = fakeGateway()
+    let opened: Readable | undefined
+    gateway.openBundle.mockImplementation(async () => {
+      opened = Readable.from(
+        (function* () {
+          for (let i = 0; i < 1024; i++) yield Buffer.alloc(64 * 1024, 3)
+        })(),
+      )
+      return opened
+    })
+    // A floor above what one chunk per poll below can keep up: about 640 KiB/s.
+    await serve(gateway, socketPath, {
+      downloadStallMs: 200,
+      minDownloadBytesPerSecond: 1024 * 1024,
+    })
+
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        { socketPath, method: 'GET', path: `/v1/bundle/${'c'.repeat(32)}`, agent: false },
+        resolve,
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    res.on('error', () => undefined)
+    res.pause()
+    // One chunk every 100 ms: never a whole period without one.
+    const trickle = setInterval(() => res.read(), 100)
+    try {
+      await vi.waitFor(() => expect(opened?.destroyed).toBe(true), { timeout: 3_000 })
+    } finally {
+      clearInterval(trickle)
+    }
+  })
+
   it('streams an outgoing bundle back, and answers a gone one with its error', async () => {
     const gateway = fakeGateway()
     gateway.openBundle.mockImplementation(async (id: string) => {
@@ -1136,6 +1371,65 @@ describe('bundles across the socket', () => {
 
     await expect(client.openBundle('d'.repeat(32))).rejects.toBeInstanceOf(GitHubTransientError)
     await expect(client.openBundle('../x')).rejects.toBeInstanceOf(GitHubGatewayProtocolError)
+  })
+})
+
+describe('a drain', () => {
+  it('lets a request under way finish, answering new ones stopping, then closes', async () => {
+    const gateway = fakeGateway()
+    let finish: () => void = () => undefined
+    gateway.defaultBranch.mockImplementation(
+      () => new Promise<string>((resolve) => (finish = () => resolve('main'))),
+    )
+    const server = await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+    const underWay = client.defaultBranch()
+    await vi.waitFor(() => expect(gateway.defaultBranch).toHaveBeenCalled())
+
+    const started = Date.now()
+    const draining = server.drain(10_000)
+    const refused = await client.isProtectedBranch('main').catch((err: unknown) => err)
+    // Still served: under socket activation systemd holds the socket too.
+    const answered = await json('/v1/is-protected-branch', { branch: 'main' })
+    finish()
+
+    expect(await underWay).toBe('main')
+    await draining
+    // Once nothing is under way, not at the grace's end.
+    expect(Date.now() - started).toBeLessThan(5_000)
+    // Stopping, which the task runner releases with no retry spent.
+    expect(answered.status).toBe(503)
+    expect(JSON.parse(answered.body)).toMatchObject({ error: { kind: 'stopping' } })
+    expect(refused).toBeInstanceOf(GitHubGatewayStoppingError)
+    expect(refused).toBeInstanceOf(GitHubGatewayUnreachableError)
+    expect(String(refused)).toMatch(/stopping/)
+    expect(isPermanentTaskFailure(refused)).toBe(false)
+    // Once per drain, though two requests met it.
+    expect(
+      consoleSpy.all().warn.filter((line) => line.includes('Answering requests as stopping')),
+    ).toHaveLength(1)
+    expect(gateway.isProtectedBranch).not.toHaveBeenCalled()
+  })
+
+  it('ends at its grace, whatever a client trickling a request holds open', async () => {
+    const server = await serve(fakeGateway())
+    const trickle = http.request({
+      socketPath,
+      method: 'POST',
+      path: '/v1/default-branch',
+      agent: false,
+      headers: { 'content-type': 'application/json', 'content-length': '100' },
+    })
+    const closed = new Promise<void>((resolve) => trickle.on('error', () => resolve()))
+    trickle.write('{')
+    // The request is under way once the server has begun reading it.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const started = Date.now()
+
+    await server.drain(300)
+
+    expect(Date.now() - started).toBeLessThan(2_000)
+    await closed
   })
 })
 
@@ -1157,6 +1451,19 @@ describe('the socket', () => {
       await fs.chmod(dir, 0o700)
     },
   )
+
+  it('is not left listening when it cannot be made 0600, and its gateway never prepares', async () => {
+    const gateway = fakeGateway()
+    const chmod = vi.spyOn(fs, 'chmod').mockRejectedValueOnce(new Error('chmod failed'))
+
+    await expect(serveGitHubGateway(gateway, { path: socketPath })).rejects.toThrow('chmod failed')
+
+    chmod.mockRestore()
+    await expect(connectGitHubGateway(socketPath).defaultBranch()).rejects.toBeInstanceOf(
+      GitHubGatewayUnreachableError,
+    )
+    expect(gateway.prepare).not.toHaveBeenCalled()
+  })
 
   it('is refused under a symbolic link to a directory', async () => {
     const real = path.join(dir, 'real')
@@ -1188,10 +1495,13 @@ describe('the socket', () => {
     await expect(serveGitHubGateway(fakeGateway(), { path: file })).rejects.toThrow(
       /something else is there/,
     )
-    // Nor a socket a running gateway still answers on.
-    await expect(serveGitHubGateway(fakeGateway(), { path: socketPath })).rejects.toThrow(
+    // Nor a socket a running gateway still answers on; and the refused one never prepared, which
+    // would sweep the state directory the running one is using.
+    const refused = fakeGateway()
+    await expect(serveGitHubGateway(refused, { path: socketPath })).rejects.toThrow(
       /a gateway already serves there/,
     )
+    expect(refused.prepare).not.toHaveBeenCalled()
     expect(await connectGitHubGateway(socketPath).defaultBranch()).toBe('main')
   })
 })

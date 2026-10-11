@@ -407,3 +407,32 @@ describe('GitHubMirror', () => {
     ).rejects.toThrow(/Not a commit ID/)
   })
 })
+
+describe('an outgoing bundle no one opens', () => {
+  it('is deleted after the retention, and opening it then is transient', async () => {
+    const retained = new GitHubMirror(stateDirectory, 30_000, undefined, 200)
+    const file = await retained.outgoingBundlePath()
+    await fs.writeFile(file, 'bundle bytes')
+    const id = await retained.setPendingBundle(file)
+
+    await vi.waitFor(() => expect(fs.access(file)).rejects.toThrow(), { timeout: 3_000 })
+    const caught = await retained.openBundle(id!).catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect((caught as GitHubTransientError).code).toBe('bundle-gone')
+  })
+
+  it('is kept past the retention once opened, until its reader is done', async () => {
+    const retained = new GitHubMirror(stateDirectory, 30_000, undefined, 200)
+    const file = await retained.outgoingBundlePath()
+    await fs.writeFile(file, 'bundle bytes')
+    const stream = await retained.openBundle((await retained.setPendingBundle(file))!)
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await expect(fs.access(file)).resolves.toBeUndefined()
+    let read = ''
+    for await (const chunk of stream) read += String(chunk)
+
+    expect(read).toBe('bundle bytes')
+  })
+})

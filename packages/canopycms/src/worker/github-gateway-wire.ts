@@ -14,7 +14,9 @@ import { redactEgress } from './gateway-egress'
  * The schemas bound shape and size. Where the gateway refuses a value itself (a branch name, a pull
  * request's text, a protected branch: worker/branch-policy.ts), the bound here sits well above its
  * cap, so its refusal crosses as itself and classifies as it does in-process. Object IDs and the
- * `have` and prerequisite counts are held here to the gateway's own rules.
+ * `have` and prerequisite counts are held here to the gateway's own rules. Requests are strict, an
+ * unknown field refused: the worker and the gateway ship in one bundle and roll together, so they
+ * never differ in version, and tolerating fields would only widen what a hostile worker can send.
  */
 
 /** Every route's prefix, so a later incompatible format can sit beside this one. */
@@ -64,6 +66,7 @@ const pullRequestText = { title: z.string().max(64 * 1024), body: z.string().max
 
 export const requests = {
   prepare: z.object({}).strict(),
+  health: z.object({}).strict(),
   defaultBranch: z.object({}).strict(),
   isProtectedBranch: z.object({ branch: name }).strict(),
   createPullRequest: z.object({ head: name, base: name, ...pullRequestText }).strict(),
@@ -94,6 +97,17 @@ const pullRequestRef = z.object({ number: prNumber, url: z.string().max(4096) })
 
 export const answers = {
   prepare: empty,
+  health: z
+    .object({
+      ready: z.boolean(),
+      fatalError: message.nullable(),
+      preflight: z.enum(['not-an-app', 'verified', 'unverified', 'pending']),
+      clerkConfigured: z.boolean(),
+      protectedBranches: z
+        .object({ configured: z.array(name).max(1024), githubDefault: name.nullable() })
+        .strict(),
+    })
+    .strict(),
   defaultBranch: z.object({ branch: name }).strict(),
   isProtectedBranch: z.object({ protected: z.boolean() }).strict(),
   createPullRequest: pullRequestRef,
@@ -116,6 +130,7 @@ export type JsonOperation = keyof typeof requests
 /** Where each JSON operation is POSTed. */
 export const JSON_ROUTES: Readonly<Record<JsonOperation, string>> = {
   prepare: `${WIRE_PREFIX}/prepare`,
+  health: `${WIRE_PREFIX}/health`,
   defaultBranch: `${WIRE_PREFIX}/default-branch`,
   isProtectedBranch: `${WIRE_PREFIX}/is-protected-branch`,
   createPullRequest: `${WIRE_PREFIX}/pull-request/create`,
@@ -137,10 +152,12 @@ export const fetchStarted = z.object({ job: jobId }).strict()
 
 /** A fetch job's state as a poll reads it; a failed one answers its error instead. */
 export const fetchPoll = z.discriminatedUnion('state', [
-  z.object({ state: z.literal('running') }).strict(),
+  /** `progress` counts the signs of life from the gateway's git while the job waits. */
+  z.object({ state: z.literal('running'), progress: z.number().int().nonnegative() }).strict(),
   z
     .object({
       state: z.literal('done'),
+      progress: z.number().int().nonnegative(),
       /** Every GitHub branch and its tip, as pairs: a `Map` has no JSON form of its own. */
       refs: z.array(z.tuple([name, objectId])).max(1_000_000),
       bundleId: jobId.nullable(),
@@ -245,6 +262,8 @@ const errorEnvelope = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('refused'), status: z.number().int(), message }).strict(),
   /** A poll named a job the gateway does not hold: it restarted, or the job's record expired. */
   z.object({ kind: z.literal('unknown-job'), message }).strict(),
+  /** The gateway is draining for a stop: to the worker it is as good as gone. */
+  z.object({ kind: z.literal('stopping'), message }).strict(),
 ])
 
 export type ErrorEnvelope = z.infer<typeof errorEnvelope>
@@ -276,6 +295,18 @@ export class GitHubGatewayUnreachableError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'GitHubGatewayUnreachableError'
+  }
+}
+
+/**
+ * The gateway answered that it is draining for a stop. Unreachable for every purpose, and more:
+ * the task runner releases a task it hits with no retry spent, since the stop, not the task, is
+ * why it failed, and a restart's grace could otherwise outlast the task's retries.
+ */
+export class GitHubGatewayStoppingError extends GitHubGatewayUnreachableError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GitHubGatewayStoppingError'
   }
 }
 
@@ -440,6 +471,8 @@ export function decodeError(value: unknown): Error {
       )
     case 'unknown-job':
       return new UnknownFetchJobError(envelope.message)
+    case 'stopping':
+      return new GitHubGatewayStoppingError(`The GitHub gateway is stopping: ${envelope.message}`)
   }
 }
 

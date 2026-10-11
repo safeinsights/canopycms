@@ -30,12 +30,7 @@ import {
   branchNameProblem,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
-import {
-  githubBoundGitOptions,
-  mirrorGitOptions,
-  mirrorPins,
-  quarantinePins,
-} from './shared-repo-git'
+import { mirrorGitOptions, mirrorPins, quarantinePins } from './shared-repo-git'
 
 /**
  * The worker's private bare mirror of the GitHub repository, in a state directory the CMS Lambda
@@ -78,7 +73,7 @@ export class GitHubMirror {
   private ready = false
   private swept = false
   private transferDirs: Promise<void> | null = null
-  private pendingBundle: { id: string; file: string } | null = null
+  private pendingBundle: { id: string; file: string; expiry: NodeJS.Timeout } | null = null
   private readonly maintenance = new MaintenanceMutex()
   private lastMaintenanceAt: number
   private corruption: MirrorCorruption = null
@@ -91,15 +86,18 @@ export class GitHubMirror {
   private rebuildFailedAt = 0
   /** A sweep the maintenance mutex prevented, done at the next session start that can take it. */
   private sweepOwed = false
+  private readonly activityListeners = new Set<() => void>()
 
   /**
    * `maintenanceIntervalMs` (default {@link MAINTENANCE_INTERVAL_MS}) also delays the first run:
-   * a mirror just fetched is in few packs.
+   * a mirror just fetched is in few packs. `bundleRetentionMs` (default
+   * {@link BUNDLE_RETENTION_MS}) is how long a bundle no one opens is kept.
    */
   constructor(
     private readonly stateDirectory: string,
     private readonly timeoutMs: number,
     private readonly maintenanceIntervalMs = MAINTENANCE_INTERVAL_MS,
+    private readonly bundleRetentionMs = BUNDLE_RETENTION_MS,
   ) {
     this.lastMaintenanceAt = Date.now()
     this.gitDir = path.join(stateDirectory, 'github.git')
@@ -128,7 +126,9 @@ export class GitHubMirror {
         }
         await sweepCredentialConfigs(this.stateDirectory)
         await this.ensureTransferDirs()
-        return await fn(new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs))
+        return await fn(
+          new MirrorSession(this.gitDir, this.stateDirectory, this.timeoutMs, this.activity),
+        )
       } catch (err) {
         this.ready = false
         throw err
@@ -137,6 +137,20 @@ export class GitHubMirror {
     const run = this.tail.then(start, start)
     this.tail = run.catch(() => undefined)
     return run
+  }
+
+  /**
+   * Call `listener` at each sign of life from a session's git (output, input taken) until the
+   * returned function is called: what a caller waiting on the mirror sees of progress, whoever's
+   * session it is.
+   */
+  watchActivity(listener: () => void): () => void {
+    this.activityListeners.add(listener)
+    return () => this.activityListeners.delete(listener)
+  }
+
+  private readonly activity = (): void => {
+    for (const listener of this.activityListeners) listener()
   }
 
   /** Create the mirror now rather than at its first use. */
@@ -387,12 +401,28 @@ export class GitHubMirror {
 
   /**
    * Make `file` the one pending outgoing bundle, or none, deleting the one it replaces (never an
-   * opened one), so a loop of fetches never fills the state directory. Returns the id that opens it: a
-   * key into this object, never a path.
+   * opened one), so a loop of fetches never fills the state directory, and deleting it after the
+   * bundle retention if no one opens it. Returns the id that opens it: a key into this object,
+   * never a path.
    */
   async setPendingBundle(file: string | null): Promise<string | null> {
     const replaced = this.pendingBundle
-    this.pendingBundle = file === null ? null : { id: randomBytes(16).toString('hex'), file }
+    if (replaced !== null) clearTimeout(replaced.expiry)
+    this.pendingBundle = null
+    if (file !== null) {
+      const pending = {
+        id: randomBytes(16).toString('hex'),
+        file,
+        // A bundle its caller never opens (a worker gone) is deleted at the retention's end.
+        expiry: setTimeout(() => {
+          if (this.pendingBundle !== pending) return
+          this.pendingBundle = null
+          void fs.rm(file, { force: true }).catch(() => undefined)
+        }, this.bundleRetentionMs),
+      }
+      pending.expiry.unref()
+      this.pendingBundle = pending
+    }
     if (replaced !== null) await fs.rm(replaced.file, { force: true })
     return this.pendingBundle?.id ?? null
   }
@@ -411,6 +441,7 @@ export class GitHubMirror {
           `it, or it was already read. Fetch again.`,
       )
     if (pending === null || pending.id !== id) throw gone()
+    clearTimeout(pending.expiry)
     this.pendingBundle = null
     let handle: fs.FileHandle
     try {
@@ -468,11 +499,17 @@ export interface ReceivedBundle {
  */
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
 
+/** How long a fetch's bundle waits to be opened before it is deleted. */
+const BUNDLE_RETENTION_MS = 10 * 60_000
+
 /** How often maintenance may run. */
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000
 
 /** How long sessions answer transient after a failed rebuild, rather than retry it each. */
 const REBUILD_BACKOFF_MS = 5 * 60 * 1000
+
+/** The slowest a GitHub transfer may run, sustained, before curl ends it. */
+const LOW_SPEED_BYTES_PER_SECOND = 1024
 
 /** Where a quarantine holds the pushed commit while it is checked and pushed. */
 const STAGING_PREFIX = 'refs/canopy/outgoing/'
@@ -706,6 +743,7 @@ export class MirrorSession {
     private readonly gitDir: string,
     private readonly stateDirectory: string,
     private readonly timeoutMs: number,
+    private readonly onActivity?: () => void,
   ) {}
 
   /** simple-git in `repo`: the mirror, or a quarantine of this session's. */
@@ -723,7 +761,10 @@ export class MirrorSession {
     args: readonly string[],
     options: { stdin?: string; repo?: string; config?: string[]; signal?: AbortSignal } = {},
   ): Promise<string> {
-    return runInRepo(options.repo ?? this.gitDir, this.timeoutMs, args, options)
+    return runInRepo(options.repo ?? this.gitDir, this.timeoutMs, args, {
+      ...options,
+      onActivity: this.onActivity,
+    })
   }
 
   /**
@@ -732,6 +773,11 @@ export class MirrorSession {
    * `GIT_CONFIG_GLOBAL`, so it is in no argv and in no process's environment. No trace variable
    * reaches this git: trace2 can print config values. Its failure is reported to the credential
    * unless {@link isOwnLockFailure}.
+   *
+   * It runs through worker/git-process.ts, in a process group of its own, so an abort or a kill
+   * reaches what git spawned for the transfer too (`git-remote-https`, `pack-objects`); simple-git
+   * would signal git alone. Besides the inactivity bound, curl's low-speed limit ends a transfer
+   * that trickles: {@link LOW_SPEED_BYTES_PER_SECOND} for as long as the inactivity bound.
    */
   private async githubBound(
     credential: GitHubCredential,
@@ -741,14 +787,19 @@ export class MirrorSession {
   ): Promise<string> {
     return withCredentialConfig(this.stateDirectory, credential, async (configPath) => {
       try {
-        return await simpleGit({
-          baseDir: repo,
-          ...githubBoundGitOptions(),
-          timeout: { block: this.timeoutMs },
-          abort: signal,
+        return await runGit(args, {
+          cwd: repo,
+          env: { ...githubBoundEnv(repo), GIT_CONFIG_GLOBAL: configPath },
+          config: [
+            ...mirrorPins(),
+            `http.lowSpeedLimit=${LOW_SPEED_BYTES_PER_SECOND}`,
+            `http.lowSpeedTime=${Math.max(1, Math.ceil(this.timeoutMs / 1000))}`,
+          ],
+          inactivityTimeoutMs: this.timeoutMs,
+          signal,
+          stdoutInFailure: true,
+          onActivity: this.onActivity,
         })
-          .env({ ...githubBoundEnv(repo), GIT_CONFIG_GLOBAL: configPath })
-          .raw(args)
       } catch (err) {
         if (!isOwnLockFailure(getErrorMessage(err))) credential.onFailure()
         throw err
@@ -1200,7 +1251,13 @@ function runInRepo(
   repo: string,
   timeoutMs: number,
   args: readonly string[],
-  options: { stdin?: string; config?: string[]; signal?: AbortSignal; deadlineMs?: number } = {},
+  options: {
+    stdin?: string
+    config?: string[]
+    signal?: AbortSignal
+    deadlineMs?: number
+    onActivity?: () => void
+  } = {},
 ): Promise<string> {
   return runGit(args, {
     cwd: repo,
@@ -1210,5 +1267,6 @@ function runInRepo(
     inactivityTimeoutMs: timeoutMs,
     deadlineMs: options.deadlineMs,
     signal: options.signal,
+    onActivity: options.onActivity,
   })
 }

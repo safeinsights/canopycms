@@ -1542,6 +1542,8 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const worker = makePushWorker()
     let resolutions = 0
     useLocalGitHubGateway(worker, {
+      // Counted from the push: a served gateway's boot fetch would resolve it first.
+      prefetch: false,
       remoteUrl: () => {
         resolutions++
         if (resolutions > 1) {

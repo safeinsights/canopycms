@@ -12,9 +12,10 @@ import { getErrorMessage } from '../utils/error'
  * (worker/shared-repo-git.ts, worker/github-mirror.ts).
  *
  * Bounded three ways: while git runs, killed after {@link GitProcessOptions.inactivityTimeoutMs}
- * with no output and no input consumed (once it has exited 0, output still unread is the
- * reader's to take, however slowly); killed when `signal` aborts; and holding at most
- * {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
+ * with no output and no input consumed, unless output it wrote is still waiting for the reader
+ * (git is then blocked on the reader, and the reader's own bounds end that wait; once git has
+ * exited 0, output still unread is the reader's to take, however slowly); killed when `signal`
+ * aborts; and holding at most {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
  * hostile bytes cannot make this one buffer without limit. A stop reaches everything git spawned:
  * git runs in its own process group.
  */
@@ -30,7 +31,8 @@ export interface GitProcessOptions {
   stdin?: Readable | string
   /**
    * While git runs, killed when nothing is written to stdout or stderr, and nothing consumed from
-   * stdin, for this long. Not after it exits 0: what it wrote is then the reader's.
+   * stdin, for this long. Not while what it wrote waits unread for the reader, nor after it exits
+   * 0: what it wrote is then the reader's.
    */
   inactivityTimeoutMs: number
   /**
@@ -39,10 +41,13 @@ export interface GitProcessOptions {
    */
   deadlineMs?: number
   signal?: AbortSignal
+  /** Told of each sign of life the inactivity bound counts: output written, input consumed. */
+  onActivity?: () => void
 }
 
 /**
- * git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any.
+ * git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any,
+ * after its stdout when `runGit` was asked for that (`stdoutInFailure`).
  * @internal Exported for tests.
  */
 export class GitProcessError extends Error {
@@ -79,7 +84,7 @@ export interface GitProcess {
 
 /**
  * Start `git <config> <args>` with stdout as a stream the caller must read or {@link GitProcess.kill}:
- * git blocks on a full pipe, and a reader that stops counts as inactivity.
+ * git blocks on a full pipe, for as long as the reader holds back.
  */
 export function spawnGit(args: readonly string[], options: GitProcessOptions): GitProcess {
   const child = spawn('git', [...(options.config ?? []).flatMap((c) => ['-c', c]), ...args], {
@@ -101,14 +106,22 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let closed = false
   let exitedCleanly = false
   let inactivity: NodeJS.Timeout | undefined
+  const idle = () => {
+    // Output git wrote is waiting here for the reader, so git is blocked on the reader, not stuck:
+    // the reader's own bounds end that wait. With nothing unread, or a reader that has gone
+    // (a destroyed stream can keep its count until it closes), silence is git's.
+    if (stdout.readableLength > 0 && !stdout.destroyed) {
+      inactivity = setTimeout(idle, options.inactivityTimeoutMs)
+      return
+    }
+    stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`)
+  }
   const touch = () => {
+    options.onActivity?.()
     clearTimeout(inactivity)
     // Once git has exited 0, output still unread is the reader's to take, however slowly.
     if (exitedCleanly) return
-    inactivity = setTimeout(
-      () => stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`),
-      options.inactivityTimeoutMs,
-    )
+    inactivity = setTimeout(idle, options.inactivityTimeoutMs)
   }
   // A stop counts until 'close', not until git exits: git can exit with its last output still
   // unread, and that output holds 'close' back until the stream is destroyed.
@@ -202,11 +215,13 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
 
 /**
  * Run `git <config> <args>` to completion and resolve with its stdout, refusing more than
- * `maxStdoutBytes` of it (default 64 MiB).
+ * `maxStdoutBytes` of it (default 64 MiB). With `stdoutInFailure`, a failure's message is what git
+ * printed to stdout and then its own message, as simple-git words one: `push --porcelain` prints
+ * the rejected ref's status, which callers classify, on stdout.
  */
 export async function runGit(
   args: readonly string[],
-  options: GitProcessOptions & { maxStdoutBytes?: number },
+  options: GitProcessOptions & { maxStdoutBytes?: number; stdoutInFailure?: boolean },
 ): Promise<string> {
   const max = options.maxStdoutBytes ?? 64 * 1024 * 1024
   const proc = spawnGit(args, options)
@@ -224,7 +239,18 @@ export async function runGit(
       callback()
     },
   })
-  await Promise.all([pipeline(proc.stdout, collect).catch(() => undefined), proc.exited])
+  try {
+    await Promise.all([pipeline(proc.stdout, collect).catch(() => undefined), proc.exited])
+  } catch (err) {
+    if (options.stdoutInFailure && err instanceof GitProcessError && chunks.length > 0) {
+      throw new GitProcessError(
+        `${Buffer.concat(chunks).toString('utf8')}${err.message}`,
+        err.exitCode,
+        err.stderr,
+      )
+    }
+    throw err
+  }
   return Buffer.concat(chunks).toString('utf8')
 }
 
