@@ -16,7 +16,7 @@
  *
  * The fix fetches into a remote-tracking namespace
  * (`GITHUB_TRACKING_REF_PREFIX`) instead, then reconciles `refs/heads/*`
- * toward it non-destructively (`reconcileTrackedBranches()`, invoked from
+ * toward GitHub's branches without touching editor work (`reconcileTrackedBranches()`, invoked from
  * `syncGit()`). These tests exercise the whole `syncGit()` cycle against
  * real git repos (a bare "GitHub" fixture and a bare `remote.git`), the
  * same style as cms-worker.test.ts's "worker-status.json bookkeeping" suite

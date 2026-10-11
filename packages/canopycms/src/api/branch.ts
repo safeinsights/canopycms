@@ -341,7 +341,7 @@ export const createBranchHandler = async (
     // is BOTH this deployment's local git origin AND a mirror of GitHub's
     // view of the repo: worker/git-sync.ts's syncGit() fetches GitHub into it
     // (see GITHUB_TRACKING_REF_PREFIX's doc comment in git-manager.ts) and
-    // then reconciles refs/heads/* non-destructively, so it carries both
+    // then reconciles refs/heads/* without touching editor work, so it carries both
     // this deployment's local heads and GitHub's view -- readable offline by
     // this same Lambda, since it resolves to the same EFS inode the worker
     // uses. Reading it here catches a sanitized-name collision with a branch
