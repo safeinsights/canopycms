@@ -79,9 +79,6 @@
     "packages/canopycms/src/editor/hooks/usePermissionManager.ts": {
       "title-case": 1
     },
-    "packages/canopycms/src/editor/media/MediaLibraryBody.tsx": {
-      "ellipsis": 1
-    },
     "packages/canopycms/src/editor/permission-manager/GroupSelector.tsx": {
       "ellipsis": 1
     },

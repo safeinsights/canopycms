@@ -586,8 +586,8 @@ Comments UI, in `editor/comments/`:
 
 Media UI, in `editor/media/`:
 
-- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser and dropzone
-- `AssetCard.tsx` — one asset's tile
+- `MediaLibrary.tsx` / `MediaLibraryBody.tsx` — asset browser; `useAssetLibrary.ts` loads every page
+- `AssetCard.tsx` / `AssetListRow.tsx` — one asset's tile or row
 - `CropStep.tsx` — crop UI over `react-easy-crop`
 - `editor-image-src.ts` — editor image preview srcs
 - `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
