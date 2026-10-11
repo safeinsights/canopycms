@@ -4,6 +4,7 @@ import { isAdmin, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
+import { SYSTEM_USER_ID } from '../system-users'
 
 /** Options narrowing {@link checkBranchAccessWithDefault} to a specific branch's nature. */
 interface BranchAccessOptions {
@@ -115,7 +116,7 @@ export function createCheckBranchAccess(
 export interface WorkflowActionOptions {
   /**
    * When true, disables the system-branch grant below. The protected base
-   * branch is auto-provisioned with `createdBy: 'canopycms-system'`, which
+   * branch is auto-provisioned with `createdBy: SYSTEM_USER_ID`, which
    * would otherwise let anyone with general branch access submit/withdraw it
    * -- pass `getBranchProtection(...).isProtected` here so only
    * admins/reviewers/explicit-ACL users retain workflow rights on it.
@@ -152,8 +153,7 @@ export function canPerformWorkflowAction(
 
   const userIsCreator = context.branch.createdBy === user.userId
 
-  const isSystemBranch =
-    !options?.isProtectedBranch && context.branch.createdBy === 'canopycms-system'
+  const isSystemBranch = !options?.isProtectedBranch && context.branch.createdBy === SYSTEM_USER_ID
 
   return (
     userIsCreator ||

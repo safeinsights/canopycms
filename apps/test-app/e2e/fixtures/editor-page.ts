@@ -220,6 +220,21 @@ export class EditorPage {
     await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
   }
 
+  /**
+   * Open a collection's "…" menu in the navigator and return its items, for asserting which
+   * actions the viewer is offered. The navigator must be open.
+   */
+  async collectionMenuItems(collection: string): Promise<Locator> {
+    const menu = this.page.locator(
+      `[data-testid="collection-menu-${navigatorTestIdSuffix(collection)}"]`,
+    )
+    await menu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await menu.click()
+    const items = this.page.getByRole('menuitem')
+    await items.first().waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    return items
+  }
+
   private async openCollectionMenu(collection: string, itemTestId: string): Promise<void> {
     const menu = this.page.locator(
       `[data-testid="collection-menu-${navigatorTestIdSuffix(collection)}"]`,

@@ -2,8 +2,6 @@
 
 import React, { useId, useMemo, useState } from 'react'
 
-let blockKeyCounter = 0
-
 import { ActionIcon, Button, Group, Paper, Select, Stack, Text } from '@mantine/core'
 import {
   DndContext,
@@ -28,6 +26,7 @@ import { formatCanopyPath } from '../canopy-path'
 import { EDITOR_ACTIONS } from '../copy'
 import { groupDescriptionProps } from './FieldDescription'
 import { FieldLabel } from './FieldLabel'
+import { useListItemKeys } from './list-item-keys'
 
 export interface BlockInstance {
   template: string
@@ -53,6 +52,8 @@ export interface BlockFieldProps {
   dataCanopyField?: string
   /** No add, remove, reorder or drag. */
   readOnly?: boolean
+  /** Told of each block Remove takes out, so the caller can offer Undo. */
+  onRemoved?: (index: number, block: BlockInstance) => void
 }
 
 const findTemplate = (templates: BlockConfig[], name: string) =>
@@ -118,23 +119,12 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   path,
   dataCanopyField,
   readOnly = false,
+  onRemoved,
 }) => {
   const descriptionBaseId = useId()
-  const [itemKeys, setItemKeys] = useState<string[]>(() =>
-    value.map(() => `block-${blockKeyCounter++}`),
-  )
+  const keysFor = useListItemKeys()
+  const itemKeys = keysFor(value, 'blocks')
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
-
-  // Keeps itemKeys in sync with value's length; setState runs directly in render, not an effect.
-  if (value.length > itemKeys.length) {
-    const extras = Array.from(
-      { length: value.length - itemKeys.length },
-      () => `block-${blockKeyCounter++}`,
-    )
-    setItemKeys((prev) => [...prev, ...extras])
-  } else if (value.length < itemKeys.length) {
-    setItemKeys((prev) => prev.slice(0, value.length))
-  }
 
   // Constant: DndContext's hooks depend on the sensor count; read-only disables each item instead.
   const sensors = useSensors(
@@ -153,23 +143,18 @@ export const BlockField: React.FC<BlockFieldProps> = ({
     if (!template) return
     if (readOnly) return
     emit([...value, { template: templateName, value: {} }])
-    setItemKeys((prev) => [
-      ...prev,
-      `block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    ])
   }
 
   const moveBlock = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0 || from >= value.length || to >= value.length) return
     if (readOnly) return
     emit(arrayMove(value, from, to))
-    setItemKeys((prev) => arrayMove(prev, from, to))
   }
 
   const removeBlock = (index: number) => {
     if (readOnly) return
     emit(value.filter((_, idx) => idx !== index))
-    setItemKeys((prev) => prev.filter((_, idx) => idx !== index))
+    onRemoved?.(index, value[index])
   }
 
   const updateBlockValue = (index: number, val: Record<string, unknown>) => {

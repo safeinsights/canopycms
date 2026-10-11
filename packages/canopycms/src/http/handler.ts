@@ -35,6 +35,7 @@ import {
   timeRequestPhase,
 } from '../utils/request-timing'
 import { baseBranchOf } from '../utils/base-branch'
+import { SYSTEM_USER_ID } from '../system-users'
 
 /** Framework-agnostic: adapters convert to and from CanopyRequest/Response. */
 export interface CanopyHandlerOptions {
@@ -91,7 +92,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         const context = await manager.openOrCreateBranch({
           branchName: branch,
           mode: operatingMode,
-          createdBy: 'canopycms-system',
+          createdBy: SYSTEM_USER_ID,
         })
 
         if (opts?.loadSchema && context) {

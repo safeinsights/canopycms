@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { SWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 
+import { RESERVED_GROUPS } from '../authorization'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { mockConsole, type MockConsole } from '../test-utils/console-spy'
@@ -124,6 +125,16 @@ function stubFetch(options: { flagged: boolean; widgetRead: () => Response }) {
   const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    // Collection management is admin-only, and these tests inspect its menu.
+    if (url.endsWith('/whoami')) {
+      return Promise.resolve(
+        okJson({
+          ok: true,
+          status: 200,
+          data: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        }),
+      )
+    }
     if (url.endsWith('/api/canopycms/branches')) {
       return Promise.resolve(
         okJson({

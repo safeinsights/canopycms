@@ -39,6 +39,8 @@ export interface ImageFieldProps {
   errors?: ImageFieldErrors
   /** No upload, pick, crop or remove; the alt text is read-only. */
   readOnly?: boolean
+  /** Told of the image Remove takes out, so the caller can offer Undo. */
+  onRemoved?: (removed: ImageFieldValue) => void
 }
 
 /** Which image the crop step is currently cropping. */
@@ -57,6 +59,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   dataCanopyField,
   errors,
   readOnly = false,
+  onRemoved,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -140,7 +143,9 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   }
 
   const handleRemove = () => {
+    if (readOnly || !value) return
     edit(undefined)
+    onRemoved?.(value)
   }
 
   const handleCropConfirm = (rect: CropRect) => {

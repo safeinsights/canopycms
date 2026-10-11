@@ -57,7 +57,7 @@ Core modules, each with its own `AGENTS.md` where one exists — the invariants 
 - `packages/canopycms/src/static/` — framework-agnostic static-generation helpers and build guards — [AGENTS.md](packages/canopycms/src/static/AGENTS.md)
 - `packages/canopycms/src/task-queue/` — file-based task queue, plus the CMS queue contract
 - `packages/canopycms/src/test-utils/` — shared test utilities, workspace-internal
-- `packages/canopycms/src/utils/` — shared cross-cutting helpers — [AGENTS.md](packages/canopycms/src/utils/AGENTS.md)
+- `packages/canopycms/src/utils/` — shared helpers — [AGENTS.md](packages/canopycms/src/utils/AGENTS.md)
 - `packages/canopycms/src/validation/` — field traversal, entry and reference validation — [AGENTS.md](packages/canopycms/src/validation/AGENTS.md)
 - `packages/canopycms/src/worker/` — CmsWorker daemon, git sync, rebase loop — [AGENTS.md](packages/canopycms/src/worker/AGENTS.md)
 
@@ -78,6 +78,7 @@ Content, git and branch files have their own sections below; the rest:
 - `config-test.ts` — test-only config helpers, `defineCanopyTestConfig` and `createTestServices`
 - `id.ts` — `generateId`, 12-character Base58 content IDs
 - `user.ts` — user utilities
+- `system-users.ts` — dependency-free ids CanopyCMS acts as: `SYSTEM_USER_ID`, `CONTENT_READER_USER_ID`, `isSystemUserId`
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
 - `comment-store.ts` — field, entry and branch comment persistence under layered concurrency; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
 - `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `buildMissingReference`, `isResolvedReference`
@@ -468,8 +469,7 @@ the entry schema registry. See [ARCHITECTURE.md](ARCHITECTURE.md#schema-registry
 ## Editor UI
 
 **Location**: `packages/canopycms/src/editor/` —
-[AGENTS.md](packages/canopycms/src/editor/AGENTS.md), which holds the layout, the client-bundle
-boundary and the known state.
+[AGENTS.md](packages/canopycms/src/editor/AGENTS.md) holds layout, client-bundle boundary, known state.
 
 Top-level components and helpers:
 
@@ -491,6 +491,8 @@ Top-level components and helpers:
 - `preview-asset-base.ts` — the preview's asset-route prefix `assetUrl` reads
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
+- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval` — undo for a form Remove
+- `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
 - `client-reference-resolver.ts` — resolves preview references at any depth, batched
@@ -512,8 +514,8 @@ Context providers, in `editor/context/`:
 - `AssetContext.tsx` — editor asset-URL prefix
 - `index.ts` — context exports
 
-Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, or it
-silently bypasses the provider's prefixed base.
+Editor code takes the API client from `useOptionalApiClient()`, never `createApiClient()`, which
+bypasses the provider's prefixed base.
 
 Manager hooks, in `editor/hooks/` — see
 [hooks/README.md](packages/canopycms/src/editor/hooks/README.md) for which are SWR-backed:
@@ -547,12 +549,13 @@ Field components, in `editor/fields/`:
 - `ObjectField.tsx` — nested object; Clear when optional and filled
 - `InlineGroupField.tsx` — renders `type: 'group'` as a bordered container, transparent to the data path
 - `BlockField.tsx` — blocks
+- `list-item-keys.ts` — `useListItemKeys`, identity keys for object lists and `BlockField`
 - `ReferenceField.tsx` — reference picker
 - `ImageField.tsx` — structured image field, storing the raw `AssetRecord.src`
 - `MdxImageDialog.tsx` — image dialog
 - `FieldLabel.tsx` — label row with comment/action slots
 - `FieldDescription.tsx` — `description` without Mantine's native prop
-- `entry-link/EntryLinkContext.tsx` — context supplying `EntryLinkOption[]` to toolbar components
+- `entry-link/EntryLinkContext.tsx` — supplies `EntryLinkOption[]` to toolbar components
 - `entry-link/InsertEntryLink.tsx` — toolbar entry picker, inserting `[Title](entry:ID)`
 
 Components, in `editor/components/`:
@@ -562,8 +565,9 @@ Components, in `editor/components/`:
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` — Branches drawer
 - `UserBadge.tsx` — user avatar and name
+- `UndoToastMessage.tsx` — a form Remove's undo toast
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
-- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
+- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the crash screen
 - `index.ts` — component exports
 
 Comments UI, in `editor/comments/`:
@@ -578,9 +582,9 @@ Media UI, in `editor/media/`:
 - `AssetCard.tsx` — one asset's tile
 - `CropStep.tsx` — crop UI over `react-easy-crop`
 - `editor-image-src.ts` — editor image preview srcs
-- `crop-math.ts` — pure conversion between the crop library's `Area` and the normalized `CropRect`
-- `upload-asset.ts` — the shared presign, transport, finalize state machine every upload entry point uses
-- `useAssetUpload.ts` — the React hook wrapping that state machine for a component's upload UI
+- `crop-math.ts` — pure conversion between the crop library's `Area` and normalized `CropRect`
+- `upload-asset.ts` — shared presign, transport, finalize state machine behind every upload
+- `useAssetUpload.ts` — React hook over that state machine
 - `xhr-upload.ts` — raw XHR POST for presigned uploads, the only browser API exposing upload progress
 - `upload-constants.ts` — client-side upload UX caps, deliberately duplicated from the server-only pipeline
 
@@ -590,7 +594,7 @@ Schema editor, in `editor/schema-editor/`: `CollectionEditor.tsx`, `EntryTypeEdi
 Permission manager, in `editor/permission-manager/`:
 
 - `PermissionTree.tsx` / `PermissionEditor.tsx` / `PermissionLevelBadge.tsx` — the path-permission tree UI
-- `GroupSelector.tsx` — group search and select, tagging each option Internal or External
+- `GroupSelector.tsx` — group search and select, tagging options Internal or External
 - `UserSelector.tsx` — user search and select
 - `hooks/usePermissionTree.ts` / `hooks/useGroupsAndUsers.ts` — tree state and group/user data
 - `types.ts` / `utils.ts` / `constants.tsx` / `index.tsx` — types, helpers and entry point
@@ -600,17 +604,15 @@ Group manager, in `editor/group-manager/`:
 - `InternalGroupsTab.tsx` / `ExternalGroupsTab.tsx` — the two group sources
 - `GroupCard.tsx` / `GroupForm.tsx` / `MemberList.tsx` — group display and editing
 - `hooks/useGroupState.ts` / `hooks/useUserSearch.ts` / `hooks/useExternalGroupSearch.ts` — state and search
-- `types.ts` / `index.tsx` — types and entry point
+- `types.ts` / `index.tsx` — types, entry point
 
-Admin UI, in `editor/admin/` — admin-gated, and visibility is the caller's responsibility:
-`Editor.tsx` renders it only for an admin, and the component does not re-check.
+Admin UI, in `editor/admin/` — `Editor.tsx` renders it only for an admin; the component does not re-check.
 
 - `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
-- `useSystemHealth.tsx` — loads status, tasks and branch health on open, polls every 30 seconds, exposes the action helpers
+- `useSystemHealth.tsx` — loads status, tasks and branch health on open, polls every 30 s, exposes the actions
 
-Conflict indicators appear per entry (`FormRenderer`'s `conflictNotice` prop) and per collection
-(`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` by
-matching a `contentId` against `currentBranch.conflictFiles`.
+Conflict indicators per entry (`FormRenderer`'s `conflictNotice` prop) and per collection
+(`EntryNavCollection.conflictNotice`, rendered as a badge), both computed in `Editor.tsx` from `currentBranch.conflictFiles`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 

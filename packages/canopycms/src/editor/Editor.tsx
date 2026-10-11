@@ -45,7 +45,7 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
-import { isAdmin } from '../authorization/helpers'
+import { isAdmin, isPrivileged } from '../authorization/helpers'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
 import {
@@ -86,6 +86,9 @@ import {
 } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 import { MediaLibrary } from './media/MediaLibrary'
+import { removalAnchors, restoreRemoval, type FieldRemoval } from './undo-removal'
+import { UndoToastMessage } from './components/UndoToastMessage'
+import { getNotificationDuration } from './utils/env'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -258,10 +261,13 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const { userContext } = useUserContext()
 
-  // The System Health panel is admin-only -- gate both the sidebar
-  // menu item and the modal mount on it, same pattern BranchManager.tsx uses
-  // for its own admin-only actions.
-  const showSystemHealth = isAdmin(userContext?.groups)
+  // Admin surfaces (permissions, groups, system health, collection management and entry order,
+  // whose API routes all take the `admin` guard) render only for admins: each menu item, action
+  // and drawer mount is gated here. Until whoami answers, the user counts as no admin.
+  const userIsAdmin = isAdmin(userContext?.groups)
+  // Name lookups take the `privileged` guard (admins and reviewers); anyone else sees ids, and
+  // no lookup is sent that would only be refused.
+  const canResolveUserNames = isPrivileged(userContext?.groups)
 
   const {
     layout,
@@ -379,6 +385,7 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
+    drafts,
     setDrafts,
     loadedValues,
     setLoadedValues,
@@ -410,6 +417,8 @@ const EditorContent: React.FC<EditorProps> = ({
         console.error('Failed to refresh entries after save', err),
       )
     },
+    // An Undo built on a discarded draft would put back an item the server's copy already has.
+    onDraftsReset: (contentId) => dismissUndoToasts(contentId),
   })
 
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
@@ -487,6 +496,74 @@ const EditorContent: React.FC<EditorProps> = ({
   // Read when an edit lands, which an upload or other async field work can do renders later.
   const contentReadOnlyRef = useRef(contentReadOnly)
   contentReadOnlyRef.current = contentReadOnly
+
+  // Undo for a form Remove: a toast whose Undo puts the item back into the entry's draft as it
+  // is then, through a functional update, so edits made since are kept. It acts only on the
+  // branch and entry it was raised for, and its toast closes when either changes.
+  const loadedValuesRef = useRef(loadedValues)
+  loadedValuesRef.current = loadedValues
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  // Open Undo toasts, by id, with the entry each belongs to.
+  const undoToastsRef = useRef(new Map<string, string>())
+  const nextUndoToastRef = useRef(0)
+  const dismissUndoToasts = (contentId?: string) => {
+    undoToastsRef.current.forEach((entry, id) => {
+      if (contentId !== undefined && entry !== contentId) return
+      notifications.hide(id)
+      undoToastsRef.current.delete(id)
+    })
+  }
+  const handleFieldRemoved = (removal: FieldRemoval) => {
+    const contentId = currentEntry?.contentId
+    if (!contentId || contentReadOnlyRef.current) return
+    const branch = branchNameState
+    const fields = schema
+    // Taken from the value this render shows, which the removal has not reached yet.
+    const anchored: FieldRemoval = {
+      ...removal,
+      anchors: displayValue ? removalAnchors(fields, displayValue, removal) : undefined,
+    }
+    nextUndoToastRef.current += 1
+    const id = `canopy-undo-${nextUndoToastRef.current}`
+    let used = false
+    const undo = () => {
+      // A closing toast stays clickable while it animates out, so a double-click arrives twice.
+      if (used) return
+      used = true
+      notifications.hide(id)
+      undoToastsRef.current.delete(id)
+      if (
+        currentBranchRef.current !== branch ||
+        currentContentIdRef.current !== contentId ||
+        contentReadOnlyRef.current
+      ) {
+        return
+      }
+      const now = draftsRef.current[contentId] ?? loadedValuesRef.current[contentId]
+      if (!now || !restoreRemoval(fields, now, anchored)) {
+        notifications.show({
+          message: `Couldn't undo: "${removal.label}" no longer fits where it was.`,
+          color: 'yellow',
+        })
+        return
+      }
+      setDrafts((prev) => {
+        const base = prev[contentId] ?? loadedValuesRef.current[contentId]
+        const restored = base ? restoreRemoval(fields, base, anchored) : undefined
+        return restored ? { ...prev, [contentId]: restored } : prev
+      })
+    }
+    undoToastsRef.current.set(id, contentId)
+    notifications.show({
+      id,
+      message: <UndoToastMessage label={removal.label} onUndo={undo} />,
+      autoClose: getNotificationDuration(8000),
+      withCloseButton: true,
+      onClose: () => undoToastsRef.current.delete(id),
+    })
+  }
+  useEffect(() => () => dismissUndoToasts(), [currentEntry?.contentId, branchNameState])
   // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
   const hiddenDraftNotice =
     contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()
@@ -958,12 +1035,18 @@ const EditorContent: React.FC<EditorProps> = ({
         onAdd: canAddEntry
           ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
           : undefined,
-        onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
+        onEdit:
+          userIsAdmin && node.type === 'collection'
+            ? () => handleOpenCollectionEditor(node)
+            : undefined,
         onAddSubCollection:
-          node.type === 'collection'
+          userIsAdmin && node.type === 'collection'
             ? () => handleOpenCollectionEditor(null, node.path)
             : undefined,
-        onDelete: node.type === 'collection' ? () => handleDeleteCollection(node.path) : undefined,
+        onDelete:
+          userIsAdmin && node.type === 'collection'
+            ? () => handleDeleteCollection(node.path)
+            : undefined,
       }
     }
     return activeCollections.map((node) => build(node))
@@ -976,6 +1059,7 @@ const EditorContent: React.FC<EditorProps> = ({
     contentRoot,
     currentBranch,
     schemaUnavailableKeys,
+    userIsAdmin,
   ])
 
   // Tree expansion state - persists across drawer close/open
@@ -1254,6 +1338,10 @@ const EditorContent: React.FC<EditorProps> = ({
                             fields={schema}
                             value={displayValue}
                             readOnly={contentReadOnly}
+                            onRemoved={handleFieldRemoved}
+                            onGetUserMetadata={
+                              canResolveUserNames ? handleGetUserMetadata : undefined
+                            }
                             // The one writer of drafts. Read-only content gets none, whatever a
                             // field emits (MDXEditor's mount-time normalisation included).
                             onChange={(next) => {
@@ -1329,10 +1417,12 @@ const EditorContent: React.FC<EditorProps> = ({
                   setHighlightEnabled(!highlightEnabled)
                   clearPreviewMarks()
                 }}
-                onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
-                onGroupManagerOpen={() => setGroupManagerOpen(true)}
+                onPermissionManagerOpen={
+                  userIsAdmin ? () => setPermissionManagerOpen(true) : undefined
+                }
+                onGroupManagerOpen={userIsAdmin ? () => setGroupManagerOpen(true) : undefined}
                 onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
-                onSystemHealthOpen={showSystemHealth ? () => setSystemHealthOpen(true) : undefined}
+                onSystemHealthOpen={userIsAdmin ? () => setSystemHealthOpen(true) : undefined}
                 AccountComponent={AccountComponent}
                 onAccountClick={onAccountClick}
                 onLogoutClick={onLogoutClick}
@@ -1427,7 +1517,7 @@ const EditorContent: React.FC<EditorProps> = ({
                     onExpandedStateChange={handleExpandedStateChange}
                     onDeleteEntry={handleDeleteEntry}
                     onRenameEntry={handleRenameEntry}
-                    onReorderEntry={handleReorderEntry}
+                    onReorderEntry={userIsAdmin ? handleReorderEntry : undefined}
                     hiddenRootPath={hiddenRootPath}
                     loading={entriesInitializing}
                     readOnly={branchContentLocked}
@@ -1475,7 +1565,7 @@ const EditorContent: React.FC<EditorProps> = ({
               onAddComment={handleAddComment}
               onResolveThread={handleResolveThread}
               highlightThreadId={highlightThreadId}
-              onGetUserMetadata={handleGetUserMetadata}
+              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
             />
           </BranchesDrawer>
           {commentsPanelOpen && branchNameState && (
@@ -1487,71 +1577,75 @@ const EditorContent: React.FC<EditorProps> = ({
               onResolveThread={handleResolveThread}
               onClose={() => setCommentsPanelOpen(false)}
               onJumpToField={handleJumpToField}
-              onGetUserMetadata={handleGetUserMetadata}
+              onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
               onJumpToEntry={handleJumpToEntry}
               onJumpToBranch={handleJumpToBranch}
             />
           )}
 
-          <Drawer
-            opened={groupManagerOpen}
-            onClose={() => setGroupManagerOpen(false)}
-            position="right"
-            title={
-              <div>
-                <Title order={4}>Groups</Title>
-                <Text size="xs" c="dimmed">
-                  Manage groups and organizations
-                </Text>
-              </div>
-            }
-            padding="md"
-            size={600}
-            overlayProps={{ blur: 2 }}
-          >
-            <GroupManager
-              internalGroups={groupsData}
-              loading={groupsLoading}
-              canEdit={true}
-              onSave={handleSaveGroups}
-              onSearchUsers={handleSearchUsers}
-              onGetUserMetadata={handleGetUserMetadata}
-              onSearchExternalGroups={handleSearchExternalGroups}
+          {userIsAdmin && (
+            <Drawer
+              opened={groupManagerOpen}
               onClose={() => setGroupManagerOpen(false)}
-            />
-          </Drawer>
+              position="right"
+              title={
+                <div>
+                  <Title order={4}>Groups</Title>
+                  <Text size="xs" c="dimmed">
+                    Manage groups and organizations
+                  </Text>
+                </div>
+              }
+              padding="md"
+              size={600}
+              overlayProps={{ blur: 2 }}
+            >
+              <GroupManager
+                internalGroups={groupsData}
+                loading={groupsLoading}
+                canEdit={userIsAdmin}
+                onSave={handleSaveGroups}
+                onSearchUsers={handleSearchUsers}
+                onGetUserMetadata={handleGetUserMetadata}
+                onSearchExternalGroups={handleSearchExternalGroups}
+                onClose={() => setGroupManagerOpen(false)}
+              />
+            </Drawer>
+          )}
 
-          <Drawer
-            opened={permissionManagerOpen}
-            onClose={() => setPermissionManagerOpen(false)}
-            position="right"
-            title={
-              <div>
-                <Title order={4}>Permissions</Title>
-                <Text size="xs" c="dimmed">
-                  Manage content access by path (read, edit, review)
-                </Text>
-              </div>
-            }
-            padding="md"
-            size={700}
-            overlayProps={{ blur: 2 }}
-          >
-            <PermissionManager
-              collections={activeCollections}
-              contentRoot={contentRoot}
-              permissions={permissionsData}
-              loading={permissionsLoading}
-              canEdit={true}
-              onSave={handleSavePermissions}
-              onSearchUsers={handleSearchUsers}
-              onGetUserMetadata={handleGetUserMetadata}
-              onListGroups={handleListGroups}
+          {userIsAdmin && (
+            <Drawer
+              opened={permissionManagerOpen}
               onClose={() => setPermissionManagerOpen(false)}
-            />
-          </Drawer>
+              position="right"
+              title={
+                <div>
+                  <Title order={4}>Permissions</Title>
+                  <Text size="xs" c="dimmed">
+                    Manage content access by path (read, edit, review)
+                  </Text>
+                </div>
+              }
+              padding="md"
+              size={700}
+              overlayProps={{ blur: 2 }}
+            >
+              <PermissionManager
+                collections={activeCollections}
+                contentRoot={contentRoot}
+                permissions={permissionsData}
+                loading={permissionsLoading}
+                canEdit={userIsAdmin}
+                onSave={handleSavePermissions}
+                onSearchUsers={handleSearchUsers}
+                onGetUserMetadata={handleGetUserMetadata}
+                onListGroups={handleListGroups}
+                onClose={() => setPermissionManagerOpen(false)}
+              />
+            </Drawer>
+          )}
 
-          {showSystemHealth && (
+          {userIsAdmin && (
             <SystemHealthPanel
               opened={systemHealthOpen}
               onClose={() => setSystemHealthOpen(false)}
@@ -1564,27 +1658,29 @@ const EditorContent: React.FC<EditorProps> = ({
             mode="manage"
           />
 
-          <CollectionEditor
-            isOpen={collectionEditorOpen}
-            editingCollection={editingCollection}
-            parentPath={collectionEditorParentPath}
-            availableSchemas={availableSchemas}
-            onSave={handleCollectionSave}
-            onAddEntryType={
-              editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
-            }
-            onUpdateEntryType={
-              editingCollection
-                ? (path, name, updates) => updateEntryType(path, name, updates)
-                : undefined
-            }
-            onRemoveEntryType={
-              editingCollection ? (path, name) => removeEntryType(path, name) : undefined
-            }
-            onClose={handleCloseCollectionEditor}
-            isSaving={schemaLoading}
-            error={collectionEditorError}
-          />
+          {userIsAdmin && (
+            <CollectionEditor
+              isOpen={collectionEditorOpen}
+              editingCollection={editingCollection}
+              parentPath={collectionEditorParentPath}
+              availableSchemas={availableSchemas}
+              onSave={handleCollectionSave}
+              onAddEntryType={
+                editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
+              }
+              onUpdateEntryType={
+                editingCollection
+                  ? (path, name, updates) => updateEntryType(path, name, updates)
+                  : undefined
+              }
+              onRemoveEntryType={
+                editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+              }
+              onClose={handleCloseCollectionEditor}
+              isSaving={schemaLoading}
+              error={collectionEditorError}
+            />
+          )}
 
           {renamingEntry && (
             <RenameEntryModal

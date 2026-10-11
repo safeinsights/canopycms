@@ -21,13 +21,29 @@ const defaultProps: EditorSidebarProps = {
   onMediaLibraryOpen: vi.fn(),
 }
 
-/**
- * Editor.tsx has no existing precedent for testing admin-gated UI (the
- * Manage Permissions/Manage Groups menu items it already renders are NOT
- * gated by isAdmin() at all), so there's no established integration harness
- * to mirror for the System Health menu item either. Testing the prop
- * contract directly here is the fallback the PR-U1 spec calls for.
- */
+/** Editor.tsx gates each admin item on the viewer; here, the prop contract it relies on. */
+describe('EditorSidebar - admin menu items', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders no Manage Permissions or Manage Groups without their callbacks', async () => {
+    render(
+      <EditorSidebar
+        {...defaultProps}
+        onPermissionManagerOpen={undefined}
+        onGroupManagerOpen={undefined}
+      />,
+      { wrapper: Wrapper },
+    )
+
+    await userEvent.click(screen.getByLabelText('Settings'))
+    await screen.findByText('Media library')
+    expect(screen.queryByText('Manage Permissions')).toBeNull()
+    expect(screen.queryByText('Manage Groups')).toBeNull()
+  })
+})
+
 describe('EditorSidebar - System health menu item', () => {
   afterEach(() => {
     cleanup()

@@ -86,3 +86,30 @@ export const WithPullRequests: Story = {
     onRequestChanges: (name: string) => console.log(`Request changes on ${name}`),
   },
 }
+
+/** A branch CanopyCMS provisioned shows its owner as "CanopyCMS bot", with no lookup. */
+export const WithBotOwner: Story = {
+  args: {
+    ...Default.args,
+    branches: [
+      {
+        name: 'feature/auto',
+        status: 'editing',
+        updatedAt: 'today',
+        access: {},
+        createdBy: 'canopycms-system',
+      },
+      {
+        name: 'feature/landing',
+        status: 'editing',
+        updatedAt: 'today',
+        access: {},
+        createdBy: 'alice',
+      },
+    ],
+    onGetUserMetadata: async (userId: string) =>
+      userId === 'alice'
+        ? { id: 'alice', name: 'Alice Johnson', email: 'alice@example.com' }
+        : null,
+  },
+}

@@ -3,13 +3,14 @@
 import React, { useState, useCallback } from 'react'
 import { Alert, Button, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
-import type { GroupManagerProps, InternalGroup, GroupFormData } from './types'
+import type { CanopyGroupId, GroupManagerProps, InternalGroup, GroupFormData } from './types'
 import { useGroupState } from './hooks/useGroupState'
 import { useUserSearch } from './hooks/useUserSearch'
 import { useExternalGroupSearch } from './hooks/useExternalGroupSearch'
 import { InternalGroupsTab } from './InternalGroupsTab'
 import { ExternalGroupsTab } from './ExternalGroupsTab'
 import { GroupForm } from './GroupForm'
+import { openConfirm } from '../utils/confirm-modal'
 
 export const GroupManager: React.FC<GroupManagerProps> = ({
   internalGroups: initialInternalGroups,
@@ -54,6 +55,26 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setFormData({ name: '', description: '' })
     setIsModalOpen(true)
   }, [])
+
+  // The delete is staged until Save Groups, but a reviewer reading the staged list can miss it.
+  const confirmDeleteGroup = useCallback(
+    (groupId: CanopyGroupId) => {
+      const group = groups.find((g) => g.id === groupId)
+      const memberCount = group?.members?.length ?? 0
+      openConfirm({
+        title: 'Delete group',
+        children: (
+          <Text size="sm">
+            {`Delete "${group?.name ?? groupId}"? Its ${memberCount} ${memberCount === 1 ? 'member loses' : 'members lose'} the access it grants when you save.`}
+          </Text>
+        ),
+        labels: { confirm: 'Delete group', cancel: 'Cancel' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => deleteGroup(groupId),
+      })
+    },
+    [groups, deleteGroup],
+  )
 
   const handleEditGroup = useCallback((group: InternalGroup) => {
     setEditingGroup(group)
@@ -133,7 +154,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
               canEdit={canEdit}
               onCreateGroup={handleCreateGroup}
               onEditGroup={handleEditGroup}
-              onDeleteGroup={deleteGroup}
+              onDeleteGroup={confirmDeleteGroup}
               onAddMember={handleAddMember}
               onRemoveMember={removeMember}
               onGetUserMetadata={onGetUserMetadata}

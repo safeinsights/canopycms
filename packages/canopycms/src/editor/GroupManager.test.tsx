@@ -7,6 +7,16 @@ import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 import { mockConsole } from '../test-utils/console-spy'
 
+// Confirms by default, as the user clicking the dialog's red button; a test overrides it to cancel.
+vi.mock('@mantine/modals', () => ({
+  modals: {
+    openConfirmModal: vi.fn((options: { onConfirm?: () => void }) => {
+      options.onConfirm?.()
+      return 'mock-modal-id'
+    }),
+  },
+}))
+
 const originalMatchMedia = window.matchMedia
 
 beforeAll(() => {
@@ -292,6 +302,23 @@ describe('GroupManager', () => {
   })
 
   describe('deleting groups', () => {
+    it('asks before deleting a group, and a cancel keeps it', async () => {
+      const { modals } = await import('@mantine/modals')
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce(() => 'mock-modal-id')
+      render(
+        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[0])
+
+      expect(modals.openConfirmModal).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Delete group' }),
+      )
+      expect(screen.getByText('Content Editors')).toBeTruthy()
+      expect(screen.queryByText('Save Groups')).toBeNull()
+    })
+
     it('removes group when delete is clicked', async () => {
       const { container } = render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
