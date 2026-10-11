@@ -433,6 +433,28 @@ describe('FormRenderer', () => {
       expect(document.activeElement).toBe(screen.getByLabelText('Title'))
     })
 
+    it("never focuses a hidden input, such as an empty image field's file input", async () => {
+      const user = userEvent.setup()
+      const Wrapper = createApiClientWrapper(await setupMockApiClient())
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer
+              fields={[{ name: 'pic', type: 'image', label: 'Picture' }]}
+              value={{}}
+              onChange={() => {}}
+              fieldErrors={{ 'pic.src': 'Image src is required' }}
+            />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      await user.click(screen.getByRole('button', { name: 'Picture › File' }))
+      const active = document.activeElement as HTMLElement
+      expect(active).not.toBe(document.body)
+      expect(active.matches('input[type="file"]')).toBe(false)
+      expect(screen.getByTestId('image-field-pic').contains(active)).toBe(true)
+    })
+
     it('renders no validation UI when there are no errors', () => {
       render(
         <CanopyCMSProvider>

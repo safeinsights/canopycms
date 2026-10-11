@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import {
+  Alert,
   Badge,
   Button,
   Drawer,
@@ -19,6 +20,7 @@ import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
 import { userIdLabel } from './user-display'
 import { formatRelativeTime } from './relative-time'
+import { getErrorMessage } from '../utils/error'
 
 export interface CommentsPanelProps {
   branchName: string
@@ -59,6 +61,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [showResolved, setShowResolved] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const filteredThreads = showResolved ? comments : comments.filter((t) => !t.resolved)
 
@@ -66,6 +69,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
     if (!newCommentText.trim()) return
 
     setIsSubmitting(true)
+    setError(null)
     try {
       if (replyTo) {
         const thread = comments.find((t) => t.id === replyTo)
@@ -83,6 +87,8 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
       }
       setNewCommentText('')
       setReplyTo(null)
+    } catch (err) {
+      setError(getErrorMessage(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -90,8 +96,11 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
 
   const handleResolve = async (threadId: string) => {
     setIsSubmitting(true)
+    setError(null)
     try {
       await onResolveThread(threadId)
+    } catch (err) {
+      setError(getErrorMessage(err))
     } finally {
       setIsSubmitting(false)
     }
@@ -139,6 +148,11 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               disabled={isSubmitting}
               data-testid="comment-textarea"
             />
+            {error && (
+              <Alert color="red" variant="light" withCloseButton onClose={() => setError(null)}>
+                {error}
+              </Alert>
+            )}
             <Button
               onClick={handleAddComment}
               size="sm"

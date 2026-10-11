@@ -166,62 +166,51 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     setRetryCount((count) => count + 1)
   }
 
-  if (loading) {
-    return (
-      <Stack
-        gap={4}
-        data-canopy-field={dataCanopyField}
-        data-testid={`reference-field-${dataCanopyField}`}
-        {...groupDescriptionProps(inputId, description)}
-      >
-        <FieldLabel label={label} commentControl={commentControl} />
-        <FieldDescription baseId={inputId} description={description} />
-        <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
-      </Stack>
-    )
-  }
+  const settled = !loading && !error
 
-  if (error) {
-    return (
-      <Stack
-        gap={4}
-        data-canopy-field={dataCanopyField}
-        data-testid={`reference-field-${dataCanopyField}`}
-        {...groupDescriptionProps(inputId, description)}
-      >
-        <FieldLabel label={label} commentControl={commentControl} />
-        <FieldDescription baseId={inputId} description={description} />
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          title="Error"
-          data-testid={`reference-error-${dataCanopyField}`}
-        >
-          <Stack gap={4}>
-            <Text size="sm">{error}</Text>
-            <Button
-              variant="light"
-              onClick={handleRetry}
-              data-testid={`reference-retry-${dataCanopyField}`}
-            >
-              Retry
-            </Button>
-          </Stack>
-        </Alert>
-      </Stack>
-    )
-  }
-
+  // One label row for every state, so the comment popover in it survives loading and Retry.
   return (
     <Stack
       gap={4}
       data-canopy-field={dataCanopyField}
       data-testid={`reference-field-${dataCanopyField}`}
+      {...(settled ? {} : groupDescriptionProps(inputId, description))}
     >
-      <FieldLabel label={label} htmlFor={inputId} commentControl={commentControl} />
-      {multiple ? (
+      <FieldLabel
+        label={label}
+        htmlFor={settled ? inputId : undefined}
+        commentControl={commentControl}
+      />
+      {loading ? (
+        <>
+          <FieldDescription baseId={inputId} description={description} />
+          <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
+        </>
+      ) : error ? (
+        <>
+          <FieldDescription baseId={inputId} description={description} />
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="red"
+            title="Error"
+            data-testid={`reference-error-${dataCanopyField}`}
+          >
+            <Stack gap={4}>
+              <Text size="sm">{error}</Text>
+              <Button
+                variant="light"
+                onClick={handleRetry}
+                data-testid={`reference-retry-${dataCanopyField}`}
+              >
+                Retry
+              </Button>
+            </Stack>
+          </Alert>
+        </>
+      ) : multiple ? (
         <MultiSelect
           id={inputId}
+          aria-label={label}
           description={description}
           data={data}
           value={normalizedValue as string[]}
@@ -237,6 +226,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       ) : (
         <Select
           id={inputId}
+          aria-label={label}
           description={description}
           data={data}
           value={normalizedValue as string}

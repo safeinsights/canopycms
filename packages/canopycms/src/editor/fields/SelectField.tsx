@@ -53,6 +53,8 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       {multiple ? (
         <MultiSelect
           id={inputId}
+          // Mantine names the options listbox from its own label prop, absent here.
+          aria-label={label}
           description={description}
           data={options}
           value={normalizedValue as string[]}
@@ -68,6 +70,7 @@ export const SelectField: React.FC<SelectFieldProps> = ({
       ) : (
         <Select
           id={inputId}
+          aria-label={label}
           description={description}
           data={options}
           value={normalizedValue as string}

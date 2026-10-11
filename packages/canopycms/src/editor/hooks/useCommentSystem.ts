@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
 import type { EditorEntry } from '../Editor'
 import { findFieldTarget } from '../field-target'
@@ -60,6 +59,11 @@ export interface UseCommentSystemReturn {
   handleJumpToBranch: (threadId: string) => void
 }
 
+/** @internal Exported for tests. */
+export const COMMENT_NOT_ADDED = "Couldn't add the comment. Try again."
+/** @internal Exported for tests. */
+export const THREAD_NOT_RESOLVED = "Couldn't resolve the thread. Try again."
+
 /**
  * Custom hook for managing the comment system.
  */
@@ -101,6 +105,8 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     await globalMutate(commentsKey(branch), fresh, { revalidate: false })
   }
 
+  // Both reject on failure, so the caller keeps the person's text and shows the error where they
+  // wrote it. Success shows itself in the thread, so it has no toast.
   const handleAddComment = async (
     text: string,
     type: 'field' | 'entry' | 'branch',
@@ -109,39 +115,20 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     threadId?: string,
   ) => {
     if (!options.branchName) return
-    try {
-      const result = await apiClient.comments.add(
-        { branch: options.branchName },
-        {
-          text,
-          threadId,
-          type,
-          entryPath,
-          canopyPath,
-        },
-      )
-      if (!result.ok) throw new Error('Failed to add comment')
-      await loadComments(options.branchName)
-      // Branch summaries auto-update via useMemo watching comments
-      notifications.show({ message: 'Comment added', color: 'green' })
-    } catch {
-      notifications.show({ message: 'Failed to add comment', color: 'red' })
-    }
+    const result = await apiClient.comments
+      .add({ branch: options.branchName }, { text, threadId, type, entryPath, canopyPath })
+      .catch(() => null)
+    if (!result?.ok) throw new Error(COMMENT_NOT_ADDED)
+    await loadComments(options.branchName)
   }
 
   const handleResolveThread = async (threadId: string) => {
     if (!options.branchName) return
-    try {
-      const result = await apiClient.comments.resolve({
-        branch: options.branchName,
-        threadId,
-      })
-      if (!result.ok) throw new Error('Failed to resolve thread')
-      await loadComments(options.branchName)
-      notifications.show({ message: 'Thread resolved', color: 'green' })
-    } catch {
-      notifications.show({ message: 'Failed to resolve thread', color: 'red' })
-    }
+    const result = await apiClient.comments
+      .resolve({ branch: options.branchName, threadId })
+      .catch(() => null)
+    if (!result?.ok) throw new Error(THREAD_NOT_RESOLVED)
+    await loadComments(options.branchName)
   }
 
   // Compute active comment threads for the thread panel

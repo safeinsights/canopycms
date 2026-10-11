@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ActionIcon,
   Badge,
   Button,
   Group,
@@ -74,8 +73,14 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
 }) => {
   const [opened, setOpened] = useState(false)
   const [composing, setComposing] = useState(false)
+  // Drafts live here, not in the dropdown, which unmounts whenever the popover closes.
+  const [newThreadDraft, setNewThreadDraft] = useState('')
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
+  const headingRef = useRef<HTMLParagraphElement>(null)
   const [flashThreadId, setFlashThreadId] = useState<string | undefined>(undefined)
   const threadRefs = useRef(new Map<string, HTMLDivElement>())
+  // Set by a post; the "New thread" button takes focus when it next mounts, as the composer goes.
+  const focusNewThreadRef = useRef(false)
   // Touch screens have no hover, so the field icon stays visible there.
   const noHover = useMediaQuery('(hover: none)')
 
@@ -85,9 +90,11 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   // A newly highlighted thread here opens the popover on it; adjusted during render, not in an
   // effect, so the popover opens in the same commit.
   const [seenHighlight, setSeenHighlight] = useState<string | undefined>(undefined)
-  if (highlightThreadId !== seenHighlight) {
+  // It stays unseen until its thread arrives, so a thread list that catches up still opens it.
+  const highlightHere = !!highlightThreadId && threads.some((t) => t.id === highlightThreadId)
+  if (highlightThreadId !== seenHighlight && (!highlightThreadId || highlightHere)) {
     setSeenHighlight(highlightThreadId)
-    if (highlightThreadId && threads.some((t) => t.id === highlightThreadId)) {
+    if (highlightHere) {
       setOpened(true)
       setFlashThreadId(highlightThreadId)
     }
@@ -115,16 +122,21 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       ? `Comment on ${subject} (${openThreadsLabel(openCount)})`
       : `Comment on ${subject}`
 
+  // Any thread keeps the control in view: a count while one is open, else a plain icon, so a
+  // field's resolved history is findable.
+  const shown = revealed || opened || noHover || threads.length > 0
+
   const target =
     variant === 'entry' ? (
       <Button
         variant="subtle"
         color="gray"
+        c="gray.8"
         size="compact-sm"
         leftSection={<IconMessage size={16} aria-hidden />}
         rightSection={
           openCount > 0 ? (
-            <Badge size="sm" variant="filled" color="orange" aria-hidden>
+            <Badge size="sm" variant="light" color="orange" c="dark.7" aria-hidden>
               {openCount}
             </Badge>
           ) : undefined
@@ -137,41 +149,41 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       >
         Comment on this entry
       </Button>
-    ) : openCount > 0 ? (
-      <Button
-        variant="light"
-        color="orange"
-        size="compact-xs"
-        leftSection={<IconMessage size={14} aria-hidden />}
-        aria-label={controlLabel}
-        aria-expanded={opened}
-        aria-haspopup="dialog"
-        onClick={() => (opened ? close() : setOpened(true))}
-        data-testid={testId}
-        data-comment-control
-      >
-        {openCount}
-      </Button>
     ) : (
-      <ActionIcon
-        variant="subtle"
-        color="gray"
-        size="sm"
+      // One element for every state, so the popover's anchor and returnFocus target survive a
+      // count change.
+      <Button
+        variant={openCount > 0 ? 'light' : 'subtle'}
+        color={openCount > 0 ? 'orange' : 'gray'}
+        c={openCount > 0 ? 'dark.7' : undefined}
+        size="compact-xs"
+        px={4}
         aria-label={controlLabel}
         aria-expanded={opened}
         aria-haspopup="dialog"
         onClick={() => (opened ? close() : setOpened(true))}
         data-testid={testId}
         data-comment-control
-        data-revealed={revealed || opened || noHover ? '' : undefined}
+        data-revealed={shown ? '' : undefined}
         style={{
           // Hidden by opacity, not display, so it stays in the tab order and shows on focus.
-          opacity: revealed || opened || noHover ? 1 : 0,
+          opacity: shown ? 1 : 0,
           transition: 'opacity 120ms ease',
         }}
       >
-        <IconMessagePlus size={16} aria-hidden />
-      </ActionIcon>
+        <Group gap={4} wrap="nowrap">
+          {threads.length === 0 ? (
+            <IconMessagePlus size={16} aria-hidden />
+          ) : (
+            <IconMessage
+              size={14}
+              color={openCount > 0 ? 'var(--mantine-color-orange-7)' : undefined}
+              aria-hidden
+            />
+          )}
+          {openCount > 0 && <span>{openCount}</span>}
+        </Group>
+      </Button>
     )
 
   return (
@@ -179,7 +191,8 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       opened={opened}
       onChange={(next) => (next ? setOpened(true) : close())}
       onClose={close}
-      position="bottom-start"
+      // Above the label row, so the popover never covers the input it is about.
+      position="top-start"
       width={380}
       shadow="md"
       withArrow
@@ -204,6 +217,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
         <Stack gap="sm">
           {/* With threads to read, opening focuses the heading rather than a reply box. */}
           <Text
+            ref={headingRef}
             size="sm"
             fw={600}
             tabIndex={-1}
@@ -228,13 +242,22 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
                         flashThreadId === thread.id
                           ? '2px solid var(--mantine-color-blue-5)'
                           : undefined,
-                      outlineOffset: 2,
+                      // Inset, so the scroll area's edge never clips it.
+                      outlineOffset: -2,
                     }}
                   >
                     <InlineCommentThread
                       thread={thread}
                       onAddReply={(text) => onAddComment(text, thread.id)}
-                      onResolve={() => onResolveThread(thread.id)}
+                      onResolve={async () => {
+                        await onResolveThread(thread.id)
+                        // Resolve and the reply box go with the open state, so focus stays inside.
+                        headingRef.current?.focus()
+                      }}
+                      replyText={replyDrafts[thread.id] ?? ''}
+                      onReplyTextChange={(text) =>
+                        setReplyDrafts((prev) => ({ ...prev, [thread.id]: text }))
+                      }
                       currentUserId={currentUserId}
                       canResolve={canResolve}
                       onGetUserMetadata={onGetUserMetadata}
@@ -246,8 +269,17 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
           )}
           {sortedThreads.length === 0 || composing ? (
             <NewThreadComposer
+              text={newThreadDraft}
+              onTextChange={setNewThreadDraft}
               onSubmit={async (text) => {
-                await onAddComment(text)
+                // Set first: the first thread's arrival mounts the button before this resolves.
+                focusNewThreadRef.current = true
+                try {
+                  await onAddComment(text)
+                } catch (err) {
+                  focusNewThreadRef.current = false
+                  throw err
+                }
                 setComposing(false)
               }}
               onCancel={sortedThreads.length > 0 ? () => setComposing(false) : close}
@@ -255,6 +287,12 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
           ) : (
             <Group>
               <Button
+                ref={(el) => {
+                  if (el && focusNewThreadRef.current) {
+                    focusNewThreadRef.current = false
+                    el.focus()
+                  }
+                }}
                 variant="subtle"
                 size="compact-sm"
                 leftSection={<IconPlus size={14} aria-hidden />}
@@ -272,10 +310,11 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
 }
 
 const NewThreadComposer: React.FC<{
+  text: string
+  onTextChange: (text: string) => void
   onSubmit: (text: string) => Promise<void>
   onCancel: () => void
-}> = ({ onSubmit, onCancel }) => {
-  const [text, setText] = useState('')
+}> = ({ text, onTextChange: setText, onSubmit, onCancel }) => {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)

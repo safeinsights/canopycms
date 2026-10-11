@@ -44,6 +44,7 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
 import { ValidationSummary } from './components/ValidationSummary'
+import { fieldBreadcrumb } from './field-breadcrumb'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 import { useListItemKeys } from './fields/list-item-keys'
 import type { FieldRemoval } from './undo-removal'
@@ -255,7 +256,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )}
         />
         {error && (
-          <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
+          <Text size="xs" c="red.8" data-testid={`field-error-${fieldKey(path)}`}>
             {error}
           </Text>
         )}
@@ -281,6 +282,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               thread.canopyPath === canopyPath,
           )
         : []
+
+    // The full breadcrumb, so a list item's or block's fields are told apart by name.
+    const commentSubject = fieldBreadcrumb(fields, value, canopyPath).join(' › ')
 
     const custom = customRenderers?.[field.type]
     if (custom) {
@@ -311,7 +315,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
-            fieldLabel={field.label ?? field.name}
+            fieldLabel={commentSubject}
             controlPlacement="corner"
           >
             {renderedField}
@@ -338,7 +342,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
-            fieldLabel={label}
+            fieldLabel={commentSubject}
           >
             {renderedField}
           </FieldWrapper>

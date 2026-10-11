@@ -23,6 +23,9 @@ export interface InlineCommentThreadProps {
   canResolve: boolean
   /** Optional function to fetch user metadata for displaying user badges */
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** The reply draft, when the caller keeps it, so it outlives this component; with `onReplyTextChange`. */
+  replyText?: string
+  onReplyTextChange?: (text: string) => void
 }
 
 /**
@@ -36,8 +39,12 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   currentUserId,
   canResolve,
   onGetUserMetadata,
+  replyText: controlledReply,
+  onReplyTextChange,
 }) => {
-  const [replyText, setReplyText] = useState('')
+  const [ownReply, setOwnReply] = useState('')
+  const replyText = controlledReply ?? ownReply
+  const setReplyText = onReplyTextChange ?? setOwnReply
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
