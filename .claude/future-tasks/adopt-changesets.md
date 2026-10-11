@@ -11,7 +11,8 @@ summary: >-
 - **PR A, int side** (`feat/changesets-int-side`): `.changeset/` config and author guide, `scripts/migration-notes.mjs`, the CI `changesets` gate, the move of `docs/adopter-migration.md` to a root `CHANGELOG.md` with its legacy entries frozen, int tags, the shipped changelog and handoff, and the stable job's refusal to publish over pending changesets.
 - **PR B, stable side**: not started. It must land on int-202610-b **before int-202610-b merges to main**. Until it does, the stable job stops on pending changesets rather than releasing them as a patch.
 - **Done outside the repo**: the `release-tags-immutable` and `stable-tags-release-bot-only` tag rulesets (2026-10-11).
-- **To do after A merges**: backfill `v0.0.68-int.N` tags for the ints published before A (int.93 onward), from `gh run list --workflow=publish.yml` head SHAs cross-checked against npm provenance. Do it before the first int that A publishes, since `--ship` needs the tags to find the previous int.
+- **To do right after A merges, before the first int it publishes**: `node scripts/backfill-int-tags.mjs --push` (JP approved the backfill). It tags all 32 published ints (0.0.61-int.74 to 0.0.68-int.113 on 2026-10-11) at their npm-attested commits, each matching its publish.yml run's head SHA; `--ship` needs the tags to find the previous int. Run it without `--push` first: the dry run must show no mismatch.
+- **Unverified**: `tag-prerelease` runs after a partly failed prerelease only if a failed reusable workflow still passes its `published` output to the caller. If it does not, that int goes untagged; tag it with the backfill script.
 
 The design below was reviewed adversarially before any code; JP and the manager settled its six decisions (D-1 to D-6) on 2026-10-11.
 

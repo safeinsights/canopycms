@@ -1170,6 +1170,7 @@ integration branch carrying them reaches `main` only after the changesets releas
 ([adopt-changesets.md](.claude/future-tasks/adopt-changesets.md)).
 
 **Tags.** Rulesets make every `v*` tag immutable, and only the release bot creates a stable one.
+`scripts/backfill-int-tags.mjs` tags any int published without one, at its attested commit.
 
 **A wedged stable release.** `publish.yml` commits the version bump only after all five packages publish, so an interrupted run can leave npm holding a version main does not know about, and every later run re-derives that same already-published version and fails forever. `--min` floors the bump on `max(committed version, --min value)`. If a release wedges that way, `node scripts/bump-version.mjs --min <registry-version>` is how you re-derive a safe next version; normally CI passes it for you.
 
