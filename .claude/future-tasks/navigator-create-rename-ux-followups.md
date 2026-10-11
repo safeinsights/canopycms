@@ -55,6 +55,9 @@ work. The HIGH and MEDIUM findings that PR could fix are fixed; these are what i
 - Every navigator row mounts a Mantine `Tooltip` (a floating-ui instance) for the truncated
   title, even when the title fits. Measure on a large tree; if it matters, mount the Tooltip
   only once the row is found truncated.
+- The filter box carries `data-autofocus`, so opening the navigator focuses a text input. On a
+  touch device that may raise the on-screen keyboard over half of the drawer each time it opens.
+  Check on a device with the small-screen work; skip the autofocus on a coarse pointer if so.
 
 Dimmed `xs`/`sm` text (Mantine's `dimmed`, about 3.3:1) is theme-wide and belongs to WS8's
 contrast sweep in [ui-epic-202610.md](ui-epic-202610.md).

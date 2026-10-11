@@ -1398,6 +1398,29 @@ describe('EntryNavigator', () => {
 
       expect(menu.contains(document.activeElement)).toBe(true)
     })
+
+    it('lets every other key from an open row menu reach the document', async () => {
+      const user = userEvent.setup()
+      renderEntryNavigator({
+        items: [{ path: unsafeAsLogicalPath('posts/a'), label: 'Alpha' }],
+        onRenameEntry: vi.fn(),
+      })
+      const reached: string[] = []
+      const listen = (event: KeyboardEvent) => reached.push(event.key)
+      // Where Mantine's useHotkeys listens, so the Mod+P shortcut among them.
+      document.documentElement.addEventListener('keydown', listen)
+
+      try {
+        await user.click(screen.getByTestId('entry-menu-alpha'))
+        await screen.findByRole('menu')
+        await user.keyboard('{ArrowDown}{Control>}p{/Control}{Tab}')
+      } finally {
+        document.documentElement.removeEventListener('keydown', listen)
+      }
+
+      expect(reached).toEqual(expect.arrayContaining(['Control', 'p', 'Tab']))
+      expect(reached).not.toContain('ArrowDown')
+    })
   })
 
   describe('row layout', () => {

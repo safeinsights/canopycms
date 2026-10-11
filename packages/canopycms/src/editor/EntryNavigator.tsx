@@ -229,11 +229,18 @@ const TruncatedLabel: React.FC<{ label: string; highlight: string; fw: number }>
   )
 }
 
+/** The keys Mantine's tree acts on, matched as it matches them, by `code`. */
+const TREE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'])
+
 /**
  * A row menu's dropdown is portaled, but React still bubbles its key events to the row, where the
- * tree's own arrow-key navigation would take focus out of the open menu.
+ * tree's arrow keys would take focus out of the open menu. Only those keys stop: React's
+ * stopPropagation stops the native event too, and every other key must still reach the document,
+ * where the Mod+P shortcut and the focus traps' Tab handling listen.
  */
-const stopTreeKeys = (event: React.KeyboardEvent) => event.stopPropagation()
+const stopTreeKeys = (event: React.KeyboardEvent) => {
+  if (TREE_KEYS.has(event.nativeEvent.code)) event.stopPropagation()
+}
 
 const UnsavedDot: React.FC<{ label: string }> = ({ label }) => (
   <Tooltip label={label} withinPortal>
