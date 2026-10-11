@@ -21,6 +21,7 @@ import {
   connectGitHubGateway,
   serveGitHubGateway,
   type GitHubGatewayServer,
+  type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 import {
   GatewayRequestRefusedError,
@@ -81,8 +82,12 @@ function fakeGateway(): FakeGateway {
   }
 }
 
-async function serve(gateway: GitHubGateway, at = socketPath): Promise<GitHubGatewayServer> {
-  const server = await serveGitHubGateway(gateway, { path: at })
+async function serve(
+  gateway: GitHubGateway,
+  at = socketPath,
+  options: GitHubGatewayServerOptions = {},
+): Promise<GitHubGatewayServer> {
+  const server = await serveGitHubGateway(gateway, { path: at }, options)
   servers.push(server)
   return server
 }
@@ -1278,6 +1283,36 @@ describe('bundles across the socket', () => {
 
     await server.idle()
     expect(reads).toEqual([expect.stringMatching(/before the bundle arrived whole/)])
+  })
+
+  it('cuts off a download whose client stops reading, releasing the bundle', async () => {
+    const gateway = fakeGateway()
+    let opened: Readable | undefined
+    gateway.openBundle.mockImplementation(async () => {
+      // Far more than the socket's buffers hold, so a client that stops reading stalls it.
+      opened = Readable.from(
+        (function* () {
+          for (let i = 0; i < 1024; i++) yield Buffer.alloc(64 * 1024, 3)
+        })(),
+      )
+      return opened
+    })
+    await serve(gateway, socketPath, { downloadStallMs: 200 })
+
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(
+        { socketPath, method: 'GET', path: `/v1/bundle/${'c'.repeat(32)}`, agent: false },
+        resolve,
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    res.on('error', () => undefined)
+    // Read one chunk, then nothing more.
+    await new Promise((resolve) => res.once('data', resolve))
+    res.pause()
+
+    await vi.waitFor(() => expect(opened?.destroyed).toBe(true), { timeout: 3_000 })
   })
 
   it('streams an outgoing bundle back, and answers a gone one with its error', async () => {

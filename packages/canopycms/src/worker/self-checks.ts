@@ -94,6 +94,7 @@ export function assertSelfChecks(results: readonly SelfCheckResult[]): void {
  * A TCP connect to IMDS fails with no route (`ENETUNREACH`, or `EAFNOSUPPORT` under
  * `RestrictAddressFamilies=AF_UNIX`) or times out. Any other outcome, a refusal included, means a
  * route exists.
+ * @internal Exported for tests.
  */
 export async function imdsUnreachable(
   environment: SelfCheckEnvironment = {},
@@ -119,6 +120,7 @@ export async function imdsUnreachable(
 /**
  * `/proc/self/net/dev` lists only `lo`: `PrivateNetwork=` took effect. Not `/sys/class/net`, which
  * `PrivateNetwork=` does not remount, so it shows the host's interfaces even inside the cut.
+ * @internal Exported for tests.
  */
 export async function onlyLoopback(
   environment: SelfCheckEnvironment = {},
@@ -149,7 +151,8 @@ export async function onlyLoopback(
   }
 }
 
-/** Every process `/proc` lists is this uid's: `ProtectProc=invisible` took effect. */
+/** Every process `/proc` lists is this uid's: `ProtectProc=invisible` took effect. * @internal Exported for tests.
+ */
 export async function procShowsOnlyOwnProcesses(
   environment: SelfCheckEnvironment = {},
 ): Promise<SelfCheckResult> {
@@ -189,6 +192,7 @@ export async function procShowsOnlyOwnProcesses(
 /**
  * `/home` is empty: `ProtectHome=tmpfs`'s always-observable effect. `/run/user`, which it also
  * hides, is empty anyway whenever nobody is logged in.
+ * @internal Exported for tests.
  */
 export async function homeIsEmpty(
   environment: SelfCheckEnvironment = {},
@@ -212,6 +216,7 @@ export async function homeIsEmpty(
 /**
  * No GitHub or Clerk secret, nor the ARN or JSON field naming one, is in the worker's environment:
  * they belong to the gateway's env file. Names only are reported.
+ * @internal Exported for tests.
  */
 export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfCheckResult {
   const env = environment.env ?? process.env
@@ -228,7 +233,8 @@ export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfChec
   }
 }
 
-/** The gateway cannot list `/mnt/efs`: `InaccessiblePaths=/mnt/efs` took effect. */
+/** The gateway cannot list `/mnt/efs`: `InaccessiblePaths=/mnt/efs` took effect. * @internal Exported for tests.
+ */
 export async function efsUnreadable(
   environment: SelfCheckEnvironment = {},
 ): Promise<SelfCheckResult> {
@@ -252,6 +258,7 @@ export async function efsUnreadable(
 /**
  * `kernel.core_pattern` does not begin with `|`: a piped pattern would hand a crashing gateway
  * git's memory (the credential file's contents) to a helper.
+ * @internal Exported for tests.
  */
 export async function corePatternNotPiped(
   environment: SelfCheckEnvironment = {},
@@ -274,7 +281,8 @@ export async function corePatternNotPiped(
   }
 }
 
-/** `/proc/self/limits` shows a zero core limit, soft and hard: `LimitCORE=0` took effect. */
+/** `/proc/self/limits` shows a zero core limit, soft and hard: `LimitCORE=0` took effect. * @internal Exported for tests.
+ */
 export async function coreLimitZero(
   environment: SelfCheckEnvironment = {},
 ): Promise<SelfCheckResult> {

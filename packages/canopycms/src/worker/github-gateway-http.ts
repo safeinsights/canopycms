@@ -81,6 +81,18 @@ const DISCARD_BODY_MS = 10_000
 /** The most connections the server holds at once. */
 const MAX_CONNECTIONS = 64
 
+export interface GitHubGatewayServerOptions {
+  /**
+   * How long a bundle download may go with nothing taken by its client before it is cut off, so
+   * a client that opens a bundle and stops reading cannot keep its file. Default
+   * {@link DEFAULT_DOWNLOAD_STALL_MS}.
+   */
+  downloadStallMs?: number
+}
+
+/** The default {@link GitHubGatewayServerOptions.downloadStallMs}: two minutes. */
+const DEFAULT_DOWNLOAD_STALL_MS = 120_000
+
 /** Where the server listens: a socket systemd passed (`fd`), or a path it binds itself. */
 export type GitHubGatewayListen = { fd: number } | { path: string }
 
@@ -109,8 +121,9 @@ export interface GitHubGatewayServer {
 export async function serveGitHubGateway(
   gateway: GitHubGateway,
   listen: GitHubGatewayListen,
+  options: GitHubGatewayServerOptions = {},
 ): Promise<GitHubGatewayServer> {
-  const handler = new GatewayRequestHandler(gateway)
+  const handler = new GatewayRequestHandler(gateway, options)
   const server = http.createServer((req, res) => {
     void handler.handle(req, res)
   })
@@ -253,7 +266,10 @@ class GatewayRequestHandler {
   private readonly runners: JsonRunners
   private readonly routes: ReadonlyMap<string, JsonOperation>
 
-  constructor(private readonly gateway: GitHubGateway) {
+  constructor(
+    private readonly gateway: GitHubGateway,
+    private readonly options: GitHubGatewayServerOptions,
+  ) {
     this.prepared = gateway.prepare()
     // Answered to every operation; never unhandled while none is asked for.
     this.prepared.catch(() => undefined)
@@ -455,9 +471,9 @@ class GatewayRequestHandler {
         .then(
           ({ refs, bundleId }) => {
             job.answer = {
-            ok: true,
-            value: { state: 'done', progress: job.progress, refs: [...refs], bundleId },
-          }
+              ok: true,
+              value: { state: 'done', progress: job.progress, refs: [...refs], bundleId },
+            }
           },
           (err: unknown) => {
             job.answer = { ok: false, error: encodeError(err) }
@@ -530,8 +546,20 @@ class GatewayRequestHandler {
     if (!/^[0-9A-Za-z]{1,128}$/.test(id)) throw new RefusedRequest(404, 'no such bundle')
     const stream = await this.gateway.openBundle(id)
     res.writeHead(200, { 'content-type': BUNDLE_CONTENT_TYPE })
-    // A client gone part way is its own failure to report; the stream is released either way.
-    await pipeline(stream, res).catch(() => undefined)
+    // The stream flows only as fast as the client takes it, so a stream with nothing taken for the
+    // stall bound is a client that stopped reading: cut it off, which releases the bundle's file.
+    const stallMs = this.options.downloadStallMs ?? DEFAULT_DOWNLOAD_STALL_MS
+    let stall = setTimeout(() => res.destroy(), stallMs)
+    stream.on('data', () => {
+      clearTimeout(stall)
+      stall = setTimeout(() => res.destroy(), stallMs)
+    })
+    try {
+      // A client gone part way is its own failure to report; the stream is released either way.
+      await pipeline(stream, res).catch(() => undefined)
+    } finally {
+      clearTimeout(stall)
+    }
   }
 
   /** Answer a failure, unless the answer has already begun; then the connection is cut. */

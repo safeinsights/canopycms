@@ -73,7 +73,7 @@ export class GitHubMirror {
   private ready = false
   private swept = false
   private transferDirs: Promise<void> | null = null
-  private pendingBundle: { id: string; file: string } | null = null
+  private pendingBundle: { id: string; file: string; expiry: NodeJS.Timeout } | null = null
   private readonly maintenance = new MaintenanceMutex()
   private lastMaintenanceAt: number
   private corruption: MirrorCorruption = null
@@ -90,12 +90,14 @@ export class GitHubMirror {
 
   /**
    * `maintenanceIntervalMs` (default {@link MAINTENANCE_INTERVAL_MS}) also delays the first run:
-   * a mirror just fetched is in few packs.
+   * a mirror just fetched is in few packs. `bundleRetentionMs` (default
+   * {@link BUNDLE_RETENTION_MS}) is how long a bundle no one opens is kept.
    */
   constructor(
     private readonly stateDirectory: string,
     private readonly timeoutMs: number,
     private readonly maintenanceIntervalMs = MAINTENANCE_INTERVAL_MS,
+    private readonly bundleRetentionMs = BUNDLE_RETENTION_MS,
   ) {
     this.lastMaintenanceAt = Date.now()
     this.gitDir = path.join(stateDirectory, 'github.git')
@@ -399,12 +401,28 @@ export class GitHubMirror {
 
   /**
    * Make `file` the one pending outgoing bundle, or none, deleting the one it replaces (never an
-   * opened one), so a loop of fetches never fills the state directory. Returns the id that opens it: a
-   * key into this object, never a path.
+   * opened one), so a loop of fetches never fills the state directory, and deleting it after the
+   * bundle retention if no one opens it. Returns the id that opens it: a key into this object,
+   * never a path.
    */
   async setPendingBundle(file: string | null): Promise<string | null> {
     const replaced = this.pendingBundle
-    this.pendingBundle = file === null ? null : { id: randomBytes(16).toString('hex'), file }
+    if (replaced !== null) clearTimeout(replaced.expiry)
+    this.pendingBundle = null
+    if (file !== null) {
+      const pending = {
+        id: randomBytes(16).toString('hex'),
+        file,
+        // A bundle its caller never opens (a worker gone) is deleted at the retention's end.
+        expiry: setTimeout(() => {
+          if (this.pendingBundle !== pending) return
+          this.pendingBundle = null
+          void fs.rm(file, { force: true }).catch(() => undefined)
+        }, this.bundleRetentionMs),
+      }
+      pending.expiry.unref()
+      this.pendingBundle = pending
+    }
     if (replaced !== null) await fs.rm(replaced.file, { force: true })
     return this.pendingBundle?.id ?? null
   }
@@ -423,6 +441,7 @@ export class GitHubMirror {
           `it, or it was already read. Fetch again.`,
       )
     if (pending === null || pending.id !== id) throw gone()
+    clearTimeout(pending.expiry)
     this.pendingBundle = null
     let handle: fs.FileHandle
     try {
@@ -479,6 +498,9 @@ export interface ReceivedBundle {
  * also holds the OS, Node and the log.
  */
 const MIRROR_SIZE_WARN_KIB = 2 * 1024 * 1024
+
+/** How long a fetch's bundle waits to be opened before it is deleted. */
+const BUNDLE_RETENTION_MS = 10 * 60_000
 
 /** How often maintenance may run. */
 const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000
