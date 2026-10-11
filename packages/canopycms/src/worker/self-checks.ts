@@ -154,7 +154,9 @@ export async function onlyLoopback(
   }
 }
 
-/** Every process `/proc` lists is this uid's: `ProtectProc=invisible` took effect. * @internal Exported for tests.
+/**
+ * Every process `/proc` lists is this uid's: `ProtectProc=invisible` took effect.
+ * @internal Exported for tests.
  */
 export async function procShowsOnlyOwnProcesses(
   environment: SelfCheckEnvironment = {},
@@ -236,7 +238,9 @@ export function noSecretsInEnv(environment: SelfCheckEnvironment = {}): SelfChec
   }
 }
 
-/** The gateway cannot list `/mnt/efs`: `InaccessiblePaths=/mnt/efs` took effect. * @internal Exported for tests.
+/**
+ * The gateway cannot list `/mnt/efs`: `InaccessiblePaths=/mnt/efs` took effect.
+ * @internal Exported for tests.
  */
 export async function efsUnreadable(
   environment: SelfCheckEnvironment = {},
@@ -245,10 +249,16 @@ export async function efsUnreadable(
   try {
     await fs.readdir(efs)
   } catch (err) {
+    // Denied is the directive at work. Absent (a unit without `RequiresMountsFor=`, started before
+    // the mount) or any other failure proves nothing: a mount made later could still reach it.
+    const code = isNodeError(err) ? err.code : undefined
+    const denied = code === 'EACCES' || code === 'EPERM'
     return {
       check: 'efs-unreadable',
-      ok: true,
-      detail: isNodeError(err) && err.code !== undefined ? err.code : getErrorMessage(err),
+      ok: denied,
+      detail: denied
+        ? (code ?? '')
+        : `cannot tell that ${efs} is inaccessible: ${getErrorMessage(err)}`,
     }
   }
   return {
@@ -284,7 +294,9 @@ export async function corePatternNotPiped(
   }
 }
 
-/** `/proc/self/limits` shows a zero core limit, soft and hard: `LimitCORE=0` took effect. * @internal Exported for tests.
+/**
+ * `/proc/self/limits` shows a zero core limit, soft and hard: `LimitCORE=0` took effect.
+ * @internal Exported for tests.
  */
 export async function coreLimitZero(
   environment: SelfCheckEnvironment = {},

@@ -701,13 +701,26 @@ describe('GitHubService', () => {
       )
       const warn = vi.fn()
       try {
-        const octokit = createCanopyOctokit({ auth: 'test-token' }, warn)
+        const octokit = createCanopyOctokit({ auth: 'test-token' }, { warn, error: vi.fn() })
         await expect(octokit.repos.get({ owner: 'o', repo: 'r' })).rejects.toThrow()
       } finally {
         vi.unstubAllGlobals()
       }
 
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/primary rate limit hit for GET/))
+    })
+
+    it("sends Octokit's own log where it is told, and leaves the default without a logger", () => {
+      const warn = vi.fn()
+      const error = vi.fn()
+
+      const told = createCanopyOctokit({ auth: 'test-token' }, { warn, error })
+      told.log.warn('deprecated')
+      told.log.error('failed')
+
+      expect(warn).toHaveBeenCalledWith('deprecated')
+      expect(error).toHaveBeenCalledWith('failed')
+      expect(createCanopyOctokit({ auth: 'test-token' }).log.warn).not.toBe(warn)
     })
 
     it('authenticates with the bare token when one is given', async () => {

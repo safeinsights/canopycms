@@ -137,12 +137,18 @@ export async function closeServedGateways(): Promise<void> {
  * `prepare()` started included, so it writes nothing under a directory the test then removes.
  */
 async function backgroundFetchSettled(local: GitHubGateway): Promise<void> {
-  const internals = local as unknown as { githubFetch?: { done: Promise<unknown> } | null }
+  const internals = local as unknown as {
+    githubFetch?: { done: Promise<unknown> } | null
+    mirror?: { tail: Promise<unknown> }
+  }
+  // The boot fetch starts once prepare() has; a fetch a push replaced still runs in a session.
+  await local.prepare().catch(() => undefined)
   for (;;) {
     const job = internals.githubFetch
-    if (job === undefined || job === null) return
-    await job.done.catch(() => undefined)
-    if (internals.githubFetch === job) return
+    const tail = internals.mirror?.tail
+    await job?.done.catch(() => undefined)
+    await tail
+    if (internals.githubFetch === job && internals.mirror?.tail === tail) return
   }
 }
 

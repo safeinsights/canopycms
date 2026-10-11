@@ -212,6 +212,13 @@ describe('the gateway checks', () => {
     expect((await efsUnreadable({ root })).ok).toBe(false)
   })
 
+  it('refuse a missing /mnt/efs: only a denial proves the directive took effect', async () => {
+    const result = await efsUnreadable({ root })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/cannot tell/)
+  })
+
   it('refuse a piped core_pattern, and an unreadable one', async () => {
     expect((await corePatternNotPiped({ root })).ok).toBe(false)
     await put('proc/sys/kernel/core_pattern', '|/usr/lib/systemd/systemd-coredump %P\n')

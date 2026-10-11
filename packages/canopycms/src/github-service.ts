@@ -76,9 +76,13 @@ export type CanopyOctokitAuthOptions = { auth: string } | OctokitAuthStrategyOpt
  */
 export function createCanopyOctokit(
   options: CanopyOctokitAuthOptions,
-  /** Where the throttle's warnings go: the GitHub gateway passes its own, which scrubs and escapes. */
-  warn: (...args: unknown[]) => void = canopyLogWarn,
+  /**
+   * Where Octokit's own log and the throttle's warnings go: the GitHub gateway passes its own,
+   * which scrubs and escapes. Without one, Octokit logs to the console as it does by default.
+   */
+  logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
 ): Octokit {
+  const warn = logger?.warn ?? canopyLogWarn
   // Pick the two auth fields out EXPLICITLY, never spread: `baseUrl`,
   // `request`, `log` and `userAgent` are all live `OctokitOptions`, and a
   // non-literal argument slips past TypeScript's excess-property check. The
@@ -90,6 +94,16 @@ export function createCanopyOctokit(
       : { auth: options.auth }
   return new ThrottledOctokit({
     ...auth,
+    ...(logger === undefined
+      ? {}
+      : {
+          log: {
+            debug: () => undefined,
+            info: () => undefined,
+            warn: logger.warn,
+            error: logger.error,
+          },
+        }),
     throttle: {
       onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
         warn(

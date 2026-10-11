@@ -83,15 +83,20 @@ const MAX_CONNECTIONS = 64
 
 export interface GitHubGatewayServerOptions {
   /**
-   * How long a bundle download may go with nothing taken by its client before it is cut off, so
-   * a client that opens a bundle and stops reading cannot keep its file. Default
-   * {@link DEFAULT_DOWNLOAD_STALL_MS}.
+   * The period over which a bundle download must keep up {@link MIN_DOWNLOAD_BYTES_PER_SECOND}, or
+   * be cut off, so a client that opens a bundle and stops reading, or reads a trickle, cannot
+   * keep its file. Default {@link DEFAULT_DOWNLOAD_STALL_MS}.
    */
   downloadStallMs?: number
+  /** The slowest average a bundle download may keep up. Default {@link MIN_DOWNLOAD_BYTES_PER_SECOND}. */
+  minDownloadBytesPerSecond?: number
 }
 
 /** The default {@link GitHubGatewayServerOptions.downloadStallMs}: two minutes. */
 const DEFAULT_DOWNLOAD_STALL_MS = 120_000
+
+/** The slowest a bundle download may run, on average over each stall period. */
+const MIN_DOWNLOAD_BYTES_PER_SECOND = 16 * 1024
 
 /** Where the server listens: a socket systemd passed (`fd`), or a path it binds itself. */
 export type GitHubGatewayListen = { fd: number } | { path: string }
@@ -122,8 +127,8 @@ export interface GitHubGatewayServer {
  * no one else can enter, so no other user can reach, plant or swap the node, which is then made
  * `0600`.
  *
- * `gateway.prepare()` starts with the server, and every operation but `health` waits for it; a
- * failure is the gateway's fatal error, answered to each of them.
+ * `gateway.prepare()` starts once the server holds its socket, and every operation but `health`
+ * waits for it; a failure is the gateway's fatal error, answered to each of them.
  */
 export async function serveGitHubGateway(
   gateway: GitHubGateway,
@@ -148,11 +153,15 @@ export async function serveGitHubGateway(
     await listenOn(server, { path: listen.path })
     await fs.chmod(listen.path, 0o600)
   }
+  handler.start()
 
   return {
     idle: () => handler.idle(),
     drain: async (graceMs) => {
       handler.close()
+      // No new connection: a worker's request now fails as unreachable, which a draining worker
+      // releases with no retry spent (task-runner.ts), where an answer would be a refusal.
+      server.close()
       let timer: NodeJS.Timeout | undefined
       await Promise.race([
         handler.requestsSettled(),
@@ -276,11 +285,15 @@ type JsonRunners = {
 
 class GatewayRequestHandler {
   /**
-   * The gateway's `prepare()`, started as the server starts. Every operation but `health` waits
-   * for it, and answers its failure: a worker that never asks for it, or asks for an operation
-   * first, still cannot reach one before the App check and the state-directory check have passed.
+   * The gateway's `prepare()`, started by {@link start} once the server holds its socket. Every
+   * operation but `health` waits for it, and answers its failure: a worker that never asks for it,
+   * or asks for an operation first, still cannot reach one before the App check and the
+   * state-directory check have passed. Not before the socket is held: `prepare()` sweeps the
+   * state directory, which a gateway already serving it, whose socket this one fails to take, is
+   * using.
    */
   private readonly prepared: Promise<void>
+  private startPreparing: () => void = () => undefined
   private readonly jobs = new Map<string, FetchJob>()
   private closed = false
   private inFlight = 0
@@ -292,7 +305,11 @@ class GatewayRequestHandler {
     private readonly gateway: GitHubGateway,
     private readonly options: GitHubGatewayServerOptions,
   ) {
-    this.prepared = gateway.prepare()
+    this.prepared = new Promise<void>((resolve, reject) => {
+      this.startPreparing = () => {
+        gateway.prepare().then(resolve, reject)
+      }
+    })
     // Answered to every operation; never unhandled while none is asked for.
     this.prepared.catch(() => undefined)
     this.routes = new Map(
@@ -330,6 +347,11 @@ class GatewayRequestHandler {
         return {}
       },
     }
+  }
+
+  /** Start the gateway's `prepare()`: see {@link prepared}. */
+  start(): void {
+    this.startPreparing()
   }
 
   close(): void {
@@ -574,19 +596,25 @@ class GatewayRequestHandler {
     if (!/^[0-9A-Za-z]{1,128}$/.test(id)) throw new RefusedRequest(404, 'no such bundle')
     const stream = await this.gateway.openBundle(id)
     res.writeHead(200, { 'content-type': BUNDLE_CONTENT_TYPE })
-    // The stream flows only as fast as the client takes it, so a stream with nothing taken for the
-    // stall bound is a client that stopped reading: cut it off, which releases the bundle's file.
+    // The stream flows only as fast as the client takes it. Each stall period the client must
+    // have taken the period's share of the minimum rate, so neither a client that
+    // stopped reading nor one reading a trickle keeps the bundle's file: cut it off.
     const stallMs = this.options.downloadStallMs ?? DEFAULT_DOWNLOAD_STALL_MS
-    let stall = setTimeout(() => res.destroy(), stallMs)
-    stream.on('data', () => {
-      clearTimeout(stall)
-      stall = setTimeout(() => res.destroy(), stallMs)
+    const rate = this.options.minDownloadBytesPerSecond ?? MIN_DOWNLOAD_BYTES_PER_SECOND
+    const floor = (rate * stallMs) / 1000
+    let taken = 0
+    stream.on('data', (chunk: Buffer) => {
+      taken += chunk.length
     })
+    const check = setInterval(() => {
+      if (taken < floor) res.destroy()
+      taken = 0
+    }, stallMs)
     try {
       // A client gone part way is its own failure to report; the stream is released either way.
       await pipeline(stream, res).catch(() => undefined)
     } finally {
-      clearTimeout(stall)
+      clearInterval(check)
     }
   }
 
@@ -817,7 +845,7 @@ class GitHubGatewayClient implements GitHubGateway {
     // Each poll answers well inside the bound, so a stalled job is seen in time.
     const wait = Math.max(1, Math.min(POLL_WAIT_MS, Math.floor(this.fetchInactivityMs / 2)))
     let progress = 0
-    let movedAt = Date.now()
+    let movedAt = performance.now()
     for (let broken = 0; ; ) {
       let poll: z.infer<typeof fetchPoll>
       try {
@@ -836,10 +864,10 @@ class GitHubGatewayClient implements GitHubGateway {
       if (poll.progress > progress) {
         onProgress?.()
         progress = poll.progress
-        movedAt = Date.now()
+        movedAt = performance.now()
       }
       if (poll.state === 'done') return { refs: new Map(poll.refs), bundleId: poll.bundleId }
-      if (Date.now() - movedAt >= this.fetchInactivityMs) {
+      if (performance.now() - movedAt >= this.fetchInactivityMs) {
         throw new GitHubTransientError(
           'github-fetch-failed',
           `The GitHub gateway's fetch showed no progress for ${this.fetchInactivityMs}ms; it runs on, ` +

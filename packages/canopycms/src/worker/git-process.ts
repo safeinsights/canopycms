@@ -107,8 +107,9 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let inactivity: NodeJS.Timeout | undefined
   const idle = () => {
     // Output git wrote is waiting here for the reader, so git is blocked on the reader, not stuck:
-    // the reader's own deadline bounds that wait. With nothing unread, silence is git's.
-    if (stdout.readableLength > 0) {
+    // the reader's own deadline bounds that wait. With nothing unread, or a reader that has gone
+    // (a destroyed stream can keep its count until it closes), silence is git's.
+    if (stdout.readableLength > 0 && !stdout.destroyed) {
       inactivity = setTimeout(idle, options.inactivityTimeoutMs)
       return
     }

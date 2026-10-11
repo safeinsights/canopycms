@@ -306,7 +306,12 @@ class LocalGitHubGateway implements GitHubGateway {
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
-    this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth, gatewayLogWarn)
+    this.octokit =
+      options.octokit ??
+      createCanopyOctokit(options.auth.octokitAuth, {
+        warn: gatewayLogWarn,
+        error: gatewayLogError,
+      })
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
