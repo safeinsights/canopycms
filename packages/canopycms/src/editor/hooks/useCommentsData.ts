@@ -23,7 +23,7 @@ export interface CommentsData {
 /**
  * Fetch a branch's comment threads. Never throws -- matches the pre-SWR
  * `loadComments` behavior of logging and resolving to an empty list on
- * failure rather than surfacing an error state (comments have no error UI).
+ * failure rather than surfacing an error state (a failed load has no error UI).
  * Exported for direct testing and for the imperative reload path.
  */
 export async function fetchComments(

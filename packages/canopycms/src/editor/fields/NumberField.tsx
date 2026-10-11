@@ -2,6 +2,8 @@ import React, { useId, useState } from 'react'
 
 import { NumberInput } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface NumberFieldProps {
   id?: string
   label?: string
@@ -56,19 +58,20 @@ export const NumberField: React.FC<NumberFieldProps> = ({
   const displayValue = toNumericValue(inputValue) === value ? inputValue : (value ?? '')
 
   return (
-    <NumberInput
-      id={inputId}
-      label={label}
-      description={description}
-      value={displayValue}
-      size="sm"
-      readOnly={readOnly}
-      onChange={(next) => {
-        if (readOnly) return
-        setInputValue(next)
-        onChange(toNumericValue(next))
-      }}
-      data-canopy-field={dataCanopyField}
-    />
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <NumberInput
+        id={inputId}
+        description={description}
+        value={displayValue}
+        size="sm"
+        readOnly={readOnly}
+        onChange={(next) => {
+          if (readOnly) return
+          setInputValue(next)
+          onChange(toNumericValue(next))
+        }}
+        data-canopy-field={dataCanopyField}
+      />
+    </LabelledInput>
   )
 }

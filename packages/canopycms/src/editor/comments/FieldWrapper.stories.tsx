@@ -1,11 +1,31 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { FieldWrapper } from './FieldWrapper'
 import type { CommentThread } from '../../comment-store'
-import { TextInput, Box } from '@mantine/core'
+import { Box } from '@mantine/core'
+import { TextField } from '../fields/TextField'
 
 const meta: Meta<typeof FieldWrapper> = {
   title: 'Editor/Comments/FieldWrapper',
   component: FieldWrapper,
+  args: {
+    canopyPath: 'title',
+    entryPath: 'posts/hello',
+    fieldLabel: 'Title',
+    resetKey: 'main\nposts/hello',
+    currentUserId: 'alice',
+    canResolve: true,
+    children: (
+      <TextField label="Title" value="Hello world" onChange={() => {}} dataCanopyField="title" />
+    ),
+    onAddComment: async (text, type, entryPath, canopyPath, threadId) => {
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    },
+    onResolveThread: async (threadId) => {
+      console.log('Resolve thread:', threadId)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    },
+  },
   decorators: [
     (Story) => (
       <Box p="xl" bg="gray.0">
@@ -87,124 +107,34 @@ const resolvedThreads: CommentThread[] = [
   },
 ]
 
-export const WithUnresolvedComments: Story = {
-  args: {
-    children: <TextInput label="Title" placeholder="Enter title..." />,
-    canopyPath: 'title',
-    entryPath: 'posts/hello',
-    threads: sampleThreads,
-    autoFocus: false,
-    currentUserId: 'alice',
-    canResolve: true,
-    onAddComment: async (
-      text: string,
-      type: string,
-      entryPath?: string,
-      canopyPath?: string,
-      threadId?: string,
-    ) => {
-      console.log('Add comment:', {
-        text,
-        type,
-        entryPath,
-        canopyPath,
-        threadId,
-      })
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    },
-    onResolveThread: async (threadId: string) => {
-      console.log('Resolve thread:', threadId)
-      await new Promise((resolve) => setTimeout(resolve, 500))
-    },
-  },
-}
-
-export const WithResolvedComments: Story = {
-  args: {
-    children: <TextInput label="Title" placeholder="Enter title..." />,
-    canopyPath: 'title',
-    entryPath: 'posts/hello',
-    threads: resolvedThreads,
-    autoFocus: false,
-    currentUserId: 'alice',
-    canResolve: true,
-    onAddComment: async (
-      text: string,
-      type: string,
-      entryPath?: string,
-      canopyPath?: string,
-      threadId?: string,
-    ) => {
-      console.log('Add comment:', {
-        text,
-        type,
-        entryPath,
-        canopyPath,
-        threadId,
-      })
-    },
-    onResolveThread: async (threadId: string) => {
-      console.log('Resolve thread:', threadId)
-    },
-  },
-}
-
+/** No threads: the comment icon after the label shows only while the field is hovered or focused. */
 export const NoComments: Story = {
-  args: {
-    children: <TextInput label="Description" placeholder="Enter description..." />,
-    canopyPath: 'description',
-    entryPath: 'posts/hello',
-    threads: [],
-    autoFocus: false,
-    currentUserId: 'alice',
-    canResolve: true,
-    onAddComment: async (
-      text: string,
-      type: string,
-      entryPath?: string,
-      canopyPath?: string,
-      threadId?: string,
-    ) => {
-      console.log('Add comment:', {
-        text,
-        type,
-        entryPath,
-        canopyPath,
-        threadId,
-      })
-    },
-    onResolveThread: async (threadId: string) => {
-      console.log('Resolve thread:', threadId)
-    },
-  },
+  args: { threads: [] },
 }
 
+/** Open threads: a persistent count badge after the label. */
+export const WithOpenThreads: Story = {
+  args: { threads: sampleThreads },
+}
+
+/** Only resolved threads: no badge, but a plain icon stays in view and the popover lists them. */
+export const WithResolvedThreads: Story = {
+  args: { threads: resolvedThreads },
+}
+
+/** The popover open on a thread, as "Jump to field" from the Comments panel opens it. */
+export const PopoverOpen: Story = {
+  args: { threads: [...sampleThreads, ...resolvedThreads], highlightThreadId: 'thread-1' },
+  decorators: [
+    (Story) => (
+      <Box pb={520}>
+        <Story />
+      </Box>
+    ),
+  ],
+}
+
+/** Focused from a preview click: scrolled into view and outlined. */
 export const AutoFocused: Story = {
-  args: {
-    children: <TextInput label="Title" placeholder="Enter title..." />,
-    canopyPath: 'title',
-    entryPath: 'posts/hello',
-    threads: sampleThreads,
-    autoFocus: true,
-    currentUserId: 'alice',
-    canResolve: true,
-    onAddComment: async (
-      text: string,
-      type: string,
-      entryPath?: string,
-      canopyPath?: string,
-      threadId?: string,
-    ) => {
-      console.log('Add comment:', {
-        text,
-        type,
-        entryPath,
-        canopyPath,
-        threadId,
-      })
-    },
-    onResolveThread: async (threadId: string) => {
-      console.log('Resolve thread:', threadId)
-    },
-  },
+  args: { threads: sampleThreads, autoFocus: true },
 }

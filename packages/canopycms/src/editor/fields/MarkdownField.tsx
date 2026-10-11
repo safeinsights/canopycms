@@ -2,7 +2,7 @@
 
 import React, { Suspense, useId, useRef, useCallback, useEffect, useReducer, useState } from 'react'
 
-import { Alert, Button, Group, Text, Textarea } from '@mantine/core'
+import { Alert, Box, Button, Text, Textarea } from '@mantine/core'
 
 import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
@@ -13,7 +13,9 @@ import { createMdxJsxPlugins } from './mdx-jsx-support'
 import { useApiClient, useAssetContext } from '../context'
 import { editorImageSrc } from '../media/editor-image-src'
 import { uploadAsset } from '../media/upload-asset'
+import { useFieldCommentControl } from '../comments/field-comment-context'
 import { FieldDescription, groupDescriptionProps } from './FieldDescription'
+import { FieldLabel } from './FieldLabel'
 import { EditorErrorBoundary, type CaughtEditorError } from '../components/EditorErrorBoundary'
 import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
 import {
@@ -406,6 +408,7 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const commentControl = useFieldCommentControl(dataCanopyField)
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
   const lastRejectedSource = useRef<string | null>(null)
@@ -559,25 +562,24 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       className="canopy-markdown-field"
       {...groupDescriptionProps(inputId, description)}
     >
-      <Group justify="space-between" align="flex-end" mb={4} wrap="nowrap">
-        {label ? (
-          <Text size="sm" fw={500}>
-            {label}
-          </Text>
-        ) : (
-          <span />
-        )}
-        {!readOnly && (
-          <Button
-            variant="subtle"
-            size="compact-xs"
-            data-testid="markdown-mode-toggle"
-            onClick={toggleMode}
-          >
-            {showSource ? 'Rich text' : 'Edit source'}
-          </Button>
-        )}
-      </Group>
+      <Box mb={4}>
+        <FieldLabel
+          label={label}
+          commentControl={commentControl}
+          actions={
+            !readOnly && (
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                data-testid="markdown-mode-toggle"
+                onClick={toggleMode}
+              >
+                {showSource ? 'Rich text' : 'Edit source'}
+              </Button>
+            )
+          }
+        />
+      </Box>
       <FieldDescription baseId={inputId} description={description} />
       <EditorContentStyles />
       {showSource ? (

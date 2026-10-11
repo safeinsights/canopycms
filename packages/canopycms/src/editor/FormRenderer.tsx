@@ -2,8 +2,8 @@
 
 import React, { useRef, useState } from 'react'
 
-import { Alert, Button, Paper, Stack, Text } from '@mantine/core'
-import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
+import { Alert, Stack, Text } from '@mantine/core'
+import { IconInfoCircle } from '@tabler/icons-react'
 
 import type {
   BlockFieldConfig,
@@ -34,9 +34,8 @@ import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
-import { groupDescriptionProps } from './fields/FieldDescription'
-import { FieldLabel } from './fields/FieldLabel'
-import { EDITOR_ACTIONS } from './copy'
+import { ObjectListField } from './fields/ObjectListField'
+import { listItemTitle } from './fields/list-item-title'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
@@ -44,6 +43,8 @@ import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
+import { ValidationSummary } from './components/ValidationSummary'
+import { fieldBreadcrumb } from './field-breadcrumb'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
 import { useListItemKeys } from './fields/list-item-keys'
 import type { FieldRemoval } from './undo-removal'
@@ -66,21 +67,6 @@ export type CustomFieldRenderers = Record<
 >
 
 /**
- * Card heading for an object-list item: the value of its `itemTitleField` when that is a
- * non-blank string or a number, otherwise `fallback`.
- */
-const listItemTitle = (
-  item: Record<string, unknown>,
-  itemTitleField: string | undefined,
-  fallback: string,
-): string => {
-  const raw = itemTitleField ? item?.[itemTitleField] : undefined
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
-  if (typeof raw === 'string' && raw.trim() !== '') return raw.trim()
-  return fallback
-}
-
-/**
  * How an Undo toast names a removed object-list item: by its title field or first non-empty
  * text field, since a positional "#2" title passes to the next item once this one is gone.
  */
@@ -90,16 +76,8 @@ const removedItemLabel = (
   listLabel: string,
   index: number,
 ): string => {
-  const named = listItemTitle(item, objectField.itemTitleField, '')
-  const text =
-    named ||
-    objectField.fields
-      .filter((f) => f.type === 'string')
-      .map((f) => item?.[f.name])
-      .find((v): v is string => typeof v === 'string' && v.trim() !== '')
-      ?.trim()
-  if (!text) return `item ${index + 1} from ${listLabel}`
-  return `"${text.length > 60 ? `${text.slice(0, 59)}…` : text}" from ${listLabel}`
+  const text = listItemTitle(item, objectField)
+  return text ? `"${text}" from ${listLabel}` : `item ${index + 1} from ${listLabel}`
 }
 
 const normalizeOptions = (
@@ -278,7 +256,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )}
         />
         {error && (
-          <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
+          <Text size="xs" c="red.8" data-testid={`field-error-${fieldKey(path)}`}>
             {error}
           </Text>
         )}
@@ -304,6 +282,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               thread.canopyPath === canopyPath,
           )
         : []
+
+    // The full breadcrumb, so a list item's or block's fields are told apart by name.
+    const commentSubject = fieldBreadcrumb(fields, value, canopyPath).join(' › ')
 
     const custom = customRenderers?.[field.type]
     if (custom) {
@@ -334,6 +315,9 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
+            fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
+            controlPlacement="corner"
           >
             {renderedField}
           </FieldWrapper>
@@ -359,6 +343,8 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
             onGetUserMetadata={onGetUserMetadata}
+            fieldLabel={commentSubject}
+            resetKey={boundaryResetKey}
           >
             {renderedField}
           </FieldWrapper>
@@ -595,106 +581,29 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           const items = Array.isArray(currentValue)
             ? (currentValue as Record<string, unknown>[])
             : []
-          const itemKeys = keysForList(items, fieldKey(path))
           return wrapWithComments(
-            <Paper
+            <ObjectListField
               key={fieldKey(path)}
-              withBorder
-              p="md"
-              shadow="xs"
-              {...groupDescriptionProps(fieldId, field.description)}
-              role="group"
-              aria-label={label}
-              data-removal-focus
-              tabIndex={-1}
-            >
-              <Stack gap="sm">
-                <FieldLabel
-                  label={label}
-                  required={field.required}
-                  description={field.description}
-                  descriptionBaseId={fieldId}
-                  actions={
-                    !readOnly && (
-                      <Button
-                        variant="light"
-                        onClick={() => update([...items, {} as Record<string, unknown>])}
-                      >
-                        Add item
-                      </Button>
-                    )
-                  }
-                />
-                <Stack gap="sm">
-                  {items.map((item, idx) => {
-                    const itemTitle = listItemTitle(
-                      item,
-                      objectField.itemTitleField,
-                      `${label} #${idx + 1}`,
-                    )
-                    return (
-                      <Paper
-                        key={itemKeys[idx]}
-                        role="group"
-                        aria-label={itemTitle}
-                        withBorder
-                        p="sm"
-                        shadow="xs"
-                      >
-                        <Stack gap="xs">
-                          <FieldLabel
-                            label={itemTitle}
-                            actions={
-                              !readOnly && (
-                                <Button
-                                  variant="subtle"
-                                  color="red"
-                                  onClick={(event) => {
-                                    // The row goes, so focus moves to its list, not the page.
-                                    const list =
-                                      event.currentTarget.closest<HTMLElement>(
-                                        '[data-removal-focus]',
-                                      )
-                                    update(items.filter((_, i) => i !== idx))
-                                    list?.focus()
-                                    onRemoved?.({
-                                      kind: 'list-item',
-                                      listPath: path,
-                                      index: idx,
-                                      item,
-                                      label: removedItemLabel(item, objectField, label, idx),
-                                    })
-                                  }}
-                                >
-                                  {EDITOR_ACTIONS.remove}
-                                </Button>
-                              )
-                            }
-                          />
-                          <ObjectField
-                            fields={objectField.fields}
-                            value={item}
-                            onChange={(next) => {
-                              const nextItems = [...items]
-                              nextItems[idx] = next
-                              update(nextItems)
-                            }}
-                            renderField={renderField}
-                            path={[...path, idx]}
-                            dataCanopyField={normalizeCanopyPath([...path, idx])}
-                          />
-                        </Stack>
-                      </Paper>
-                    )
-                  })}
-                  {items.length === 0 && (
-                    <Text size="xs" c="dimmed">
-                      {readOnly ? 'No items.' : 'No items yet. Add one to get started.'}
-                    </Text>
-                  )}
-                </Stack>
-              </Stack>
-            </Paper>,
+              id={fieldId}
+              label={label}
+              field={objectField}
+              items={items}
+              itemKeys={keysForList(items, fieldKey(path))}
+              onChange={(next) => update(next)}
+              renderField={renderField}
+              path={path}
+              canopyPath={canopyPath}
+              readOnly={readOnly}
+              onRemoved={(index, item) =>
+                onRemoved?.({
+                  kind: 'list-item',
+                  listPath: path,
+                  index,
+                  item,
+                  label: removedItemLabel(item, objectField, label, index),
+                })
+              }
+            />,
           )
         }
 
@@ -760,6 +669,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           onResolveThread={onResolveThread}
           highlightThreadId={highlightThreadId}
           onGetUserMetadata={onGetUserMetadata}
+          resetKey={boundaryResetKey}
         />
       )}
 
@@ -777,23 +687,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         </Alert>
       )}
 
-      {fieldErrors && Object.keys(fieldErrors).length > 0 && (
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="red"
-          variant="light"
-          title="Fix these issues before saving"
-          data-testid="validation-alert"
-        >
-          <Stack gap={2}>
-            {Object.entries(fieldErrors).map(([path, message]) => (
-              <Text size="xs" key={path}>
-                {path}: {message}
-              </Text>
-            ))}
-          </Stack>
-        </Alert>
-      )}
+      {fieldErrors && <ValidationSummary fields={fields} value={value} errors={fieldErrors} />}
 
       {fields.map((field) => {
         // Inline groups are transparent to the value — render them directly with parent value/onChange

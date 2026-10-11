@@ -2,6 +2,8 @@ import React, { useId, useState } from 'react'
 
 import { TagsInput } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface NumberListFieldProps {
   id?: string
   label?: string
@@ -53,33 +55,34 @@ export const NumberListField: React.FC<NumberListFieldProps> = ({
   const [rejected, setRejected] = useState<string[]>([])
 
   return (
-    <TagsInput
-      id={inputId}
-      label={label}
-      description={description}
-      value={value.map(String)}
-      size="sm"
-      error={
-        rejected.length > 0
-          ? `Not ${rejected.length === 1 ? 'a number' : 'numbers'}: ${rejected.join(', ')}`
-          : undefined
-      }
-      readOnly={readOnly}
-      onChange={(next) => {
-        if (readOnly) return
-        const parsed: number[] = []
-        const dropped: string[] = []
-        for (const tag of next) {
-          const num = parseTag(tag)
-          if (num === undefined) dropped.push(tag)
-          else parsed.push(num)
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <TagsInput
+        id={inputId}
+        description={description}
+        value={value.map(String)}
+        size="sm"
+        error={
+          rejected.length > 0
+            ? `Not ${rejected.length === 1 ? 'a number' : 'numbers'}: ${rejected.join(', ')}`
+            : undefined
         }
-        setRejected(dropped)
-        onChange(parsed)
-      }}
-      splitChars={[]}
-      allowDuplicates
-      data-canopy-field={dataCanopyField}
-    />
+        readOnly={readOnly}
+        onChange={(next) => {
+          if (readOnly) return
+          const parsed: number[] = []
+          const dropped: string[] = []
+          for (const tag of next) {
+            const num = parseTag(tag)
+            if (num === undefined) dropped.push(tag)
+            else parsed.push(num)
+          }
+          setRejected(dropped)
+          onChange(parsed)
+        }}
+        splitChars={[]}
+        allowDuplicates
+        data-canopy-field={dataCanopyField}
+      />
+    </LabelledInput>
   )
 }

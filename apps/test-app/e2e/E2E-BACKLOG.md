@@ -174,8 +174,8 @@ Use existing fixtures:
 **Status:** Done — `comments.spec.ts` › "add and resolve a field-level comment thread"
 **Spec file:** `comments.spec.ts`
 **Scenario:** Select an entry and field. Trigger a field-level comment (look for a comment icon near the field or in the preview). Add a comment. Verify an inline comment thread appears (`InlineCommentThread.tsx`). Resolve/close the thread. Verify it is marked resolved.
-**data-testids added:** `data-testid="field-new-comment-{canopyPath}"` on "New comment" button in `FieldWrapper.tsx`; `data-testid="new-thread-textarea"` and `data-testid="create-thread-button"` in `ThreadCarousel.tsx`; `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
-**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The "New comment" button is always in the DOM (no hover required). After resolving, the "Resolved" badge appears and the Resolve button disappears.
+**data-testids added:** `data-testid="field-comment-{canopyPath}"` on the field's comment control and `data-testid="new-thread-textarea"` / `"create-thread-button"` in its popover (`CommentThreadsPopover.tsx`); `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
+**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The comment control is always in the DOM but transparent until its field is hovered or focused, so `startFieldComment` hovers first. After resolving, the "Resolved" badge appears and the Resolve button disappears.
 
 ---
 

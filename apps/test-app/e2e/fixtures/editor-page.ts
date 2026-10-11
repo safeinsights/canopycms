@@ -380,13 +380,24 @@ export class EditorPage {
   }
 
   /**
-   * Begin a new comment thread on a form field.
+   * A form field's comment control: an icon shown while the field is hovered or focused, a count
+   * badge while it has open threads, or a plain icon once all its threads are resolved.
+   * @param field - The field's data-canopy-field path
+   */
+  fieldCommentControl(field: string): Locator {
+    return this.page.getByTestId(`field-comment-${field}`)
+  }
+
+  /**
+   * Hover a form field and open its comments popover, which starts a new thread when the field
+   * has none.
    * @param field - The field's data-canopy-field path
    */
   async startFieldComment(field: string): Promise<void> {
-    const trigger = this.page.locator(`[data-testid="field-new-comment-${field}"]`)
-    await trigger.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    await trigger.click()
+    const control = this.fieldCommentControl(field)
+    await control.waitFor({ state: 'attached', timeout: STANDARD_TIMEOUT })
+    await this.page.locator(`[data-field-comments][data-canopy-field="${field}"]`).hover()
+    await control.click()
   }
 
   /**
@@ -400,7 +411,7 @@ export class EditorPage {
   }
 
   /**
-   * The comment thread shown inline in the form.
+   * The comment thread shown in the open comments popover.
    */
   fieldCommentThread(): Locator {
     return this.page.locator('[data-testid="inline-comment-thread"]')

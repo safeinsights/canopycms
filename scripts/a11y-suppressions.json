@@ -9,16 +9,6 @@
       "count": 1
     }
   },
-  "packages/canopycms/src/editor/comments/EntryComments.tsx": {
-    "jsx-a11y/no-autofocus": {
-      "count": 1
-    }
-  },
-  "packages/canopycms/src/editor/comments/FieldWrapper.tsx": {
-    "jsx-a11y/no-autofocus": {
-      "count": 1
-    }
-  },
   "packages/canopycms/src/editor/comments/ThreadCarousel.tsx": {
     "jsx-a11y/control-has-associated-label": {
       "count": 2

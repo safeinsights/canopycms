@@ -156,7 +156,7 @@ describe('InlineCommentThread', () => {
       { wrapper: Wrapper },
     )
 
-    const textareas = screen.getAllByPlaceholderText('Write a reply...') as HTMLTextAreaElement[]
+    const textareas = screen.getAllByPlaceholderText('Write a reply…') as HTMLTextAreaElement[]
     const textarea = textareas[0]
 
     // Use act to ensure state updates are flushed
@@ -203,7 +203,7 @@ describe('InlineCommentThread', () => {
       { wrapper: Wrapper },
     )
 
-    const textareas = screen.getAllByPlaceholderText('Write a reply...') as HTMLTextAreaElement[]
+    const textareas = screen.getAllByPlaceholderText('Write a reply…') as HTMLTextAreaElement[]
     const textarea = textareas[0]
     await user.type(textarea, 'My reply')
     expect(textarea.value).toBe('My reply')
@@ -328,7 +328,7 @@ describe('InlineCommentThread', () => {
     const replyButtons = screen.getAllByRole('button', { name: /reply/i })
     expect(replyButtons[0].hasAttribute('disabled')).toBe(true)
 
-    const textareas = screen.getAllByPlaceholderText('Write a reply...')
+    const textareas = screen.getAllByPlaceholderText('Write a reply…')
     await user.type(textareas[0], 'Some text')
 
     expect(replyButtons[0].hasAttribute('disabled')).toBe(false)

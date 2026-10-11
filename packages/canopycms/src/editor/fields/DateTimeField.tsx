@@ -2,6 +2,8 @@ import React, { useId } from 'react'
 
 import { Input } from '@mantine/core'
 
+import { LabelledInput } from './FieldLabel'
+
 export interface DateTimeFieldProps {
   id?: string
   label?: string
@@ -73,18 +75,20 @@ export const DateTimeField: React.FC<DateTimeFieldProps> = ({
   const inputId = id ?? generatedId
 
   return (
-    <Input.Wrapper id={inputId} label={label} description={description} size="sm">
-      <Input
-        type="datetime-local"
-        step={1}
-        size="sm"
-        value={isoToDatetimeLocalValue(value)}
-        readOnly={readOnly}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          if (!readOnly) onChange(datetimeLocalValueToIso(e.currentTarget.value))
-        }}
-        data-canopy-field={dataCanopyField}
-      />
-    </Input.Wrapper>
+    <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
+      <Input.Wrapper id={inputId} description={description} size="sm">
+        <Input
+          type="datetime-local"
+          step={1}
+          size="sm"
+          value={isoToDatetimeLocalValue(value)}
+          readOnly={readOnly}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+            if (!readOnly) onChange(datetimeLocalValueToIso(e.currentTarget.value))
+          }}
+          data-canopy-field={dataCanopyField}
+        />
+      </Input.Wrapper>
+    </LabelledInput>
   )
 }

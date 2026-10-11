@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { CommentsPanel } from './CommentsPanel'
 import type { CommentThread } from '../comment-store'
@@ -77,6 +77,19 @@ describe('CommentsPanel', () => {
     renderPanel()
 
     expect(screen.getByText(/Posts a branch-level comment on "feature\/my-branch"/)).toBeTruthy()
+  })
+
+  it('keeps the text and says why when a comment fails', async () => {
+    renderPanel({
+      onAddComment: vi.fn(async () => {
+        throw new Error("Couldn't add the comment. Try again.")
+      }),
+    })
+    const box = screen.getByTestId('comment-textarea') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Keep me' } })
+    fireEvent.click(screen.getByTestId('comment-submit'))
+    expect(await screen.findByText("Couldn't add the comment. Try again.")).toBeTruthy()
+    expect(box.value).toBe('Keep me')
   })
 
   it('renders an "Open branch discussion" action for branch threads', () => {
