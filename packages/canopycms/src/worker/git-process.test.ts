@@ -194,6 +194,37 @@ describe('spawnGit', () => {
     expect(bytes).toBe(100_000)
   })
 
+  it('waits for a reader that holds back, past the inactivity bound, while git has more to write', async () => {
+    // More than the pipe and the stream's buffer hold, so git blocks writing while the reader
+    // waits: a push's bundle while the gateway has not yet taken it in.
+    const proc = spawnGit(['big'], alias('big', 'yes y | head -c 2000000', 300))
+    const chunks = proc.stdout[Symbol.asyncIterator]()
+    let bytes = 0
+    const first = await chunks.next()
+    bytes += (first.value as Buffer).length
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    for (;;) {
+      const next = await chunks.next()
+      if (next.done) break
+      bytes += (next.value as Buffer).length
+    }
+    await proc.exited
+    expect(bytes).toBe(2_000_000)
+  })
+
+  it('kills a git gone quiet once its reader has taken everything it wrote', async () => {
+    const proc = spawnGit(['quiet'], alias('quiet', 'printf x; sleep 5', 300))
+    let out = ''
+    // The kill ends the stream early, which is this reader's failure, not the test's.
+    const reading = (async () => {
+      for await (const chunk of proc.stdout) out += String(chunk)
+    })().catch(() => undefined)
+    const err = await failure(proc.exited)
+    await reading
+    expect(out).toBe('x')
+    expect(err.message).toBe('git quiet wrote nothing for 300ms')
+  })
+
   it("reports git's own failure, not a stop that came after it", async () => {
     const proc = spawnGit(
       ['fail'],

@@ -6,7 +6,7 @@
  */
 
 import childProcess, { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
@@ -778,6 +778,33 @@ describe('the worker side of a push', () => {
 
     expect(String(caught)).toMatch(/git bundle was aborted/)
     expect(await tip(githubPath, 'refs/heads/feature')).toBeNull()
+  })
+
+  it('lets a bundle wait for the gateway to take it, past the inactivity bound', async () => {
+    const { main } = await featureAhead()
+    // Incompressible and larger than the pipes between git and the gateway hold, so `bundle
+    // create` blocks writing while the gateway has not started reading.
+    await fs.writeFile(path.join(seedPath, 'large.bin'), randomBytes(3 * 1024 * 1024))
+    await seed.add('.')
+    await seed.commit('large')
+    await seed.raw(['push', '-q', '--force', remoteGitPath, 'HEAD:refs/heads/feature'])
+    const feature = await git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature')
+    const github = gateway()
+    const push = github.push.bind(github)
+    vi.spyOn(github, 'push').mockImplementation(async (req, body, signal) => {
+      // As a push whose intake waits behind another's: four inactivity bounds pass unread.
+      if (body !== undefined) await new Promise((resolve) => setTimeout(resolve, 1_200))
+      return push(req, body, signal)
+    })
+
+    await pushToGitHub(
+      { github: () => github, remoteGitPath, taskTimeoutMs: 300 },
+      { branch: 'feature', prerequisiteBranches: ['feature', 'main'] },
+      async () => feature,
+    )
+
+    expect(await tip(githubPath, 'refs/heads/feature')).toBe(feature)
+    expect(main).not.toBe(feature)
   })
 
   it('fails at once when the gateway refuses a bundle it never read', async () => {

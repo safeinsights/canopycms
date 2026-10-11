@@ -12,8 +12,9 @@ import { getErrorMessage } from '../utils/error'
  * (worker/shared-repo-git.ts, worker/github-mirror.ts).
  *
  * Bounded three ways: while git runs, killed after {@link GitProcessOptions.inactivityTimeoutMs}
- * with no output and no input consumed (once it has exited 0, output still unread is the
- * reader's to take, however slowly); killed when `signal` aborts; and holding at most
+ * with no output and no input consumed, unless output it wrote is still waiting for the reader
+ * (git is then blocked on the reader, whose own deadline bounds it; and once git has exited 0,
+ * output still unread is the reader's to take, however slowly); killed when `signal` aborts; and holding at most
  * {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
  * hostile bytes cannot make this one buffer without limit. A stop reaches everything git spawned:
  * git runs in its own process group.
@@ -30,7 +31,8 @@ export interface GitProcessOptions {
   stdin?: Readable | string
   /**
    * While git runs, killed when nothing is written to stdout or stderr, and nothing consumed from
-   * stdin, for this long. Not after it exits 0: what it wrote is then the reader's.
+   * stdin, for this long. Not while what it wrote waits unread for the reader, nor after it exits
+   * 0: what it wrote is then the reader's.
    */
   inactivityTimeoutMs: number
   /**
@@ -79,7 +81,7 @@ export interface GitProcess {
 
 /**
  * Start `git <config> <args>` with stdout as a stream the caller must read or {@link GitProcess.kill}:
- * git blocks on a full pipe, and a reader that stops counts as inactivity.
+ * git blocks on a full pipe, for as long as the reader holds back.
  */
 export function spawnGit(args: readonly string[], options: GitProcessOptions): GitProcess {
   const child = spawn('git', [...(options.config ?? []).flatMap((c) => ['-c', c]), ...args], {
@@ -101,14 +103,20 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let closed = false
   let exitedCleanly = false
   let inactivity: NodeJS.Timeout | undefined
+  const idle = () => {
+    // Output git wrote is waiting here for the reader, so git is blocked on the reader, not stuck:
+    // the reader's own deadline bounds that wait. With nothing unread, silence is git's.
+    if (stdout.readableLength > 0) {
+      inactivity = setTimeout(idle, options.inactivityTimeoutMs)
+      return
+    }
+    stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`)
+  }
   const touch = () => {
     clearTimeout(inactivity)
     // Once git has exited 0, output still unread is the reader's to take, however slowly.
     if (exitedCleanly) return
-    inactivity = setTimeout(
-      () => stop(`git ${command} wrote nothing for ${options.inactivityTimeoutMs}ms`),
-      options.inactivityTimeoutMs,
-    )
+    inactivity = setTimeout(idle, options.inactivityTimeoutMs)
   }
   // A stop counts until 'close', not until git exits: git can exit with its last output still
   // unread, and that output holds 'close' back until the stream is destroyed.
