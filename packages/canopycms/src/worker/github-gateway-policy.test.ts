@@ -175,6 +175,14 @@ describe('pushes', () => {
     expect(await tip('refs/heads/production')).toBe(sha)
   })
 
+  it('pushes the settings branch whatever glob protectedBranches holds', async () => {
+    const sha = await onMain('canopycms-settings-prod')
+
+    await pushVia(gateway({ protectedBranches: ['*-prod'] }), 'canopycms-settings-prod')
+
+    expect(await tip('refs/heads/canopycms-settings-prod')).toBe(sha)
+  })
+
   it('pushes a settings branch plainly, and refuses it under a lease', async () => {
     const first = await onMain('canopycms-settings-prod')
     const github = gateway()
@@ -325,6 +333,17 @@ describe('branch names', () => {
     await expect(
       gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
         request('feature', name),
+      ),
+    ).rejects.toMatchObject({ reason: 'invalid' })
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+  })
+
+  it('refuses a base longer than a branch name can be', async () => {
+    const octokit = octokitStub()
+
+    await expect(
+      gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
+        request('feature', 'b'.repeat(256)),
       ),
     ).rejects.toMatchObject({ reason: 'invalid' })
     expect(octokit.pulls.create).not.toHaveBeenCalled()

@@ -11,10 +11,7 @@ import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/br
  */
 export const DEFAULT_BRANCH_TTL_MS = 10 * 60_000
 
-/**
- * The longest branch name the gateway takes, in characters (all ASCII).
- * @internal Exported for tests.
- */
+/** The longest branch name the gateway takes, in characters. */
 export const MAX_BRANCH_NAME_LENGTH = 255
 
 /**
@@ -242,7 +239,9 @@ export class BranchPolicy {
   private matchesConfigured(branch: string): boolean {
     return (
       this.exact.some((name) => sameBranch(name, branch)) ||
-      this.globs.some((glob) => matchesBranchPattern(glob, branch))
+      // A glob never takes in a settings branch, whose one allowed push (plain) the worker needs:
+      // `*-prod` would otherwise stop `canopycms-settings-prod` reaching GitHub.
+      (!this.isSettings(branch) && this.globs.some((glob) => matchesBranchPattern(glob, branch)))
     )
   }
 

@@ -132,6 +132,13 @@ describe('BranchPolicy: the protected set', () => {
     expect(await new BranchPolicy().isProtected('main', defaultIs(null))).toBe(false)
   })
 
+  it('never lets a glob take in a settings branch, whose plain push the worker needs', async () => {
+    const policy = new BranchPolicy({ protectedBranches: ['*-prod'] })
+
+    expect(await policy.isProtected('release-prod', defaultIs('main'))).toBe(true)
+    expect(await policy.isProtected('canopycms-settings-prod', defaultIs('main'))).toBe(false)
+  })
+
   it('protects listed names and globs', async () => {
     const policy = new BranchPolicy({ protectedBranches: ['release/*', 'hotfix'] })
     const read = defaultIs('main')

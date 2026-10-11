@@ -23,7 +23,12 @@ import {
   sweepLocksAndTemporaries,
   type MirrorCorruption,
 } from './github-mirror-upkeep'
-import { BranchPolicy, GatewayRefusalError, branchNameProblem } from './branch-policy'
+import {
+  BranchPolicy,
+  GatewayRefusalError,
+  MAX_BRANCH_NAME_LENGTH,
+  branchNameProblem,
+} from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
 import {
   githubBoundGitOptions,
@@ -660,7 +665,7 @@ export async function assertPlainBranchName(
   branch: string,
   git: SimpleGit = simpleGit(),
   operation: 'push' | 'delete' | 'pull-request' = 'push',
-  /** False for a name the gateway only passes on, never acts on: git's rules, and no leading `-`. */
+  /** False for a name the gateway only passes on, never acts on: git's rules, its length, no leading `-`. */
   shape = true,
 ): Promise<void> {
   const invalid = (why: string) =>
@@ -677,7 +682,9 @@ export async function assertPlainBranchName(
     ? branchNameProblem(branch)
     : branch.startsWith('-')
       ? "it starts with '-'"
-      : null
+      : branch.length > MAX_BRANCH_NAME_LENGTH
+        ? `it is longer than ${MAX_BRANCH_NAME_LENGTH} characters`
+        : null
   if (problem !== null) throw invalid(problem)
   let normalized: string
   try {

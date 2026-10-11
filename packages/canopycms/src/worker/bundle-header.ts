@@ -100,6 +100,8 @@ export class BundleHeaderReader {
   private counted = 0
   /** Bytes taken from the bundle. */
   private consumed = 0
+  /** Comment bytes kept to send, when shortening. */
+  private keptBytes = 0
   /** In a comment: its bytes so far, and those kept to send. */
   private comment: { bytes: number; kept: Buffer[] } | null = null
   private done = false
@@ -184,7 +186,11 @@ export class BundleHeaderReader {
         `a prerequisite's comment is longer than ${PREREQUISITE_COMMENT_MAX_BYTES} bytes`,
       )
     }
-    if (room > 0 && this.comments === 'shorten') comment.kept.push(bytes.subarray(0, room))
+    if (room > 0 && this.comments === 'shorten') {
+      const kept = bytes.subarray(0, room)
+      comment.kept.push(kept)
+      this.keptBytes += kept.length
+    }
     comment.bytes += bytes.length
     this.consumed += bytes.length
     this.checkBound()
@@ -194,7 +200,10 @@ export class BundleHeaderReader {
     if (this.counted >= BUNDLE_HEADER_MAX_BYTES) {
       throw new BundleHeaderError(`its header does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`)
     }
-    if (this.consumed >= BUNDLE_HEADER_TOTAL_MAX_BYTES) {
+    // Refusing, every comment byte is read; shortening, only the kept ones are held and sent, so
+    // a single subject of any length shortens rather than counts.
+    const total = this.comments === 'refuse' ? this.consumed : this.counted + this.keptBytes
+    if (total >= BUNDLE_HEADER_TOTAL_MAX_BYTES) {
       throw new BundleHeaderError(
         `its header, comments included, does not end within ${BUNDLE_HEADER_TOTAL_MAX_BYTES} bytes`,
       )

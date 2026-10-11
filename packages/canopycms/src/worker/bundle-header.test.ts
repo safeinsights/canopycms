@@ -178,6 +178,13 @@ describe('prerequisite comments', () => {
     },
   )
 
+  it('shortens one comment longer than the total bound, holding only what it keeps', () => {
+    const long = comment(BUNDLE_HEADER_TOTAL_MAX_BYTES + 1024)
+    const read = new BundleHeaderReader('shorten').push(header(long))
+
+    expect(read?.bytes.equals(header(comment(PREREQUISITE_COMMENT_MAX_BYTES)))).toBe(true)
+  })
+
   it("cuts only a comment's bytes: each line keeps its `-<oid> ` and its LF, and gains none", () => {
     // Multi-byte characters straddle the cut: it is on bytes, not characters.
     const long = Buffer.from('\u00e9'.repeat(PREREQUISITE_COMMENT_MAX_BYTES), 'utf8')
