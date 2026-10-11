@@ -514,10 +514,8 @@ describe('the wire format at the client', () => {
       res.end(body)
     })
     await new Promise<void>((resolve) => server.listen(socketPath, resolve))
-    servers.push({
-      idle: async () => undefined,
-      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-    })
+    const close = () => new Promise<void>((resolve) => server.close(() => resolve()))
+    servers.push({ idle: async () => undefined, drain: close, close })
   }
 
   it.each([
@@ -1330,6 +1328,55 @@ describe('bundles across the socket', () => {
 
     await expect(client.openBundle('d'.repeat(32))).rejects.toBeInstanceOf(GitHubTransientError)
     await expect(client.openBundle('../x')).rejects.toBeInstanceOf(GitHubGatewayProtocolError)
+  })
+})
+
+describe('a drain', () => {
+  it('lets a request under way finish, refusing new ones as transient, then closes', async () => {
+    const gateway = fakeGateway()
+    let finish: () => void = () => undefined
+    gateway.defaultBranch.mockImplementation(
+      () => new Promise<string>((resolve) => (finish = () => resolve('main'))),
+    )
+    const server = await serve(gateway)
+    const client = connectGitHubGateway(socketPath)
+    const underWay = client.defaultBranch()
+    await vi.waitFor(() => expect(gateway.defaultBranch).toHaveBeenCalled())
+
+    const started = Date.now()
+    const draining = server.drain(10_000)
+    const refused = await client.isProtectedBranch('main').catch((err: unknown) => err)
+    finish()
+
+    expect(await underWay).toBe('main')
+    await draining
+    // Once nothing is under way, not at the grace's end.
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(refused).toBeInstanceOf(GitHubGatewayProtocolError)
+    expect(isPermanentTaskFailure(refused)).toBe(false)
+    expect(String(refused)).toMatch(/stopping/)
+    expect(gateway.isProtectedBranch).not.toHaveBeenCalled()
+  })
+
+  it('ends at its grace, whatever a client trickling a request holds open', async () => {
+    const server = await serve(fakeGateway())
+    const trickle = http.request({
+      socketPath,
+      method: 'POST',
+      path: '/v1/default-branch',
+      agent: false,
+      headers: { 'content-type': 'application/json', 'content-length': '100' },
+    })
+    const closed = new Promise<void>((resolve) => trickle.on('error', () => resolve()))
+    trickle.write('{')
+    // The request is under way once the server has begun reading it.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const started = Date.now()
+
+    await server.drain(300)
+
+    expect(Date.now() - started).toBeLessThan(2_000)
+    await closed
   })
 })
 

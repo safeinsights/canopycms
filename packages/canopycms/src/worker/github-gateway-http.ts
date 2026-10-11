@@ -101,6 +101,13 @@ export interface GitHubGatewayServer {
    * Resolves once nothing is under way: no request is being handled, and no fetch job runs.
    */
   idle(): Promise<void>
+  /**
+   * Stop as a SIGTERM asks: refuse new requests (503, transient to the worker), let those under
+   * way finish for at most `graceMs`, then close every connection, whatever is still on it. The
+   * bound is time, not only {@link idle}: a client that trickles a request body would otherwise
+   * hold the stop open. A fetch job is not waited for; stopping one is the gateway's own.
+   */
+  drain(graceMs: number): Promise<void>
   /** Stop accepting, and close every connection. */
   close(): Promise<void>
 }
@@ -144,13 +151,28 @@ export async function serveGitHubGateway(
 
   return {
     idle: () => handler.idle(),
-    close: () =>
-      new Promise<void>((resolve) => {
-        handler.close()
-        server.close(() => resolve())
-        server.closeAllConnections()
-      }),
+    drain: async (graceMs) => {
+      handler.close()
+      let timer: NodeJS.Timeout | undefined
+      await Promise.race([
+        handler.requestsSettled(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, graceMs)
+        }),
+      ])
+      clearTimeout(timer)
+      await closeServer(server, handler)
+    },
+    close: () => closeServer(server, handler),
   }
+}
+
+function closeServer(server: http.Server, handler: GatewayRequestHandler): Promise<void> {
+  return new Promise<void>((resolve) => {
+    handler.close()
+    server.close(() => resolve())
+    server.closeAllConnections()
+  })
 }
 
 function listenOn(server: http.Server, options: { fd: number } | { path: string }): Promise<void> {
@@ -312,6 +334,12 @@ class GatewayRequestHandler {
 
   close(): void {
     this.closed = true
+  }
+
+  /** Resolves once no request is being handled; fetch jobs aside. */
+  requestsSettled(): Promise<void> {
+    if (this.inFlight === 0) return Promise.resolve()
+    return new Promise<void>((resolve) => this.idleWaiters.push(resolve))
   }
 
   async idle(): Promise<void> {
