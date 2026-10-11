@@ -13,7 +13,7 @@ import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { collectStaticPaths } from '../../static'
 import { generateAIContent } from '../generate'
 import { createAIContentHandler } from '../handler'
-import type { AIContentConfig, AIManifest } from '../types'
+import type { AIContentConfig, AIEntry, AIManifest } from '../types'
 
 const schema: RootCollectionConfig = {
   collections: [
@@ -150,6 +150,29 @@ describe('AI content and noindex', () => {
   it('refuses an exclude.noindex that is not a boolean', async () => {
     const aiConfig = { exclude: { noindex: 'false' } } as unknown as AIContentConfig
     await expect(generate(aiConfig)).rejects.toThrow('exclude.noindex must be a boolean')
+  })
+
+  it('reads the flag inside a configured SEO group', async () => {
+    await store.write(unsafeAsLogicalPath('content/guides'), unsafeAsSlug('grouped'), {
+      format: 'md',
+      data: { title: 'Grouped', seo: { noindex: true } },
+      body: 'Grouped text.',
+    })
+    expect((await generate({ seo: { group: 'seo' } })).files.has('guides/grouped.md')).toBe(false)
+    expect((await generate()).files.has('guides/grouped.md')).toBe(true)
+  })
+
+  it('refuses an unknown seo.fields key', async () => {
+    const aiConfig = { seo: { fields: { noIndex: 'hidden' } } } as unknown as AIContentConfig
+    await expect(generate(aiConfig)).rejects.toThrow('unknown seo.fields key(s): noIndex')
+  })
+
+  it('shows exclude.where the body with its links resolved', async () => {
+    const { files } = await generate({
+      exclude: { where: (entry) => Boolean((entry as AIEntry).body?.includes('/guides/basics')) },
+    })
+    expect(files.has('guides/overview.md')).toBe(false)
+    expect(files.has('guides/basics.md')).toBe(true)
   })
 
   it('refuses a misshapen seo location', async () => {

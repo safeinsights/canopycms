@@ -122,11 +122,17 @@ const INLINE_LINK_TARGET = new RegExp(
 function unwrapInlineLinks(text: string, shouldUnwrap: (id: string) => boolean): string {
   let out = ''
   let cursor = 0
+  // A failed search from `close` saw no `[` it could match before it, and a later `]` only adds
+  // depth, so later searches stop there: the scans stay linear in the text.
+  let scanFloor = 0
   for (const match of text.matchAll(INLINE_LINK_TARGET)) {
     const close = match.index
     if (close < cursor || !shouldUnwrap(match[1])) continue
-    const open = findOpeningBracket(text, close, cursor)
-    if (open === -1) continue
+    const open = findOpeningBracket(text, close, Math.max(cursor, scanFloor))
+    if (open === -1) {
+      scanFloor = close
+      continue
+    }
     const start = open > cursor && text[open - 1] === '!' ? open - 1 : open
     out += text.slice(cursor, start) + text.slice(open + 1, close)
     cursor = close + match[0].length

@@ -240,6 +240,14 @@ describe('resolveEntryLinksInText', () => {
       )
     })
 
+    it('stays linear on withheld targets with no opening bracket', () => {
+      const text = '](entry:vh2WdhwAFiSL)'.repeat(20_000)
+      const started = performance.now()
+      expect(resolve(text)).toBe('](#)'.repeat(20_000))
+      // Quadratic scanning takes seconds at this size; linear takes milliseconds
+      expect(performance.now() - started).toBeLessThan(1500)
+    })
+
     it('leaves a withheld link inside code alone', () => {
       const text = '`[Hello](entry:vh2WdhwAFiSL)`'
       expect(resolve(text)).toBe(text)

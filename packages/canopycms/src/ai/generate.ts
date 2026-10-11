@@ -14,7 +14,11 @@ import { minimatch } from 'minimatch'
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
 import { isDataOnlyFormat } from '../utils/format'
-import { extractEntryTypeFromFilename, extractIdFromFilename } from '../content-id-index'
+import {
+  extractEntryTypeFromFilename,
+  extractIdFromFilename,
+  type ContentIdIndex,
+} from '../content-id-index'
 import { hasTraversalSequence } from '../paths'
 import { getErrorMessage, isNodeError } from '../utils/error'
 import { entryToMarkdown, frontmatterTitle, type ReferenceRendering } from './json-to-markdown'
@@ -30,7 +34,7 @@ import {
   resolveEntryLinksInText,
   type EntryLinkUrlResolver,
 } from '../entry-link-resolver'
-import { isNoindexEntry } from '../static/seo'
+import { DEFAULT_SEO_FIELD_NAMES, isNoindexEntry } from '../static/seo'
 import type {
   AIContentConfig,
   AIEntry,
@@ -93,6 +97,8 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     store,
     contentRoot,
     config,
+    idIndex,
+    entryLinkUrl,
     resolveTarget: createReferenceTargetResolver(store),
   }
 
@@ -239,6 +245,8 @@ interface EntryReadContext {
   store: ContentStore
   contentRoot: string
   config?: AIContentConfig
+  idIndex: ContentIdIndex
+  entryLinkUrl?: EntryLinkUrlResolver
   resolveTarget: ReferenceTargetResolver
 }
 
@@ -298,7 +306,7 @@ async function collectEntries(
   collection: FlatSchemaItem & { type: 'collection' },
   cleanPath: string,
 ): Promise<PendingEntry[]> {
-  const { store, config, resolveTarget } = read
+  const { store, contentRoot, config, idIndex, entryLinkUrl, resolveTarget } = read
   const skipNoindex = config?.exclude?.noindex !== false
   const pending: PendingEntry[] = []
 
@@ -325,12 +333,15 @@ async function collectEntries(
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
 
+      const body = aiEntry.body
+      // `where` sees every link resolved; the export's own rendering re-resolves from `body`
+      if (body) aiEntry.body = resolveEntryLinksInText(body, idIndex, contentRoot, entryLinkUrl)
       if (config?.exclude?.where?.(aiEntry)) continue
 
       pending.push({
         entry: aiEntry,
-        body: aiEntry.body,
-        linkedIds: aiEntry.body ? extractEntryLinkIds(aiEntry.body).map((link) => link.id) : [],
+        body,
+        linkedIds: body ? extractEntryLinkIds(body).map((link) => link.id) : [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,
         collectionPath: collection.logicalPath,
@@ -410,6 +421,11 @@ function assertValidNoindexConfig(config: AIContentConfig | undefined): void {
     Object.values(fields).some((name) => typeof name !== 'string')
   ) {
     throw new Error('AI content config: seo.fields must map SEO fields to field-name strings')
+  }
+  // An unknown key (`noIndex`) would leave the gate reading the default field name
+  const unknown = Object.keys(fields).filter((key) => !(key in DEFAULT_SEO_FIELD_NAMES))
+  if (unknown.length > 0) {
+    throw new Error(`AI content config: unknown seo.fields key(s): ${unknown.join(', ')}`)
   }
 }
 
