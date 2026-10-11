@@ -1279,7 +1279,7 @@ the drain mapping, deadlines, and the self-check helpers.
   - No `BindsTo=`. On systemd 252 (container), a bound unit is stopped at its gateway's first exit
     and stays stopped despite `Restart=always`; with `Requires=` it is restarted at every gateway
     restart. The worker has `Requires=` on the socket only and `Wants=` on the service. Instead the
-    split worker retries `completeLifecycle` every 5 s for 150 s (`LIFECYCLE_RETRY_WINDOW_MS`), and the
+    split worker retries `completeLifecycle` every 5 s for 110 s (`LIFECYCLE_RETRY_WINDOW_MS`: with the drain, inside the 210 s minimum heartbeat), and the
     failed-boot stand-in serves `termination` and `completeLifecycle` through a `GatewayInstance`
     (core, extracted from the local gateway) under the same guards.
   - The gateway's restart: `Restart=always`, `RestartSec=5`, `StartLimitIntervalSec=0` (in
