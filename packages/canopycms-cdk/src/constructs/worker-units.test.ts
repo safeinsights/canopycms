@@ -9,7 +9,7 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { Stack } from 'aws-cdk-lib'
+import { Fn, Stack } from 'aws-cdk-lib'
 import { Template } from 'aws-cdk-lib/assertions'
 import { aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-lib'
 
@@ -372,6 +372,31 @@ describe('the instance files', () => {
       /user data could reach \d+ bytes, over the 16384 EC2 accepts/,
     )
     expect(() => synth({ workerLogGroupName: `/canopycms/${'g'.repeat(500)}` })).not.toThrow()
+  })
+
+  it('measure the log group by its configured name and a token-valued ARN at its longest', () => {
+    const measured = (overrides: Partial<CanopyCmsServiceProps>) => {
+      try {
+        synth({
+          protectedBranches: Array.from({ length: 700 }, (_, i) => `release-${i}/*`),
+          ...overrides,
+        })
+      } catch (err) {
+        const bytes = /could reach (\d+) bytes/.exec(String(err))?.[1]
+        if (bytes) return Number(bytes)
+      }
+      throw new Error('expected the size check to refuse')
+    }
+    const base = measured({})
+    // The log group's name appears in both CloudWatch entries.
+    const longName = `/canopycms/${'g'.repeat(500)}`
+    expect(measured({ workerLogGroupName: longName }) - base).toBe(
+      2 * (longName.length - '/canopycms/TestStack/worker'.length),
+    )
+    // A token-valued ARN counts as 640 bytes, not as the 128 of the construct's own values.
+    const literal = measured({ githubTokenSecretArn: ARN('t') })
+    const token = measured({ githubTokenSecretArn: Fn.importValue('TokenArn') })
+    expect(token - literal).toBe(640 - ARN('t').length)
   })
 
   it('keep every heredoc body as written, and refuse a heredoc form they cannot follow', () => {

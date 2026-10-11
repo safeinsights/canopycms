@@ -195,35 +195,43 @@ export function withoutShellComments(...lines: string[]): string[] {
 const USER_DATA_MAX_BYTES = 16_384
 
 /**
- * The most bytes one deploy-time value in user data resolves to, other than the log group's name:
- * a bucket name is at most 63, an asset key or a sha256 under 80, a file system or access point
- * id under 25.
+ * The most bytes a deploy-time value the construct itself puts in user data resolves to: a bucket
+ * name is at most 63, an asset key or a sha256 under 80, a file system or access point id under 25.
  */
 const USER_DATA_TOKEN_MAX_BYTES = 128
+
+/**
+ * The most bytes a deploy-time env value from a prop resolves to: a Secrets Manager ARN with a
+ * 512-character name is about 600. A longer token (an SSM parameter's value) is the adopter's to
+ * keep short.
+ */
+const ENV_TOKEN_MAX_BYTES = 640
 
 /** The most bytes a CloudWatch log group's name can be. */
 const LOG_GROUP_NAME_MAX_BYTES = 512
 
+/** How long a deploy-time value in user data can be, by the token string it renders as. */
+interface TokenBound {
+  token: string
+  bytes: number
+}
+
 /**
  * Add `lines` to `userData`, refusing at synth any configuration whose user data could exceed
- * what EC2 accepts with every deploy-time value at its longest: EC2 would refuse the launch
- * template, or every launch, and the group would never get a worker. `logGroupName` is the log
- * group's name as configured, a token when unknown at synth.
+ * what EC2 accepts: EC2 would refuse the launch template, or every launch, and the group would
+ * never get a worker. Each token counts as its `bounds` entry's bytes, or
+ * {@link USER_DATA_TOKEN_MAX_BYTES}.
  */
-function addUserData(
-  userData: ec2.UserData,
-  logGroup: { token: string; name: string },
-  ...lines: string[]
-): void {
+function addUserData(userData: ec2.UserData, bounds: TokenBound[], ...lines: string[]): void {
   userData.addCommands(...lines)
-  const logGroupToken = Tokenization.reverseString(logGroup.token).firstToken
-  const logGroupBytes = Token.isUnresolved(logGroup.name)
-    ? LOG_GROUP_NAME_MAX_BYTES
-    : Buffer.byteLength(logGroup.name)
+  const bytesOf = new Map(
+    bounds.flatMap(({ token, bytes }) =>
+      Tokenization.reverseString(token).tokens.map((resolvable) => [resolvable, bytes] as const),
+    ),
+  )
   const longest: unknown = Tokenization.reverseString(userData.render())
     .mapTokens({
-      mapToken: (token) =>
-        'x'.repeat(token === logGroupToken ? logGroupBytes : USER_DATA_TOKEN_MAX_BYTES),
+      mapToken: (token) => 'x'.repeat(bytesOf.get(token) ?? USER_DATA_TOKEN_MAX_BYTES),
     })
     .join({ join: (left: unknown, right: unknown) => `${String(left)}${String(right)}` })
   const bytes = Buffer.byteLength(String(longest))
@@ -1933,12 +1941,20 @@ export class CanopyCmsService extends Construct {
 
     const efsMountOptions = `tls,iam,accesspoint=${accessPoint.accessPointId}`
     const userData = ec2.UserData.forLinux()
+    const logGroupName = props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`
     addUserData(
       userData,
-      {
-        token: this.workerLogGroup.logGroupName,
-        name: props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`,
-      },
+      [
+        {
+          token: this.workerLogGroup.logGroupName,
+          bytes: Token.isUnresolved(logGroupName)
+            ? LOG_GROUP_NAME_MAX_BYTES
+            : Buffer.byteLength(logGroupName),
+        },
+        ...envEntries
+          .filter(([, value]) => Token.isUnresolved(value))
+          .map(([, value]) => ({ token: value, bytes: ENV_TOKEN_MAX_BYTES })),
+      ],
       ...withoutShellComments(
         '#!/bin/bash',
         'set -euo pipefail',
