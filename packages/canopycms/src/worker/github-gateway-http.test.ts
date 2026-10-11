@@ -1435,6 +1435,19 @@ describe('the socket', () => {
     },
   )
 
+  it('is not left listening when it cannot be made 0600, and its gateway never prepares', async () => {
+    const gateway = fakeGateway()
+    vi.spyOn(fs, 'chmod').mockRejectedValueOnce(new Error('chmod failed'))
+
+    await expect(serveGitHubGateway(gateway, { path: socketPath })).rejects.toThrow('chmod failed')
+
+    vi.restoreAllMocks()
+    await expect(connectGitHubGateway(socketPath).defaultBranch()).rejects.toBeInstanceOf(
+      GitHubGatewayUnreachableError,
+    )
+    expect(gateway.prepare).not.toHaveBeenCalled()
+  })
+
   it('is refused under a symbolic link to a directory', async () => {
     const real = path.join(dir, 'real')
     await fs.mkdir(real, { mode: 0o700 })

@@ -107,8 +107,8 @@ export interface GitHubGatewayServer {
    */
   idle(): Promise<void>
   /**
-   * Stop as a SIGTERM asks: refuse new requests (503, transient to the worker), let those under
-   * way finish for at most `graceMs`, then close every connection, whatever is still on it. The
+   * Stop as a SIGTERM asks: answer new requests `stopping` (unreachable, to the worker), let those
+   * under way finish for at most `graceMs`, then close every connection, whatever is still on it. The
    * bound is time, not only {@link idle}: a client that trickles a request body would otherwise
    * hold the stop open. A fetch job is not waited for; stopping one is the gateway's own.
    */
@@ -151,17 +151,23 @@ export async function serveGitHubGateway(
     await assertPrivateDirectory(path.dirname(listen.path))
     await removeStaleSocket(listen.path)
     await listenOn(server, { path: listen.path })
-    await fs.chmod(listen.path, 0o600)
+    try {
+      await fs.chmod(listen.path, 0o600)
+    } catch (err) {
+      // Nothing returned would close it: a server left listening answers no operation.
+      await closeServer(server, handler)
+      throw err
+    }
   }
   handler.start()
 
   return {
     idle: () => handler.idle(),
     drain: async (graceMs) => {
+      // New requests are answered `stopping`, which the worker takes as unreachable. The socket
+      // stays open meanwhile: under socket activation systemd holds it too, so closing ours would
+      // only leave new connections waiting for the next gateway.
       handler.close()
-      // No new connection: a worker's request now fails as unreachable, which a draining worker
-      // releases with no retry spent (task-runner.ts), where an answer would be a refusal.
-      server.close()
       let timer: NodeJS.Timeout | undefined
       await Promise.race([
         handler.requestsSettled(),
@@ -395,7 +401,16 @@ class GatewayRequestHandler {
       if (!res.writableFinished) controller.abort(new Error('The worker closed the request'))
     })
     try {
-      if (this.closed) throw new RefusedRequest(503, 'the gateway is stopping')
+      if (this.closed) {
+        // As good as unreachable to the worker, which releases a task it hits while draining.
+        sendJson(req, res, 503, {
+          error: {
+            kind: 'stopping',
+            message: 'it no longer takes requests',
+          } satisfies ErrorEnvelope,
+        })
+        return
+      }
       const url = new URL(req.url ?? '/', 'http://gateway')
       const route = url.pathname
       const op = this.routes.get(route)

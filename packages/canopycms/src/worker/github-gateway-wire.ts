@@ -262,6 +262,8 @@ const errorEnvelope = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('refused'), status: z.number().int(), message }).strict(),
   /** A poll named a job the gateway does not hold: it restarted, or the job's record expired. */
   z.object({ kind: z.literal('unknown-job'), message }).strict(),
+  /** The gateway is draining for a stop: to the worker it is as good as gone. */
+  z.object({ kind: z.literal('stopping'), message }).strict(),
 ])
 
 export type ErrorEnvelope = z.infer<typeof errorEnvelope>
@@ -457,6 +459,10 @@ export function decodeError(value: unknown): Error {
       )
     case 'unknown-job':
       return new UnknownFetchJobError(envelope.message)
+    case 'stopping':
+      return new GitHubGatewayUnreachableError(
+        `The GitHub gateway is stopping: ${envelope.message}`,
+      )
   }
 }
 
