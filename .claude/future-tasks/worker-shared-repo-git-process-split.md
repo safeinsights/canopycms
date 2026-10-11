@@ -1223,7 +1223,7 @@ the drain mapping, deadlines, and the self-check helpers.
     exit 1. A worker that finds the gateway away meanwhile (unreachable, or no `health` answer
     within 300 s) exits 1, leaving in place the gateway's own fatal error if it recorded one in
     the last 5 minutes, and recording the unreachable gateway otherwise. That window cannot cover
-    the 300 s timeout path ([worker-gateway-away-keep-window.md](worker-gateway-away-keep-window.md)).
+    the 300 s timeout path ([worker-gateway-away-keep-window.md](resolved/worker-gateway-away-keep-window.md)).
   - The gateway's SIGTERM: `drain(60 s)`, then exit 0. A running fetch job is not waited for; the
     cgroup kill takes it.
   - Three gateway operations: `authSnapshot` (D7: the gateway fetches with the Clerk key behind
