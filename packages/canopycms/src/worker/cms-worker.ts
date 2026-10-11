@@ -83,7 +83,6 @@ export {
 // two processes serves the in-process gateway on a socket in one, and connects to it in the other.
 export {
   createLocalGitHubGateway,
-  type GatewayTerminationNotice,
   type GitHubGateway,
   type GitHubGatewayHealth,
   type LocalGitHubGatewayOptions,
@@ -98,13 +97,15 @@ export {
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
 // The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
-// are not GitHub tokens (the auth provider's key, the App's private key).
+// are not GitHub tokens (the auth provider's key, the App's private key). `redactEgress` scrubs
+// the cause a failed boot hands the worker.
 export {
   gatewayLog,
   gatewayLogWarn,
   gatewayLogError,
   registerSecretText,
   registerPrivateKey,
+  redactEgress,
 } from './gateway-egress'
 // The boot self-checks the split entrypoint runs in each role (.claude/future-tasks/
 // worker-shared-repo-git-process-split.md §5).
