@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   BUNDLE_HEADER_MAX_BYTES,
+  BUNDLE_HEADER_TOTAL_MAX_BYTES,
   BundleHeaderError,
   BundleHeaderReader,
   PREREQUISITE_COMMENT_MAX_BYTES,
@@ -149,6 +150,45 @@ describe('prerequisite comments', () => {
       // What is sent is a header the gateway takes, with the same prerequisites and heads.
       expect(scanBundleHeader(read!.bytes)).toEqual({ ...read!.header, length: shortened.length })
     }
+  })
+
+  it.each(['refuse', 'shorten'] as const)(
+    'refuses, in %s mode, comments each within their bound but over the total, reading no further',
+    (mode) => {
+      // 300 comments at their bound are past the total; the rest of the header is not near 64 KiB.
+      const many = header(
+        ...Array.from({ length: 300 }, () => comment(PREREQUISITE_COMMENT_MAX_BYTES)),
+      )
+      expect(many.length).toBeGreaterThan(BUNDLE_HEADER_TOTAL_MAX_BYTES)
+      const reader = new BundleHeaderReader(mode)
+      const chunk = 4096
+      let fed = 0
+      let caught: unknown = null
+      for (let at = 0; at < many.length && caught === null; at += chunk) {
+        fed += Math.min(chunk, many.length - at)
+        try {
+          reader.push(many.subarray(at, at + chunk))
+        } catch (err) {
+          caught = err
+        }
+      }
+      expect(caught).toBeInstanceOf(BundleHeaderError)
+      expect(String(caught)).toContain(`within ${BUNDLE_HEADER_TOTAL_MAX_BYTES} bytes`)
+      expect(fed).toBeLessThanOrEqual(BUNDLE_HEADER_TOTAL_MAX_BYTES + chunk)
+    },
+  )
+
+  it("cuts only a comment's bytes: each line keeps its `-<oid> ` and its LF, and gains none", () => {
+    // Multi-byte characters straddle the cut: it is on bytes, not characters.
+    const long = Buffer.from('\u00e9'.repeat(PREREQUISITE_COMMENT_MAX_BYTES), 'utf8')
+    const read = new BundleHeaderReader('shorten').push(header(long, comment(3)))!
+    const lines = read.bytes.toString('latin1').split('\n')
+
+    expect(lines).toHaveLength(header(long, comment(3)).toString('latin1').split('\n').length)
+    expect(lines[1]).toBe(
+      `-${'0'.repeat(40)} ${long.subarray(0, PREREQUISITE_COMMENT_MAX_BYTES).toString('latin1')}`,
+    )
+    expect(lines[2]).toBe(`-${'1'.padStart(40, '0')} sss`)
   })
 
   it('still refuses a malformed prerequisite when shortening', () => {

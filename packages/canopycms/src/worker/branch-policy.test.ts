@@ -96,6 +96,9 @@ describe('branchNameProblem', () => {
     ['too long', 'x'.repeat(MAX_BRANCH_NAME_LENGTH + 1)],
     ['a leading refs/heads/', 'refs/heads/main'],
     ['a leading Refs/ in another case', 'Refs/heads/main'],
+    ['a leading heads/', 'heads/main'],
+    ['a leading tags/', 'tags/v1'],
+    ['a leading remotes/', 'remotes/origin/main'],
     ['a percent sign', 'm%61in'],
     ['a brace', 'a{b'],
     ['a quote', 'a"b'],
@@ -139,14 +142,16 @@ describe('BranchPolicy: the protected set', () => {
     expect(await policy.isProtected('releases/x', read)).toBe(false)
   })
 
-  it('matches case-insensitively, and an exact entry by its workspace directory too', async () => {
+  it('matches case-sensitively, as GitHub names refs, and an exact entry by its workspace directory too', async () => {
     const policy = new BranchPolicy({ baseBranch: 'release/v2', protectedBranches: ['Hot*'] })
     const read = defaultIs('Main')
 
-    expect(await policy.isProtected('MAIN', read)).toBe(true)
-    expect(await policy.isProtected('RELEASE/V2', read)).toBe(true)
+    expect(await policy.isProtected('Main', read)).toBe(true)
+    expect(await policy.isProtected('MAIN', read)).toBe(false)
+    expect(await policy.isProtected('RELEASE/V2', read)).toBe(false)
     expect(await policy.isProtected('release-v2', read)).toBe(true)
-    expect(await policy.isProtected('hotfix', read)).toBe(true)
+    expect(await policy.isProtected('Hotfix', read)).toBe(true)
+    expect(await policy.isProtected('hotfix', read)).toBe(false)
   })
 
   it('fails, and caches nothing, when the default branch cannot be read', async () => {

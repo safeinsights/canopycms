@@ -649,6 +649,14 @@ export async function pushBranchToGitHub(
     if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
     throw err
   }
+  // Defense-in-depth behind the gateway's policy, which protects a base detected rather than
+  // configured only when it is GitHub's default branch (BranchPolicy).
+  if (sanitizeBranchName(branch) === ctx.sanitizedBaseBranch) {
+    throw new PermanentTaskError(
+      `Refusing to push "${branch}" to GitHub: it is the base branch, which the CanopyCMS worker ` +
+        `never pushes. Nothing in CanopyCMS queues such a push; find out what wrote this task.`,
+    )
+  }
 
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
   // history, GitHub still holds the commit it replaced, so an ordinary

@@ -113,6 +113,20 @@ describe('redactValue', () => {
   })
 })
 
+describe('redactValue, for answers', () => {
+  it('scrubs live tokens only, never by pattern: a branch named like a token is data', () => {
+    const names = [
+      'chore/github_pat_rotation',
+      'ghs_cleanup_scripts',
+      'eyJ-review-notes.abcdefghij.x',
+    ]
+    const refs = new Map(names.map((name) => [name, 'a'.repeat(40)]))
+
+    expect(redactValue(refs)).toBe(refs)
+    for (const name of names) expect(redactEgress(name)).not.toBe(name)
+  })
+})
+
 describe('the gateway log', () => {
   it('escapes every non-printable character, so a field cannot forge or reorder a line', () => {
     expect(escapeForLog('a\nb\tc\rd')).toBe('a\\nb\\tc\\rd')

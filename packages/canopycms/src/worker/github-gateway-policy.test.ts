@@ -15,7 +15,7 @@ import type { Octokit } from '@octokit/rest'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, octokitErrorFor, type MockConsole } from '../test-utils'
 import { DEFAULT_BRANCH_TTL_MS, GatewayRefusalError } from './branch-policy'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import {
@@ -23,7 +23,7 @@ import {
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
 } from './github-gateway'
-import { RefusedPushError } from './github-mirror'
+import { GitHubTransientError, RefusedPushError } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { isPermanentTaskFailure } from './task-runner'
 
@@ -167,15 +167,12 @@ describe('pushes', () => {
     expect(await tip('refs/heads/production')).toBeNull()
   })
 
-  it('refuses a protected name in another case', async () => {
-    await onMain('production')
+  it('pushes a branch that differs from a protected one only in case, a ref of its own on GitHub', async () => {
+    const sha = await onMain('production')
 
-    const caught = await pushVia(gateway({ baseBranch: 'Production' }), 'production').catch(
-      (err: unknown) => err,
-    )
+    await pushVia(gateway({ baseBranch: 'Production' }), 'production')
 
-    expect(caught).toMatchObject({ reason: 'protected' })
-    expect(await tip('refs/heads/production')).toBeNull()
+    expect(await tip('refs/heads/production')).toBe(sha)
   })
 
   it('pushes a settings branch plainly, and refuses it under a lease', async () => {
@@ -298,24 +295,51 @@ describe('branch names', () => {
 
   it.each([
     ['a leading refs/heads/', 'refs/heads/main'],
+    ['a leading heads/', 'heads/main'],
     ['an owner prefix', 'someone:main'],
     ['a percent escape', 'm%61in'],
     ['a leading dash', '--upload-pack=x'],
     ['a bidi control', 'ma\u202ein'],
     ['a range', 'main..x'],
-  ])('refuses %s for a delete and for either end of a pull request', async (_label, name) => {
+  ])('refuses %s for a delete and a pull request head', async (_label, name) => {
     const octokit = octokitStub()
     const github = gateway({ octokit: octokit as unknown as Octokit })
 
     for (const attempt of [
       () => github.deleteBranch(name),
       () => github.createPullRequest(request(name)),
-      () => github.createPullRequest(request('feature', name)),
     ]) {
       await expect(attempt()).rejects.toMatchObject({ reason: 'invalid' })
     }
     expect(octokit.git.deleteRef).not.toHaveBeenCalled()
     expect(octokit.pulls.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an owner prefix', 'someone:main'],
+    ['a leading dash', '--upload-pack=x'],
+    ['a range', 'main..x'],
+  ])('refuses %s, which git refuses, for a pull request base', async (_label, name) => {
+    const octokit = octokitStub()
+
+    await expect(
+      gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
+        request('feature', name),
+      ),
+    ).rejects.toMatchObject({ reason: 'invalid' })
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+  })
+
+  it('takes a base git takes, outside the names it acts on: a configured base can be any', async () => {
+    const octokit = octokitStub()
+
+    await gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
+      request('feature', 'd\u00e9veloppement'),
+    )
+
+    expect(octokit.pulls.create).toHaveBeenCalledWith(
+      expect.objectContaining({ base: 'd\u00e9veloppement' }),
+    )
   })
 })
 
@@ -492,5 +516,84 @@ describe('the canary sweep', () => {
     const logged = Object.values(consoleSpy.all()).flat().join('\n')
     expect(logged).toContain('Failed to re-read the GitHub credential')
     holdsNoForm(logged)
+  })
+})
+
+describe('an unread default branch', () => {
+  it('fails a push as transient, caching nothing, when its ls-remote fails', async () => {
+    await onMain('feature')
+    const provider = vi.fn(async () => undefined)
+    const github = gateway({}, provider)
+    const sent: string[] = []
+    let failLsRemote = true
+    const original = childProcess.spawn
+    vi.spyOn(childProcess, 'spawn').mockImplementation(((
+      command: string,
+      args: readonly string[],
+      options: { env?: Record<string, string | undefined> },
+    ) => {
+      const lsRemote =
+        options?.env?.GIT_CONFIG_GLOBAL !== undefined && subcommand(args) === 'ls-remote'
+      if (lsRemote) sent.push('ls-remote')
+      const redirected =
+        lsRemote && failLsRemote
+          ? args.map((arg) => (arg === githubPath ? path.join(root, 'missing.git') : arg))
+          : args
+      return original(command, redirected, options)
+    }) as typeof childProcess.spawn)
+    syncBuiltinESMExports()
+
+    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(caught).toMatchObject({ code: 'default-branch-unread' })
+    expect(isPermanentTaskFailure(caught)).toBe(false)
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(await tip('refs/heads/feature')).toBeNull()
+
+    failLsRemote = false
+    await pushVia(github, 'feature')
+    // Read again, not taken from a cache the failure filled.
+    expect(sent).toEqual(['ls-remote', 'ls-remote'])
+    expect(await tip('refs/heads/feature')).not.toBeNull()
+  })
+
+  it("passes a deletion's repos.get failure on unchanged, arming the re-read and caching nothing", async () => {
+    const octokit = octokitStub()
+    const notFound = await octokitErrorFor(404, { message: 'Not Found' })
+    octokit.repos.get.mockRejectedValueOnce(notFound)
+    const provider = vi.fn(async () => undefined)
+    const github = gateway({ octokit: octokit as unknown as Octokit }, provider)
+
+    const caught = await github.deleteBranch('feature').catch((err: unknown) => err)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(caught).toBe(notFound)
+    expect(caught).toMatchObject({ status: 404 })
+    expect(isPermanentTaskFailure(caught)).toBe(true)
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(octokit.git.deleteRef).not.toHaveBeenCalled()
+
+    await github.deleteBranch('feature')
+    expect(octokit.repos.get).toHaveBeenCalledTimes(2)
+    expect(octokit.git.deleteRef).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('answers', () => {
+  it("keep GitHub's branch names, even ones shaped like a token", async () => {
+    const names = [
+      'chore/github_pat_rotation',
+      'ghs_cleanup_scripts',
+      'eyJ-review-notes.abcdefghij.x',
+    ]
+    for (const name of names) {
+      await git('--git-dir', githubPath, 'update-ref', `refs/heads/${name}`, 'refs/heads/main')
+    }
+
+    const { refs } = await gateway().fetch({ have: [] })
+
+    for (const name of names) expect(refs.has(name)).toBe(true)
   })
 })

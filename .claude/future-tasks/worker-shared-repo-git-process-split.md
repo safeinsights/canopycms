@@ -1055,8 +1055,8 @@ PR 2, their first user.
 **Carried from 3** (gateway policy):
 - Settled in 3: `BranchPolicy` (`worker/branch-policy.ts`) owns the protected set: the configured
   base (`baseBranch`, never a detected one), GitHub's default branch, and `protectedBranches`
-  (names and `*` globs). Matching ignores case, and an exact entry also matches a name with the
-  same sanitized form. `push` no longer takes `protectedBranches`. Refusals are
+  (names and `*` globs). Matching is case-sensitive, as GitHub's refs are, and an exact entry
+  also matches a name with the same sanitized form. `push` no longer takes `protectedBranches`. Refusals are
   `GatewayRefusalError` (`RefusedPushError` is its push form); `isPermanentTaskFailure` takes
   them, and none arms the re-read or ends fetch reuse. Egress is `worker/gateway-egress.ts`.
 - Deviations:
@@ -1082,6 +1082,18 @@ PR 2, their first user.
   strategy) nor the Clerk key, so their exact-form scrub (PEM per line, the key) arrives when
   the gateway reads its own secrets. `redactCredentials`'s PEM-block and JWT patterns apply now.
 - PR 7: the Security Model and "The worker instance" name `protectedBranches`.
+- From 3's review, deferred:
+  - PR 4 or 5: `createOrUpdatePullRequest` and Octokit's throttle callbacks (`github-service.ts`)
+    log through `canopyLogWarn`, which is `workerLogWarn` in the worker, so those lines miss the
+    gateway's scrub and escaping. Their content is validated names, a PR number and GitHub's
+    GraphQL error text; give the gateway its own logger there.
+  - PR 5: a token rotated in by `refreshCredential`, or minted by `@octokit/auth-app` on an
+    Octokit request, is registered for the exact scrub only at the next `credential()`. Octokit
+    redacts `authorization`, and `redactCredentials` catches every GitHub token shape meanwhile.
+    Register on read when the gateway owns its secrets.
+  - A configured settings branch without the reserved prefix gets no settings rules, matching
+    the task runner's `isSettingsBranch`. Protecting the deployment's own configured name
+    exactly needs the gateway to know it (D9 territory).
 
 ## 9. Residual risks, and the Security Model afterwards
 

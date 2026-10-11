@@ -536,9 +536,9 @@ contract is unchanged. A hand-installed unit needs the same change:
 branch or GitHub's default branch, whatever a task asks, and fails the task permanently.
 CanopyCMS never queues such a push, but a compromised CMS Lambda can write the task queue.
 
-(next) It protects what the construct's `protectedBranches` prop lists (names and `*` globs,
-ignoring case), never deletes or opens a pull request from a protected or settings branch, and
-re-reads GitHub's default branch every 10 minutes.
+(next) It protects what the construct's `protectedBranches` prop lists (names and `*` globs),
+never deletes or opens a pull request from a protected or settings branch, and re-reads
+GitHub's default branch every 10 minutes.
 
 **To adopt.** Nothing to change. Upgrade, and roll the worker. Protect your base branch on GitHub
 with a branch protection rule or ruleset that CanopyCMS's credential cannot bypass. A classic token belonging to a repository admin often can, so check its bypass

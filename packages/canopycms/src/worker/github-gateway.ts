@@ -551,7 +551,11 @@ class LocalGitHubGateway implements GitHubGateway {
     return this.credentialed(signal, (reach) =>
       this.policy.isProtected(branch, async () => {
         const credential = await this.credential(reach)
-        return this.mirror.exclusive((session) => session.githubDefaultBranch(credential, signal))
+        // A session can wait behind a whole-repository fetch; an abort ends only this wait.
+        return untilAborted(
+          this.mirror.exclusive((session) => session.githubDefaultBranch(credential, signal)),
+          signal,
+        )
       }),
     )
   }
@@ -575,7 +579,9 @@ class LocalGitHubGateway implements GitHubGateway {
   ): Promise<void> {
     const git = await this.mirror.checkGit()
     await assertPlainBranchName(request.head, git, 'pull-request')
-    await assertPlainBranchName(request.base, git, 'pull-request')
+    // The base is GitHub's to validate and the policy's to leave alone (BranchPolicy), and may be
+    // a configured name outside branchNameProblem's narrower set: git's rules only.
+    await assertPlainBranchName(request.base, git, 'pull-request', false)
     await this.policy.assertPullRequestAllowed(request, () => this.readDefaultBranch(reach, signal))
   }
 
@@ -727,7 +733,7 @@ class LocalGitHubGateway implements GitHubGateway {
     try {
       return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
     } catch (err) {
-      if (err instanceof RefusedPushError) throw err
+      if (err instanceof RefusedPushError || err instanceof GitHubTransientError) throw err
       const message = getErrorMessage(err)
       // A refused lease means GitHub is not at the commit the lease names, which is routine: a
       // task re-runs after a crash, and the marker it came from survives any failure to clear

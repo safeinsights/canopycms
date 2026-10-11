@@ -1,7 +1,9 @@
 /**
  * What leaves the GitHub gateway: every error it throws, every answer it returns and every line it
  * logs goes through here. Each is scrubbed of every live token the gateway has resolved, in every
- * form git's extraheader gives it, as exact strings, then by `redactCredentials`'s patterns. The
+ * form git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
+ * `redactCredentials`'s patterns too; answers are not, because they are data the worker acts on,
+ * and a pattern would rewrite a GitHub branch named `chore/github_pat_rotation`. The
  * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
  * form beside another (at the `%` of a URL-encoded one) and leave its tail unmatchable. Each log
  * line also has its non-printable characters escaped, since request fields (branch names, pull
@@ -38,39 +40,44 @@ export function registerLiveSecret(token: string): void {
   }
 }
 
-/** `text` without any live token in any registered form, or anything `redactCredentials` finds. */
-export function redactEgress(text: string): string {
+/** `text` without any live token in any registered form. */
+function redactLiveSecrets(text: string): string {
   let result = text
   for (const forms of liveSecrets.values()) {
     for (const form of forms) result = result.split(form).join('***')
   }
-  return redactCredentials(result)
+  return result
+}
+
+/** `text` without any live token in any registered form, or anything `redactCredentials` finds. */
+export function redactEgress(text: string): string {
+  return redactCredentials(redactLiveSecrets(text))
 }
 
 /** The deepest a returned value is walked; anything deeper passes as it is. */
 const MAX_DEPTH = 8
 
 /**
- * `value` with every string in it (a Map's keys included) passed through {@link redactEgress}: the
- * same object when nothing in it changed, else a copy. Plain data only: anything else (a stream)
- * is returned as it is.
+ * An answer with every string in it (a Map's keys included) scrubbed of live tokens, never by
+ * pattern: the same object when nothing in it changed, else a copy. Plain data only: anything
+ * else (a stream) is returned as it is.
  */
-export function redactValue<T>(value: T, depth = 0): T {
-  return redactAny(value, depth) as T
+export function redactValue<T>(value: T): T {
+  return redactAny(value, 0, redactLiveSecrets) as T
 }
 
-function redactAny(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') return redactEgress(value)
+function redactAny(value: unknown, depth: number, scrub: (text: string) => string): unknown {
+  if (typeof value === 'string') return scrub(value)
   if (depth >= MAX_DEPTH || typeof value !== 'object' || value === null) return value
   if (Array.isArray(value)) {
-    const items = value.map((item) => redactAny(item, depth + 1))
+    const items = value.map((item) => redactAny(item, depth + 1, scrub))
     return items.every((item, i) => item === value[i]) ? value : items
   }
   if (value instanceof Map) {
     const before: [unknown, unknown][] = [...value]
     const after = before.map(([key, item]): [unknown, unknown] => [
-      redactAny(key, depth + 1),
-      redactAny(item, depth + 1),
+      redactAny(key, depth + 1, scrub),
+      redactAny(item, depth + 1, scrub),
     ])
     return after.every(([key, item], i) => key === before[i][0] && item === before[i][1])
       ? value
@@ -78,7 +85,7 @@ function redactAny(value: unknown, depth: number): unknown {
   }
   if (Object.getPrototypeOf(value) !== Object.prototype) return value
   const entries = Object.entries(value)
-  const redacted = entries.map(([key, item]) => [key, redactAny(item, depth + 1)] as const)
+  const redacted = entries.map(([key, item]) => [key, redactAny(item, depth + 1, scrub)] as const)
   return redacted.every(([, item], i) => item === entries[i][1])
     ? value
     : Object.fromEntries(redacted)
@@ -103,7 +110,7 @@ export function redactError(err: unknown, depth = 0): unknown {
     }
   }
   for (const key of ['response', 'request']) {
-    const redacted = redactValue(fields[key])
+    const redacted = redactAny(fields[key], 0, redactEgress)
     if (redacted !== fields[key]) updates.push([key, redacted])
   }
   if (fields.cause !== undefined) {

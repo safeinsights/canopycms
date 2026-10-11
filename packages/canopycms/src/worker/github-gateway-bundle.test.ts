@@ -787,7 +787,7 @@ describe('the worker side of a push', () => {
     await fs.writeFile(
       raw,
       `tree ${tree}\nparent ${base}\nauthor a <a@x> 1700000000 +0000\n` +
-        `committer a <a@x> 1700000000 +0000\n\n${'s'.repeat(70 * 1024)}\n`,
+        `committer a <a@x> 1700000000 +0000\n\n${'s'.repeat(100 * 1024)}\n`,
     )
     const long = await git('--git-dir', githubPath, 'hash-object', '-t', 'commit', '-w', raw)
     await git('--git-dir', githubPath, 'update-ref', 'refs/heads/main', long)
@@ -797,9 +797,9 @@ describe('the worker side of a push', () => {
     await seed.raw(['fetch', '-q', githubPath, 'main'])
     await seed.raw(['checkout', '-q', '-B', 'feature', 'FETCH_HEAD'])
     const feature = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
-    // git writes the 70 KiB subject as the bundle's prerequisite comment.
+    // git writes the 100 KiB subject as the bundle's prerequisite comment.
     const sent = await fs.readFile(await bundleOf(remoteGitPath, 'refs/heads/feature', `^${long}`))
-    expect(sent.toString('latin1')).toContain(`-${long} ${'s'.repeat(70 * 1024)}\n`)
+    expect(sent.toString('latin1')).toContain(`-${long} ${'s'.repeat(100 * 1024)}\n`)
 
     const push = vi.spyOn(github, 'push')
 

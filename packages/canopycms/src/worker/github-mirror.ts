@@ -488,7 +488,8 @@ export class GitHubTransientError extends Error {
       | 'bundle-gone'
       | 'mirror-corrupt'
       | 'objects-still-needed'
-      | 'ref-kept-moving',
+      | 'ref-kept-moving'
+      | 'default-branch-unread',
     message: string,
   ) {
     super(message)
@@ -659,6 +660,8 @@ export async function assertPlainBranchName(
   branch: string,
   git: SimpleGit = simpleGit(),
   operation: 'push' | 'delete' | 'pull-request' = 'push',
+  /** False for a name the gateway only passes on, never acts on: git's rules, and no leading `-`. */
+  shape = true,
 ): Promise<void> {
   const invalid = (why: string) =>
     operation === 'push'
@@ -669,7 +672,12 @@ export async function assertPlainBranchName(
           'invalid',
           `Refusing ${JSON.stringify(branch)}: it is not a valid branch name (${why}).`,
         )
-  const problem = branchNameProblem(branch)
+  // A leading `-` is refused whatever `shape` says: git would read it as an option.
+  const problem = shape
+    ? branchNameProblem(branch)
+    : branch.startsWith('-')
+      ? "it starts with '-'"
+      : null
   if (problem !== null) throw invalid(problem)
   let normalized: string
   try {
@@ -1027,7 +1035,15 @@ export class MirrorSession {
     await options.policy.assertPushAllowed(
       branch,
       options.lease,
-      () => this.githubDefaultBranch(credential, options.signal),
+      // Unknown, the policy cannot decide: neither a refusal nor a rejected push, but transient.
+      () =>
+        this.githubDefaultBranch(credential, options.signal).catch((err: unknown) => {
+          throw new GitHubTransientError(
+            'default-branch-unread',
+            `Could not read GitHub's default branch before pushing ${branch}: ` +
+              redactEgress(getErrorMessage(err)).trim(),
+          )
+        }),
       (reason) => new RefusedPushError(branch, reason),
     )
     options.onPushing?.()

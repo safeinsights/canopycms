@@ -990,7 +990,9 @@ export class CmsWorker {
    */
   private async warnIfBaseUnprotected(): Promise<void> {
     try {
-      if (await this.github().isProtectedBranch(this.baseBranch)) return
+      if (await this.github().isProtectedBranch(this.baseBranch, this.shutdownController.signal)) {
+        return
+      }
       workerLogWarn(
         `The base branch '${this.baseBranch}' is neither CANOPYCMS_BASE_BRANCH nor GitHub's ` +
           `default branch, nor in CANOPYCMS_PROTECTED_BRANCHES, so nothing stops a task pushing ` +

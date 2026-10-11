@@ -918,8 +918,8 @@ export interface CanopyCmsServiceProps {
   /**
    * Branches the worker never pushes, deletes or opens a pull request from, beside `baseBranch`
    * and GitHub's default branch, which it always protects (default: none). Each entry is a branch
-   * name or a glob in which `*` matches any run of characters, `/` included (`release/*`);
-   * matching ignores case. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
+   * name or a glob in which `*` matches any run of characters, `/` included (`release/*`),
+   * matched case-sensitively, as GitHub names refs. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
    * comma-separated, and validated at synth.
    */
   protectedBranches?: string[]

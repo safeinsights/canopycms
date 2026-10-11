@@ -61,7 +61,8 @@ const PROTECTED_WHY =
 /**
  * Why `branch` is not a name the gateway takes, before git sees it, or null. Printable ASCII only,
  * so no two names differ invisibly; no `"`, `%`, `{` or `}`, which reach URLs and log lines; no
- * leading `-`; no leading `refs/`, which would name a ref other than `refs/heads/<branch>`.
+ * leading `-`; no leading `refs/`, `heads/`, `tags/` or `remotes/`, which git's ref lookup could
+ * read as some other ref than `refs/heads/<branch>`.
  * `git check-ref-format --branch` runs after this (`assertPlainBranchName`).
  */
 export function branchNameProblem(branch: string): string | null {
@@ -71,7 +72,9 @@ export function branchNameProblem(branch: string): string | null {
   if (!/^[\x21-\x7e]+$/.test(branch)) return 'it is not printable ASCII'
   if (/["%{}]/.test(branch)) return 'it contains ", %, { or }'
   if (branch.startsWith('-')) return "it starts with '-'"
-  if (/^refs\//i.test(branch)) return "it starts with 'refs/'"
+  if (/^(?:refs|heads|tags|remotes)\//i.test(branch)) {
+    return "it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'"
+  }
   return null
 }
 
@@ -132,9 +135,9 @@ export type DefaultBranchReader = () => Promise<string | null>
 /**
  * The protected set and the settings rules.
  *
- * A branch is protected when, compared case-insensitively, it is the configured base branch,
- * GitHub's default branch or a `protectedBranches` entry (an exact entry also matches a name
- * that sanitizes to the same workspace directory). GitHub's default is re-read once
+ * A branch is protected when it is the configured base branch, GitHub's default branch or a
+ * `protectedBranches` entry, compared case-sensitively as GitHub compares refs (an exact entry
+ * also matches a name that sanitizes to the same workspace directory). GitHub's default is re-read once
  * {@link DEFAULT_BRANCH_TTL_MS} has passed since the read that set it, so a change of default
  * takes up to that long to reach the set. A failed read is never cached: the operation fails.
  * Reads are not shared between concurrent callers, because a push reads inside a mirror session
@@ -161,8 +164,8 @@ export class BranchPolicy {
       }
     }
     if (options.baseBranch !== undefined) entries.push(options.baseBranch)
-    this.exact = entries.filter((entry) => !entry.includes('*')).map(fold)
-    this.globs = entries.filter((entry) => entry.includes('*')).map(fold)
+    this.exact = entries.filter((entry) => !entry.includes('*'))
+    this.globs = entries.filter((entry) => entry.includes('*'))
   }
 
   /** Whether `branch` is protected; GitHub's default is read only when nothing else matches. */
@@ -237,10 +240,9 @@ export class BranchPolicy {
   }
 
   private matchesConfigured(branch: string): boolean {
-    const folded = fold(branch)
     return (
       this.exact.some((name) => sameBranch(name, branch)) ||
-      this.globs.some((glob) => matchesBranchPattern(glob, folded))
+      this.globs.some((glob) => matchesBranchPattern(glob, branch))
     )
   }
 
@@ -281,11 +283,7 @@ export function assertPullRequestText(
   }
 }
 
-function fold(name: string): string {
-  return name.toLowerCase()
-}
-
-/** Equal case-insensitively, or naming the same workspace directory. */
+/** Equal, or naming the same workspace directory. */
 function sameBranch(a: string, b: string): boolean {
-  return fold(a) === fold(b) || fold(sanitizeBranchName(a)) === fold(sanitizeBranchName(b))
+  return a === b || sanitizeBranchName(a) === sanitizeBranchName(b)
 }

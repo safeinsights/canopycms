@@ -16,7 +16,10 @@
  * tab, a `\r`, non-UTF-8), never parsed and never logged. Every other line ends in LF alone. git
  * reads the comment only to display it, so its length is bounded on its own
  * ({@link PREREQUISITE_COMMENT_MAX_BYTES}) and the worker shortens it rather than send a bundle
- * the gateway would refuse: a boundary commit's subject can be any length.
+ * the gateway would refuse: a boundary commit's subject can be any length. Shortening cuts bytes,
+ * never characters, and only after the line's `-<oid> `; it removes bytes and adds none, so it
+ * never adds an LF. A bundle has as many prerequisites as it has boundary commits, so the whole
+ * header, comments included, has a fixed bound too ({@link BUNDLE_HEADER_TOTAL_MAX_BYTES}).
  */
 
 /**
@@ -31,6 +34,13 @@ export const BUNDLE_HEADER_MAX_BYTES = 64 * 1024
  * @internal Exported for tests.
  */
 export const PREREQUISITE_COMMENT_MAX_BYTES = 1024
+
+/**
+ * The header must end within this many bytes counting comments too: the most a reader takes,
+ * and holds, of a header.
+ * @internal Exported for tests.
+ */
+export const BUNDLE_HEADER_TOTAL_MAX_BYTES = 256 * 1024
 
 export interface BundleHeader {
   /** Bytes from the start of the bundle to the end of the header's blank line. */
@@ -64,7 +74,7 @@ type Section = 'signature' | 'capabilities' | 'prerequisites' | 'heads'
 /** A complete header, as {@link BundleHeaderReader.push} returns it. */
 export interface ReadBundleHeader {
   header: BundleHeader
-  /** The header's bytes as they are to be sent: each comment shortened, when the reader shortens. */
+  /** When shortening, the header's bytes as they are to be sent, each comment shortened; else empty. */
   bytes: Buffer
   /** What followed the header in the chunk that completed it. */
   rest: Buffer
@@ -72,9 +82,10 @@ export interface ReadBundleHeader {
 
 /**
  * Reads a header from a bundle's bytes as they arrive, holding at most
- * {@link BUNDLE_HEADER_MAX_BYTES} plus one comment's bound, however long a comment is. A comment
- * over {@link PREREQUISITE_COMMENT_MAX_BYTES} is refused (`'refuse'`, the gateway) or cut to it
- * (`'shorten'`, the worker, which sends {@link ReadBundleHeader.bytes} in its place).
+ * {@link BUNDLE_HEADER_TOTAL_MAX_BYTES} of it, however long a comment is. A comment over
+ * {@link PREREQUISITE_COMMENT_MAX_BYTES} is refused (`'refuse'`, the gateway, which keeps no copy
+ * of the header) or cut to it (`'shorten'`, the worker, which sends {@link ReadBundleHeader.bytes}
+ * in its place).
  */
 export class BundleHeaderReader {
   private section: Section = 'signature'
@@ -173,14 +184,20 @@ export class BundleHeaderReader {
         `a prerequisite's comment is longer than ${PREREQUISITE_COMMENT_MAX_BYTES} bytes`,
       )
     }
-    if (room > 0) comment.kept.push(bytes.subarray(0, room))
+    if (room > 0 && this.comments === 'shorten') comment.kept.push(bytes.subarray(0, room))
     comment.bytes += bytes.length
     this.consumed += bytes.length
+    this.checkBound()
   }
 
   private checkBound(): void {
     if (this.counted >= BUNDLE_HEADER_MAX_BYTES) {
       throw new BundleHeaderError(`its header does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`)
+    }
+    if (this.consumed >= BUNDLE_HEADER_TOTAL_MAX_BYTES) {
+      throw new BundleHeaderError(
+        `its header, comments included, does not end within ${BUNDLE_HEADER_TOTAL_MAX_BYTES} bytes`,
+      )
     }
   }
 
@@ -199,7 +216,8 @@ export class BundleHeaderReader {
     this.line = []
     this.lineBytes = 0
     this.comment = null
-    this.out.push(line, ...(comment?.kept ?? []), Buffer.from([LF]))
+    if (this.comments === 'shorten')
+      this.out.push(line, ...(comment?.kept ?? []), Buffer.from([LF]))
     // latin1 maps each byte to one character, so a pattern sees exactly the bytes.
     const text = line.toString('latin1')
     if (this.section === 'signature') {
