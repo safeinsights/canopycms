@@ -205,6 +205,65 @@ describe('resolveEntryLinksInText', () => {
   it('handles empty string', () => {
     expect(resolveEntryLinksInText('', idx, 'content')).toBe('')
   })
+
+  describe('isLinkable', () => {
+    // Only the getting-started guide may be linked
+    const isLinkable = (id: string) => id === 'abc123def456'
+    const resolve = (text: string) =>
+      resolveEntryLinksInText(text, idx, 'content', undefined, { isLinkable })
+
+    it('renders an inline link to a withheld target as its bare text', () => {
+      expect(resolve('See [Hello World](entry:vh2WdhwAFiSL#intro "Title") now.')).toBe(
+        'See Hello World now.',
+      )
+    })
+
+    it('still links a target it allows', () => {
+      expect(resolve('[Hello](entry:vh2WdhwAFiSL) and [Guide](entry:abc123def456).')).toBe(
+        'Hello and [Guide](/docs/guides/getting-started).',
+      )
+    })
+
+    it('keeps nested brackets and drops an image marker', () => {
+      expect(resolve('A [see [1]](entry:vh2WdhwAFiSL) and ![pic](entry:vh2WdhwAFiSL).')).toBe(
+        'A see [1] and pic.',
+      )
+    })
+
+    it('renders a missing target as bare text too', () => {
+      expect(resolve('[Gone](entry:ZZZZZZZZZZZz#section)')).toBe('Gone')
+    })
+
+    it('points any other form of the link at #, anchor and all', () => {
+      expect(resolve('[ref]: entry:vh2WdhwAFiSL#intro\n<a href="entry:vh2WdhwAFiSL">x</a>')).toBe(
+        '[ref]: #\n<a href="#">x</a>',
+      )
+    })
+
+    it('stays linear on withheld targets with no opening bracket', () => {
+      const text = '](entry:vh2WdhwAFiSL)'.repeat(20_000)
+      const started = performance.now()
+      expect(resolve(text)).toBe('](#)'.repeat(20_000))
+      // Quadratic scanning takes seconds at this size; linear takes milliseconds
+      expect(performance.now() - started).toBeLessThan(1500)
+    })
+
+    it('stays linear on withheld targets whose anchor never closes', () => {
+      const text = '](entry:vh2WdhwAFiSL#'.repeat(16_000)
+      const started = performance.now()
+      expect(resolve(text)).not.toContain('hello-world')
+      expect(performance.now() - started).toBeLessThan(1500)
+    })
+
+    it('keeps an escaped image marker', () => {
+      expect(resolve('\\![pic](entry:vh2WdhwAFiSL)')).toBe('\\!pic')
+    })
+
+    it('leaves a withheld link inside code alone', () => {
+      const text = '`[Hello](entry:vh2WdhwAFiSL)`'
+      expect(resolve(text)).toBe(text)
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

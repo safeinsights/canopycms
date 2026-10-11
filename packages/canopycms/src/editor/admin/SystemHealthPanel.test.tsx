@@ -624,6 +624,62 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: diverged branches', () => {
+    const statusWithDiverged = (diverged: string[]): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus?.lastGitSync) throw new Error('expected a last git sync')
+      status.workerStatus.lastGitSync.tracked = {
+        created: [],
+        fastForwarded: [],
+        ahead: [],
+        diverged,
+      }
+      return status
+    }
+
+    it('lists each diverged branch, says what it means and what to do', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithDiverged(['feature-a', 'feature-b'])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('diverged-branches-alert')
+      expect(alert.textContent).toContain('2 branches diverged from GitHub')
+      expect(alert.textContent).toContain(
+        'holds editor work that conflicts with the branch on GitHub',
+      )
+      expect(alert.textContent).toContain('first push it to a new branch name on GitHub')
+      expect(alert.textContent).not.toContain('purge')
+      expect(alert.textContent).toContain('feature-a')
+      expect(alert.textContent).toContain('feature-b')
+    })
+
+    it('shows a hostile branch name escaped, never as markup or hidden characters', async () => {
+      const markup = '<img src=x onerror="alert(1)">'
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithDiverged([markup, 'feature-\u202eevil\u200b'])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('diverged-branches-alert')
+      expect(alert.querySelector('img')).toBeNull()
+      expect(alert.textContent).toContain(markup)
+      expect(alert.textContent).toContain('feature-\\u{202e}evil\\u{200b}')
+      expect(alert.textContent).not.toMatch(/[\u202e\u200b]/)
+    })
+
+    it('shows no alert when nothing diverged', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithDiverged([])))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('diverged-branches-alert')).toBeNull()
+    })
+  })
+
   describe('Overview tab: base branch refresh', () => {
     it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
       mockClient.admin.status.mockResolvedValueOnce(

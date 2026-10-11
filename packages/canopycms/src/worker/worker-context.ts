@@ -108,6 +108,12 @@ export interface WorkerContext {
   /** This deployment's own settings branch name. Throws on an invalid name. */
   ensureSettingsBranch(): string
   /**
+   * What this worker's tracked-branch warnings have said, by key (git-sync.ts's `warnOnce`): a
+   * diverged branch's tips and reason, an unchecked orphan's error. Held per instance, so a
+   * restarted worker warns afresh.
+   */
+  warnedDivergences(): Map<string, string>
+  /**
    * Test hook: fires when the rebase has reported conflicted files and is about
    * to `checkout --theirs` them. No-op in production.
    */

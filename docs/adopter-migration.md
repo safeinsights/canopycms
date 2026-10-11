@@ -88,6 +88,8 @@ replaces each `next` with its number.
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
+| next | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
+| next | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -219,6 +221,22 @@ where: (entry) => (entry.data.author as AIReferenceValue | undefined)?.id === AL
 matching: search your AI config for each reference field's name.
 
 **Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
+
+### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
+
+**What changed.** (next) AI content leaves out entries marked `noindex`, both from
+`generate-ai-content` and from the `/ai` route, using the same predicate as the sitemap and robots
+metadata. An inline body `entry:` link to an entry the export leaves out (by `exclude`, `noindex`
+or a failed render) renders as its plain text, with no URL; any other form of the link points at
+`#`.
+
+**To adopt.** To keep exporting `noindex` entries, set `exclude: { noindex: false }`. If your SEO
+fields are nested or renamed, pass the AI config's `seo` the same object you pass
+`createNextCanopyContext({ seo })`, so the sitemap and AI content read the flag from the same
+place. A field that links to a hidden section by plain URL needs a field transform; the README
+shows [the recipe](../README.md#ai-content-configuration).
+
+**Now deletable.** An `exclude.where` that re-read the `noindex` flag by hand.
 
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
@@ -570,6 +588,15 @@ stops applying and no keychain credential is tried.
 and operations may reuse GitHub fetches under 30 seconds old.
 
 **To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
+
+### The worker follows a rebased or deleted GitHub branch
+
+**What changed.** (next) When a branch is rebased and force-pushed on GitHub, or deleted there, the
+worker now updates or deletes its own copy of it instead of warning about it on every sync. A rebased
+branch's copy that holds editor work is left as it is: the worker warns once, and System
+health lists it with what to do.
+
+**To adopt.** Nothing.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

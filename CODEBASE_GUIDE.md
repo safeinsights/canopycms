@@ -227,6 +227,7 @@ direction, and every invariant.
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
+- `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
@@ -792,7 +793,7 @@ Cross-cutting feature linking between entries with `entry:CONTENT_ID` in markdow
 - `src/config/types.ts` — the `entryLinkUrl?: EntryLinkUrlResolver` callback for custom URL mapping
 - `src/content-reader.ts` — resolves links in the body at read time, default on
 - `src/api/content.ts` — validates on write, folding broken-link warnings into `validationWarnings`
-- `src/ai/generate.ts` — resolves links before AI content generation
+- `src/ai/generate.ts` — resolves links against the export set (`isLinkable`), so a link to an entry the export leaves out shows no URL
 - `src/editor/hooks/useEntryLinkResolution.ts` — client-side resolution for preview data
 - `src/editor/fields/entry-link/` — the MDXEditor toolbar button, picker modal and context
 

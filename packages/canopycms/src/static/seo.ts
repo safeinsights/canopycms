@@ -152,12 +152,12 @@ export function extractSeoFields(
  * THE `noindex` predicate. Every surface that suppresses an entry must route through this one
  * function rather than re-deriving the flag:
  *
- * - the page's own `robots: { index: false }` (canopycms-next's `entryToMetadata`), and
- * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`).
+ * - the page's own `robots: { index: false }` (canopycms-next's `entryToMetadata`),
+ * - exclusion from the sitemap (canopycms-next's `generateContentSitemap`), and
+ * - exclusion from AI content (`ai/generate.ts`, unless `exclude.noindex: false`).
  *
- * Those two shipping from one predicate is the point of shipping them together. Where they were
- * derived separately, a `noindex` entry stayed advertised in one surface while correctly absent
- * from the other, and nothing warned.
+ * Those surfaces shipping from one predicate is the point. Derived separately, a `noindex` entry
+ * stays advertised in one surface while correctly absent from another, and nothing warns.
  *
  * NOT applied to enumeration: `noindex` means "don't advertise this", not "don't build this".
  * `collectRoutableEntries` and `generateStaticParams` must still emit the entry, so its URL
