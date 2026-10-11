@@ -24,6 +24,33 @@ export interface PreviewMarks {
   paths?: string[]
 }
 
+/**
+ * How long after the iframe's `load` the preview has to send its ready message before the frame
+ * says live updates are off. Ready usually arrives before `load`, which waits for images too.
+ */
+const READY_TIMEOUT_MS = 5000
+
+/**
+ * `waiting` until the preview's ready message arrives, `missing` once `READY_TIMEOUT_MS` passes
+ * after `load` without one. A late ready still moves it to `ready`.
+ */
+type Handshake = 'waiting' | 'ready' | 'missing'
+
+const LIVE_UPDATES_OFF_HELP =
+  "The preview didn't connect, so your edits won't show in it until it reconnects. Retry reloads the preview; your edits are kept."
+
+const visuallyHidden: CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+}
+
 const isMarkPaths = (paths: unknown): paths is string[] =>
   Array.isArray(paths) &&
   paths.length <= MARK_REPORT_LIMITS.paths &&
@@ -42,7 +69,9 @@ const sendDraftUpdate = (
 
 /**
  * Lightweight iframe wrapper to keep the preview in sync with form state.
- * It posts the latest draft data to the iframe after load and when data changes.
+ * It posts the latest draft data to the iframe after load and when data changes. A progress bar
+ * runs until the preview's ready message arrives; when none does, a "Live updates off" chip offers
+ * to reload the preview.
  */
 export const PreviewFrame = ({
   src,
@@ -81,15 +110,36 @@ export const PreviewFrame = ({
   // and inbound messages must come from it. An iframe that navigates cross-origin
   // silently stops participating in the bridge.
   const previewOrigin = resolveMessageOrigin(src)
-  // Show progress bar while waiting for the preview's ready handshake.
-  const [syncPending, setSyncPending] = useState(data !== undefined)
+  // Only the ready message clears the progress bar: `onLoad` posts the draft before the preview's
+  // listener exists, so the preview shows the draft only after ready triggers the re-post.
+  const [handshake, setHandshake] = useState<Handshake>('waiting')
+  const [loaded, setLoaded] = useState(false)
+  // Retry remounts the iframe under a new key, which reloads it whatever its origin.
+  const [frameKey, setFrameKey] = useState(0)
 
-  // Reset when navigating to a different entry (src change = new iframe page load).
+  // A new src is a new page, with a handshake of its own.
   const [prevSrc, setPrevSrc] = useState(src)
   if (src !== prevSrc) {
     setPrevSrc(src)
-    setSyncPending(data !== undefined)
+    setHandshake('waiting')
+    setLoaded(false)
   }
+
+  useEffect(() => {
+    if (!loaded || handshake !== 'waiting') return
+    const timer = setTimeout(() => setHandshake('missing'), READY_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [loaded, handshake])
+
+  const retry = () => {
+    setHandshake('waiting')
+    setLoaded(false)
+    setFrameKey((key) => key + 1)
+  }
+
+  const hasDraft = data !== undefined
+  const syncPending = hasDraft && handshake === 'waiting'
+  const liveUpdatesOff = hasDraft && handshake === 'missing'
 
   // Inject the progress bar keyframe animation once per page.
   useEffect(() => {
@@ -161,7 +211,7 @@ export const PreviewFrame = ({
       if (type === CANOPY_PREVIEW_READY) {
         postRef.current()
         postHighlightRef.current()
-        setSyncPending(false)
+        setHandshake('ready')
       } else if (type === CANOPY_PREVIEW_ERROR) {
         const msg = event.data as Partial<PreviewErrorMessage>
         // Shape-check the payload: an adopter passing an Error object (instead of
@@ -188,6 +238,8 @@ export const PreviewFrame = ({
     <div className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
       {syncPending && (
         <div
+          role="progressbar"
+          aria-label="Connecting to the preview"
           style={{
             position: 'absolute',
             top: 0,
@@ -212,9 +264,54 @@ export const PreviewFrame = ({
           />
         </div>
       )}
+      {liveUpdatesOff && (
+        <div
+          role="status"
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            zIndex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '2px 4px 2px 10px',
+            borderRadius: 999,
+            border: '1px solid var(--mantine-color-gray-4, #ced4da)',
+            background: 'var(--mantine-color-white, #fff)',
+            boxShadow: 'var(--mantine-shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.1))',
+            color: 'var(--mantine-color-gray-7, #495057)',
+            fontFamily: 'var(--mantine-font-family, inherit)',
+            fontSize: 12,
+            lineHeight: '20px',
+          }}
+        >
+          <span title={LIVE_UPDATES_OFF_HELP}>Live updates off</span>
+          <span style={visuallyHidden}>{LIVE_UPDATES_OFF_HELP}</span>
+          <button
+            type="button"
+            onClick={retry}
+            title="Reload the preview"
+            style={{
+              border: 'none',
+              borderRadius: 999,
+              padding: '0 8px',
+              background: 'transparent',
+              color: 'var(--mantine-color-blue-filled, #228be6)',
+              font: 'inherit',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <iframe
+        key={frameKey}
         ref={iframeRef}
         src={src}
+        title="Live preview"
         style={{
           display: 'block',
           position: 'absolute',
@@ -226,6 +323,7 @@ export const PreviewFrame = ({
         onLoad={() => {
           post()
           postHighlight()
+          setLoaded(true)
         }}
       />
     </div>
