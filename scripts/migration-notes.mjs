@@ -22,6 +22,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -69,14 +70,44 @@ const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:/i
 const HANDOFF =
   "If you upgraded from a build on another branch, compare the `<!-- changeset: … -->` slugs in your previous build's `CHANGELOG.md` (`npm pack canopycms@<old>` fetches it) with this one's: entries whose slug your old file lacks are new to you. Legacy entries above the changeset entries carry hand-written int labels."
 
+/** Anchors the shipped `## This build` section takes, so no other heading may. */
+const RESERVED_ANCHOR_RE = /^(?:this-build|(?:new|revised)-since-int\d+)$/
+
 const problem = (file, line, message, severity = 'error') => ({ file, line, message, severity })
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
-const isIgnoredMd = (name) =>
-  IGNORED_MD.some((p) => (typeof p === 'string' ? p === name : p.test(name)))
 const isKebab = (s) => s.length > 0 && s.split('-').every((part) => /^[a-z0-9]+$/.test(part))
 const wordCount = (s) => s.split(/\s+/).filter(Boolean).length
-const isAbsoluteUrl = (url) => ABSOLUTE_URL_RE.test(url) || url.startsWith('/')
+/** `//host` is absolute; a single leading `/` is repo-root-relative, as GitHub renders it. */
+const isAbsoluteUrl = (url) => ABSOLUTE_URL_RE.test(url) || url.startsWith('//')
 const errorMessage = (err) => (err instanceof Error ? err.message : String(err))
+/** Plain text made safe inside link text: no markup, so no nested link or emphasis. */
+const escapeInline = (s) => s.replace(/[\\[\]*_`<>]/g, '\\$&')
+
+/**
+ * Whether a `.changeset/` entry name is a changeset, exactly as
+ * @changesets/read@1.0.1 lists them: `.md`, not a dotfile, and not one of
+ * IGNORED_MD (README.md in any case, the others in exact case).
+ */
+function isChangesetName(name) {
+  return (
+    name.endsWith('.md') &&
+    !name.startsWith('.') &&
+    !IGNORED_MD.some((p) => (typeof p === 'string' ? p === name : p.test(name)))
+  )
+}
+
+/** Why a `row` would break its table link, or null: link text cannot hold a bare bracket. */
+function rowMarkupProblem(row) {
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] === '\\') {
+      if (i === row.length - 1) return 'ends in a lone `\\`'
+      i++
+    } else if (row[i] === '[' || row[i] === ']') {
+      return 'has an unescaped `[` or `]`; write `\\[` or `\\]`'
+    }
+  }
+  return null
+}
 
 function lineAt(text, offset) {
   let n = 1
@@ -109,13 +140,6 @@ function headingsOf(tree) {
     if (n.type === 'heading') out.push(n)
   })
   return out
-}
-
-/** A heading's inline markdown, without its `#` markers. */
-function inlineSource(text, heading) {
-  const first = heading.children[0]
-  const last = heading.children.at(-1)
-  return first ? text.slice(first.position.start.offset, last.position.end.offset) : ''
 }
 
 const decode = (path) => {
@@ -193,14 +217,23 @@ function padBlock(text, at, block) {
 function readChangesets(root, problems) {
   const dir = join(root, '.changeset')
   if (!existsSync(dir)) return []
+  const pre = join(dir, 'pre')
+  if (existsSync(pre) && statSync(pre).isDirectory()) {
+    for (const name of readdirSync(pre).filter(isChangesetName).sort(cmp)) {
+      problems.push(problem(`.changeset/pre/${name}`, null, 'pre mode is unsupported; remove it'))
+    }
+  }
   const records = []
-  const names = readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isFile() && !e.name.startsWith('.') && e.name.endsWith('.md'))
-    .map((e) => e.name)
-    .filter((name) => !isIgnoredMd(name))
-    .sort(cmp)
-  for (const name of names) {
+  const entries = readdirSync(dir, { withFileTypes: true })
+    .filter((e) => isChangesetName(e.name))
+    .sort((a, b) => cmp(a.name, b.name))
+  for (const entry of entries) {
+    const name = entry.name
     const file = `.changeset/${name}`
+    if (!entry.isFile()) {
+      problems.push(problem(file, null, 'is not a regular file; a changeset is a plain file'))
+      continue
+    }
     const slug = name.slice(0, -3)
     if (!isKebab(slug)) {
       problems.push(
@@ -307,7 +340,18 @@ function parseRecord(file, slug, contents, problems) {
     }
   })
   walk(tree, (n) => {
-    if (n.type === 'link' || n.type === 'image' || n.type === 'definition') rec.links.push(n)
+    if (n.type === 'link' || n.type === 'image') rec.links.push(n)
+    if (n.type === 'definition') {
+      // Spliced into one document, a definition would resolve every entry's `[label]`.
+      fail(lineOf(n), `reference definition "[${n.label}]:" would be global; write the link inline`)
+    }
+    if (
+      n.type === 'html' &&
+      !n.value.trimStart().startsWith('<!--') &&
+      /\b(?:href|src)\s*=/i.test(n.value)
+    ) {
+      fail(lineOf(n), 'raw HTML with href= or src= escapes link rebasing; use markdown links')
+    }
   })
   const headings = headingsOf(tree)
   for (const h of headings) {
@@ -346,9 +390,13 @@ function parseRecord(file, slug, contents, problems) {
     )
   const titleFirst = (h) => {
     if (h !== tree.children[0]) fail(lineOf(h), 'the ### title must come first in the body')
+    walk(h, (n) => {
+      if (['link', 'image', 'linkReference', 'imageReference'].includes(n.type)) {
+        fail(lineOf(h), 'the ### title takes no links or images; it is embedded in links')
+      }
+    })
     rec.titleNode = h
     rec.titleText = plainText(h).trim()
-    rec.titleInline = inlineSource(rec.summary, h)
   }
   const at = lineOf(rec.metaNode)
 
@@ -382,6 +430,8 @@ function parseRecord(file, slug, contents, problems) {
   if (meta.row !== undefined && wordCount(meta.row) > MAX_ROW_WORDS) {
     fail(at, `row "${meta.row}" is over ${MAX_ROW_WORDS} words`)
   }
+  const rowMarkup = meta.row === undefined ? null : rowMarkupProblem(meta.row)
+  if (rowMarkup) fail(at, `row "${meta.row}" ${rowMarkup}`)
 
   if (meta.extends === undefined) {
     rec.kind = 'entry'
@@ -461,7 +511,6 @@ function readBase(root, problems) {
       key: `base:${node.position.start.offset}`,
       depth: node.depth,
       text: plainText(node).trim(),
-      source: inlineSource(text, node),
       offset: node.position.start.offset,
       origin: `${CHANGELOG}:${node.position.start.line}`,
     }
@@ -481,8 +530,23 @@ function readBase(root, problems) {
   const base = { text, headings, links: [], unreleased: range(unrel) }
   base.released = released ? range(released) : null
   base.firstH2 = tops.find((n) => n.type === 'heading' && n.depth === 2).position.start.offset
-  walk(tree, (n) => {
-    if (n.type === 'link' || n.type === 'image' || n.type === 'definition') base.links.push(n)
+  // Every relative link becomes absolute in the shipped copy, so each must be
+  // rewritable; checking here makes --check refuse what --ship would.
+  walk(tree, (node) => {
+    if (node.type !== 'link' && node.type !== 'image' && node.type !== 'definition') return
+    const url = node.url
+    if (!url || url.startsWith('#') || isAbsoluteUrl(url)) return
+    const { path, suffix } = splitUrl(url)
+    const repoPath = posix.normalize(path.replace(/^\/+/, '') || '.')
+    const line = node.position.start.line
+    const range = urlRange(text, node)
+    if (repoPath === '..' || repoPath.startsWith('../')) {
+      problems.push(problem(CHANGELOG, line, `link "${url}" leaves the repository`))
+    } else if (!range || text.slice(range.start, range.end) !== url) {
+      problems.push(problem(CHANGELOG, line, `write the link "${url}" without escapes`))
+    } else {
+      base.links.push({ range, repoPath, suffix, image: node.type === 'image' })
+    }
   })
 
   const nodes = tops.slice(unrel.index + 1, unrel.nextIndex)
@@ -570,18 +634,38 @@ function lsTree(root, tag) {
     const tab = entry.indexOf('\t')
     if (tab === -1) continue
     const [, type, blob] = entry.slice(0, tab).split(' ')
-    const path = entry.slice(tab + 1)
-    if (type === 'blob' && !path.slice('.changeset/'.length).includes('/')) {
-      files.set(path.slice('.changeset/'.length), blob)
-    }
+    const name = entry.slice(tab + 1).slice('.changeset/'.length)
+    if (type === 'blob' && !name.includes('/') && isChangesetName(name)) files.set(name, blob)
   }
   return files
 }
 
+/** `.changeset/` names a commit anywhere in HEAD's history deleted (a rename counts). */
+function deletedChangesets(root) {
+  const out = runGit(root, [
+    'log',
+    '--no-renames',
+    '--diff-filter=D',
+    '--name-only',
+    '--format=',
+    'HEAD',
+    '--',
+    '.changeset/',
+  ])
+  return new Set(
+    out
+      .split('\n')
+      .filter((p) => p.startsWith('.changeset/'))
+      .map((p) => p.slice('.changeset/'.length)),
+  )
+}
+
 /**
  * Tags and history. `usable` is false on a shallow clone or with no int tags,
- * and then nothing tag-dependent runs. M is the int tag with the largest N
- * that is an ancestor of HEAD.
+ * and then nothing tag-dependent runs. M is the int tag nearest HEAD along its
+ * first-parent chain, the largest N where one commit carries several: this
+ * branch's own last int. A side branch's tag merged in is an ancestor too, but
+ * what it shipped never shipped from here.
  */
 function readGitState(root) {
   const state = { shallow: false, tags: [], usable: false, M: null }
@@ -594,10 +678,27 @@ function readGitState(root) {
   }
   state.usable = !state.shallow && state.tags.length > 0
   if (!state.usable) return state
-  const merged = new Set(
-    runGit(root, ['tag', '--merged', 'HEAD', '--list', 'v*-int.*']).split('\n'),
-  )
-  state.M = state.tags.filter((t) => merged.has(t.name)).at(-1) ?? null
+  const byCommit = new Map()
+  const tagged = new Map(state.tags.map((t) => [t.name, t]))
+  const refs = runGit(root, [
+    'for-each-ref',
+    '--format=%(refname:strip=2) %(objectname) %(*objectname)',
+    'refs/tags/',
+  ])
+  for (const line of refs.split('\n')) {
+    const [name, object, peeled] = line.split(' ')
+    const tag = tagged.get(name)
+    if (!tag) continue
+    const commit = peeled || object
+    byCommit.set(commit, [...(byCommit.get(commit) ?? []), tag])
+  }
+  for (const commit of runGit(root, ['rev-list', '--first-parent', 'HEAD']).split('\n')) {
+    const here = byCommit.get(commit)
+    if (here) {
+      state.M = here.reduce((a, b) => (b.n > a.n ? b : a))
+      break
+    }
+  }
   const trees = new Map()
   state.tree = (tag) => {
     if (!trees.has(tag.name)) trees.set(tag.name, lsTree(root, tag.name))
@@ -643,17 +744,20 @@ function computeLabels(records, git, fallback) {
 
 /**
  * Where a changeset-body URL points. Bodies are authored relative to
- * `.changeset/`: `./<slug>.md` is another changeset, `../CHANGELOG.md#a` an
- * anchor in the assembled document, anything else relative a repo file.
+ * `.changeset/`, or to the repo root with a leading `/`: `./<slug>.md` is
+ * another changeset, `../CHANGELOG.md#a` an anchor in the assembled document,
+ * anything else relative a repo file.
  */
 function resolveLink(url) {
   if (url === '' || isAbsoluteUrl(url)) return { kind: 'absolute' }
   if (url.startsWith('#')) return { kind: 'hash', anchor: url.slice(1) }
   const { path, suffix } = splitUrl(url)
-  const repoPath = posix.normalize(posix.join('.changeset', path))
+  const repoPath = path.startsWith('/')
+    ? posix.normalize(path.replace(/^\/+/, '') || '.')
+    : posix.normalize(posix.join('.changeset', path))
   if (repoPath === '..' || repoPath.startsWith('../')) return { kind: 'escapes' }
   const name = repoPath.startsWith('.changeset/') ? repoPath.slice('.changeset/'.length) : ''
-  if (name.endsWith('.md') && !name.includes('/') && !name.startsWith('.') && !isIgnoredMd(name)) {
+  if (!name.includes('/') && isChangesetName(name)) {
     return { kind: 'changeset', slug: name.slice(0, -3) }
   }
   if (repoPath === CHANGELOG && suffix.length > 1 && suffix.startsWith('#')) {
@@ -662,7 +766,8 @@ function resolveLink(url) {
   return { kind: 'file', repoPath, suffix }
 }
 
-function fileUrl(root, sha, repoPath) {
+/** A repo path at `sha` on GitHub: `raw` for an image, so it renders, `tree` for a directory. */
+function fileUrl(root, sha, repoPath, image) {
   if (repoPath === '.') return `${REPO_URL}/tree/${sha}`
   let dir = false
   try {
@@ -670,18 +775,21 @@ function fileUrl(root, sha, repoPath) {
   } catch {
     dir = false
   }
-  return `${REPO_URL}/${dir ? 'tree' : 'blob'}/${sha}/${repoPath}`
+  return `${REPO_URL}/${dir ? 'tree' : image ? 'raw' : 'blob'}/${sha}/${repoPath}`
 }
 
-function rewriteBodyUrl(url, L, anchorOf) {
-  const link = resolveLink(url)
+function rewriteBodyUrl(node, L, anchorOf) {
+  const link = resolveLink(node.url)
   if (link.kind === 'changeset') {
     const anchor = anchorOf(`cs:${link.slug}`)
     return anchor === undefined ? null : `#${anchor}`
   }
-  if (link.kind === 'hash') return url.startsWith('#') ? null : `#${link.anchor}`
+  if (link.kind === 'hash') return node.url.startsWith('#') ? null : `#${link.anchor}`
   if (link.kind === 'file') {
-    return (L.ship ? fileUrl(L.root, L.ship.sha, link.repoPath) : link.repoPath) + link.suffix
+    const image = node.type === 'image'
+    return (
+      (L.ship ? fileUrl(L.root, L.ship.sha, link.repoPath, image) : link.repoPath) + link.suffix
+    )
   }
   return null
 }
@@ -708,7 +816,7 @@ function renderRecord(rec, L, anchorOf) {
   const src = rec.summary
   const urlEdits = []
   for (const node of rec.links) {
-    const url = rewriteBodyUrl(node.url, L, anchorOf)
+    const url = rewriteBodyUrl(node, L, anchorOf)
     if (url === null) continue
     const range = urlRange(src, node)
     if (range && src.slice(range.start, range.end) === node.url) {
@@ -740,21 +848,20 @@ function renderRecord(rec, L, anchorOf) {
   return { title, body, bodyHeadings }
 }
 
-/** The heading and table text an item shows: its own title, or "<parent>, continued". */
+/** The plain heading text an item shows: its own title, or "<parent>, continued". */
 function itemTitle(rec) {
-  if (rec.kind === 'entry') return { text: rec.titleText, inline: rec.titleInline }
-  if (rec.titleNode) return { text: rec.titleText, inline: rec.titleInline }
-  return { text: `${rec.parent.text}, continued`, inline: `${rec.parent.source}, continued` }
+  return rec.titleNode ? rec.titleText : `${rec.parent.text}, continued`
 }
 
 function renderItem(rec, L, anchorOf) {
   const label = L.labels.get(rec.slug)
   const { title, body, bodyHeadings } = renderRecord(rec, L, anchorOf)
-  const { text, inline } = itemTitle(rec)
-  const out = [title ?? `### ${inline}`, `<!-- changeset: ${rec.slug} -->`, firstIn(label)]
+  const text = itemTitle(rec)
+  const out = [title ?? `### ${escapeInline(text)}`, `<!-- changeset: ${rec.slug} -->`]
+  out.push(firstIn(label))
   const headings = [{ key: `cs:${rec.slug}`, text, origin: rec.file }]
   if (rec.kind === 'part') {
-    out.push(`Continues [${rec.parent.source}](#${anchorOf(rec.parent.key)}).`)
+    out.push(`Continues [${escapeInline(rec.parent.text)}](#${anchorOf(rec.parent.key)}).`)
   }
   out.push(body)
   headings.push(...bodyHeadings)
@@ -780,10 +887,8 @@ function tableRow(rec, L, anchorOf) {
 
 /** Title links for the ship handoff lists; a nested part points at its "Added in" heading. */
 function handoffItem(rec, anchorOf) {
-  const inline = rec.parentEntry
-    ? `${rec.parentEntry.titleInline}, continued`
-    : itemTitle(rec).inline
-  return `- [${inline}](#${anchorOf(`cs:${rec.slug}`)})`
+  const text = rec.parentEntry ? `${rec.parentEntry.titleText}, continued` : itemTitle(rec)
+  return `- [${escapeInline(text)}](#${anchorOf(`cs:${rec.slug}`)})`
 }
 
 function renderThisBuild(L, anchorOf) {
@@ -824,7 +929,7 @@ function renderThisBuild(L, anchorOf) {
  * returned heading model: the first pass runs with placeholders, and since no
  * anchor changes a heading's text, the second pass's headings are the same.
  */
-function build(L, anchorOf, problems) {
+function build(L, anchorOf) {
   const { base, items } = L
   const insertions = []
   const replacements = []
@@ -858,19 +963,9 @@ function build(L, anchorOf, problems) {
     })
   }
   if (L.ship) {
-    for (const node of base.links) {
-      if (!node.url || node.url.startsWith('#') || isAbsoluteUrl(node.url)) continue
-      const { path, suffix } = splitUrl(node.url)
-      const repoPath = posix.normalize(path)
-      const line = node.position.start.line
-      const range = urlRange(base.text, node)
-      if (repoPath === '..' || repoPath.startsWith('../')) {
-        problems.push(problem(CHANGELOG, line, `link "${node.url}" leaves the repository`))
-      } else if (!range || base.text.slice(range.start, range.end) !== node.url) {
-        problems.push(problem(CHANGELOG, line, `write the link "${node.url}" without escapes`))
-      } else {
-        replacements.push({ ...range, text: fileUrl(L.root, L.ship.sha, repoPath) + suffix })
-      }
+    for (const link of base.links) {
+      const url = fileUrl(L.root, L.ship.sha, link.repoPath, link.image) + link.suffix
+      replacements.push({ ...link.range, text: url })
     }
   }
   const text = applyEdits(base.text, [
@@ -944,7 +1039,7 @@ function analyze(root, { fallbackLabel, ship = null }) {
     r.parent = parent
     const row = t.type === 'legacy' ? base.table?.rows.find((x) => x.anchor === t.anchor) : null
     r.rowArea = r.meta.area ?? row?.area
-    r.rowText = r.meta.row ?? `${row?.text ?? parent.source}, continued`
+    r.rowText = r.meta.row ?? `${row?.text ?? escapeInline(parent.text)}, continued`
     if (r.rowArea) continued.push(r)
     else fail(r, 'needs `area`: its parent has no row in the Unreleased table to take one from')
   }
@@ -961,6 +1056,14 @@ function analyze(root, { fallbackLabel, ship = null }) {
   for (const e of entries) e.parts.sort((a, b) => labelKey(a) - labelKey(b) || cmp(a.slug, b.slug))
   const shippable = items.flatMap((r) => [r, ...(r.parts ?? [])])
 
+  if (!git.shallow && !git.notRepo) {
+    const deleted = deletedChangesets(root)
+    for (const r of records) {
+      if (deleted.has(`${r.slug}.md`)) {
+        fail(r, `the name "${r.slug}" was used before (history deletes ${r.file}); pick a new one`)
+      }
+    }
+  }
   if (git.usable) {
     const heads = headBlobs(root, records)
     const mTree = git.M ? git.tree(git.M) : new Map()
@@ -995,6 +1098,20 @@ function analyze(root, { fallbackLabel, ship = null }) {
         )
       }
     }
+    // A stable release consumes changesets and promote marks each in CHANGELOG.md;
+    // any other way out of the tree loses an entry adopters were already told about.
+    for (const name of mTree.keys()) {
+      const slug = name.slice(0, -3)
+      if (!bySlug.has(slug) && !base.text.includes(`<!-- changeset: ${slug} -->`)) {
+        problems.push(
+          problem(
+            `.changeset/${name}`,
+            null,
+            `shipped in int.${git.M.n}; a shipped entry can't be removed or renamed, only corrected or extended`,
+          ),
+        )
+      }
+    }
     if (ship) {
       ship.M = git.M
       ship.fresh = shippable.filter((r) => !mTree.has(`${r.slug}.md`))
@@ -1008,7 +1125,7 @@ function analyze(root, { fallbackLabel, ship = null }) {
   }
 
   const L = { root, base, items, labels, ship }
-  const draft = build(L, () => 'pending', [])
+  const draft = build(L, () => 'pending')
   const slugger = new GithubSlugger()
   const anchors = new Map(draft.model.map((h) => [h.key, slugger.slug(h.text)]))
   const anchorSet = new Set(anchors.values())
@@ -1017,9 +1134,34 @@ function analyze(root, { fallbackLabel, ship = null }) {
   for (const h of draft.model) {
     const s = baseSlug(h.text)
     bySlugBase.set(s, [...(bySlugBase.get(s) ?? []), h])
+    if (!h.key.startsWith('build:') && RESERVED_ANCHOR_RE.test(s)) {
+      problems.push(
+        problem(
+          h.origin,
+          null,
+          `heading "${h.text}" takes an anchor the shipped This build section uses`,
+        ),
+      )
+    }
+  }
+  // An inserted heading sharing a base heading's slug renumbers every later
+  // copy, so a Released anchor adopters already link to would silently move.
+  for (const h of base.headings) {
+    const now = anchors.get(h.key)
+    if (now === h.rawAnchor) continue
+    const s = baseSlug(h.text)
+    const culprits = draft.model.filter((m) => !m.key.startsWith('base:') && baseSlug(m.text) === s)
+    const why = culprits.map((m) => `"${m.text}" (${m.origin})`).join(', ') || 'an inserted heading'
+    problems.push(
+      problem(
+        culprits[0]?.origin ?? h.origin,
+        null,
+        `${why} moves "${h.text}" (${h.origin}) from #${h.rawAnchor} to #${now}; retitle it`,
+      ),
+    )
   }
   for (const rec of items) {
-    const { text } = itemTitle(rec)
+    const text = itemTitle(rec)
     const others = bySlugBase.get(baseSlug(text)).filter((h) => h.key !== `cs:${rec.slug}`)
     if (others.length > 0) {
       const list = others.map((h) => `"${h.text}" (${h.origin})`).join(', ')
@@ -1064,7 +1206,7 @@ function analyze(root, { fallbackLabel, ship = null }) {
     }
   }
 
-  const final = build(L, (key) => anchors.get(key), problems)
+  const final = build(L, (key) => anchors.get(key))
   const parsed = headingsOf(fromMarkdown(final.text)).map((h) => plainText(h).trim())
   const diverge = draft.model.findIndex((h, i) => parsed[i] !== h.text)
   if (diverge !== -1 || parsed.length !== draft.model.length) {
@@ -1231,7 +1373,7 @@ function selfTest() {
     '',
     '## How to use',
     '',
-    'See the [readme](README.md#top) and ![logo](docs/logo.png).',
+    'See the [readme](README.md#top), [root](/README.md) and ![logo](docs/logo.png).',
     '',
     '---',
     '',
@@ -1305,8 +1447,12 @@ function selfTest() {
       mkdirSync(join(vrepo, '.changeset'))
       write(vrepo, '.changeset/config.json', '{}\n')
       write(vrepo, '.changeset/README.md', '# Guide (int.5) (next)\n')
-      for (const [name, content] of Object.entries(files))
-        write(vrepo, `.changeset/${name}`, content)
+      for (const [name, content] of Object.entries(files)) {
+        const path = join(vrepo, '.changeset', name)
+        if (content === null) mkdirSync(path)
+        else if (typeof content === 'object') symlinkSync(content.link, path)
+        else write(vrepo, `.changeset/${name}`, content)
+      }
       write(vrepo, CHANGELOG, base)
       const r = check(vrepo)
       const fmt = (p) => `${p.line != null ? `${p.file}:${p.line}` : p.file} ${p.message}`
@@ -1575,14 +1721,144 @@ function selfTest() {
     refused('links: a missing repo file', linked('../nope.md'), /nope\.md does not exist/)
     refused('links: a link leaving the repository', linked('../../x.md'), /leaves the repository/)
     refused('links: an escaped destination', linked('../READ\\_ME.md'), /without escapes/)
+    clean('links: a repo-root-relative file', linked('/README.md#top'))
+    refused(
+      'links: a missing repo-root-relative file',
+      linked('/nope.md'),
+      /nope\.md does not exist/,
+    )
+    clean('links: a protocol-relative URL is absolute', linked('//example.com/x'))
+    refused(
+      'links: a reference definition',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, 'See [x][d].', '[d]: ../README.md'] }) },
+      /an-entry\.md:\d+ reference definition "\[d\]:" would be global/,
+    )
+    refused(
+      'links: raw HTML with href=',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, 'See <a href="../README.md">it</a>.'] }) },
+      /raw HTML with href= or src=/,
+    )
+    refused(
+      'links: raw HTML with src=',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, '<img src="../logo.png">'] }) },
+      /raw HTML with href= or src=/,
+    )
+    clean('links: an HTML comment mentioning href= is not a link', {
+      'an-entry.md': entry({ body: [WHAT, ADOPT, '<!-- no href= here -->'] }),
+    })
+    refused(
+      'links: a link in an entry title',
+      { 'an-entry.md': entry({ title: 'See [x](../README.md)' }) },
+      /the ### title takes no links or images/,
+    )
+    refused(
+      'links: an image in a part title',
+      { 'a-part.md': part('legacy#legacy-thing', { title: 'More ![i](/README.md)' }) },
+      /the ### title takes no links or images/,
+    )
+    {
+      const base = BASE.replace('### Other legacy', '### Other `x_y` legacy')
+      const r = clean(
+        'links: a parent title with markup is embedded as plain text',
+        { 'a-part.md': part('legacy#other-x_y-legacy', { meta: { area: 'Ops' } }) },
+        base,
+      )
+      expect(
+        'links: Continues, the default title and its row use escaped plain text',
+        r.text.includes('### Other x\\_y legacy, continued') &&
+          r.text.includes('Continues [Other x\\_y legacy](#other-x_y-legacy).') &&
+          r.text.includes(
+            '| next | Ops | [Other x\\_y legacy, continued](#other-x_y-legacy-continued) | None |',
+          ),
+      )
+    }
+
+    // row markup
+    refused(
+      'row: an unescaped bracket',
+      { 'an-entry.md': entry({ meta: { row: 'A [b] row' } }) },
+      /has an unescaped `\[` or `\]`/,
+    )
+    refused(
+      'row: a trailing backslash',
+      { 'an-entry.md': entry({ meta: { row: 'A row \\' } }) },
+      /ends in a lone/,
+    )
+    clean('row: escaped brackets', { 'an-entry.md': entry({ meta: { row: 'A \\[b\\] row' } }) })
+
+    // listing, as @changesets/read@1.0.1 lists .changeset/
+    refused(
+      'listing: a file in .changeset/pre/',
+      { 'pre/x.md': entry() },
+      /\.changeset\/pre\/x\.md pre mode is unsupported/,
+    )
+    refused(
+      'listing: a directory named like a changeset',
+      { 'dir.md': null },
+      /\.changeset\/dir\.md is not a regular file/,
+    )
+    refused(
+      'listing: a symlink',
+      { 'link.md': { link: '../README.md' } },
+      /\.changeset\/link\.md is not a regular file/,
+    )
+    refused(
+      'listing: agents.md in lower case is a changeset',
+      { 'agents.md': 'junk\n' },
+      /\.changeset\/agents\.md cannot be parsed/,
+    )
+    clean('listing: README.md is skipped in any case', {
+      'ReadMe.md': 'junk\n',
+      'AGENTS.md': 'junk\n',
+    })
+
+    // anchors stay put, and none takes the This build section's
+    refused(
+      'stability: a body heading renumbering a Released anchor',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, '#### 0.0.67'] }) },
+      /moves "0\.0\.67" \(CHANGELOG\.md:31\) from #0067 to #0067-1/,
+    )
+    refused(
+      'stability: a generated Added heading renumbering a Released anchor',
+      { 'an-entry.md': entry(), 'a-part.md': part('an-entry') },
+      /"Added, not yet in an int" \(\.changeset\/a-part\.md\) moves "Added, not yet in an int" \(CHANGELOG\.md:33\)/,
+      BASE.replace('#### Released thing', '#### Added, not yet in an int'),
+    )
+    refused(
+      'reserved: an entry titled This build',
+      { 'an-entry.md': entry({ title: 'This build' }) },
+      /heading "This build" takes an anchor the shipped This build section uses/,
+    )
+    refused(
+      'reserved: a body heading This build',
+      { 'an-entry.md': entry({ body: [WHAT, ADOPT, '#### This build'] }) },
+      /an-entry\.md heading "This build" takes an anchor/,
+    )
+    refused(
+      'reserved: a CHANGELOG.md heading',
+      {},
+      /CHANGELOG\.md:33 heading "Revised since int\.2" takes an anchor/,
+      BASE.replace('#### Released thing', '#### Revised since int.2'),
+    )
+    refused(
+      'reserved: --check validates CHANGELOG.md links',
+      {},
+      /CHANGELOG\.md:7 link "\.\.\/outside\.md" leaves the repository/,
+      BASE.replace('README.md#top', '../outside.md'),
+    )
+    refused(
+      'kinds: legacy# names a ### only, not a deeper heading in Unreleased',
+      { 'a-part.md': part('legacy#sub-legacy', { meta: { area: 'Ops' } }) },
+      /extends legacy#sub-legacy, but no ### in ## Unreleased has that anchor/,
+      BASE.replace('**What changed.** Old.', '**What changed.** Old.\n\n#### Sub legacy'),
+    )
 
     // assembly: placement, the table, parts, rebasing
     {
       const body = [
         WHAT,
         ADOPT,
-        'Links: [r](../README.md#top), *keep  this*, [b](./other-one.md), [c](../CHANGELOG.md#legacy-thing),\n[x](https://example.com/a), [h](#legacy-thing) and [d].',
-        '[d]: ../README.md',
+        'Links: [r](../README.md#top), *keep  this*, [b](./other-one.md), [c](../CHANGELOG.md#legacy-thing),\n[x](https://example.com/a), [h](#legacy-thing) and ![i](/README.md).',
       ]
       const files = {
         'an-entry.md': entry({ body }),
@@ -1625,9 +1901,7 @@ function selfTest() {
             ADOPT,
             '',
             'Links: [r](README.md#top), *keep  this*, [b](#other), [c](#legacy-thing),',
-            '[x](https://example.com/a), [h](#legacy-thing) and [d].',
-            '',
-            '[d]: README.md',
+            '[x](https://example.com/a), [h](#legacy-thing) and ![i](README.md).',
             '',
             '#### Added, not yet in an int',
             '',
@@ -1728,7 +2002,7 @@ function selfTest() {
         errors.length === 0,
       )
       expect(
-        'git: M is the newest ancestor tag (int.6, not the unmerged int.9)',
+        'git: M is the nearest first-parent tag (int.6, not the unmerged int.9)',
         warns.length === 1 &&
           warns[0].file === '.changeset/rev.md' &&
           warns[0].message.startsWith('shipped in int.6;'),
@@ -1782,7 +2056,7 @@ function selfTest() {
       expect(
         'ship: relative links in CHANGELOG.md become absolute',
         shipped.includes(
-          `[readme](${REPO_URL}/blob/${SHA}/README.md#top) and ![logo](${REPO_URL}/blob/${SHA}/docs/logo.png)`,
+          `[readme](${REPO_URL}/blob/${SHA}/README.md#top), [root](${REPO_URL}/blob/${SHA}/README.md) and ![logo](${REPO_URL}/raw/${SHA}/docs/logo.png)`,
         ) && shipped.includes('[Legacy thing](#legacy-thing)'),
       )
       const sum = existsSync(summary) ? readFileSync(summary, 'utf8') : ''
@@ -1874,6 +2148,101 @@ function selfTest() {
             p.file === '.changeset/zeta.md' &&
             /^reuses a slug: int\.1 carried it and int\.2/.test(p.message),
         ),
+      )
+    }
+
+    {
+      // The reviewer's case: b (int.110) merges c (int.115), adds bee-two, ships int.120.
+      const brepo = join(tmp, 'b')
+      mkdirSync(brepo)
+      g(brepo, 'init', '-q')
+      write(brepo, 'README.md', '# Readme\n')
+      write(brepo, CHANGELOG, BASE)
+      g(brepo, 'add', '-A')
+      g(brepo, 'commit', '-qm', 'base')
+      g(brepo, 'checkout', '-qb', 'c')
+      write(brepo, '.changeset/cee-one.md', titled('Cee one'))
+      g(brepo, 'add', '-A')
+      g(brepo, 'commit', '-qm', 'cee-one')
+      g(brepo, 'tag', 'v0.0.68-int.115')
+      g(brepo, 'checkout', '-q', 'main')
+      write(brepo, '.changeset/bee-one.md', titled('Bee one'))
+      g(brepo, 'add', '-A')
+      g(brepo, 'commit', '-qm', 'bee-one')
+      g(brepo, 'tag', 'v0.0.68-int.110')
+      g(brepo, 'merge', '-q', '--no-ff', '-m', 'merge c', 'c')
+      write(brepo, '.changeset/bee-two.md', titled('Bee two'))
+      g(brepo, 'add', '-A')
+      g(brepo, 'commit', '-qm', 'bee-two')
+      const out = join(tmp, 'ship-firstparent.md')
+      const s = ship(brepo, { version: '0.0.68-int.120', sha: SHA, out })
+      const shipped = existsSync(out) ? readFileSync(out, 'utf8') : ''
+      const section = shipped.slice(
+        shipped.indexOf('## This build'),
+        shipped.indexOf('## How to use'),
+      )
+      expect(
+        `git: M is int.110 along the first-parent chain, not the merged int.115, got ${JSON.stringify(s.problems)}`,
+        section.includes(
+          '### New since int.110\n\n- [Cee one](#cee-one)\n- [Bee two](#bee-two)\n\n',
+        ) && !section.includes('Bee one'),
+      )
+      write(brepo, '.changeset/bee-three.md', titled('Bee `three_x`'))
+      const out2 = join(tmp, 'ship-escaped.md')
+      ship(brepo, { version: '0.0.68-int.120', sha: SHA, out: out2 })
+      const escaped = existsSync(out2) ? readFileSync(out2, 'utf8') : ''
+      expect(
+        'links: the New list embeds escaped plain titles',
+        escaped.includes('- [Bee three\\_x](#bee-three_x)'),
+      )
+    }
+    {
+      const drepo = join(tmp, 'd')
+      mkdirSync(drepo)
+      g(drepo, 'init', '-q')
+      write(drepo, CHANGELOG, BASE)
+      write(drepo, '.changeset/gone.md', entry({ title: 'Gone' }))
+      write(drepo, '.changeset/kept.md', entry({ title: 'Kept' }))
+      g(drepo, 'add', '-A')
+      g(drepo, 'commit', '-qm', 'two')
+      g(drepo, 'rm', '-q', '.changeset/gone.md')
+      g(drepo, 'mv', '.changeset/kept.md', '.changeset/moved.md')
+      g(drepo, 'commit', '-qm', 'consume one, rename one')
+      write(drepo, '.changeset/gone.md', entry({ title: 'Gone' }))
+      const r = check(drepo)
+      expect(
+        'git: a name deleted in history is refused without any tag',
+        r.problems.some(
+          (p) =>
+            p.file === '.changeset/gone.md' && /^the name "gone" was used before/.test(p.message),
+        ),
+      )
+      expect(
+        'git: a renamed file keeps its new name',
+        !r.problems.some((p) => p.file === '.changeset/moved.md'),
+      )
+    }
+    {
+      const srepo = join(tmp, 's')
+      mkdirSync(srepo)
+      g(srepo, 'init', '-q')
+      write(srepo, CHANGELOG, BASE)
+      write(srepo, '.changeset/shipped-one.md', entry({ title: 'Shipped' }))
+      g(srepo, 'add', '-A')
+      g(srepo, 'commit', '-qm', 'shipped')
+      g(srepo, 'tag', 'v0.0.1-int.1')
+      g(srepo, 'mv', '.changeset/shipped-one.md', '.changeset/renamed-one.md')
+      g(srepo, 'commit', '-qm', 'rename')
+      const shipped = /shipped in int\.1; a shipped entry can't be removed or renamed/
+      const r = check(srepo)
+      expect(
+        'git: renaming a shipped changeset is refused',
+        r.problems.some((p) => p.file === '.changeset/shipped-one.md' && shipped.test(p.message)),
+      )
+      write(srepo, CHANGELOG, BASE + '\n<!-- changeset: shipped-one -->\n')
+      expect(
+        'git: a promoted changeset may leave the tree',
+        !check(srepo).problems.some((p) => shipped.test(p.message)),
       )
     }
 
