@@ -565,7 +565,7 @@ stops applying and no keychain credential is tried.
 
 **What changed.** (next) The worker, run as one process, moves objects between GitHub and
 `remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
-and until a later int each push fetches GitHub first.
+and pushes reuse a GitHub fetch under 30 seconds old.
 
 **To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
 
