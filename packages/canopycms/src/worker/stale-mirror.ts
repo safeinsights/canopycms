@@ -47,7 +47,7 @@ export interface EditorWorkSnapshot {
  * Read {@link EditorWorkSnapshot}, once per sync cycle and after the heads it applies to. Pending is
  * listed before processing, since a claim moves a task from the first to the second. A push task
  * queued after this read comes from a workspace, which {@link settleStaleMirror}'s lock keeps from
- * appearing, or was planted; one that slips past it (put back to pending between the two listings)
+ * appearing, or pushes a settings branch, kept by name, or was planted; one that slips past it (put back to pending between the two listings)
  * reads the head before the update, and pushes what it would have pushed without it, or after, and
  * finds nothing of its own to push.
  */
@@ -80,8 +80,8 @@ export type MirrorSettlement =
   /** The head moved after it was read; the lease refused the update, and the next cycle retries. */
   | { kind: 'moved-meanwhile'; error: string }
   /**
-   * `packed-refs.lock` is held, which every deletion needs: by a concurrent deletion, or left by a
-   * git killed mid-delete, which github-transfer.ts reports once it is stale.
+   * `remote.git`'s own `packed-refs.lock` is held, which every deletion needs: by a concurrent
+   * deletion, or left by a git killed mid-delete, which github-transfer.ts reports once it is stale.
    */
   | { kind: 'packed-refs-locked' }
 
@@ -100,7 +100,7 @@ export type MirrorSettlement =
  *
  * A push task queued for the branch keeps the head too, as `editorWork` listed the queue. The
  * update names the head itself (`--no-deref`): the listing skips symbolic refs, and one planted
- * between the listing and the update fails the lease rather than moving the ref it points at.
+ * between the listing and the update is itself replaced or deleted, never the ref it points at.
  *
  * Every party that can write this head can already set it to any value it holds or delete it:
  * the update only ever makes the head match GitHub, as the gateway's fetch reported it.
@@ -138,7 +138,8 @@ export async function settleStaleMirror(
   }
   try {
     // Listing the root opens it, which makes NFS revalidate the directory rather than answer
-    // from a cached name lookup. Anything at the name counts, residue included.
+    // from a cached name lookup (as branch-provisioning.ts's `inspectBlocking` relies on).
+    // Anything at the name counts, residue included.
     if ((await fs.readdir(ctx.contentBranchesPath)).includes(dirName)) {
       return { kind: 'kept', state: 'workspace' }
     }

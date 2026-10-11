@@ -41,7 +41,8 @@ import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 /**
  * `hook` runs while stale-mirror.ts's `readEditorWork` lists the queue, after the heads are read
  * and before any leased update: the window a concurrent Lambda push lands in. `queueReads` counts
- * every queue listing, which only a settle makes during a sync.
+ * every queue listing; in these tests' syncs only that read makes one (the rebase loop's push
+ * dedupe lists the queue too, but no branch here has a rewrite to push).
  */
 const duringStaleMirrorCheck = vi.hoisted(() => ({
   hook: null as null | (() => Promise<void>),
@@ -655,7 +656,9 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
       true,
     )
     await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-b')).resolves.toBe(false)
-    expect(consoleSpy).toHaveWarned(/feature-a-packed-refs moved while it was checked/)
+    expect(consoleSpy).toHaveWarned(
+      /feature-a-packed-refs was moved or locked while it was checked/,
+    )
     await fs.rm(ownLock)
 
     // The repository's packed-refs.lock stops every deletion, so the loop stops at the first.
@@ -669,9 +672,9 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
       true,
     )
     await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-c')).resolves.toBe(true)
-    expect(lockedSpy.all().warn.filter((line) => /moved while it was checked/.test(line))).toEqual(
-      [],
-    )
+    expect(
+      lockedSpy.all().warn.filter((line) => /was moved or locked while it was checked/.test(line)),
+    ).toEqual([])
   })
 
   it('warns once about a head GitHub no longer has that could not be checked', async () => {
@@ -734,7 +737,7 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
 
     expect(movedTip).not.toBe('')
     await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-raced')).resolves.toBe(movedTip)
-    expect(consoleSpy).toHaveWarned(/feature-raced moved while it was checked/)
+    expect(consoleSpy).toHaveWarned(/feature-raced was moved or locked while it was checked/)
     const tracked = trackedOf(await readStatus())
     expect(tracked.repointed).toEqual([])
     expect(tracked.diverged).toEqual([])

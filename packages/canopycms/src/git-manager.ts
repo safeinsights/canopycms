@@ -302,8 +302,8 @@ const remoteInitLocks = new Map<string, Promise<void>>()
  * next push no-ops and the editor's commit never arrives while the branch still
  * reports `synced`. Confining `+`/`--prune` to this namespace keeps them off
  * those local heads; `reconcileTrackedBranches()` (worker/git-sync.ts) is what
- * subsequently, and non-destructively, brings `refs/heads/*` toward what is
- * tracked here.
+ * then brings `refs/heads/*` toward GitHub's branches, never moving a head it
+ * finds editor work in.
  */
 export const GITHUB_TRACKING_REF_PREFIX = 'refs/remotes/github/'
 
@@ -838,8 +838,9 @@ export class GitManager {
     if (options.namespaces === 'tracking') {
       // GitHub's view only. Local heads in `remote.git` are NOT evidence of a
       // collision for branch CREATION: one can outlive its branch (the sync
-      // loop's reconcileTrackedBranches deletes it only a cycle after GitHub
-      // has, and an editor delete's own removal is best-effort), so an
+      // loop's reconcileTrackedBranches deletes it no sooner than the cycle
+      // after GitHub does, and never while it finds editor work in it, and an
+      // editor delete's own removal is best-effort), so an
       // ordinary create -> publish -> merge -> delete -> reuse-the-name cycle
       // would otherwise report an untrue collision on a name the user just
       // deleted. This deployment's own live branches are already

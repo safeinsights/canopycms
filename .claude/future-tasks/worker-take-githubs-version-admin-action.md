@@ -37,7 +37,7 @@ An admin-only action on a diverged branch, "Take GitHub's version":
 1. Under the branch's provisioning lock and content-write lock, move the workspace aside into the
    trash (as purge does, reversible for the trash retention window).
 2. Lease `remote.git`'s `refs/heads/<name>` from the diverged local tip to GitHub's tip (the
-   tracking ref), as `worker/stale-mirror.ts` does.
+   gateway's latest fetch), as `worker/stale-mirror.ts` does.
 3. Re-provision the workspace from the branch's new head, keeping `branch.json`'s identity (PR
    number, ACLs, status as appropriate), or leave the branch unprovisioned for the editor to
    reopen.

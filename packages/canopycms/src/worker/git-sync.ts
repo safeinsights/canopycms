@@ -273,33 +273,31 @@ export async function pushSettingsBranches(
 }
 
 /**
- * Bring `refs/heads/*` in `remote.git` toward GitHub's branches as this cycle's
- * fetch reported them (`githubTips`), WITHOUT ever rewinding or deleting a head
- * that holds editor work (see git-manager.ts's `GITHUB_TRACKING_REF_PREFIX` for
- * the two failure modes a `+refs/heads/*:refs/heads/*` fetch refspec causes).
+ * Bring `refs/heads/*` in `remote.git` toward GitHub's branches as this cycle's fetch reported them
+ * (`githubTips`), WITHOUT ever rewinding or deleting a head in which stale-mirror.ts finds editor
+ * work (`EditorState`; see git-manager.ts's `GITHUB_TRACKING_REF_PREFIX` for the two failure modes
+ * a `+refs/heads/*:refs/heads/*` fetch refspec causes).
  *
- * Per GitHub branch: no local `refs/heads/<name>` -> create it at GitHub's tip;
- * local behind -> fast-forward; equal -> nothing to do; local AHEAD -> LEAVE IT
- * ALONE, since that is unpushed editor/settings work the queued push task (or
- * pushSettingsBranches) ships; diverged -> our own rebase loop's published
- * rewrite with the GitHub push still queued goes to `rewritten`, and anything
- * else to stale-mirror.ts's `settleStaleMirror`. A head holding no editor work
- * there is a stale copy of a branch rebased and force-pushed on GitHub, and is
- * moved to GitHub's tip (`repointed`); one holding editor work is a real
- * collision (another deployment moved the same branch name, or GitHub's branch
- * was rewritten under an editor's work), never resolved by picking a winner:
- * it stays `diverged`, and the next push is rejected non-fast-forward.
+ * Per GitHub branch: no local `refs/heads/<name>` -> create it at GitHub's tip; local behind ->
+ * fast-forward; equal -> nothing to do; local AHEAD -> LEAVE IT ALONE, since that is unpushed
+ * editor/settings work the queued push task (or pushSettingsBranches) ships; diverged -> our own
+ * rebase loop's published rewrite with the GitHub push still queued goes to `rewritten`, and
+ * anything else to stale-mirror.ts's `settleStaleMirror`. A head holding no editor work there is a
+ * stale copy of a branch rebased and force-pushed on GitHub, and is moved to GitHub's tip
+ * (`repointed`); one holding editor work is a real collision (another deployment moved the same
+ * branch name, or GitHub's branch was rewritten under an editor's work), never resolved by picking
+ * a winner: it stays `diverged`, and the next push is rejected non-fast-forward.
  *
- * A head GitHub has no branch for is deleted through the same function when it
- * holds no editor work (`pruned`), and only when GitHub's answer names the base
- * branch: an answer without it is not GitHub's branch list.
+ * A head GitHub has no branch for is deleted through the same function when it holds no editor work
+ * and shares history with the base (`pruned`), and only when GitHub's answer names the base branch:
+ * an answer without it is not GitHub's branch list. A held `packed-refs.lock`, which every deletion
+ * needs, ends that cycle's deletions at the first.
  *
- * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into it
- * while this runs. Every `update-ref` below passes the expected old value (the
- * all-zeros OID for "must not exist yet" on creation, the just-read SHA
- * otherwise), so a concurrent Lambda write landing between the read and the
- * write loses the ref update instead of silently clobbering it -- that branch
- * is simply revisited next cycle.
+ * Concurrency: `remote.git` is bare and on EFS, and the Lambda pushes into it while this runs.
+ * Every `update-ref` below passes the expected old value (the all-zeros OID for "must not exist
+ * yet" on creation, the just-read SHA otherwise), so a concurrent Lambda write landing between the
+ * read and the write loses the ref update instead of silently clobbering it -- that branch is
+ * simply revisited next cycle.
  */
 async function reconcileTrackedBranches(
   ctx: GitSyncContext,
@@ -324,8 +322,10 @@ async function reconcileTrackedBranches(
   const rewritten: string[] = []
   let baseHold: { hold: BaseSchemaHold | undefined } | undefined
 
-  // A symbolic ref under refs/heads/ is none CanopyCMS writes: it is left out of `heads` and
-  // never written, since an update through it would move the ref it points at.
+  // A symbolic ref under refs/heads/ is none CanopyCMS writes. One for-each-ref lists is left out
+  // of `heads` and never written, since an update through it would move the ref it points at;
+  // one whose target is missing is not listed at all, and every update below passes
+  // `--no-deref`, so writing its name replaces the symbolic ref itself, never its target.
   const raw = await git.raw([
     'for-each-ref',
     '--format=%(refname) %(objectname) %(symref)',
@@ -371,7 +371,7 @@ async function reconcileTrackedBranches(
   }
   const reportMovedMeanwhile = (name: string, error: string) =>
     workerLogWarn(
-      `  Tracked-branch reconcile: ${escapeForLog(name)} moved while it was checked, so it was left as it is until the next cycle: ${escapeForLog(error.trim())}`,
+      `  Tracked-branch reconcile: ${escapeForLog(name)} was moved or locked while it was checked, so it was left as it is until the next cycle: ${escapeForLog(error.trim())}`,
     )
 
   for (const [name, trackedSha] of githubTips) {
@@ -477,6 +477,7 @@ async function reconcileTrackedBranches(
         else if (outcome.kind === 'kept') {
           diverged.push({ name, local: localSha, github: trackedSha, ...outcome })
         } else {
+          // `packed-refs-locked` belongs to deletions; a move is not expected to meet it.
           reportMovedMeanwhile(
             name,
             outcome.kind === 'moved-meanwhile' ? outcome.error : 'packed-refs.lock is held',

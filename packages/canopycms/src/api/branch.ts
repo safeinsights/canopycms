@@ -409,14 +409,14 @@ export const createBranchHandler = async (
         // deleteBranchHandler's cleanup (below) handles the common case, but
         // cannot cover every ordering: when the branch still existed on
         // GitHub at editor-delete time, the sync loop's reconcile re-creates
-        // the local head from the tracking ref within a cycle, and once the
+        // the local head from GitHub's branch within a cycle, and once the
         // GitHub side is later deleted that re-created head stays until the
         // sync loop's next prune, with no registry entry left for the delete
         // path to run against. Healing at REUSE time covers every ordering,
-        // however the head got orphaned: the registry check
-        // above already proved no live branch owns this name, and the
-        // tracking check just proved GitHub doesn't either, so a remaining
-        // local head is stale by definition. Best-effort (old-value-guarded
+        // however the head got orphaned: the registry check above already
+        // proved no live branch owns this name, and the tracking check just
+        // proved GitHub doesn't either, so a remaining local head is stale by
+        // definition. Best-effort (old-value-guarded
         // against a concurrent push): on failure, creation still proceeds --
         // that is today's status quo, and the publish-time 409 message names
         // this cause.

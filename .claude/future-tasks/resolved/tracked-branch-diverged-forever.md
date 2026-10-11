@@ -33,9 +33,9 @@ health did not show `tracked.diverged`, and no operator could resolve it without
   and the update hold the branch's provisioning lock, zero-retry, so no workspace can be published
   in between.
 - **Orphans are pruned** under the same test once GitHub's answer no longer names the branch,
-  and only when it names the base branch.
-- **Warn once** per (branch, local tip, GitHub tip), held on the worker instance, with the
-  editor state that kept the head, and every name escaped.
+  only when it names the base branch, and never when the head shares no history with the base.
+- **Warn once** per (branch, local tip, GitHub tip, reason), held on the worker instance, with
+  the editor state that kept the head, and every name escaped.
 - **System health** lists `tracked.diverged` with plain-language copy: what diverged means, and
   the remedies the editor has today. Delete Branch also deletes a published branch on GitHub, so
   GitHub's version is pushed to a new name first. Purge refuses a live branch, and nothing copies

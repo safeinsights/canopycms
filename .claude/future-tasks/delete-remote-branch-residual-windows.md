@@ -23,7 +23,7 @@ delete task still pending (in backoff, recovered as an orphan, or requeued by an
 Possible fix, on that rare path only: when a live branch.json has no PR number, ask GitHub
 (`pulls.list` with `head: owner:branch`, `state: open`) and skip if an open PR other than the
 deleted one exists. A remote.git-vs-GitHub SHA comparison does not work:
-`reconcileTrackedBranches` recreates the local head from GitHub's tracking ref.
+`reconcileTrackedBranches` recreates the local head from GitHub's branch.
 
 ## 2. A failed or late delete lets the stale local head come back
 
