@@ -183,6 +183,7 @@ export const MdxImageDialog: React.FC<MdxImageDialogProps> = ({ state, onSave, o
               />
               <Group justify="flex-end">
                 <Button
+                  size="sm"
                   onClick={handleUrlSubmit}
                   disabled={!urlValue.trim()}
                   data-testid="mdx-image-dialog-url-submit"
@@ -195,7 +196,7 @@ export const MdxImageDialog: React.FC<MdxImageDialogProps> = ({ state, onSave, o
         </Tabs>
 
         <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>
+          <Button size="sm" variant="default" onClick={onClose}>
             Cancel
           </Button>
         </Group>

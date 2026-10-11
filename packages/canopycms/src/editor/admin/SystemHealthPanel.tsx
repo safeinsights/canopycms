@@ -30,7 +30,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -44,6 +44,7 @@ import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
+import { branchStatusPresentation } from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -224,14 +225,6 @@ function baseRefreshWarning(report: BaseRefreshReport | undefined): string | nul
   return lines.length > 0 ? lines.join('\n') : null
 }
 
-// Mirrors BranchManager.tsx's statusColorMap -- kept local (not exported
-// there) rather than shared, same tiny lookup either way.
-const branchStatusColorMap: Record<string, string> = {
-  editing: 'brand',
-  submitted: 'green',
-  approved: 'teal',
-}
-
 const TASK_STATUS_OPTIONS: { label: string; value: AdminTaskStatus }[] = [
   { label: 'Pending', value: 'pending' },
   { label: 'Processing', value: 'processing' },
@@ -377,7 +370,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="sm" c="dimmed">
           No status available.
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()}>
+        <Button variant="light" onClick={() => refresh()}>
           Refresh
         </Button>
       </Stack>
@@ -503,7 +496,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         </Alert>
       )}
 
-      <Paper withBorder p="sm" radius="md">
+      <Paper withBorder p="sm">
         <Text size="sm" fw={600}>
           Build
         </Text>
@@ -562,7 +555,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       </Paper>
 
       {lastGitSync && (
-        <Paper withBorder p="sm" radius="md">
+        <Paper withBorder p="sm">
           <Text size="sm" fw={600}>
             Last git sync
           </Text>
@@ -611,7 +604,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
 
       <SimpleGrid cols={5} spacing="xs">
         {(['pending', 'processing', 'completed', 'failed', 'corrupt'] as const).map((key) => (
-          <Paper key={key} withBorder p="xs" radius="md" ta="center">
+          <Paper key={key} withBorder p="xs" ta="center">
             <Text size="xs" c="dimmed" tt="capitalize">
               {key}
             </Text>
@@ -637,7 +630,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
         <Text size="xs" c="dimmed">
           Generated at {status.generatedAt}
         </Text>
-        <Button size="xs" variant="light" onClick={() => refresh()} loading={statusLoading}>
+        <Button variant="light" onClick={() => refresh()} loading={statusLoading}>
           Refresh
         </Button>
       </Group>
@@ -657,7 +650,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   const canDelete = taskStatus === 'pending' || taskStatus === 'failed' || taskStatus === 'corrupt'
 
   const handleRetryClick = (task: Task) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Retry task',
       children: <Text size="sm">{RETRY_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Retry', cancel: 'Cancel' },
@@ -667,7 +660,7 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleDeleteClick = (status: DeletableTaskStatus, fileName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Delete task file',
       children: <Text size="sm">{deleteConfirmText(status)}</Text>,
       labels: { confirm: 'Delete', cancel: 'Cancel' },
@@ -738,7 +731,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                       </Table.Td>
                       <Table.Td>
                         <Button
-                          size="xs"
                           variant="light"
                           color="red"
                           data-testid={`delete-task-${file.fileName}`}
@@ -774,7 +766,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                         <Group gap="xs">
                           {taskStatus === 'failed' && (
                             <Button
-                              size="xs"
                               variant="light"
                               data-testid={`retry-task-${task.id}`}
                               onClick={() => handleRetryClick(task)}
@@ -784,7 +775,6 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
                           )}
                           {canDelete && (
                             <Button
-                              size="xs"
                               variant="light"
                               color="red"
                               data-testid={`delete-task-${task.id}`}
@@ -816,7 +806,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const baseWarning = baseRefreshWarning(health.status?.workerStatus?.lastGitSync?.baseRefresh)
 
   const handleMarkMergedClick = (branchName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Mark branch as merged',
       children: <Text size="sm">{MARK_MERGED_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Mark merged', cancel: 'Cancel' },
@@ -826,7 +816,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handleRepairClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Repair metadata',
       children: <Text size="sm">{REPAIR_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Repair', cancel: 'Cancel' },
@@ -836,7 +826,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   }
 
   const handlePurgeClick = (dirName: string) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Purge directory',
       children: <Text size="sm">{PURGE_CONFIRM_TEXT}</Text>,
       labels: { confirm: 'Purge', cancel: 'Cancel' },
@@ -849,7 +839,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   // calls only the duplicate repair: Purge sits on neighbouring rows and
   // trashes a whole branch directory.
   const handleDuplicateIdsClick = (dirName: string, duplicates: DuplicateContentId[]) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Fix duplicate content IDs',
       children: <DuplicateRepairDetails dirName={dirName} duplicates={duplicates} />,
       labels: { confirm: 'Archive duplicates', cancel: 'Cancel' },
@@ -1015,7 +1005,8 @@ function BranchHealthRow({
           </Group>
         </Table.Td>
         <Table.Td>
-          <Badge color={branchStatusColorMap[b.status] ?? 'neutral'} variant="light">
+          {/* Colour from the shared map; the raw status text stays, since admin-branch-health e2e reads it. */}
+          <Badge color={branchStatusPresentation(b.status)?.color ?? 'neutral'} variant="light">
             {b.status}
           </Badge>
         </Table.Td>
@@ -1135,7 +1126,6 @@ function BranchHealthRow({
         <Table.Td>
           {canMarkMerged && (
             <Button
-              size="xs"
               variant="light"
               data-testid={`mark-merged-${b.name}`}
               onClick={() => onMarkMerged(b.name)}
@@ -1173,7 +1163,6 @@ function BranchHealthRow({
         <Table.Td>
           <Group gap="xs" wrap="nowrap">
             <Button
-              size="xs"
               variant="light"
               data-testid={`repair-dir-${entry.dirName}`}
               onClick={() => onRepair(entry.dirName)}
@@ -1183,7 +1172,6 @@ function BranchHealthRow({
             <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
               <span>
                 <Button
-                  size="xs"
                   variant="light"
                   color="red"
                   disabled={purgeGate.disabled}
@@ -1226,7 +1214,6 @@ function BranchHealthRow({
         <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
           <span>
             <Button
-              size="xs"
               variant="light"
               color="red"
               disabled={purgeGate.disabled}

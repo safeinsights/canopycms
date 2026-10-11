@@ -9,8 +9,7 @@ import { resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
  * `useCanopyPreview` itself at `/`, and posts render through `createPreviewPage`'s route.
  */
 
-const previewOf = (page: Page): FrameLocator =>
-  page.frameLocator('[data-testid="preview-pane"] iframe')
+const previewOf = (page: Page): FrameLocator => new EditorPage(page).previewFrame()
 
 const outlineStyle = (element: Locator) =>
   element.evaluate((node) => getComputedStyle(node).outlineStyle)
@@ -44,21 +43,22 @@ const recordMarkCounts = (page: Page) =>
 const markCounts = (page: Page) =>
   page.evaluate(() => (window as unknown as { __markCounts: number[] }).__markCounts)
 
-const expectHighlightToggles = async (page: Page, marked: Locator[]) => {
-  const toggle = page.getByRole('button', { name: 'Toggle highlights' })
+const expectHighlightToggles = async (editorPage: EditorPage, marked: Locator[]) => {
+  const { page } = editorPage
+  const toggle = editorPage.highlightToggle()
   for (const element of marked) expect(await outlineStyle(element)).toBe('none')
   await recordMarkCounts(page)
 
-  await toggle.click()
+  await editorPage.toggleHighlights()
   await expect(toggle).toHaveAttribute('aria-pressed', 'true')
   for (const element of marked) await expect.poll(() => outlineStyle(element)).toBe('dashed')
   await expect
     .poll(async () => (await markCounts(page)).at(-1) ?? 0)
     .toBeGreaterThanOrEqual(marked.length)
-  await expect(page.getByText(/marks no editable elements/)).toHaveCount(0)
+  await expect(editorPage.noEditableMarksNotice()).toHaveCount(0)
   await expect(toggle).not.toHaveAttribute('aria-description')
 
-  await toggle.click()
+  await editorPage.toggleHighlights()
   await expect(toggle).toHaveAttribute('aria-pressed', 'false')
   for (const element of marked) await expect.poll(() => outlineStyle(element)).toBe('none')
 }
@@ -84,14 +84,17 @@ test.describe('Preview highlights and click-to-focus', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await editorPage.createPost('focus-target', 'Focus Target Post')
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Home Page')
-      await page.keyboard.press('Escape')
+      await editorPage.closeContentNavigator()
       await expect(title).toContainText('Home Page', { timeout: 15000 })
     })
 
     await test.step('the toggle outlines marked elements, and removes the outline', async () => {
-      await expectHighlightToggles(page, [title, preview.locator('[data-canopy-path="tagline"]')])
+      await expectHighlightToggles(editorPage, [
+        title,
+        preview.locator('[data-canopy-path="tagline"]'),
+      ])
     })
 
     await test.step('clicking the title focuses its field', async () => {
@@ -137,7 +140,10 @@ test.describe('Preview highlights and click-to-focus', () => {
     })
 
     await test.step('the toggle outlines marked elements, and removes the outline', async () => {
-      await expectHighlightToggles(page, [title, preview.locator('[data-canopy-path="tags[0]"]')])
+      await expectHighlightToggles(editorPage, [
+        title,
+        preview.locator('[data-canopy-path="tags[0]"]'),
+      ])
     })
 
     await test.step('clicking a list item focuses the list field', async () => {
@@ -155,8 +161,8 @@ test.describe('Preview highlights and click-to-focus', () => {
       page.on('console', (message) => {
         if (message.type() === 'warning') warnings.push(message.text())
       })
-      const toggle = page.getByRole('button', { name: 'Toggle highlights' })
-      await toggle.click()
+      const toggle = editorPage.highlightToggle()
+      await editorPage.toggleHighlights()
       await expect(toggle).toHaveAttribute('aria-pressed', 'true')
       await title.evaluate((node) => {
         const mark = document.createElement('span')

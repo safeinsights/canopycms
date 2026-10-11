@@ -8,7 +8,7 @@ import {
   readRawContentFile,
   findContentFile,
 } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
+import { STANDARD_TIMEOUT } from '../fixtures/timeouts'
 
 // The settings YAML file is seeded from content/ into the main branch workspace.
 const SETTINGS_CONTENT_PATH = 'settings.settings.sEtTiNgS5678.yaml'
@@ -37,11 +37,10 @@ test.describe('YAML Format and isTitle Flag', () => {
     })
 
     await test.step('open entry navigator and select Settings entry', async () => {
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       // isTitle: true on siteName means the navigator shows the siteName value "Test Site"
       await editorPage.selectEntry('Test Site')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('verify siteName field shows the seeded value', async () => {
@@ -62,10 +61,9 @@ test.describe('YAML Format and isTitle Flag', () => {
     await test.step('open editor and navigate to Settings', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Test Site')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
     })
 
     await test.step('edit siteName and toggle maintenanceMode on', async () => {
@@ -102,10 +100,9 @@ test.describe('YAML Format and isTitle Flag', () => {
     await test.step('edit and save', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
       await editorPage.selectEntry('Test Site')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
 
       await editorPage.fillTextField('siteName', uniqueSiteName)
       await editorPage.saveAndVerify()
@@ -126,26 +123,25 @@ test.describe('YAML Format and isTitle Flag', () => {
     await test.step('open editor and open navigator', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await editorPage.openEntryNavigator()
+      await editorPage.openContentNavigator()
     })
 
     await test.step('verify Settings entry appears with isTitle value "Test Site"', async () => {
       // With isTitle: true on siteName (value = "Test Site"), the navigator label
       // should be "Test Site" rather than the entry type label "Settings"
-      const navItem = page.locator('[data-testid="entry-nav-item-test-site"]')
+      const navItem = editorPage.navigatorItem('Test Site')
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
 
       // The entry type label "Settings" should NOT appear as a nav item
       // (it's still the collection label, but not the individual entry label)
-      const settingsTypeItem = page.locator('[data-testid="entry-nav-item-settings"]')
+      const settingsTypeItem = editorPage.navigatorItem('Settings')
       await expect(settingsTypeItem).not.toBeVisible()
     })
 
     await test.step('update siteName and verify navigator label updates after reload', async () => {
       // Select the entry
       await editorPage.selectEntry('Test Site')
-      await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await editorPage.closeContentNavigator()
 
       // Change siteName
       await editorPage.fillTextField('siteName', 'Renamed Site')
@@ -156,8 +152,8 @@ test.describe('YAML Format and isTitle Flag', () => {
       await editorPage.waitForReady()
 
       // Open navigator and verify the updated label
-      await editorPage.openEntryNavigator()
-      const renamedItem = page.locator('[data-testid="entry-nav-item-renamed-site"]')
+      await editorPage.openContentNavigator()
+      const renamedItem = editorPage.navigatorItem('Renamed Site')
       await expect(renamedItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })

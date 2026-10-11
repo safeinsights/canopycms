@@ -55,14 +55,13 @@ export interface EditorSidebarProps {
   onHighlightToggle: () => void
 
   /**
-   * Callback when permission manager should be opened.
+   * Opens the permission manager. Admin-only like `onSystemHealthOpen`: the menu item renders
+   * only when this is provided.
    */
-  onPermissionManagerOpen: () => void
+  onPermissionManagerOpen?: () => void
 
-  /**
-   * Callback when group manager should be opened.
-   */
-  onGroupManagerOpen: () => void
+  /** Opens the group manager. Admin-only; the menu item renders only when this is provided. */
+  onGroupManagerOpen?: () => void
 
   /**
    * Callback when the media library should be opened.
@@ -185,6 +184,7 @@ export function EditorSidebar({
               radius="md"
               aria-pressed={highlightEnabled}
               aria-label="Toggle highlights"
+              data-testid="toggle-highlights-button"
               aria-description={
                 highlightEnabled && previewInexactMarks.length > 0
                   ? inexactMarksNote(previewInexactMarks)
@@ -200,19 +200,41 @@ export function EditorSidebar({
       <Stack gap="xs" align="center">
         <Menu shadow="md" width={200} position="left">
           <Menu.Target>
-            <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Settings">
+            <ActionIcon
+              variant="subtle"
+              size="lg"
+              radius="md"
+              aria-label="Settings"
+              data-testid="settings-button"
+            >
               <IconSettings size={18} />
             </ActionIcon>
           </Menu.Target>
-          <Menu.Dropdown>
+          <Menu.Dropdown data-testid="settings-menu">
             <Menu.Label>Settings</Menu.Label>
-            <Menu.Item onClick={onPermissionManagerOpen}>Manage Permissions</Menu.Item>
-            <Menu.Item onClick={onGroupManagerOpen}>Manage Groups</Menu.Item>
-            <Menu.Item leftSection={<IconPhoto size={14} />} onClick={onMediaLibraryOpen}>
+            {onPermissionManagerOpen && (
+              <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>
+                Manage Permissions
+              </Menu.Item>
+            )}
+            {onGroupManagerOpen && (
+              <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
+                Manage Groups
+              </Menu.Item>
+            )}
+            <Menu.Item
+              data-testid="settings-menu-media-library"
+              leftSection={<IconPhoto size={14} />}
+              onClick={onMediaLibraryOpen}
+            >
               Media library
             </Menu.Item>
             {onSystemHealthOpen && (
-              <Menu.Item leftSection={<IconActivity size={14} />} onClick={onSystemHealthOpen}>
+              <Menu.Item
+                data-testid="settings-menu-system-health"
+                leftSection={<IconActivity size={14} />}
+                onClick={onSystemHealthOpen}
+              >
                 System health
               </Menu.Item>
             )}

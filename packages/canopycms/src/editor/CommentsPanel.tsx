@@ -17,6 +17,7 @@ import {
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
+import { userIdLabel } from './user-display'
 import { formatRelativeTime } from './relative-time'
 
 export interface CommentsPanelProps {
@@ -119,7 +120,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                 <Text size="xs" c="dimmed">
                   Replying to thread
                 </Text>
-                <Button size="xs" variant="subtle" onClick={() => setReplyTo(null)}>
+                <Button variant="subtle" onClick={() => setReplyTo(null)}>
                   Cancel
                 </Button>
               </Group>
@@ -212,7 +213,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       <Group gap="xs">
                         {canResolve && !thread.resolved && (
                           <Button
-                            size="xs"
                             variant="subtle"
                             color="green"
                             onClick={() => handleResolve(thread.id)}
@@ -230,7 +230,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         thread.canopyPath &&
                         onJumpToField && (
                           <Button
-                            size="xs"
                             variant="light"
                             onClick={() => {
                               onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id)
@@ -242,7 +241,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         )}
                       {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
                         <Button
-                          size="xs"
                           variant="light"
                           onClick={() => {
                             onJumpToEntry(thread.entryPath!, thread.id)
@@ -254,7 +252,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                       )}
                       {thread.type === 'branch' && onJumpToBranch && (
                         <Button
-                          size="xs"
                           variant="light"
                           onClick={() => {
                             onJumpToBranch(thread.id)
@@ -291,7 +288,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                               />
                             ) : (
                               <Text size="xs" fw={500}>
-                                {comment.userId}
+                                {userIdLabel(comment.userId)}
                               </Text>
                             )}
                             <Text
@@ -311,7 +308,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
 
                     {!thread.resolved && (
                       <Button
-                        size="xs"
                         variant="subtle"
                         onClick={() => {
                           setReplyTo(thread.id)

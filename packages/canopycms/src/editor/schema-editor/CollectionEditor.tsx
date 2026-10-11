@@ -432,7 +432,7 @@ export function CollectionEditor({
                     </Group>
                     <Menu position="bottom-end" withinPortal>
                       <Menu.Target>
-                        <ActionIcon variant="subtle" size="sm">
+                        <ActionIcon variant="subtle">
                           <IconDotsVertical size={16} />
                         </ActionIcon>
                       </Menu.Target>
@@ -463,6 +463,7 @@ export function CollectionEditor({
           )}
 
           <Button
+            size="sm"
             variant="light"
             leftSection={<IconPlus size={16} />}
             onClick={handleOpenAddEntryType}
@@ -471,10 +472,10 @@ export function CollectionEditor({
           </Button>
 
           <Group justify="flex-end" gap="sm" mt="md">
-            <Button variant="subtle" onClick={onClose} disabled={isSaving}>
+            <Button size="sm" variant="subtle" onClick={onClose} disabled={isSaving}>
               Cancel
             </Button>
-            <Button onClick={handleSave} loading={isSaving}>
+            <Button size="sm" onClick={handleSave} loading={isSaving}>
               {isEditMode ? 'Save Changes' : 'Create Collection'}
             </Button>
           </Group>

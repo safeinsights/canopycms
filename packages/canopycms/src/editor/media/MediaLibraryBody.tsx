@@ -15,7 +15,7 @@ import {
   TextInput,
 } from '@mantine/core'
 import { Dropzone, type FileRejection } from '@mantine/dropzone'
-import { modals } from '@mantine/modals'
+import { openConfirm } from '../utils/confirm-modal'
 import { IconAlertCircle, IconUpload } from '@tabler/icons-react'
 
 import type { AssetRecord } from '../../api'
@@ -143,7 +143,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   }
 
   const handleDeleteClick = (asset: AssetRecord) => {
-    modals.openConfirmModal({
+    openConfirm({
       title: 'Remove from library',
       children: (
         <Text size="sm">
@@ -213,7 +213,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         <Alert icon={<IconAlertCircle size={16} />} color="red" data-testid="media-library-error">
           <Stack gap={4}>
             <Text size="sm">{listError}</Text>
-            <Button size="xs" variant="light" onClick={() => void loadFirstPage()}>
+            <Button variant="light" onClick={() => void loadFirstPage()}>
               Retry
             </Button>
           </Stack>
@@ -247,7 +247,6 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           <Group justify="center" py="sm">
             <Button
               variant="light"
-              size="xs"
               loading={loadingMore}
               onClick={() => void handleLoadMore()}
               data-testid="media-library-load-more"

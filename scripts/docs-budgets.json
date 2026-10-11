@@ -56,6 +56,11 @@
       "maxSectionWords": 180,
       "words": 518
     },
+    ".claude/agents/ux-review.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 92,
+      "words": 459
+    },
     "AGENTS.md": {
       "historyMarkers": 0,
       "maxSectionWords": 333,
@@ -95,6 +100,11 @@
       "historyMarkers": 0,
       "maxSectionWords": 1766,
       "words": 10140
+    },
+    "docs/ux-guidelines.md": {
+      "historyMarkers": 0,
+      "maxSectionWords": 137,
+      "words": 1012
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,
