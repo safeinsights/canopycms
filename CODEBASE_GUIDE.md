@@ -792,7 +792,7 @@ Cross-cutting feature linking between entries with `entry:CONTENT_ID` in markdow
 - `src/config/types.ts` — the `entryLinkUrl?: EntryLinkUrlResolver` callback for custom URL mapping
 - `src/content-reader.ts` — resolves links in the body at read time, default on
 - `src/api/content.ts` — validates on write, folding broken-link warnings into `validationWarnings`
-- `src/ai/generate.ts` — resolves links against the export set
+- `src/ai/generate.ts` — resolves links against the export set (`isLinkable`), so a link to an entry the export leaves out shows no URL
 - `src/editor/hooks/useEntryLinkResolution.ts` — client-side resolution for preview data
 - `src/editor/fields/entry-link/` — the MDXEditor toolbar button, picker modal and context
 

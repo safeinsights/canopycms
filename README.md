@@ -1670,7 +1670,7 @@ post: previewView({
 
 CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, documentation chatbots): schema-driven JSON/MD/MDX entries converted into well-structured markdown with a discovery manifest, needing no authentication, since the output is read-only.
 
-All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. So is an entry marked `noindex`, through [the sitemap's predicate](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
+All content is included by default (an opt-out exclusion model); you can exclude collections, entry types, or entries matching a predicate. An entry marked `noindex` is left out too, read through [the same predicate the sitemap uses](#sitemap-and-seo-metadata). Fields convert from your schema automatically, and arrays of **flat records** — object-list fields whose subfields are all single-line scalars — render as a compact markdown **table**, while lists whose items contain nested objects, sub-lists or long-form text keep an expanded heading-per-item form. Table cells use default per-type rendering; to customize, add a `fieldTransforms` entry for the **list field itself**, which replaces the whole field's output.
 
 A `reference` field renders as a link to its target wherever it appears, never as an inlined copy. The link text is the field's `displayField` value or the target's title; the URL is the target's page, following `entryLinkUrl` as body `entry:` links do. A second link labeled `markdown version` points at the target's own file in this export, under `mountPath`. A gone target renders as `(missing entry <id>)`, and one the export leaves out as `(unavailable entry <id>)`, with no title. An inline `entry:` link to a left-out entry renders as its plain text. Callbacks receive an `AIReferenceValue`: check `unavailable` before reading anything but `id`.
 
@@ -1763,7 +1763,7 @@ const aiConfig = defineAIContentConfig({
 })
 ```
 
-**A plain-URL link into a hidden section**, such as a settings entry's nav list, names no entry, so the export can't recognise it. Filter it with a field transform:
+**A link into a hidden section by plain URL.** A field holding a plain URL, such as a site settings entry's navigation list, names no entry, so the export can't tell that it points at a `noindex` section. Filter it with a field transform, which replaces the field's whole output:
 
 ```typescript
 fieldTransforms: {
@@ -1777,7 +1777,7 @@ fieldTransforms: {
 },
 ```
 
-Return `''` to drop the field; `exclude.where` drops the entry.
+Return `''` from the transform to drop the field entirely, or use `exclude.where` to drop the whole entry.
 
 **Transform pipeline** for MD/MDX entries, in order: `stripMdxImports` removes import statements automatically; `componentTransforms` match JSX components by PascalCase name and replace them with the transform's output (keeping the JSX as-is when it returns `undefined`); then `bodyTransforms` passes the full body string through the entry-type-specific transform for final cleanup. `componentTransforms` are keyed by component name and apply across all entry types, since MDX components are project-wide; `bodyTransforms` are keyed by entry type, for stripping entry-type-specific syntax that does not belong in AI output.
 

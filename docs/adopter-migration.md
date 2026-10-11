@@ -223,14 +223,19 @@ matching: search your AI config for each reference field's name.
 
 ### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
 
-**What changed.** (next) AI content, built or served, leaves out entries marked `noindex`, through
-the sitemap's predicate. An inline `entry:` link to any left-out entry renders as plain text.
+**What changed.** (next) AI content leaves out entries marked `noindex`, both from
+`generate-ai-content` and from the `/ai` route, using the same predicate as the sitemap and robots
+metadata. An inline body `entry:` link to an entry the export leaves out (by `exclude`, `noindex`
+or a failed render) renders as its plain text, with no URL; any other form of the link points at
+`#`.
 
-**To adopt.** To keep them, set `exclude: { noindex: false }`. For nested or renamed SEO fields, pass
-the AI config `createNextCanopyContext`'s `seo` object. A plain-URL link into a hidden section needs a
-[field transform](../README.md#ai-content-configuration).
+**To adopt.** To keep exporting `noindex` entries, set `exclude: { noindex: false }`. If your SEO
+fields are nested or renamed, pass the AI config's `seo` the same object you pass
+`createNextCanopyContext({ seo })`, so the sitemap and AI content read the flag from the same
+place. A field that links to a hidden section by plain URL needs a field transform; the README
+shows [the recipe](../README.md#ai-content-configuration).
 
-**Now deletable.** An `exclude.where` that re-read `noindex`.
+**Now deletable.** An `exclude.where` that re-read the `noindex` flag by hand.
 
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
