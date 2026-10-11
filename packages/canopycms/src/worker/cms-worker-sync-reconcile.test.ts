@@ -451,9 +451,8 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
   })
 
   it('keeps the head of a branch GitHub deleted while its workspace remains', async () => {
-    await commitOnto(tmpDir, githubPath, 'feature-deleted-upstream', {
-      'a.txt': 'will be deleted upstream',
-    })
+    // Branched from main, so only the workspace keeps it (an unrelated history is kept anyway).
+    await forcePushRewrite(tmpDir, githubPath, 'feature-deleted-upstream')
     const sha = await seedBranch(remoteGitPath, githubPath, 'feature-deleted-upstream')
     await giveWorkspace('feature-deleted-upstream')
     await makeWorker().syncGit()
@@ -605,7 +604,7 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
   })
 
   it('deletes the head of a branch GitHub deleted once no editor work is left in it', async () => {
-    await commitOnto(tmpDir, githubPath, 'feature-merged', { 'a.txt': 'merged and deleted' })
+    await forcePushRewrite(tmpDir, githubPath, 'feature-merged')
     await makeWorker().syncGit()
     await expect(bareRefExists(remoteGitPath, 'refs/heads/feature-merged')).resolves.toBe(true)
 
@@ -617,7 +616,7 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
   })
 
   it('deletes nothing when GitHub answers without the base branch', async () => {
-    await commitOnto(tmpDir, githubPath, 'feature-kept', { 'a.txt': 'kept' })
+    await forcePushRewrite(tmpDir, githubPath, 'feature-kept')
     await makeWorker().syncGit()
 
     await openBareRepo(githubPath).raw(['update-ref', '-d', 'refs/heads/feature-kept'])
@@ -674,6 +673,44 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
     } finally {
       await release()
     }
+  })
+
+  it('never writes through a symbolic ref planted under refs/heads', async () => {
+    const mainSha = await bareRevParse(remoteGitPath, 'refs/heads/main')
+    await openBareRepo(remoteGitPath).raw(['symbolic-ref', 'refs/heads/planted', 'refs/heads/main'])
+
+    await makeWorker().syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/main')).resolves.toBe(mainSha)
+    await expect(
+      openBareRepo(remoteGitPath).raw(['symbolic-ref', 'refs/heads/planted']),
+    ).resolves.toContain('refs/heads/main')
+    expect(trackedOf(await readStatus()).pruned).toEqual([])
+  })
+
+  it('reads past a task file without a payload', async () => {
+    const { newTip } = await forcePushedAfterMirroring('feature-beside-bad-task')
+    await fs.mkdir(path.join(taskDir(), 'pending'), { recursive: true })
+    await fs.writeFile(
+      path.join(taskDir(), 'pending', 'no-payload.json'),
+      JSON.stringify({ id: 'no-payload', action: 'push-branch' }),
+    )
+
+    await makeWorker().syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/feature-beside-bad-task')).resolves.toBe(
+      newTip,
+    )
+  })
+
+  it('keeps a head GitHub does not have whose history shares nothing with the base', async () => {
+    // A settings branch under a name this worker does not know as one: an orphan history.
+    const sha = await commitOnto(tmpDir, remoteGitPath, 'site-settings', { 'groups.json': '[]' })
+
+    await makeWorker().syncGit()
+
+    await expect(bareRevParse(remoteGitPath, 'refs/heads/site-settings')).resolves.toBe(sha)
+    expect(trackedOf(await readStatus()).pruned).toEqual([])
   })
 
   it('escapes a hostile branch name in the warning', async () => {

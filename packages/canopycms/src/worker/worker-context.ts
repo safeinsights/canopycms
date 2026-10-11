@@ -108,7 +108,7 @@ export interface WorkerContext {
   /** This deployment's own settings branch name. Throws on an invalid name. */
   ensureSettingsBranch(): string
   /**
-   * Diverged branches this worker has warned about, each with the local and GitHub tips it named
+   * Diverged branches this worker has warned about, each with the tips and reason it named
    * (git-sync.ts's `warnDivergedOnce`). Held per instance, so a restarted worker warns afresh.
    */
   warnedDivergences(): Map<string, string>

@@ -15,13 +15,61 @@ export type StaleMirrorContext = Pick<
 >
 
 /**
- * Why a `remote.git` head is this deployment's own, not a copy of GitHub's: the base branch, a
- * settings branch (its workspace lives outside the branches root, and a stranded one is [SYNC-M3]'s
- * signal), a branch workspace at its sanitized name (which is also where the [SYNC-H1] marker
- * lives), a push task queued or running for it, or its provisioning lock held, so a workspace may
- * be appearing.
+ * Why a `remote.git` head is kept as this deployment's own rather than treated as a copy of
+ * GitHub's: the base branch; a settings branch (its workspace lives outside the branches root, and
+ * a stranded one is [SYNC-M3]'s signal); a head GitHub no longer has whose history shares no commit
+ * with the base, as a settings branch's never does, even under a name this worker does not know as
+ * one; a branch workspace at its sanitized name (which is also where the [SYNC-H1] marker lives); a
+ * push task queued or running for it; its provisioning lock held, so a workspace may be appearing;
+ * this deployment's settings branch unresolvable, so any head may be it; or the check failing.
  */
-export type EditorState = 'base' | 'settings' | 'workspace' | 'queued-push' | 'busy'
+export type EditorState =
+  | 'base'
+  | 'settings'
+  | 'unrelated-history'
+  | 'workspace'
+  | 'queued-push'
+  | 'busy'
+  | 'unresolved-settings'
+  | 'unchecked'
+
+/**
+ * The branches root and the task queue as read once this cycle, by sanitized name. A name in
+ * `workspaces` is kept without taking its lock; one absent there is re-read under the lock.
+ */
+export interface EditorWorkSnapshot {
+  workspaces: ReadonlySet<string>
+  queuedPushes: ReadonlySet<string>
+}
+
+/**
+ * Read {@link EditorWorkSnapshot}, once per sync cycle and after the heads it applies to. Pending is
+ * listed before processing, since a claim moves a task from the first to the second. A push task
+ * queued after this read comes from a workspace, which {@link settleStaleMirror}'s lock keeps from
+ * appearing, or was planted; one that slips past it (put back to pending between the two listings)
+ * reads the head before the update, and pushes what it would have pushed without it, or after, and
+ * finds nothing of its own to push.
+ */
+export async function readEditorWork(
+  ctx: Pick<StaleMirrorContext, 'contentBranchesPath' | 'taskDir'>,
+): Promise<EditorWorkSnapshot> {
+  const workspaces = new Set(await fs.readdir(ctx.contentBranchesPath).catch(() => []))
+  const queuedPushes = new Set<string>()
+  for (const status of ['pending', 'processing'] as const) {
+    for (const task of await listTasks(ctx.taskDir, status, Number.POSITIVE_INFINITY)) {
+      const payload: unknown = task.payload
+      const branch =
+        typeof payload === 'object' && payload !== null
+          ? (payload as Record<string, unknown>).branch
+          : undefined
+      // Compared sanitized, the form a workspace's directory takes, so near-collisions count too.
+      if (task.action.startsWith('push') && typeof branch === 'string') {
+        queuedPushes.add(sanitizeBranchName(branch))
+      }
+    }
+  }
+  return { workspaces, queuedPushes }
+}
 
 export type MirrorSettlement =
   /** The head now matches GitHub: moved to GitHub's tip, or deleted when GitHub has no such branch. */
@@ -29,6 +77,11 @@ export type MirrorSettlement =
   | { kind: 'kept'; state: EditorState }
   /** The head moved after it was read; the lease refused the update, and the next cycle retries. */
   | { kind: 'moved-meanwhile'; error: string }
+  /**
+   * `packed-refs.lock` is held, which every deletion needs: by a concurrent deletion, or left by a
+   * git killed mid-delete, which github-transfer.ts reports once it is stale.
+   */
+  | { kind: 'packed-refs-locked' }
 
 /**
  * Bring `remote.git`'s `refs/heads/<name>` to GitHub's tip `to` (null: delete it, GitHub having
@@ -43,10 +96,9 @@ export type MirrorSettlement =
  * elsewhere keeps the head for this cycle. The update leases on `from`, so a push that moved the
  * head meanwhile wins and the head is revisited next cycle.
  *
- * A push task already in the queue for the branch keeps the head too. Pending is listed before
- * processing, since a claim moves a task from the first to the second. A task that slips past the
- * check (put back to pending between the two listings) reads the head before the update, and
- * pushes what it would have pushed without it, or after, and finds nothing of its own to push.
+ * A push task queued for the branch keeps the head too, as `editorWork` listed the queue. The
+ * update names the head itself (`--no-deref`): the listing skips symbolic refs, and one planted
+ * between the listing and the update fails the lease rather than moving the ref it points at.
  *
  * Every party that can write this head can already set it to any value it holds or delete it:
  * the update only ever makes the head match GitHub, as the gateway's fetch reported it.
@@ -56,15 +108,20 @@ export async function settleStaleMirror(
   git: SimpleGit,
   head: { name: string; from: string; to: string | null },
   ownSettingsBranch: string,
-  /** The branches root as listed earlier this cycle: a name in it is kept without the lock. */
-  listedWorkspaces: ReadonlySet<string>,
+  editorWork: EditorWorkSnapshot,
+  /** GitHub's base tip, against which a head GitHub no longer has must share history. */
+  baseTip: string,
 ): Promise<MirrorSettlement> {
   const { name, from, to } = head
   if (name === ctx.baseBranch) return { kind: 'kept', state: 'base' }
   if (isSettingsBranchName(name, ownSettingsBranch)) return { kind: 'kept', state: 'settings' }
 
   const dirName = sanitizeBranchName(name)
-  if (listedWorkspaces.has(dirName)) return { kind: 'kept', state: 'workspace' }
+  if (editorWork.workspaces.has(dirName)) return { kind: 'kept', state: 'workspace' }
+  if (editorWork.queuedPushes.has(dirName)) return { kind: 'kept', state: 'queued-push' }
+  if (to === null && !(await sharesHistory(git, from, baseTip))) {
+    return { kind: 'kept', state: 'unrelated-history' }
+  }
   let release: () => Promise<void>
   try {
     release = await tryAcquireProvisioningLock(
@@ -81,19 +138,21 @@ export async function settleStaleMirror(
     if ((await fs.readdir(ctx.contentBranchesPath)).includes(dirName)) {
       return { kind: 'kept', state: 'workspace' }
     }
-    for (const status of ['pending', 'processing'] as const) {
-      const tasks = await listTasks(ctx.taskDir, status, Number.POSITIVE_INFINITY)
-      if (tasks.some((task) => task.action.startsWith('push') && pushesBranch(task, dirName))) {
-        return { kind: 'kept', state: 'queued-push' }
-      }
-    }
     const ref = `refs/heads/${name}`
     try {
-      await git.raw(to === null ? ['update-ref', '-d', ref, from] : ['update-ref', ref, to, from])
+      await git.raw(
+        to === null
+          ? ['update-ref', '--no-deref', '-d', ref, from]
+          : ['update-ref', '--no-deref', ref, to, from],
+      )
     } catch (err: unknown) {
-      // The lease's refusal, or the ref's lock held by a concurrent writer; sharedRepoGit pins the
-      // C locale, so the text is git's own. Anything else is the caller's to report.
+      // sharedRepoGit pins the C locale, so the text is git's own. Anything else is the caller's
+      // to report.
       const message = getErrorMessage(err)
+      if (/Unable to create '[^']*packed-refs\.lock': File exists/.test(message)) {
+        return { kind: 'packed-refs-locked' }
+      }
+      // The lease's refusal, or the ref's own lock held by a concurrent writer.
       if (/cannot lock ref|Unable to create '[^']*\.lock': File exists/.test(message)) {
         return { kind: 'moved-meanwhile', error: message }
       }
@@ -105,8 +164,12 @@ export async function settleStaleMirror(
   }
 }
 
-/** Compared sanitized, the form a workspace's directory takes, so near-collisions count too. */
-function pushesBranch(task: { payload: Record<string, unknown> }, dirName: string): boolean {
-  const branch = task.payload.branch
-  return typeof branch === 'string' && sanitizeBranchName(branch) === dirName
+/** Whether `head` and `baseTip` share a commit; an error counts as no, which keeps the head. */
+async function sharesHistory(git: SimpleGit, head: string, baseTip: string): Promise<boolean> {
+  try {
+    // No common ancestor exits 1 with no output, which simple-git may resolve as '' or throw.
+    return (await git.raw(['merge-base', '--end-of-options', head, baseTip])).trim() !== ''
+  } catch {
+    return false
+  }
 }
