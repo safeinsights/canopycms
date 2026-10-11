@@ -1,18 +1,16 @@
 ---
 priority: P3
 summary: >-
-  A body `entry:ID` link in AI content resolves to its target's URL even when `exclude` leaves the target out of the export, so the URL (and the slug in it) of an excluded entry, e.g. a draft, appears in the output. Reference fields are masked to `(unavailable entry <id>)` for exactly this case; body links are not.
+  RESOLVED (2026-10-11), folded into [ai-content-ignores-noindex.md](ai-content-ignores-noindex.md). A body `entry:` link in AI content is resolved only once the export set is settled, and a link to an entry the export leaves out (by `exclude`, `noindex`, or a failed render) renders as its plain link text, with no URL or slug; any other form of the link points at `#`.
 ---
 
 # AI content: body `entry:` links reveal the URL of an excluded entry
 
-`generate.ts` runs `resolveEntryLinksInText` over each md/mdx body before the export set is known,
-and the resolver links to any entry in the id index. A reference field to the same target renders
-as `(unavailable entry <id>)` (`maskUnexportedTargets` in `ai/references.ts`), so one AI document
-can hide an excluded target in a field and still link it in the body.
+## Status: RESOLVED 2026-10-11
 
-## Proposed fix
-
-Resolve body links in the second phase of `generateAIContent`, once the exported ids are known,
-and point a link to a target outside them at `#`, as the resolver already does for a missing
-target.
+`generate.ts` keeps each md/mdx body as stored and resolves its `entry:` links in each render
+round, through `resolveEntryLinksInText`'s `isLinkable` option bound to the exported set. An
+inline markdown link (or image) to a withheld or missing target becomes its bracketed text; a
+reference-style definition, HTML `href` or bare token becomes `#`. An entry whose render fails
+leaves the export, and every entry whose body links to it renders again. Reference fields keep
+their `(unavailable entry <id>)` masking.
