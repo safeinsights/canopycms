@@ -76,6 +76,8 @@ export interface RunWorkerDeps {
   sleep?: (ms: number) => Promise<void>
   /** The contract this bundle runs at (default {@link WORKER_CONTRACT_VERSION}); a test seam. */
   bundleContract?: number
+  /** Test seam: the lifecycle retry window (default {@link LIFECYCLE_RETRY_WINDOW_MS}). */
+  lifecycleRetryWindowMs?: number
 }
 
 export interface GitHubAppEnv {
@@ -510,23 +512,30 @@ async function buildSplitWorker(
   return {
     worker,
     watchForTermination: () => pollGatewayForTermination(gateway, { sleep: deps.sleep }),
-    completeLifecycle: () => completeLifecycleThroughGateway(gateway, deps.sleep),
+    completeLifecycle: () =>
+      completeLifecycleThroughGateway(
+        gateway,
+        deps.lifecycleRetryWindowMs ?? LIFECYCLE_RETRY_WINDOW_MS,
+        deps.sleep,
+      ),
   }
 }
 
 /**
- * Ask the gateway to complete the lifecycle action until it does, for at most
- * {@link LIFECYCLE_RETRY_WINDOW_MS}; never rejects. The gateway refuses until its own watch has seen
+ * Ask the gateway to complete the lifecycle action until it does, for at most `windowMs`
+ * ({@link LIFECYCLE_RETRY_WINDOW_MS}), the call in flight included; never rejects. The gateway refuses until its own watch has seen
  * the Auto Scaling notice, which a restarted gateway reads again first.
  */
 async function completeLifecycleThroughGateway(
   gateway: Pick<GitHubGateway, 'completeLifecycle'>,
+  windowMs: number,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
 ): Promise<void> {
-  const deadline = Date.now() + LIFECYCLE_RETRY_WINDOW_MS
+  const deadline = Date.now() + windowMs
   for (let attempt = 1; ; attempt++) {
     try {
-      await gateway.completeLifecycle()
+      // A call the gateway holds (a restart, its wait for its own notice) ends with the window.
+      await gateway.completeLifecycle(AbortSignal.timeout(Math.max(1, deadline - Date.now())))
       return
     } catch (err) {
       if (attempt >= LIFECYCLE_ATTEMPTS || Date.now() + LIFECYCLE_RETRY_MS >= deadline) {

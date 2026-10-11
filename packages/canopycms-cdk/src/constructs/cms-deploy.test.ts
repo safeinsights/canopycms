@@ -42,6 +42,11 @@ import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
 } from '../../../canopycms/src/operating-mode/deployment-name-fixtures'
+import {
+  shippedInstanceFile,
+  shippedInstanceFiles,
+  shippedWorkerUnits,
+} from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 import { readFileSync } from 'node:fs'
 
@@ -1519,7 +1524,8 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
     const template = synth()
     const all = workerUserDataBlobs(template)
     expect(all).toContain('>> /etc/fstab')
-    expect(all).toContain('RequiresMountsFor=/mnt/efs')
+    for (const [, unit] of shippedWorkerUnits())
+      expect(unit).toContain('RequiresMountsFor=/mnt/efs')
   })
 })
 
@@ -1542,12 +1548,16 @@ describe('CanopyCmsService: worker boot cannot fail silently', () => {
   })
 
   it('runs the worker from the version-pinned node binary, not the alternatives symlink', () => {
-    const all = workerUserDataBlobs(synth())
     // AL2023 installs /usr/bin/node-22 and points /usr/bin/node at some
     // installed version via `alternatives`, whose selection AWS documents as
     // able to change at any time.
-    expect(all).toContain('ExecStart=/usr/bin/node-22 index.js')
-    expect(all).not.toContain('ExecStart=/usr/bin/node index.js')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('ExecStart=/usr/bin/node-22 index.js')
+      expect(unit).not.toContain('ExecStart=/usr/bin/node index.js')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'ExecStart=/usr/bin/node-22 index.js gateway',
+    )
   })
 
   it('shuts the instance down when user-data fails, so the ASG replaces it', () => {
@@ -2702,8 +2712,15 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
-    expect(all).not.toContain('StandardOutput=journal')
+    for (const [, unit] of shippedWorkerUnits()) {
+      expect(unit).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
+    }
+    expect(shippedInstanceFile('canopy-github.service')).toContain(
+      'StandardOutput=append:/var/log/canopy-github/gateway.log',
+    )
+    expect([...shippedInstanceFiles().values()].flat().join('\n')).not.toContain(
+      'StandardOutput=journal',
+    )
     expect(all).toContain('/etc/logrotate.d/canopy-worker')
   })
 

@@ -384,3 +384,41 @@ export function inspectRc(): string[] {
     `cd ${EFS_MOUNT_PATH}`,
   ]
 }
+
+/**
+ * Where user-data unpacks the instance files (root-only), before installing those its layout
+ * needs.
+ */
+export const INSTANCE_FILES_DIR = '/run/canopy-instance-files'
+
+/** The instance files, by their name in {@link INSTANCE_FILES_DIR}. */
+export function instanceFiles(): Record<string, string[]> {
+  return {
+    'canopy-worker.service': workerUnit('split'),
+    'canopy-worker-single-process.service': workerUnit('single-process'),
+    'canopy-github.service': gatewayUnit(),
+    'canopy-github.socket': gatewaySocketUnit(),
+    'canopy-inspect': canopyInspectScript(),
+    'inspect-checks': inspectChecksScript(),
+    'inspect.rc': inspectRc(),
+  }
+}
+
+const INSTANCE_FILE_DELIMITER = 'CANOPYFILEEOF'
+
+/**
+ * A script that writes {@link instanceFiles} into its working directory. `build:worker` writes it
+ * beside the bundle as `worker/dist/instance-files.sh`, and the construct ships it as an asset
+ * checked against its sha256, as the bundle is: EC2 caps user data at 16 KiB, which the files
+ * alone would nearly fill.
+ */
+export function instanceFilesScript(): string {
+  return `${Object.entries(instanceFiles())
+    .flatMap(([name, lines]) => {
+      if (lines.includes(INSTANCE_FILE_DELIMITER)) {
+        throw new Error(`${name} holds the line ${INSTANCE_FILE_DELIMITER}`)
+      }
+      return [`cat > ${name} << '${INSTANCE_FILE_DELIMITER}'`, ...lines, INSTANCE_FILE_DELIMITER]
+    })
+    .join('\n')}\n`
+}

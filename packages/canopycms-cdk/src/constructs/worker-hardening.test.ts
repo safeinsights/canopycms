@@ -17,6 +17,7 @@ import { aws_ecr as ecr, aws_iam as iam, aws_lambda as lambda, aws_sns as sns } 
 
 import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
+import { shippedWorkerUnits } from '../../test-support/instance-files'
 import { newTestApp } from '../../test-support/test-synth'
 
 interface Statement {
@@ -153,13 +154,19 @@ describe('the worker bundle', () => {
     expect(check).toBeLessThan(all.indexOf('trap - ERR'))
   })
 
-  it('is the only object in the asset bucket the worker can read', () => {
+  it('is, with the instance files, the only object in the asset bucket the worker can read', () => {
+    const filesLine = all[lineIndex(all, "retry 'worker instance files download' aws s3 cp s3://")]
+    const [, filesBucket, filesKey] = /s3:\/\/([^/]+)\/(\S+) /.exec(filesLine) ?? []
+    expect(filesKey).toMatch(/^[0-9a-f]{64}\.sh$/)
     const statements = statementsOf(template, workerRoleId(template))
     const s3 = statements.filter((s) => actionsOf(s).some((a) => a.startsWith('s3:')))
     expect(s3).toHaveLength(1)
     expect(actionsOf(s3[0])).toEqual(['s3:GetObject'])
-    const resource = JSON.stringify(s3[0].Resource)
+    const resources = s3[0].Resource as unknown[]
+    expect(resources).toHaveLength(2)
+    const resource = JSON.stringify(resources)
     expect(resource).toContain(`${bucket}/${key}`)
+    expect(resource).toContain(`${filesBucket}/${filesKey}`)
     expect(resource).not.toContain('/*')
   })
 })
@@ -364,6 +371,7 @@ describe('boot failures name their step', () => {
       'dnf install amazon-efs-utils',
       'EFS mount',
       'worker bundle download',
+      'worker instance files download',
       'dnf install amazon-cloudwatch-agent logrotate',
     ])
     expect(all).toContain(`      echo "canopy-worker boot: '$step' failed after $n attempts" >&2`)
@@ -554,8 +562,8 @@ describe('the worker systemd unit is sandboxed', () => {
     'utf-8',
   ).split('\n')
 
-  it.each(sandbox)('the deployed unit carries %s', (line) => {
-    expect(lines(template)).toContain(line)
+  it.each(sandbox)('both deployed worker units carry %s', (line) => {
+    for (const [, unit] of shippedWorkerUnits()) expect(unit).toContain(line)
   })
 
   it.each(sandbox)('the checked-in copy carries %s', (line) => {
@@ -563,18 +571,17 @@ describe('the worker systemd unit is sandboxed', () => {
   })
 
   it("leaves the worker's own code read-only", () => {
-    // User data writes two worker units, the split one and the single-process one.
-    const deployed = lines(template).filter((l) => l.startsWith('ReadWritePaths='))
-    expect(deployed).toEqual(['ReadWritePaths=/mnt/efs', 'ReadWritePaths=/mnt/efs'])
-    expect(checkedIn.filter((l) => l.startsWith('ReadWritePaths='))).toEqual([
-      'ReadWritePaths=/mnt/efs',
-    ])
+    for (const unit of [...shippedWorkerUnits().map(([, u]) => u), checkedIn]) {
+      expect(unit.filter((l) => l.startsWith('ReadWritePaths='))).toEqual([
+        'ReadWritePaths=/mnt/efs',
+      ])
+    }
   })
 
   // systemd opens the append: log as root, following symlinks, before the
   // sandbox applies; LogsDirectory= would chown its directory to the worker.
   it('gives the worker no ownership of its log directory', () => {
-    for (const unit of [lines(template), checkedIn]) {
+    for (const unit of [lines(template), ...shippedWorkerUnits().map(([, u]) => u), checkedIn]) {
       expect(unit.filter((l) => l.startsWith('LogsDirectory'))).toEqual([])
     }
   })

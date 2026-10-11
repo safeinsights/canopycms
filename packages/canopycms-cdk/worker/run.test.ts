@@ -1185,6 +1185,28 @@ describe('runWorker: split mode', () => {
       expect(Number(stopSec) * 1000).toBeGreaterThan(DEFAULT_DRAIN_DEADLINE_MS + abortGraceMs)
     })
 
+    it('ends a lifecycle call the gateway holds when the retry window ends, and exits', async () => {
+      const h = harness({ env: splitEnv(), lifecycleRetryWindowMs: 200 })
+      h.gateway.termination.mockResolvedValueOnce({
+        kind: 'auto-scaling',
+        reason: 'Auto Scaling is terminating',
+      })
+      // Held until its signal aborts, as a call across a gateway restart can be.
+      h.gateway.completeLifecycle.mockImplementation(
+        (signal?: AbortSignal) =>
+          new Promise<void>((_, reject) =>
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true }),
+          ),
+      )
+      const started = Date.now()
+
+      await runWorker(h.deps)
+      await vi.waitFor(() => expect(h.exitCodes()).toEqual([EXIT_DRAINED_FOR_TERMINATION]))
+
+      expect(Date.now() - started).toBeLessThan(5_000)
+      expect(h.gateway.completeLifecycle).toHaveBeenCalledTimes(1)
+    })
+
     it('retries completing the lifecycle through a gateway that restarted, and exits once it has', async () => {
       const h = harness({ env: splitEnv() })
       h.gateway.termination.mockResolvedValueOnce({

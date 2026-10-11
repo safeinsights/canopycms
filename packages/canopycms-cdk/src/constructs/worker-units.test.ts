@@ -5,7 +5,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -16,6 +16,11 @@ import { aws_ecr as ecr, aws_lambda as lambda } from 'aws-cdk-lib'
 import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { newTestApp } from '../../test-support/test-synth'
+import {
+  SHIPPED_INSTANCE_FILES,
+  shippedInstanceFile,
+  shippedInstanceFilesSha256,
+} from '../../test-support/instance-files'
 import {
   GATEWAY_SPLIT_CONTRACT,
   GITHUB_GATEWAY_SOCKET_ENV,
@@ -29,6 +34,7 @@ import {
   CANOPY_INSPECT,
   INSPECT_CHECKS,
   INSPECT_RC,
+  INSTANCE_FILES_DIR,
   SINGLE_PROCESS_UNIT_CONTRACT,
   WORKER_SANDBOX_DIRECTIVES,
   WORKER_SPLIT_SANDBOX,
@@ -37,6 +43,8 @@ import {
   gatewayUnit,
   inspectChecksScript,
   inspectRc,
+  instanceFiles,
+  instanceFilesScript,
   workerUnit,
 } from './worker-units'
 
@@ -201,18 +209,122 @@ describe('the environment, split between the two processes', () => {
   })
 })
 
-describe('the units', () => {
-  const [splitWorker, singleProcessWorker] = heredocs(
-    all,
-    '/etc/systemd/system/canopy-worker.service',
-  )
+describe('the instance files', () => {
+  const scratch = mkdtempSync(path.join(os.tmpdir(), 'canopy-instance-files-'))
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
-  it('writes the split units user-data and the package ship, byte for byte', () => {
+  it('are the asset user data downloads, checks against its sha256 and unpacks, under the fail-fast trap', () => {
+    expect(readFileSync(SHIPPED_INSTANCE_FILES, 'utf-8')).toBe(instanceFilesScript())
+    const download = indexOfLine(
+      all,
+      (l) => l.startsWith("retry 'worker instance files download' aws s3 cp s3://"),
+      'downloads them',
+    )
+    const check = indexOfLine(
+      all,
+      (l) =>
+        l ===
+        `echo '${shippedInstanceFilesSha256()}  /tmp/canopy-instance-files.sh' | sha256sum -c -`,
+      'checks them',
+    )
+    const unpack = indexOfLine(
+      all,
+      (l) => l === `(cd ${INSTANCE_FILES_DIR} && bash /tmp/canopy-instance-files.sh)`,
+      'unpacks them',
+    )
+    expect(all).toContain(`install -d -o root -g root -m 0700 ${INSTANCE_FILES_DIR}`)
+    expect(download).toBeLessThan(check)
+    expect(check).toBeLessThan(unpack)
+    expect(unpack).toBeLessThan(all.indexOf('trap - ERR'))
+  })
+
+  it('unpack into exactly the files the units and the inspect sandbox are made of', () => {
+    const run = spawnSync('bash', ['--norc', SHIPPED_INSTANCE_FILES], {
+      cwd: scratch,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    expect(run.status).toBe(0)
+    expect(Object.keys(instanceFiles()).sort()).toEqual(readdirSync(scratch).sort())
+    for (const [name, lines] of Object.entries(instanceFiles())) {
+      expect(readFileSync(path.join(scratch, name), 'utf-8'), name).toBe(`${lines.join('\n')}\n`)
+    }
+  })
+
+  it('install by layout: the split units and canopy-inspect, or the single unit', () => {
+    const split = indexOfLine(all, (l) => l.startsWith('if [ "${WORKER_BUNDLE_CONTRACT'), 'splits')
+    const otherwise = all.indexOf('else', split)
+    const end = all.indexOf('fi', otherwise)
+    const installs = (from: number, to: number) =>
+      all
+        .slice(from, to)
+        .filter((l) => l.trim().startsWith(`install -m `) && l.includes(INSTANCE_FILES_DIR))
+        .map((l) => l.trim())
+    expect(installs(split, otherwise)).toEqual([
+      `install -m 0644 ${INSTANCE_FILES_DIR}/canopy-worker.service /etc/systemd/system/canopy-worker.service`,
+      `install -m 0644 ${INSTANCE_FILES_DIR}/canopy-github.service /etc/systemd/system/canopy-github.service`,
+      `install -m 0644 ${INSTANCE_FILES_DIR}/canopy-github.socket /etc/systemd/system/canopy-github.socket`,
+      `install -m 0755 ${INSTANCE_FILES_DIR}/canopy-inspect ${CANOPY_INSPECT}`,
+      `install -m 0755 ${INSTANCE_FILES_DIR}/inspect-checks ${INSPECT_CHECKS}`,
+      `install -m 0644 ${INSTANCE_FILES_DIR}/inspect.rc ${INSPECT_RC}`,
+    ])
+    expect(installs(otherwise, end)).toEqual([
+      `install -m 0644 ${INSTANCE_FILES_DIR}/canopy-worker-single-process.service /etc/systemd/system/canopy-worker.service`,
+    ])
+  })
+
+  it('leave user data well inside the 16 KiB EC2 allows, with every prop at its longest', () => {
+    const arn = (name: string) =>
+      `arn:aws:secretsmanager:us-east-1:123456789012:secret:${name.padEnd(80, 'x')}`
+    const t = synth({
+      githubOwner: 'o'.repeat(39),
+      githubRepo: 'r'.repeat(100),
+      baseBranch: `b${'x'.repeat(99)}`,
+      settingsBranch: `canopycms-settings-${'s'.repeat(80)}`,
+      githubAppId: '123456789',
+      githubAppInstallationId: '123456789',
+      githubAppPrivateKeySecretArn: arn('app'),
+      githubAppPrivateKeySecretJsonField: 'f'.repeat(60),
+      clerkSecretKeySecretArn: arn('clerk'),
+      clerkSecretKeySecretJsonField: 'f'.repeat(60),
+      protectedBranches: Array.from({ length: 20 }, (_, i) => `release-${i}/*`),
+      workerCapacity: { type: 'spot' },
+      workerLogGroupName: `/canopycms/${'g'.repeat(200)}`,
+    })
+    // Each Ref as a long resolved value: bucket names (63), ids, the log group.
+    const bytes = Buffer.byteLength(
+      userDataLines(t)
+        .join('\n')
+        .replace(/REF_\w+/g, 'x'.repeat(100)),
+    )
+    expect(bytes).toBeLessThan(16_384 - 4_096)
+  })
+
+  it('leave no shell comment in user data outside a heredoc', () => {
+    let heredocEnd: string | undefined
+    const comments = all.filter((line) => {
+      if (heredocEnd !== undefined) {
+        if (line === heredocEnd) heredocEnd = undefined
+        return false
+      }
+      heredocEnd = /<< '(\w+)'$/.exec(line)?.[1]
+      return /^\s*#(?!!)/.test(line)
+    })
+    expect(comments).toEqual([])
+    expect(heredocEnd).toBeUndefined()
+  })
+})
+
+describe('the units', () => {
+  const splitWorker = shippedInstanceFile('canopy-worker.service')
+  const singleProcessWorker = shippedInstanceFile('canopy-worker-single-process.service')
+
+  it('ships the split units in the package byte for byte as the instance gets them', () => {
     const checkedIn = (name: string) =>
       readFileSync(path.join(PACKAGE_ROOT, 'worker', name), 'utf-8')
     expect(splitWorker).toEqual(workerUnit('split'))
-    expect(heredocs(all, '/etc/systemd/system/canopy-github.service')).toEqual([gatewayUnit()])
-    expect(heredocs(all, '/etc/systemd/system/canopy-github.socket')).toEqual([gatewaySocketUnit()])
+    expect(shippedInstanceFile('canopy-github.service')).toEqual(gatewayUnit())
+    expect(shippedInstanceFile('canopy-github.socket')).toEqual(gatewaySocketUnit())
     expect(checkedIn('canopy-worker.service')).toBe(`${workerUnit('split').join('\n')}\n`)
     expect(checkedIn('canopy-github.service')).toBe(`${gatewayUnit().join('\n')}\n`)
     expect(checkedIn('canopy-github.socket')).toBe(`${gatewaySocketUnit().join('\n')}\n`)
@@ -453,11 +565,10 @@ describe('canopy-inspect', () => {
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'canopy-inspect-'))
   afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
-  it('installs its three files, root-owned, the scripts executable', () => {
-    expect(heredocs(all, CANOPY_INSPECT)).toEqual([canopyInspectScript()])
-    expect(heredocs(all, INSPECT_CHECKS)).toEqual([inspectChecksScript()])
-    expect(heredocs(all, INSPECT_RC)).toEqual([inspectRc()])
-    expect(all.map((l) => l.trim())).toContain(`chmod 0755 ${CANOPY_INSPECT} ${INSPECT_CHECKS}`)
+  it('ships its three files as the instance gets them', () => {
+    expect(shippedInstanceFile('canopy-inspect')).toEqual(canopyInspectScript())
+    expect(shippedInstanceFile('inspect-checks')).toEqual(inspectChecksScript())
+    expect(shippedInstanceFile('inspect.rc')).toEqual(inspectRc())
   })
 
   /** The wrapper, with systemd-run replaced by a stub that prints its argv and stdin, exiting `status`. */
