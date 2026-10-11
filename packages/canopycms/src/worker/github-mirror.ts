@@ -5,7 +5,6 @@ import type { Readable } from 'node:stream'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { gitNetworkChildEnv } from '../git-manager'
-import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import {
   BundleHeaderError,
@@ -24,7 +23,8 @@ import {
   sweepLocksAndTemporaries,
   type MirrorCorruption,
 } from './github-mirror-upkeep'
-import { workerLog, workerLogError, workerLogWarn } from './log'
+import { BranchPolicy, GatewayRefusalError, branchNameProblem } from './branch-policy'
+import { gatewayLog, gatewayLogError, gatewayLogWarn } from './gateway-egress'
 import {
   githubBoundGitOptions,
   mirrorGitOptions,
@@ -151,7 +151,7 @@ export class GitHubMirror {
     await recoverRebuild(this.gitDir)
     const removed = await sweepLocksAndTemporaries(this.gitDir)
     if (removed.length > 0) {
-      workerLogWarn(
+      gatewayLogWarn(
         `Removed what a stopped gateway left in the GitHub mirror: ${removed.join(', ')}`,
       )
     }
@@ -217,7 +217,7 @@ export class GitHubMirror {
       await fs.rm(old, { recursive: true, force: true })
       this.corruption = null
       this.generation++
-      workerLogWarn(`Rebuilt the GitHub mirror from GitHub: ${reason}`)
+      gatewayLogWarn(`Rebuilt the GitHub mirror from GitHub: ${reason}`)
     } catch (err) {
       this.rebuildFailedAt = Date.now()
       await fs.rm(rebuild, { recursive: true, force: true }).catch(() => undefined)
@@ -279,7 +279,7 @@ export class GitHubMirror {
     }
     try {
       const removed = await sweepLocksAndTemporaries(this.gitDir)
-      if (removed.length > 0) workerLogWarn(`${label}: ${removed.join(', ')}`)
+      if (removed.length > 0) gatewayLogWarn(`${label}: ${removed.join(', ')}`)
       this.sweepOwed = false
       return true
     } finally {
@@ -301,7 +301,7 @@ export class GitHubMirror {
    */
   async afterFetch(): Promise<void> {
     await this.warnIfLarge().catch((err: unknown) =>
-      workerLogWarn(`Could not measure the GitHub mirror: ${getErrorMessage(err)}`),
+      gatewayLogWarn(`Could not measure the GitHub mirror: ${getErrorMessage(err)}`),
     )
     if (Date.now() - this.lastMaintenanceAt < this.maintenanceIntervalMs) return
     const release = this.maintenance.tryAcquire()
@@ -320,10 +320,10 @@ export class GitHubMirror {
       const { repacked } = await maintainMirror((args, { deadlineMs }) =>
         runInRepo(this.gitDir, deadlineMs, args, { deadlineMs }),
       )
-      if (repacked) workerLog(`GitHub mirror repacked in ${Date.now() - started}ms`)
+      if (repacked) gatewayLog(`GitHub mirror repacked in ${Date.now() - started}ms`)
     } catch (err) {
       this.sweepOwed = true
-      workerLogError(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
+      gatewayLogError(`GitHub mirror maintenance failed: ${getErrorMessage(err)}`)
     } finally {
       this.lastMaintenanceAt = Date.now()
     }
@@ -334,7 +334,7 @@ export class GitHubMirror {
     const kib = await objectStoreKiB((args) => runInRepo(this.gitDir, this.timeoutMs, args))
     if (kib > MIRROR_SIZE_WARN_KIB) {
       this.warnedSize = true
-      workerLogWarn(
+      gatewayLogWarn(
         `The worker's GitHub mirror (${this.gitDir}) holds ${Math.round(kib / 1024)} MiB of ` +
           `objects, on the instance's root volume. See "The worker instance" in ` +
           `docs/deploying-to-aws.md for the headroom it assumes.`,
@@ -565,7 +565,7 @@ async function withCredentialConfig<T>(
     await fs
       .rm(dir, { recursive: true, force: true })
       .catch((err: unknown) =>
-        workerLogWarn(`Could not delete a credential file in ${dir}: ${getErrorMessage(err)}`),
+        gatewayLogWarn(`Could not delete a credential file in ${dir}: ${getErrorMessage(err)}`),
       )
   }
 }
@@ -616,33 +616,39 @@ async function assertOwnDirectory(dir: string): Promise<void> {
 }
 
 /**
- * A push the worker never makes: to a name that is not a plain branch name, to the base branch or
- * GitHub's default branch, or of an object that is not a commit. No CanopyCMS flow asks for any of
- * these, so a task that does was not written by CanopyCMS, and no retry can change the answer.
+ * A push the worker never makes: to a name that is not a plain branch name, to a protected branch
+ * (`BranchPolicy`), to a settings branch under a lease, or of an object that is not a commit.
  */
-export class RefusedPushError extends Error {
+export class RefusedPushError extends GatewayRefusalError {
   constructor(
-    readonly branch: string,
-    reason: 'invalid' | 'protected' | 'not-a-commit',
+    branch: string,
+    reason: 'invalid' | 'protected' | 'settings' | 'not-a-commit',
     sha?: string,
   ) {
     super(
+      'push',
+      branch,
+      reason,
       reason === 'invalid'
         ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
         : reason === 'protected'
-          ? `Refusing to push "${branch}" to GitHub: it is the base branch or GitHub's default ` +
-            `branch, which the CanopyCMS worker never pushes. Nothing in CanopyCMS queues such a ` +
-            `push; find out what wrote this task.`
-          : `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
-            `commit, and a branch can only point at one. Find out what put it at ` +
-            `refs/heads/${branch} in remote.git.`,
+          ? `Refusing to push "${branch}" to GitHub: it is protected (the base branch, GitHub's ` +
+            `default branch, or a name protectedBranches lists), which the CanopyCMS worker never ` +
+            `pushes. Nothing in CanopyCMS queues such a push; find out what wrote this task.`
+          : reason === 'settings'
+            ? `Refusing to push "${branch}" to GitHub under a lease: a settings branch only ever ` +
+              `fast-forwards. Find out what set a history-rewrite marker on it.`
+            : `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
+              `commit, and a branch can only point at one. Find out what put it at ` +
+              `refs/heads/${branch} in remote.git.`,
     )
     this.name = 'RefusedPushError'
   }
 }
 
 /**
- * Throw {@link RefusedPushError} unless `branch` is a plain branch name: one
+ * Throw {@link RefusedPushError} (or, for another `operation`, {@link GatewayRefusalError}) unless
+ * `branch` is a plain branch name: one `branchNameProblem` passes and
  * `git check-ref-format --branch` accepts unchanged. That rules out a `:` (git would read what
  * follows it in a refspec as another destination), `..`, `^`, `~`, `@{`, spaces and a leading
  * `-`, so `refs/heads/<branch>` is exactly the ref a push names. `check-ref-format --branch` takes
@@ -652,19 +658,31 @@ export class RefusedPushError extends Error {
 export async function assertPlainBranchName(
   branch: string,
   git: SimpleGit = simpleGit(),
+  operation: 'push' | 'delete' | 'pull-request' = 'push',
 ): Promise<void> {
+  const invalid = (why: string) =>
+    operation === 'push'
+      ? new RefusedPushError(branch, 'invalid')
+      : new GatewayRefusalError(
+          operation,
+          branch,
+          'invalid',
+          `Refusing ${JSON.stringify(branch)}: it is not a valid branch name (${why}).`,
+        )
+  const problem = branchNameProblem(branch)
+  if (problem !== null) throw invalid(problem)
   let normalized: string
   try {
     normalized = (await git.raw(['check-ref-format', '--branch', branch])).trim()
   } catch (err) {
     // Only git's own verdict is a refusal; a failure to run git at all is transient.
     if (/is not a valid branch name/.test(getErrorMessage(err))) {
-      throw new RefusedPushError(branch, 'invalid')
+      throw invalid('git check-ref-format refuses it')
     }
     throw err
   }
   // `@{-1}` and the like resolve to some other name.
-  if (normalized !== branch) throw new RefusedPushError(branch, 'invalid')
+  if (normalized !== branch) throw invalid('git resolves it to another name')
 }
 
 /** What one {@link GitHubMirror.exclusive} call may do. */
@@ -863,31 +881,10 @@ export class MirrorSession {
   }
 
   /**
-   * Refuse a push to the base branch or GitHub's default branch, which is read from GitHub
-   * itself, per push: the task queue, remote.git and the lease marker are all Lambda-writable, and
-   * the worker's base branch comes from Lambda-writable state when it is not configured
-   * (`CmsWorker.resolveBaseBranch`).
-   */
-  private async assertPushAllowed(
-    credential: GitHubCredential,
-    branch: string,
-    protectedBranches: readonly string[],
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const protectedNames = [...protectedBranches]
-    const githubDefault = await this.githubDefaultBranch(credential, signal)
-    if (githubDefault !== null) protectedNames.push(githubDefault)
-    const target = sanitizeBranchName(branch)
-    if (protectedNames.some((name) => name === branch || sanitizeBranchName(name) === target)) {
-      throw new RefusedPushError(branch, 'protected')
-    }
-  }
-
-  /**
    * The branch GitHub's HEAD names, or null for a repository with none (empty, or HEAD unborn). A
    * failure to reach GitHub throws, so a push that cannot learn it does not happen.
    */
-  private async githubDefaultBranch(
+  async githubDefaultBranch(
     credential: GitHubCredential,
     signal?: AbortSignal,
   ): Promise<string | null> {
@@ -1005,8 +1002,9 @@ export class MirrorSession {
    * it (`--force-with-lease`); without one the push is an ordinary fast-forward. Resolves with
    * what the push did to GitHub's ref.
    *
-   * Validation and the protected-branch refusal are here, at the one place every GitHub push
-   * (plain or under a lease) goes through, so no caller can skip them. A bundle's quarantine fetch
+   * Validation and `policy` are here, at the one place every GitHub push (plain or under a lease)
+   * goes through, so no caller can skip them. When `policy` needs GitHub's default branch read
+   * afresh, it is read here, in this session, from the repository the push goes to. A bundle's quarantine fetch
    * names `branch` first, so the gateway validates it before the ingest too (`pushOnce`).
    */
   async pushToGitHub(
@@ -1017,7 +1015,7 @@ export class MirrorSession {
       lease?: string
       signal?: AbortSignal
       repo?: string
-      protectedBranches: readonly string[]
+      policy: BranchPolicy
       /** Called once the push is allowed, just before git pushes. */
       onPushing?: () => void
     },
@@ -1026,7 +1024,12 @@ export class MirrorSession {
       if (!isObjectId(id)) throw new Error(`Not a commit ID: ${JSON.stringify(id)}`)
     }
     await assertPlainBranchName(branch, this.git())
-    await this.assertPushAllowed(credential, branch, options.protectedBranches, options.signal)
+    await options.policy.assertPushAllowed(
+      branch,
+      options.lease,
+      () => this.githubDefaultBranch(credential, options.signal),
+      (reason) => new RefusedPushError(branch, reason),
+    )
     options.onPushing?.()
     const status = await this.githubBound(
       credential,

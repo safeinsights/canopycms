@@ -2451,8 +2451,9 @@ describe('CanopyCmsService: deploymentName validation', () => {
  * `release/v2`. The first entry below is the regression test for that.
  *
  * These live here rather than in a cross-package fixture because there is no
- * runtime counterpart to drift from: nothing in `canopycms` validates a branch
- * name, the worker uses the string as given.
+ * runtime counterpart to drift from: the worker uses these two names as given.
+ * (`protectedBranches` does have one, `protectedPatternProblem`; see its own
+ * tests below.)
  */
 const VALID_BRANCH_NAMES = [
   'release/v2',
@@ -2529,6 +2530,44 @@ describe('CanopyCmsService: baseBranch validation', () => {
     const all = workerUserDataBlobs(synth(false))
     expect(all).toContain('CANOPYCMS_GITHUB_REPO=')
     expect(all).not.toContain('CANOPYCMS_BASE_BRANCH')
+  })
+})
+
+describe('CanopyCmsService: protectedBranches', () => {
+  it('stamps the entries, comma-separated, into the worker .env', () => {
+    const all = workerUserDataBlobs(
+      synth(false, { protectedBranches: ['release/*', 'production', '*-stable'] }),
+    )
+    expect(all).toContain('CANOPYCMS_PROTECTED_BRANCHES=release/*,production,*-stable')
+  })
+
+  it('stamps nothing when the prop is unset or empty', () => {
+    expect(workerUserDataBlobs(synth(false))).not.toContain('CANOPYCMS_PROTECTED_BRANCHES')
+    expect(workerUserDataBlobs(synth(false, { protectedBranches: [] }))).not.toContain(
+      'CANOPYCMS_PROTECTED_BRANCHES',
+    )
+  })
+
+  it.each([
+    ['a comma', 'a,b', /comma/],
+    ['a glob character other than *', 'release-[0-9]', /\[/],
+    ['a question mark', 'release-?', /\?/],
+    ['a leading refs/', 'refs/heads/main', /refs\//],
+    ['a percent sign', 'a%2fb', /%/],
+    ['non-ASCII', 'caf\u00e9', /printable ASCII/],
+    ['an empty entry', '', /empty/],
+    ['dot-dot', 'release/*..x', /\.\./],
+  ])('refuses an entry with %s at synth', (_label, entry, why) => {
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(
+      /invalid protectedBranches entry/,
+    )
+    expect(() => synth(false, { protectedBranches: [entry] })).toThrow(why)
+  })
+
+  it('names a refused glob as written, not with its wildcards replaced', () => {
+    expect(() => synth(false, { protectedBranches: ['release/*.lock'] })).toThrow(
+      '"release/*.lock"',
+    )
   })
 })
 

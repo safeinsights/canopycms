@@ -64,6 +64,11 @@ async function commitAndPush(target: string, ref: string, file: string): Promise
   return (await seed.revparse(['HEAD'])).trim()
 }
 
+/** `octokit.repos`, answering GitHub's default branch, which the policy reads before a PR or delete. */
+const defaultBranchStub = (name = 'main') => ({
+  get: vi.fn().mockResolvedValue({ data: { default_branch: name } }),
+})
+
 function gateway(
   overrides: Partial<LocalGitHubGatewayOptions> = {},
   refreshGitHubToken?: () => Promise<string | undefined>,
@@ -93,7 +98,7 @@ function gateway(
  */
 async function pushVia(
   github: GitHubGateway,
-  request: { branch: string; sha: string; protectedBranches: string[] },
+  request: { branch: string; sha: string },
   signal?: AbortSignal,
 ) {
   const { sha, ...rest } = request
@@ -203,7 +208,7 @@ describe('the credential file', () => {
     const github = gateway()
 
     await github.fetch({ have: [] })
-    await pushVia(github, { branch: 'feature', sha: ahead, protectedBranches: ['main'] })
+    await pushVia(github, { branch: 'feature', sha: ahead })
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     const credentialed = observed.filter((spawn) => spawn.env.GIT_CONFIG_GLOBAL !== undefined)
@@ -287,11 +292,7 @@ describe('the credential file', () => {
     }) as typeof childProcess.spawn)
 
     await expect(
-      pushVia(
-        gateway(),
-        { branch: 'feature', sha: ahead, protectedBranches: ['main'] },
-        controller.signal,
-      ),
+      pushVia(gateway(), { branch: 'feature', sha: ahead }, controller.signal),
     ).rejects.toThrow()
 
     expect(killedPush).toBe(true)
@@ -373,7 +374,7 @@ describe('against a server that checks the credential', () => {
     const github = gateway({ remoteUrl: server.url('repo.git') })
 
     await github.fetch({ have: [] })
-    await pushVia(github, { branch: 'feature', sha: ahead, protectedBranches: ['main'] })
+    await pushVia(github, { branch: 'feature', sha: ahead })
 
     expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
     expect(server.authorizations.length).toBeGreaterThan(0)
@@ -429,7 +430,7 @@ describe('re-reading the credential', () => {
     const observed = spySpawns()
 
     const caught = await gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
-      .push({ branch: 'feature', sha: ahead, prerequisites: [], protectedBranches: ['main'] })
+      .push({ branch: 'feature', sha: ahead, prerequisites: [] })
       .catch((err: unknown) => err)
     await settle()
 
@@ -450,7 +451,7 @@ describe('re-reading the credential', () => {
     }
 
     const caught = await gateway({ auth })
-      .push({ branch: 'feature', sha: ahead, prerequisites: [], protectedBranches: ['main'] })
+      .push({ branch: 'feature', sha: ahead, prerequisites: [] })
       .catch((err: unknown) => err)
 
     expect(caught).not.toBeInstanceOf(GitHubTransientError)
@@ -482,7 +483,6 @@ describe('re-reading the credential', () => {
         branch: 'feature',
         sha: main,
         prerequisites: [],
-        protectedBranches: ['main'],
       }),
     ).rejects.toThrow()
     await settle()
@@ -495,7 +495,12 @@ describe('re-reading the credential', () => {
     const provider = vi.fn(async () => undefined)
     const create = vi.fn().mockRejectedValue(await octokitErrorFor(401, { message: 'Nope' }))
     const github = gateway(
-      { octokit: { pulls: { create } } as unknown as LocalGitHubGatewayOptions['octokit'] },
+      {
+        octokit: {
+          pulls: { create },
+          repos: defaultBranchStub(),
+        } as unknown as LocalGitHubGatewayOptions['octokit'],
+      },
       provider,
     )
 
@@ -513,7 +518,12 @@ describe('re-reading the credential', () => {
       .fn()
       .mockRejectedValue(await octokitErrorFor(422, { message: 'Reference does not exist' }))
     const github = gateway(
-      { octokit: { git: { deleteRef } } as unknown as LocalGitHubGatewayOptions['octokit'] },
+      {
+        octokit: {
+          git: { deleteRef },
+          repos: defaultBranchStub(),
+        } as unknown as LocalGitHubGatewayOptions['octokit'],
+      },
       provider,
     )
 
@@ -529,7 +539,12 @@ describe('re-reading the credential', () => {
       .fn()
       .mockRejectedValue(await octokitErrorFor(404, { message: 'Not Found' }))
     const github = gateway(
-      { octokit: { git: { deleteRef } } as unknown as LocalGitHubGatewayOptions['octokit'] },
+      {
+        octokit: {
+          git: { deleteRef },
+          repos: defaultBranchStub(),
+        } as unknown as LocalGitHubGatewayOptions['octokit'],
+      },
       provider,
     )
 
@@ -595,7 +610,6 @@ describe('re-reading the credential', () => {
     const caught = await pushVia(gateway({}, provider), {
       branch: 'feature',
       sha: ahead,
-      protectedBranches: ['main'],
     }).catch((err: unknown) => err)
     await settle()
 
@@ -612,19 +626,18 @@ describe('re-reading the credential', () => {
     const blob = await git('--git-dir', githubPath, 'rev-parse', 'main:main.txt')
 
     await expect(
-      github.push({ branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }),
+      github.push({ branch: 'main', sha: main, prerequisites: [] }),
     ).rejects.toBeInstanceOf(RefusedPushError)
     await expect(
       github.push({
         branch: 'feature',
         sha: 'not-an-id',
         prerequisites: [],
-        protectedBranches: ['main'],
       }),
     ).rejects.toThrow(/Not a commit ID/)
-    await expect(
-      github.push({ branch: 'feature', sha: blob, prerequisites: [], protectedBranches: ['main'] }),
-    ).rejects.toThrow(/is not a commit/)
+    await expect(github.push({ branch: 'feature', sha: blob, prerequisites: [] })).rejects.toThrow(
+      /is not a commit/,
+    )
     await settle()
 
     expect(provider).not.toHaveBeenCalled()

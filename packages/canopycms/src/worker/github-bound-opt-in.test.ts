@@ -89,7 +89,7 @@ describe('allowUnsafeConfigPaths', () => {
     await github.fetch({ have: [] })
     await pushToGitHub(
       { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
-      { branch: 'feature', protectedBranches: ['main'], prerequisiteBranches: ['feature'] },
+      { branch: 'feature', prerequisiteBranches: ['feature'] },
       async () => sha,
     )
 

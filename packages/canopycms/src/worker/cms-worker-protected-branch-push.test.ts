@@ -14,6 +14,7 @@ import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { fixtureCredential, initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
 import { CmsWorker } from './cms-worker'
+import { BranchPolicy } from './branch-policy'
 import { GitHubMirror, RefusedPushError } from './github-mirror'
 
 describe('the worker refuses to push protected branches', () => {
@@ -192,7 +193,7 @@ describe('the worker refuses to push protected branches', () => {
       mirror.exclusive((m) =>
         m.pushToGitHub(fixtureCredential(github), 'main', sha, {
           lease: githubTip,
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toBeInstanceOf(RefusedPushError)

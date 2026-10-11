@@ -218,7 +218,6 @@ export async function pushSettingsBranches(
                 ctx,
                 {
                   branch: settingsBranch,
-                  protectedBranches: [ctx.baseBranch],
                   prerequisiteBranches: [settingsBranch],
                 },
                 readSha,

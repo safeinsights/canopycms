@@ -82,11 +82,7 @@ function pushVia(
   readSha: () => Promise<string> = async () =>
     git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
 ) {
-  return pushToGitHub(
-    transfer(github),
-    { branch, protectedBranches: [], prerequisiteBranches: [branch, 'main'] },
-    readSha,
-  )
+  return pushToGitHub(transfer(github), { branch, prerequisiteBranches: [branch, 'main'] }, readSha)
 }
 
 /** A bundle file of `revs` in `repo`, built by git. */
@@ -114,7 +110,6 @@ const request = (branch: string, sha: string): GitHubPushRequest => ({
   branch,
   sha,
   prerequisites: [],
-  protectedBranches: [],
 })
 
 /** Every file in the mirror, by path, with a hash of its bytes. */
@@ -734,7 +729,7 @@ describe('the worker side of a push', () => {
 
     const caught = await pushToGitHub(
       transfer(github),
-      { branch: 'feature', protectedBranches: [], prerequisiteBranches: ['feature', 'main'] },
+      { branch: 'feature', prerequisiteBranches: ['feature', 'main'] },
       async () => git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature'),
       controller.signal,
     ).catch((err: unknown) => err)
@@ -1038,7 +1033,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const github = coalescing()
     await github.fetch({ have: [] })
-    const refused = { branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }
+    const refused = { branch: 'main', sha: main, prerequisites: [] }
     // The valid push joins the fetch while the first refused push's session runs, so both refusals
     // fail between its join and its session.
     let valid: Promise<GitHubPushAnswer> | undefined
@@ -1084,7 +1079,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(true)
 
@@ -1106,7 +1104,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     holder.github = github
 
@@ -1127,7 +1128,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     // The deletion starts during the fetch's own session, and GitHub answers during the session
     // of the fetch the caller then joins.

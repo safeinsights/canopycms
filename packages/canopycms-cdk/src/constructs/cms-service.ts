@@ -203,8 +203,8 @@ function assertEnvSafe(name: string, value: string): string {
  * and the worker handles such names fine - it keeps the raw name for git refs
  * and runs it through `sanitizeBranchName` only for workspace DIRECTORY names.
  * This implements git's `check-ref-format` rules for a branch name instead.
- * Nothing in `canopycms` validates a branch name, so there is no runtime
- * counterpart to drift from and no shared fixture list like `deploymentName`'s.
+ * The worker uses these two names as given, so there is no runtime counterpart
+ * to drift from and no shared fixture list like `deploymentName`'s.
  */
 function assertValidGitBranchName(propName: string, value: string): string {
   const reject = (why: string): never => {
@@ -248,6 +248,37 @@ function assertValidGitBranchName(propName: string, value: string): string {
   }
 
   return value
+}
+
+/**
+ * Refuse a `protectedBranches` entry the worker would refuse at boot, which would crash-loop it:
+ * a branch name in which `*` is a wildcard, held to the worker's own rules too
+ * (`protectedPatternProblem`, packages/canopycms/src/worker/branch-policy.ts): printable ASCII,
+ * no `"`, `%`, `{` or `}`, no leading `refs/`, at most 255 characters. A comma separates entries
+ * in the worker's `.env`, so none may hold one.
+ */
+function assertValidProtectedBranches(entries: readonly string[]): string[] {
+  return entries.map((entry) => {
+    const reject = (why: string): never => {
+      throw new Error(
+        `CanopyCmsService: invalid protectedBranches entry ${JSON.stringify(entry)} -- ${why}.`,
+      )
+    }
+    if (entry.includes(',')) reject('it contains a comma, which separates entries')
+    if (entry.length > 255) reject('it is longer than 255 characters')
+    if (!/^[\x20-\x7e]*$/.test(entry)) reject('it is not printable ASCII')
+    if (/["%{}]/.test(entry)) reject('it contains ", %, { or }')
+    if (/^refs\//i.test(entry)) reject("it starts with 'refs/'")
+    const asName = entry.replace(/\*/g, 'x')
+    try {
+      assertValidGitBranchName('protectedBranches entry', asName)
+    } catch (err) {
+      // Name the entry as written, not with its wildcards replaced.
+      const message = err instanceof Error ? err.message : String(err)
+      throw new Error(message.replace(JSON.stringify(asName), JSON.stringify(entry)))
+    }
+    return entry
+  })
 }
 
 /**
@@ -885,6 +916,15 @@ export interface CanopyCmsServiceProps {
   settingsBranch?: string
 
   /**
+   * Branches the worker never pushes, deletes or opens a pull request from, beside `baseBranch`
+   * and GitHub's default branch, which it always protects (default: none). Each entry is a branch
+   * name or a glob in which `*` matches any run of characters, `/` included (`release/*`);
+   * matching ignores case. Stamped into the worker's `CANOPYCMS_PROTECTED_BRANCHES`,
+   * comma-separated, and validated at synth.
+   */
+  protectedBranches?: string[]
+
+  /**
    * Deployment name (default: 'prod'). Namespaces the settings branch
    * (`canopycms-settings-{deploymentName}`) so this stack's CMS Lambda/worker
    * don't fight another CanopyCMS deployment over the same orphan settings
@@ -1174,6 +1214,8 @@ export class CanopyCmsService extends Construct {
       props.settingsBranch !== undefined
         ? assertValidGitBranchName('settingsBranch', props.settingsBranch)
         : undefined
+
+    const protectedBranches = assertValidProtectedBranches(props.protectedBranches ?? [])
 
     const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
     const workerInstanceTypes =
@@ -1763,6 +1805,9 @@ export class CanopyCmsService extends Construct {
       // (the worker falls through to the computed `canopycms-settings-<name>`),
       // so this must never stamp an empty string either way.
       envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch])
+    }
+    if (protectedBranches.length > 0) {
+      envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(',')])
     }
     const envFileContent = envEntries
       .map(([name, value]) => `${name}=${assertEnvSafe(name, value)}`)

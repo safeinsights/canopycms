@@ -116,6 +116,12 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */
   baseBranch?: string
   /**
+   * Branches the worker never pushes, deletes or opens a pull request from, beside the configured
+   * base branch and GitHub's default branch: exact names, or globs in which `*` matches any run of
+   * characters (`release/*`). See worker/branch-policy.ts.
+   */
+  protectedBranches?: readonly string[]
+  /**
    * Names THIS worker's own settings branch
    * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
    * mode default in operating-mode/client-unsafe-strategy.ts, the only mode the
@@ -619,7 +625,10 @@ export class CmsWorker {
       }
 
       // Tracked like loop iterations, so a stop() during the first sync drains it.
-      const initialTasks: Promise<void>[] = [this.trackOperation('git sync', this.syncGit())]
+      const initialTasks: Promise<void>[] = [
+        this.trackOperation('git sync', this.syncGit()),
+        this.trackOperation('base branch check', this.warnIfBaseUnprotected()),
+      ]
       if (this.config.refreshAuthCache) {
         initialTasks.push(this.trackOperation('auth cache refresh', this.refreshAuthCache()))
       }
@@ -972,6 +981,27 @@ export class CmsWorker {
     }
     this.setBaseBranch(name)
     workerLog(`Base branch: '${name}' (detected; CANOPYCMS_BASE_BRANCH is not set)`)
+  }
+
+  /**
+   * Warn when the base branch is outside the gateway's protected set, which happens only when it
+   * was detected from remote.git rather than configured: the gateway would then push it. A warning,
+   * not a refusal, so a change of GitHub's default branch cannot stop the worker booting.
+   */
+  private async warnIfBaseUnprotected(): Promise<void> {
+    try {
+      if (await this.github().isProtectedBranch(this.baseBranch)) return
+      workerLogWarn(
+        `The base branch '${this.baseBranch}' is neither CANOPYCMS_BASE_BRANCH nor GitHub's ` +
+          `default branch, nor in CANOPYCMS_PROTECTED_BRANCHES, so nothing stops a task pushing ` +
+          `to it. Set CANOPYCMS_BASE_BRANCH (the CDK construct's \`baseBranch\` prop).`,
+      )
+    } catch (err) {
+      workerLogWarn(
+        `Could not check that the base branch '${this.baseBranch}' is protected: ` +
+          redactCredentials(getErrorMessage(err)),
+      )
+    }
   }
 
   /**
@@ -1421,6 +1451,8 @@ export class CmsWorker {
       stateDirectory: this.stateDirectory,
       workspacePath: this.config.workspacePath,
       timeoutMs: this.taskTimeoutMs,
+      baseBranch: this.config.baseBranch,
+      protectedBranches: this.config.protectedBranches,
     }
   }
 

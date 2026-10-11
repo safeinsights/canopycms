@@ -22,7 +22,15 @@ import {
   type MirrorSession,
   type ReceivedBundle,
 } from './github-mirror'
-import { workerLog, workerLogError, workerLogWarn } from './log'
+import { BranchPolicy, GatewayRefusalError, assertPullRequestText } from './branch-policy'
+import {
+  gatewayLog,
+  gatewayLogError,
+  gatewayLogWarn,
+  redactError,
+  redactValue,
+  registerLiveSecret,
+} from './gateway-egress'
 
 /** What a {@link GitHubGateway.fetch} brought back. */
 interface GitHubFetchResult {
@@ -78,8 +86,6 @@ export interface GitHubPushRequest {
    * on, so an answer of `need-objects` can say which of them the gateway can use.
    */
   prerequisites: readonly string[]
-  /** Branches no push may name; GitHub's default branch is always added. */
-  protectedBranches: readonly string[]
 }
 
 /**
@@ -132,8 +138,10 @@ type GitHubCreateOrUpdatePullRequest = Omit<
 
 /**
  * Everything the worker does with GitHub, and the only place the credential and Octokit are used.
- * Octokit errors propagate unchanged (status, headers, response data), so the task runner's
- * classifiers read them as they would Octokit's own. The gateway re-reads its own credential after
+ * Octokit errors propagate with their status, headers and response data, so the task runner's
+ * classifiers read them as they would Octokit's own; every error, answer and log line is first
+ * scrubbed of the credential (worker/gateway-egress.ts). What it refuses to do, whatever it is
+ * asked, is worker/branch-policy.ts's, and throws `GatewayRefusalError`. The gateway re-reads its own credential after
  * a failure (`LocalGitHubGateway.credentialed`); the worker never asks it to.
  */
 export interface GitHubGateway {
@@ -144,6 +152,8 @@ export interface GitHubGateway {
   prepare(): Promise<void>
   /** GitHub's default branch. */
   defaultBranch(signal?: AbortSignal): Promise<string>
+  /** Whether the gateway refuses to push, delete or open a pull request from `branch`. */
+  isProtectedBranch(branch: string, signal?: AbortSignal): Promise<boolean>
   /**
    * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
    * lacks. `have` is the caller's own tips, at most {@link MAX_FETCH_HAVE} object IDs; any the
@@ -206,6 +216,10 @@ export interface LocalGitHubGatewayOptions {
   remoteUrl?: string | (() => string | Promise<string>)
   /** Test seam: the Octokit client. Default: built from `auth`. */
   octokit?: Octokit
+  /** The configured base branch, which the gateway never pushes, deletes or opens a PR from. */
+  baseBranch?: string
+  /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
+  protectedBranches?: readonly string[]
   /** The largest pushed bundle taken in, in bytes. Default 1 GiB. */
   maxBundleBytes?: number
   /**
@@ -230,6 +244,7 @@ class LocalGitHubGateway implements GitHubGateway {
   // Built here, where the gateway is created inside start()'s try: an App strategy that throws
   // on first touch is then recorded as a startup failure.
   private readonly octokit: Octokit
+  private readonly policy: BranchPolicy
   /** The credential re-read in flight, which every credentialed operation joins. */
   private refreshing: Promise<void> | null = null
   /** The GitHub fetch that operations join: in flight, or completed and still reusable. */
@@ -240,6 +255,10 @@ class LocalGitHubGateway implements GitHubGateway {
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.timeoutMs)
     this.octokit = options.octokit ?? createCanopyOctokit(options.auth.octokitAuth)
+    this.policy = new BranchPolicy({
+      baseBranch: options.baseBranch,
+      protectedBranches: options.protectedBranches,
+    })
   }
 
   private get repo(): { owner: string; repo: string } {
@@ -254,7 +273,7 @@ class LocalGitHubGateway implements GitHubGateway {
    * commands or Octokit calls failed, it ARMS a re-read. Not gated on the failure looking
    * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
    * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
-   * (`RefusedPushError`, an invalid object ID), anything else local, a lock file the mirror's own
+   * (`GatewayRefusalError`, whatever came before it; an invalid object ID), anything else local, a lock file the mirror's own
    * housekeeping holds (`isOwnLockFailure`), and an Octokit 422 (`api`). A 404 does arm it, the
    * branch-already-gone one `deleteBranch` callers tolerate included. What bounds a caller that
    * fails on purpose is the floors behind `auth.refreshCredential`:
@@ -263,18 +282,24 @@ class LocalGitHubGateway implements GitHubGateway {
    *
    * The re-read starts detached, after the failure has been delivered: a provider can take 87s for
    * one `getSecret`, longer than a task's whole deadline.
+   *
+   * What it returns or throws leaves the gateway, so it is scrubbed here (worker/gateway-egress.ts).
    */
   private async credentialed<T>(
     signal: AbortSignal | undefined,
     operation: (reach: GitHubReach) => Promise<T>,
   ): Promise<T> {
-    await this.joinRefresh(signal)
-    const reach: GitHubReach = { failed: false }
     try {
-      return await operation(reach)
+      await this.joinRefresh(signal)
+      const reach: GitHubReach = { failed: false }
+      try {
+        return redactValue(await operation(reach))
+      } catch (err) {
+        if (reach.failed && !(err instanceof GatewayRefusalError)) this.armRefresh()
+        throw err
+      }
     } catch (err) {
-      if (reach.failed) this.armRefresh()
-      throw err
+      throw redactError(err)
     }
   }
 
@@ -312,6 +337,7 @@ class LocalGitHubGateway implements GitHubGateway {
           ? remoteUrl
           : await remoteUrl()
     const token = await this.api(reach, () => this.options.auth.resolveGitToken())
+    registerLiveSecret(token)
     return {
       url,
       token,
@@ -444,10 +470,14 @@ class LocalGitHubGateway implements GitHubGateway {
   }
 
   async prepare(): Promise<void> {
-    // Before the mirror's first fetch, whose failure would otherwise blame the repository.
-    await this.preflightGitHubAppAuth()
-    await this.ensureStateDirectoryIsPrivate()
-    await this.mirror.ensure()
+    try {
+      // Before the mirror's first fetch, whose failure would otherwise blame the repository.
+      await this.preflightGitHubAppAuth()
+      await this.ensureStateDirectoryIsPrivate()
+      await this.mirror.ensure()
+    } catch (err) {
+      throw redactError(err)
+    }
     // The first GitHub fetch starts now, detached, so the first operation that needs one joins
     // it under way. Its failure surfaces to whoever joins it.
     void this.credentialed(undefined, (reach) =>
@@ -468,12 +498,12 @@ class LocalGitHubGateway implements GitHubGateway {
   private async preflightGitHubAppAuth(): Promise<void> {
     if (!this.options.githubApp) return
     try {
-      await this.options.auth.resolveGitToken()
+      registerLiveSecret(await this.options.auth.resolveGitToken())
     } catch (err) {
       // [REDACT] Both messages below reach worker-status.json and the browser.
       const detail = redactCredentials(getErrorMessage(err))
       if (isTransientAuthFailure(err)) {
-        workerLogWarn(
+        gatewayLogWarn(
           `Could not verify GitHub App authentication at startup: ${detail}. ` +
             'Continuing — this looks transient, and the credential is minted again on first use.',
         )
@@ -485,7 +515,7 @@ class LocalGitHubGateway implements GitHubGateway {
           'Check the app id, the installation id, and that the private key belongs to that app.',
       )
     }
-    workerLog('GitHub App authentication verified')
+    gatewayLog('GitHub App authentication verified')
   }
 
   /**
@@ -507,11 +537,45 @@ class LocalGitHubGateway implements GitHubGateway {
 
   defaultBranch(signal?: AbortSignal): Promise<string> {
     return this.credentialed(signal, async (reach) => {
-      const { data } = await this.api(reach, () =>
-        this.octokit.repos.get({ ...this.repo, ...(signal ? { request: { signal } } : {}) }),
+      const name = await this.policy.recordGitHubDefault(() =>
+        this.readDefaultBranch(reach, signal),
       )
-      return data.default_branch
+      if (name === null) throw new Error('GitHub reported no default branch')
+      return name
     })
+  }
+
+  /** Reads GitHub's default branch with git, in a mirror session, so it never costs an API call. */
+  isProtectedBranch(branch: string, signal?: AbortSignal): Promise<boolean> {
+    return this.credentialed(signal, (reach) =>
+      this.policy.isProtected(branch, async () => {
+        const credential = await this.credential(reach)
+        return this.mirror.exclusive((session) => session.githubDefaultBranch(credential, signal))
+      }),
+    )
+  }
+
+  /**
+   * GitHub's default branch, through the API, for the policy's operations outside a mirror
+   * session; a push reads it with git, inside its session (`MirrorSession.pushToGitHub`).
+   */
+  private async readDefaultBranch(reach: GitHubReach, signal?: AbortSignal): Promise<string> {
+    const { data } = await this.api(reach, () =>
+      this.octokit.repos.get({ ...this.repo, ...(signal ? { request: { signal } } : {}) }),
+    )
+    return data.default_branch
+  }
+
+  /** Validate a pull request's head and base, and apply the policy to its head and text. */
+  private async assertPullRequestAllowed(
+    reach: GitHubReach,
+    request: { head: string; base: string; title?: string; body?: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const git = await this.mirror.checkGit()
+    await assertPlainBranchName(request.head, git, 'pull-request')
+    await assertPlainBranchName(request.base, git, 'pull-request')
+    await this.policy.assertPullRequestAllowed(request, () => this.readDefaultBranch(reach, signal))
   }
 
   fetch(request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
@@ -655,7 +719,7 @@ class LocalGitHubGateway implements GitHubGateway {
         lease,
         signal,
         repo,
-        protectedBranches: request.protectedBranches,
+        policy: this.policy,
         // Whatever the push does to GitHub, a fetch reused from before it may not show it.
         onPushing: () => this.invalidateGitHubFetch(),
       })
@@ -699,6 +763,7 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<{ number: number; url: string }> {
     return this.credentialed(signal, async (reach) => {
+      await this.assertPullRequestAllowed(reach, request, signal)
       const { data } = await this.api(reach, () =>
         this.octokit.pulls.create({ ...this.repo, ...request, request: { signal } }),
       )
@@ -712,6 +777,7 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<void> {
     return this.credentialed(signal, async (reach) => {
+      assertPullRequestText(`Refusing to update pull request #${number}`, `#${number}`, update)
       await this.api(reach, () =>
         this.octokit.pulls.update({
           ...this.repo,
@@ -741,11 +807,12 @@ class LocalGitHubGateway implements GitHubGateway {
   createOrUpdatePullRequest(
     request: GitHubCreateOrUpdatePullRequest,
   ): Promise<{ number: number; url: string; created: boolean }> {
-    return this.credentialed(request.signal, (reach) =>
-      this.api(reach, () =>
+    return this.credentialed(request.signal, async (reach) => {
+      await this.assertPullRequestAllowed(reach, request, request.signal)
+      return this.api(reach, () =>
         createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request }),
-      ),
-    )
+      )
+    })
   }
 
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
@@ -763,6 +830,8 @@ class LocalGitHubGateway implements GitHubGateway {
 
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
+      await assertPlainBranchName(branch, await this.mirror.checkGit(), 'delete')
+      await this.policy.assertDeleteAllowed(branch, () => this.readDefaultBranch(reach, signal))
       // Once the call has settled, when GitHub may have acted: any fetch before then, a fetch whose
       // session ran during the call included, may still show the branch.
       try {
@@ -802,7 +871,7 @@ class LocalGitHubGateway implements GitHubGateway {
 
 function logFailedCredentialRefresh(err: unknown): void {
   // [REDACT] The message can name the secret and, on a malformed-secret path, quote what was read.
-  workerLogError(
+  gatewayLogError(
     'Failed to re-read the GitHub credential after a failure:',
     redactCredentials(getErrorMessage(err)),
   )
