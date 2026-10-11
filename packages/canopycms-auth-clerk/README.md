@@ -2,6 +2,8 @@
 
 Clerk authentication provider for CanopyCMS.
 
+What changed in each release, for all five CanopyCMS packages, is in `node_modules/canopycms/CHANGELOG.md`.
+
 ## Installation
 
 ```bash

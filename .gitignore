@@ -37,3 +37,6 @@ packages/canopycms-cdk/.scaffold-synth/
 .claude/memory/
 .claude/projects/
 .claude/worktrees/
+
+# Assembled at publish time by scripts/migration-notes.mjs --ship; the repository copy is the root CHANGELOG.md.
+packages/canopycms/CHANGELOG.md

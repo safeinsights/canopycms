@@ -47,7 +47,7 @@ export interface GitHubAuthConfig {
    * `canopycms-cdk`'s EC2 worker supplies it from three CDK props — see
    * `packages/canopycms-cdk/worker/github-app-auth.ts`, which is also the
    * worked example an adopter driving `CmsWorker` from their own entrypoint
-   * should copy, and `docs/adopter-migration.md` for that case written out.
+   * should copy, and `CHANGELOG.md` for that case written out.
    *
    * Exactly one of this and `githubToken` must be set: configuring both is an
    * error, and so is configuring neither.

@@ -48,7 +48,7 @@ export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: nu
  *
  * A deployment using an App constructs the strategy and passes it through here
  * — see `packages/canopycms-cdk/worker/github-app-auth.ts` and
- * `docs/adopter-migration.md` for a hand-written entrypoint.
+ * `CHANGELOG.md` for a hand-written entrypoint.
  */
 export interface OctokitAuthStrategyOptions {
   /**

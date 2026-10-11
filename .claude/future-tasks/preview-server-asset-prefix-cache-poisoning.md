@@ -7,7 +7,7 @@ summary: >-
 # The preview's server asset prefix can poison cross-request caches
 
 **Status:** Open. **Priority: P3.** Filed 2026-10-08 from two reviews of the preview first-paint
-fix. Accepted and documented (README "Live Preview", `docs/adopter-migration.md`, the comment on
+fix. Accepted and documented (README "Live Preview", `CHANGELOG.md`, the comment on
 `previewRequest` in `canopycms-next/src/preview-page.tsx`); this file holds the remedy if an
 adopter hits it.
 

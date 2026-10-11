@@ -4,29 +4,17 @@ CanopyCMS is a schema-driven, branch-aware CMS for websites that store their con
 
 ## Which documentation matches this build
 
-This package ships code, not documentation. The guides — `docs/adopter-migration.md`,
-`docs/deploying-to-aws.md` and the project README — live in the repository and change
-alongside the code, so read them at the ref **your installed version was built from**, not at
-`main`. The npm provenance attestation records that ref exactly:
+Read `CHANGELOG.md`, next to this README, first. It is assembled for this exact build: its **This
+build** section names the commit the build came from and lists what is new since the previous int
+on the same branch, and every link in it points at that commit. It is the one guide this package
+ships.
 
-```bash
-V=$(node -p "require('./node_modules/canopycms/package.json').version")
-curl -s "https://registry.npmjs.org/-/npm/v1/attestations/canopycms@$V" | node -e '
-let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
-  const a=JSON.parse(s).attestations.find(x=>x.predicateType==="https://slsa.dev/provenance/v1")
-  const b=JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload,"base64")).predicate.buildDefinition
-  console.log(b.externalParameters.workflow.ref, b.resolvedDependencies[0].digest.gitCommit)
-})'
-```
-
-Then browse `https://github.com/safeinsights/canopycms/tree/<commit>/docs`.
-
-Check this whenever a documented behaviour does not match what you observe. It matters most on
-the `int` channel: a version like `0.0.67-int.90` is published from an integration branch that
-has **not** merged to `main`, so `main`'s guides describe the last stable release and simply do
-not contain the sections covering your build. A missing section reads exactly like a behaviour
-you misunderstood, which is why it is worth resolving the ref rather than guessing. Stable
-`X.Y.Z` builds are on `main`, at tag `vX.Y.Z`.
+The other guides, `docs/deploying-to-aws.md` and the project README, live in the repository and
+change alongside the code. Read them at that commit, not at `main`: browse
+`https://github.com/safeinsights/canopycms/tree/v<your version>`, the tag every published version
+carries. This matters most on the `int` channel: a version like `0.0.68-int.112` comes from an
+integration branch that has **not** merged to `main`, so `main`'s guides describe the last
+stable release and lack the sections covering your build.
 
 ## What it does for you
 
@@ -669,7 +657,6 @@ For deployment, the `canopycms-cdk` package ships an `AssetSupport` construct th
 the bucket and serves `/assets/*` from S3 only: an unmaterialized URL is a 403, and
 `lazyPublicTransforms: true` transforms misses in a Lambda instead. Fuller documentation — every
 config option, the release steps and their IAM grants, and the AWS wiring — is in the project
-README's `#media-configuration` section, `docs/deploying-to-aws.md` and
-`docs/adopter-migration.md`. Read them at the ref this
-build came from, not at `main` — see
+README's `#media-configuration` section, `docs/deploying-to-aws.md` and `CHANGELOG.md`. Read
+them at the ref this build came from, not at `main` — see
 [Which documentation matches this build](#which-documentation-matches-this-build).

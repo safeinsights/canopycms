@@ -22,6 +22,6 @@ The code disagrees. The edit page is a client component (`edit-page.tsx.template
 when `remote.git` is missing, and `http/worker-not-ready.ts` maps that to a 503 with the
 `WORKER_NOT_READY_MESSAGE` body and `Retry-After`.
 
-`docs/adopter-migration.md` already says 503. To do: confirm on a worker-less dev or deployed
+`CHANGELOG.md` already says 503. To do: confirm on a worker-less dev or deployed
 stack (or with a handler test) what `/edit` and `/api/canopycms/*` answer, then correct both
 statements to match.

@@ -10,7 +10,7 @@ summary: >-
 
 Found 2026-08-14 while verifying an independent code review's SUSPECTED
 finding on `meta.entryType`/`meta.entryId` (unrelated — see
-`docs/adopter-migration.md`'s entry on that). Not a regression: reproduced on
+`CHANGELOG.md`'s entry on that). Not a regression: reproduced on
 `entry-schema.ts` unmodified by that work.
 
 **Update 2026-08-14 (second review pass):** the original write-up below reproduced the
@@ -83,7 +83,7 @@ grepping the full run's output for the file). Confirmed pre-existing on
   latent, not live. But the README now has a section instructing eOPT
   adopters how optional fields behave (added alongside the
   optional-property-inference work), and it now states the `skipLibCheck: true`
-  requirement explicitly (see `README.md` and `docs/adopter-migration.md`,
+  requirement explicitly (see `README.md` and `CHANGELOG.md`,
   "`required: false` now infers an optional property").
 
 ## Fix direction (not investigated in depth)

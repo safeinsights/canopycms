@@ -7,7 +7,7 @@
  * every adopter's server bundle, and `pnpm lint:bundle` checks the *client*
  * boundary only — it would not catch the weight. Core therefore accepts a
  * structurally-typed `GitHubAppAuth` and this file supplies one. An adopter on
- * another cloud writes their own equivalent; `docs/adopter-migration.md`
+ * another cloud writes their own equivalent; `CHANGELOG.md`
  * carries the same wiring for that case.
  *
  * Split out of `index.ts` so it can be imported by a test at all: `index.ts`

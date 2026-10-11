@@ -71,6 +71,6 @@ of `git log`.
 
 ## Related
 
-- [document-release-process.md](../document-release-process.md) — the release process is
+- [document-release-process.md](document-release-process.md) — the release process is
   undocumented outside workflow comments, which is plausibly why this step has no owner.
   Its adopter half shipped 2026-10-01.

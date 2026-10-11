@@ -1,6 +1,7 @@
-# Adopter Migration Guide
+# Changelog
 
-What changed in CanopyCMS, what you must do to adopt it, and **what you can now delete**.
+What changed in CanopyCMS, what you must do to adopt it, and **what you can now delete**. The five
+packages release together, at one version.
 
 ## How to use this document
 
@@ -11,16 +12,20 @@ Each entry has up to three parts:
 - **Now deletable**: the kind of local code the change supersedes. **This part is the point.**
   Adding the new API without removing what it replaces leaves two implementations to drift apart.
 
+**Read the copy your build ships.** Every published version carries this file as
+`node_modules/canopycms/CHANGELOG.md`, assembled for that build: its **This build** section lists
+what is new since the previous int on the same branch, and its links point at the commit the build
+came from. The copy in the repository holds released history and the entries from before changesets;
+every entry written since is a file in [`.changeset/`](.changeset/README.md) until a stable release
+moves it here.
+
 **Find your starting point.** From a stable pin, start at the first version under **Released**
 newer than it, and below `0.0.63` read the notes for `0.0.62 and earlier` too. From an int
 prerelease such as `0.0.68-int.101`, read only the **Unreleased** entries, or labelled parts of
 entries, carrying a higher int number (the table lists later parts in parentheses).
 
 **Find your target.** `npm view canopycms version` reports the `latest` dist-tag, the newest
-stable release; `main` publishes a patch on every push, so never take a target from this document.
-On the int channel that command answers the wrong question: a prerelease comes from an integration
-branch, so read this file at the ref your build came from (`packages/canopycms/README.md`, inside
-your installed package, shows how to resolve it from the npm provenance attestation).
+stable release. On the int channel, the target's own `CHANGELOG.md` is the one to read.
 
 **Read every window between the two, oldest first.** Deletable-code lists compound. Where a later
 entry replaces an earlier one's advice, the earlier one points to it.
@@ -29,67 +34,62 @@ entry replaces an earlier one's advice, the earlier one points to it.
 
 ## Unreleased
 
-**Promoting entries is manual.** When a release ships, move its entries under a new `### <version>`
-in `## Released`, demoting `###` to `####` and keeping their int labels. `pnpm lint:docs` fails
-when a release tag reachable from `HEAD` has no `### <version>` section; which entries belong to it
-is still a read of `git log`.
-
 **int** is the first int prerelease carrying an entry, and each part of the entry is labelled
 `(int.N)` the same way; a number in parentheses after a change is a later int that added a part.
 **Action** says who must act; **Template first** means that with `workerCode: { source: 'parameter' }`,
-you deploy the stack template before CI rolls that int's bundle. `next` marks a change no published int carries yet; publishing an int
-replaces each `next` with its number.
+you deploy the stack template before CI rolls that int's bundle.
 
-| int  | Area     | Change                                                                                                                                                                                      | Action                       |
-| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| 93   | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules                 |
-| 93   | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked                   |
-| 93   | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                     |
-| 93   | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages                  |
-| 93   | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                         |
-| 93   | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                      |
-| 94   | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers               |
-| 94   | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                     |
-| 94   | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                     |
-| 94   | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                     |
-| 94   | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed      |
-| 94   | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                     |
-| 100  | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together             |
-| 100  | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod                 |
-| 100  | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                     |
-| 100  | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only                 |
-| 100  | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin                  |
-| 100  | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`                |
-| 100  | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key                   |
-| 101  | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                         |
-| 102  | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites             |
-| 105  | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps                  |
-| 106  | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config                    |
-| 106  | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                      |
-| 107  | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                         |
-| 108  | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, 110)                                                                              | Required                     |
-| 108  | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                       |
-| 109  | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys                  |
-| 109  | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint            |
-| 109  | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                     |
-| 109  | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                     |
-| 110  | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first               |
-| 110  | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default          |
-| 111  | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand            |
-| 111  | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts            |
-| 111  | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images            |
-| 111  | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins               |
-| 112  | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first               |
-| 112  | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                         |
-| 112  | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
-| 112  | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix) (next)                                                                      | Protect base on GitHub       |
-| 112  | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
-| 113  | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
-| 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
-| 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
-| next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
-| next | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
-| next | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
+The entries below predate changesets and keep their hand-written labels. Nothing in this section is
+edited by hand any more: a new entry is a `.changeset/` file, labelled when an int first carries
+it, and a stable release moves this whole section under **Released**.
+
+| int | Area     | Change                                                                                                                                                                                      | Action                       |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| 93  | Branches | [Path rules match logical paths](#path-permission-rules-now-take-effect-below-the-content-root--security-fix-breaking-for-rules-written-with-on-disk-names)                                 | Review rules                 |
+| 93  | Branches | [`.canopy-meta/` must not be committed](#canopy-meta-must-not-be-committed-and-system-health-says-so)                                                                                       | If tracked                   |
+| 93  | Branches | [`autoCreateSettingsPR` removed](#settings-saves-only-push-the-settings-branch--breaking-config-autocreatesettingspr-is-removed)                                                            | Required                     |
+| 93  | Reading  | [Listings take `branch`; reads report `slug`/`urlPath`](#content-reads-listings-take-a-branch-and-reads-report-slug-and-urlpath) (102)                                                      | Index pages                  |
+| 93  | Editing  | [Field descriptions, list-card titles, `public/` images](#field-editing-descriptions-list-card-titles-and-public-images) (96, 103)                                                          | None                         |
+| 93  | Branches | [Commits name editors; submit refuses an empty branch](#commits-name-their-editors-and-submit-refuses-a-branch-with-nothing-to-submit) (108, 110)                                           | Scripts                      |
+| 94  | Branches | [Reads never create a branch](#reads-never-create-a-requested-branch--security-fix-breaking-for-some-direct-createcontentreader-callers)                                                    | Direct callers               |
+| 94  | Preview  | [Preview URLs: one prefix, `trailingSlash`, own page](#preview-urls-take-one-prefix-follow-trailingslash-and-load-each-entrys-own-page--breaking-env) (98)                                  | Required                     |
+| 94  | Preview  | [`createPreviewPage`, `/preview` entries](#the-preview-route-and-preview-entries--breaking-imports) (95, 101, 103)                                                                          | Required                     |
+| 94  | Refs     | [Restricted and missing references](#a-reference-resolves-to-its-target-a-restricted-stub-or-a-missing-stub--security-fix-breaking-types-and-build) (106)                                   | Required                     |
+| 94  | CDK      | [`attachTo`, editor response headers](#canopycms-cdk-canopycmsserviceattachto-and-editor-response-headers--behaviour-change-if-you-frame-the-cms)                                           | If hand-wired or framed      |
+| 94  | Ops      | [System health shows the build](#system-health-shows-which-build-is-running)                                                                                                                | Optional                     |
+| 100 | Branches | [Crash-safe branch creation](#fast-crash-safe-branch-creation--behaviour-change-branch-clones-hold-only-the-content-root)                                                                   | Upgrade together             |
+| 100 | Ops      | [Prod workspace defaults to `/mnt/efs`](#the-prod-workspace-defaults-to-mntefs--behaviour-change-if-you-run-prod-without-canopycms_workspace_root)                                          | Non-CDK prod                 |
+| 100 | Assets   | [`AssetSupport` serves from S3 only](#canopycms-cdk-assetsupport-serves-images-from-s3-only--breaking)                                                                                      | Required                     |
+| 100 | Assets   | [`collect-asset-refs`, `materialize-assets`](#collect-asset-refs-and-materialize-assets-store-a-builds-images-before-release) (104)                                                         | With S3-only                 |
+| 100 | Assets   | [Editor images via signed-in route](#the-editor-and-its-live-preview-load-images-through-the-signed-in-asset-route)                                                                         | CSP, origin                  |
+| 100 | Assets   | [`assetUrl` applies crop](#asseturl-applies-an-image-values-crop--behaviour-change-for-cropped-images)                                                                                      | Scale `<img>`                |
+| 100 | Assets   | [`media.publicBaseUrl` removed; wider limits](#mediapublicbaseurl-is-removed-and-image-limits-are-wider--breaking-config)                                                                   | Delete key                   |
+| 101 | Editing  | [Saves rewrite only what changed](#a-save-rewrites-only-what-changed) (103)                                                                                                                 | None                         |
+| 102 | Auth     | [`unauthenticatedStatus: 419`](#unauthenticatedstatus-answer-signed-out-api-calls-with-419)                                                                                                 | Basic-auth sites             |
+| 105 | Editing  | [MDXEditor 4.3](#the-markdown-editor-runs-mdxeditor-43)                                                                                                                                     | Direct deps                  |
+| 106 | Refs     | [AI content links references](#ai-content-links-a-reference-to-its-target--behaviour-change-for-ai-output-and-ai-config-callbacks)                                                          | AI config                    |
+| 106 | Refs     | [Deleting a referenced entry asks](#deleting-a-referenced-entry-asks-first--behaviour-change-on-the-delete-api)                                                                             | Scripts                      |
+| 107 | Schema   | [Unknown schemas cost one entry type](#a-schema-the-running-code-lacks-costs-one-entry-type-and-holds-the-worker--behaviour-change)                                                         | Rare                         |
+| 108 | MDX      | [MDX that runs code is refused](#mdx-content-that-runs-code-is-refused-at-save--breaking-behaviour) (109, 110)                                                                              | Required                     |
+| 108 | Worker   | [On-demand worker, drain; `spotMaxPrice` removed](#canopycms-cdk-the-worker-drains-before-replacement-and-runs-on-demand--breaking-props-spotmaxprice-is-removed-behaviour-and-cost-change) | If set                       |
+| 109 | Worker   | [Hardened worker instance](#canopycms-cdk-the-worker-instance-is-hardened--an-existing-stack-upgrades-in-two-deploys-behaviour-and-cost-change)                                             | Two deploys                  |
+| 109 | Worker   | [Failed or stopped worker says why](#a-failed-or-stopped-worker-says-why--behaviour-change-on-the-not-ready-503-new-worker-apis)                                                            | Custom entrypoint            |
+| 109 | Worker   | [CI worker roll; worker-down alarm](#canopycms-cdk-ci-can-roll-the-worker-with-a-parameter-and-alarm-when-it-stops-syncing--new-opt-in)                                                     | Optional                     |
+| 109 | Preview  | [Typed `fieldProps`](#preview-fieldprops-is-typed-with-server-safe-helpers--breaking-types-and-schemas)                                                                                     | Required                     |
+| 110 | Worker   | [Worker needs a state directory](#canopycms-cdk-the-worker-needs-a-state-directory--deploy-the-template-before-the-bundle)                                                                  | Template first               |
+| 110 | Ops      | [Prod detects an unset `defaultBaseBranch`](#prod-detects-an-unset-defaultbasebranch-instead-of-assuming-main--behaviour-change-startup-can-fail)                                           | Base ≠ repo default          |
+| 111 | CDK      | [Example workflow's triggers and checks](#the-aws-example-workflow-gains-the-templates-triggers-and-dependency-checks)                                                                      | If copied by hand            |
+| 111 | Ops      | [Duplicate-ID scan only on request](#get-adminbranch-health-scans-for-duplicate-content-ids-only-on-request--behaviour-change)                                                              | Admin-API scripts            |
+| 111 | Auth     | [CMS image builds a prod editor; mismatch blocks](#the-cms-image-builds-a-prod-editor-and-a-mode-mismatch-blocks-the-editor--behaviour-change-a-hand-built-image-can-fail-its-build)        | Hand-built images            |
+| 111 | Auth     | [Auth plugins look users up in batches](#auth-plugins-look-users-up-in-batches)                                                                                                             | Custom plugins               |
+| 112 | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first               |
+| 112 | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                         |
+| 112 | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
+| 112 | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub       |
+| 112 | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
+| 113 | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
+| 113 | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
+| 113 | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -137,7 +137,7 @@ URL.
 2. For a branch preview: wrap views with `withCanopyPreview` in a `'use client'` module, add
    `app/preview/[[...path]]/page.server.tsx`, set `editor.previewPrefix: '/preview'`, and serve that
    route with `frame-ancestors 'self'`, not `X-Frame-Options: DENY` (see
-   [Live Preview](../README.md#live-preview)).
+   [Live Preview](README.md#live-preview)).
 3. A test reading view content from the route's server HTML must load the page in a browser.
    Server output rendered during a preview request carries the signed-in asset prefix; keep it out
    of cross-request caches (`unstable_cache`, module memos).
@@ -152,7 +152,7 @@ kept site styles ahead of Mantine's in the preview.
 server components. A string path marks the form's spelling (`'a.0.b'` marks `a[0].b`), and an empty
 path marks nothing. The editor counts and logs marks naming no field. `createEntrySchemaRegistry`
 refuses a field name that is empty, all digits or contains `.`, `[` or `]`. See
-[Live Preview](../README.md#live-preview).
+[Live Preview](README.md#live-preview).
 
 **To adopt.** Fix each path that stops compiling; the error lists valid ones. Rewrite computed paths
 as literal segments, or type that component's prop as plain `FieldProps`. Pass `fieldProps` as
@@ -222,22 +222,6 @@ matching: search your AI config for each reference field's name.
 
 **Now deletable.** A `fieldTransforms` entry that looked up a reference id to print its title.
 
-### AI content leaves out `noindex` entries — **behaviour change for `/ai` output**
-
-**What changed.** (next) AI content leaves out entries marked `noindex`, both from
-`generate-ai-content` and from the `/ai` route, using the same predicate as the sitemap and robots
-metadata. An inline body `entry:` link to an entry the export leaves out (by `exclude`, `noindex`
-or a failed render) renders as its plain text, with no URL; any other form of the link points at
-`#`.
-
-**To adopt.** To keep exporting `noindex` entries, set `exclude: { noindex: false }`. If your SEO
-fields are nested or renamed, pass the AI config's `seo` the same object you pass
-`createNextCanopyContext({ seo })`, so the sitemap and AI content read the flag from the same
-place. A field that links to a hidden section by plain URL needs a field transform; the README
-shows [the recipe](../README.md#ai-content-configuration).
-
-**Now deletable.** An `exclude.where` that re-read the `noindex` flag by hand.
-
 ### Deleting a referenced entry asks first — **behaviour change on the delete API**
 
 **What changed.** (int.106) Deleting an entry that other entries reference (by field or `entry:`
@@ -256,7 +240,7 @@ A `markdown` field with `renderAs: 'mdx'` is checked as MDX, and `mdxAllow` narr
 field or site-wide. New: field options `renderAs`, `mdxAllow`; config key `mdxAllow`; type
 `MdxAllowlist`. (int.110) A component prop allowance can be `'string'` (or
 `{ type: 'string', maxLength }`): a quoted value only, never bare or `{…}`. See
-[MDX content cannot run code](../README.md#mdx-content-cannot-run-code).
+[MDX content cannot run code](README.md#mdx-content-cannot-run-code).
 
 **To adopt.** Set `renderAs: 'mdx'` on each `markdown` field your site compiles as MDX, and
 `mdxAllow` to what your renderer takes. Set `executable: true` only on a field whose editors you
@@ -393,7 +377,7 @@ a format check.
 
 - (int.93) Submit commits gain an `Edited-by: Name (id)` trailer; PR bodies gain a section that
   re-submits replace, keeping human text. Options: `gitEditedByTrailers`, `gitCoAuthoredByTrailers`
-  ([reference](../README.md#definecanopyconfig-options)).
+  ([reference](README.md#definecanopyconfig-options)).
 - (int.110) Submit-commit trailers name every user who saved since the last submit commit, and
   the PR-body section every user who edited the branch, not only the submitter; settings commits
   (permissions, groups) carry the acting user's trailer.
@@ -417,7 +401,7 @@ saves only push the branch, and no failing PR task lands in System health.
 that entry type goes unavailable: the editor says so, and its entries answer 503 with
 `code: 'SCHEMA_UNAVAILABLE'`. Builds, static deploys and `generate-ai-content` still fail. The
 worker holds the base branch for up to 30 minutes while that lasts; see
-[New schemas wait for the editor deploy](deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy).
+[New schemas wait for the editor deploy](docs/deploying-to-aws.md#new-schemas-wait-for-the-editor-deploy).
 Public types gain optional `unavailable` on `EntryTypeConfig` and `FlatSchemaItem`, optional
 `ApiResponse.code`, and a required `SchemaResolutionResult.issues`.
 
@@ -455,7 +439,7 @@ hang until the drain heartbeat lets termination continue. Its in-flight task is 
 new stack needs no steps.
 
 **What changed.** (int.109) Detailed in
-[The worker instance](deploying-to-aws.md#the-worker-instance): IMDSv2 with a hop limit of 1; the
+[The worker instance](docs/deploying-to-aws.md#the-worker-instance): IMDSv2 with a hop limit of 1; the
 bundle is one file whose sha256 user data checks, readable as that one object; a file-system policy
 refusing clients without TLS or IAM, replacing the worker's
 `AmazonElasticFileSystemClientReadWriteAccess`; an encrypted gp3 root volume; a boot-time upgrade to
@@ -509,10 +493,10 @@ failure and exits non-zero on `selfStopped`, with a code outside `RestartPrevent
   with its hash, as `worker/dist/index.js` and `index.js.sha256`. The default, `'asset'`, is
   unchanged.
 - `CanopyCmsService` alarms when the worker logs no git sync for 30 minutes. See
-  [Worker-down alarm](deploying-to-aws.md#worker-down-alarm).
+  [Worker-down alarm](docs/deploying-to-aws.md#worker-down-alarm).
 
 **To adopt.** Optional. For parameter-only change sets, see
-[Rolling the worker from CI](deploying-to-aws.md#rolling-the-worker-from-ci). For the alarm, pass
+[Rolling the worker from CI](docs/deploying-to-aws.md#rolling-the-worker-from-ci). For the alarm, pass
 `alarmTopic`.
 
 **Now deletable.** A manual `cdk deploy` after each canopycms bump whose only purpose is moving the
@@ -523,7 +507,7 @@ worker, and a hand-built alarm on the worker log group.
 **What changed.** (int.112) The boot's `dnf upgrade` could be OOM-killed on every retry. A 1 GiB
 swap file now goes on first; an upgrade that still fails starts the worker unpatched and notifies
 `alarmTopic` if set; a retried step names itself when it gives up. See
-[The worker instance](deploying-to-aws.md#the-worker-instance).
+[The worker instance](docs/deploying-to-aws.md#the-worker-instance).
 
 **To adopt.** Deploy, which replaces the worker instance. The bundle needs none of this, so it is
 not Template first and the worker contract stays at 1.
@@ -554,10 +538,6 @@ contract is unchanged. A hand-installed unit needs the same change:
 branch or GitHub's default branch, whatever a task asks, and fails the task permanently.
 CanopyCMS never queues such a push, but a compromised CMS Lambda can write the task queue.
 
-(next) It protects what the construct's `protectedBranches` prop lists (at most 1024, no settings
-branch), never deletes or opens a pull request from a protected or settings branch, and re-reads
-GitHub's default branch every 10 minutes.
-
 **To adopt.** Upgrade, and roll the worker. Protect your base branch on GitHub with a rule or
 ruleset CanopyCMS's credential cannot bypass. A repository admin's classic token often can: check
 its bypass list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without
@@ -581,23 +561,6 @@ stops applying and no keychain credential is tried.
 **To adopt.** Nothing in production. In dev, move a global-config proxy or CA to `HTTPS_PROXY` or
 `GIT_SSL_CAINFO`.
 
-### The worker moves objects between GitHub and `remote.git` as bundles
-
-**What changed.** (next) The worker, run as one process, moves objects between GitHub and
-`remote.git` as git bundles. A new instance's first sync fetches the whole repository from GitHub,
-and operations may reuse GitHub fetches under 30 seconds old.
-
-**To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
-
-### The worker follows a rebased or deleted GitHub branch
-
-**What changed.** (next) When a branch is rebased and force-pushed on GitHub, or deleted there, the
-worker now updates or deletes its own copy of it instead of warning about it on every sync. A rebased
-branch's copy that holds editor work is left as it is: the worker warns once, and System
-health lists it with what to do.
-
-**To adopt.** Nothing.
-
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 
 **What changed.** (int.112) The worker unit carries a contract version
@@ -609,7 +572,7 @@ changes the template too (the fallback bundle's key and hash), so only the contr
 bundle-only roll is safe.
 
 **To adopt.** Parameter mode: gate bundle-only rolls on the contract
-([recipe](deploying-to-aws.md#rolling-the-worker-from-ci)). The gate refuses a stack without the
+([recipe](docs/deploying-to-aws.md#rolling-the-worker-from-ci)). The gate refuses a stack without the
 `WorkerContract` output, so `cdk deploy` the template once, which adds it. A hand-installed unit
 copies its `Environment=CANOPYCMS_WORKER_CONTRACT=` line from `worker/canopy-worker.service`.
 
@@ -624,7 +587,7 @@ response headers policy. `CanopyCmsDistribution` sends the same headers: `frame-
 `X-Frame-Options: SAMEORIGIN`, `nosniff`, HSTS and `X-Robots-Tag: noindex`. Unless your app sends
 its own framing headers, no other origin can frame the editor or any page the CMS domain serves. Every such page is
 marked `noindex`. The editor's default preview is same-origin and unaffected. See
-[Serving the editor from a distribution you already own](deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
+[Serving the editor from a distribution you already own](docs/deploying-to-aws.md#serving-the-editor-from-a-distribution-you-already-own).
 
 **To adopt.** If you wired the Function URL into your own distribution by hand, delete those
 behaviors and call `attachTo`, passing your CMS build's `assetPrefix` as `editorAssetPrefix` and a
@@ -784,24 +747,6 @@ asset URLs.
 
 ---
 
-<!--
-Template for each entry — copy, don't improvise. File it under its area heading, add a row to the
-table above, and label it `(next int)`.
-
-### <short title>
-
-**What changed.** (next int) One or two sentences.
-
-**To adopt.** Concrete steps, with the import path and the call shape.
-
-**Now deletable.** The PATTERN of local code this supersedes ("a hand-rolled filename
-parser"), recognisable in any adopter's tree. Never name files, paths, branches, hosts or
-identifiers from an adopter's repo: this package is public and theirs generally are not. If
-nothing becomes deletable, leave the part out.
--->
-
----
-
 ## Released
 
 ### 0.0.67
@@ -816,7 +761,7 @@ never ended. `canopycms-auth-clerk` skips it while the editor is mounted, and ex
 **To adopt.** Nothing for the editor, if your edit page uses `useClerkAuthConfig()` or
 `ClerkSignIn`. If your CMS build renders `<SignIn>`, `UserButton` or `OrganizationSwitcher` on your
 own pages, mount the hook as in
-[Clerk components on your own pages](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages).
+[Clerk components on your own pages](packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages).
 Your own Server Actions in the CMS build still 403 behind OAC.
 
 **Now deletable.** Any local patch of `window.__internal_onBeforeSetActive` (or 6.x's
@@ -857,12 +802,12 @@ fast naming the ARN, the field and the keys present, never a value.
 **To adopt.** Nothing, unless one of those secrets holds a JSON document: then set the matching
 prop. The scaffolded stack fills them from the repository _variables_
 `CANOPY_GITHUB_TOKEN_SECRET_JSON_FIELD` and `CLERK_SECRET_KEY_SECRET_JSON_FIELD`
-([why the prefix](deploying-to-aws.md#repository-secrets-and-variables)); a stack scaffolded earlier
+([why the prefix](docs/deploying-to-aws.md#repository-secrets-and-variables)); a stack scaffolded earlier
 adds the props to `infrastructure/bin/app.ts` and `infrastructure/lib/cms-stack.ts` and the two `env`
 lines to `.github/workflows/deploy-cms.yml`, or re-runs the generator and diffs. `cdk synth` refuses a `…JsonField` prop without its `…SecretArn`, and an ARN carrying the ECS `:KEY::` suffix
 (also in `secretsArns`). Don't use CDK's `secretValueFromJson`: it resolves the plaintext into the deployed
 resource's configuration, readable by anyone who can describe it. Only `CLERK_SECRET_KEY` goes through Secrets Manager; `CLERK_JWT_KEY` and the publishable
-key are public material ([Security Model](deploying-to-aws.md#security-model)).
+key are public material ([Security Model](docs/deploying-to-aws.md#security-model)).
 
 **Now deletable.** A wrapper that fetches the secret, parses it and re-exports one field into the
 worker's environment, such as a `jq` step in user data or a wrapper entrypoint around
@@ -874,7 +819,7 @@ worker's environment, such as a `jq` step in user data or a wrapper entrypoint a
 `githubToken` is not deprecated and stays the documented default; `canopycms` neither depends on
 nor imports `@octokit/auth-app`. Register one App per site, not one shared across repositories:
 anyone holding an App's key can mint a token for any of its installations
-([why](../ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation)).
+([why](ARCHITECTURE.md#why-one-github-app-per-site-not-one-shared-across-an-organisation)).
 
 **To adopt with `canopycms-cdk`** (existing stacks need no edit). `CanopyCmsServiceProps` takes
 `githubAppId`, `githubAppInstallationId`, `githubAppPrivateKeySecretArn` and
@@ -887,7 +832,7 @@ anyone holding an App's key can mint a token for any of its installations
    `verify` checks an existing installation's permissions: run it, since an App missing a
    permission only shows up later, as `sync-failed`. `create` needs an interactive terminal and
    never edits an existing JSON secret (create one and point the JSON-field prop at it)
-   ([details](deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
+   ([details](docs/deploying-to-aws.md#register-it-with-canopycms-init-github-app)).
 2. Set the three props and **remove `githubTokenSecretArn`** (with its JSON field). A partial set
    of the three is refused at synth, and so is an App alongside a token.
 3. In the generated workflow, store them as `CANOPY_GITHUB_APP_ID`,
@@ -898,7 +843,7 @@ anyone holding an App's key can mint a token for any of its installations
 
 The private key is ARN-only; passing the key itself is refused at synth. Its ARN joins the worker's
 IAM policy automatically, so you need not add it to `secretsArns`. See
-[Authenticating as a GitHub App](deploying-to-aws.md#authenticating-as-a-github-app).
+[Authenticating as a GitHub App](docs/deploying-to-aws.md#authenticating-as-a-github-app).
 
 ```bash
 canopycms init-github-app create -- \
@@ -946,7 +891,7 @@ downloads the `.pem` from the App's settings page.
 
 **What changed.** The worker re-reads a Secrets Manager secret (the GitHub token or the Clerk secret
 key) when the operation using it fails. Timings, costs and the store-before-revoke order are in
-[Rotating a secret](deploying-to-aws.md#rotating-a-secret).
+[Rotating a secret](docs/deploying-to-aws.md#rotating-a-secret).
 
 **To adopt.** Nothing for credentials from `*_SECRET_ARN`, which is every scaffolded deployment. A
 GitHub App private key is still read only at boot: store the new key, replace the instance, and
@@ -1000,12 +945,12 @@ also check the bucket policy for its grant.
 5. `withCanopy()` adds sharp's libvips to Next's file tracing (not for a static export) and, on
    Next 16 and later, sets `turbopack: {}` when your config has neither `turbopack` nor your own
    `webpack` and it can read your Next version. A webpack build still fails its image transforms
-   ([Dual Build Support](deploying-to-aws.md#dual-build-support)).
+   ([Dual Build Support](docs/deploying-to-aws.md#dual-build-support)).
 
 **Breaking:** a stack setting `platform` on `fromImageAsset` without `architecture` gets an arm64
 function while `platform` still decides the image, so `Platform.LINUX_AMD64` builds an image the
 function cannot run. A stack setting neither moves to arm64 with a matching image, built under QEMU
-on an x86 host ([Where the image is built](deploying-to-aws.md#where-the-image-is-built)).
+on an x86 host ([Where the image is built](docs/deploying-to-aws.md#where-the-image-is-built)).
 
 **To adopt.**
 
@@ -1034,7 +979,7 @@ reason; `platform` on `fromImageAsset`; and, with `withCanopy()`, a hand-written
 
 **What changed.** `media.uploadUrl` (s3 adapter; an absolute http(s) URL or a site-relative path)
 replaces the `url` that `beginUpload()` returns, leaving the presign's `fields` untouched, so
-uploads can be same-origin. See [Media Configuration](../README.md#media-configuration) for the
+uploads can be same-origin. See [Media Configuration](README.md#media-configuration) for the
 CloudFront behavior it expects.
 
 **To adopt.** Optional. Set it from an environment variable: a site-relative value works only where
@@ -1059,7 +1004,7 @@ needs `lazyPublicTransforms: true`) let you pass a deterministically named role,
 bucket's stack computes `arn:aws:iam::<account>:role/<name>` from literals instead of a
 `Fn::GetStackOutput` reference only the CDK CLI resolves. The constructs re-attach
 `AWSLambdaBasicExecutionRole` (and the VPC policy) that `lambda.Function` drops from a role you
-pass. See [Cross-account asset bucket](deploying-to-aws.md#cross-account-asset-bucket).
+pass. See [Cross-account asset bucket](docs/deploying-to-aws.md#cross-account-asset-bucket).
 
 **To adopt.** Optional:
 
@@ -1169,7 +1114,7 @@ public JWKS PEM, used only to verify signatures.
 to variables (Settings → Secrets and variables → Actions → Variables); `bin/app.ts` refuses the
 deploy at synth while it is unset. Check that `bin/app.ts` passes `CLERK_SECRET_KEY` as
 `clerkSecretKeySecretArn` (read by the worker), never in the Lambda's `environment`, unless you keep
-`clerkMiddleware` ([Security Model](deploying-to-aws.md#security-model)).
+`clerkMiddleware` ([Security Model](docs/deploying-to-aws.md#security-model)).
 
 #### `readByUrlPath` answers only where `listEntries` publishes — **breaking (routing)**
 
@@ -1268,7 +1213,7 @@ basePath: process.env.NEXT_PUBLIC_BASE_PATH,
 Then pass `baseUrl` to `assetUrl` only if Next serves `/assets` (local adapter, `next dev`, S3 with
 no distribution): `assetUrl(image, { width: 960, baseUrl: BASE_PATH })`. Assets on CloudFront via
 `AssetSupport` stay at the distribution root; pass no `baseUrl` (mount table under "Where `/assets`
-is mounted" in [Media Configuration](../README.md#media-configuration)). Two traps:
+is mounted" in [Media Configuration](README.md#media-configuration)). Two traps:
 
 - Don't pass a deployment `basePath` to `contentStaticParams({ basePath })`; that option filters by
   a nested route prefix and emits zero params, building green.
@@ -1427,7 +1372,7 @@ Under `exactOptionalPropertyTypes: true`, omit keys instead of assigning `undefi
 `withTrailingSlash` and `isAbsoluteUrl` from `canopycms/server`; `defineSeoFieldGroup()` from
 `canopycms`; `generateContentSitemap` and `entryToMetadata` from `canopycms-next`, bound on
 `createNextCanopyContext`'s result. See
-[Sitemap and SEO Metadata](../README.md#sitemap-and-seo-metadata). Every routable entry type is in
+[Sitemap and SEO Metadata](README.md#sitemap-and-seo-metadata). Every routable entry type is in
 the sitemap unless `exclude`d or `noindex`; one `noindex` predicate drives both robots metadata and
 sitemap exclusion. `trailingSlash` is never inferred. `lastModified` defaults to `updatedAt`, a
 filesystem mtime. An empty SEO field counts as unset. `siteUrl` must be absolute, colliding URLs are
@@ -1484,7 +1429,7 @@ underscore-prefixed files are skipped.
 
 **What changed.** New scaffolds write `defaultBranchAccess: 'deny'` and
 `defaultPathAccess: { read: 'allow' }`
-([Public read on server deployments](../README.md#public-read-on-server-deployments)).
+([Public read on server deployments](README.md#public-read-on-server-deployments)).
 
 **To adopt.** An older scaffold's `defaultBranchAccess: 'allow'` is wider than recommended;
 consider `'deny'`. If you deleted `defaultPathAccess: { read: 'allow' }`, anonymous visitors get no content until you
@@ -1537,7 +1482,7 @@ re-checked an entry's type (a `switch` on `meta.entryType` can merge them into o
 **What changed.** `BlockComponentRegistry<Blocks>` (types only, from `canopycms`; `BlockValueOf<Blocks, 'hero'>`
 gives one template's value type) requires exactly
 one component per block template name when written as an object literal. See
-[Block Component Registries](../README.md#block-component-registries) and
+[Block Component Registries](README.md#block-component-registries) and
 `apps/example1/app/components/PostView.tsx`.
 
 ```ts
@@ -1559,7 +1504,7 @@ templates against the schema.
 
 **What changed.** Spreading a `const` field array into several schemas, and nesting
 `defineInlineFieldGroup()` inside a block template, are documented
-([Reusable Field Fragments](../README.md#reusable-field-fragments)); `defineFieldFragment()` is an
+([Reusable Field Fragments](README.md#reusable-field-fragments)); `defineFieldFragment()` is an
 identity helper for them.
 
 ```ts
@@ -1578,7 +1523,7 @@ field by composing from the same `const` field object.
 A block template holding a `reference` field is a shared block; `read()`/`readByUrlPath()` resolve
 it, and listings do with
 [`resolveReferences`](#listings-resolve-references-and-a-resolved-reference-carries-urlpath-and-optionally-its-body-16--breaking-type-level)
-(0.0.64). See [Shared / Referenced Blocks](../README.md#shared--referenced-blocks).
+(0.0.64). See [Shared / Referenced Blocks](README.md#shared--referenced-blocks).
 
 **Now deletable.** A second `read()` in page code to unwrap a shared block's reference.
 
@@ -1600,7 +1545,7 @@ Not retro-documented, apart from these:
 
 #### The registry is keyed by entry-type name (0.0.42)
 
-**What changed.** `createEntrySchemaRegistry` keys are the entry-type names that `.collection.json` files name in `entry.schema`, and `EntryTypesFromRegistry` derives the typed entry-type map from them. Schema-variable keys (`{ postSchema }`) still work but derive nothing; [README's registry convention](../README.md#convention-why-key-the-registry-by-entry-type-name) says when to keep them.
+**What changed.** `createEntrySchemaRegistry` keys are the entry-type names that `.collection.json` files name in `entry.schema`, and `EntryTypesFromRegistry` derives the typed entry-type map from them. Schema-variable keys (`{ postSchema }`) still work but derive nothing; [README's registry convention](README.md#convention-why-key-the-registry-by-entry-type-name) says when to keep them.
 
 **To adopt.**
 
