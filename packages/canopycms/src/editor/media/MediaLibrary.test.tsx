@@ -1159,7 +1159,7 @@ describe('MediaLibraryBody', () => {
   })
 
   describe('a walk that cannot finish', () => {
-    it('does not call a repeated cursor complete, and Retry walks again from page 1 without clearing the list', async () => {
+    it('does not call a repeated cursor complete, and Retry starts the walk over', async () => {
       const extra = makeAsset(3)
       const restart = deferred<ReturnType<typeof page>>()
       let firstPageRequests = 0
@@ -1188,18 +1188,14 @@ describe('MediaLibraryBody', () => {
 
       await waitFor(() => expect(mockClient.assets.list).toHaveBeenCalledTimes(3))
       expect(mockClient.assets.list).toHaveBeenNthCalledWith(3, { limit: '40' })
-      // What was loaded stays on screen while page 1 is requested again.
-      expect(renderedHashes().sort()).toEqual([catAsset.hash32, dogAsset.hash32])
-      expect(screen.queryByTestId('media-library-loading')).toBeNull()
+      // Starting over drops what the moved listing produced; nothing stale survives it.
+      expect(screen.getByTestId('media-library-loading')).toBeTruthy()
       expect(screen.queryByTestId('media-library-error')).toBeNull()
 
-      await act(async () => restart.resolve(page([catAsset, dogAsset, extra])))
+      await act(async () => restart.resolve(page([dogAsset, extra])))
 
-      await waitFor(() => expect(screen.queryByTestId('media-library-load-status')).toBeNull())
-      expect(renderedHashes()).toHaveLength(3)
-      expect(new Set(renderedHashes())).toEqual(
-        new Set([catAsset.hash32, dogAsset.hash32, extra.hash32]),
-      )
+      await waitFor(() => expect(screen.queryByTestId('media-library-loading')).toBeNull())
+      expect(new Set(renderedHashes())).toEqual(new Set([dogAsset.hash32, extra.hash32]))
     })
 
     it('says what the loaded part holds when a search matches nothing mid-walk', async () => {
@@ -1346,6 +1342,25 @@ describe('MediaLibraryBody', () => {
       await waitFor(() => expect(screen.queryByText('cat.png')).toBeNull())
       expect(document.activeElement).toBe(screen.getByTestId('media-library-filter'))
       expect(actionNotice()).toBe('Removed cat.png from library')
+    })
+
+    it('re-announces a second remove whose words are the same', async () => {
+      asAdmin()
+      const otherCat: AssetRecord = { ...catAsset, hash32: 'c'.repeat(32) }
+      mockClient.assets.list.mockResolvedValueOnce(page([catAsset, otherCat]))
+      mockClient.assets.delete.mockResolvedValue({ ok: true, status: 200, data: { deleted: true } })
+
+      renderBody()
+      fireEvent.click(await screen.findByTestId(`asset-card-delete-${catAsset.hash32}`))
+      await waitFor(() => expect(actionNotice()).toBe('Removed cat.png from library'))
+      const first = screen.getByTestId('media-library-action-notice').firstChild
+
+      fireEvent.click(screen.getByTestId(`asset-card-delete-${otherCat.hash32}`))
+      await waitFor(() => expect(screen.queryByTestId(`asset-card-${otherCat.hash32}`)).toBeNull())
+      const second = screen.getByTestId('media-library-action-notice').firstChild
+      expect(actionNotice()).toBe('Removed cat.png from library')
+      // A new text node, not the same one left in place, is what a screen reader announces.
+      expect(second).not.toBe(first)
     })
 
     it('leaves focus on the search field when the last file is removed', async () => {

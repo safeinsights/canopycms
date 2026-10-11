@@ -131,7 +131,8 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   const [filterText, setFilterText] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
   // The result of the last remove, for the live region; the removed card itself is gone.
-  const [actionNotice, setActionNotice] = useState<string | null>(null)
+  // `id` re-keys the region's text, so a second remove with the same words is announced too.
+  const [actionNotice, setActionNotice] = useState<{ id: number; text: string } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   // A removed card takes its focused button with it, so focus moves to the search field once the
   // removal has rendered (Mantine returns focus to the trash button when the confirm closes).
@@ -229,7 +230,10 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         return
       }
       library.remove(asset.hash32)
-      setActionNotice(`Removed ${asset.filename} from library`)
+      setActionNotice((prev) => ({
+        id: (prev?.id ?? 0) + 1,
+        text: `Removed ${asset.filename} from library`,
+      }))
       focusAfterRemove.current = true
     } catch (err) {
       setActionError(`Couldn't remove ${asset.filename} from the library. ${getErrorMessage(err)}`)
@@ -370,7 +374,9 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   )
 
   return (
-    <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
+    // `h="100%"` bounds it in a fixed-height host (the MDX image dialog's library tab); `flex`
+    // bounds it in the drawer's flex body.
+    <Stack gap="sm" h="100%" style={{ flex: 1, minHeight: 0 }}>
       <Dropzone
         onDrop={(files) => void handleDrop(files)}
         onReject={handleReject}
@@ -487,7 +493,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
       </VisuallyHidden>
       {/* Its own region, so a load or match status never masks it or announces it late. */}
       <VisuallyHidden role="status" aria-live="polite" data-testid="media-library-action-notice">
-        {actionNotice ?? ''}
+        {actionNotice && <span key={actionNotice.id}>{actionNotice.text}</span>}
       </VisuallyHidden>
 
       {library.error && (
@@ -528,7 +534,7 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
           {listContent}
         </ScrollArea.Autosize>
       ) : (
-        <ScrollArea style={{ flex: 1, minHeight: 0 }} viewportRef={setViewport}>
+        <ScrollArea style={{ flex: 1, minHeight: 200 }} viewportRef={setViewport}>
           {listContent}
         </ScrollArea>
       )}

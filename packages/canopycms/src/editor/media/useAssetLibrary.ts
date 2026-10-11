@@ -67,8 +67,6 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
   const requested = useRef(new Set<string>())
   const removed = useRef(new Set<string>())
   const failedCursor = useRef<string | undefined>(undefined)
-  // Set when the listing moved mid-walk: Retry walks again from page 1, keeping what is shown.
-  const restartFromTop = useRef(false)
 
   const walk = useCallback(
     async (startCursor: string | undefined, runId: number) => {
@@ -111,7 +109,6 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
         // that as complete. Retry starts over.
         if (requested.current.has(next)) {
           failedCursor.current = undefined
-          restartFromTop.current = true
           setError({ message: 'The library changed while it was loading.', firstPage: false })
           return
         }
@@ -126,7 +123,6 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
     requested.current = new Set()
     removed.current = new Set()
     failedCursor.current = undefined
-    restartFromTop.current = false
     setAssets([])
     setFirstPageLoaded(false)
     setComplete(false)
@@ -145,13 +141,9 @@ export function useAssetLibrary(opened: boolean): UseAssetLibraryResult {
 
   const retry = useCallback(() => {
     const cursor = failedCursor.current
-    if (cursor === undefined && !restartFromTop.current) {
+    if (cursor === undefined) {
       start()
       return
-    }
-    if (restartFromTop.current) {
-      restartFromTop.current = false
-      requested.current = new Set()
     }
     generation.current += 1
     setError(null)
