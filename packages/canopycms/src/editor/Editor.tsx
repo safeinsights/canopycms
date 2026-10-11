@@ -1498,6 +1498,8 @@ const EditorContent: React.FC<EditorProps> = ({
             onClose={() => setNavigatorOpen(false)}
             // Mantine closes every open overlay on one Escape, so the drawer leaves it to a dialog
             // opened from its rows.
+            // Its focus return would otherwise run after the palette took focus, on a timer.
+            returnFocus={!quickOpenOpen}
             closeOnEscape={
               !createModalOpen &&
               !renameModalOpen &&

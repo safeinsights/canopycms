@@ -49,6 +49,12 @@ work. The HIGH and MEDIUM findings that PR could fix are fixed; these are what i
 - The no-entry-types alert in the create modal offers no next action.
 - The palette gives screen readers no result count and doesn't mark the open entry.
 - The QuickOpenPalette story's button hard-codes "Ctrl+P".
+- Mod+P does nothing for the ~200ms another modal plays its close transition (its dialog is
+  still mounted, so the palette's overlay guard counts it). The shortcut is still kept from the
+  browser, so nothing prints; it just needs pressing again.
+- Every navigator row mounts a Mantine `Tooltip` (a floating-ui instance) for the truncated
+  title, even when the title fits. Measure on a large tree; if it matters, mount the Tooltip
+  only once the row is found truncated.
 
 Dimmed `xs`/`sm` text (Mantine's `dimmed`, about 3.3:1) is theme-wide and belongs to WS8's
 contrast sweep in [ui-epic-202610.md](ui-epic-202610.md).

@@ -246,6 +246,31 @@ describe('quick open', () => {
     expect(await screen.findByTestId('quick-open-input')).toBeTruthy()
     await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
   })
+
+  it('does not let the closing drawer hand focus back while the palette opens', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    await openNavigator()
+
+    // Which wins, the drawer's focus return or the palette's autofocus, is a race in a browser
+    // (a 10ms timer against an animation frame), so watch for the return itself: nothing but the
+    // palette's field may be focused.
+    const focused: Element[] = []
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      focused.push(this)
+    })
+    fireEvent.keyDown(screen.getByTestId('entry-nav-filter'), { key: 'p', ctrlKey: true })
+    await screen.findByTestId('quick-open-input')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    focus.mockRestore()
+
+    const paletteInput = screen.getByTestId('quick-open-input')
+    expect(focused).toContain(paletteInput)
+    expect(focused.filter((element) => element !== paletteInput)).toEqual([])
+  })
 })
 
 describe('dialogs opened from the navigator', () => {
