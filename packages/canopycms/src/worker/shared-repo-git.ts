@@ -312,6 +312,16 @@ export interface UnexpectedConfigKey {
   file: string
 }
 
+/**
+ * How a refusal's fix is to be run. Run as root, or as an unsandboxed worker user, a command on EFS
+ * can be made to run what the CMS Lambda wrote there (a repository's config, a symbolic link), and
+ * root writes into EFS follow its links; `canopy-inspect` (the AWS worker instance's
+ * /opt/canopy-worker/canopy-inspect) runs each one as the worker does, inside its sandbox.
+ */
+const RUN_FIX_AS_THE_WORKER =
+  "as the worker's user and never as root: on the AWS worker instance, run each command " +
+  'through /opt/canopy-worker/canopy-inspect'
+
 /** Every refusal to run git in a shared repository, so a caller can tell one from git's own errors. */
 export class SharedRepoRefusalError extends Error {
   constructor(message: string) {
@@ -336,10 +346,10 @@ export class UntrustedRepoConfigError extends SharedRepoRefusalError {
         `which can make the worker run a command or send its GitHub credential elsewhere ` +
         `(${keys.map((k) => `${k.key} in ${k.file}`).join('; ')}). Find out how ` +
         `${keys.length === 1 ? 'it' : 'they'} got there, then remove ` +
-        `${keys.length === 1 ? 'it' : 'them'}: ` +
+        `${keys.length === 1 ? 'it' : 'them'}, ${RUN_FIX_AS_THE_WORKER}: ` +
         keys
           .map((k) => `git config --file ${shellQuote(k.file)} --unset-all ${shellQuote(k.key)}`)
-          .join(' && '),
+          .join('; then '),
     )
     this.name = 'UntrustedRepoConfigError'
   }
@@ -527,8 +537,8 @@ async function refusePopulated(clone: string, gitlinks: string[]): Promise<void>
   throw new SharedRepoRefusalError(
     `Refusing to run git in ${clone}: it has a submodule with a repository in it at ` +
       `${populated.map((p) => JSON.stringify(p)).join(', ')}, and git runs inside one under its ` +
-      `own config. CanopyCMS never populates a submodule. Find out how it got there, then ` +
-      `${removals.join('; then ')}`,
+      `own config. CanopyCMS never populates a submodule. Find out how it got there, then, ` +
+      `${RUN_FIX_AS_THE_WORKER}: ${removals.join('; then ')}`,
   )
 }
 
