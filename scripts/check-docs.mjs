@@ -361,20 +361,32 @@ function proseText(node) {
  * Measures each `###` entry under a changelog's `## Unreleased` section and
  * returns those whose words, heading included, exceed `cap`, plus whether the
  * section exists at all: without it nothing would be capped, so the caller
- * reports its absence. The file is parsed as CommonMark, so only a real
+ * reports its absence, and any other H1 or H2 before `## Released`, which
+ * would otherwise end the section early. The file is parsed as CommonMark, so only a real
  * top-level heading opens an entry or a section, and code and HTML comments
  * (the entry template) are not counted. An entry runs to the next `###` or
  * higher heading. Entries under `## Released` are exempt: release
  * consolidation is where the file shrinks.
  */
 function measureChangelog(content, cap) {
+  // micromark drops a byte-order mark, which would shift every offset by one.
+  const text = content.replace(/^\uFEFF/, '')
   const entries = []
+  const strayHeadings = []
   let hasUnreleased = false
   let inUnreleased = false
   let current = null
-  for (const node of fromMarkdown(content).children) {
+  for (const node of fromMarkdown(text).children) {
     if (node.type === 'heading' && node.depth <= 2) {
-      inUnreleased = node.depth === 2 && proseText(node).trim() === 'Unreleased'
+      const name = proseText(node).trim()
+      // Only `## Released` closes the section, so a paragraph that turns into a
+      // setext heading over a `---` cannot silently uncap the entries after it.
+      if (inUnreleased && !(node.depth === 2 && name === 'Released')) {
+        strayHeadings.push({ heading: name, lineNo: node.position.start.line })
+        current = null
+        continue
+      }
+      inUnreleased = node.depth === 2 && name === 'Unreleased'
       hasUnreleased ||= inUnreleased
       current = null
       continue
@@ -383,15 +395,13 @@ function measureChangelog(content, cap) {
     if (node.type === 'heading' && node.depth === 3) {
       const first = node.children[0]
       const last = node.children.at(-1)
-      const heading = first
-        ? content.slice(first.position.start.offset, last.position.end.offset)
-        : ''
+      const heading = first ? text.slice(first.position.start.offset, last.position.end.offset) : ''
       current = { heading, lineNo: node.position.start.line, words: 0 }
       entries.push(current)
     }
     if (current) current.words += countWords(proseText(node))
   }
-  return { hasUnreleased, over: entries.filter((e) => e.words > cap) }
+  return { hasUnreleased, strayHeadings, over: entries.filter((e) => e.words > cap) }
 }
 
 /**
@@ -721,6 +731,38 @@ function selfTest() {
       ),
     )
   }
+  expect(
+    'entry cap: a setext heading inside Unreleased is reported, and later entries still capped',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', 'para', '---', '### B', words(20)].join('\n'),
+        15,
+      )
+      return m.strayHeadings.length === 1 && m.over.some((e) => e.heading === 'B')
+    })(),
+  )
+  expect(
+    'entry cap: a byte-order mark keeps the heading text',
+    measureChangelog(`\uFEFF## Unreleased\n### B\n${words(20)}`, 15).over[0]?.heading === 'B',
+  )
+  expect(
+    'entry cap: inline code in an entry is not counted',
+    overOf(['## Unreleased', '### A', words(10), '`' + words(20) + '`']).length === 0,
+  )
+  expect(
+    'entry cap: list items are counted as separate words',
+    overOf(['## Unreleased', '### A', ...Array.from({ length: 20 }, (_, i) => `- w${i}`)])
+      .length === 1,
+  )
+  expect(
+    'entry cap: words between comments in an HTML block stay separate',
+    overOf(['## Unreleased', '### A', '<!-- c -->' + words(20).split(' ').join('<!-- c -->')])
+      .length === 1,
+  )
+  expect(
+    'entry cap: words in an unclosed comment are not counted',
+    overOf(['## Unreleased', '### A', `<!-- a --> <!-- ${words(20)}`]).length === 0,
+  )
   for (const empty of ['<!-->', '<!--->']) {
     expect(
       `entry cap: prose after an empty ${empty} comment is counted`,
@@ -728,8 +770,14 @@ function selfTest() {
     )
   }
   expect(
-    'entry cap: an H1 ends the Unreleased section',
-    overOf(['## Unreleased', '### A', words(5), '# Other', words(20)]).length === 0,
+    'entry cap: an H1 inside Unreleased is reported and stops the entry',
+    (() => {
+      const m = measureChangelog(
+        ['## Unreleased', '### A', words(5), '# Other', words(20)].join('\n'),
+        15,
+      )
+      return m.strayHeadings.length === 1 && m.over.length === 0
+    })(),
   )
   expect(
     'entry cap: a ### inside a comment opens no entry',
@@ -1093,6 +1141,14 @@ for (const f of inScopeFiles) {
         line: null,
         message:
           'maxEntryWords caps the ### entries under `## Unreleased`; without that heading nothing is checked',
+      })
+    }
+    for (const stray of changelog.strayHeadings) {
+      problems.push({
+        kind: 'changelog heading inside ## Unreleased',
+        file: f,
+        line: stray.lineNo,
+        message: `"${stray.heading}" -- only \`## Released\` may follow \`## Unreleased\`; a paragraph directly above \`---\` becomes a heading, so add a blank line`,
       })
     }
     for (const entry of changelog.over) {
