@@ -17,6 +17,17 @@ describe('useUserMetadata', () => {
     avatarUrl: 'https://example.com/avatar.jpg',
   }
 
+  it.each(['canopycms-system', 'canopycms-content-reader'])(
+    'answers the bot id %s as "CanopyCMS bot" without a lookup',
+    (botId) => {
+      const getUserMetadata = vi.fn()
+      const { result } = renderHook(() => useUserMetadata(botId, getUserMetadata), { wrapper })
+      expect(result.current.userMetadata?.name).toBe('CanopyCMS bot')
+      expect(result.current.isLoading).toBe(false)
+      expect(getUserMetadata).not.toHaveBeenCalled()
+    },
+  )
+
   it('returns cached user immediately if provided', () => {
     const getUserMetadata = vi.fn()
 

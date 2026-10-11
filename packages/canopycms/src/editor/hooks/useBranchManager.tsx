@@ -113,6 +113,24 @@ const showWithdrawConfirmation = (
   })
 }
 
+const showRequestChangesConfirmation = (
+  branchName: string,
+  onConfirm: () => Promise<void>,
+  onDismiss: () => void,
+) => {
+  openConfirm({
+    title: 'Request changes',
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Send "${branchName}" back to its editor?\n\nThis will:\n• Change the branch status back to "editing"\n• Let its editor change it and submit again`}
+      </Text>
+    ),
+    labels: { confirm: 'Request changes', cancel: 'Cancel' },
+    confirmProps: { color: 'orange', 'data-testid': 'confirm-request-changes' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+  })
+}
+
 /**
  * Delete is the one irreversible branch action: it unlinks branch.json and removes the clone,
  * the local mirror's head and, for a branch with a PR, the GitHub branch. BranchManager.tsx's
@@ -584,23 +602,31 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
-  const handleRequestChanges = async (branchNameForChanges: string) => {
-    options.setBusy(true)
-    try {
-      const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to request changes')
-      }
-      notifications.show({ message: 'Changes requested', color: 'orange' })
-      updateCreatedBranch(branchNameForChanges, result.data?.branch)
-      await loadBranches()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to request changes'
-      notifications.show({ message, color: 'red' })
-    } finally {
-      options.setBusy(false)
-    }
-  }
+  const handleRequestChanges = (branchNameForChanges: string) =>
+    new Promise<void>((resolve) => {
+      showRequestChangesConfirmation(
+        branchNameForChanges,
+        async () => {
+          options.setBusy(true)
+          try {
+            const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges })
+            if (!result.ok) {
+              throw new Error(result.error || 'Failed to request changes')
+            }
+            notifications.show({ message: 'Changes requested', color: 'orange' })
+            updateCreatedBranch(branchNameForChanges, result.data?.branch)
+            await loadBranches()
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to request changes'
+            notifications.show({ message, color: 'red' })
+          } finally {
+            options.setBusy(false)
+            resolve()
+          }
+        },
+        () => resolve(),
+      )
+    })
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)

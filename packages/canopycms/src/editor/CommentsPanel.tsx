@@ -17,6 +17,7 @@ import {
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { UserBadge } from './components/UserBadge'
+import { userIdLabel } from './user-display'
 import { formatRelativeTime } from './relative-time'
 
 export interface CommentsPanelProps {
@@ -287,7 +288,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                               />
                             ) : (
                               <Text size="xs" fw={500}>
-                                {comment.userId}
+                                {userIdLabel(comment.userId)}
                               </Text>
                             )}
                             <Text

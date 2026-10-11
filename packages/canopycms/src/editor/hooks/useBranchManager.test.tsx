@@ -1116,6 +1116,33 @@ describe('useBranchManager', () => {
     expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' })
   })
 
+  it('asks before requesting changes, and a cancel sends nothing', async () => {
+    const { modals } = await import('@mantine/modals')
+    vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+      options.onCancel?.()
+      return 'mock-modal-id'
+    })
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => {
+      expect(result.current.branches).toHaveLength(2)
+    })
+
+    await act(async () => {
+      await expect(result.current.handleRequestChanges('feature')).resolves.toBeUndefined()
+    })
+
+    expect(modals.openConfirmModal).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Request changes' }),
+    )
+    expect(mockClient.workflow.requestChanges).not.toHaveBeenCalled()
+  })
+
   it('reloads branch data', async () => {
     mockClient.branches.list
       .mockResolvedValueOnce({

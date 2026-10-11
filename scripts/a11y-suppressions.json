@@ -40,11 +40,6 @@
       "count": 1
     }
   },
-  "packages/canopycms/src/editor/group-manager/GroupCard.tsx": {
-    "jsx-a11y/control-has-associated-label": {
-      "count": 2
-    }
-  },
   "packages/canopycms/src/editor/group-manager/MemberList.tsx": {
     "jsx-a11y/control-has-associated-label": {
       "count": 1

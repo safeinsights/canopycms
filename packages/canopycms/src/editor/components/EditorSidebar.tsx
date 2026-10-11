@@ -55,14 +55,13 @@ export interface EditorSidebarProps {
   onHighlightToggle: () => void
 
   /**
-   * Callback when permission manager should be opened.
+   * Opens the permission manager. Admin-only like `onSystemHealthOpen`: the menu item renders
+   * only when this is provided.
    */
-  onPermissionManagerOpen: () => void
+  onPermissionManagerOpen?: () => void
 
-  /**
-   * Callback when group manager should be opened.
-   */
-  onGroupManagerOpen: () => void
+  /** Opens the group manager. Admin-only; the menu item renders only when this is provided. */
+  onGroupManagerOpen?: () => void
 
   /**
    * Callback when the media library should be opened.
@@ -213,12 +212,16 @@ export function EditorSidebar({
           </Menu.Target>
           <Menu.Dropdown data-testid="settings-menu">
             <Menu.Label>Settings</Menu.Label>
-            <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>
-              Manage Permissions
-            </Menu.Item>
-            <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
-              Manage Groups
-            </Menu.Item>
+            {onPermissionManagerOpen && (
+              <Menu.Item data-testid="settings-menu-permissions" onClick={onPermissionManagerOpen}>
+                Manage Permissions
+              </Menu.Item>
+            )}
+            {onGroupManagerOpen && (
+              <Menu.Item data-testid="settings-menu-groups" onClick={onGroupManagerOpen}>
+                Manage Groups
+              </Menu.Item>
+            )}
             <Menu.Item
               data-testid="settings-menu-media-library"
               leftSection={<IconPhoto size={14} />}

@@ -42,8 +42,11 @@ import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
+import type { UserSearchResult } from '../auth/types'
 import { EditorErrorBoundary, type CaughtEditorError } from './components/EditorErrorBoundary'
 import { FieldCrashFallback } from './fields/FieldCrashFallback'
+import { useListItemKeys } from './fields/list-item-keys'
+import type { FieldRemoval } from './undo-removal'
 
 export type FormValue = Record<string, unknown>
 
@@ -188,6 +191,10 @@ export interface FormRendererProps {
   format?: ContentFormat
   /** Shows the value without accepting edits. Comments stay open. */
   readOnly?: boolean
+  /** Told of each list item, block or image that Remove takes out, so the caller can offer Undo. */
+  onRemoved?: (removal: FieldRemoval) => void
+  /** Resolves comment authors to names in field and entry threads; without it they show as ids. */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -208,54 +215,15 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   fieldErrors,
   format,
   readOnly = false,
+  onRemoved,
+  onGetUserMetadata,
 }) => {
   const emit = readOnly ? noop : onChange
   const boundaryResetKey = `${branch}\n${currentEntryPath ?? ''}`
   const siteMdxAllow = useSiteMdxAllow()
   const bodyName = format === 'md' || format === 'mdx' ? findBodyFieldName(fields) : undefined
 
-  // Object-list item keys. An object listed once keeps the key it was first shown with, so an
-  // append remounts no item and a removal never hands a crashed item's boundary to the next one.
-  // A list whose length is unchanged (an edited item, the saved copy of the same items) keeps
-  // keys by position.
-  const listItemKeys = useRef(new WeakMap<object, string>())
-  const lastListKeys = useRef(new Map<string, string[]>())
-  const nextListItemKey = useRef(0)
-  const keysForList = (items: unknown[], listPath: string): string[] => {
-    const previous = lastListKeys.current.get(listPath)
-    const occurrences = new Map<object, number>()
-    for (const item of items) {
-      if (typeof item === 'object' && item !== null) {
-        occurrences.set(item, (occurrences.get(item) ?? 0) + 1)
-      }
-    }
-    // Only an object listed once has an identity; a repeated one is keyed by position.
-    const single = (item: unknown): item is object =>
-      typeof item === 'object' && item !== null && occurrences.get(item) === 1
-    const claimed = new Set<string>()
-    const keys = items.map((item) => {
-      const own = single(item) ? listItemKeys.current.get(item) : undefined
-      // Two objects can hold one key, an edited copy having inherited its original's.
-      if (own === undefined || claimed.has(own)) return undefined
-      claimed.add(own)
-      return own
-    })
-    // The rest inherit their position's key, never one an object present here holds.
-    const resolved = keys.map((key, idx) => {
-      if (key !== undefined) return key
-      let next = previous?.length === items.length ? previous[idx] : undefined
-      if (next === undefined || claimed.has(next)) {
-        nextListItemKey.current += 1
-        next = `item-${nextListItemKey.current}`
-      }
-      claimed.add(next)
-      const item = items[idx]
-      if (single(item)) listItemKeys.current.set(item, next)
-      return next
-    })
-    lastListKeys.current.set(listPath, resolved)
-    return resolved
-  }
+  const keysForList = useListItemKeys()
 
   // Wraps the rendered control in an error boundary, and with an inline validation message
   // when this field has an active error (keyed by canonical canopy path, so errors land on
@@ -343,6 +311,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onAddComment={onAddComment}
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
+            onGetUserMetadata={onGetUserMetadata}
           >
             {renderedField}
           </FieldWrapper>
@@ -367,6 +336,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onAddComment={onAddComment}
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
+            onGetUserMetadata={onGetUserMetadata}
           >
             {renderedField}
           </FieldWrapper>
@@ -561,6 +531,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               crop: fieldErrors?.[`${canopyPath}.crop`],
             }}
             readOnly={readOnly}
+            onRemoved={(removed) => onRemoved?.({ kind: 'value', path, value: removed, label })}
           />,
         )
       }
@@ -579,6 +550,17 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             path={path}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            onRemoved={(index, block) =>
+              onRemoved?.({
+                kind: 'list-item',
+                listPath: path,
+                index,
+                item: block,
+                label:
+                  blockField.templates.find((t) => t.name === block.template)?.label ??
+                  block.template,
+              })
+            }
           />,
         )
       }
@@ -638,7 +620,16 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
                                 <Button
                                   variant="subtle"
                                   color="red"
-                                  onClick={() => update(items.filter((_, i) => i !== idx))}
+                                  onClick={() => {
+                                    update(items.filter((_, i) => i !== idx))
+                                    onRemoved?.({
+                                      kind: 'list-item',
+                                      listPath: path,
+                                      index: idx,
+                                      item,
+                                      label: itemTitle,
+                                    })
+                                  }}
                                 >
                                   {EDITOR_ACTIONS.remove}
                                 </Button>
@@ -733,6 +724,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           onAddComment={onAddComment}
           onResolveThread={onResolveThread}
           highlightThreadId={highlightThreadId}
+          onGetUserMetadata={onGetUserMetadata}
         />
       )}
 

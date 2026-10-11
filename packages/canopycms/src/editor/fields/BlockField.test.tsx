@@ -74,4 +74,26 @@ describe('BlockField', () => {
       ],
     ])
   })
+
+  it('keeps a block in the same element through a Remove and its Undo', () => {
+    const [a, b, c] = ['A', 'B', 'C'].map((headline) => ({ template: 'hero', value: { headline } }))
+    const field = (value: (typeof a)[]) => (
+      <MantineProvider>
+        <BlockField
+          templates={templates}
+          value={value}
+          onChange={() => {}}
+          renderField={(_f, v) => <input aria-label="headline" defaultValue={String(v)} />}
+          path={['blocks']}
+        />
+      </MantineProvider>
+    )
+    const { rerender, getByDisplayValue } = render(field([a, b, c]))
+    const cElement = getByDisplayValue('C')
+
+    rerender(field([a, c]))
+    rerender(field([a, b, c]))
+
+    expect(getByDisplayValue('C')).toBe(cElement)
+  })
 })
