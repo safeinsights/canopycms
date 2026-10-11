@@ -1084,7 +1084,18 @@ describe('bundles across the socket', () => {
       }
       return { kind: 'pushed' as const, moved: false as const, pastStaleLease: false }
     })
+    // The server's side of each request, to hold this test to its own precondition below.
+    const received: http.IncomingMessage[] = []
+    const createServer = http.createServer.bind(http)
+    const spy = vi.spyOn(http, 'createServer').mockImplementation(((
+      listener: http.RequestListener,
+    ) =>
+      createServer((req, res) => {
+        received.push(req)
+        listener(req, res)
+      })) as typeof http.createServer)
     const server = await serve(gateway)
+    spy.mockRestore()
     const header = Buffer.from(
       JSON.stringify({ branch: 'feature', sha: SHA, prerequisites: [], bundle: true }),
     ).toString('base64url')
@@ -1099,7 +1110,9 @@ describe('bundles across the socket', () => {
     // Larger than the stream buffers between the socket and the reader, all of it sent.
     whole.end(Buffer.alloc(180 * 1024))
     await vi.waitFor(() => expect(gateway.push).toHaveBeenCalledTimes(1))
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    // Every byte has arrived, and some of it waits unread in the request: the case under test.
+    await vi.waitFor(() => expect(received[0]?.complete).toBe(true))
+    expect(received[0].readableEnded).toBe(false)
     whole.destroy()
     await new Promise((resolve) => setTimeout(resolve, 100))
     release()
