@@ -319,13 +319,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     <Menu.Item disabled>&lt;none&gt;</Menu.Item>
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
-                      <Menu.Item
-                        key={file.path}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
-                      >
+                      <Menu.Item key={file.path} onClick={() => onEntrySelect(file.path)}>
                         {file.label}
                       </Menu.Item>
                     ))
@@ -384,10 +378,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     editedFiles.map((file) => (
                       <Menu.Item
                         key={`branch-mod-${file.path}`}
-                        onClick={() => {
-                          onEntrySelect(file.path)
-                          onNavigatorOpen()
-                        }}
+                        onClick={() => onEntrySelect(file.path)}
                       >
                         {file.label}
                       </Menu.Item>

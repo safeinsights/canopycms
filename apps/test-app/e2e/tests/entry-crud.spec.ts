@@ -33,11 +33,11 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('create a Posts entry from the collection menu', async () => {
-      await editorPage.createEntry('Posts', testSlug)
+      await editorPage.createEntry('Posts', testSlug, 'Post')
     })
 
     await test.step('verify new entry appears in navigator', async () => {
-      // The entry label comes from the entry type label ("Post"), not the slug.
+      // The entry label is the title typed into the create form, not the slug.
       // The Posts collection should be auto-expanded after creation.
       const navItem = editorPage.navigatorItem('Post')
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
@@ -81,7 +81,7 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('create a post entry (setup)', async () => {
-      await editorPage.createEntry('Posts', 'post-to-rename')
+      await editorPage.createEntry('Posts', 'post-to-rename', 'Post')
 
       // Wait for entry to appear in navigator
       await expect(editorPage.navigatorItem('Post')).toBeVisible({
@@ -105,7 +105,7 @@ test.describe('Entry CRUD Operations', () => {
       })
       await editorPage.toggleCollection('Posts')
 
-      // Label stays "Post" (rename only changes slug, not the display label)
+      // Label stays "Post" (rename only changes the slug, not the title)
       await expect(editorPage.navigatorItem('Post')).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })
@@ -122,7 +122,7 @@ test.describe('Entry CRUD Operations', () => {
     })
 
     await test.step('create a post entry (setup)', async () => {
-      await editorPage.createEntry('Posts', 'post-to-delete')
+      await editorPage.createEntry('Posts', 'post-to-delete', 'Post')
 
       await expect(editorPage.navigatorItem('Post')).toBeVisible({
         timeout: STANDARD_TIMEOUT,

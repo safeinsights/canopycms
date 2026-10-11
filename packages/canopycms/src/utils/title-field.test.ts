@@ -7,6 +7,8 @@ import {
   resolveEntryTitle,
   findInvalidTitleFields,
   findTitleFieldsInLists,
+  titleFieldPath,
+  withTitleAtPath,
 } from './title-field'
 
 describe('extractTitleFromSchema', () => {
@@ -392,5 +394,108 @@ describe('findInvalidTitleFields with inline groups', () => {
       } as FieldConfig,
     ]
     expect(findInvalidTitleFields(fields)).toEqual([])
+  })
+})
+
+describe('titleFieldPath', () => {
+  it('returns the path of a top-level isTitle field', () => {
+    const fields: FieldConfig[] = [
+      { name: 'body', type: 'markdown' },
+      { name: 'heading', type: 'string', isTitle: true },
+    ]
+    expect(titleFieldPath(fields)).toEqual(['heading'])
+  })
+
+  it('returns a nested path through an object field', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'hero',
+        type: 'object',
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    expect(titleFieldPath(fields)).toEqual(['hero', 'title'])
+  })
+
+  it('treats inline groups as transparent, adding no path segment', () => {
+    const fields: FieldConfig[] = [
+      {
+        type: 'group',
+        name: 'meta',
+        fields: [{ name: 'headline', type: 'string', isTitle: true }],
+      },
+    ]
+    expect(titleFieldPath(fields)).toEqual(['headline'])
+  })
+
+  it('does not enter a list object, whose items cannot supply one title', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    expect(titleFieldPath(fields)).toBeUndefined()
+  })
+
+  it('prefers isTitle over a field named title', () => {
+    const fields: FieldConfig[] = [
+      { name: 'title', type: 'string' },
+      { name: 'heading', type: 'string', isTitle: true },
+    ]
+    expect(titleFieldPath(fields)).toEqual(['heading'])
+  })
+
+  it('falls back to a string field named title, then name', () => {
+    expect(titleFieldPath([{ name: 'title', type: 'string' }])).toEqual(['title'])
+    expect(
+      titleFieldPath([
+        { name: 'body', type: 'markdown' },
+        { name: 'name', type: 'string' },
+      ]),
+    ).toEqual(['name'])
+    expect(
+      titleFieldPath([
+        { name: 'name', type: 'string' },
+        { name: 'title', type: 'string' },
+      ]),
+    ).toEqual(['title'])
+  })
+
+  it('ignores a title or name field that does not hold a plain string', () => {
+    const fields: FieldConfig[] = [
+      { name: 'title', type: 'markdown' },
+      { name: 'name', type: 'number' },
+    ]
+    expect(titleFieldPath(fields)).toBeUndefined()
+  })
+
+  it('is undefined when the schema has no title field', () => {
+    expect(titleFieldPath([{ name: 'body', type: 'markdown' }])).toBeUndefined()
+    expect(titleFieldPath([])).toBeUndefined()
+  })
+
+  it('agrees with where resolveEntryTitle reads the title', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'hero',
+        type: 'object',
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    const path = titleFieldPath(fields)!
+    expect(resolveEntryTitle(withTitleAtPath(path, 'Welcome'), { schema: fields })).toBe('Welcome')
+  })
+})
+
+describe('withTitleAtPath', () => {
+  it('builds a flat object for a one-segment path', () => {
+    expect(withTitleAtPath(['title'], 'Hello')).toEqual({ title: 'Hello' })
+  })
+
+  it('builds nested objects for a longer path', () => {
+    expect(withTitleAtPath(['a', 'b', 'c'], 'Deep')).toEqual({ a: { b: { c: 'Deep' } } })
   })
 })

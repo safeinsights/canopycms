@@ -12,6 +12,14 @@ const SETTINGS_ITEM_TEST_IDS: Record<SettingsItem, string> = {
   'System health': 'settings-menu-system-health',
 }
 
+/** 'my-first-post' as 'My First Post'. */
+const humanizeSlug = (slug: string): string =>
+  slug
+    .split('-')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+
 /** The navigator derives its per-node test ids from the node label this way. */
 const navigatorTestIdSuffix = (label: string): string => label.toLowerCase().replace(/\s+/g, '-')
 
@@ -162,16 +170,46 @@ export class EditorPage {
    * The navigator must be open.
    * @param collection - The collection's display label, e.g. 'Posts'
    * @param slug - The new entry's slug
+   * @param title - The new entry's title, which becomes its label; the slug with its words
+   *   capitalised when omitted. Ignored by an entry type that has no title field.
    */
-  async createEntry(collection: string, slug: string): Promise<void> {
+  async createEntry(collection: string, slug: string, title?: string): Promise<void> {
     await this.openCollectionMenu(collection, 'add-entry-menu-item')
 
     const modal = this.page.locator('[data-testid="create-entry-modal"]')
     await expect(modal).toBeVisible()
+    const titleInput = this.page.locator('[data-testid="entry-title-input"]')
+    if ((await titleInput.count()) > 0) {
+      await titleInput.fill(title ?? humanizeSlug(slug))
+    }
+    // fill() replaces the slug the title seeded
     await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
     await this.page.locator('[data-testid="create-entry-submit"]').click()
     // Entry creation involves server-side file writes
     await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+  }
+
+  /**
+   * Type into the navigator's filter box. The navigator must be open.
+   */
+  async filterNavigator(query: string): Promise<void> {
+    await this.page.locator('[data-testid="entry-nav-filter"]').fill(query)
+  }
+
+  /**
+   * Open an entry through the Mod+P palette: type `query` and take its first match.
+   * Works from wherever focus is, the form's inputs included.
+   */
+  async quickOpen(query: string): Promise<void> {
+    await this.page.keyboard.press('ControlOrMeta+P')
+    const input = this.page.locator('[data-testid="quick-open-input"]')
+    await expect(input).toBeVisible({ timeout: STANDARD_TIMEOUT })
+    await input.fill(query)
+    await expect(this.page.locator('[data-testid="quick-open-option"]').first()).toBeVisible({
+      timeout: STANDARD_TIMEOUT,
+    })
+    await input.press('Enter')
+    await expect(input).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -629,7 +667,9 @@ export class EditorPage {
    */
   async createPost(slug: string, title: string): Promise<void> {
     await this.openContentNavigator()
-    await this.createEntry('Posts', slug)
+    // Titled "Post" so the entry's label is the one the lookups below expect; the title typed
+    // into the form afterwards replaces it.
+    await this.createEntry('Posts', slug, 'Post')
 
     // After creation the navigator is still open. Expand Posts if collapsed,
     // then click the new entry so it loads in the form pane.

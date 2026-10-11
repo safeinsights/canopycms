@@ -83,7 +83,7 @@ const previewBaseFor = (
  * `listEntries` publishes it, so a root entry previews at `/<slug>` and only a root index at `/`.
  * Site-relative unless a matching value is absolute.
  */
-const buildPreviewRoute = (
+export const buildPreviewRoute = (
   entry: PreviewEntry,
   { previewBaseByCollection, contentRoot = 'content' }: PreviewContext & { contentRoot?: string },
 ): string | undefined => {

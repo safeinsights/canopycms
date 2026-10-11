@@ -172,7 +172,7 @@ const stubApi = (groups: string[]) => {
   return fetchMock
 }
 
-const renderEditor = () =>
+const renderEditor = (props: Partial<React.ComponentProps<typeof Editor>> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
       <ApiClientProvider>
@@ -183,6 +183,7 @@ const renderEditor = () =>
           branchName="main"
           operatingMode="dev"
           themeOptions={{}}
+          {...props}
         />
       </ApiClientProvider>
     </SWRConfig>,
@@ -227,9 +228,81 @@ describe('admin surfaces', () => {
     await openNavigator()
     fireEvent.click(screen.getByTestId('collection-menu-posts'))
     await screen.findByTestId('add-entry-menu-item')
-    for (const label of ['Add Sub-Collection', 'Edit Collection', 'Delete Collection']) {
+    for (const label of ['Add sub-collection…', 'Edit collection…', 'Delete collection…']) {
       expect(screen.queryByText(label) !== null).toBe(admin)
     }
+  })
+})
+
+describe('quick open', () => {
+  it('opens from inside the navigator drawer and closes the drawer', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    await openNavigator()
+
+    fireEvent.keyDown(screen.getByTestId('entry-nav-filter'), { key: 'p', ctrlKey: true })
+
+    expect(await screen.findByTestId('quick-open-input')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByTestId('entry-nav-filter')).toBeNull())
+  })
+
+  it('does not let the closing drawer hand focus back while the palette opens', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    await openNavigator()
+
+    // Which wins, the drawer's focus return or the palette's autofocus, is a race in a browser
+    // (a 10ms timer against an animation frame), so watch for the return itself: nothing but the
+    // palette's field may be focused.
+    const focused: Element[] = []
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      focused.push(this)
+    })
+    fireEvent.keyDown(screen.getByTestId('entry-nav-filter'), { key: 'p', ctrlKey: true })
+    await screen.findByTestId('quick-open-input')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    focus.mockRestore()
+
+    const paletteInput = screen.getByTestId('quick-open-input')
+    expect(focused).toContain(paletteInput)
+    expect(focused.filter((element) => element !== paletteInput)).toEqual([])
+  })
+})
+
+describe('dialogs opened from the navigator', () => {
+  const openAddEntry = async () => {
+    await openNavigator()
+    fireEvent.click(screen.getByTestId('collection-menu-posts'))
+    fireEvent.click(await screen.findByTestId('add-entry-menu-item'))
+    return screen.findByTestId('create-entry-modal')
+  }
+
+  it('shows the page route under the slug, without the preview prefix', async () => {
+    stubApi([])
+    renderEditor({ previewPrefix: '/edit/preview' })
+    await loaded()
+
+    const modal = await openAddEntry()
+
+    expect(within(modal).getByText('URL path: /posts/your-slug')).toBeTruthy()
+  })
+
+  it('closes only the dialog on Escape, leaving the drawer open', async () => {
+    stubApi([])
+    renderEditor()
+    await loaded()
+    const modal = await openAddEntry()
+
+    fireEvent.keyDown(within(modal).getByTestId('entry-slug-input'), { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByTestId('create-entry-modal')).toBeNull())
+    // A closing drawer stays mounted through its exit transition, so look after it would be gone.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(screen.getByTestId('entry-nav-filter')).toBeTruthy()
   })
 })
 

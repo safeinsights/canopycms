@@ -26,15 +26,8 @@
     "packages/canopycms/src/editor/components/EditorSidebar.tsx": {
       "title-case": 2
     },
-    "packages/canopycms/src/editor/components/EntryCreateModal.tsx": {
-      "title-case": 1,
-      "ellipsis": 1
-    },
     "packages/canopycms/src/editor/Editor.tsx": {
-      "title-case": 6
-    },
-    "packages/canopycms/src/editor/EntryNavigator.tsx": {
-      "title-case": 10
+      "title-case": 4
     },
     "packages/canopycms/src/editor/fields/BlockField.tsx": {
       "ellipsis": 1

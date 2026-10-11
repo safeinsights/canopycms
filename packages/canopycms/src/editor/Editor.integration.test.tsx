@@ -1505,7 +1505,7 @@ describe('Editor integration', () => {
     // Open the entry navigator (File dropdown -> All Files) and confirm the
     // read-only branch hides every mutation affordance: the per-collection
     // context menu (EntryNavigator's readOnly gating) and the drawer header's
-    // "Content actions" button (Add Entry/Add Collection for the root), which
+    // "Content actions" button (Add entry/Add collection for the root), which
     // reads navCollections[0].onAdd directly and would otherwise bypass
     // EntryNavigator's gating entirely.
     fireEvent.click(screen.getByTestId('file-dropdown-button'))
@@ -1868,7 +1868,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       const { notifications } = await import('@mantine/notifications')
@@ -1973,7 +1973,7 @@ describe('Editor integration', () => {
       await openNavigatorAndFindSubA()
 
       fireEvent.click(screen.getByTestId('collection-menu-sub-a'))
-      const moveDown = await screen.findByText('Move Down')
+      const moveDown = await screen.findByText('Move down')
       fireEvent.click(moveDown)
 
       await waitFor(() => {

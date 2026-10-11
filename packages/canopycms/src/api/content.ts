@@ -319,9 +319,10 @@ const writeContentHandler = async (
   // EntryTypeConfig.maxItems (SCH-H3) — so a direct API call can't bypass what the editor's form
   // enforces client-side.
   //
-  // Carve-out: a create scaffold (target doesn't exist yet, payload is entirely empty `{}`/no
-  // body) skips field validation, since the editor's create flow writes an empty scaffold before
-  // the user fills the form.
+  // Carve-outs for a create (the target doesn't exist yet), because the editor creates an entry
+  // before the user fills its form: an entirely empty payload (`{}`, no body) skips field
+  // validation, and any other create skips only the required-field checks, so a create carrying
+  // just a title lands. Every save after that is checked in full.
 
   // Resolve the entry-type config the store will write with (mirrors ContentStore.write)
   let entryTypeConfig: EntryTypeConfig | undefined
@@ -456,7 +457,9 @@ const writeContentHandler = async (
       // Pure rules (shared with the editor). For md/mdx the body is validated
       // as the schema's isBody field.
       const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
-      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation, '', {
+        required: exists,
+      })
 
       // Code in markdown or MDX (validation/markdown-safety.ts). A field the stored entry held
       // with code is kept, with a warning, when saved unchanged; any other code is refused.
