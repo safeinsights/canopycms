@@ -13,9 +13,9 @@ import { getErrorMessage } from '../utils/error'
  *
  * Bounded three ways: while git runs, killed after {@link GitProcessOptions.inactivityTimeoutMs}
  * with no output and no input consumed, unless output it wrote is still waiting for the reader
- * (git is then blocked on the reader, whose own deadline bounds it; and once git has exited 0,
- * output still unread is the reader's to take, however slowly); killed when `signal` aborts; and holding at most
- * {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
+ * (git is then blocked on the reader, and the reader's own bounds end that wait; once git has
+ * exited 0, output still unread is the reader's to take, however slowly); killed when `signal`
+ * aborts; and holding at most {@link STDERR_CAP_BYTES} of stderr and `maxStdoutBytes` of captured stdout, so a process fed
  * hostile bytes cannot make this one buffer without limit. A stop reaches everything git spawned:
  * git runs in its own process group.
  */
@@ -46,7 +46,8 @@ export interface GitProcessOptions {
 }
 
 /**
- * git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any.
+ * git exited non-zero, by a signal, or was killed here; `message` is its stderr when it wrote any,
+ * after its stdout when `runGit` was asked for that (`stdoutInFailure`).
  * @internal Exported for tests.
  */
 export class GitProcessError extends Error {
@@ -107,7 +108,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let inactivity: NodeJS.Timeout | undefined
   const idle = () => {
     // Output git wrote is waiting here for the reader, so git is blocked on the reader, not stuck:
-    // the reader's own deadline bounds that wait. With nothing unread, or a reader that has gone
+    // the reader's own bounds end that wait. With nothing unread, or a reader that has gone
     // (a destroyed stream can keep its count until it closes), silence is git's.
     if (stdout.readableLength > 0 && !stdout.destroyed) {
       inactivity = setTimeout(idle, options.inactivityTimeoutMs)

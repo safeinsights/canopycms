@@ -1,8 +1,9 @@
 /**
  * What leaves the GitHub gateway: every error it throws, every answer it returns and every line it
- * logs goes through here, `github-service.ts`'s lines for it included (it is given
- * {@link gatewayLogWarn}), except `openBundle`'s errors, which hold no secret. Each is scrubbed of every live token the gateway has resolved, in every
- * form git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
+ * logs goes through here, `github-service.ts`'s and Octokit's lines for it included (they are
+ * given {@link gatewayLogWarn} and {@link gatewayLogError}), except `openBundle`'s errors, which
+ * hold no secret. Each is scrubbed of every live token the gateway has resolved, in every form
+ * git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
  * `redactCredentials`'s patterns too; answers are not, because they are data the worker acts on,
  * and a pattern would rewrite a GitHub branch named `chore/github_pat_rotation`. The
  * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
@@ -94,9 +95,9 @@ function redactAny(value: unknown, depth: number, scrub: (text: string) => strin
 
 /**
  * `err` scrubbed for leaving the gateway: its message, stack and `stderr`, its `cause` chain, and
- * an Octokit error's `response` and `request`. Scrubbed in place, so its class and the fields the task runner
- * classifies on (`status`, `code`, `kind`) survive; a field that cannot be set (a DOMException's
- * message) makes it a plain Error of the same name instead. Only fields that hold a secret are
+ * an Octokit error's `response` and `request`. Scrubbed in place, so its class and the fields the
+ * task runner classifies on (`status`, `code`, `kind`) survive; a field that cannot be set (a
+ * DOMException's message) makes it a plain Error of the same name instead. Only fields that hold a secret are
  * touched. A thrown string is scrubbed; anything else is returned as it is.
  */
 export function redactError(err: unknown, depth = 0): unknown {

@@ -326,8 +326,9 @@ class LocalGitHubGateway implements GitHubGateway {
    * Run one operation that uses the credential.
    *
    * It first JOINS a re-read in flight, bounded by its own `signal` and by
-   * {@link REFRESH_JOIN_CAP_MS}, so the 5s/10s/20s task retries see a rotated token. Then, if the operation fails after any of its GitHub-bound git
-   * commands or Octokit calls failed, it ARMS a re-read. Not gated on the failure looking
+   * {@link REFRESH_JOIN_CAP_MS}, so the 5s/10s/20s task retries see a rotated token. Then, if the
+   * operation fails after any of its GitHub-bound git commands or Octokit calls failed, it ARMS a
+   * re-read. Not gated on the failure looking
    * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
    * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
    * (`GatewayRefusalError`, whatever came before it; an invalid object ID), anything else local, a lock file the mirror's own

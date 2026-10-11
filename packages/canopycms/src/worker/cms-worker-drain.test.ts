@@ -199,7 +199,11 @@ describe('CmsWorker.stop() drains the task queue', () => {
     expect(pending?.status).toBe('pending')
     if (released) {
       expect(pending?.retryCount ?? 0).toBe(0)
-      expect(consoleSpy).toHaveWarned(/The GitHub gateway is stopping; released task/)
+      expect(consoleSpy).toHaveWarned(
+        gatewayStopping
+          ? /The GitHub gateway is stopping; released task/
+          : /out of reach while the worker drains; released task/,
+      )
     } else {
       expect(pending?.retryCount).toBe(1)
       expect(consoleSpy).toHaveErrored(/Could not reach the GitHub gateway/)

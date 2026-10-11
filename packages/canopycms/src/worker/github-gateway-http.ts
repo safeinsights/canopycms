@@ -107,10 +107,10 @@ export interface GitHubGatewayServer {
    */
   idle(): Promise<void>
   /**
-   * Stop as a SIGTERM asks: answer new requests `stopping` (unreachable, to the worker), let those
-   * under way finish for at most `graceMs`, then close every connection, whatever is still on it. The
-   * bound is time, not only {@link idle}: a client that trickles a request body would otherwise
-   * hold the stop open. A fetch job is not waited for; stopping one is the gateway's own.
+   * Stop as a SIGTERM asks: answer new requests `stopping` (`GitHubGatewayStoppingError`, whose
+   * task the worker releases with no retry spent), let those under way finish for at most
+   * `graceMs`, then close every connection, whatever is still on it. The bound is time, not only
+   * {@link idle}: a client that trickles a request body would otherwise hold the stop open. A fetch job is not waited for; stopping one is the gateway's own.
    */
   drain(graceMs: number): Promise<void>
   /** Stop accepting, and close every connection. */
@@ -164,7 +164,7 @@ export async function serveGitHubGateway(
   return {
     idle: () => handler.idle(),
     drain: async (graceMs) => {
-      // New requests are answered `stopping`, which the worker takes as unreachable. The socket
+      // New requests are answered `stopping` (GitHubGatewayStoppingError to the worker). The socket
       // stays open meanwhile: under socket activation systemd holds it too, so closing ours would
       // only leave new connections waiting for the next gateway.
       handler.close()
@@ -403,7 +403,7 @@ class GatewayRequestHandler {
     })
     try {
       if (this.closed) {
-        // As good as unreachable to the worker, which releases a task it hits with no retry spent.
+        // The worker rebuilds it as GitHubGatewayStoppingError, and releases the task it hits.
         if (!this.loggedStopping) {
           this.loggedStopping = true
           gatewayLogWarn('Answering requests as stopping while the gateway drains')

@@ -248,16 +248,17 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       // A stop, not the task, is why these failed, so the task goes back to pending with no retry
       // spent, as after a drain's abort: the gateway draining, or out of reach while this worker
       // drains (its host going away).
-      const stopping =
-        err instanceof GitHubGatewayStoppingError ||
-        (ctx.isDraining() && err instanceof GitHubGatewayUnreachableError)
-      if (err instanceof TaskAbortedForShutdownError || stopping) {
+      const gatewayStopping = err instanceof GitHubGatewayStoppingError
+      const gatewayGone = ctx.isDraining() && err instanceof GitHubGatewayUnreachableError
+      if (err instanceof TaskAbortedForShutdownError || gatewayStopping || gatewayGone) {
         // It runs again from the start, exactly as a retry after a timed-out attempt does.
         await releaseTask(ctx.taskDir, task.id, ctx.log)
         workerLogWarn(
-          stopping
+          gatewayStopping
             ? `The GitHub gateway is stopping; released task ${task.id} (${task.action}) to pending`
-            : `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,
+            : gatewayGone
+              ? `The GitHub gateway is out of reach while the worker drains; released task ${task.id} (${task.action}) to pending for the next worker`
+              : `Drain deadline hit, aborted task ${task.id} (${task.action}); released to pending for the next worker`,
         )
         break
       }

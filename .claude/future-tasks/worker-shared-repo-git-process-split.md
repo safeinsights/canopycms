@@ -1153,8 +1153,10 @@ the drain mapping, deadlines, and the self-check helpers.
 
 **Carried from 4b** (lifecycle and bounds):
 - Settled in 4b:
-  - A served gateway prepares as its server starts, and every operation but `health` waits for
-    that and answers its failure, so a worker that skips `prepare` reaches nothing first.
+  - A served gateway prepares once its server holds its socket (never sooner: `prepare()` sweeps
+    the state directory, which a gateway already serving it may be using), and every operation
+    but `health` waits for that and answers its failure, so a worker that skips `prepare` reaches
+    nothing first.
   - `health()` is on `GitHubGateway`: ready, the fatal error, the preflight result,
     `clerkConfigured` (a constructor option until PR 5) and the protected set.
   - The GitHub-bound commands run through `worker/git-process.ts`, in their own process group,
@@ -1163,20 +1165,36 @@ the drain mapping, deadlines, and the self-check helpers.
   - A fetch job's progress is every sign of life from the gateway's git; the client stops
     waiting, transient, once it has not moved for `fetchInactivityMs` (a client option; PR 5
     passes the task timeout).
-  - Outgoing bundles: an unopened one is deleted after 10 minutes, and a download nobody reads is
-    cut off after `downloadStallMs` (2 minutes).
-  - The server's `drain(graceMs)` refuses new requests, waits for those under way up to the
-    grace, then closes every connection.
+  - Outgoing bundles: an unopened one is deleted after 10 minutes, and a download that averages
+    under 16 KiB/s over any `downloadStallMs` period (2 minutes) is cut off.
+  - The server's `drain(graceMs)` answers new requests `stopping`, waits for those under way up
+    to the grace, then closes every connection. It keeps its socket meanwhile, since under
+    socket activation systemd holds it too. The worker rebuilds `stopping` as
+    `GitHubGatewayStoppingError` and releases the task with no retry spent, draining or not.
+  - The EFS self-check passes only on a denial (`EACCES`, `EPERM`): a missing `/mnt/efs` fails it.
   - The refresh join is capped at 15 s (§3.2).
   - A worker's git is no longer killed for inactivity while its output waits unread (carried 1).
   - `github-service.ts` warns through the logger it is given, which is the gateway's (carried 4).
   - A task whose gateway is unreachable while the worker drains is released with no retry spent.
+  - Octokit's own log, and `github-service.ts`'s warnings, go through the gateway's log.
 - PR 5:
   - wire the self-checks (`workerSelfChecks`, `gatewaySelfChecks`, `assertSelfChecks`) and call
     `drain()` on SIGTERM; killing a running fetch job is the gateway's own
     ([worker-mirror-detached-work-drain.md](worker-mirror-detached-work-drain.md), item 1);
   - pass `fetchInactivityMs` and `clerkConfigured`, and record `health`'s fatal error as
-    `lastFatalError`.
+    `lastFatalError`;
+  - decide whether `runGateway` exits on a failed `prepare()`: memoized, it stays the gateway's
+    fatal error until the process restarts, which a transient ENOSPC would otherwise outlast;
+  - pass `drain()` a grace that ends the stop, then exit; `KillMode` stays `mixed`, so the cgroup
+    kill takes any fetch job still running.
+- PR 6 (first deploy): `onlyLoopback` accepts `lo` alone. A new network namespace also gets the
+  fallback tunnel devices (`sit0`, `tunl0`, `ip6tnl0`) of any tunnel module loaded on the host,
+  unless `net.core.fb_tunnels_only_for_init_net` is set, which would refuse a correctly cut worker.
+  Check `/proc/self/net/dev` under the real unit on AL2023; set the sysctl in user-data, or let the
+  check pass those devices, if it shows them.
+- Open, for the manager: the secret check matches the plan's three prefixes; `GH_TOKEN`,
+  `GITHUB_TOKEN` and AWS credentials in a hand unit's environment pass it. `health`'s
+  `protectedBranches.configured` crosses only up to 1024 entries.
 
 ## 9. Residual risks, and the Security Model afterwards
 
