@@ -114,8 +114,9 @@ export const PreviewFrame = ({
   // listener exists, so the preview shows the draft only after ready triggers the re-post.
   const [handshake, setHandshake] = useState<Handshake>('waiting')
   const [loaded, setLoaded] = useState(false)
-  // Retry remounts the iframe under a new key, which reloads it whatever its origin.
-  const [frameKey, setFrameKey] = useState(0)
+  // Retry and a new src each mount a fresh iframe rather than navigating the old one: its
+  // contentWindow is new, so the source check drops a late ready or load from the page it replaces.
+  const [retries, setRetries] = useState(0)
 
   // A new src is a new page, with a handshake of its own.
   const [prevSrc, setPrevSrc] = useState(src)
@@ -127,14 +128,18 @@ export const PreviewFrame = ({
 
   useEffect(() => {
     if (!loaded || handshake !== 'waiting') return
-    const timer = setTimeout(() => setHandshake('missing'), READY_TIMEOUT_MS)
+    // Functional, so a ready batched into the same render as this callback still wins.
+    const timer = setTimeout(
+      () => setHandshake((current) => (current === 'waiting' ? 'missing' : current)),
+      READY_TIMEOUT_MS,
+    )
     return () => clearTimeout(timer)
   }, [loaded, handshake])
 
   const retry = () => {
     setHandshake('waiting')
     setLoaded(false)
-    setFrameKey((key) => key + 1)
+    setRetries((count) => count + 1)
   }
 
   const hasDraft = data !== undefined
@@ -264,51 +269,49 @@ export const PreviewFrame = ({
           />
         </div>
       )}
-      {liveUpdatesOff && (
-        <div
-          role="status"
-          style={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-            zIndex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '2px 4px 2px 10px',
-            borderRadius: 999,
-            border: '1px solid var(--mantine-color-gray-4, #ced4da)',
-            background: 'var(--mantine-color-white, #fff)',
-            boxShadow: 'var(--mantine-shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.1))',
-            color: 'var(--mantine-color-gray-7, #495057)',
-            fontFamily: 'var(--mantine-font-family, inherit)',
-            fontSize: 12,
-            lineHeight: '20px',
-          }}
-        >
-          <span title={LIVE_UPDATES_OFF_HELP}>Live updates off</span>
-          <span style={visuallyHidden}>{LIVE_UPDATES_OFF_HELP}</span>
-          <button
-            type="button"
-            onClick={retry}
-            title="Reload the preview"
+      {/* Mounted empty, so screen readers announce the chip when it is inserted. */}
+      <div role="status" style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}>
+        {liveUpdatesOff && (
+          <div
             style={{
-              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '2px 4px 2px 10px',
               borderRadius: 999,
-              padding: '0 8px',
-              background: 'transparent',
-              color: 'var(--mantine-color-blue-filled, #228be6)',
-              font: 'inherit',
-              fontWeight: 600,
-              cursor: 'pointer',
+              border: '1px solid var(--mantine-color-gray-4, #ced4da)',
+              background: 'var(--mantine-color-white, #fff)',
+              boxShadow: 'var(--mantine-shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.1))',
+              color: 'var(--mantine-color-gray-7, #495057)',
+              fontFamily: 'var(--mantine-font-family, inherit)',
+              fontSize: 12,
+              lineHeight: '20px',
             }}
           >
-            Retry
-          </button>
-        </div>
-      )}
+            <span title={LIVE_UPDATES_OFF_HELP}>Live updates off</span>
+            <span style={visuallyHidden}>{LIVE_UPDATES_OFF_HELP}</span>
+            <button
+              type="button"
+              onClick={retry}
+              title="Reload the preview"
+              style={{
+                border: 'none',
+                borderRadius: 999,
+                padding: '0 8px',
+                background: 'transparent',
+                color: 'var(--mantine-color-blue-filled, #228be6)',
+                font: 'inherit',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+      </div>
       <iframe
-        key={frameKey}
+        key={`${retries}:${src}`}
         ref={iframeRef}
         src={src}
         title="Live preview"

@@ -651,21 +651,24 @@ describe('PreviewFrame - sync status', () => {
     const iframe = () => utils.container.querySelector('iframe') as HTMLIFrameElement
     const bar = () => utils.queryByRole('progressbar')
     const chip = () => utils.queryByText('Live updates off')
-    const sendReady = (origin = window.location.origin) =>
+    const readyEvent = (
+      origin = window.location.origin,
+      source: Window | null = iframe().contentWindow,
+    ) =>
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_READY, path: '/x' },
+        origin,
+        source,
+      })
+    const sendReady = (origin?: string) =>
       act(() => {
-        window.dispatchEvent(
-          new MessageEvent('message', {
-            data: { type: CANOPY_PREVIEW_READY, path: '/x' },
-            origin,
-            source: iframe().contentWindow,
-          }),
-        )
+        window.dispatchEvent(readyEvent(origin))
       })
     const advance = (ms: number) =>
       act(() => {
         vi.advanceTimersByTime(ms)
       })
-    return { ...utils, iframe, bar, chip, sendReady, advance }
+    return { ...utils, iframe, bar, chip, readyEvent, sendReady, advance }
   }
 
   it('shows the progress bar until the ready message clears it', () => {
@@ -766,6 +769,44 @@ describe('PreviewFrame - sync status', () => {
     expect(bar()).toBeNull()
     rerender(<PreviewFrame src="/preview/z?branch=main" path="/x" data={{ value: 'draft' }} />)
     expect(bar()).not.toBeNull()
+  })
+
+  it('ignores a late ready or load from the page a new src replaced', () => {
+    const { iframe, bar, chip, rerender, readyEvent, advance } = renderFrame()
+    const replaced = iframe()
+    const replacedWindow = replaced.contentWindow
+    rerender(<PreviewFrame src="/preview/y?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(iframe()).not.toBe(replaced)
+
+    act(() => {
+      window.dispatchEvent(readyEvent(window.location.origin, replacedWindow))
+    })
+    fireEvent.load(replaced)
+    advance(10_000)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('lets a ready win when it lands in the same batch as the timeout', () => {
+    const { iframe, bar, chip, readyEvent, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(4_999)
+    act(() => {
+      window.dispatchEvent(readyEvent())
+      vi.advanceTimersByTime(1)
+    })
+    expect(bar()).toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('mounts the status region before the chip, so its insertion is announced', () => {
+    const { iframe, getByRole, advance } = renderFrame()
+    const region = getByRole('status')
+    expect(region.textContent).toBe('')
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(getByRole('status')).toBe(region)
+    expect(region.textContent).toContain('Live updates off')
   })
 
   it('titles the iframe', () => {
