@@ -23,8 +23,8 @@ const systemUser = (userId: string): UserSearchResult => ({
 const userMetadataKey = (userId: string): string => `canopy:user:${userId}`
 
 /**
- * Caches profiles a response carried, keeping a cached record's email. Mounted badges refetch:
- * SWR discards a lookup the seed overtook, and with it that lookup's email.
+ * Caches profiles a response carried, keeping a cached record's email. A record left without one
+ * is refetched: SWR discards a lookup the seed overtook, and with it that lookup's email.
  */
 export async function seedUserProfiles(
   mutate: ScopedMutator,
@@ -35,7 +35,7 @@ export async function seedUserProfiles(
       mutate<UserSearchResult | null>(
         userMetadataKey(user.id),
         (current) => ({ email: '', ...current, ...user }),
-        { revalidate: true },
+        { revalidate: (merged) => !merged?.email },
       ),
     ),
   )
@@ -49,13 +49,13 @@ const isUserRecord = (value: unknown): value is UserSearchResult =>
   'name' in value &&
   typeof value.name === 'string'
 
-/** Answers from what {@link seedUserProfiles} wrote, with no request; unseeded is `null`. */
+/** Answers from the cache with no request and no email, for a reader who may not look users up. */
 export function useSeededUserResolver(): (userId: string) => Promise<UserSearchResult | null> {
   const { cache } = useSWRConfig()
   return useCallback(
     (userId: string) => {
       const data: unknown = cache.get(userMetadataKey(userId))?.data
-      return Promise.resolve(isUserRecord(data) ? data : null)
+      return Promise.resolve(isUserRecord(data) ? { ...data, email: '' } : null)
     },
     [cache],
   )

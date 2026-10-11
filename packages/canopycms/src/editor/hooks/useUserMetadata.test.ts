@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { createElement, type ReactNode } from 'react'
 import { SWRConfig, useSWRConfig } from 'swr'
-import { seedUserProfiles, useUserMetadata } from './useUserMetadata'
+import { seedUserProfiles, useSeededUserResolver, useUserMetadata } from './useUserMetadata'
 import type { UserSearchResult } from '../../auth/types'
 
 // A fresh SWR cache per hook, so one test's user never answers another's.
@@ -251,9 +251,11 @@ describe('useUserMetadata', () => {
       })
 
       expect(result.current.badge.userMetadata).toEqual({ ...mockUser, name: 'Alice J.' })
+      // A record that kept its email is not looked up again.
+      expect(lookup).toHaveBeenCalledTimes(1)
     })
 
-    it('keeps the email of a lookup that was in flight when the seed landed', async () => {
+    it('refetches, so a badge whose lookup the seed overtook still gets its email', async () => {
       let settleFirst: (user: UserSearchResult) => void = () => {}
       const lookup = vi
         .fn<(userId: string) => Promise<UserSearchResult | null>>()
@@ -271,6 +273,19 @@ describe('useUserMetadata', () => {
       await act(async () => settleFirst(mockUser))
 
       await waitFor(() => expect(result.current.badge.userMetadata?.email).toBe(mockUser.email))
+    })
+
+    it('answers the seeded resolver without an email, even one cached by a privileged lookup', async () => {
+      const { result } = renderHook(
+        () => ({ swr: useSWRConfig(), resolve: useSeededUserResolver() }),
+        { wrapper },
+      )
+      await act(async () => {
+        await result.current.swr.mutate('canopy:user:user-1', mockUser, { revalidate: false })
+      })
+
+      await expect(result.current.resolve('user-1')).resolves.toEqual({ ...mockUser, email: '' })
+      await expect(result.current.resolve('user-2')).resolves.toBeNull()
     })
   })
 })
