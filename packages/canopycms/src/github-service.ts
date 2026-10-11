@@ -81,19 +81,39 @@ export function createCanopyOctokit(
    * which scrubs and escapes. Without one, Octokit logs to the console as it does by default.
    */
   logger?: { warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
+  /**
+   * Told of every request's `authorization` header just before it is sent, which is the only
+   * place the FINAL header is visible: a token an auth strategy minted or rotated shows up here
+   * before anything has logged or thrown it. The GitHub gateway registers it for scrubbing.
+   */
+  observe?: { onAuthorization: (authorization: string) => void },
 ): Octokit {
   const warn = logger?.warn ?? canopyLogWarn
   // Pick the two auth fields out EXPLICITLY, never spread: `baseUrl`,
   // `request`, `log` and `userAgent` are all live `OctokitOptions`, and a
   // non-literal argument slips past TypeScript's excess-property check. The
   // contract is "our Octokit, authenticated the way you say", not "configured
-  // however you like".
+  // however you like". The one `request` we set is `observe`'s fetch: an auth
+  // strategy's hook is the innermost `request` wrap, so a hook added after
+  // construction runs before it sets the header, and `@octokit/auth-app` mints
+  // through this same `request`, so its JWT passes the fetch too.
   const auth =
     'authStrategy' in options
       ? { authStrategy: options.authStrategy, auth: options.auth }
       : { auth: options.auth }
   return new ThrottledOctokit({
     ...auth,
+    ...(observe === undefined
+      ? {}
+      : {
+          request: {
+            fetch: (url: string | URL | Request, init?: RequestInit) => {
+              const authorization = authorizationOf(init?.headers)
+              if (authorization !== undefined) observe.onAuthorization(authorization)
+              return globalThis.fetch(url, init)
+            },
+          },
+        }),
     ...(logger === undefined
       ? {}
       : {
@@ -309,6 +329,23 @@ export function isNoCommitsBetweenError(err: unknown): boolean {
     )
   }
   return /"message":"No commits between /.test(err.message)
+}
+
+/**
+ * The `authorization` header of a request's headers: a plain object (lower-case keys, as Octokit
+ * sends them), a `Headers`, or a list of pairs.
+ * @internal Exported for tests.
+ */
+export function authorizationOf(headers: HeadersInit | undefined): string | undefined {
+  if (headers === undefined) return undefined
+  if (headers instanceof Headers) return headers.get('authorization') ?? undefined
+  if (Array.isArray(headers)) {
+    return headers.find(([name]) => name.toLowerCase() === 'authorization')?.[1]
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'authorization' && typeof value === 'string') return value
+  }
+  return undefined
 }
 
 export class GitHubService {
