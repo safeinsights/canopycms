@@ -883,6 +883,8 @@ the split.
 - `api-test-helpers.ts` — mock factories: `createMockBranchContext`, `createMockUser`, `createMockServices`, `createMockApiContext`, `createMockSettingsMutation`
 - `console-spy.ts` — `mockConsole()` plus the `toHaveLogged` / `toHaveWarned` / `toHaveErrored` matchers
 - `git-helpers.ts` — `initTestRepo()`, a git repo with the CanopyCMS marker and user config
+- `https-git-server.ts` — `startHttpsGitServer()`
+- `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
 - `render-errors.ts` — `silenceReportedRenderErrors()`
 - `index.ts` — exports
 

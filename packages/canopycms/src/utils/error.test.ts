@@ -194,6 +194,54 @@ describe('error utilities', () => {
   })
 
   describe('redactCredentials', () => {
+    describe("every form the worker's GitHub-bound git gives the credential", () => {
+      // No GitHub prefix, so only the rules for these forms can catch them; three lengths, so the
+      // base64 ends with each of its padding shapes.
+      const canaries = [
+        'CANARYtoken0123456789',
+        'CANARYtoken01234567890',
+        'CANARYtoken012345678901',
+      ]
+      const formsOf = (token: string) => {
+        const pair = Buffer.from(`x-access-token:${token}`).toString('base64')
+        return [
+          ['the base64 pair', `fetch failed near ${pair} here`],
+          ['the header', `header AUTHORIZATION: basic ${pair} sent`],
+          ['the header, other spelling', `authorization: Basic ${pair}`],
+          [
+            'the config file',
+            `[http "https://github.com/"]\n\textraheader = AUTHORIZATION: basic ${pair}\n`,
+          ],
+        ] as const
+      }
+
+      it.each(
+        canaries.flatMap((token) => formsOf(token).map(([label, text]) => [label, token, text])),
+      )('%s (%s)', (_label, token, text) => {
+        const pair = Buffer.from(`x-access-token:${token}`).toString('base64')
+        for (const redact of [redactCredentials, sanitizeErrorMessage]) {
+          const out = redact(text)
+          expect(out).not.toContain(token)
+          expect(out).not.toContain(pair)
+          // Nothing of the pair past its fixed prefix survives.
+          expect(out).not.toContain(pair.slice(20, 28))
+          expect(out).toContain('***')
+        }
+      })
+
+      it('redacts a basic header whatever credential it carries', () => {
+        expect(redactCredentials('AUTHORIZATION: basic dXNlcjpzZWNyZXQ=')).toBe(
+          'AUTHORIZATION: basic ***',
+        )
+      })
+
+      it('leaves a header without a credential alone', () => {
+        expect(redactCredentials('missing Authorization header')).toBe(
+          'missing Authorization header',
+        )
+      })
+    })
+
     it('redacts URL credentials but keeps filesystem paths', () => {
       const msg =
         'push https://x-access-token:ghp_secret9876543210@github.com/org/repo.git failed in /mnt/efs/workspace/main'

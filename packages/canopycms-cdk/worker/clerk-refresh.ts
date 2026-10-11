@@ -107,9 +107,9 @@ export function createClerkAuthCacheRefresher(
       // narrowed after boot turns every tick into an AccessDeniedException and
       // the 401 that actually explains the stale cache is never logged - at the
       // default 15-minute auth-cache interval, indefinitely, since every tick
-      // clears the reader's own 5-minute floor and re-attempts the read.
-      // `CmsWorker.syncGitWithCredentialRefresh` is the same shape for the same
-      // reason; this is the Clerk half of it.
+      // clears the reader's own 5-minute floor and re-attempts the read. Core's
+      // GitHub gateway keeps a failed GitHub re-read from replacing the failure
+      // it follows for the same reason; this is the Clerk half of it.
       let rotated: string | undefined
       try {
         rotated = await secret.refresh()

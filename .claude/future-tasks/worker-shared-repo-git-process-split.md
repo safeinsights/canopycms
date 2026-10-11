@@ -348,7 +348,8 @@ The worker:
     failure with the lock text (`Unable to create '…\.lock': File exists`) on a line of the
     gateway git's own output, never a `remote:`-prefixed line from GitHub, which is
     gateway-local: it means `pack-refs` holds the lock, not a credential problem;
-  - any Octokit error;
+  - any Octokit error except a 422: a validation answer, never a credential one, and the worker
+    treats two as success (`isRefAlreadyGoneError`, `isNoCommitsBetweenError`);
   - any Clerk error.
 
   This is today's ungated rule (`cms-worker.ts` L1471–1479 says why: a dead token's git failure
@@ -650,8 +651,8 @@ hostile bytes:**
   command only, then deletes the file; the start-up sweep removes leftovers.
   - **Not `PrivateTmp`:** it is tmpfs only if the host's `/tmp` is, and in single-process mode
     it is the shared `os.tmpdir()`.
-  - **The file must exist before the spawn:** a `GIT_CONFIG_GLOBAL` naming a missing file is a
-    hard error.
+  - **The file must exist before the spawn:** with a `GIT_CONFIG_GLOBAL` naming a missing file,
+    a command other than `git config` runs unauthenticated (git 2.50.1, measured in 1b's review).
   - **simple-git refuses `GIT_CONFIG_GLOBAL` in `.env()`** without `allowUnsafeConfigPaths`
     (`@simple-git/argv-parser` 1.1.1, under `simple-git` 3.36.0). That opt-in is enabled
     **only** on the instance that runs the two GitHub-bound commands, never in
@@ -989,6 +990,11 @@ PR 2, their first user.
   `createOrUpdatePullRequest` request.
 - PR 4: `onGitHub` keeps its object-ID validation (`MirrorSession.isOnGitHub`) gateway-side,
   whatever the client checks.
+
+**Carried from 1b's reviews:**
+- PRs 4 and 5: a credentialed operation joins an in-flight re-read within its own deadline, so a
+  healthy task joining a slow one (the provider can take 87 s) can lose one retry. R5 lists the
+  same join as a push-stall lever (§12 9a-L). Design the transport's deadlines with it.
 
 ## 9. Residual risks, and the Security Model afterwards
 

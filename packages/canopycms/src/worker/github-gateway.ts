@@ -14,6 +14,7 @@ import { isTransientAuthFailure, type ResolvedGitHubAuth } from './github-auth'
 import {
   GitHubMirror,
   RefusedPushError,
+  type GitHubCredential,
   type GitHubRefUpdate,
   type MirrorSession,
 } from './github-mirror'
@@ -89,7 +90,8 @@ type GitHubCreateOrUpdatePullRequest = Omit<
 /**
  * Everything the worker does with GitHub, and the only place the credential and Octokit are used.
  * Octokit errors propagate unchanged (status, headers, response data), so the task runner's
- * classifiers read them as they would Octokit's own.
+ * classifiers read them as they would Octokit's own. The gateway re-reads its own credential after
+ * a failure (`LocalGitHubGateway.credentialed`); the worker never asks it to.
  */
 export interface GitHubGateway {
   /**
@@ -145,11 +147,6 @@ export interface GitHubGateway {
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
   /** Mirror upkeep. */
   maintain(): Promise<BareRemoteRepackResult>
-  /**
-   * Re-read the credential because an operation that used it just failed. Never throws, and
-   * settles within the gateway's timeout.
-   */
-  refreshCredential(): Promise<void>
 }
 
 export interface LocalGitHubGatewayOptions {
@@ -165,8 +162,8 @@ export interface LocalGitHubGatewayOptions {
   /** simple-git's inactivity timeout, and the bound on a credential re-read. */
   timeoutMs: number
   /**
-   * Test seam: the repository standing in for GitHub, resolved per use. Default: the
-   * token-bearing https URL.
+   * Test seam: the repository standing in for GitHub, resolved once per operation. Default:
+   * `https://github.com/<owner>/<repo>.git`, which never carries the token.
    */
   remoteUrl?: string | (() => string | Promise<string>)
   /** Test seam: the Octokit client. Default: built from `auth`. */
@@ -178,11 +175,18 @@ export function createLocalGitHubGateway(options: LocalGitHubGatewayOptions): Gi
   return new LocalGitHubGateway(options)
 }
 
+/** Whether one operation's attempt to reach GitHub failed: see `LocalGitHubGateway.credentialed`. */
+interface GitHubReach {
+  failed: boolean
+}
+
 class LocalGitHubGateway implements GitHubGateway {
   private readonly mirror: GitHubMirror
   // Built here, where the gateway is created inside start()'s try: an App strategy that throws
   // on first touch is then recorded as a startup failure.
   private readonly octokit: Octokit
+  /** The credential re-read in flight, which every credentialed operation joins. */
+  private refreshing: Promise<void> | null = null
 
   constructor(private readonly options: LocalGitHubGatewayOptions) {
     this.mirror = new GitHubMirror(options.stateDirectory, options.remoteGitPath, options.timeoutMs)
@@ -194,18 +198,107 @@ class LocalGitHubGateway implements GitHubGateway {
   }
 
   /**
-   * The tokenized GitHub URL: the one seam through which the credential reaches git. Async
-   * because a GitHub App's installation token is minted on demand and lasts about an hour, so
-   * nothing may cache what this returns; resolving per use is cheap. A mint failure propagates as
-   * thrown, carrying the `.status` `isPermanentTaskFailure` classifies on. Anything derived from
-   * it can embed the token, so a message reaching worker-status.json, branch.json or a task file
-   * goes through `redactCredentials` first.
+   * Run one operation that uses the credential.
+   *
+   * It first JOINS a re-read in flight, bounded by its own `signal`, so the 5s/10s/20s task
+   * retries see a rotated token. Then, if the operation fails after any of its GitHub-bound git
+   * commands or Octokit calls failed, it ARMS a re-read. Not gated on the failure looking
+   * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
+   * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
+   * (`RefusedPushError`, an invalid object ID), anything else local, a lock file the mirror's own
+   * housekeeping holds (`isOwnLockFailure`), and an Octokit 422 (`api`). A 404 does arm it, the
+   * branch-already-gone one `deleteBranch` callers tolerate included. What bounds a caller that
+   * fails on purpose is the floors behind `auth.refreshCredential`:
+   * `refreshGitHubTokenMinIntervalMs` (github-auth.ts) and the provider's own. On the GitHub App
+   * path a re-read is a no-op.
+   *
+   * The re-read starts detached, after the failure has been delivered: a provider can take 87s for
+   * one `getSecret`, longer than a task's whole deadline.
    */
-  private async buildGitHubUrl(): Promise<string> {
-    const { remoteUrl } = this.options
-    if (remoteUrl !== undefined) return typeof remoteUrl === 'string' ? remoteUrl : remoteUrl()
-    const token = await this.options.auth.resolveGitToken()
-    return `https://x-access-token:${token}@github.com/${this.options.githubOwner}/${this.options.githubRepo}.git`
+  private async credentialed<T>(
+    signal: AbortSignal | undefined,
+    operation: (reach: GitHubReach) => Promise<T>,
+  ): Promise<T> {
+    await this.joinRefresh(signal)
+    const reach: GitHubReach = { failed: false }
+    try {
+      return await operation(reach)
+    } catch (err) {
+      if (reach.failed) this.armRefresh()
+      throw err
+    }
+  }
+
+  /**
+   * One Octokit call inside {@link credentialed}, whose failure arms a re-read unless it is a 422.
+   * A 422 is GitHub validating the request, never judging the credential, and the worker treats
+   * two as success: a head branch GitHub already deleted after a merge (`isRefAlreadyGoneError`),
+   * and a pull request with no commits between (`isNoCommitsBetweenError`). Arming on them would
+   * spend the provider's floor on routine traffic and hold off the re-read a real rotation needs.
+   */
+  private async api<T>(reach: GitHubReach, call: () => Promise<T>): Promise<T> {
+    try {
+      return await call()
+    } catch (err) {
+      if (!(typeof err === 'object' && err !== null && 'status' in err && err.status === 422)) {
+        reach.failed = true
+      }
+      throw err
+    }
+  }
+
+  /**
+   * The credential for one operation's GitHub-bound git, resolved ONCE per operation, so every
+   * command in it carries the same token and a resolution failure cannot replace a git failure
+   * being classified. Async because a GitHub App's installation token is minted on demand and
+   * lasts about an hour, so nothing may cache it. A mint failure propagates as thrown, carrying
+   * the `.status` `isPermanentTaskFailure` classifies on.
+   */
+  private async credential(reach: GitHubReach): Promise<GitHubCredential> {
+    const { remoteUrl, githubOwner, githubRepo } = this.options
+    const url =
+      remoteUrl === undefined
+        ? `https://github.com/${githubOwner}/${githubRepo}.git`
+        : typeof remoteUrl === 'string'
+          ? remoteUrl
+          : await remoteUrl()
+    const token = await this.api(reach, () => this.options.auth.resolveGitToken())
+    return {
+      url,
+      token,
+      onFailure: () => {
+        reach.failed = true
+      },
+    }
+  }
+
+  /** Wait for a re-read in flight, unless `signal` aborts first. */
+  private async joinRefresh(signal?: AbortSignal): Promise<void> {
+    const inFlight = this.refreshing
+    if (inFlight === null) return
+    if (signal === undefined) return inFlight
+    signal.throwIfAborted()
+    let onAbort = (): void => undefined
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason)
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      await Promise.race([inFlight, aborted])
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /** Start a re-read on the next turn of the event loop, unless one is already in flight. */
+  private armRefresh(): void {
+    if (this.refreshing !== null) return
+    const refreshing: Promise<void> = new Promise<void>((resolve) => setImmediate(resolve))
+      .then(() => this.refreshCredential())
+      .finally(() => {
+        if (this.refreshing === refreshing) this.refreshing = null
+      })
+    this.refreshing = refreshing
   }
 
   async prepare(): Promise<void> {
@@ -239,7 +332,7 @@ class LocalGitHubGateway implements GitHubGateway {
         )
         return
       }
-      // Re-thrown with context, unlike buildGitHubUrl(): nothing classifies a startup failure.
+      // Re-thrown with context, unlike credential(): nothing classifies a startup failure.
       throw new Error(
         `GitHub App authentication failed: ${detail}. ` +
           'Check the app id, the installation id, and that the private key belongs to that app.',
@@ -265,31 +358,31 @@ class LocalGitHubGateway implements GitHubGateway {
     }
   }
 
-  async defaultBranch(signal?: AbortSignal): Promise<string> {
-    const { data } = await this.octokit.repos.get({
-      ...this.repo,
-      ...(signal ? { request: { signal } } : {}),
+  defaultBranch(signal?: AbortSignal): Promise<string> {
+    return this.credentialed(signal, async (reach) => {
+      const { data } = await this.api(reach, () =>
+        this.octokit.repos.get({ ...this.repo, ...(signal ? { request: { signal } } : {}) }),
+      )
+      return data.default_branch
     })
-    return data.default_branch
   }
 
-  async fetch(
-    _request: { have: readonly string[] },
-    signal?: AbortSignal,
-  ): Promise<GitHubFetchResult> {
-    const githubUrl = await this.buildGitHubUrl()
-    await this.mirror.exclusive(async (mirror) => {
-      await mirror.fetchFromGitHub(githubUrl, signal)
-      await mirror.publishTrackingRefs(signal)
+  fetch(_request: { have: readonly string[] }, signal?: AbortSignal): Promise<GitHubFetchResult> {
+    return this.credentialed(signal, async (reach) => {
+      const credential = await this.credential(reach)
+      await this.mirror.exclusive(async (mirror) => {
+        await mirror.fetchFromGitHub(credential, signal)
+        await mirror.publishTrackingRefs(signal)
+      })
+      return { bundleId: null }
     })
-    return { bundleId: null }
   }
 
   onGitHub(ids: readonly string[]): Promise<ReadonlySet<string>> {
     return this.mirror.exclusive((mirror) => idsOnGitHub(mirror, ids))
   }
 
-  async seedBareRepository(
+  seedBareRepository(
     gitDir: string,
     options: {
       baseBranch: string
@@ -297,31 +390,40 @@ class LocalGitHubGateway implements GitHubGateway {
       createRepository: () => Promise<void>
     },
   ): Promise<void> {
-    const githubUrl = await this.buildGitHubUrl()
-    await this.mirror.exclusive(async (mirror) => {
-      await mirror.fetchFromGitHub(githubUrl)
-      await options.beforeSeed?.({
-        [inMirrorSession]: true,
-        onGitHub: (ids) => idsOnGitHub(mirror, ids),
+    return this.credentialed(undefined, async (reach) => {
+      const credential = await this.credential(reach)
+      await this.mirror.exclusive(async (mirror) => {
+        await mirror.fetchFromGitHub(credential)
+        await options.beforeSeed?.({
+          [inMirrorSession]: true,
+          onGitHub: (ids) => idsOnGitHub(mirror, ids),
+        })
+        if ((await mirror.branchTip(options.baseBranch)) === null) {
+          throw new Error(`GitHub has no branch '${options.baseBranch}'`)
+        }
+        await options.createRepository()
+        await mirror.seedBareRepository(gitDir)
       })
-      if ((await mirror.branchTip(options.baseBranch)) === null) {
-        throw new Error(`GitHub has no branch '${options.baseBranch}'`)
-      }
-      await options.createRepository()
-      await mirror.seedBareRepository(gitDir)
     })
   }
 
-  async push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome> {
-    // Resolved ONCE, for both attempts: a resolution that threw inside the stale-lease retry would
-    // replace the rejection being classified, and both attempts must carry the same credential.
-    const githubUrl = await this.buildGitHubUrl()
+  push(request: GitHubPushRequest, signal?: AbortSignal): Promise<GitHubPushOutcome> {
+    return this.credentialed(signal, (reach) => this.pushOnce(request, reach, signal))
+  }
+
+  private async pushOnce(
+    request: GitHubPushRequest,
+    reach: GitHubReach,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushOutcome> {
+    // Both attempts carry this one credential (see credential()).
+    const credential = await this.credential(reach)
     // One mirror session for the whole exchange; the mirror kills its git when `signal` aborts.
     // GitHub moves the ref only after receiving the whole pack, so a killed push changes nothing
     // or is found already done by the re-run.
     return this.mirror.exclusive(async (mirror) => {
       const attempt = (lease?: string) =>
-        mirror.pushToGitHub(githubUrl, request.branch, request.sha, {
+        mirror.pushToGitHub(credential, request.branch, request.sha, {
           lease,
           signal,
           protectedBranches: request.protectedBranches,
@@ -355,57 +457,79 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
-  async createPullRequest(
+  createPullRequest(
     request: { head: string; base: string; title: string; body: string },
     signal?: AbortSignal,
   ): Promise<{ number: number; url: string }> {
-    const { data } = await this.octokit.pulls.create({
-      ...this.repo,
-      ...request,
-      request: { signal },
+    return this.credentialed(signal, async (reach) => {
+      const { data } = await this.api(reach, () =>
+        this.octokit.pulls.create({ ...this.repo, ...request, request: { signal } }),
+      )
+      return { number: data.number, url: data.html_url }
     })
-    return { number: data.number, url: data.html_url }
   }
 
-  async updatePullRequest(
+  updatePullRequest(
     number: number,
     update: { title?: string; body?: string; state?: 'closed' },
     signal?: AbortSignal,
   ): Promise<void> {
-    await this.octokit.pulls.update({
-      ...this.repo,
-      pull_number: number,
-      ...update,
-      request: { signal },
+    return this.credentialed(signal, async (reach) => {
+      await this.api(reach, () =>
+        this.octokit.pulls.update({
+          ...this.repo,
+          pull_number: number,
+          ...update,
+          request: { signal },
+        }),
+      )
     })
   }
 
-  async getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
-    const { data } = await this.octokit.pulls.get({
-      ...this.repo,
-      pull_number: number,
-      request: { signal },
-    })
+  getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
+    return this.credentialed(signal, (reach) => this.pullRequest(reach, number, signal))
+  }
+
+  private async pullRequest(
+    reach: GitHubReach,
+    number: number,
+    signal?: AbortSignal,
+  ): Promise<GitHubPullRequest> {
+    const { data } = await this.api(reach, () =>
+      this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+    )
     return data
   }
 
   createOrUpdatePullRequest(
     request: GitHubCreateOrUpdatePullRequest,
   ): Promise<{ number: number; url: string; created: boolean }> {
-    return createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request })
-  }
-
-  async convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
-    // The REST API cannot convert a PR to a draft; GraphQL can.
-    const pr = await this.getPullRequest(number, signal)
-    await this.octokit.graphql(
-      `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
-      { id: pr.node_id, request: { signal } },
+    return this.credentialed(request.signal, (reach) =>
+      this.api(reach, () =>
+        createOrUpdatePullRequest({ octokit: this.octokit, ...this.repo, ...request }),
+      ),
     )
   }
 
-  async deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
-    await this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } })
+  convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
+    return this.credentialed(signal, async (reach) => {
+      // The REST API cannot convert a PR to a draft; GraphQL can.
+      const pr = await this.pullRequest(reach, number, signal)
+      await this.api(reach, () =>
+        this.octokit.graphql(
+          `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+          { id: pr.node_id, request: { signal } },
+        ),
+      )
+    })
+  }
+
+  deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
+    return this.credentialed(signal, async (reach) => {
+      await this.api(reach, () =>
+        this.octokit.git.deleteRef({ ...this.repo, ref: `heads/${branch}`, request: { signal } }),
+      )
+    })
   }
 
   maintain(): Promise<BareRemoteRepackResult> {
@@ -413,22 +537,13 @@ class LocalGitHubGateway implements GitHubGateway {
   }
 
   /**
-   * Two callers, each covering what the other cannot: the git-sync loop notices a dead credential
-   * when nobody is publishing, and the task loop's per-task catch saves a publish, whose retries
-   * (5s/10s/20s) all fall inside one sync interval. Every consumer reads the credential per use,
-   * so a refresh from either repairs all of them for their NEXT use.
-   *
-   * NOT gated on the failure looking auth-shaped: a git fetch or push refused for a dead token
-   * exits 128 with no HTTP `.status`, so such a gate would never fire. Two floors bound the cost
-   * instead, shared by both callers: `refreshGitHubTokenMinIntervalMs` (github-auth.ts) and the
-   * provider's own. On the GitHub App path it is a no-op.
-   *
-   * Never throws, since both callers are already reporting the failure that matters. Bounded by
-   * the timeout, because the task loop awaits it and a provider may have no bound of its own (the
-   * AWS one can take 87s for one `getSecret`). A losing read is not cancelled, but
-   * `refreshCredential` discards a result older than one already applied.
+   * Re-read the credential, for {@link armRefresh}. Every consumer reads the credential per use,
+   * so a re-read repairs all of them for their next use. Never throws: the failure that armed it
+   * has already been reported. Bounded by the timeout, because every credentialed operation joins
+   * it and a provider may have no bound of its own. A losing read is not cancelled, but
+   * `auth.refreshCredential` discards a result older than one already applied.
    */
-  async refreshCredential(): Promise<void> {
+  private async refreshCredential(): Promise<void> {
     let timer: NodeJS.Timeout | undefined
     const timedOut = new Promise<never>((_, reject) => {
       timer = setTimeout(
@@ -444,22 +559,6 @@ class LocalGitHubGateway implements GitHubGateway {
       clearTimeout(timer)
     }
   }
-}
-
-/**
- * `github().refreshCredential()`, for its two call sites. Never throws, even when `github()`
- * does: building the gateway resolves the credential, and a half-configured one is logged as a
- * failed re-read so the failure each caller is reporting stays the one that propagates.
- */
-export async function refreshGitHubCredential(github: () => GitHubGateway): Promise<void> {
-  let gateway: GitHubGateway
-  try {
-    gateway = github()
-  } catch (err) {
-    logFailedCredentialRefresh(err)
-    return
-  }
-  await gateway.refreshCredential()
 }
 
 function logFailedCredentialRefresh(err: unknown): void {

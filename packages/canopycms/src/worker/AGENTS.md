@@ -49,12 +49,12 @@ lint and still break the layering above. Keep the direction by review.
 - The drain's rules: `cms-worker.ts`'s `stop()`.
 - Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
   loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
-- `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`, at that
-  function.
+- `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`.
 - No push, plain or leased, to the base branch or GitHub's default branch, whatever a task asks:
   `github-mirror.ts`, `MirrorSession.pushToGitHub` (`RefusedPushError`).
-- The credential only in mirror sessions; other shared-repository git only via `sharedRepoGit`,
-  after `assertSharedRepoConfig`: `shared-repo-git.ts`'s module doc.
+- The credential only in mirror sessions' per-command files (`github-mirror.ts`, `withCredentialConfig`); other
+  shared-repository git only via `sharedRepoGit`, after `assertSharedRepoConfig`:
+  `shared-repo-git.ts`'s module doc.
 - `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
   `BranchRebaseOutcome`.
 - Interrupted-rebase recovery is lossy and keyed on the WORKING-TREE column: `rebase.ts`, the

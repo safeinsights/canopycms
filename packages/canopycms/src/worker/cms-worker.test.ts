@@ -411,10 +411,9 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
   })
 
   // [REDACT] task.error is persisted to failed/<id>.json and served to the
-  // browser by the admin panel's Tasks tab. A git push failure's message
-  // can embed the bot token (the gateway's buildGitHubUrl() builds
-  // https://x-access-token:TOKEN@github.com/...), so it must be redacted
-  // before it reaches disk.
+  // browser by the admin panel's Tasks tab. Any credential a failure's
+  // message carries, a token in a URL included, must be redacted before it
+  // reaches disk.
   it('redacts a token-bearing error message before persisting task.error via failTask', async () => {
     const id = await runWithFailure(
       Object.assign(
@@ -1452,12 +1451,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   })
 
   // -------------------------------------------------------------------------
-  // The gateway's buildGitHubUrl() resolves asynchronously.
+  // The gateway resolves its remote and credential asynchronously.
   //
-  // The credential behind the URL need not be a value the worker already holds
-  // -- a credential that has to be fetched or minted cannot be read out of
-  // config synchronously -- so the gateway resolves the URL per operation, and
-  // a push awaits it. The tests below pin what that resolution must not change:
+  // The credential need not be a value the worker already holds -- one that has
+  // to be fetched or minted cannot be read out of config synchronously -- so the
+  // gateway resolves it per operation, and a push awaits it. The tests below pin what that resolution must not change:
   // a resolver returning a real promise, one resolution for both of a push's
   // attempts, and a tip that moves while it resolves.
   // -------------------------------------------------------------------------
@@ -1466,7 +1464,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     pushBranchToGitHub(branch: string): Promise<void>
   }
 
-  it('pushes when buildGitHubUrl resolves a real promise rather than a bare string', async () => {
+  it('pushes when the remote URL resolves a real promise rather than a bare string', async () => {
     // A resolver that returns a promise rather than a bare string.
     await seedBranchInRemoteGit('feature-async-url', 'hello')
     const worker = makePushWorker()
@@ -2007,8 +2005,7 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     // A local nonexistent path (no `://`) so git fails immediately without
     // any network attempt, while still echoing the literal string back
     // verbatim in its fatal message -- simulating a fetch/push error whose
-    // text embeds the bot token, same shape as the gateway's buildGitHubUrl()
-    // https://x-access-token:TOKEN@github.com/... URLs.
+    // text embeds the bot token in a URL's userinfo.
     useLocalGitHubGateway(worker, {
       remoteUrl: () =>
         path.join(tmpDir, 'x-access-token:ghp_secret123456@nonexistent', 'remote.git'),

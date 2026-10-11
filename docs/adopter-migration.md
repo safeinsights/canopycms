@@ -86,6 +86,7 @@ replaces each `next` with its number.
 | 112  | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
 | next | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
 | next | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
+| next | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -548,6 +549,16 @@ worker protects only GitHub's current default branch and whatever it read as bas
 where from; an unmoved branch logs at debug level. An unchanged settings branch is not pushed.
 
 **To adopt.** Nothing.
+
+### The worker hands git its GitHub credential in a per-command file — **security fix; dev behaviour change**
+
+**What changed.** (next) The token leaves git URLs: each GitHub fetch and push reads it from a
+`0600` file named by `GIT_CONFIG_GLOBAL`, deleted afterwards. For those commands the file replaces
+your global git config and clears credential helpers, so a global `http.proxy` or `http.sslCAInfo`
+stops applying and no keychain credential is tried.
+
+**To adopt.** Nothing in production. In dev, move a global-config proxy or CA to `HTTPS_PROXY` or
+`GIT_SSL_CAINFO`.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 

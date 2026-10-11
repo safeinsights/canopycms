@@ -6,6 +6,7 @@ import {
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
 } from '../worker/github-gateway'
+import type { GitHubCredential } from '../worker/github-mirror'
 
 interface WorkerGatewayInternals {
   gateway?: GitHubGateway
@@ -30,4 +31,13 @@ export function useLocalGitHubGateway(
   })
   internals.gateway = gateway
   return gateway
+}
+
+/**
+ * A credential for driving a `MirrorSession`'s GitHub-bound commands directly, against a local
+ * repository standing in for GitHub. Its header is scoped to GitHub's origin, which a local path
+ * never matches.
+ */
+export function fixtureCredential(url: string, token = 'fake-token'): GitHubCredential {
+  return { url, token, onFailure: () => undefined }
 }

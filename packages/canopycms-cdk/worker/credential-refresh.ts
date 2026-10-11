@@ -33,12 +33,13 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * For the Clerk key, at the default intervals, it is inert: the key's only
  * trigger is the auth-cache loop (15 minutes), already slower than this.
  *
- * For the GitHub token it is ACTIVE, and it is what bounds the cost. That token
- * has two triggers in core, a failed task and a failed git sync (see
- * `GitHubGateway.refreshCredential` in core), and a task retries on a 5s/10s/20s
+ * For the GitHub token it is ACTIVE, and it is what bounds the cost. Core's
+ * GitHub gateway re-reads it after any operation that failed reaching GitHub
+ * other than with a 422 (a publish, a sync's fetch, a pull-request call; see
+ * `LocalGitHubGateway.credentialed` in core), and a task retries on a 5s/10s/20s
  * backoff — so a queue of failing publishes reaches this provider at core's own
  * floor, once a minute by default. This floor makes that one read per five
- * minutes, SHARED by both triggers, at the price that a rotation is picked up at
+ * minutes, SHARED by every trigger, at the price that a rotation is picked up at
  * the first failure the floor permits: immediately unless a failure in the last
  * interval already used the read, and then normally at most one interval later
  * (core's floor can push that to about two — see
@@ -134,8 +135,8 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
   // started later has already finished: that one saw the store more recently, so
   // the older value can only be stale. Without this a read that stalled past the
   // floor could land after a newer read adopted a rotated value and put the old
-  // one back - and a caller that stops waiting
-  // (GitHubGateway.refreshCredential) does not cancel the read it abandoned.
+  // one back - and a caller that stops waiting (core's GitHub gateway, after its
+  // timeout) does not cancel the read it abandoned.
   let readsStarted = 0
   let newestReadFinished = 0
 
@@ -156,10 +157,10 @@ export function createReactiveSecret(options: ReactiveSecretOptions): ReactiveSe
       // overlapping calls each see an unstamped clock and both issue a read,
       // which is the floor not holding.
       //
-      // Overlap is real for the GitHub token: its two triggers, a failed task
-      // and a failed git sync, run on separate loops that `scheduleLoop` does
-      // not serialise against each other (GitHubGateway.refreshCredential).
-      // The Clerk key has one calling loop, which awaits each cycle.
+      // Overlap is real for the GitHub token: core's gateway stops waiting for
+      // a read after its timeout without cancelling it, and the next failure
+      // starts another. The Clerk key has one calling loop, which awaits each
+      // cycle.
       lastReadAt = at
 
       const read = ++readsStarted

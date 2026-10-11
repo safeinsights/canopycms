@@ -146,9 +146,9 @@ describe('guard: too soon', () => {
     // `lastReadAt` is stamped BEFORE the await for this case; stamped after,
     // all three callers see an unstamped clock and all three read.
     //
-    // The GitHub token's two triggers -- a failed task and a failed git sync --
-    // run on separate loops and can overlap, so this is what keeps the floor
-    // shared between them.
+    // Reads of the GitHub token can overlap -- core's gateway stops waiting
+    // for one after its timeout and the next failure starts another -- so this
+    // is what keeps the floor shared between them.
     await Promise.all([secret.refresh(), secret.refresh(), secret.refresh()])
 
     expect(sendMock).toHaveBeenCalledTimes(1)

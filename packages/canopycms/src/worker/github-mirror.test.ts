@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { fixtureCredential, initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { GitHubMirror } from './github-mirror'
 
 const execFileAsync = promisify(execFile)
@@ -94,7 +94,9 @@ describe('GitHubMirror', () => {
     await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
 
     await mirror.exclusive((m) =>
-      m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] }),
+      m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
+        protectedBranches: [],
+      }),
     )
 
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
@@ -109,7 +111,7 @@ describe('GitHubMirror', () => {
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', next, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', next, {
           lease: notGitHubsTip,
           protectedBranches: [],
         }),
@@ -125,9 +127,11 @@ describe('GitHubMirror', () => {
     await plantHostileRemoteGit()
 
     await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
+      await m.fetchFromGitHub(fixtureCredential(githubPath))
       await m.publishTrackingRefs()
-      await m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] })
+      await m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
+        protectedBranches: [],
+      })
     })
 
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
@@ -139,7 +143,7 @@ describe('GitHubMirror', () => {
   it('prunes tracking refs for branches GitHub no longer has, and leaves refs/heads alone', async () => {
     await commitAndPush(githubPath, 'refs/heads/gone-soon', 'g.txt')
     await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
+      await m.fetchFromGitHub(fixtureCredential(githubPath))
       await m.publishTrackingRefs()
     })
     expect(await refs(remoteGitPath)).toContain('refs/remotes/github/gone-soon')
@@ -147,7 +151,7 @@ describe('GitHubMirror', () => {
     const local = await commitAndPush(remoteGitPath, 'refs/heads/editor-work', 'e.txt')
 
     await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
+      await m.fetchFromGitHub(fixtureCredential(githubPath))
       await m.publishTrackingRefs()
     })
 
@@ -158,9 +162,11 @@ describe('GitHubMirror', () => {
   it('recreates itself when its directory is not a repository', async () => {
     await mirror.ensure()
     await fs.rm(path.join(mirror.gitDir, 'HEAD'))
-    await expect(mirror.exclusive((m) => m.fetchFromGitHub(githubPath))).rejects.toThrow()
+    await expect(
+      mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath))),
+    ).rejects.toThrow()
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
       await tip(githubPath, 'refs/heads/main'),
@@ -205,7 +211,7 @@ describe('GitHubMirror', () => {
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'malformed', sha, { protectedBranches: [] }),
+        m.pushToGitHub(fixtureCredential(githubPath), 'malformed', sha, { protectedBranches: [] }),
       ),
     ).rejects.toThrow(/fsck|missingEmail|bad/i)
     expect(await tip(githubPath, 'refs/heads/malformed')).toBeNull()
@@ -242,7 +248,7 @@ describe('GitHubMirror', () => {
     )
     const upstream = await commitAndPush(githubPath, 'refs/heads/main', 'upstream.txt')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     // Seeded: the object only remote.git had is in the mirror, and its ref is pruned.
     expect(await git('--git-dir', mirror.gitDir, 'cat-file', '-t', onlyInRemoteGit)).toBe('commit')
@@ -255,7 +261,7 @@ describe('GitHubMirror', () => {
     await git('init', '-q', '--bare', remoteGitPath)
     await fs.writeFile(path.join(remoteGitPath, 'packed-refs'), 'not a ref line\n')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
       await tip(githubPath, 'refs/heads/main'),
@@ -285,7 +291,7 @@ describe('GitHubMirror', () => {
     await git('--git-dir', githubPath, 'update-ref', 'refs/heads/imported-history', sha)
     await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/remotes/github/main')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     expect(await tip(mirror.gitDir, 'refs/heads/imported-history')).toBe(sha)
   })
@@ -310,7 +316,7 @@ describe('GitHubMirror', () => {
 
     const restarted = new GitHubMirror(path.join(root, 'state'), remoteGitPath, 30_000)
     await restarted.exclusive((m) =>
-      m.pushToGitHub(githubPath, 'a/b', published, { protectedBranches: [] }),
+      m.pushToGitHub(fixtureCredential(githubPath), 'a/b', published, { protectedBranches: [] }),
     )
 
     expect(await tip(githubPath, 'refs/heads/a/b')).toBe(published)
@@ -320,7 +326,7 @@ describe('GitHubMirror', () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', published, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
           lease: 'refs/heads/main',
           protectedBranches: [],
         }),
@@ -352,7 +358,9 @@ describe('GitHubMirror', () => {
   it('refuses a commit argument that is not an object ID', async () => {
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', 'main:refs/heads/x', { protectedBranches: [] }),
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', 'main:refs/heads/x', {
+          protectedBranches: [],
+        }),
       ),
     ).rejects.toThrow(/Not a commit ID/)
   })
