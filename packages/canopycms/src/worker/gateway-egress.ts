@@ -3,7 +3,8 @@
  * logs goes through here, `github-service.ts`'s and Octokit's lines for it included (they are
  * given {@link gatewayLogWarn} and {@link gatewayLogError}), except `openBundle`'s errors, which
  * hold no secret. Each is scrubbed of every live token the gateway has resolved, in every form
- * git's extraheader gives it, as exact strings. Errors and log lines are then scrubbed by
+ * git's extraheader gives it, and of the auth provider's key and the App's private key, as exact
+ * strings. Errors and log lines are then scrubbed by
  * `redactCredentials`'s patterns too; answers are not, because they are data the worker acts on,
  * and a pattern would rewrite a GitHub branch named `chore/github_pat_rotation`. The
  * exact scrub comes first and cannot be left to the patterns: one can stop part-way through a
@@ -42,12 +43,64 @@ export function registerLiveSecret(token: string): void {
   }
 }
 
-/** `text` without any live token in any registered form. */
+/**
+ * Scrub `value` from everything that leaves the gateway from now on, raw and URL-encoded: a secret
+ * that is not a GitHub token (the auth provider's key). It shares {@link registerLiveSecret}'s store
+ * and cap, so a rotated key replaces the old one as tokens do.
+ */
+export function registerSecretText(value: string): void {
+  if (value.length < MIN_SECRET_LENGTH) return
+  liveSecrets.delete(value)
+  liveSecrets.set(
+    value,
+    [...new Set([value, encodeURIComponent(value)])].sort((a, b) => b.length - a.length),
+  )
+  for (const oldest of liveSecrets.keys()) {
+    if (liveSecrets.size <= MAX_LIVE_SECRETS) break
+    liveSecrets.delete(oldest)
+  }
+}
+
+/** How many private-key lines are scrubbed; the oldest are dropped past it. */
+const MAX_PRIVATE_KEY_LINES = 1024
+
+/**
+ * The lines of every registered private key, in their own set: a PEM is about 27 lines and the
+ * token store holds {@link MAX_LIVE_SECRETS}, so sharing it would evict live tokens.
+ */
+const privateKeyLines = new Set<string>()
+
+/** `privateKeyLines`, longest first; rebuilt when a key is registered. */
+let privateKeyLinesLongestFirst: string[] = []
+
+/**
+ * Scrub each line of a PEM key's body from everything that leaves the gateway from now on, so the
+ * scrub survives JSON or log escaping, which split a PEM at its newlines. Lines split on real
+ * newlines and on the two-character literal `\n` (a key pasted into a single-line config field);
+ * the BEGIN/END lines and lines shorter than the secret floor are skipped. A key given as one
+ * base64 line (a base64-wrapped PEM) is one entry.
+ */
+export function registerPrivateKey(pem: string): void {
+  for (const raw of pem.split(/\r?\n|\\n/)) {
+    const line = raw.trim()
+    if (line.length < MIN_SECRET_LENGTH || line.startsWith('-----')) continue
+    privateKeyLines.delete(line)
+    privateKeyLines.add(line)
+  }
+  for (const oldest of privateKeyLines) {
+    if (privateKeyLines.size <= MAX_PRIVATE_KEY_LINES) break
+    privateKeyLines.delete(oldest)
+  }
+  privateKeyLinesLongestFirst = [...privateKeyLines].sort((a, b) => b.length - a.length)
+}
+
+/** `text` without any live token or registered secret in any registered form. */
 function redactLiveSecrets(text: string): string {
   let result = text
   for (const forms of liveSecrets.values()) {
     for (const form of forms) result = result.split(form).join('***')
   }
+  for (const line of privateKeyLinesLongestFirst) result = result.split(line).join('***')
   return result
 }
 

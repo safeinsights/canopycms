@@ -1,13 +1,18 @@
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { mockConsole, octokitErrorFor, type MockConsole } from '../test-utils'
 import {
   escapeForLog,
+  gatewayLog,
   gatewayLogWarn,
   redactEgress,
   redactError,
   redactValue,
   registerLiveSecret,
+  registerPrivateKey,
+  registerSecretText,
 } from './gateway-egress'
 
 /**
@@ -143,5 +148,142 @@ describe('the gateway log', () => {
     expect(line).not.toContain('\n')
     expect(line).toContain('evil\\n2026')
     holdsNoForm(line)
+  })
+})
+
+/** The auth provider's key: alphanumeric, so URL-encoding leaves it as it is. */
+const CLERK_KEY = `sk_live_${randomBytes(20).toString('hex')}`
+
+describe('registerSecretText', () => {
+  beforeEach(() => {
+    registerSecretText(CLERK_KEY)
+  })
+
+  it('scrubs the key from an egress message, raw and URL-encoded', () => {
+    expect(redactEgress(`provider said ${CLERK_KEY}`)).not.toContain(CLERK_KEY)
+    expect(redactEgress(`GET /?key=${encodeURIComponent(CLERK_KEY)}`)).not.toContain(CLERK_KEY)
+  })
+
+  it('scrubs the URL-encoded form of a value that encodes differently', () => {
+    const odd = 'sk/live+odd value=0123456789'
+    registerSecretText(odd)
+
+    const scrubbed = redactEgress(`raw ${odd} encoded ${encodeURIComponent(odd)}`)
+
+    expect(scrubbed).not.toContain('odd value')
+    expect(scrubbed).not.toContain(encodeURIComponent(odd))
+    expect(scrubbed).not.toContain('odd%20value')
+  })
+
+  it('scrubs the key from an answer', () => {
+    const answer = { users: [{ id: 'u', name: `name ${CLERK_KEY}` }], note: [CLERK_KEY] }
+
+    expect(JSON.stringify(redactValue(answer))).not.toContain(CLERK_KEY)
+  })
+
+  it('scrubs the key from an error: message and stderr', () => {
+    const error = Object.assign(new Error(`failed with ${CLERK_KEY}`), {
+      stderr: `stderr ${CLERK_KEY}`,
+    })
+
+    const scrubbed = redactError(error) as Error & { stderr: string }
+
+    expect(scrubbed.message).not.toContain(CLERK_KEY)
+    expect(scrubbed.stderr).not.toContain(CLERK_KEY)
+  })
+
+  it('scrubs the key from a log line', () => {
+    gatewayLog(`refreshing with ${CLERK_KEY}`)
+
+    const [line] = consoleSpy.all().log
+    expect(line).toBeDefined()
+    expect(line).not.toContain(CLERK_KEY)
+  })
+
+  it('leaves a short value alone', () => {
+    registerSecretText('short')
+    expect(redactEgress('a short text')).toBe('a short text')
+  })
+
+  it('stops scrubbing a key the cap has dropped, as it does a token', () => {
+    for (let i = 0; i < 40; i++)
+      registerLiveSecret(`CANARY-cap-${i}-${randomBytes(8).toString('hex')}`)
+
+    expect(redactEgress(`late ${CLERK_KEY}`)).toContain(CLERK_KEY)
+  })
+})
+
+describe('registerPrivateKey', () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+  const pems = {
+    pkcs1: privateKey.export({ type: 'pkcs1', format: 'pem' }).toString(),
+    pkcs8: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  }
+  const bodyLines = (pem: string) =>
+    pem
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('-----'))
+  /** The PEM without its BEGIN/END lines, which `redactCredentials` would otherwise scrub whole. */
+  const bodyOf = (pem: string) => bodyLines(pem).join('\n')
+  const holdsNoBodyLine = (text: string, pem: string) => {
+    const lines = bodyLines(pem)
+    expect(lines.length).toBeGreaterThan(10)
+    for (const line of lines) expect(text).not.toContain(line)
+  }
+
+  describe.each(Object.entries(pems))('a %s key', (_name, pem) => {
+    beforeEach(() => {
+      registerPrivateKey(pem)
+    })
+
+    it.each([
+      ['the PEM itself', (text: string) => text],
+      ['JSON-escaped', (text: string) => JSON.stringify(text)],
+      [
+        'with newlines as the two characters backslash-n',
+        (text: string) => text.replace(/\n/g, '\\n'),
+      ],
+    ])('scrubs every body line from %s, with or without its BEGIN/END lines', (_form, render) => {
+      holdsNoBodyLine(redactEgress(`key: ${render(pem)} done`), pem)
+      holdsNoBodyLine(redactEgress(`key: ${render(bodyOf(pem))} done`), pem)
+    })
+
+    it('scrubs every body line from an answer, which is never scrubbed by pattern', () => {
+      const scrubbed = redactValue({ detail: pem, lines: bodyLines(pem) })
+
+      holdsNoBodyLine(JSON.stringify(scrubbed).replace(/\\n/g, '\n'), pem)
+    })
+  })
+
+  it('scrubs a key registered from its literal backslash-n form', () => {
+    const pem = pems.pkcs8
+    registerPrivateKey(pem.replace(/\n/g, '\\n'))
+
+    holdsNoBodyLine(redactEgress(bodyOf(pem)), pem)
+  })
+
+  it('scrubs a base64-wrapped PEM registered as given', () => {
+    const wrapped = Buffer.from(pems.pkcs8).toString('base64')
+    registerPrivateKey(wrapped)
+
+    expect(wrapped).not.toContain('\n')
+    expect(redactEgress(`config ${wrapped} end`)).not.toContain(wrapped.slice(0, 64))
+  })
+
+  it('is not evicted by registering more tokens than the token store holds', () => {
+    registerPrivateKey(pems.pkcs1)
+    for (let i = 0; i < 40; i++)
+      registerLiveSecret(`CANARY-evict-${i}-${randomBytes(8).toString('hex')}`)
+
+    holdsNoBodyLine(redactEgress(bodyOf(pems.pkcs1)), pems.pkcs1)
+  })
+
+  it('skips the BEGIN/END lines and lines under the secret floor', () => {
+    registerPrivateKey('-----BEGIN PRIVATE KEY-----\nshort\n-----END PRIVATE KEY-----')
+
+    expect(redactValue('short and -----BEGIN PRIVATE KEY----- stay')).toBe(
+      'short and -----BEGIN PRIVATE KEY----- stay',
+    )
   })
 })
