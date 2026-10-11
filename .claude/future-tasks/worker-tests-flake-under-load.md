@@ -30,6 +30,15 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
    (dist)", failed twice in one run and then passed alone. Probably a concurrent build rebuilt
    `dist` mid-run, so likely not a real flake. Confirm before changing anything.
 
+4. **A concurrent-operations test that rejects one operation.**
+   - Where: `github-gateway-bundle.test.ts` (`worker-http`), "never deadlocks the mirror session,
+     whatever runs beside it", which runs two fetches and three pushes of one branch at once and
+     expects all five to fulfil.
+   - Seen 2026-10-11, building PR 5: the fifth (a body-less push) rejected once, with the whole
+     worker suite running under CI-like git. It passed four reruns alone. The error was not
+     captured: it may be a legitimate `transient` under slow git (`ref-kept-moving`, or two
+     fetch-reuse misses in `afterGitHubFetch`), or an ordering bug.
+
 ## Shape of the fix
 
 - Case 1: assert the property, a re-read that is bounded rather than hung, with a bound that
@@ -38,6 +47,8 @@ other heavy jobs. Each case passed when re-run alone, and the sequential gates a
   cleanup is a single cheap `rm` that isn't contended.
 - Case 3: reproduce with a concurrent `build` and decide whether the test should build into a
   private output directory.
+- Case 4: reproduce under load, log the rejection's class and code, and decide whether the test
+  should accept a transient outcome for that operation or the gateway is wrong.
 
 ## Related
 
