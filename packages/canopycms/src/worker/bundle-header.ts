@@ -239,6 +239,7 @@ export class BundleHeaderReader {
 /**
  * Read the header at the start of `bytes` ({@link BundleHeaderReader}, refusing a long comment):
  * null while it may still be completed by more bytes, the header once its blank line has arrived.
+ * @internal Exported for tests.
  */
 export function scanBundleHeader(bytes: Buffer): BundleHeader | null {
   return new BundleHeaderReader('refuse').push(bytes)?.header ?? null

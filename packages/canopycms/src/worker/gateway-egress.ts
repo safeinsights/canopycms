@@ -131,6 +131,7 @@ export function redactError(err: unknown, depth = 0): unknown {
  * `text` on one line, every character outside printable ASCII escaped (`\n`, `\t`, `\r`, `\xHH`,
  * `\u{H}`), and `\` doubled so an escape cannot be forged. Bidi controls and zero-width characters
  * are outside printable ASCII too, so a branch name cannot reorder or hide part of a line.
+ * @internal Exported for tests.
  */
 export function escapeForLog(text: string): string {
   let out = ''

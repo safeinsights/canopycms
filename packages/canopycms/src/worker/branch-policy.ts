@@ -5,16 +5,28 @@
  */
 import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
 
-/** How long GitHub's default branch, once read, is taken to be still the default. */
+/**
+ * How long GitHub's default branch, once read, is taken to be still the default.
+ * @internal Exported for tests.
+ */
 export const DEFAULT_BRANCH_TTL_MS = 10 * 60_000
 
-/** The longest branch name the gateway takes, in characters (all ASCII). */
+/**
+ * The longest branch name the gateway takes, in characters (all ASCII).
+ * @internal Exported for tests.
+ */
 export const MAX_BRANCH_NAME_LENGTH = 255
 
-/** The longest pull request title the gateway sends, in UTF-16 code units. */
+/**
+ * The longest pull request title the gateway sends, in UTF-16 code units.
+ * @internal Exported for tests.
+ */
 export const MAX_PULL_REQUEST_TITLE_LENGTH = 1024
 
-/** The longest pull request body the gateway sends: GitHub's own limit. */
+/**
+ * The longest pull request body the gateway sends: GitHub's own limit.
+ * @internal Exported for tests.
+ */
 export const MAX_PULL_REQUEST_BODY_LENGTH = 65_536
 
 export type GatewayOperation = 'push' | 'delete' | 'pull-request'
@@ -68,6 +80,7 @@ export function branchNameProblem(branch: string): string | null {
  * `*` matches any run of characters, `/` included; nothing else is a wildcard. A character no
  * branch name can hold is refused rather than left to match nothing, so a list never protects
  * less than it seems to.
+ * @internal Exported for tests.
  */
 export function protectedPatternProblem(pattern: string): string | null {
   const named = branchNameProblem(pattern.replace(/\*/g, 'x'))
@@ -83,7 +96,10 @@ export function protectedPatternProblem(pattern: string): string | null {
   return null
 }
 
-/** Whether `name` matches `pattern`, where `*` matches any run of characters. Never a regex. */
+/**
+ * Whether `name` matches `pattern`, where `*` matches any run of characters. Never a regex.
+ * @internal Exported for tests.
+ */
 export function matchesBranchPattern(pattern: string, name: string): boolean {
   const parts = pattern.split('*')
   const first = parts[0]
