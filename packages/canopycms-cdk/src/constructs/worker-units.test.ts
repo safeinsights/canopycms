@@ -338,7 +338,7 @@ describe('the host settings the split rests on', () => {
     )
     const apply = indexOfLine(
       all,
-      (l) => l.trim() === 'sysctl -q -p /etc/sysctl.d/99-canopy.conf',
+      (l) => l.trim() === 'sysctl -q -e -p /etc/sysctl.d/99-canopy.conf',
       'applies it',
     )
     const limit = indexOfLine(
