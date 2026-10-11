@@ -39,6 +39,8 @@ export interface ImageFieldProps {
   errors?: ImageFieldErrors
   /** No upload, pick, crop or remove; the alt text is read-only. */
   readOnly?: boolean
+  /** Told of the image Remove takes out, so the caller can offer Undo. */
+  onRemoved?: (removed: ImageFieldValue) => void
 }
 
 /** Which image the crop step is currently cropping. */
@@ -57,6 +59,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
   dataCanopyField,
   errors,
   readOnly = false,
+  onRemoved,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
@@ -139,8 +142,12 @@ export const ImageField: React.FC<ImageFieldProps> = ({
     edit({ ...value, alt: nextAlt })
   }
 
-  const handleRemove = () => {
+  const handleRemove = (event: React.MouseEvent<HTMLElement>) => {
+    if (readOnly || !value) return
+    const field = event.currentTarget.closest<HTMLElement>('[data-removal-focus]')
     edit(undefined)
+    onRemoved?.(value)
+    field?.focus()
   }
 
   const handleCropConfirm = (rect: CropRect) => {
@@ -166,6 +173,10 @@ export const ImageField: React.FC<ImageFieldProps> = ({
       data-canopy-field={dataCanopyField}
       data-testid={`image-field-${dataCanopyField}`}
       {...groupDescriptionProps(inputId, description)}
+      role="group"
+      aria-label={label}
+      data-removal-focus
+      tabIndex={-1}
     >
       {label && (
         <Text size="sm" fw={500}>

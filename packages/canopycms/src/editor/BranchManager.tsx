@@ -21,11 +21,13 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
+import { userIdLabel } from './user-display'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
 import { formatRelativeTime } from './relative-time'
 import { PROTECTED_BRANCH_PRESENTATION, branchStatusPresentation } from './branch-status'
+import { SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
 export interface BranchSummary {
@@ -98,9 +100,9 @@ export const getBranchPermissions = (
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
   // The system-branch grant is disabled on the protected base branch -- its
-  // auto-provision marker (createdBy: 'canopycms-system') would otherwise let
+  // auto-provision marker (createdBy: SYSTEM_USER_ID) would otherwise let
   // anyone with general access submit/withdraw/delete it.
-  const isSystemBranch = branch.createdBy === 'canopycms-system' && !branch.isProtected
+  const isSystemBranch = branch.createdBy === SYSTEM_USER_ID && !branch.isProtected
 
   const userInACL =
     (branch.access?.users?.includes(user.userId) ||
@@ -473,7 +475,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                               />
                             ) : (
                               <Text size="xs" c="dimmed">
-                                {b.createdBy}
+                                {userIdLabel(b.createdBy)}
                               </Text>
                             )}
                           </>

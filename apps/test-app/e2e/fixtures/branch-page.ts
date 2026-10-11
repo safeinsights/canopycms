@@ -290,8 +290,7 @@ export class BranchPage {
   // outside the editor (via GitHub PR). Only request-changes is available for reviewers.
 
   /**
-   * Request changes on a submitted branch (reviewer action).
-   * Note: request-changes has no confirmation modal — the action fires immediately.
+   * Request changes on a submitted branch (reviewer action), confirming the dialog.
    *
    * @param branchName - The name of the branch
    */
@@ -300,6 +299,9 @@ export class BranchPage {
       `[data-testid="request-changes-branch-button-${branchName}"]`,
     )
     await requestChangesButton.click()
+    const confirmButton = this.page.locator('[data-testid="confirm-request-changes"]')
+    await confirmButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await confirmButton.click()
   }
 
   /**

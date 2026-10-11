@@ -1,8 +1,9 @@
 import { Avatar, Badge, Tooltip, Group, Text, Skeleton, ActionIcon } from '@mantine/core'
-import { IconUserOff, IconX } from '@tabler/icons-react'
+import { IconRobot, IconUserOff, IconX } from '@tabler/icons-react'
 import type { UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { useUserMetadata } from '../hooks/useUserMetadata'
+import { isSystemUserId } from '../../system-users'
 
 export interface UserBadgeProps {
   /** User ID to display */
@@ -112,6 +113,13 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         </Avatar>
       )
     }
+    if (isSystemUserId(userId)) {
+      return (
+        <Avatar size={avatarSize} color="gray">
+          <IconRobot size={avatarSize * 0.6} />
+        </Avatar>
+      )
+    }
 
     // When inside Badge wrapper with filled/light variant, use white background for visibility
     // For outline badges or no badge, use the passed color
@@ -216,14 +224,18 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
 
     return showEmailTooltip && variant !== 'full' ? (
-      <Tooltip label={userMetadata.email}>{badgeContent}</Tooltip>
+      <Tooltip label={userMetadata.email} disabled={!userMetadata.email}>
+        {badgeContent}
+      </Tooltip>
     ) : (
       badgeContent
     )
   }
 
   return showEmailTooltip && variant !== 'full' ? (
-    <Tooltip label={userMetadata.email}>{content}</Tooltip>
+    <Tooltip label={userMetadata.email} disabled={!userMetadata.email}>
+      {content}
+    </Tooltip>
   ) : (
     content
   )

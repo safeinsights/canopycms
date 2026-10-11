@@ -64,12 +64,17 @@ export const GroupCard: React.FC<GroupCardProps> = ({
         </div>
         <Group gap="xs">
           <Tooltip label="Edit group">
-            <ActionIcon variant="subtle" onClick={() => onEdit(group)}>
+            <ActionIcon variant="subtle" aria-label="Edit group" onClick={() => onEdit(group)}>
               <IconEdit size={16} />
             </ActionIcon>
           </Tooltip>
           <Tooltip label="Delete group">
-            <ActionIcon variant="subtle" color="red" onClick={() => onDelete(group.id)}>
+            <ActionIcon
+              variant="subtle"
+              color="red"
+              aria-label="Delete group"
+              onClick={() => onDelete(group.id)}
+            >
               <IconTrash size={16} />
             </ActionIcon>
           </Tooltip>

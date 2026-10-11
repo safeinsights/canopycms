@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-10, from the editor UI epic's WS3. The yellow lock banners' buttons ("Create a branch", "Manage Branches") use Mantine `variant="light" color="yellow"`: rgb(250,176,5) text on a yellow-tinted alert, about 1.7:1 against the 4.5:1 docs/ux-guidelines.md asks for. Switch to `variant="default"`, as ReadOnlyDraftNotice does
+  RESOLVED (2026-10-10, editor UI epic WS3b) — the protected-branch and status-locked banners' buttons in EditorHeader.tsx use `variant="default"`, as ReadOnlyDraftNotice does, instead of `variant="light" color="yellow"`, which measured about 1.7:1
 ---
 # Yellow banner buttons miss text contrast
 

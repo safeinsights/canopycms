@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react'
 import { Box, Button } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import { ThreadCarousel } from './ThreadCarousel'
 
 export interface EntryCommentsProps {
@@ -28,6 +29,8 @@ export interface EntryCommentsProps {
   autoFocus?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
+  /** Resolves author ids to names; without it authors show as ids. */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 /**
@@ -43,6 +46,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
   onResolveThread,
   autoFocus,
   highlightThreadId,
+  onGetUserMetadata,
 }) => {
   const [showCarousel, setShowCarousel] = useState(false)
 
@@ -84,6 +88,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
       autoFocus={autoFocus}
       autoOpenNewThread={showCarousel && entryThreads.length === 0}
       highlightThreadId={highlightThreadId}
+      onGetUserMetadata={onGetUserMetadata}
     />
   )
 }

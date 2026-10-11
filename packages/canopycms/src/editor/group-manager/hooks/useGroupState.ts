@@ -3,7 +3,7 @@ import type { InternalGroup, CanopyGroupId, CanopyUserId } from '../types'
 
 const TEMP_GROUP_ID_PREFIX = 'temp-'
 
-const isTempGroupId = (id: CanopyGroupId): boolean => id.startsWith(TEMP_GROUP_ID_PREFIX)
+export const isTempGroupId = (id: CanopyGroupId): boolean => id.startsWith(TEMP_GROUP_ID_PREFIX)
 
 export interface UseGroupStateOptions {
   initialGroups: InternalGroup[]

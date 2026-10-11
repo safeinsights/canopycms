@@ -122,6 +122,12 @@ export interface UseDraftManagerOptions {
    * instead of the stale label from the last entries fetch.
    */
   onSaved?: () => void
+  /**
+   * Fired when drafts are thrown away for the server's copy: Discard (one entry, or every entry
+   * when `contentId` is undefined) and Reload. Anything built on the discarded draft, such as an
+   * Undo, no longer applies.
+   */
+  onDraftsReset?: (contentId?: string) => void
 }
 
 /** The unsaved work a branch-level action would leave behind. `labels` names the entries (it may be shorter than `count`). */
@@ -787,6 +793,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const performDiscardDrafts = () => {
+    options.onDraftsReset?.()
     setDrafts({})
     setErrorState(null)
     try {
@@ -824,6 +831,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const performDiscardFileDraft = () => {
     if (!currentId) return
+    options.onDraftsReset?.(currentId)
     setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
@@ -881,6 +889,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
+      options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
       setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
       // Drop the draft rather than seeding it with `loaded`. `effectiveValue`

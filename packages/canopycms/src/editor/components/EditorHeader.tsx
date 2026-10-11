@@ -22,6 +22,7 @@ import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 import { isAdmin, isReviewer } from '../../authorization/helpers'
 import { branchStatusPresentation } from '../branch-status'
+import { SYSTEM_USER_ID } from '../../system-users'
 
 export interface EditorHeaderProps {
   /**
@@ -516,7 +517,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // server's canPerformWorkflowAction (BranchManager.tsx), which is the
               // actual enforcer; this only decides whether to show the control disabled.
               const userIsCreator = userContext?.userId === branchCreatedBy
-              const isSystemBranch = branchCreatedBy === 'canopycms-system' && !branchIsProtected
+              const isSystemBranch = branchCreatedBy === SYSTEM_USER_ID && !branchIsProtected
               const userInACL =
                 userContext &&
                 branchAccess &&
@@ -578,7 +579,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               <Text size="sm">
                 {`You are viewing the protected base branch "${branchName}". Content is read-only — create a branch to make changes.`}
               </Text>
-              <Button variant="light" color="yellow" onClick={onBranchManagerOpen}>
+              <Button variant="default" onClick={onBranchManagerOpen}>
                 Create a branch
               </Button>
             </Group>
@@ -600,7 +601,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     ? `Branch "${branchName}" is submitted for review and locked for edits. Use Withdraw Branch above to resume editing.`
                     : `Branch "${branchName}" is ${branchStatus} — content is read-only.`}
               </Text>
-              <Button variant="light" color="yellow" onClick={onBranchManagerOpen}>
+              <Button variant="default" onClick={onBranchManagerOpen}>
                 Manage Branches
               </Button>
             </Group>

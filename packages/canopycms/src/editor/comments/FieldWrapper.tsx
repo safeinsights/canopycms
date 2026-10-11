@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Box, Button } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import { ThreadCarousel } from './ThreadCarousel'
 
 export interface FieldWrapperProps {
@@ -34,6 +35,8 @@ export interface FieldWrapperProps {
   fieldLabel?: string
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
+  /** Resolves author ids to names; without it authors show as ids. */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 /**
@@ -51,6 +54,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   onAddComment,
   onResolveThread,
   highlightThreadId,
+  onGetUserMetadata,
 }) => {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [showCarousel, setShowCarousel] = useState(false)
@@ -115,6 +119,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
           autoFocus={autoFocus}
           autoOpenNewThread={showCarousel && threads.length === 0}
           highlightThreadId={highlightThreadId}
+          onGetUserMetadata={onGetUserMetadata}
           onCancelNewThread={() => setShowCarousel(false)}
         />
       )}

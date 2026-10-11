@@ -3,13 +3,14 @@
 import React, { useState, useCallback } from 'react'
 import { Alert, Button, Group, Loader, Stack, Tabs, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
-import type { GroupManagerProps, InternalGroup, GroupFormData } from './types'
-import { useGroupState } from './hooks/useGroupState'
+import type { CanopyGroupId, GroupManagerProps, InternalGroup, GroupFormData } from './types'
+import { isTempGroupId, useGroupState } from './hooks/useGroupState'
 import { useUserSearch } from './hooks/useUserSearch'
 import { useExternalGroupSearch } from './hooks/useExternalGroupSearch'
 import { InternalGroupsTab } from './InternalGroupsTab'
 import { ExternalGroupsTab } from './ExternalGroupsTab'
 import { GroupForm } from './GroupForm'
+import { openConfirm } from '../utils/confirm-modal'
 
 export const GroupManager: React.FC<GroupManagerProps> = ({
   internalGroups: initialInternalGroups,
@@ -54,6 +55,31 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
     setFormData({ name: '', description: '' })
     setIsModalOpen(true)
   }, [])
+
+  // Save Groups writes every staged change at once, so this is the last look at a delete.
+  const confirmDeleteGroup = useCallback(
+    (groupId: CanopyGroupId) => {
+      // A group created since the last save exists nowhere yet, so removing it destroys nothing.
+      if (isTempGroupId(groupId)) {
+        deleteGroup(groupId)
+        return
+      }
+      const group = groups.find((g) => g.id === groupId)
+      const memberCount = group?.members?.length ?? 0
+      const consequence =
+        memberCount === 0
+          ? 'It is deleted when you save.'
+          : `Its ${memberCount} ${memberCount === 1 ? 'member loses' : 'members lose'} the access it grants when you save.`
+      openConfirm({
+        title: 'Delete group',
+        children: <Text size="sm">{`Delete "${group?.name ?? groupId}"? ${consequence}`}</Text>,
+        labels: { confirm: 'Delete group', cancel: 'Cancel' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => deleteGroup(groupId),
+      })
+    },
+    [groups, deleteGroup],
+  )
 
   const handleEditGroup = useCallback((group: InternalGroup) => {
     setEditingGroup(group)
@@ -133,7 +159,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
               canEdit={canEdit}
               onCreateGroup={handleCreateGroup}
               onEditGroup={handleEditGroup}
-              onDeleteGroup={deleteGroup}
+              onDeleteGroup={confirmDeleteGroup}
               onAddMember={handleAddMember}
               onRemoveMember={removeMember}
               onGetUserMetadata={onGetUserMetadata}

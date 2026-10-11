@@ -1770,6 +1770,12 @@ describe('Editor integration', () => {
     // A branch list that leaves the branch unlocked (editing, unprotected),
     // so the reorder UI is reachable at all -- otherwise Change 1's
     // fail-closed default would hide it and these tests would prove nothing.
+    const adminWhoami = {
+      ok: true,
+      status: 200,
+      data: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+    }
+
     const unlockedBranchesResponse = {
       ok: true,
       status: 200,
@@ -1812,6 +1818,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           // Empty flatSchema -- collectionsFromApi (buildEditorCollections)
@@ -1886,6 +1896,10 @@ describe('Editor integration', () => {
           typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
         if (url.endsWith('/api/canopycms/branches')) {
           return Promise.resolve(okJson(unlockedBranchesResponse))
+        }
+        // Entry order is an admin action (its API takes the `admin` guard).
+        if (url.endsWith('/whoami')) {
+          return Promise.resolve(okJson(adminWhoami))
         }
         if (url.includes('/schema') && !url.includes('/schema/')) {
           return Promise.resolve(
