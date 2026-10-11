@@ -14,7 +14,17 @@ import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
-import { initTestRepo, mockConsole, octokitErrorFor, type MockConsole } from '../test-utils'
+import {
+  initTestRepo,
+  mockConsole,
+  octokitErrorFor,
+  type MockConsole,
+  gatewayUnderTest,
+  GATEWAY_TRANSPORT,
+  passedSignal,
+  serverRequestOption,
+  expectRebuiltOctokitError,
+} from '../test-utils'
 import { isNonFastForwardRejection } from '../utils/git'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import {
@@ -59,19 +69,21 @@ const defaultBranchStub = (name = 'main') => ({
 })
 
 function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGateway {
-  return createLocalGitHubGateway({
-    githubOwner: 'test-owner',
-    githubRepo: 'test-repo',
-    auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
-    githubApp: false,
-    stateDirectory: path.join(root, 'state'),
-    workspacePath: path.join(root, 'workspace'),
-    timeoutMs: 30_000,
-    remoteUrl: githubPath,
-    // Each operation fetches GitHub afresh, so a test sees what it changed there.
-    fetchCoalesceMs: 0,
-    ...overrides,
-  })
+  return gatewayUnderTest(
+    createLocalGitHubGateway({
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
+      githubApp: false,
+      stateDirectory: path.join(root, 'state'),
+      workspacePath: path.join(root, 'workspace'),
+      timeoutMs: 30_000,
+      remoteUrl: githubPath,
+      // Each operation fetches GitHub afresh, so a test sees what it changed there.
+      fetchCoalesceMs: 0,
+      ...overrides,
+    }),
+  )
 }
 
 /** The worker's side of a transfer, over `github`, with remote.git as this test's. */
@@ -399,7 +411,8 @@ describe('Octokit operations', () => {
       .createPullRequest({ head: 'feature', base: 'main', title: 'T', body: 'B' })
       .catch((err: unknown) => err)
 
-    expect(caught).toBe(error)
+    if (GATEWAY_TRANSPORT === 'local') expect(caught).toBe(error)
+    else expectRebuiltOctokitError(caught, error)
     expect((caught as { status: number }).status).toBe(422)
   })
 
@@ -432,13 +445,13 @@ describe('Octokit operations', () => {
       base: 'main',
       title: 'T',
       body: 'B',
-      request: { signal },
+      request: { signal: passedSignal(signal) },
     })
     expect(deleteRef).toHaveBeenCalledWith({
       owner: 'test-owner',
       repo: 'test-repo',
       ref: 'heads/feature',
-      request: { signal },
+      request: { signal: passedSignal(signal) },
     })
   })
 
@@ -449,6 +462,11 @@ describe('Octokit operations', () => {
     })
 
     expect(await github.defaultBranch()).toBe('production')
-    expect(get).toHaveBeenCalledWith({ owner: 'test-owner', repo: 'test-repo' })
+    // Over the socket the server always gives one: the request's own, which ends with it.
+    expect(get).toHaveBeenCalledWith({
+      owner: 'test-owner',
+      repo: 'test-repo',
+      ...serverRequestOption(),
+    })
   })
 })

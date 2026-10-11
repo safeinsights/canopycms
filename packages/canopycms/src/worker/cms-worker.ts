@@ -77,6 +77,21 @@ export {
   type GitHubAuthConfig,
 } from './github-auth'
 
+// Re-exported for the same reason: an entrypoint that runs the GitHub gateway and the worker as
+// two processes serves the in-process gateway on a socket in one, and connects to it in the other.
+export {
+  createLocalGitHubGateway,
+  type GitHubGateway,
+  type LocalGitHubGatewayOptions,
+} from './github-gateway'
+export {
+  serveGitHubGateway,
+  connectGitHubGateway,
+  type GitHubGatewayListen,
+  type GitHubGatewayServer,
+} from './github-gateway-http'
+export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+
 /**
  * Auth cache refresh function type; adopters supply their auth-plugin-specific
  * implementation (for Clerk, refreshClerkCache from

@@ -18,7 +18,14 @@ import type { Octokit } from '@octokit/rest'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import {
+  initTestRepo,
+  mockConsole,
+  type MockConsole,
+  gatewayUnderTest,
+  localGatewayOf,
+  GATEWAY_TRANSPORT,
+} from '../test-utils'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import {
   createLocalGitHubGateway,
@@ -55,20 +62,29 @@ async function commitAndPush(target: string, ref: string, file: string): Promise
   return (await seed.revparse(['HEAD'])).trim()
 }
 
+/**
+ * What the socket transport reads from a bundle ahead of the gateway: the client's pipe into the
+ * socket and the server's into the gateway, each a stream buffer or two. Not the gateway's bound,
+ * which the in-process run holds to exactly.
+ */
+const TRANSPORT_READ_AHEAD = GATEWAY_TRANSPORT === 'http' ? 128 * 1024 : 0
+
 function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGateway {
-  return createLocalGitHubGateway({
-    githubOwner: 'test-owner',
-    githubRepo: 'test-repo',
-    auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
-    githubApp: false,
-    stateDirectory,
-    workspacePath: path.join(root, 'workspace'),
-    timeoutMs: 30_000,
-    remoteUrl: githubPath,
-    // Each operation fetches GitHub afresh, so a test sees what it changed there.
-    fetchCoalesceMs: 0,
-    ...overrides,
-  })
+  return gatewayUnderTest(
+    createLocalGitHubGateway({
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
+      githubApp: false,
+      stateDirectory,
+      workspacePath: path.join(root, 'workspace'),
+      timeoutMs: 30_000,
+      remoteUrl: githubPath,
+      // Each operation fetches GitHub afresh, so a test sees what it changed there.
+      fetchCoalesceMs: 0,
+      ...overrides,
+    }),
+  )
 }
 
 function transfer(github: GitHubGateway): TransferContext {
@@ -595,7 +611,7 @@ describe('refusing a hostile bundle', () => {
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toMatch(/does not end within 65536 bytes/)
-    expect(pulled).toBeLessThan(256 * 1024)
+    expect(pulled).toBeLessThan(256 * 1024 + TRANSPORT_READ_AHEAD)
   })
 
   it('refuses a 2 MiB prerequisite comment without reading it all', async () => {
@@ -617,7 +633,7 @@ describe('refusing a hostile bundle', () => {
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toMatch(/comment is longer than 1024 bytes/)
-    expect(pulled).toBeLessThan(256 * 1024)
+    expect(pulled).toBeLessThan(256 * 1024 + TRANSPORT_READ_AHEAD)
   })
 
   it('refuses a prerequisite GitHub no longer has as transient', async () => {
@@ -1164,7 +1180,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     // The deletion starts during the fetch's own session, and GitHub answers during the session
     // of the fetch the caller then joins.
-    const mirror = (github as unknown as { mirror: GitHubMirror }).mirror
+    const mirror = (localGatewayOf(github) as unknown as { mirror: GitHubMirror }).mirror
     const exclusive = mirror.exclusive.bind(mirror)
     let sessions = 0
     let deletion: Promise<void> | undefined

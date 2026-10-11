@@ -15,7 +15,15 @@ import type { Octokit } from '@octokit/rest'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, octokitErrorFor, type MockConsole } from '../test-utils'
+import {
+  initTestRepo,
+  mockConsole,
+  octokitErrorFor,
+  type MockConsole,
+  gatewayUnderTest,
+  GATEWAY_TRANSPORT,
+  expectRebuiltOctokitError,
+} from '../test-utils'
 import { DEFAULT_BRANCH_TTL_MS, GatewayRefusalError } from './branch-policy'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import {
@@ -65,21 +73,23 @@ function gateway(
   overrides: Partial<LocalGitHubGatewayOptions> = {},
   refreshGitHubToken?: () => Promise<string | undefined>,
 ): GitHubGateway {
-  return createLocalGitHubGateway({
-    githubOwner: 'test-owner',
-    githubRepo: 'test-repo',
-    auth: resolveWorkerGitHubAuth({
-      githubToken: 'fake-token-for-policy',
-      refreshGitHubToken,
-      refreshGitHubTokenMinIntervalMs: 0,
+  return gatewayUnderTest(
+    createLocalGitHubGateway({
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      auth: resolveWorkerGitHubAuth({
+        githubToken: 'fake-token-for-policy',
+        refreshGitHubToken,
+        refreshGitHubTokenMinIntervalMs: 0,
+      }),
+      githubApp: false,
+      stateDirectory: path.join(root, 'state'),
+      workspacePath: path.join(root, 'workspace'),
+      timeoutMs: 30_000,
+      remoteUrl: githubPath,
+      ...overrides,
     }),
-    githubApp: false,
-    stateDirectory: path.join(root, 'state'),
-    workspacePath: path.join(root, 'workspace'),
-    timeoutMs: 30_000,
-    remoteUrl: githubPath,
-    ...overrides,
-  })
+  )
 }
 
 /** Push remote.git's `branch` as the worker does, optionally under a lease. */
@@ -445,20 +455,22 @@ describe('the canary sweep', () => {
     overrides: Partial<LocalGitHubGatewayOptions>,
     refreshGitHubToken: () => Promise<string | undefined>,
   ) =>
-    createLocalGitHubGateway({
-      githubOwner: 'test-owner',
-      githubRepo: 'test-repo',
-      auth: resolveWorkerGitHubAuth({
-        githubToken: TOKEN,
-        refreshGitHubToken,
-        refreshGitHubTokenMinIntervalMs: 0,
+    gatewayUnderTest(
+      createLocalGitHubGateway({
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        auth: resolveWorkerGitHubAuth({
+          githubToken: TOKEN,
+          refreshGitHubToken,
+          refreshGitHubTokenMinIntervalMs: 0,
+        }),
+        githubApp: false,
+        stateDirectory: path.join(root, 'state'),
+        workspacePath: path.join(root, 'workspace'),
+        timeoutMs: 30_000,
+        ...overrides,
       }),
-      githubApp: false,
-      stateDirectory: path.join(root, 'state'),
-      workspacePath: path.join(root, 'workspace'),
-      timeoutMs: 30_000,
-      ...overrides,
-    })
+    )
 
   /** Everything an error carries that can leave the gateway. */
   const everything = (err: unknown): string =>
@@ -489,7 +501,13 @@ describe('the canary sweep', () => {
       pulls: {
         create: vi.fn().mockRejectedValue(octokitError),
         get: vi.fn().mockResolvedValue({
-          data: { merged: false, state: 'open', node_id: TOKEN, title: `x ${pair}` },
+          data: {
+            merged: false,
+            merged_at: null,
+            state: 'open',
+            node_id: TOKEN,
+            title: `x ${pair}`,
+          },
         }),
       },
     }
@@ -588,7 +606,8 @@ describe('an unread default branch', () => {
     const caught = await github.deleteBranch('feature').catch((err: unknown) => err)
     await new Promise((resolve) => setTimeout(resolve, 50))
 
-    expect(caught).toBe(notFound)
+    if (GATEWAY_TRANSPORT === 'local') expect(caught).toBe(notFound)
+    else expectRebuiltOctokitError(caught, notFound)
     expect(caught).toMatchObject({ status: 404 })
     expect(isPermanentTaskFailure(caught)).toBe(true)
     expect(provider).toHaveBeenCalledTimes(1)

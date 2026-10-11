@@ -3,5 +3,15 @@ export { mockConsole, consoleMatchers } from './console-spy'
 export type { MockConsole } from './console-spy'
 export { initTestRepo, openBareRepo } from './git-helpers'
 export { octokitErrorFor, noCommitsBetweenError } from './github-errors'
-export { fixtureCredential, useLocalGitHubGateway } from './worker-gateway'
+export {
+  GATEWAY_TRANSPORT,
+  fixtureCredential,
+  expectRebuiltOctokitError,
+  gatewayUnderTest,
+  passedSignal,
+  serverRequestOption,
+  gatewaysSettled,
+  localGatewayOf,
+  useLocalGitHubGateway,
+} from './worker-gateway'
 export { startHttpsGitServer, type HttpsGitServer } from './https-git-server'

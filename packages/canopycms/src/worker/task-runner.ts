@@ -402,16 +402,18 @@ export async function executeTask(
 
       let result: { number: number; url: string; created: boolean }
       try {
-        result = await ctx.github().createOrUpdatePullRequest({
-          head: branch,
-          base,
-          title: optionalString(payload, 'title', `Submit ${branch}`),
-          body: optionalString(payload, 'body', ''),
-          // Content submits (api/github-sync.ts) set both.
-          markReadyIfDraft: payload.markReadyIfDraft === true,
-          mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+        result = await ctx.github().createOrUpdatePullRequest(
+          {
+            head: branch,
+            base,
+            title: optionalString(payload, 'title', `Submit ${branch}`),
+            body: optionalString(payload, 'body', ''),
+            // Content submits (api/github-sync.ts) set both.
+            markReadyIfDraft: payload.markReadyIfDraft === true,
+            mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+          },
           signal,
-        })
+        )
       } catch (err) {
         if (!isNoCommitsBetweenError(err)) throw err
         throw new NothingToSubmitTaskError(

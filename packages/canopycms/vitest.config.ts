@@ -36,6 +36,27 @@ export default defineConfig({
       {
         extends: true,
         test: {
+          // The GitHub gateway's suites, and the worker suites that reach it, again with the
+          // worker reaching the gateway through its socket transport (test-utils/worker-gateway.ts,
+          // GATEWAY_TRANSPORT): one set of assertions for both.
+          name: 'worker-http',
+          environment: 'node',
+          include: [
+            'src/worker/github-gateway*.test.ts',
+            'src/worker/cms-worker*.test.ts',
+            'src/branch-provisioning.test.ts',
+          ],
+          env: { CANOPY_TEST_GATEWAY_TRANSPORT: 'http' },
+          setupFiles: [
+            'src/test-utils/quiet-provision-log.ts',
+            'src/test-utils/gateway-transport-setup.ts',
+          ],
+          testTimeout: 30000,
+        },
+      },
+      {
+        extends: true,
+        test: {
           name: 'editor',
           environment: 'jsdom',
           include: ['src/editor/**/*.test.{ts,tsx}'],

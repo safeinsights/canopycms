@@ -294,6 +294,7 @@ describe('CmsWorker credential refresh', () => {
       refreshGitHubToken: () => Promise<string | undefined>,
       taskTimeoutMs = 10_000,
       refreshGitHubTokenMinIntervalMs?: number,
+      gatewayTimeoutMs?: number,
     ) => {
       const worker = new CmsWorker({
         workspacePath,
@@ -308,7 +309,10 @@ describe('CmsWorker credential refresh', () => {
       })
       const internals = worker as unknown as TaskInternals
       internals.running = true
-      useLocalGitHubGateway(worker, { remoteUrl: server.url('github.git') })
+      useLocalGitHubGateway(worker, {
+        remoteUrl: server.url('github.git'),
+        timeoutMs: gatewayTimeoutMs,
+      })
       const realPush = internals.pushBranchToGitHub.bind(worker)
       const push = vi.fn(realPush)
       internals.pushBranchToGitHub = push
@@ -432,7 +436,9 @@ describe('CmsWorker credential refresh', () => {
             setTimeout(() => reject(new Error('late secret read')), 1_500)
           }),
       )
-      const { worker } = makeTaskWorker(refreshGitHubToken, 100)
+      // The re-read's bound is the gateway's; the task's deadline stays long, so the push reaches
+      // GitHub and fails, which a deadline as short as the bound could cut off before it sends.
+      const { worker } = makeTaskWorker(refreshGitHubToken, undefined, undefined, 100)
       const id = await enqueuePush()
 
       const started = performance.now()
