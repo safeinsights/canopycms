@@ -14,7 +14,6 @@ import {
   Skeleton,
   Stack,
   Text,
-  Title,
   useTree,
 } from '@mantine/core'
 import {
@@ -1600,65 +1599,33 @@ const EditorContent: React.FC<EditorProps> = ({
           )}
 
           {userIsAdmin && (
-            <Drawer
+            <GroupManager
               opened={groupManagerOpen}
               onClose={() => setGroupManagerOpen(false)}
-              position="right"
-              title={
-                <div>
-                  <Title order={4}>Groups</Title>
-                  <Text size="xs" c="dimmed">
-                    Manage groups and organizations
-                  </Text>
-                </div>
-              }
-              padding="md"
-              size={600}
-              overlayProps={{ blur: 2 }}
-            >
-              <GroupManager
-                internalGroups={groupsData}
-                loading={groupsLoading}
-                canEdit={userIsAdmin}
-                onSave={handleSaveGroups}
-                onSearchUsers={handleSearchUsers}
-                onGetUserMetadata={handleGetUserMetadata}
-                onSearchExternalGroups={handleSearchExternalGroups}
-                onClose={() => setGroupManagerOpen(false)}
-              />
-            </Drawer>
+              internalGroups={groupsData}
+              loading={groupsLoading}
+              canEdit={userIsAdmin}
+              onSave={handleSaveGroups}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onSearchExternalGroups={handleSearchExternalGroups}
+            />
           )}
 
           {userIsAdmin && (
-            <Drawer
+            <PermissionManager
               opened={permissionManagerOpen}
               onClose={() => setPermissionManagerOpen(false)}
-              position="right"
-              title={
-                <div>
-                  <Title order={4}>Permissions</Title>
-                  <Text size="xs" c="dimmed">
-                    Manage content access by path (read, edit, review)
-                  </Text>
-                </div>
-              }
-              padding="md"
-              size={700}
-              overlayProps={{ blur: 2 }}
-            >
-              <PermissionManager
-                collections={activeCollections}
-                contentRoot={contentRoot}
-                permissions={permissionsData}
-                loading={permissionsLoading}
-                canEdit={userIsAdmin}
-                onSave={handleSavePermissions}
-                onSearchUsers={handleSearchUsers}
-                onGetUserMetadata={handleGetUserMetadata}
-                onListGroups={handleListGroups}
-                onClose={() => setPermissionManagerOpen(false)}
-              />
-            </Drawer>
+              collections={activeCollections}
+              contentRoot={contentRoot}
+              permissions={permissionsData}
+              loading={permissionsLoading}
+              canEdit={userIsAdmin}
+              onSave={handleSavePermissions}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onListGroups={handleListGroups}
+            />
           )}
 
           {userIsAdmin && (

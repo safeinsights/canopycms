@@ -61,7 +61,7 @@
     },
     "packages/canopycms/src/editor/group-manager/index.tsx": {
       "ellipsis": 1,
-      "title-case": 4
+      "title-case": 2
     },
     "packages/canopycms/src/editor/group-manager/InternalGroupsTab.tsx": {
       "title-case": 1
@@ -92,7 +92,7 @@
       "ellipsis": 1
     },
     "packages/canopycms/src/editor/permission-manager/index.tsx": {
-      "title-case": 4,
+      "title-case": 2,
       "ellipsis": 1
     },
     "packages/canopycms/src/editor/permission-manager/PermissionEditor.tsx": {

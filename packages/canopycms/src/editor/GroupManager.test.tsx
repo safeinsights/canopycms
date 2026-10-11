@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { GroupManager } from './GroupManager'
 import type { InternalGroup } from '../authorization'
@@ -107,6 +107,8 @@ describe('GroupManager', () => {
     it('renders with internal groups', () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -122,7 +124,14 @@ describe('GroupManager', () => {
 
     it('renders loading state', () => {
       render(
-        <GroupManager internalGroups={[]} loading={true} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={[]}
+          loading={true}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -130,14 +139,31 @@ describe('GroupManager', () => {
     })
 
     it('renders read-only mode for non-admin users', () => {
-      render(<GroupManager internalGroups={mockInternalGroups} canEdit={false} />, { wrapper })
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={false}
+        />,
+        { wrapper },
+      )
 
       expect(screen.getByText('Read-only')).toBeTruthy()
       expect(screen.getByText('You need admin access to manage groups.')).toBeTruthy()
     })
 
     it('renders empty state when no groups exist', () => {
-      render(<GroupManager internalGroups={[]} canEdit={true} onSave={mockOnSave} />, { wrapper })
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={[]}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
 
       expect(screen.getByText('No internal groups yet. Create one to get started.')).toBeTruthy()
     })
@@ -146,7 +172,13 @@ describe('GroupManager', () => {
   describe('tabs', () => {
     it('shows internal groups tab by default', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -157,6 +189,8 @@ describe('GroupManager', () => {
     it('switches to external groups tab when clicked', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -177,7 +211,13 @@ describe('GroupManager', () => {
   describe('internal groups management', () => {
     it('shows Create Group button', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -186,7 +226,13 @@ describe('GroupManager', () => {
 
     it('opens modal when Create Group is clicked', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -204,7 +250,13 @@ describe('GroupManager', () => {
 
     it('displays group details in list', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -219,7 +271,13 @@ describe('GroupManager', () => {
 
     it('shows edit and delete buttons for each group', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -229,9 +287,46 @@ describe('GroupManager', () => {
     })
   })
 
+  describe('lifetime', () => {
+    it('starts each opening from the loaded groups, not from what the last opening staged', async () => {
+      const props = {
+        onClose: vi.fn(),
+        internalGroups: mockInternalGroups,
+        canEdit: true,
+        onSave: mockOnSave,
+      }
+      const { rerender } = render(<GroupManager opened {...props} />, { wrapper })
+      fireEvent.click(screen.getByText('Create Group'))
+      const nameInput = await screen.findByPlaceholderText('e.g., Content Editors')
+      fireEvent.change(nameInput, {
+        target: { value: 'Staged Group' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+      await waitFor(() => expect(screen.getByText('Staged Group')).toBeTruthy())
+
+      // Closed by the parent directly, so no discard runs: only the remount can drop it.
+      rerender(<GroupManager opened={false} {...props} />)
+      await waitFor(() => expect(screen.queryByText('Content Editors')).toBeNull())
+      rerender(<GroupManager opened {...props} />)
+
+      await waitFor(() => expect(screen.getByText('Content Editors')).toBeTruthy())
+      expect(screen.queryByText('Staged Group')).toBeNull()
+      expect(screen.queryByText('Save Groups')).toBeNull()
+    })
+  })
+
   describe('creating groups', () => {
     it('creates a new group when form is submitted', async () => {
-      render(<GroupManager internalGroups={[]} canEdit={true} onSave={mockOnSave} />, { wrapper })
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
 
       // Click Create Group
       fireEvent.click(screen.getByText('Create Group'))
@@ -244,22 +339,29 @@ describe('GroupManager', () => {
       const nameInput = screen.getByPlaceholderText('e.g., Content Editors')
       fireEvent.change(nameInput, { target: { value: 'New Group' } })
 
-      // Click Create button in modal
-      const createButtons = screen.getAllByText('Create')
-      const modalCreateButton = createButtons[createButtons.length - 1]
-      fireEvent.click(modalCreateButton)
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
-      // Should show save button
+      // Adding only stages the group: its row says so until the batch is saved.
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()
       })
+      const newGroupCard = screen.getByText('New Group').closest('.mantine-Paper-root')
+      expect(newGroupCard?.textContent).toContain('Unsaved')
+      const existingCard = screen.getByText('Marketing Team').closest('.mantine-Paper-root')
+      expect(existingCard?.textContent).not.toContain('Unsaved')
     })
   })
 
   describe('editing groups', () => {
     it('opens modal with group data when edit is clicked', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -283,7 +385,13 @@ describe('GroupManager', () => {
 
     it('shows read-only ID when editing existing group', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -310,9 +418,16 @@ describe('GroupManager', () => {
         name: 'Draft group',
         members: [],
       }
-      render(<GroupManager internalGroups={[unsaved]} canEdit={true} onSave={mockOnSave} />, {
-        wrapper,
-      })
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={[unsaved]}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
 
       fireEvent.click(screen.getByRole('button', { name: 'Delete group' }))
 
@@ -324,7 +439,13 @@ describe('GroupManager', () => {
       const { modals } = await import('@mantine/modals')
       vi.mocked(modals.openConfirmModal).mockImplementationOnce(() => 'mock-modal-id')
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -337,16 +458,52 @@ describe('GroupManager', () => {
       expect(screen.queryByText('Save Groups')).toBeNull()
     })
 
+    it('leaves Escape to the delete confirm while it is open, not the drawer behind it', async () => {
+      const { modals } = await import('@mantine/modals')
+      let closeConfirm: (() => void) | undefined
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        closeConfirm = options.onClose
+        return 'mock-modal-id'
+      })
+      const onClose = vi.fn()
+      render(
+        <GroupManager
+          opened
+          onClose={onClose}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
+        { wrapper },
+      )
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'Delete group' })[0])
+      fireEvent.keyDown(document.body, { key: 'Escape' })
+      expect(onClose).not.toHaveBeenCalled()
+
+      act(() => closeConfirm?.())
+      await waitFor(() => {
+        fireEvent.keyDown(document.body, { key: 'Escape' })
+        expect(onClose).toHaveBeenCalledTimes(1)
+      })
+    })
+
     it('removes group when delete is clicked', async () => {
-      const { container } = render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
       expect(screen.getByText('Content Editors')).toBeTruthy()
 
       // Delete buttons are the second ActionIcon in each group (index 1, 3, 5...)
-      const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
+      const actionButtons = document.body.querySelectorAll('button[class*="ActionIcon"]')
       fireEvent.click(actionButtons[1] as Element)
 
       await waitFor(() => {
@@ -358,7 +515,13 @@ describe('GroupManager', () => {
   describe('member management', () => {
     it('displays member badges for each group', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -370,6 +533,8 @@ describe('GroupManager', () => {
     it('shows Add Member button for each group', () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -385,6 +550,8 @@ describe('GroupManager', () => {
     it('opens user search when Add Member is clicked', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -403,7 +570,13 @@ describe('GroupManager', () => {
 
     it('disables Add Member button when onSearchUsers is not provided', () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -417,6 +590,8 @@ describe('GroupManager', () => {
     it('searches for users when typing in search box', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -446,6 +621,8 @@ describe('GroupManager', () => {
     it('adds user to group when search result is clicked', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -480,7 +657,13 @@ describe('GroupManager', () => {
 
     it('removes user from group when X is clicked on badge', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -504,6 +687,8 @@ describe('GroupManager', () => {
     it('shows search input in external groups tab', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -523,6 +708,8 @@ describe('GroupManager', () => {
     it('searches external groups when typing', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -552,6 +739,8 @@ describe('GroupManager', () => {
     it('displays external group search results', async () => {
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -580,7 +769,13 @@ describe('GroupManager', () => {
 
     it('shows message when external search is not configured', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -598,6 +793,8 @@ describe('GroupManager', () => {
 
       render(
         <GroupManager
+          opened
+          onClose={vi.fn()}
           internalGroups={mockInternalGroups}
           canEdit={true}
           onSave={mockOnSave}
@@ -629,25 +826,37 @@ describe('GroupManager', () => {
 
   describe('saving', () => {
     it('shows Save and Discard buttons when changes are made', async () => {
-      const { container } = render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
-      const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
+      const actionButtons = document.body.querySelectorAll('button[class*="ActionIcon"]')
       // Delete buttons are at odd indexes (1, 3, 5...)
       // Click Marketing Team's delete button (index 5 = third group)
       fireEvent.click(actionButtons[5] as Element)
 
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()
-        expect(screen.getByText('Discard Changes')).toBeTruthy()
+        expect(screen.getByText('Discard changes')).toBeTruthy()
       })
     })
 
     it('calls onSave when Save Groups is clicked', async () => {
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
@@ -670,22 +879,28 @@ describe('GroupManager', () => {
       })
     })
 
-    it('reverts changes when Discard Changes is clicked', async () => {
-      const { container } = render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
+    it('reverts changes when Discard changes is clicked', async () => {
+      render(
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockOnSave}
+        />,
         { wrapper },
       )
 
       expect(screen.getByText('Content Editors')).toBeTruthy()
 
-      const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
+      const actionButtons = document.body.querySelectorAll('button[class*="ActionIcon"]')
       fireEvent.click(actionButtons[1] as Element)
 
       await waitFor(() => {
-        expect(screen.getByText('Discard Changes')).toBeTruthy()
+        expect(screen.getByText('Discard changes')).toBeTruthy()
       })
 
-      const discardButton = screen.getByText('Discard Changes')
+      const discardButton = screen.getByText('Discard changes')
       fireEvent.click(discardButton)
 
       await waitFor(() => {
@@ -698,7 +913,13 @@ describe('GroupManager', () => {
       const mockError = vi.fn().mockRejectedValue(new Error('Network error'))
 
       render(
-        <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockError} />,
+        <GroupManager
+          opened
+          onClose={vi.fn()}
+          internalGroups={mockInternalGroups}
+          canEdit={true}
+          onSave={mockError}
+        />,
         { wrapper },
       )
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { SWRConfig } from 'swr'
@@ -82,6 +82,8 @@ describe('user metadata batching', () => {
 
     render(
       <GroupManager
+        opened
+        onClose={vi.fn()}
         internalGroups={groups}
         canEdit={true}
         onGetUserMetadata={createUserMetadataBatcher(asApiClient(client))}
@@ -105,6 +107,8 @@ describe('user metadata batching', () => {
 
     render(
       <GroupManager
+        opened
+        onClose={vi.fn()}
         internalGroups={[{ id: 'big', name: 'Big', members }]}
         canEdit={true}
         onGetUserMetadata={createUserMetadataBatcher(asApiClient(client))}

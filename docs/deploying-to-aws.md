@@ -805,15 +805,15 @@ How long it takes, and why:
 | Clerk secret key       | ~15 minutes            | the auth-cache refresh                                        |
 | GitHub App private key | not re-read            | — see below                                                   |
 
-The re-read is **reactive**: the worker re-reads a secret only after the
-operation using it has just failed, so a healthy deployment makes no
+The re-read is **reactive**: the worker re-reads a secret only after an
+operation using it fails, so a healthy deployment makes no
 `GetSecretValue` calls between boots — which is also why rotation is not instant.
 
 For the GitHub token, **store the new value before you revoke the old one.**
 Then the first publish to meet the revoked token normally re-reads straight away
 and its automatic retry goes out on the new token. Normally, not always: the
 worker re-reads at most once every five minutes (and calls its credential
-provider at most once a minute), and any failure — a sync, or an unrelated
+provider at most once a minute), and any GitHub failure — a sync, or an unrelated
 publish — can consume that read, so a publish can still fail and need
 resubmitting. The two limits can stack, which is where the table's ~10 minutes
 comes from. Revoke first and a failure in the gap re-reads the old value, so
@@ -1142,7 +1142,7 @@ The worker holds the GitHub credential, so `CanopyCmsService` hardens its instan
   symlinks, before the sandbox applies: a worker owning them could redirect its output into any
   file on the host.
 - **Git that does not trust the shared file system.** Git carrying the GitHub credential runs
-  only in a private mirror in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
+  only in private repositories in `/var/lib/canopy-worker` (`StateDirectory=`, required), out of the
   Lambda's reach. In `remote.git` and the clones, hooks, helpers and non-local transports are
   off, and a repository whose config holds a key CanopyCMS never writes, or with a repository in
   a submodule, is refused. The mirror sits on the 8 GiB root volume; past 2 GiB the worker warns.

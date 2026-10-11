@@ -23,9 +23,9 @@ import { BranchMetadataFileManager } from '../branch-metadata'
 import { recordSparseCone } from '../branch-sparse'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
-import { MirrorSession } from './github-mirror'
+import type { GitHubGateway } from './github-gateway'
 
 const execFileAsync = promisify(execFile)
 
@@ -75,7 +75,6 @@ interface Fixture {
 }
 
 type WorkerInternals = {
-  buildGitHubUrl(): Promise<string>
   running: boolean
   syncGit(): Promise<void>
   ensureRemoteGit(): Promise<void>
@@ -141,15 +140,16 @@ async function createFixture(): Promise<Fixture> {
   await branchGit.commit('branch work')
   await branchGit.raw(['push', '-q', remoteGitPath, `${BRANCH}:${BRANCH}`])
 
-  const worker = new CmsWorker({
+  const cmsWorker = new CmsWorker({
     workspacePath,
     githubOwner: 'test-owner',
     githubRepo: 'test-repo',
     githubToken: 'fake-token',
     baseBranch: BASE,
     stateDirectory: path.join(root, 'worker-state'),
-  }) as unknown as WorkerInternals
-  worker.buildGitHubUrl = async () => githubPath
+  })
+  useLocalGitHubGateway(cmsWorker, { remoteUrl: async () => githubPath })
+  const worker = cmsWorker as unknown as WorkerInternals
   worker.running = true
 
   let n = 0
@@ -534,13 +534,13 @@ describe('seeding a new remote.git', () => {
   it('refuses a staging directory written to while it seeds, and leaves neither behind', async () => {
     await fs.rm(f.remoteGitPath, { recursive: true, force: true })
     const staging = `${f.remoteGitPath}.cloning`
-    const seed = MirrorSession.prototype.seedBareRepository
-    const spy = vi
-      .spyOn(MirrorSession.prototype, 'seedBareRepository')
-      .mockImplementation(async function (this: MirrorSession, gitDir, signal) {
-        await seed.call(this, gitDir, signal)
-        await plantConfig(gitDir, [['core.fsmonitor', record(f, 'staging')]])
-      })
+    // Planted once the seed has created the staging repository, before it unbundles into it.
+    const github = (f.worker as unknown as { github(): GitHubGateway }).github()
+    const openBundle = github.openBundle.bind(github)
+    const spy = vi.spyOn(github, 'openBundle').mockImplementation(async (bundleId) => {
+      await plantConfig(staging, [['core.fsmonitor', record(f, 'staging')]])
+      return openBundle(bundleId)
+    })
     try {
       await expect(f.worker.ensureRemoteGit()).rejects.toThrow(
         /^Refusing to run git in \S+remote\.git\.cloning: something wrote to it while the worker seeded remote\.git from it \(core\.fsmonitor\), so it was removed\./,

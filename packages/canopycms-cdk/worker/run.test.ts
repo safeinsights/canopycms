@@ -445,6 +445,22 @@ describe('runWorker: a healthy start', () => {
     expect(h.createWorker.mock.calls[0][0].baseBranch).toBeUndefined()
   })
 
+  it('passes CANOPYCMS_PROTECTED_BRANCHES as a list, and none when it is absent', async () => {
+    const listed = harness({
+      env: { ...baseEnv(), CANOPYCMS_PROTECTED_BRANCHES: 'release/*, production,,hotfix-*' },
+    })
+    await runWorker(listed.deps)
+    expect(listed.createWorker.mock.calls[0][0].protectedBranches).toEqual([
+      'release/*',
+      'production',
+      'hotfix-*',
+    ])
+
+    const absent = harness({ env: envWithout('CANOPYCMS_PROTECTED_BRANCHES') })
+    await runWorker(absent.deps)
+    expect(absent.createWorker.mock.calls[0][0].protectedBranches).toEqual([])
+  })
+
   it('builds an App credential from the trio, reading the key from its secret', async () => {
     const h = harness({
       env: {

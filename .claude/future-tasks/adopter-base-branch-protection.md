@@ -32,6 +32,15 @@ code path regresses.
 - Verify it with the credential itself, against a throwaway branch protected the same way: a
   direct push and a force push should both be rejected.
 
+## Status
+
+- **Marketing site, checked 2026-10-10 by reading its rulesets:** its current base branch is
+  protected by rulesets that block deletion and force-push, require a pull request, and give the
+  CMS's GitHub App no bypass. Its GitHub default branch is likewise closed to the CMS. **Open:**
+  the `production` branch its cutover moves to does not exist yet. It needs the same rulesets,
+  with no bypass for the CMS's app, when it is created and before the cutover.
+- **Knowledge base:** not checked. KB work is paused for several weeks from 2026-10-10.
+
 ## Done when
 
 Every adopter repository has passed the check above, recorded in that adopter's own repo. This file then

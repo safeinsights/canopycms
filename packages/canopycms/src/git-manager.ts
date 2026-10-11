@@ -97,8 +97,8 @@ export function gitChildEnv(overrides: Record<string, string>): Record<string, s
  * classifier into a no-op.
  *
  * `GIT_SSH_COMMAND` stays out even though it is a "network" variable:
- * simple-git hard-blocks it (`allowUnsafeSshCommand`), and `buildGitHubUrl()`
- * produces an `https://` URL, so the worker never reaches GitHub over SSH.
+ * simple-git hard-blocks it (`allowUnsafeSshCommand`), and the worker's GitHub
+ * gateway builds an `https://` URL, so the worker never reaches GitHub over SSH.
  */
 const GIT_NETWORK_ENV_PASSTHROUGH =
   /^((HTTPS?|ALL)_PROXY|(https?|all)_proxy|NO_PROXY|no_proxy|GIT_SSL_(CAINFO|CAPATH|NO_VERIFY|VERSION)|CURL_CA_BUNDLE|SSL_CERT_(FILE|DIR)|REQUESTS_CA_BUNDLE|NODE_EXTRA_CA_CERTS)$/
@@ -170,7 +170,7 @@ interface BareRemoteObjectCounts {
 }
 
 async function countObjects(git: SimpleGit, gitDir: string): Promise<BareRemoteObjectCounts> {
-  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v'])
+  const output = await git.raw(['--git-dir', gitDir, 'count-objects', '-v', '--end-of-options'])
   const fields = new Map(
     output.split('\n').map((line): [string, string] => {
       const [name, value = ''] = line.split(': ')
@@ -217,8 +217,8 @@ export async function repackBareRemoteIfNeeded(
     return { repacked: false, before }
   }
   const startedAt = Date.now()
-  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q'])
-  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all'])
+  await git.raw(['--git-dir', gitDir, 'repack', '-a', '-d', '--cruft', '-q', '--end-of-options'])
+  await git.raw(['--git-dir', gitDir, 'pack-refs', '--all', '--end-of-options'])
   const after = await countObjects(git, gitDir)
   return { repacked: true, before, after, ms: Date.now() - startedAt }
 }

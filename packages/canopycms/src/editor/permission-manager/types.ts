@@ -3,6 +3,9 @@ import type { UserSearchResult, GroupSource, PermissionGroupOption } from '../..
 import type { EditorCollection } from '../Editor'
 
 export interface PermissionManagerProps {
+  opened: boolean
+  /** Closes the drawer; while there are unsaved changes it runs only after the user confirms discarding them. */
+  onClose: () => void
   /** Collections from API */
   collections?: EditorCollection[]
   /** Content root path (default: 'content') */
@@ -15,7 +18,6 @@ export interface PermissionManagerProps {
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Handler to list groups (internal + external, tagged by `source`) */
   onListGroups?: () => Promise<PermissionGroupOption[]>
-  onClose?: () => void
   loading?: boolean
   /** Optional: actual filesystem content tree (for entries not in schema) */
   contentTree?: ContentNode

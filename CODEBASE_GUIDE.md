@@ -221,19 +221,21 @@ The three access layers, reserved groups, and bootstrap admins are described in
 direction, and every invariant.
 
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
-- `worker-context.ts` — `WorkerContext`, the only channel between the class and the extracted clusters
+- `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
-- `remote-git-maintenance.ts` — `maintainRemoteGit`: the worker's logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
-- `sparse-cone.ts` — `reapplySparseCones`: moves sparse clones to the recorded cone after a content-root change
+- `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
+- `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
-- `github-mirror.ts`, `shared-repo-git.ts` — isolated git
-- `history-rewrite.ts` — force-push leasing on a known pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
-- `github-auth.ts` — which GitHub credential the worker uses, and installation-token minting
-- `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, the timestamp-and-level prefixed replacements for `console.*`
+- `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
+- `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
+- `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
+- `history-rewrite.ts` — force-push leasing on a pre-rebase commit; see [ARCHITECTURE.md](ARCHITECTURE.md#publishing-a-rewritten-history)
+- `github-auth.ts` — credential selection and installation-token minting
+- `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
 `push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Rebase
@@ -481,8 +483,8 @@ Top-level components and helpers:
 - `EntryNavigator.tsx` — collection and entry tree, with per-collection conflict badges
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
-- `CommentsPanel.tsx` — comments
-- `GroupManager.tsx` / `PermissionManager.tsx` — admin group and permission modals
+- `CommentsPanel.tsx` — comment panel
+- `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the preview bridge's host and editor sides; see [Preview Bridge](#preview-bridge)
 - `unavailable-entry-type.ts` — unavailable-entry-type wording
 - `editor-config.ts` — builds `EditorCollection` / `EditorEntryType` from the flat schema
@@ -564,11 +566,11 @@ Components, in `editor/components/`:
 - `EditorFooter.tsx` / `EditorSidebar.tsx` — chrome
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` — Branches drawer
+- `StagedChangesDrawer.tsx` — unsaved-changes drawer shell
 - `UserBadge.tsx` — user avatar and name
 - `UndoToastMessage.tsx` — a form Remove's undo toast
 - `EditorErrorBoundary.tsx` — reporting error boundary, `CopyErrorDetailsButton`
-- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the crash screen
-- `index.ts` — component exports
+- `EditorCrashScreen.tsx` — `EditorCrashBoundary`, the editor crash screen
 
 Comments UI, in `editor/comments/`:
 
@@ -888,6 +890,8 @@ the split.
 - `api-test-helpers.ts` — mock factories: `createMockBranchContext`, `createMockUser`, `createMockServices`, `createMockApiContext`, `createMockSettingsMutation`
 - `console-spy.ts` — `mockConsole()` plus the `toHaveLogged` / `toHaveWarned` / `toHaveErrored` matchers
 - `git-helpers.ts` — `initTestRepo()`, a git repo with the CanopyCMS marker and user config
+- `https-git-server.ts` — `startHttpsGitServer()`
+- `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
 - `render-errors.ts` — `silenceReportedRenderErrors()`
 - `index.ts` — exports
 

@@ -230,6 +230,11 @@ export async function runWorker(deps: RunWorkerDeps): Promise<void> {
       refreshAuthCache,
       // Unset, CmsWorker detects it rather than assuming 'main'.
       baseBranch: env.CANOPYCMS_BASE_BRANCH || undefined,
+      // Comma-separated: a comma is legal in a branch name, but the construct refuses one in an entry.
+      protectedBranches: (env.CANOPYCMS_PROTECTED_BRANCHES ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry !== ''),
       // deploymentName is deliberately NOT passed: CmsWorker resolves it through
       // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself,
       // applies the same env > config > 'prod' precedence as the Lambda, and

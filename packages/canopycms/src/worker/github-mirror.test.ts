@@ -1,7 +1,8 @@
 /**
- * The worker's private GitHub mirror, with no allowlist check in front of it: `remote.git` is
- * planted with redirects, a credential helper and hooks, and every operation that carries the
- * credential must still go to "GitHub" (a local bare repo) and run nothing that was planted.
+ * The worker's private GitHub mirror, with no allowlist check in front of `remote.git`: it is
+ * planted with redirects, a credential helper and hooks. The mirror never runs git there; objects
+ * cross as bundles, and the worker's side of the transfer runs pinned, so every operation that
+ * carries the credential must still go to "GitHub" (a local bare repo) and run nothing planted.
  */
 
 import { execFile } from 'node:child_process'
@@ -13,8 +14,12 @@ import { promisify } from 'node:util'
 import type { SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
-import { GitHubMirror } from './github-mirror'
+import { fixtureCredential, initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { resolveWorkerGitHubAuth } from './github-auth'
+import { createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
+import { BranchPolicy } from './branch-policy'
+import { GitHubMirror, GitHubTransientError } from './github-mirror'
+import { fetchGitHubIntoRemoteGit, pushToGitHub, type TransferContext } from './github-transfer'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,6 +28,7 @@ let sentinel: string
 let githubPath: string
 let attackerPath: string
 let remoteGitPath: string
+let stateDirectory: string
 let seed: SimpleGit
 let seedPath: string
 let mirror: GitHubMirror
@@ -64,6 +70,35 @@ async function plantHostileRemoteGit(): Promise<void> {
   }
 }
 
+function gateway(): GitHubGateway {
+  return createLocalGitHubGateway({
+    githubOwner: 'test-owner',
+    githubRepo: 'test-repo',
+    auth: resolveWorkerGitHubAuth({ githubToken: 'fake-token' }),
+    githubApp: false,
+    stateDirectory,
+    workspacePath: path.join(root, 'workspace'),
+    timeoutMs: 30_000,
+    remoteUrl: githubPath,
+    // Each operation fetches GitHub afresh, so a test sees what it changed there.
+    fetchCoalesceMs: 0,
+  })
+}
+
+/** The worker's side of a transfer, over `github`, with remote.git as this test's. */
+function transfer(github: GitHubGateway): TransferContext {
+  return { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 }
+}
+
+/** Push `branch`'s tip in remote.git as the worker does. */
+async function pushVia(github: GitHubGateway, branch: string, lease?: string) {
+  return pushToGitHub(
+    transfer(github),
+    { branch, lease, prerequisiteBranches: [branch] },
+    async () => git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
+  )
+}
+
 beforeEach(async () => {
   consoleSpy = mockConsole()
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-github-mirror-')))
@@ -71,6 +106,7 @@ beforeEach(async () => {
   githubPath = path.join(root, 'github.git')
   attackerPath = path.join(root, 'attacker.git')
   remoteGitPath = path.join(root, 'workspace', 'remote.git')
+  stateDirectory = path.join(root, 'state')
   seedPath = path.join(root, 'seed')
   await fs.mkdir(seedPath)
   seed = await initTestRepo(seedPath)
@@ -80,7 +116,7 @@ beforeEach(async () => {
   await commitAndPush(githubPath, 'refs/heads/main', 'base.txt')
   await git('clone', '-q', '--bare', githubPath, remoteGitPath)
   await git('--git-dir', remoteGitPath, 'remote', 'remove', 'origin')
-  mirror = new GitHubMirror(path.join(root, 'state'), remoteGitPath, 30_000)
+  mirror = new GitHubMirror(stateDirectory, 30_000)
 })
 
 afterEach(async () => {
@@ -89,16 +125,36 @@ afterEach(async () => {
 })
 
 describe('GitHubMirror', () => {
-  it("publishes exactly the commit it was given, even after remote.git's ref has moved", async () => {
+  it("publishes exactly the commit it was asked for, though remote.git's branch has moved past it", async () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
-
-    await mirror.exclusive((m) =>
-      m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] }),
+    const github = gateway()
+    // A bundle whose one head is `published` at refs/heads/feature, as the worker builds it.
+    const bundleRepo = path.join(root, 'bundle-source.git')
+    await git('clone', '-q', '--bare', remoteGitPath, bundleRepo)
+    await git('--git-dir', bundleRepo, 'update-ref', 'refs/heads/feature', published)
+    const bundle = path.join(root, 'feature.bundle')
+    await git(
+      '--git-dir',
+      bundleRepo,
+      'bundle',
+      'create',
+      '-q',
+      bundle,
+      'refs/heads/feature',
+      '^main',
     )
 
+    const answer = await github.push(
+      { branch: 'feature', sha: published, prerequisites: [] },
+      (await fs.open(bundle)).createReadStream(),
+    )
+
+    expect(answer).toMatchObject({ kind: 'pushed', moved: true, to: published })
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
-    expect(await refs(mirror.gitDir)).not.toContain('refs/canopy/outgoing/feature')
+    expect(await refs(path.join(stateDirectory, 'github.git'))).not.toContain(
+      'refs/canopy/outgoing/feature',
+    )
   })
 
   it('holds a lease: a push keyed to a commit GitHub is not at is refused as stale', async () => {
@@ -106,12 +162,15 @@ describe('GitHubMirror', () => {
     const next = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
     const notGitHubsTip = (await seed.revparse(['HEAD~2'])).trim()
     expect(notGitHubsTip).not.toBe(first)
+    // So the mirror holds `next`, which this test pushes directly, without the gateway's retry.
+    await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${next}:refs/heads/parked`)
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', next, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', next, {
           lease: notGitHubsTip,
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/stale info/)
@@ -123,12 +182,10 @@ describe('GitHubMirror', () => {
     const upstream = await commitAndPush(githubPath, 'refs/heads/main', 'upstream.txt')
     // After this test's own pushes into remote.git, which would run the hooks.
     await plantHostileRemoteGit()
+    const github = gateway()
 
-    await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
-      await m.publishTrackingRefs()
-      await m.pushToGitHub(githubPath, 'feature', published, { protectedBranches: [] })
-    })
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    await pushVia(github, 'feature')
 
     expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
     expect(await tip(remoteGitPath, 'refs/remotes/github/main')).toBe(upstream)
@@ -138,18 +195,13 @@ describe('GitHubMirror', () => {
 
   it('prunes tracking refs for branches GitHub no longer has, and leaves refs/heads alone', async () => {
     await commitAndPush(githubPath, 'refs/heads/gone-soon', 'g.txt')
-    await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
-      await m.publishTrackingRefs()
-    })
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
     expect(await refs(remoteGitPath)).toContain('refs/remotes/github/gone-soon')
     await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/gone-soon')
     const local = await commitAndPush(remoteGitPath, 'refs/heads/editor-work', 'e.txt')
 
-    await mirror.exclusive(async (m) => {
-      await m.fetchFromGitHub(githubPath)
-      await m.publishTrackingRefs()
-    })
+    await fetchGitHubIntoRemoteGit(transfer(github))
 
     expect(await refs(remoteGitPath)).not.toContain('refs/remotes/github/gone-soon')
     expect(await tip(remoteGitPath, 'refs/heads/editor-work')).toBe(local)
@@ -158,9 +210,11 @@ describe('GitHubMirror', () => {
   it('recreates itself when its directory is not a repository', async () => {
     await mirror.ensure()
     await fs.rm(path.join(mirror.gitDir, 'HEAD'))
-    await expect(mirror.exclusive((m) => m.fetchFromGitHub(githubPath))).rejects.toThrow()
+    await expect(
+      mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath))),
+    ).rejects.toThrow()
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
       await tip(githubPath, 'refs/heads/main'),
@@ -203,16 +257,18 @@ describe('GitHubMirror', () => {
     )
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/malformed', sha)
 
-    await expect(
-      mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'malformed', sha, { protectedBranches: [] }),
-      ),
-    ).rejects.toThrow(/fsck|missingEmail|bad/i)
+    const caught = await pushVia(gateway(), 'malformed').catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(String(caught)).toMatch(/fsck|missingEmail|bad/i)
     expect(await tip(githubPath, 'refs/heads/malformed')).toBeNull()
+    expect(await git('--git-dir', mirror.gitDir, 'cat-file', '-e', sha).catch(() => 'absent')).toBe(
+      'absent',
+    )
   })
 
-  it('seeds an empty mirror from remote.git, then makes every ref exactly what GitHub holds', async () => {
-    // A commit no GitHub history contains, so only seeding can bring it into the mirror.
+  it('takes nothing from remote.git: an object only remote.git has never enters the mirror', async () => {
+    // A commit no GitHub history contains, named from remote.git's tracking namespace and heads.
     const tree = await git('--git-dir', remoteGitPath, 'rev-parse', 'main^{tree}')
     const onlyInRemoteGit = await git(
       '--git-dir',
@@ -233,39 +289,33 @@ describe('GitHubMirror', () => {
       'refs/remotes/github/stale',
       onlyInRemoteGit,
     )
-    await git(
-      '--git-dir',
-      remoteGitPath,
-      'update-ref',
-      'refs/remotes/github/main',
-      'refs/heads/main',
-    )
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/only-here', onlyInRemoteGit)
     const upstream = await commitAndPush(githubPath, 'refs/heads/main', 'upstream.txt')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await fetchGitHubIntoRemoteGit(transfer(gateway()))
 
-    // Seeded: the object only remote.git had is in the mirror, and its ref is pruned.
-    expect(await git('--git-dir', mirror.gitDir, 'cat-file', '-t', onlyInRemoteGit)).toBe('commit')
+    await expect(
+      git('--git-dir', mirror.gitDir, 'cat-file', '-e', onlyInRemoteGit),
+    ).rejects.toThrow()
     expect(await refs(mirror.gitDir)).toEqual(['refs/heads/main'])
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(upstream)
+    expect(await refs(remoteGitPath)).not.toContain('refs/remotes/github/stale')
   })
 
-  it('falls back to GitHub alone when remote.git cannot seed it', async () => {
+  it('fetches GitHub whatever state remote.git is in, since it never reads it', async () => {
     await fs.rm(path.join(remoteGitPath, 'objects'), { recursive: true, force: true })
     await git('init', '-q', '--bare', remoteGitPath)
     await fs.writeFile(path.join(remoteGitPath, 'packed-refs'), 'not a ref line\n')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    const fetched = await gateway().fetch({ have: [] })
 
+    expect(fetched.refs.get('main')).toBe(await tip(githubPath, 'refs/heads/main'))
     expect(await tip(mirror.gitDir, 'refs/heads/main')).toBe(
       await tip(githubPath, 'refs/heads/main'),
     )
-    expect(consoleSpy).toHaveWarned(
-      /Could not seed the GitHub mirror from remote\.git, fetching all of it from GitHub/,
-    )
   })
 
-  it('does not object-check what it fetches from GitHub, only what comes from remote.git', async () => {
+  it('does not object-check what it fetches from GitHub', async () => {
     const tree = await git('--git-dir', githubPath, 'rev-parse', 'main^{tree}')
     const file = path.join(root, 'old-commit')
     await fs.writeFile(
@@ -283,46 +333,44 @@ describe('GitHubMirror', () => {
       file,
     )
     await git('--git-dir', githubPath, 'update-ref', 'refs/heads/imported-history', sha)
-    await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/remotes/github/main')
 
-    await mirror.exclusive((m) => m.fetchFromGitHub(githubPath))
+    await mirror.exclusive((m) => m.fetchFromGitHub(fixtureCredential(githubPath)))
 
     expect(await tip(mirror.gitDir, 'refs/heads/imported-history')).toBe(sha)
   })
 
-  it('drops a staging ref a killed push left, so a branch under that name can be pushed', async () => {
+  it('sweeps what a killed push left in incoming/ when a new gateway starts', async () => {
     await mirror.ensure()
-    const leftover = await commitAndPush(remoteGitPath, 'refs/heads/a', 'a.txt')
+    // A killed push's quarantine, holding a staging ref at `a`.
+    const leftover = path.join(stateDirectory, 'incoming', 'push-AbC123')
+    await fs.mkdir(leftover, { recursive: true })
+    await git('init', '-q', '--bare', path.join(leftover, 'repo.git'))
+    const a = await commitAndPush(remoteGitPath, 'refs/heads/a', 'a.txt')
     await git(
       '--git-dir',
-      mirror.gitDir,
+      path.join(leftover, 'repo.git'),
       'fetch',
       '-q',
       remoteGitPath,
-      `${leftover}:refs/canopy/outgoing/a`,
+      `${a}:refs/canopy/outgoing/a`,
     )
-    const published = await commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt').catch(
-      async () => {
-        await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/heads/a')
-        return commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt')
-      },
-    )
+    await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/heads/a')
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt')
 
-    const restarted = new GitHubMirror(path.join(root, 'state'), remoteGitPath, 30_000)
-    await restarted.exclusive((m) =>
-      m.pushToGitHub(githubPath, 'a/b', published, { protectedBranches: [] }),
-    )
+    // A new gateway, as after a restart.
+    await pushVia(gateway(), 'a/b')
 
     expect(await tip(githubPath, 'refs/heads/a/b')).toBe(published)
+    expect(await fs.readdir(path.join(stateDirectory, 'incoming'))).toEqual([])
   })
 
   it('refuses a lease that is not an object ID', async () => {
     const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', published, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
           lease: 'refs/heads/main',
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/Not a commit ID: "refs\/heads\/main"/)
@@ -345,15 +393,46 @@ describe('GitHubMirror', () => {
     const state = path.join(root, 'shared-state')
     await fs.mkdir(state)
     await fs.chmod(state, 0o777)
-    const exposed = new GitHubMirror(state, remoteGitPath, 30_000)
+    const exposed = new GitHubMirror(state, 30_000)
     await expect(exposed.ensure()).rejects.toThrow(/must be a directory this worker owns/)
   })
 
   it('refuses a commit argument that is not an object ID', async () => {
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(githubPath, 'feature', 'main:refs/heads/x', { protectedBranches: [] }),
+        m.pushToGitHub(fixtureCredential(githubPath), 'feature', 'main:refs/heads/x', {
+          policy: new BranchPolicy(),
+        }),
       ),
     ).rejects.toThrow(/Not a commit ID/)
+  })
+})
+
+describe('an outgoing bundle no one opens', () => {
+  it('is deleted after the retention, and opening it then is transient', async () => {
+    const retained = new GitHubMirror(stateDirectory, 30_000, undefined, 200)
+    const file = await retained.outgoingBundlePath()
+    await fs.writeFile(file, 'bundle bytes')
+    const id = await retained.setPendingBundle(file)
+
+    await vi.waitFor(() => expect(fs.access(file)).rejects.toThrow(), { timeout: 3_000 })
+    const caught = await retained.openBundle(id!).catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect((caught as GitHubTransientError).code).toBe('bundle-gone')
+  })
+
+  it('is kept past the retention once opened, until its reader is done', async () => {
+    const retained = new GitHubMirror(stateDirectory, 30_000, undefined, 200)
+    const file = await retained.outgoingBundlePath()
+    await fs.writeFile(file, 'bundle bytes')
+    const stream = await retained.openBundle((await retained.setPendingBundle(file))!)
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    await expect(fs.access(file)).resolves.toBeUndefined()
+    let read = ''
+    for await (const chunk of stream) read += String(chunk)
+
+    expect(read).toBe('bundle bytes')
   })
 })

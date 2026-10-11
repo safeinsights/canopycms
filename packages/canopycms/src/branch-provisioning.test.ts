@@ -22,7 +22,7 @@ import { BranchWorkspaceManager, setProvisioningTestHooks } from './branch-works
 import { BranchRegistry } from './branch-registry'
 import { defineCanopyTestConfig } from './config-test'
 import { SettingsWorkspaceManager } from './settings-workspace'
-import { initTestRepo, mockConsole, type MockConsole } from './test-utils'
+import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from './test-utils'
 import {
   acquireProvisioningLock,
   branchProvisioningLockName,
@@ -521,8 +521,7 @@ describe('W5: the worker repairs residue', () => {
       githubToken: 'fake-token',
       baseBranch: 'main',
     })
-    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
-      path.join(tmpDir, 'no-such-github.git')
+    useLocalGitHubGateway(worker, { remoteUrl: () => path.join(tmpDir, 'no-such-github.git') })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }

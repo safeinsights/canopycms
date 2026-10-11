@@ -8,6 +8,8 @@ import { MemberList } from './MemberList'
 
 export interface GroupCardProps {
   group: InternalGroup
+  /** The group is new or edited and its change is staged, not saved. */
+  isUnsaved: boolean
   onEdit: (group: InternalGroup) => void
   onDelete: (groupId: CanopyGroupId) => void
   onAddMember: (groupId: CanopyGroupId, userId: CanopyUserId) => void
@@ -26,6 +28,7 @@ export interface GroupCardProps {
 
 export const GroupCard: React.FC<GroupCardProps> = ({
   group,
+  isUnsaved,
   onEdit,
   onDelete,
   onAddMember,
@@ -52,6 +55,11 @@ export const GroupCard: React.FC<GroupCardProps> = ({
             <Badge size="sm" variant="light">
               {group.members?.length || 0} members
             </Badge>
+            {isUnsaved && (
+              <Badge size="sm" variant="light" color="orange">
+                Unsaved
+              </Badge>
+            )}
           </Group>
           <Text size="xs" c="dimmed" mt={4}>
             ID: {group.id}
