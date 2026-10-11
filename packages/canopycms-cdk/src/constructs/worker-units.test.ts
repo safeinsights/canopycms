@@ -370,7 +370,7 @@ describe('the instance files', () => {
     const many = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}/*`)
     expect(() => synth({ protectedBranches: many(200) })).not.toThrow()
     expect(() => synth({ protectedBranches: many(700) })).toThrow(
-      /user data could reach \d+ bytes, over the 16384 EC2 accepts/,
+      /user data could reach \d+ bytes, over the 16384 EC2 accepts\. protectedBranches has 700 entries, the likeliest cause/,
     )
     expect(() => synth({ workerLogGroupName: `/canopycms/${'g'.repeat(500)}` })).not.toThrow()
   })
