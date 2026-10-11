@@ -46,8 +46,9 @@
  * package paginates today.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { Octokit } from '@octokit/rest'
 import { CANOPY_APP_PERMISSIONS } from './github-app-manifest'
@@ -77,6 +78,9 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, keyof typeof CANOPY_APP_PER
   // DELETE /repos/{o}/{r}/git/refs/{ref} is Contents/write — not
   // `administration`, which is the plausible wrong guess.
   'git.deleteRef': 'contents',
+  // GET /repos/{o}/{r} is Metadata/read: the gateway's branch policy reads the default branch
+  // before a deletion or a pull request.
+  'repos.get': 'metadata',
   // The GraphQL mutations, keyed BY MUTATION rather than collapsed to
   // `graphql`. Collapsing them was a hole: every `octokit.graphql(...)` recorded
   // the same key, so a new mutation needing a different permission entirely —
@@ -174,13 +178,17 @@ function recordingOctokit(seen: Set<string>, responses: Responses = {}): Octokit
  * The worker's real GitHub gateway with `octokit` in place of GitHub: every worker call to GitHub
  * goes through it, so driving the worker drives the gateway's own Octokit calls.
  */
+// A real private directory: the gateway runs git there to check branch names.
+const stateRoot = mkdtempSync(join(tmpdir(), 'canopy-permission-drift-'))
+afterAll(() => rmSync(stateRoot, { recursive: true, force: true }))
+
 function gatewayWith(octokit: Octokit): GitHubGateway {
   return createLocalGitHubGateway({
     githubOwner: 'an-org',
     githubRepo: 'a-content-site',
     auth: resolveWorkerGitHubAuth({ githubToken: 'unused' }),
     githubApp: false,
-    stateDirectory: '/nonexistent/state',
+    stateDirectory: join(stateRoot, 'state'),
     workspacePath: '/nonexistent/workspace',
     timeoutMs: 1000,
     octokit,
@@ -238,6 +246,7 @@ async function observeEverything(): Promise<Coverage> {
     'pulls.list': { data: [] },
     'pulls.create': { data: { number: 7, html_url: 'https://example.invalid/pr/7' } },
     'pulls.get': { data: { node_id: 'PR_1', state: 'open', merged: false, draft: false } },
+    'repos.get': { data: { default_branch: 'main' } },
   })
   for (const action of ALL_TASK_ACTIONS) {
     await executeTask(taskContext(taskOctokit), task(action), signal)
@@ -377,6 +386,7 @@ describe('the declared App permissions cover every GitHub call this package make
       'pulls.get',
       'pulls.list',
       'pulls.update',
+      'repos.get',
     ])
     // The update path: an existing DRAFT PR, so update runs and the
     // mark-ready mutation fires. `pulls.create` is deliberately absent — that
@@ -499,8 +509,8 @@ describe('the declared App permissions cover every GitHub call this package make
   })
 
   it('requests no permission that no operation needs', async () => {
-    // `metadata` is the deliberate exception: GitHub grants it alongside any
-    // repository permission, so it is declared without any call forcing it.
+    // `metadata` stays declared whatever the calls need: GitHub grants it
+    // alongside any repository permission.
     const needed = new Set(Object.values(OPERATION_PERMISSIONS))
     needed.add('metadata')
     expect(Object.keys(CANOPY_APP_PERMISSIONS).sort()).toEqual([...needed].sort())
