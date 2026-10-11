@@ -21,8 +21,8 @@ export interface MediaLibraryProps {
 }
 
 /**
- * One component, two presentations, sharing the same grid/upload/filter/
- * pagination/delete core (MediaLibraryBody) - see
+ * One component, two presentations, sharing the same grid/list/upload/search/
+ * delete core (MediaLibraryBody) - see
  * .claude/future-tasks/resolved/assets-media-system.md "MediaManager design".
  */
 export const MediaLibrary: React.FC<MediaLibraryProps> = ({ opened, onClose, mode, onSelect }) => {

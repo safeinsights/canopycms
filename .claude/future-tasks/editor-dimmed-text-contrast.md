@@ -2,7 +2,7 @@
 priority: P2
 adopters: BOTH
 summary: >-
-  New 2026-10-11, from WS7a-1's UX review. Mantine's default dimmed colour (#868e96 on white) measures 3.32:1, under the 4.5:1 docs/ux-guidelines.md asks for, and about 39 editor files use `c="dimmed"`; fix it once in the theme rather than per component
+  New 2026-10-11, from WS7a-1's UX review. Mantine's default dimmed colour (#868e96 on white) measures 3.32:1, under the 4.5:1 docs/ux-guidelines.md asks for, and 38 editor component files use `c="dimmed"`; fix it once in the theme rather than per component
 ---
 # Dimmed editor text misses 4.5:1 contrast
 

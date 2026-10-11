@@ -20,6 +20,6 @@ whenever another editor removes the wrong asset at the wrong moment.
 
 Encode `(uploadedAt, hash32)` in the local cursor and resume at the first entry after that
 position in the store's sort order, so a deleted anchor doesn't reset the walk. Check the S3
-store's continuation token for the same property (ListObjectsV2 tokens survive deletes). This is
+store's ListObjectsV2 continuation token for the same property; it is unverified whether a token survives deleting the key it was issued after. This is
 an API-internal change; WS7a-2's asset index in [ui-epic-202610.md](ui-epic-202610.md) may
 replace the listing altogether, so decide there first.

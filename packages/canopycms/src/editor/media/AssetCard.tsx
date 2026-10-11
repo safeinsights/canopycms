@@ -17,7 +17,7 @@ export interface AssetCardProps {
   baseUrl?: string
   /** Present in picker mode - clicking the card selects the asset. */
   onSelect?: (asset: AssetRecord) => void
-  /** Present only for admins in manage mode - renders the trash button. */
+  /** Present only where the viewer may remove the asset (manage mode) - renders the trash button. */
   onDelete?: (asset: AssetRecord) => void
   /** `compact` shrinks the thumbnail and drops the date line. */
   density?: 'grid' | 'compact'

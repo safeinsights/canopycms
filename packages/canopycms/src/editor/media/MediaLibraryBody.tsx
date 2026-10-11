@@ -97,7 +97,7 @@ export interface MediaLibraryBodyProps {
   /** Whether the enclosing Drawer/Modal is open - the library (re)loads from page 1 on each open and stops loading on close. */
   opened: boolean
   mode: 'manage' | 'picker'
-  /** Present in picker mode - clicking a card (or completing an upload) selects the asset. */
+  /** Present in picker mode - clicking a card or row selects the asset; an upload is pinned first, not selected. */
   onSelect?: (asset: AssetRecord) => void
 }
 

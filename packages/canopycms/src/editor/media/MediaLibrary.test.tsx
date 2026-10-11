@@ -366,7 +366,7 @@ describe('MediaLibraryBody', () => {
     expect(onSelect).toHaveBeenCalledWith(catAsset)
   })
 
-  it('ignores other keys and never selects via the keyboard in manage mode (no onSelect)', async () => {
+  it('makes manage-mode cards neither buttons nor focusable (no onSelect)', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
