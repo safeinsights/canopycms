@@ -31,7 +31,10 @@ export type SelfCheckName =
   | 'core-pattern'
   | 'core-limit'
 
-/** How a TCP connect ended: it connected, it failed with an errno code, or it timed out. */
+/**
+ * How a TCP connect ended: it connected, it failed with an errno code, or it timed out.
+ * @internal Exported for tests.
+ */
 export type ConnectOutcome = 'connected' | 'timeout' | { code: string }
 
 export interface SelfCheckEnvironment {

@@ -101,6 +101,7 @@ export {
   gatewaySelfChecks,
   workerSelfChecks,
   type SelfCheckEnvironment,
+  type SelfCheckName,
   type SelfCheckResult,
 } from './self-checks'
 
