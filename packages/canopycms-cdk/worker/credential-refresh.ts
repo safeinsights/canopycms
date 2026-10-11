@@ -34,8 +34,8 @@ import { getSecret, type GetSecretOptions } from './secrets'
  * trigger is the auth-cache loop (15 minutes), already slower than this.
  *
  * For the GitHub token it is ACTIVE, and it is what bounds the cost. Core's
- * GitHub gateway re-reads it after any operation that failed reaching GitHub (a
- * publish, a sync's fetch, a pull-request call; see
+ * GitHub gateway re-reads it after any operation that failed reaching GitHub
+ * other than with a 422 (a publish, a sync's fetch, a pull-request call; see
  * `LocalGitHubGateway.credentialed` in core), and a task retries on a 5s/10s/20s
  * backoff — so a queue of failing publishes reaches this provider at core's own
  * floor, once a minute by default. This floor makes that one read per five

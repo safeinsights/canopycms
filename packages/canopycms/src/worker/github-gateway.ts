@@ -206,9 +206,11 @@ class LocalGitHubGateway implements GitHubGateway {
    * auth-shaped: a dead token's git failure is a plain exit 128 with no HTTP status, and a token
    * that lost access fails as a 404 or a 403. What never arms it: a refusal of the gateway's own
    * (`RefusedPushError`, an invalid object ID), anything else local, a lock file the mirror's own
-   * housekeeping holds (`isOwnLockFailure`), and an Octokit 422 (`api`). What bounds a caller that fails on purpose is the
-   * floors behind `auth.refreshCredential`: `refreshGitHubTokenMinIntervalMs` (github-auth.ts) and
-   * the provider's own. On the GitHub App path a re-read is a no-op.
+   * housekeeping holds (`isOwnLockFailure`), and an Octokit 422 (`api`). A 404 does arm it, the
+   * branch-already-gone one `deleteBranch` callers tolerate included. What bounds a caller that
+   * fails on purpose is the floors behind `auth.refreshCredential`:
+   * `refreshGitHubTokenMinIntervalMs` (github-auth.ts) and the provider's own. On the GitHub App
+   * path a re-read is a no-op.
    *
    * The re-read starts detached, after the failure has been delivered: a provider can take 87s for
    * one `getSecret`, longer than a task's whole deadline.
@@ -229,10 +231,10 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * One Octokit call inside {@link credentialed}, whose failure arms a re-read unless it is a 422.
-   * A 422 is GitHub validating the request, never judging the credential, and the worker meets two
-   * as success on every merge (a head branch GitHub already deleted, a pull request with no commits
-   * between): arming on them would spend the provider's floor on routine traffic and hold off the
-   * re-read a real rotation needs.
+   * A 422 is GitHub validating the request, never judging the credential, and the worker treats
+   * two as success: a head branch GitHub already deleted after a merge (`isRefAlreadyGoneError`),
+   * and a pull request with no commits between (`isNoCommitsBetweenError`). Arming on them would
+   * spend the provider's floor on routine traffic and hold off the re-read a real rotation needs.
    */
   private async api<T>(reach: GitHubReach, call: () => Promise<T>): Promise<T> {
     try {

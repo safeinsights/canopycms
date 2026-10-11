@@ -174,9 +174,9 @@ describe('CmsWorker credential refresh', () => {
         const { gateway } = makeWorker(refreshGitHubToken)
         reachable = false
 
-        // A missing repository: exit 128, no HTTP status, nothing about credentials. GitHub says
-        // the same for a token that lost access, which is why this is not gated on the failure
-        // looking auth-shaped.
+        // A missing repository: exit 128, no HTTP status, nothing about credentials. A token
+        // that lost access fails on GitHub as a missing repository does (a 404), which is why this
+        // is not gated on the failure looking auth-shaped.
         const caught = await gateway.fetch({ have: [] }).catch((err: unknown) => err)
         expect(String(caught)).not.toMatch(/auth|credential|Username/i)
         expect((caught as { status?: unknown }).status).toBeUndefined()
@@ -411,7 +411,7 @@ describe('CmsWorker credential refresh', () => {
       )
     })
 
-    it('does not let a re-read that never settles stall the task loop', async () => {
+    it('bounds a re-read that never settles, and handles its late rejection', async () => {
       // Rejects long after the bound, so this also proves the losing read's eventual rejection is
       // handled rather than surfacing as unhandled.
       const refreshGitHubToken = vi.fn(

@@ -81,7 +81,7 @@ export interface GitHubAuthConfig {
    * Core's own backstop, not a substitute for one the provider keeps: a
    * failing publish retries on a 5s/10s/20s backoff (task-queue.ts), and
    * the gateway calls `refreshCredential` after every operation that failed
-   * reaching GitHub, so a burst of failures would otherwise reach an
+   * reaching GitHub other than with a 422, so a burst of failures would otherwise reach an
    * adopter-supplied `refreshGitHubToken` every few seconds. The AWS provider
    * (`packages/canopycms-cdk/worker/credential-refresh.ts`) already enforces
    * its own five-minute floor; an adopter's own provider has none unless they

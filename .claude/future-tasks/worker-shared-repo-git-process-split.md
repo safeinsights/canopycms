@@ -349,7 +349,7 @@ The worker:
     gateway git's own output, never a `remote:`-prefixed line from GitHub, which is
     gateway-local: it means `pack-refs` holds the lock, not a credential problem;
   - any Octokit error except a 422: a validation answer, never a credential one, and the worker
-    meets two as success on every merge (`isRefAlreadyGoneError`, `isNoCommitsBetweenError`);
+    treats two as success (`isRefAlreadyGoneError`, `isNoCommitsBetweenError`);
   - any Clerk error.
 
   This is today's ungated rule (`cms-worker.ts` L1471–1479 says why: a dead token's git failure

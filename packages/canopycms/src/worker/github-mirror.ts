@@ -161,8 +161,8 @@ const CREDENTIAL_DIR_PATTERN = /^\.canopy-github-credential-[A-Za-z0-9]{6}$/
  * The global-scope config a GitHub-bound command gets: the token as an `Authorization` header for
  * the remote's origin only, and an empty credential-helper list, so a 401 asks no helper (a
  * developer's keychain included) and git's prompt is off besides. A URL without an http(s) origin
- * (a test's local fixture) gets GitHub's, which it can never match. Every value is base64 or an
- * origin, so no byte of the token can end a line or a quoted section name.
+ * (a test's local fixture) gets GitHub's, which it can never match. The token is written only
+ * base64-encoded, so none of its bytes can end a line or a quoted section name.
  */
 function credentialConfig(credential: GitHubCredential): string {
   let origin = GITHUB_ORIGIN
@@ -316,7 +316,7 @@ export class MirrorSession {
    * Run one GitHub-bound command, `args` naming `credential.url` where git expects the remote. The
    * credential reaches it only through {@link withCredentialConfig}'s file, named by
    * `GIT_CONFIG_GLOBAL`, so it is in no argv and in no process's environment. No trace variable
-   * reaches this git: trace2 prints config values. Its failure is reported to the credential
+   * reaches this git: trace2 can print config values. Its failure is reported to the credential
    * unless {@link isOwnLockFailure}.
    */
   private async githubBound(

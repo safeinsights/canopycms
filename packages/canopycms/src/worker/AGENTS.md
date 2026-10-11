@@ -52,7 +52,7 @@ lint and still break the layering above. Keep the direction by review.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`.
 - No push, plain or leased, to the base branch or GitHub's default branch, whatever a task asks:
   `github-mirror.ts`, `MirrorSession.pushToGitHub` (`RefusedPushError`).
-- The credential only in mirror sessions' per-command files (`withCredentialConfig`); other
+- The credential only in mirror sessions' per-command files (`github-mirror.ts`, `withCredentialConfig`); other
   shared-repository git only via `sharedRepoGit`, after `assertSharedRepoConfig`:
   `shared-repo-git.ts`'s module doc.
 - `rebaseOneBranch` never throws; the `rebased` rider on `{ kind: 'failed' }`: `rebase.ts`,
