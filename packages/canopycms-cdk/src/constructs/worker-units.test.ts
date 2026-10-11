@@ -370,9 +370,23 @@ describe('the instance files', () => {
     const many = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}/*`)
     expect(() => synth({ protectedBranches: many(200) })).not.toThrow()
     expect(() => synth({ protectedBranches: many(700) })).toThrow(
-      /user data could reach \d+ bytes, over the 16384 EC2 accepts\. protectedBranches has 700 entries, the likeliest cause/,
+      /user data could reach \d+ bytes, over the 16384 EC2 accepts; protectedBranches has 700 entries\./,
     )
     expect(() => synth({ workerLogGroupName: `/canopycms/${'g'.repeat(500)}` })).not.toThrow()
+  })
+
+  it('state the protectedBranches count without blaming it when other names fill user data', () => {
+    const long = (name: string) =>
+      `arn:aws:secretsmanager:us-east-1:123456789012:secret:${name}-${'x'.repeat(4_000)}`
+    expect(() =>
+      synth({
+        workerLogGroupName: `/canopycms/${'g'.repeat(500)}`,
+        githubTokenSecretArn: long('token'),
+        clerkSecretKeySecretArn: long('clerk'),
+      }),
+    ).toThrow(
+      /protectedBranches has 0 entries\. Protect branches with fewer, wider \* patterns, or shorten the other names/,
+    )
   })
 
   it('measure the log group by its configured name and a token-valued ARN at its longest', () => {

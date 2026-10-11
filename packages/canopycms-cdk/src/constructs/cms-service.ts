@@ -244,10 +244,9 @@ function addUserData(
   if (bytes > USER_DATA_MAX_BYTES) {
     throw new Error(
       `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
-        `${USER_DATA_MAX_BYTES} EC2 accepts. protectedBranches has ${protectedBranchCount} ` +
-        `entries, the likeliest cause: protect branches with fewer, wider * patterns. The ` +
-        `lengths of the other names passed in count too (secret ARNs and fields, branches, the ` +
-        `repository, the worker log group).`,
+        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${protectedBranchCount} ` +
+        `entries. Protect branches with fewer, wider * patterns, or shorten the other names ` +
+        `passed in (secret ARNs and fields, branches, the repository, the worker log group).`,
     )
   }
 }
