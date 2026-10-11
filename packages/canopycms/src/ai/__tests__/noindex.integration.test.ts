@@ -193,6 +193,11 @@ describe('AI content and noindex', () => {
 
   it('renders a body link to an entry whose render failed as its text', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await store.write(unsafeAsLogicalPath('content/guides'), unsafeAsSlug('spelled'), {
+      format: 'md',
+      data: { title: 'Spelled' },
+      body: `See [entr](entry:${ids.stub})y:${ids.broken} here.`,
+    })
     const { files } = await generate({
       bodyTransforms: {
         guide: (body, entry) => {
@@ -203,6 +208,8 @@ describe('AI content and noindex', () => {
     })
 
     expect(files.has('guides/broken.md')).toBe(false)
+    // Unwrapping the withheld link spells a new `entry:` token, which must re-render too
+    expect(files.get('guides/spelled.md')).not.toContain('/guides/broken')
     const overview = files.get('guides/overview.md')!
     expect(overview).toContain('Read the broken page.')
     expect(overview).not.toContain('/guides/broken')

@@ -29,11 +29,7 @@ import {
   resolveReferenceFields,
   type ReferenceTargetResolver,
 } from './references'
-import {
-  extractEntryLinkIds,
-  resolveEntryLinksInText,
-  type EntryLinkUrlResolver,
-} from '../entry-link-resolver'
+import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
 import { DEFAULT_SEO_FIELD_NAMES, isNoindexEntry } from '../static/seo'
 import type {
   AIContentConfig,
@@ -136,7 +132,6 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
     mountPath: config?.mountPath ?? '/ai',
     files: exported,
   })
-  const isLinkable = (id: string) => exported.has(id)
   // An entry whose render throws is not in the export after all, so references and body links to
   // it are withheld like any other left-out target, and the entries that changed run their
   // transforms and render again. That can fail another entry, so this repeats until a round fails
@@ -145,13 +140,20 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   for (;;) {
     for (const pending of round) {
       if (pending.body !== undefined) {
+        const linked = new Set<string>()
         pending.entry.body = resolveEntryLinksInText(
           pending.body,
           idIndex,
           contentRoot,
           entryLinkUrl,
-          { isLinkable },
+          {
+            isLinkable: (id) => {
+              linked.add(id)
+              return exported.has(id)
+            },
+          },
         )
+        pending.linkedIds = [...linked]
       }
       maskUnexportedTargets(pending.entry, exported)
       // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), on data as masked
@@ -255,7 +257,7 @@ interface PendingEntry {
   entry: AIEntry
   /** The MD/MDX body as stored, before its `entry:` links are resolved against the export. */
   body?: string
-  /** The content ids its body links to. */
+  /** The content ids its body's links were resolved against, as of its last resolution. */
   linkedIds: string[]
   contentId: string | null
   absolutePath: string
@@ -341,7 +343,7 @@ async function collectEntries(
       pending.push({
         entry: aiEntry,
         body,
-        linkedIds: body ? extractEntryLinkIds(body).map((link) => link.id) : [],
+        linkedIds: [],
         contentId: extractIdFromFilename(path.basename(listEntry.relativePath)),
         absolutePath: doc.absolutePath,
         collectionPath: collection.logicalPath,

@@ -248,6 +248,17 @@ describe('resolveEntryLinksInText', () => {
       expect(performance.now() - started).toBeLessThan(1500)
     })
 
+    it('stays linear on withheld targets whose anchor never closes', () => {
+      const text = '](entry:vh2WdhwAFiSL#'.repeat(16_000)
+      const started = performance.now()
+      expect(resolve(text)).not.toContain('hello-world')
+      expect(performance.now() - started).toBeLessThan(1500)
+    })
+
+    it('keeps an escaped image marker', () => {
+      expect(resolve('\\![pic](entry:vh2WdhwAFiSL)')).toBe('\\!pic')
+    })
+
     it('leaves a withheld link inside code alone', () => {
       const text = '`[Hello](entry:vh2WdhwAFiSL)`'
       expect(resolve(text)).toBe(text)

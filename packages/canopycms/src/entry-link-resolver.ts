@@ -108,9 +108,12 @@ function findEntry(idIndex: ContentIdIndex, id: string): EntryLocation | undefin
   return location as EntryLocation
 }
 
-/** `](entry:ID#anchor "title")`: the target half of an inline markdown link. */
+/**
+ * `](entry:ID#anchor "title")`: the target half of an inline markdown link. The anchor stops at
+ * `]`, so a failed match backtracks no further than the next `](`, keeping the scan linear.
+ */
 const INLINE_LINK_TARGET = new RegExp(
-  `\\]\\(entry:(${BASE58_CHAR}{12})(?:#[^\\s)>"']*)?(?:[ \\t]+"[^"\\n]*")?\\)`,
+  `\\]\\(entry:(${BASE58_CHAR}{12})(?:#[^\\s)>"'\\]]*)?(?:[ \\t]+"[^"\\n]*")?\\)`,
   'g',
 )
 
@@ -123,7 +126,7 @@ function unwrapInlineLinks(text: string, shouldUnwrap: (id: string) => boolean):
   let out = ''
   let cursor = 0
   // A failed search from `close` saw no `[` it could match before it, and a later `]` only adds
-  // depth, so later searches stop there: the scans stay linear in the text.
+  // depth, so later searches stop there: the bracket scans stay linear in the text.
   let scanFloor = 0
   for (const match of text.matchAll(INLINE_LINK_TARGET)) {
     const close = match.index
@@ -133,7 +136,8 @@ function unwrapInlineLinks(text: string, shouldUnwrap: (id: string) => boolean):
       scanFloor = close
       continue
     }
-    const start = open > cursor && text[open - 1] === '!' ? open - 1 : open
+    const isImage = open > cursor && text[open - 1] === '!' && text[open - 2] !== '\\'
+    const start = isImage ? open - 1 : open
     out += text.slice(cursor, start) + text.slice(open + 1, close)
     cursor = close + match[0].length
   }
