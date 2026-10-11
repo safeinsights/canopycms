@@ -89,6 +89,7 @@ replaces each `next` with its number.
 | 113  | Worker   | [Credential in a per-command git config](#the-worker-hands-git-its-github-credential-in-a-per-command-file--security-fix-dev-behaviour-change)                                              | Dev: proxy or CA in env      |
 | next | Worker   | [GitHub objects cross as bundles](#the-worker-moves-objects-between-github-and-remotegit-as-bundles)                                                                                        | None                         |
 | next | AI       | [`noindex` entries leave AI content](#ai-content-leaves-out-noindex-entries--behaviour-change-for-ai-output)                                                                                | `exclude.noindex: false`     |
+| next | Worker   | [Worker follows a rebased or deleted branch](#the-worker-follows-a-rebased-or-deleted-github-branch)                                                                                        | None                         |
 
 ### Preview URLs take one prefix, follow `trailingSlash`, and load each entry's own page — **breaking (env)**
 
@@ -587,6 +588,15 @@ stops applying and no keychain credential is tried.
 and operations may reuse GitHub fetches under 30 seconds old.
 
 **To adopt.** Nothing. Seeding `remote.git` stages a copy of the repository in the state directory.
+
+### The worker follows a rebased or deleted GitHub branch
+
+**What changed.** (next) When a branch is rebased and force-pushed on GitHub, or deleted there, the
+worker now updates or deletes its own copy of it instead of warning about it on every sync. A rebased
+branch's copy that holds editor work is left as it is: the worker warns once, and System
+health lists it with what to do.
+
+**To adopt.** Nothing.
 
 ### `canopycms-cdk`: a worker bundle states the template it needs — **template first for the gate only**
 
