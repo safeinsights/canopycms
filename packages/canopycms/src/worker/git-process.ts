@@ -82,6 +82,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
   let stderr = ''
   let stderrBytes = 0
   let killedFor: string | null = null
+  let closed = false
   let inactivity: NodeJS.Timeout | undefined
   const touch = () => {
     clearTimeout(inactivity)
@@ -90,11 +91,12 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
       options.inactivityTimeoutMs,
     )
   }
+  // A stop counts until 'close', not until git exits: git can exit with its last output still
+  // unread, and that output holds 'close' back until the stream is destroyed.
   const stop = (reason: string) => {
-    if (killedFor !== null || child.exitCode !== null || child.signalCode !== null) return
+    if (closed || killedFor !== null) return
     killedFor = reason
-    terminate(child)
-    // Unread output would otherwise hold the pipe open, and 'close' would never come.
+    if (child.exitCode === null && child.signalCode === null) terminate(child)
     stdout.destroy()
   }
 
@@ -128,6 +130,7 @@ export function spawnGit(args: readonly string[], options: GitProcessOptions): G
       }
     })
     child.on('close', (code, signal) => {
+      closed = true
       clearTimeout(inactivity)
       options.signal?.removeEventListener('abort', onAbort)
       const written = stderrBytes > STDERR_CAP_BYTES ? `${stderr}\n[stderr truncated]` : stderr

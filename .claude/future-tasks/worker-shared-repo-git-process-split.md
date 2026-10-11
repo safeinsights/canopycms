@@ -1014,6 +1014,12 @@ PR 2, their first user.
   old refs against the seeded replacement itself (`unreachableFrom`), so its decision follows the
   bundle whatever the mirror does after. `GitHubPushError` carries git's output as a string, not a
   live `.cause`. The fetch's ref map is a `Map`, not a record.
+- PR 4 or 2b: a pushed body waits unread while its push queues (behind another ingest, the session,
+  or a credential re-read), and the worker's `bundle create`, blocked on the pipe, can be killed for
+  inactivity at the same bound: a spurious transient failure that a retry recovers. Take the body
+  into `incoming/` before queueing, or stop the worker's clock while it waits for a reader.
+- 2b or PR 3: a boundary commit whose subject outgrows the 64 KiB header bound makes every bundle
+  built on it refused, on both sides, for good. Bound a prerequisite comment's bytes separately.
 - PR 7: "The worker instance" (docs/deploying-to-aws.md) says that the mirror never reads
   `remote.git`, that objects cross as bundles staged in the state directory, and that each new
   instance fetches the whole repository from GitHub once, with room for a copy when seeding.

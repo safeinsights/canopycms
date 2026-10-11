@@ -149,6 +149,24 @@ describe('spawnGit', () => {
     expect(err.message).toBe('no longer wanted')
   })
 
+  it('settles `exited` after a kill that comes once git has exited, its output unread', async () => {
+    // More than one read, but small enough to fit the pipe and the stream's buffer, so git exits
+    // with the rest unread.
+    const proc = spawnGit(['small'], alias('small', 'yes y | head -c 100000'))
+    const chunks = proc.stdout[Symbol.asyncIterator]()
+    await chunks.next()
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    proc.kill('no longer wanted')
+    const settled = await Promise.race([
+      proc.exited.then(
+        () => 'resolved',
+        (err: unknown) => (err as Error).message,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('still pending'), 3_000)),
+    ])
+    expect(settled).toBe('no longer wanted')
+  })
+
   it('rejects `exited` after the caller kills it', async () => {
     const proc = spawnGit(['nap'], alias('nap', 'sleep 5'))
     proc.kill('not needed')

@@ -743,6 +743,50 @@ describe('the worker side of a push', () => {
     expect(await tip(githubPath, 'refs/heads/feature')).toBeNull()
   })
 
+  it('fails at once when the gateway refuses a bundle it never read', async () => {
+    await featureAhead()
+    const github = gateway()
+    const push = github.push.bind(github)
+    vi.spyOn(github, 'push').mockImplementation(async (req, body, signal) => {
+      if (body === undefined) return push(req, body, signal)
+      // As a failed token mint does, before the gateway reads a byte.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      body.destroy()
+      throw new Error('the token could not be minted')
+    })
+    const started = Date.now()
+
+    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+
+    expect(String(caught)).toContain('the token could not be minted')
+    expect(Date.now() - started).toBeLessThan(10_000)
+  })
+
+  it('fails at once on a prerequisite whose subject outgrows the header bound', async () => {
+    const base = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const tree = await git('--git-dir', githubPath, 'rev-parse', `${base}^{tree}`)
+    const raw = path.join(root, 'long-subject')
+    await fs.writeFile(
+      raw,
+      `tree ${tree}\nparent ${base}\nauthor a <a@x> 1700000000 +0000\n` +
+        `committer a <a@x> 1700000000 +0000\n\n${'s'.repeat(70 * 1024)}\n`,
+    )
+    const long = await git('--git-dir', githubPath, 'hash-object', '-t', 'commit', '-w', raw)
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/main', long)
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/main', long)
+    await seed.raw(['fetch', '-q', githubPath, 'main'])
+    await seed.raw(['checkout', '-q', '-B', 'feature', 'FETCH_HEAD'])
+    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
+    const started = Date.now()
+
+    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+
+    expect(String(caught)).toContain('does not end within 65536 bytes')
+    expect(Date.now() - started).toBeLessThan(10_000)
+  })
+
   it('fails transient on a second need-objects for the same push', async () => {
     const { feature } = await featureAhead()
     const github = gateway()
@@ -799,6 +843,28 @@ describe('the tracking namespace', () => {
     expect(await tip(remoteGitPath, 'refs/remotes/github/release/1.0')).toBe(release)
     // The deletions, then the creates and updates: no transaction failed and fell back.
     expect(observed.filter((s) => subcommand(s.args) === 'update-ref')).toHaveLength(2)
+  })
+
+  it('fails the fetch, rather than logging a lost race, when the move is aborted', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = gateway()
+    await fetchGitHubIntoRemoteGit(transfer(github))
+    // A new branch at a commit remote.git has: no bundle, one ref to move.
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/also', main)
+    const controller = new AbortController()
+    const fetch = github.fetch.bind(github)
+    vi.spyOn(github, 'fetch').mockImplementation(async (request, signal) => {
+      const answered = await fetch(request, signal)
+      controller.abort()
+      return answered
+    })
+
+    const caught = await fetchGitHubIntoRemoteGit(transfer(github), controller.signal).catch(
+      (err: unknown) => err,
+    )
+
+    expect(String(caught)).toContain('git update-ref was aborted')
+    expect(consoleSpy).not.toHaveWarned(/Could not move/)
   })
 
   it('moves the refs that can move when one lost a race, and names the one that did not', async () => {

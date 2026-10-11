@@ -227,6 +227,7 @@ async function startBundle(
   )
   const chunks = proc.stdout[Symbol.asyncIterator]()
   let start = Buffer.alloc(0)
+  let unreadable: unknown = null
   try {
     for (;;) {
       const next = await chunks.next()
@@ -236,11 +237,8 @@ async function startBundle(
       try {
         header = scanBundleHeader(start)
       } catch (err) {
-        // git writes a header with no head before it refuses an empty bundle, so let its exit
-        // say which this is.
-        proc.stdout.resume()
-        if (await refusedAsEmpty(proc)) return 'empty'
-        throw err
+        unreadable = err
+        break
       }
       if (header === null) continue
       if (!hasOnlyHead(header, sha, branch)) {
@@ -252,11 +250,16 @@ async function startBundle(
         process: proc,
         stream: Readable.from(
           (async function* () {
-            yield head
-            for (;;) {
-              const rest = await chunks.next()
-              if (rest.done) return
-              yield rest.value as Buffer
+            try {
+              yield head
+              for (;;) {
+                const rest = await chunks.next()
+                if (rest.done) return
+                yield rest.value as Buffer
+              }
+            } finally {
+              // A reader that stops early releases git's stdout with it.
+              await chunks.return?.()
             }
           })(),
         ),
@@ -264,6 +267,13 @@ async function startBundle(
     }
   } catch (err) {
     throw await causeOf(proc, err, 'its header could not be read')
+  }
+  if (unreadable !== null) {
+    // git writes a header with no head before it refuses an empty bundle, so its exit says which
+    // this is. Otherwise the header is the failure, whatever git makes of losing its reader.
+    proc.stdout.destroy()
+    if (await refusedAsEmpty(proc).catch(() => false)) return 'empty'
+    throw unreadable
   }
   // stdout ended before a whole header: git failed, or found nothing to bundle.
   if (await refusedAsEmpty(proc)) return 'empty'
@@ -390,9 +400,13 @@ async function moveTrackingRefs(
     try {
       await updateRefs(ctx, gitDir, moves, signal)
     } catch (err) {
+      if (!lostRace(err)) throw err
       const losers: string[] = []
       for (const move of moves) {
-        await updateRefs(ctx, gitDir, [move], signal).catch(() => losers.push(move.ref))
+        await updateRefs(ctx, gitDir, [move], signal).catch((moveErr: unknown) => {
+          if (!lostRace(moveErr)) throw moveErr
+          losers.push(move.ref)
+        })
       }
       if (losers.length > 0) {
         workerLogWarn(
@@ -402,6 +416,15 @@ async function moveTrackingRefs(
       }
     }
   }
+}
+
+/**
+ * Whether `update-ref` failed because a ref was not at the value a move stated, or a lock was
+ * held: git's "cannot lock ref" for each. Anything else (an abort, a missing object) is not a race
+ * a per-ref retry can win.
+ */
+function lostRace(err: unknown): boolean {
+  return /cannot lock ref/.test(getErrorMessage(err))
 }
 
 /** Apply `moves` as one `update-ref` transaction, NUL-separated, so no refname can split a line. */
