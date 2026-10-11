@@ -184,6 +184,29 @@ describe('the secrets check', () => {
     expect(result.detail).not.toContain('v4lue-never-shown')
   })
 
+  it.each([
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GITHUB_BOT_TOKEN',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'AWS_SECURITY_TOKEN',
+  ])('refuses the ambient credential %s, naming it and never its value', (name) => {
+    const result = noSecretsInEnv({ env: { PATH: '/usr/bin', [name]: 'v4lue-never-shown' } })
+
+    expect(result.ok).toBe(false)
+    expect(result.detail).toContain(name)
+    expect(result.detail).not.toContain('v4lue-never-shown')
+  })
+
+  it.each(['GITHUB_TOKEN_PATH', 'MY_GH_TOKEN', 'AWS_REGION', 'CLERK_JWT_KEY'])(
+    'passes the lookalike %s',
+    (name) => {
+      expect(noSecretsInEnv({ env: { PATH: '/usr/bin', [name]: 'value' } }).ok).toBe(true)
+    },
+  )
+
   it('passes with none, and ignores lookalikes', () => {
     expect(
       noSecretsInEnv({ env: { PATH: '/usr/bin', CANOPYCMS_GITHUB_GATEWAY_SOCKET: '/run/x' } }).ok,

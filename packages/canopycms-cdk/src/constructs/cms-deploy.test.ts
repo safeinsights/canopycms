@@ -2570,6 +2570,7 @@ describe('CanopyCmsService: protectedBranches', () => {
     ['a leading refs/', 'refs/heads/main', /refs\//],
     ['a leading heads/', 'heads/main', /heads\//],
     ['a glob only settings branches could match', 'canopycms-settings-*', /match nothing/],
+    ['an exact settings branch', 'canopycms-settings-prod', /settings reaching GitHub/],
     ['a leading tags/', 'tags/*', /tags\//],
     ['a leading remotes/ in another case', 'Remotes/x', /remotes\//],
     ['a percent sign', 'a%2fb', /%/],
@@ -2581,6 +2582,14 @@ describe('CanopyCmsService: protectedBranches', () => {
       /invalid protectedBranches entry/,
     )
     expect(() => synth(false, { protectedBranches: [entry] })).toThrow(why)
+  })
+
+  it('takes 1024 entries and refuses 1025', () => {
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}`)
+    expect(() => synth(false, { protectedBranches: entries(1024) })).not.toThrow()
+    expect(() => synth(false, { protectedBranches: entries(1025) })).toThrow(
+      /protectedBranches has 1025 entries; the most it takes is 1024/,
+    )
   })
 
   it('names a refused glob as written, not with its wildcards replaced', () => {
