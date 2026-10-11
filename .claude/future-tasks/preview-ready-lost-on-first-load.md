@@ -1,0 +1,56 @@
+---
+priority: P2
+adopters: BOTH
+summary: >-
+  New 2026-10-10. On a deployed editor, one cold first load in nine left `PreviewFrame` waiting even though the preview's ready message reached the editor window with the right origin and source. The "Live updates off" chip and Retry now cover it, but the cause is unexplained and was not reproduced again
+---
+# Preview ready message delivered but not handled on a cold first load
+
+`PreviewFrame` clears its progress bar when the preview's `canopycms:preview:ready` arrives. If
+none arrives within 5s of the iframe's `load`, it shows "Live updates off" with a Retry that
+remounts the iframe. That covers the symptom. This task is the cause.
+
+## What was measured
+
+These loads were captured read-only on a deployed adopter editor (canopycms `0.0.68-int.111`),
+using a capture-phase `message` listener in the editor window:
+
+- **Every load got exactly one ready message.** Its origin was the editor's and its `source` was
+  the iframe's `contentWindow`. The preview is same-origin and lives under the editor's path, with
+  no redirect.
+- **The stuck load was the first, cold-cache one.** The iframe document started 6.5s into the
+  editor's life, and ready arrived 5.2s later (slow hydration). The iframe's `load` came 1.2s after
+  ready. Afterwards the bar's pending state (`syncPending`, as int.111 names it) still read true.
+  The iframe's document, by its `timeOrigin`, had started before ready arrived, so no `src` change
+  after ready re-armed the bar.
+- **A manual `location.reload()` of the iframe cleared the bar at once**, so the handler was
+  attached by then.
+- **No other load reproduced it (0 of 8):** full reloads, loads in a hidden tab, and a popup.
+  An entry switch, where the frame remounts (`Editor.tsx:1031` gates it on `previewFrameData`),
+  cleared too.
+
+## Ruled out: a `src` string change re-arming the bar without a new page
+
+int.111's `PreviewFrame` re-armed the bar on any change to the `src` string. That would strand it
+only if the string changed without the iframe loading a new document. In Chrome (an iframe on a
+local origin, each change set as `iframe.src`, checked by `contentWindow.performance.timeOrigin`
+and `load` events), every change below produced a new document and one `load`:
+
+- re-setting the same string;
+- adding a trailing slash;
+- adding a query parameter;
+- reordering query parameters;
+- an absolute URL equal to the relative one.
+
+Only a hash-only change kept the document and fired no `load`. `buildPreviewSrc` adds no hash, and
+this adopter's routes have none. The stuck load's document also started before ready arrived, so
+no full navigation followed it. `PreviewFrame` now remounts the iframe on every `src` change, so
+even a hash-only change brings a fresh page and a fresh ready.
+
+## What is left to rule out
+
+- Whether `PreviewFrame`'s message effect had attached when ready arrived. Wrapping
+  `window.addEventListener` to log it broke the host's auth provider, so that question is still
+  open. A `performance.mark` inside the effect, shipped in a debug build, would answer it.
+- Whether `Editor.tsx` mounts `PreviewFrame` and then re-renders it in a way that loses the update
+  on a slow first load.

@@ -640,6 +640,181 @@ describe('PreviewFrame', () => {
   })
 })
 
+describe('PreviewFrame - sync status', () => {
+  const src = '/preview/x?branch=main'
+  const renderFrame = (frameSrc = src) => {
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    const utils = render(<PreviewFrame src={frameSrc} path="/x" data={{ value: 'draft' }} />)
+    const iframe = () => utils.container.querySelector('iframe') as HTMLIFrameElement
+    const bar = () => utils.queryByRole('progressbar')
+    const chip = () => utils.queryByText('Live updates off')
+    const readyEvent = (
+      origin = window.location.origin,
+      source: Window | null = iframe().contentWindow,
+    ) =>
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_READY, path: '/x' },
+        origin,
+        source,
+      })
+    const sendReady = (origin?: string) =>
+      act(() => {
+        window.dispatchEvent(readyEvent(origin))
+      })
+    const advance = (ms: number) =>
+      act(() => {
+        vi.advanceTimersByTime(ms)
+      })
+    return { ...utils, iframe, bar, chip, readyEvent, sendReady, advance }
+  }
+
+  it('shows the progress bar until the ready message clears it', () => {
+    const { iframe, bar, chip, sendReady, advance } = renderFrame()
+    expect(bar()).not.toBeNull()
+    fireEvent.load(iframe())
+    sendReady()
+    expect(bar()).toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+  })
+
+  it('keeps the bar for a ready from another origin', () => {
+    const { iframe, bar, sendReady } = renderFrame()
+    fireEvent.load(iframe())
+    sendReady('https://evil.example')
+    expect(bar()).not.toBeNull()
+  })
+
+  it('stays synced when ready arrives before the load event', () => {
+    const { iframe, bar, chip, sendReady, advance } = renderFrame()
+    sendReady()
+    fireEvent.load(iframe())
+    advance(10_000)
+    expect(bar()).toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('replaces the bar with the chip 5s after load without a ready', () => {
+    const { iframe, bar, chip, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(4_999)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+    advance(1)
+    expect(bar()).toBeNull()
+    expect(chip()).not.toBeNull()
+  })
+
+  it('starts the timeout only once the iframe loads', () => {
+    const { bar, chip, advance } = renderFrame()
+    advance(60_000)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('clears the chip when a late ready arrives', () => {
+    const { iframe, chip, sendReady, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(chip()).not.toBeNull()
+    sendReady()
+    expect(chip()).toBeNull()
+  })
+
+  it('Retry reloads the iframe and waits for a fresh handshake', () => {
+    const { iframe, bar, chip, getByRole, sendReady, advance } = renderFrame()
+    const first = iframe()
+    fireEvent.load(first)
+    advance(5_000)
+    fireEvent.click(getByRole('button', { name: 'Retry' }))
+    const second = iframe()
+    expect(second).not.toBe(first)
+    expect(second.getAttribute('src')).toBe(src)
+    expect(chip()).toBeNull()
+    expect(bar()).not.toBeNull()
+
+    const postSpy = vi
+      .spyOn(second.contentWindow as Window, 'postMessage')
+      .mockImplementation(() => {})
+    fireEvent.load(second)
+    expect(postSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: CANOPY_PREVIEW_MESSAGE, path: '/x' }),
+      window.location.origin,
+    )
+    advance(4_999)
+    expect(chip()).toBeNull()
+    sendReady()
+    expect(bar()).toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+  })
+
+  it('resets to the bar when src changes, from either outcome', () => {
+    const { iframe, bar, chip, rerender, sendReady, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(chip()).not.toBeNull()
+
+    rerender(<PreviewFrame src="/preview/y?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(chip()).toBeNull()
+    expect(bar()).not.toBeNull()
+    advance(10_000)
+    expect(chip()).toBeNull()
+
+    fireEvent.load(iframe())
+    sendReady()
+    expect(bar()).toBeNull()
+    rerender(<PreviewFrame src="/preview/z?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(bar()).not.toBeNull()
+  })
+
+  it('ignores a late ready or load from the page a new src replaced', () => {
+    const { iframe, bar, chip, rerender, readyEvent, advance } = renderFrame()
+    const replaced = iframe()
+    const replacedWindow = replaced.contentWindow
+    rerender(<PreviewFrame src="/preview/y?branch=main" path="/x" data={{ value: 'draft' }} />)
+    expect(iframe()).not.toBe(replaced)
+
+    act(() => {
+      window.dispatchEvent(readyEvent(window.location.origin, replacedWindow))
+    })
+    fireEvent.load(replaced)
+    advance(10_000)
+    expect(bar()).not.toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('lets a ready win when it lands in the same batch as the timeout', () => {
+    const { iframe, bar, chip, readyEvent, advance } = renderFrame()
+    fireEvent.load(iframe())
+    advance(4_999)
+    act(() => {
+      window.dispatchEvent(readyEvent())
+      vi.advanceTimersByTime(1)
+    })
+    expect(bar()).toBeNull()
+    expect(chip()).toBeNull()
+  })
+
+  it('mounts the status region before the chip, so its insertion is announced', () => {
+    const { iframe, getByRole, advance } = renderFrame()
+    const region = getByRole('status')
+    expect(region.textContent).toBe('')
+    fireEvent.load(iframe())
+    advance(5_000)
+    expect(getByRole('status')).toBe(region)
+    expect(region.textContent).toContain('Live updates off')
+  })
+
+  it('titles the iframe', () => {
+    const { iframe } = renderFrame()
+    expect(iframe().getAttribute('title')).toBe('Live preview')
+  })
+})
+
 describe('PreviewFrame - assetBase', () => {
   const postedDraft = (src: string, assetBase?: string): unknown => {
     const { container } = render(
