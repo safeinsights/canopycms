@@ -63,11 +63,12 @@ async function commitAndPush(target: string, ref: string, file: string): Promise
 }
 
 /**
- * What the socket transport reads from a bundle ahead of the gateway: the client's pipe into the
- * socket and the server's into the gateway, each a stream buffer or two. Not the gateway's bound,
- * which the in-process run holds to exactly.
+ * What the socket transport reads from a bundle ahead of the gateway: stream buffers at each end,
+ * and the kernel's socket buffers between them, which are the larger part and differ by platform
+ * (measured 16 KiB on macOS, 272 KiB on Linux CI). Not the gateway's bound, which the in-process
+ * run holds to exactly; with it, these tests still read far short of the 2 MiB a whole read pulls.
  */
-const TRANSPORT_READ_AHEAD = GATEWAY_TRANSPORT === 'http' ? 128 * 1024 : 0
+const TRANSPORT_READ_AHEAD = GATEWAY_TRANSPORT === 'http' ? 1024 * 1024 : 0
 
 function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGateway {
   return gatewayUnderTest(
