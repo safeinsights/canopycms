@@ -82,11 +82,7 @@ function pushVia(
   readSha: () => Promise<string> = async () =>
     git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
 ) {
-  return pushToGitHub(
-    transfer(github),
-    { branch, protectedBranches: [], prerequisiteBranches: [branch, 'main'] },
-    readSha,
-  )
+  return pushToGitHub(transfer(github), { branch, prerequisiteBranches: [branch, 'main'] }, readSha)
 }
 
 /** A bundle file of `revs` in `repo`, built by git. */
@@ -114,7 +110,6 @@ const request = (branch: string, sha: string): GitHubPushRequest => ({
   branch,
   sha,
   prerequisites: [],
-  protectedBranches: [],
 })
 
 /** Every file in the mirror, by path, with a hash of its bytes. */
@@ -196,7 +191,8 @@ beforeEach(async () => {
   await fs.mkdir(seedPath)
   seed = await initTestRepo(seedPath)
   await seed.raw(['checkout', '-q', '-b', 'main'])
-  await git('init', '-q', '--bare', githubPath)
+  // GitHub's default branch is `main`, whatever git's own default is.
+  await git('init', '-q', '--bare', '--initial-branch', 'main', githubPath)
   await git('init', '-q', '--bare', remoteGitPath)
 })
 
@@ -585,7 +581,7 @@ describe('refusing a hostile bundle', () => {
     let pulled = 0
     const body = Readable.from(
       (function* () {
-        yield Buffer.from(`# v2 git bundle\n-${'b'.repeat(40)} `)
+        yield Buffer.from(`# v2 git bundle\n${'b'.repeat(40)} refs/heads/`)
         for (let i = 0; i < 128; i++) {
           pulled += 16 * 1024
           yield Buffer.alloc(16 * 1024, 0x61)
@@ -599,6 +595,28 @@ describe('refusing a hostile bundle', () => {
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toMatch(/does not end within 65536 bytes/)
+    expect(pulled).toBeLessThan(256 * 1024)
+  })
+
+  it('refuses a 2 MiB prerequisite comment without reading it all', async () => {
+    const { feature } = await featureAhead()
+    let pulled = 0
+    const body = Readable.from(
+      (function* () {
+        yield Buffer.from(`# v2 git bundle\n-${'b'.repeat(40)} `)
+        for (let i = 0; i < 128; i++) {
+          pulled += 16 * 1024
+          yield Buffer.alloc(16 * 1024, 0x61)
+        }
+      })(),
+    )
+
+    const caught = await gateway()
+      .push(request('feature', feature), body)
+      .catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(GitHubTransientError)
+    expect(String(caught)).toMatch(/comment is longer than 1024 bytes/)
     expect(pulled).toBeLessThan(256 * 1024)
   })
 
@@ -734,7 +752,7 @@ describe('the worker side of a push', () => {
 
     const caught = await pushToGitHub(
       transfer(github),
-      { branch: 'feature', protectedBranches: [], prerequisiteBranches: ['feature', 'main'] },
+      { branch: 'feature', prerequisiteBranches: ['feature', 'main'] },
       async () => git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature'),
       controller.signal,
     ).catch((err: unknown) => err)
@@ -762,14 +780,14 @@ describe('the worker side of a push', () => {
     expect(Date.now() - started).toBeLessThan(10_000)
   })
 
-  it('fails at once on a prerequisite whose subject outgrows the header bound', async () => {
+  it('pushes a branch built on a commit whose subject outgrows the header bound', async () => {
     const base = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const tree = await git('--git-dir', githubPath, 'rev-parse', `${base}^{tree}`)
     const raw = path.join(root, 'long-subject')
     await fs.writeFile(
       raw,
       `tree ${tree}\nparent ${base}\nauthor a <a@x> 1700000000 +0000\n` +
-        `committer a <a@x> 1700000000 +0000\n\n${'s'.repeat(70 * 1024)}\n`,
+        `committer a <a@x> 1700000000 +0000\n\n${'s'.repeat(100 * 1024)}\n`,
     )
     const long = await git('--git-dir', githubPath, 'hash-object', '-t', 'commit', '-w', raw)
     await git('--git-dir', githubPath, 'update-ref', 'refs/heads/main', long)
@@ -778,13 +796,19 @@ describe('the worker side of a push', () => {
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/main', long)
     await seed.raw(['fetch', '-q', githubPath, 'main'])
     await seed.raw(['checkout', '-q', '-B', 'feature', 'FETCH_HEAD'])
-    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
-    const started = Date.now()
+    const feature = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'feature.txt')
+    // git writes the 100 KiB subject as the bundle's prerequisite comment.
+    const sent = await fs.readFile(await bundleOf(remoteGitPath, 'refs/heads/feature', `^${long}`))
+    expect(sent.toString('latin1')).toContain(`-${long} ${'s'.repeat(100 * 1024)}\n`)
 
-    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+    const push = vi.spyOn(github, 'push')
 
-    expect(String(caught)).toContain('does not end within 65536 bytes')
-    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(await pushVia(github, 'feature')).toMatchObject({
+      outcome: { moved: true, to: feature },
+    })
+    expect(await tip(githubPath, 'refs/heads/feature')).toBe(feature)
+    // It went as a bundle built on that commit, so its header named it.
+    expect(push.mock.calls.map(([, body]) => body !== undefined)).toEqual([false, true])
   })
 
   it('fails transient on a second need-objects for the same push', async () => {
@@ -1038,7 +1062,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const github = coalescing()
     await github.fetch({ have: [] })
-    const refused = { branch: 'main', sha: main, prerequisites: [], protectedBranches: ['main'] }
+    const refused = { branch: 'main', sha: main, prerequisites: [] }
     // The valid push joins the fetch while the first refused push's session runs, so both refusals
     // fail between its join and its session.
     let valid: Promise<GitHubPushAnswer> | undefined
@@ -1084,7 +1108,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     expect((await github.fetch({ have: [] })).refs.has('gone')).toBe(true)
 
@@ -1106,7 +1133,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     holder.github = github
 
@@ -1127,7 +1157,10 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     const github = gateway({
       fetchCoalesceMs: undefined,
-      octokit: { git: { deleteRef } } as unknown as Octokit,
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      } as unknown as Octokit,
     })
     // The deletion starts during the fetch's own session, and GitHub answers during the session
     // of the fetch the caller then joins.

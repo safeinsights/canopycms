@@ -53,6 +53,11 @@ async function commitAndPush(target: string, ref: string, file: string): Promise
   return (await seed.revparse(['HEAD'])).trim()
 }
 
+/** `octokit.repos`, answering GitHub's default branch, which the policy reads before a PR or delete. */
+const defaultBranchStub = (name = 'main') => ({
+  get: vi.fn().mockResolvedValue({ data: { default_branch: name } }),
+})
+
 function gateway(overrides: Partial<LocalGitHubGatewayOptions> = {}): GitHubGateway {
   return createLocalGitHubGateway({
     githubOwner: 'test-owner',
@@ -80,7 +85,7 @@ function transfer(github: GitHubGateway): TransferContext {
  */
 async function pushVia(
   github: GitHubGateway,
-  request: { branch: string; sha: string; lease?: string; protectedBranches: string[] },
+  request: { branch: string; sha: string; lease?: string },
 ) {
   const { sha, ...rest } = request
   const pushed = await pushToGitHub(
@@ -100,7 +105,8 @@ beforeEach(async () => {
   await fs.mkdir(seedPath)
   seed = await initTestRepo(seedPath)
   await seed.raw(['checkout', '-q', '-b', 'main'])
-  await git('init', '-q', '--bare', githubPath)
+  // GitHub's default branch is `main`, whatever git's own default is.
+  await git('init', '-q', '--bare', '--initial-branch', 'main', githubPath)
   await git('init', '-q', '--bare', remoteGitPath)
 })
 
@@ -197,7 +203,6 @@ describe('push', () => {
     const outcome = await pushVia(gateway(), {
       branch: 'feature',
       sha: ahead,
-      protectedBranches: ['main'],
     })
 
     expect(outcome).toEqual({
@@ -213,7 +218,7 @@ describe('push', () => {
   it('reports a push of the commit GitHub already holds as not moved', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const { ahead } = await aheadOnRemoteGit('feature')
-    const request = { branch: 'feature', sha: ahead, protectedBranches: ['main'] }
+    const request = { branch: 'feature', sha: ahead }
     await pushVia(gateway(), request)
 
     expect(await pushVia(gateway(), request)).toEqual({ moved: false, pastStaleLease: false })
@@ -227,14 +232,12 @@ describe('push', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const sha = await commitAndPush(remoteGitPath, 'refs/heads/fresh', 'fresh.txt')
 
-    expect(await pushVia(gateway(), { branch: 'fresh', sha, protectedBranches: ['main'] })).toEqual(
-      {
-        moved: true,
-        from: null,
-        to: sha,
-        pastStaleLease: false,
-      },
-    )
+    expect(await pushVia(gateway(), { branch: 'fresh', sha })).toEqual({
+      moved: true,
+      from: null,
+      to: sha,
+      pastStaleLease: false,
+    })
   })
 
   it('reports a forced update under a held lease as moved from the leased commit', async () => {
@@ -247,7 +250,6 @@ describe('push', () => {
       branch: 'feature',
       sha: rewritten,
       lease: base,
-      protectedBranches: ['main'],
     })
 
     expect(outcome).toMatchObject({ moved: true, to: rewritten, pastStaleLease: false })
@@ -263,7 +265,6 @@ describe('push', () => {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
-      protectedBranches: ['main'],
     })
 
     expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
@@ -281,7 +282,6 @@ describe('push', () => {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
-      protectedBranches: ['main'],
     }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubPushError)
@@ -300,7 +300,6 @@ describe('push', () => {
     const caught = await pushVia(gateway(), {
       branch: 'feature',
       sha: ahead,
-      protectedBranches: ['main'],
     }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubPushError)
@@ -316,7 +315,6 @@ describe('push', () => {
     const caught = await pushVia(gateway(), {
       branch: 'main',
       sha: ahead,
-      protectedBranches: ['main'],
     }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(RefusedPushError)
@@ -335,7 +333,6 @@ describe('push', () => {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
-      protectedBranches: ['main'],
     })
 
     expect(remoteUrl).toHaveBeenCalledTimes(1)
@@ -357,7 +354,6 @@ describe('push', () => {
       branch: 'feature',
       sha: ahead,
       lease: '0'.repeat(40),
-      protectedBranches: ['main'],
     })
 
     expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
@@ -393,7 +389,10 @@ describe('Octokit operations', () => {
     const error = await octokitErrorFor(422, { message: 'Validation Failed' })
     const create = vi.fn().mockRejectedValue(error)
     const github = gateway({
-      octokit: { pulls: { create } } as unknown as LocalGitHubGatewayOptions['octokit'],
+      octokit: {
+        pulls: { create },
+        repos: defaultBranchStub(),
+      } as unknown as LocalGitHubGatewayOptions['octokit'],
     })
 
     const caught = await github
@@ -414,6 +413,7 @@ describe('Octokit operations', () => {
       octokit: {
         pulls: { create },
         git: { deleteRef },
+        repos: defaultBranchStub(),
       } as unknown as LocalGitHubGatewayOptions['octokit'],
     })
 

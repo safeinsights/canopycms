@@ -26,12 +26,14 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `log.ts`                    | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                                                                                    |
 | `github-gateway.ts`         | `GitHubGateway`, the only user of the credential and Octokit, and its in-process implementation                                                                                                                                 |
 | `github-auth.ts`            | Credential selection (token or App), installation-token minting, the PAT swap behind its 60s floor, PEM normalization                                                                                                           |
-| `github-mirror.ts`          | The gateway's private GitHub mirror and the quarantines pushed bundles are checked in: the only repositories where git carries the credential                                                                                   |
+| `github-mirror.ts`          | The gateway's private mirror and push quarantines: the only repositories where git carries the credential                                                                                                                       |
 | `github-mirror-upkeep.ts`   | The mirror's sweeps, corruption check, crash recovery, maintenance, and the lock order                                                                                                                                          |
 | `github-transfer.ts`        | The worker's side of the bundle transfer: fetching into remote.git, the seed, the push                                                                                                                                          |
 | `bundle-header.ts`          | A git bundle header's grammar, read in node before git sees the bundle                                                                                                                                                          |
-| `git-process.ts`            | git with a streamed stdin or stdout, bounded by inactivity, a deadline, abort and output caps                                                                                                                                   |
-| `shared-repo-git.ts`        | How the worker runs git in `remote.git` and the clones: the pins, the pinned pack commands, the config allowlist check                                                                                                          |
+| `branch-policy.ts`          | Gateway policy: protected branches, settings rules, names                                                                                                                                                                       |
+| `gateway-egress.ts`         | Scrubbing and escaping all the gateway emits                                                                                                                                                                                    |
+| `git-process.ts`            | Streamed git, bounded by inactivity, a deadline, abort and output caps                                                                                                                                                          |
+| `shared-repo-git.ts`        | The worker's git in `remote.git` and the clones: the pins, pinned pack commands, the config allowlist check                                                                                                                     |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` →
 `history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate`). `github-gateway` sits outside that chain: `cms-worker` creates the instance, clusters reach it
@@ -54,8 +56,8 @@ lint and still break the layering above. Keep the direction by review.
 - Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
   loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`.
-- No push, plain or leased, to the base branch or GitHub's default branch, whatever a task asks:
-  `github-mirror.ts`, `MirrorSession.pushToGitHub` (`RefusedPushError`).
+- No push to, deletion of or pull request from a protected branch: `branch-policy.ts`; a push's
+  check is in `MirrorSession.pushToGitHub`.
 - The credential only in mirror sessions' per-command files (`github-mirror.ts`, `withCredentialConfig`); other
   shared-repository git only via `sharedRepoGit`, after `assertSharedRepoConfig`:
   `shared-repo-git.ts`'s module doc.

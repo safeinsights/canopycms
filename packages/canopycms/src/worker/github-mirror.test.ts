@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fixtureCredential, initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { resolveWorkerGitHubAuth } from './github-auth'
 import { createLocalGitHubGateway, type GitHubGateway } from './github-gateway'
+import { BranchPolicy } from './branch-policy'
 import { GitHubMirror, GitHubTransientError } from './github-mirror'
 import { fetchGitHubIntoRemoteGit, pushToGitHub, type TransferContext } from './github-transfer'
 
@@ -93,7 +94,7 @@ function transfer(github: GitHubGateway): TransferContext {
 async function pushVia(github: GitHubGateway, branch: string, lease?: string) {
   return pushToGitHub(
     transfer(github),
-    { branch, lease, protectedBranches: [], prerequisiteBranches: [branch] },
+    { branch, lease, prerequisiteBranches: [branch] },
     async () => git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
   )
 }
@@ -145,7 +146,7 @@ describe('GitHubMirror', () => {
     )
 
     const answer = await github.push(
-      { branch: 'feature', sha: published, prerequisites: [], protectedBranches: [] },
+      { branch: 'feature', sha: published, prerequisites: [] },
       (await fs.open(bundle)).createReadStream(),
     )
 
@@ -169,7 +170,7 @@ describe('GitHubMirror', () => {
       mirror.exclusive((m) =>
         m.pushToGitHub(fixtureCredential(githubPath), 'feature', next, {
           lease: notGitHubsTip,
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/stale info/)
@@ -369,7 +370,7 @@ describe('GitHubMirror', () => {
       mirror.exclusive((m) =>
         m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
           lease: 'refs/heads/main',
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/Not a commit ID: "refs\/heads\/main"/)
@@ -400,7 +401,7 @@ describe('GitHubMirror', () => {
     await expect(
       mirror.exclusive((m) =>
         m.pushToGitHub(fixtureCredential(githubPath), 'feature', 'main:refs/heads/x', {
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/Not a commit ID/)

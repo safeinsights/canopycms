@@ -82,7 +82,7 @@ replaces each `next` with its number.
 | 112  | Worker   | [Bundle states the template it needs](#canopycms-cdk-a-worker-bundle-states-the-template-it-needs--template-first-for-the-gate-only)                                                        | Template first               |
 | 112  | Worker   | [Poisoned `remote.git` re-clones](#a-poisoned-remotegit-re-clones-itself)                                                                                                                   | None                         |
 | 112  | Worker   | [Nano worker boots reliably](#canopycms-cdk-a-t4gnano-worker-boots-reliably--behaviour-change-a-deploy-replaces-the-worker)                                                                 | Deploy                       |
-| 112  | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix)                                                                             | Protect base on GitHub       |
+| 112  | Worker   | [Worker never pushes base or default branch](#the-worker-never-pushes-the-base-or-default-branch--security-fix) (next)                                                                      | Protect base on GitHub       |
 | 112  | Worker   | [Worker log is root-owned](#canopycms-cdk-the-workers-log-is-root-owned--security-fix)                                                                                                      | Deploy; hand-installed units |
 | 113  | Worker   | [Push logs say whether GitHub moved](#the-workers-push-logs-say-whether-github-moved)                                                                                                       | None                         |
 | 113  | Editing  | [Unsaved ACL changes show; closing asks](#unsaved-group-and-permission-changes-show-and-closing-asks-first)                                                                                 | None                         |
@@ -532,17 +532,19 @@ contract is unchanged. A hand-installed unit needs the same change:
 
 ### The worker never pushes the base or default branch — **security fix**
 
-**What changed.** (int.112) The worker now refuses to push to the base branch or to GitHub's
-default branch, whichever task asks, and fails that task permanently. CanopyCMS never queues
-such a push. But the task queue is on the shared workspace, which the CMS Lambda can write, so
-before this a compromised Lambda could have had the worker push to, or overwrite, your base
-branch. The refusal also covers a push that would replace history.
+**What changed.** (int.112) The worker refuses to push, plainly or replacing history, to the base
+branch or GitHub's default branch, whatever a task asks, and fails the task permanently.
+CanopyCMS never queues such a push, but a compromised CMS Lambda can write the task queue.
 
-**To adopt.** Nothing to change. Upgrade, and roll the worker. Regardless of this fix, protect
-your base branch on GitHub with a branch protection rule or ruleset that CanopyCMS's credential
-cannot bypass. A classic token belonging to a repository admin often can, so check its bypass
-list. Set `CANOPYCMS_BASE_BRANCH` (the construct's `baseBranch`) explicitly: without it, the
-worker protects only GitHub's current default branch and whatever it read as base at startup.
+(next) It protects what the construct's `protectedBranches` prop lists, never deletes or opens a
+pull request from a protected or settings branch, and re-reads GitHub's default branch every 10
+minutes.
+
+**To adopt.** Upgrade, and roll the worker. Protect your base branch on GitHub with a branch
+protection rule or ruleset that CanopyCMS's credential cannot bypass. A classic token belonging to
+a repository admin often can, so check its bypass list. Set `CANOPYCMS_BASE_BRANCH` (the
+construct's `baseBranch`) explicitly: without it, the gateway protects only GitHub's default branch
+and your list; the worker still refuses the base it detected, warning when that base is neither.
 
 ### The worker's push logs say whether GitHub moved
 

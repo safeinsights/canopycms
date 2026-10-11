@@ -14,6 +14,7 @@ import { BranchMetadataFileManager } from '../branch-metadata'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { fixtureCredential, initTestRepo, mockConsole, useLocalGitHubGateway } from '../test-utils'
 import { CmsWorker } from './cms-worker'
+import { BranchPolicy } from './branch-policy'
 import { GitHubMirror, RefusedPushError } from './github-mirror'
 
 describe('the worker refuses to push protected branches', () => {
@@ -154,6 +155,27 @@ describe('the worker refuses to push protected branches', () => {
     expect((await failedErrors())[0]).toMatch(/Refusing to push "production" to GitHub/)
   })
 
+  it("refuses a detected base branch that is not GitHub's default, which the gateway does not protect", async () => {
+    await commitInRemoteGit('production', 'on-main')
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'o',
+      githubRepo: 'r',
+      githubToken: 'fake-token',
+    })
+    // As start() would after reading remote.git's HEAD: detected, so the gateway was given no base.
+    ;(worker as unknown as { setBaseBranch(name: string): void }).setBaseBranch('production')
+    useLocalGitHubGateway(worker, { remoteUrl: () => github })
+    ;(worker as unknown as { running: boolean }).running = true
+    await queuePush('production')
+
+    await worker.processTaskQueue()
+
+    expect(await failedErrors()).toEqual([expect.stringMatching(/Refusing to push "production"/)])
+    expect(await listTasks(taskDir, 'pending')).toHaveLength(0)
+    await expect(githubLog('production')).rejects.toThrow()
+  })
+
   it('refuses a name that is not a plain branch name before any git reads it', async () => {
     await commitInRemoteGit('main', 'on-main')
     await queuePush('x:main')
@@ -192,7 +214,7 @@ describe('the worker refuses to push protected branches', () => {
       mirror.exclusive((m) =>
         m.pushToGitHub(fixtureCredential(github), 'main', sha, {
           lease: githubTip,
-          protectedBranches: [],
+          policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toBeInstanceOf(RefusedPushError)

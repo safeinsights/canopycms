@@ -457,6 +457,8 @@ type PrOctokitStub = {
     update: ReturnType<typeof vi.fn>
   }
   graphql: ReturnType<typeof vi.fn>
+  /** GitHub's default branch, which the gateway's policy reads before opening a PR. */
+  repos: { get: ReturnType<typeof vi.fn> }
 }
 
 describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
@@ -509,6 +511,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
         update: vi.fn(),
       },
       graphql: vi.fn(),
+      repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
     }
     useLocalGitHubGateway(worker, { octokit })
     internals.running = true
@@ -2712,7 +2715,12 @@ describe('CmsWorker delete-remote-branch', () => {
     })
     const internals = worker as unknown as { running: boolean }
     internals.running = true
-    useLocalGitHubGateway(worker, { octokit: { git: { deleteRef } } })
+    useLocalGitHubGateway(worker, {
+      octokit: {
+        git: { deleteRef },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      },
+    })
     const id = await enqueueTask(taskDir, {
       action: 'delete-remote-branch',
       payload: {

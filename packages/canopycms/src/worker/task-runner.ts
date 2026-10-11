@@ -18,6 +18,7 @@ import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/br
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { isNonFastForwardRejection, workflowPushRefusalFile } from '../utils/git'
 import { GitHubPushError, describeMove, type GitHubPushOutcome } from './github-gateway'
+import { GatewayRefusalError } from './branch-policy'
 import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
@@ -103,11 +104,12 @@ class NothingToSubmitTaskError extends PermanentTaskError {}
  *
  * Permanent — retrying the identical request cannot succeed:
  * - PermanentTaskError (malformed payload, unknown action);
+ * - GatewayRefusalError: the GitHub gateway's policy refused it (worker/branch-policy.ts);
  * - other HTTP 4xx (401/404/422): the request itself is bad;
  * - plain HTTP 403 with no rate-limit signal: a real permission denial.
  */
 export function isPermanentTaskFailure(err: unknown): boolean {
-  if (err instanceof PermanentTaskError) return true
+  if (err instanceof PermanentTaskError || err instanceof GatewayRefusalError) return true
   const status = getHttpStatus(err)
   if (status === null) return false
   if (status === 408 || status === 429) return false
@@ -647,6 +649,14 @@ export async function pushBranchToGitHub(
     if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
     throw err
   }
+  // Defense-in-depth behind the gateway's policy, which protects a base detected rather than
+  // configured only when it is GitHub's default branch (BranchPolicy).
+  if (sanitizeBranchName(branch) === ctx.sanitizedBaseBranch) {
+    throw new PermanentTaskError(
+      `Refusing to push "${branch}" to GitHub: it is the base branch, which the CanopyCMS worker ` +
+        `never pushes. Nothing in CanopyCMS queues such a push; find out what wrote this task.`,
+    )
+  }
 
   // [SYNC-H1] If the rebase loop rewrote this branch's already-published
   // history, GitHub still holds the commit it replaced, so an ordinary
@@ -672,7 +682,6 @@ export async function pushBranchToGitHub(
       {
         branch,
         lease: marker,
-        protectedBranches: [ctx.baseBranch],
         prerequisiteBranches: [branch, ctx.baseBranch],
       },
       readSha,

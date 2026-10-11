@@ -4,7 +4,7 @@ import { Readable } from 'node:stream'
 
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import { getErrorMessage } from '../utils/error'
-import { hasOnlyHead, scanBundleHeader, type BundleHeader } from './bundle-header'
+import { BundleHeaderReader, hasOnlyHead, type ReadBundleHeader } from './bundle-header'
 import { runGit, spawnGit, type GitProcess } from './git-process'
 import {
   MAX_FETCH_HAVE,
@@ -210,7 +210,8 @@ interface StartedBundle {
 /**
  * Start `bundle create` of `refs/heads/<branch>` in `remote.git`, built on `usable`, and read its
  * header: `moved` when its head is not `sha`, `empty` when git refused an empty bundle (GitHub
- * already has every commit it would hold), else the bundle to send.
+ * already has every commit it would hold), else the bundle to send, each prerequisite's comment
+ * shortened to what the gateway takes.
  */
 async function startBundle(
   ctx: TransferContext,
@@ -232,29 +233,30 @@ async function startBundle(
     },
   )
   const chunks = proc.stdout[Symbol.asyncIterator]()
-  let start = Buffer.alloc(0)
+  // A prerequisite's comment is a commit subject, any length; the gateway takes only a short one.
+  const reader = new BundleHeaderReader('shorten')
   let unreadable: unknown = null
   try {
     for (;;) {
       const next = await chunks.next()
       if (next.done) break
-      start = Buffer.concat([start, next.value as Buffer])
-      let header: BundleHeader | null
+      let read: ReadBundleHeader | null
       try {
-        header = scanBundleHeader(start)
+        read = reader.push(next.value as Buffer)
       } catch (err) {
         unreadable = err
         break
       }
-      if (header === null) continue
-      if (!hasOnlyHead(header, sha, branch)) {
+      if (read === null) continue
+      if (!hasOnlyHead(read.header, sha, branch)) {
         proc.kill('the branch moved')
         return 'moved'
       }
-      const head = start
+      const { bytes, rest: first } = read
       const stream = Readable.from(
         (async function* () {
-          yield head
+          yield bytes
+          if (first.length > 0) yield first
           for (;;) {
             const rest = await chunks.next()
             if (rest.done) return
